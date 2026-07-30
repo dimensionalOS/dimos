@@ -23,11 +23,76 @@ Drop the file under any scene's `evals/` folder and `dimsim eval list` picks it 
 
 ```bash
 dimsim eval go-to-couch                    # against the open sim
+dimsim eval apartment/go-to-couch --agent  # closed-loop through a running DimOS agent
 dimsim eval --headless --scene apartment --workflow go-to-couch   # standalone / CI
 deno run -A misc/DimSim/scenes/apartment/evals/go-to-couch.js     # direct execution
 ```
 
-All three end up at the same harness in the browser. Pick whichever fits the moment.
+All modes end up at the same harness in the browser. Pick whichever fits the moment.
+
+## Closed-loop agent mode
+
+`--agent` evaluates an already-running DimOS agent rather than only scoring
+browser state:
+
+```bash
+# Terminal 1: start the upstream MCP-enabled agent stack with DimSim.
+dimos --simulation dimsim run unitree-go2-agentic
+
+# Terminal 2: reset, dispatch the exact workflow task once, then score.
+dimsim eval apartment/go-to-couch --agent
+```
+
+Agent mode requires connect mode, exactly one workflow, and no `--parallel` or
+standalone `--headless` launch. The MCP endpoint is selected in this order:
+`--mcp-url`, `DIMOS_MCP_URL`, then `http://127.0.0.1:9990/mcp`. API keys, model
+names, and model endpoints remain DimOS configuration; DimSim never reads them.
+
+The correlated lifecycle is:
+
+```text
+runEval → evalReady → evalReset → resetAck → agent_send → evalStart → evalResult
+                                                     ↳ evalAgentOutput
+```
+
+The browser imports and validates the workflow and runs `setup`, but scoring
+does not start until `evalStart`. The bridge applies `startPose` to its
+authoritative Rapier body, clears prior motion, publishes the resulting
+pose/odometry, and acknowledges the actual pose before `agent_send` is called.
+Agent workflows therefore require finite `x`, `y`, `z`, and `yaw` fields.
+An initially satisfied rubric is rejected because it cannot measure agent
+behavior.
+
+A workflow may set `requiredAgentOutput` to require an exact, standalone
+assistant response. For those workflows only, the runner starts a read-only
+Python sidecar that subscribes to the existing `/agent` stream. Human messages,
+tool output, AI messages with tool calls, and non-exact text do not count.
+The sidecar does not add an agent tool or modify DimOS.
+
+The outside bathtub workflow uses this contract:
+
+```bash
+dimsim eval apartment/find-and-go-to-bathtub --agent
+```
+
+It passes only after the agent emits exactly `FOUND_BATHTUB` during the active
+run and the robot is within 1 metre of the bathtub. JSON output includes the
+accepted message timestamp and the robot pose at which it was received.
+
+Results retain `passed` and add `runId`, `status`, and (for infrastructure
+errors) `failureStage`. Exit codes are `0` for pass, `1` for task failure, and
+`2` for configuration or infrastructure errors. Both JSON and JUnit keep
+machine-readable output on stdout; progress is written to stderr.
+
+### Manual live-model smoke test
+
+With the model credentials configured in DimOS:
+
+1. Start `dimos --simulation dimsim run unitree-go2-agentic`.
+2. Run `dimsim eval apartment/go-to-couch --agent`.
+3. Confirm the logs show one `agent_send`, after `resetAck`, and scoring begins
+   only after dispatch.
+4. Stop MCP and repeat. The command must exit `2` before `evalStart`.
 
 ## The workflow object
 
@@ -39,6 +104,7 @@ All three end up at the same harness in the browser. Pick whichever fits the mom
 | `timeoutSec` | – | Default 120. Wall-clock cap. |
 | `startPose` | – | `{x, y, z, yaw?}`, applied before `setup`. Yaw in degrees. |
 | `setup(ctx)` | – | Async fn run once at start. Spawn obstacles, set props, anything. |
+| `requiredAgentOutput` | – | Exact standalone AI response required in connected `--agent` mode. |
 
 ## The `ctx` object
 
@@ -49,6 +115,7 @@ Both `setup(ctx)` and `success(ctx)` receive:
 | `ctx.agent` | The live agent: `setPosition`, `getPosition`, `group`, etc. |
 | `ctx.agentPos` | `{x, y, z}`, current translation, convenience copy. |
 | `ctx.sceneState` | `{assets, agentPos}`, used by rubric helpers. |
+| `ctx.agentOutput` | Accepted exact agent output evidence, or `null`. |
 | `ctx.setAgentPose({x, y, z, yaw?})` | Teleport the agent. |
 | `ctx.findAsset(query)` | Case-insensitive search by title or id. |
 | `ctx.dist(a, b)` | Euclidean distance. |

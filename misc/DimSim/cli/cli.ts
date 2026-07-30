@@ -13,7 +13,15 @@
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import { startBridgeServer } from "./bridge/server.ts";
 import { launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
-import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml } from "../evals/runner.ts";
+import {
+  collectWorkflows,
+  configurationResult,
+  exitCodeForResults,
+  formatResults,
+  runEvals,
+  runEvalsMultiPage,
+  type EvalResult,
+} from "../evals/runner.ts";
 
 const CLI_DIR = dirname(fromFileUrl(import.meta.url));
 const PROJECT_DIR = resolve(CLI_DIR, "..");
@@ -99,7 +107,7 @@ async function resolveDistDir(): Promise<string> {
 
   console.error(`[dimsim] No dist/ found and tryBuildFromSource() failed.`);
   console.error(`[dimsim] Build manually:  cd ${PROJECT_DIR} && npm run build`);
-  Deno.exit(1);
+  Deno.exit(2);
 }
 
 function printUsage() {
@@ -127,6 +135,8 @@ Dev:
 
 Eval:
   --connect                      Connect to existing bridge (use with dimos)
+  --agent                        Dispatch one workflow task through DimOS MCP
+  --mcp-url <url>                MCP endpoint (env: DIMOS_MCP_URL)
   --headless                     Headless Chromium (required for CI)
   --parallel <n>                 N parallel browser pages (default: 1)
   --render gpu|cpu               gpu = Metal/ANGLE, cpu = SwiftShader (default: cpu)
@@ -143,6 +153,7 @@ const KNOWN_FLAGS = new Set([
   "help", "version",
   "scene", "port", "headless", "render", "channels", "eval", "env",
   "output", "parallel", "connect", "timeout", "workflow",
+  "agent", "mcp-url",
   "camera-fov", "image-rate", "lidar-rate", "no-depth",
 ]);
 
@@ -189,7 +200,7 @@ async function main() {
       `[dimsim] unknown flag${unknownFlags.length > 1 ? "s" : ""}: ${unknownFlags.map((f) => `--${f}`).join(", ")}`,
     );
     console.error("[dimsim] run `dimsim help` for valid flags.");
-    Deno.exit(1);
+    Deno.exit(2);
   }
 
   const port = parseInt(opts.port as string) || 8090;
@@ -303,6 +314,11 @@ async function main() {
 
   // ── Eval ────────────────────────────────────────────────────────────
   if (subcommand === "eval") {
+    // Machine-readable eval output owns stdout. Route all progress from the
+    // runner, bridge, browser launcher, and build helpers to stderr.
+    const emitOutput = console.log.bind(console);
+    console.log = console.error.bind(console);
+
     // Positional workflow: `dimsim eval go-to-tv` is shorthand for
     // `dimsim eval --workflow go-to-tv --connect`.  Accepts either bare
     // workflow name ("go-to-tv") or scene-qualified ("apartment/go-to-tv").
@@ -326,16 +342,87 @@ async function main() {
     const wsUrl = `ws://localhost:${port}`;
     const filterScene = posScene ?? (opts.scene as string) ?? (opts.env as string);
     const filterWorkflow = posWorkflow ?? (opts.workflow as string);
+    const agentMode = opts.agent === true;
+    const emitAndExit = (results: EvalResult[]): never => {
+      emitOutput(formatResults(results, outputFormat));
+      const passed = results.filter((result) => result.status === "passed").length;
+      const failed = results.filter((result) => result.status === "failed").length;
+      const errors = results.filter((result) => result.status === "error").length;
+      console.error(
+        `[dimsim] Done: ${passed} passed, ${failed} failed, ${errors} errors, ` +
+        `${results.length} total`,
+      );
+      Deno.exit(exitCodeForResults(results));
+    };
+
+    if (agentMode) {
+      const matches = collectWorkflows({
+        scenesRoot: SCENES_DIR,
+        filterScene,
+        filterWorkflow,
+      });
+      let reason = "";
+      if (!connectMode) {
+        reason = "agent mode requires --connect or a positional workflow";
+      } else if (opts.headless === true) {
+        reason =
+          "agent mode cannot launch a standalone --headless scorer; connect to the DimOS-launched browser";
+      } else if (opts.parallel !== undefined) {
+        reason = "agent mode does not support --parallel";
+      } else if (matches.length !== 1) {
+        reason =
+          `agent mode requires exactly one workflow; matched ${matches.length}`;
+      }
+      if (reason) {
+        emitAndExit([
+          configurationResult(filterScene ?? "", filterWorkflow ?? "", reason),
+        ]);
+      }
+    }
+
+    const mcpUrl = (opts["mcp-url"] as string | undefined) ??
+      Deno.env.get("DIMOS_MCP_URL") ??
+      "http://127.0.0.1:9990/mcp";
+    if (agentMode) {
+      try {
+        const parsed = new URL(mcpUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          throw new Error("expected http or https");
+        }
+      } catch (error) {
+        emitAndExit([
+          configurationResult(
+            filterScene ?? "",
+            filterWorkflow ?? "",
+            `invalid MCP URL "${mcpUrl}": ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        ]);
+      }
+    }
 
     // --connect mode: just run the runner against an existing bridge
     if (connectMode) {
-      console.log(`[dimsim] Connecting to existing bridge at ${wsUrl}…`);
-      const results = await runEvals({ wsUrl, scenesRoot: SCENES_DIR, filterScene, filterWorkflow });
-      if (outputFormat === "junit") console.log(toJunitXml(results));
-      const passed = results.filter((r) => r.passed).length;
-      const failed = results.length - passed;
-      console.log(`\n[dimsim] Done: ${passed} passed, ${failed} failed, ${results.length} total`);
-      Deno.exit(failed > 0 ? 1 : 0);
+      console.error(`[dimsim] Connecting to existing bridge at ${wsUrl}…`);
+      const results = await runEvals({
+        wsUrl,
+        scenesRoot: SCENES_DIR,
+        filterScene,
+        filterWorkflow,
+        agent: agentMode,
+        mcpUrl,
+      });
+      if (results.length === 0) {
+        emitAndExit([
+          configurationResult(
+            filterScene ?? "",
+            filterWorkflow ?? "",
+            "no workflows match filter",
+          ),
+        ]);
+      }
+      emitAndExit(results);
     }
 
     const distDir = await resolveDistDir();
@@ -371,14 +458,16 @@ async function main() {
       });
 
       await instance.close();
-
-      if (outputFormat === "junit") console.log(toJunitXml(allResults));
-      else console.log(JSON.stringify(allResults, null, 2));
-
-      const passed = allResults.filter((r) => r.passed).length;
-      const failed = allResults.length - passed;
-      console.log(`\n[dimsim] Done: ${passed} passed, ${failed} failed, ${allResults.length} total`);
-      Deno.exit(failed > 0 ? 1 : 0);
+      if (allResults.length === 0) {
+        emitAndExit([
+          configurationResult(
+            filterScene ?? "",
+            filterWorkflow ?? "",
+            "no workflows match filter",
+          ),
+        ]);
+      }
+      emitAndExit(allResults);
     }
 
     // -- Single worker eval (sequential) -----------------------------------
@@ -393,11 +482,18 @@ async function main() {
       await new Promise((r) => setTimeout(r, 3000));
 
       const results = await runEvals({ wsUrl, scenesRoot: SCENES_DIR, filterScene, filterWorkflow });
-      if (outputFormat === "junit") console.log(toJunitXml(results));
 
       await instance.close();
-      const failed = results.filter((r) => !r.passed).length;
-      Deno.exit(failed > 0 ? 1 : 0);
+      if (results.length === 0) {
+        emitAndExit([
+          configurationResult(
+            filterScene ?? "",
+            filterWorkflow ?? "",
+            "no workflows match filter",
+          ),
+        ]);
+      }
+      emitAndExit(results);
     } else {
       console.log(`[dimsim] Open ${url} in your browser to start evals`);
       console.log("[dimsim] Press Ctrl+C to stop.");
@@ -406,7 +502,7 @@ async function main() {
   }
 
   printUsage();
-  Deno.exit(1);
+  Deno.exit(2);
 }
 
 main();

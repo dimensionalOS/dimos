@@ -20,12 +20,35 @@
  * orchestration — the workflow file is the source of truth.
  */
 
+/// <reference lib="dom" />
+
 import {
-  type SceneState, type AssetEntry,
-  type ObjectDistanceOpts, type RadiusContainsOpts,
-  findAsset, dist, objectDistance, radiusContains,
+  type AssetEntry,
+  dist,
+  type EvalMetrics,
+  findAsset,
+  objectDistance,
+  type ObjectDistanceOpts,
+  orderedRegionVisits,
+  type OrderedRegionVisitsOpts,
+  radiusContains,
+  type RadiusContainsOpts,
+  type SceneState,
+  searchEvidence,
+  type SearchEvidenceOpts,
 } from "./rubrics.ts";
 import type { DimosBridge } from "../src/bridge.ts";
+import type {
+  EvalAbortMessage,
+  EvalAgentOutputEvidence,
+  EvalAgentOutputMessage,
+  EvalFailureStage,
+  EvalReadyMessage,
+  EvalResultMessage,
+  EvalStartMessage,
+  RunEvalMessage,
+} from "./protocol.ts";
+import { isFiniteStartPose } from "./protocol.ts";
 
 export interface AgentPose { x: number; y: number; z: number; yaw: number; pitch: number; }
 export interface StartPose { x?: number; y?: number; z?: number; yaw?: number; }
@@ -42,6 +65,10 @@ export interface EvalContext {
   agent: any;
   agentPos: { x: number; y: number; z: number };
   sceneState: SceneState;
+  /** Pose-history evidence collected only after authoritative eval start. */
+  metrics: EvalMetrics;
+  /** Exact agent output accepted for this run, if the workflow requires one. */
+  agentOutput: EvalAgentOutputEvidence | null;
   setAgentPose: (p: StartPose) => void;
   findAsset: (q: string) => AssetEntry | null;
   dist: (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => number;
@@ -49,6 +76,8 @@ export interface EvalContext {
   rubrics: {
     objectDistance: (opts: ObjectDistanceOpts) => EvalSuccess;
     radiusContains: (opts: RadiusContainsOpts) => EvalSuccess;
+    searchEvidence: (opts: SearchEvidenceOpts) => EvalSuccess;
+    orderedRegionVisits: (opts: OrderedRegionVisitsOpts) => EvalSuccess;
   };
 }
 
@@ -59,20 +88,14 @@ export interface EvalWorkflow {
   timeoutSec?: number;
   startPose?: StartPose;
   setup?: (ctx: EvalContext) => void | Promise<void>;
+  /** Static goal check used to reject an agent eval already solved at reset. */
+  initialSuccess?: (ctx: EvalContext) => EvalSuccess;
+  /** Exact, standalone assistant output required during an agent eval. */
+  requiredAgentOutput?: string;
   success: (ctx: EvalContext) => EvalSuccess;
 }
 
-export interface EvalResultMsg {
-  type: "evalResult";
-  workflowUrl: string;
-  scene: string;
-  task: string;
-  passed: boolean;
-  reason?: string;
-  score?: number;
-  durationMs: number;
-  channel?: string;
-}
+export type EvalResultMsg = EvalResultMessage;
 
 export interface EvalHarnessOptions {
   bridge: DimosBridge;
@@ -83,6 +106,43 @@ export interface EvalHarnessOptions {
 
 declare global {
   interface Window { __dimosAgent?: any; }
+}
+
+interface ActiveCommand {
+  runId: string;
+  workflowUrl: string;
+  agent: boolean;
+}
+
+interface TrajectoryState extends EvalMetrics {
+  lastPose: AgentPose | null;
+  viewpoints: AgentPose[];
+}
+
+const EMPTY_METRICS: EvalMetrics = {
+  pathLengthM: 0,
+  headingTravelDeg: 0,
+  distinctViewpoints: 0,
+  trajectory: [],
+};
+
+const MIN_PATH_SAMPLE_M = 0.005;
+const MAX_PATH_SAMPLE_M = 2.0;
+const MIN_HEADING_SAMPLE_DEG = 0.5;
+const VIEWPOINT_SEPARATION_M = 0.75;
+
+function angleDeltaDeg(a: number, b: number): number {
+  const delta = Math.atan2(Math.sin(a - b), Math.cos(a - b));
+  return Math.abs(delta) * 180 / Math.PI;
+}
+
+interface PendingAgentEval {
+  runId: string;
+  workflowUrl: string;
+  workflow: EvalWorkflow;
+  resolve: (message: EvalResultMsg) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  started: boolean;
 }
 
 // ── Singleton registration ──────────────────────────────────────────────────
@@ -131,6 +191,16 @@ export class EvalHarness {
 
   _activeUrl: string | null = null;
   _overlay: HTMLDivElement | null = null;
+  _command: ActiveCommand | null = null;
+  _pendingAgentEval: PendingAgentEval | null = null;
+  _trajectory: TrajectoryState = {
+    ...EMPTY_METRICS,
+    lastPose: null,
+    viewpoints: [],
+  };
+  _agentOutput: EvalAgentOutputEvidence | null = null;
+  _earlyAborts = new Map<string, EvalAbortMessage>();
+  _patchedSockets = new WeakSet<WebSocket>();
 
   constructor({ bridge, getSceneState, getAgentPose, channel }: EvalHarnessOptions) {
     this.bridge = bridge;
@@ -156,22 +226,26 @@ export class EvalHarness {
   }
 
   _patchWsOnMessage(ws: WebSocket): void {
-    const origOnMessage = ws.onmessage;
-    const evalTypes = new Set(["runEval"]);
-    ws.onmessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") {
-        try {
-          const cmd = JSON.parse(event.data);
-          if (cmd.type && evalTypes.has(cmd.type)) {
-            this._handleCommand(cmd);
-            return;
-          }
-        } catch { /* not JSON */ }
-        if (origOnMessage) (origOnMessage as (e: MessageEvent) => void).call(ws, event);
-        return;
-      }
-      if (origOnMessage) (origOnMessage as (e: MessageEvent) => void).call(ws, event);
-    };
+    if (this._patchedSockets.has(ws)) return;
+    this._patchedSockets.add(ws);
+    const evalTypes = new Set([
+      "runEval",
+      "evalStart",
+      "evalAgentOutput",
+      "evalAbort",
+    ]);
+    // Listen alongside DimosBridge's transport handler. Replacing
+    // `ws.onmessage` here can orphan heartbeat and pose processing after a
+    // reconnect, leaving the scorer at the browser's stale spawn pose.
+    ws.addEventListener("message", (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      try {
+        const cmd = JSON.parse(event.data);
+        if (cmd.type && evalTypes.has(cmd.type)) {
+          this._handleCommand(cmd);
+        }
+      } catch { /* not JSON */ }
+    });
   }
 
   _send(msg: Record<string, any>): void {
@@ -183,7 +257,16 @@ export class EvalHarness {
     if (this.channel && cmd.channel && cmd.channel !== this.channel) return;
     switch (cmd.type) {
       case "runEval":
-        await this._loadAndRunWorkflowFile(cmd.workflowUrl);
+        await this._loadAndRunWorkflowFile(cmd as RunEvalMessage);
+        break;
+      case "evalStart":
+        this._startAgentEval(cmd as EvalStartMessage);
+        break;
+      case "evalAgentOutput":
+        this._recordAgentOutput(cmd as EvalAgentOutputMessage);
+        break;
+      case "evalAbort":
+        this._abortAgentEval(cmd as EvalAbortMessage);
         break;
     }
   }
@@ -194,17 +277,43 @@ export class EvalHarness {
    * `this.runEval(workflow)` and sends the result WS message itself.  We
    * just await the import — when it resolves the eval is done.
    */
-  async _loadAndRunWorkflowFile(workflowUrl: string): Promise<void> {
+  async _loadAndRunWorkflowFile(cmd: RunEvalMessage): Promise<void> {
+    const workflowUrl = cmd.workflowUrl;
+    const runId = cmd.runId || crypto.randomUUID();
+    if (
+      this._command?.runId === runId ||
+      this._pendingAgentEval?.runId === runId
+    ) {
+      return;
+    }
+    const stale = this._pendingAgentEval;
+    if (stale && stale.runId !== runId) {
+      this._abortAgentEval({
+        type: "evalAbort",
+        runId: stale.runId,
+        reason: `superseded by agent eval ${runId}`,
+        failureStage: "socket",
+      });
+    }
+    this._command = { runId, workflowUrl, agent: cmd.agent === true };
     try {
       const cacheBust = `?t=${Date.now()}`;
       await import(/* @vite-ignore */ workflowUrl + cacheBust);
     } catch (e: any) {
       console.error("[eval] failed to import %s:", workflowUrl, e);
-      this._send({
-        type: "evalResult", workflowUrl, scene: "", task: "",
-        passed: false, reason: `import failed: ${e?.message ?? e}`,
-        durationMs: 0,
-      });
+      this._activeUrl = null;
+      this._fail(
+        runId,
+        workflowUrl,
+        "",
+        "",
+        `import failed: ${e?.message ?? e}`,
+        0,
+        "import",
+      );
+    } finally {
+      this._earlyAborts.delete(runId);
+      if (this._command?.runId === runId) this._command = null;
     }
   }
 
@@ -223,19 +332,51 @@ export class EvalHarness {
    * for the Deno runner.
    */
   async runEval(workflow: EvalWorkflow): Promise<EvalResultMsg> {
-    if (!workflow || typeof workflow.success !== "function") {
+    const command = this._command ?? {
+      runId: crypto.randomUUID(),
+      workflowUrl: "",
+      agent: false,
+    };
+    if (
+      !workflow ||
+      typeof workflow.scene !== "string" ||
+      typeof workflow.task !== "string" ||
+      workflow.task.length === 0 ||
+      typeof workflow.success !== "function"
+    ) {
       const msg = "runEval(workflow) requires { scene, task, success() }";
       console.error("[eval] %s", msg);
-      return this._fail("", "", "", msg);
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow?.scene ?? "",
+        workflow?.task ?? "",
+        msg,
+        0,
+        "configuration",
+      );
     }
     const tag = `${workflow.scene ?? "?"}/${workflow.task}`;
     if (this._activeUrl) {
       const err = `another eval is already running: ${this._activeUrl}`;
       console.warn("[eval] %s", err);
-      return this._fail("", workflow.scene, workflow.task, err);
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow.scene,
+        workflow.task,
+        err,
+        0,
+        "configuration",
+      );
     }
     this._activeUrl = tag;
 
+    if (command.agent) {
+      return await this._prepareAgentEval(command, workflow);
+    }
+
+    this._agentOutput = null;
     console.log("[eval] running: %s", tag);
     this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
 
@@ -250,13 +391,23 @@ export class EvalHarness {
         const reason = `setup() threw: ${e?.message ?? e}`;
         console.error("[eval] %s", reason);
         this._activeUrl = null;
-        return this._fail("", workflow.scene, workflow.task, reason, Date.now() - start);
+        return this._fail(
+          command.runId,
+          command.workflowUrl,
+          workflow.scene,
+          workflow.task,
+          reason,
+          Date.now() - start,
+          "setup",
+        );
       }
     }
+    this._resetTrajectory(this.getAgentPose());
 
     return new Promise<EvalResultMsg>((resolve) => {
       const tick = () => {
         const elapsed = Date.now() - start;
+        this._recordTrajectory(this.getAgentPose());
         let result: EvalSuccess;
         try {
           result = workflow.success(this._makeContext());
@@ -264,11 +415,27 @@ export class EvalHarness {
           result = { passed: false, reason: `success() threw: ${e?.message ?? e}` };
         }
         if (result.passed) {
-          this._finish(workflow, true, result, elapsed, resolve);
+          this._finish(
+            command.runId,
+            command.workflowUrl,
+            workflow,
+            true,
+            result,
+            elapsed,
+            resolve,
+          );
           return;
         }
         if (elapsed >= timeoutMs) {
-          this._finish(workflow, false, { passed: false, ...result, reason: result.reason ?? "timeout" }, elapsed, resolve);
+          this._finish(
+            command.runId,
+            command.workflowUrl,
+            workflow,
+            false,
+            { ...result, passed: false, reason: result.reason ?? "timeout" },
+            elapsed,
+            resolve,
+          );
           return;
         }
         setTimeout(tick, 250);
@@ -279,18 +446,301 @@ export class EvalHarness {
 
   // ── Internals ──────────────────────────────────────────────────────────────
 
-  _makeContext(): EvalContext {
+  async _prepareAgentEval(
+    command: ActiveCommand,
+    workflow: EvalWorkflow,
+  ): Promise<EvalResultMsg> {
+    this._agentOutput = null;
+    const alreadyAborted = this._takeEarlyAbort(command, workflow);
+    if (alreadyAborted) return alreadyAborted;
+
+    const timeoutSec = workflow.timeoutSec ?? 120;
+    if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
+      this._activeUrl = null;
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow.scene,
+        workflow.task,
+        "agent eval requires a finite positive timeoutSec",
+        0,
+        "configuration",
+      );
+    }
+    const startPose = workflow.startPose;
+    if (!isFiniteStartPose(startPose)) {
+      this._activeUrl = null;
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow.scene,
+        workflow.task,
+        "agent eval startPose requires finite x, y, z, and yaw",
+        0,
+        "configuration",
+      );
+    }
+
+    const setupStart = Date.now();
+    if (workflow.setup) {
+      try {
+        await workflow.setup(this._makeContext());
+      } catch (e: any) {
+        const aborted = this._takeEarlyAbort(command, workflow);
+        if (aborted) return aborted;
+        const reason = `setup() threw: ${e?.message ?? e}`;
+        this._activeUrl = null;
+        return this._fail(
+          command.runId,
+          command.workflowUrl,
+          workflow.scene,
+          workflow.task,
+          reason,
+          Date.now() - setupStart,
+          "setup",
+        );
+      }
+    }
+
+    const abortedAfterSetup = this._takeEarlyAbort(command, workflow);
+    if (abortedAfterSetup) return abortedAfterSetup;
+
+    // Evaluate against the declared authoritative start pose without moving the
+    // browser-only avatar.  A task that is already satisfied cannot measure
+    // agent behavior and is rejected before reset or model dispatch.
+    let initial: EvalSuccess;
+    try {
+      const initialSuccess = workflow.initialSuccess ?? workflow.success;
+      initial = initialSuccess(this._makeContext(startPose, EMPTY_METRICS));
+    } catch (e: any) {
+      this._activeUrl = null;
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow.scene,
+        workflow.task,
+        `initial success() threw: ${e?.message ?? e}`,
+        0,
+        "rubric",
+      );
+    }
+    if (initial.passed) {
+      this._activeUrl = null;
+      return this._fail(
+        command.runId,
+        command.workflowUrl,
+        workflow.scene,
+        workflow.task,
+        "agent eval rubric is already satisfied at startPose",
+        0,
+        "initialRubric",
+      );
+    }
+
+    return await new Promise<EvalResultMsg>((resolve) => {
+      this._pendingAgentEval = {
+        runId: command.runId,
+        workflowUrl: command.workflowUrl,
+        workflow,
+        resolve,
+        timer: null,
+        started: false,
+      };
+      const ready: EvalReadyMessage = {
+        type: "evalReady",
+        runId: command.runId,
+        workflowUrl: command.workflowUrl,
+        scene: workflow.scene,
+        task: workflow.task,
+        timeoutMs: timeoutSec * 1000,
+        startPose,
+        requiredAgentOutput: workflow.requiredAgentOutput,
+      };
+      console.log(
+        "[eval] ready and waiting for authoritative reset: %s",
+        this._activeUrl,
+      );
+      this._send(ready);
+    });
+  }
+
+  _startAgentEval(message: EvalStartMessage): void {
+    const pending = this._pendingAgentEval;
+    if (!pending || pending.runId !== message.runId || pending.started) return;
+    pending.started = true;
+
+    const workflow = pending.workflow;
+    const timeoutMs = (workflow.timeoutSec ?? 120) * 1000;
+    const start = Date.now();
+    this._agentOutput = null;
+    this._resetTrajectory(this.getAgentPose());
+    console.log("[eval] agent scoring started: %s", this._activeUrl);
+    this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
+
+    const tick = () => {
+      if (this._pendingAgentEval !== pending) return;
+      const elapsed = Date.now() - start;
+      this._recordTrajectory(this.getAgentPose());
+      let result: EvalSuccess;
+      try {
+        result = workflow.success(this._makeContext());
+      } catch (e: any) {
+        const reason = `success() threw: ${e?.message ?? e}`;
+        this._pendingAgentEval = null;
+        this._activeUrl = null;
+        pending.resolve(
+          this._fail(
+            pending.runId,
+            pending.workflowUrl,
+            workflow.scene,
+            workflow.task,
+            reason,
+            elapsed,
+            "rubric",
+          ),
+        );
+        return;
+      }
+      if (result.passed) {
+        this._finish(
+          pending.runId,
+          pending.workflowUrl,
+          workflow,
+          true,
+          result,
+          elapsed,
+          pending.resolve,
+        );
+        return;
+      }
+      if (elapsed >= timeoutMs) {
+        this._finish(
+          pending.runId,
+          pending.workflowUrl,
+          workflow,
+          false,
+          { ...result, passed: false, reason: result.reason ?? "timeout" },
+          elapsed,
+          pending.resolve,
+        );
+        return;
+      }
+      pending.timer = setTimeout(tick, 250);
+    };
+    tick();
+  }
+
+  _recordAgentOutput(message: EvalAgentOutputMessage): void {
+    const pending = this._pendingAgentEval;
+    if (
+      !pending ||
+      !pending.started ||
+      pending.runId !== message.runId ||
+      this._agentOutput ||
+      pending.workflow.requiredAgentOutput !== message.text ||
+      !Number.isFinite(message.timestampMs)
+    ) {
+      return;
+    }
+    const pose = this.getAgentPose();
+    this._agentOutput = {
+      text: message.text,
+      timestampMs: message.timestampMs,
+      pose: pose
+        ? { x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw }
+        : undefined,
+    };
+    console.log(
+      "[eval] accepted required agent output for %s: %s",
+      message.runId,
+      message.text,
+    );
+  }
+
+  _abortAgentEval(message: EvalAbortMessage): void {
+    const pending = this._pendingAgentEval;
+    if (!pending || pending.runId !== message.runId) {
+      if (this._command?.runId === message.runId) {
+        this._earlyAborts.set(message.runId, message);
+      }
+      return;
+    }
+    if (pending.timer) clearTimeout(pending.timer);
+    this._pendingAgentEval = null;
+    this._activeUrl = null;
+    this._agentOutput = null;
+    if (this._overlay) {
+      this._overlay.remove();
+      this._overlay = null;
+    }
+    pending.resolve({
+      type: "evalResult",
+      runId: pending.runId,
+      workflowUrl: pending.workflowUrl,
+      scene: pending.workflow.scene,
+      task: pending.workflow.task,
+      passed: false,
+      status: "error",
+      failureStage: message.failureStage,
+      reason: message.reason,
+      durationMs: 0,
+    });
+  }
+
+  _takeEarlyAbort(
+    command: ActiveCommand,
+    workflow: EvalWorkflow,
+  ): EvalResultMsg | null {
+    const abort = this._earlyAborts.get(command.runId);
+    if (!abort) return null;
+    this._earlyAborts.delete(command.runId);
+    this._activeUrl = null;
+    this._agentOutput = null;
+    return {
+      type: "evalResult",
+      runId: command.runId,
+      workflowUrl: command.workflowUrl,
+      scene: workflow.scene,
+      task: workflow.task,
+      passed: false,
+      status: "error",
+      failureStage: abort.failureStage,
+      reason: abort.reason,
+      durationMs: 0,
+    };
+  }
+
+  _makeContext(
+    agentPosOverride?: { x: number; y: number; z: number },
+    metricsOverride?: EvalMetrics,
+  ): EvalContext {
     const sceneState = this.getSceneState();
     const pose = this.getAgentPose();
-    const agentPos = pose
+    const agentPos = agentPosOverride
+      ? {
+        x: agentPosOverride.x,
+        y: agentPosOverride.y,
+        z: agentPosOverride.z,
+      }
+      : pose
       ? { x: pose.x, y: pose.y, z: pose.z }
       : { x: 0, y: 0, z: 0 };
     sceneState.agentPos = agentPos;
     const ctxLite = { agentPos, sceneState };
+    const metrics = metricsOverride ?? this._metricsSnapshot();
     return {
       agent: window.__dimosAgent,
       agentPos,
       sceneState,
+      metrics,
+      agentOutput: this._agentOutput
+        ? {
+          ...this._agentOutput,
+          pose: this._agentOutput.pose
+            ? { ...this._agentOutput.pose }
+            : undefined,
+        }
+        : null,
       setAgentPose: (p) => {
         const a = window.__dimosAgent;
         if (!a) return;
@@ -302,36 +752,126 @@ export class EvalHarness {
       rubrics: {
         objectDistance: (opts) => objectDistance(ctxLite, opts),
         radiusContains: (opts) => radiusContains(ctxLite, opts),
+        searchEvidence: (opts) => searchEvidence({ metrics }, opts),
+        orderedRegionVisits: (opts) => orderedRegionVisits({ metrics }, opts),
       },
     };
   }
 
+  _resetTrajectory(pose: AgentPose | null): void {
+    this._trajectory = {
+      pathLengthM: 0,
+      headingTravelDeg: 0,
+      distinctViewpoints: pose ? 1 : 0,
+      trajectory: pose ? [{ x: pose.x, y: pose.y, z: pose.z }] : [],
+      lastPose: pose ? { ...pose } : null,
+      viewpoints: pose ? [{ ...pose }] : [],
+    };
+  }
+
+  _recordTrajectory(pose: AgentPose | null): void {
+    if (!pose) return;
+    const trajectory = this._trajectory;
+    const previous = trajectory.lastPose;
+    if (!previous) {
+      this._resetTrajectory(pose);
+      return;
+    }
+
+    const stepM = Math.hypot(pose.x - previous.x, pose.z - previous.z);
+    const plausibleStep = stepM <= MAX_PATH_SAMPLE_M;
+    if (stepM >= MIN_PATH_SAMPLE_M && plausibleStep) {
+      trajectory.pathLengthM += stepM;
+      trajectory.trajectory.push({ x: pose.x, y: pose.y, z: pose.z });
+    }
+
+    const headingStepDeg = angleDeltaDeg(pose.yaw, previous.yaw);
+    if (headingStepDeg >= MIN_HEADING_SAMPLE_DEG) {
+      trajectory.headingTravelDeg += headingStepDeg;
+    }
+
+    const isDistinct = plausibleStep &&
+      trajectory.viewpoints.every((viewpoint) =>
+        Math.hypot(pose.x - viewpoint.x, pose.z - viewpoint.z) >=
+          VIEWPOINT_SEPARATION_M
+      );
+    if (isDistinct) {
+      trajectory.viewpoints.push({ ...pose });
+      trajectory.distinctViewpoints = trajectory.viewpoints.length;
+    }
+    trajectory.lastPose = { ...pose };
+  }
+
+  _metricsSnapshot(): EvalMetrics {
+    return {
+      pathLengthM: this._trajectory.pathLengthM,
+      headingTravelDeg: this._trajectory.headingTravelDeg,
+      distinctViewpoints: this._trajectory.distinctViewpoints,
+      trajectory: this._trajectory.trajectory.map((point) => ({ ...point })),
+    };
+  }
+
   _finish(
-    wf: EvalWorkflow, passed: boolean,
-    result: EvalSuccess, durationMs: number,
+    runId: string,
+    workflowUrl: string,
+    wf: EvalWorkflow,
+    passed: boolean,
+    result: EvalSuccess,
+    durationMs: number,
     resolve: (msg: EvalResultMsg) => void,
   ): void {
+    const pending = this._pendingAgentEval;
+    if (pending?.timer) clearTimeout(pending.timer);
     const msg: EvalResultMsg = {
       type: "evalResult",
-      workflowUrl: "",
+      runId,
+      workflowUrl,
       scene: wf.scene,
       task: wf.task,
       passed,
+      status: passed ? "passed" : "failed",
       reason: result.reason,
       score: result.score,
       durationMs,
+      evidence: this._agentOutput
+        ? {
+          agentOutput: {
+            ...this._agentOutput,
+            pose: this._agentOutput.pose
+              ? { ...this._agentOutput.pose }
+              : undefined,
+          },
+        }
+        : undefined,
     };
     console.log("[eval] %s (%dms): %s", passed ? "PASS" : "FAIL", durationMs, result.reason ?? "");
     this._showResult(passed, result.reason ?? (passed ? "ok" : "fail"));
     this._send(msg);
+    this._pendingAgentEval = null;
     this._activeUrl = null;
     resolve(msg);
   }
 
-  _fail(workflowUrl: string, scene: string, task: string, reason: string, durationMs = 0): EvalResultMsg {
+  _fail(
+    runId: string,
+    workflowUrl: string,
+    scene: string,
+    task: string,
+    reason: string,
+    durationMs = 0,
+    failureStage?: EvalFailureStage,
+  ): EvalResultMsg {
     const msg: EvalResultMsg = {
-      type: "evalResult", workflowUrl, scene, task,
-      passed: false, reason, durationMs,
+      type: "evalResult",
+      runId,
+      workflowUrl,
+      scene,
+      task,
+      passed: false,
+      status: failureStage ? "error" : "failed",
+      failureStage,
+      reason,
+      durationMs,
     };
     this._send(msg);
     return msg;
@@ -346,9 +886,21 @@ export class EvalHarness {
     const taskEl = document.createElement("div");
     taskEl.style.cssText = "color:#4fc3f7;font-size:16px;font-weight:bold;margin-bottom:4px;";
     taskEl.textContent = `EVAL: ${task}`;
+    const closeEl = document.createElement("button");
+    closeEl.type = "button";
+    closeEl.setAttribute("aria-label", "Hide evaluation goal");
+    closeEl.textContent = "×";
+    closeEl.style.cssText =
+      "position:absolute;top:3px;right:7px;border:0;background:transparent;color:#aaa;font:18px/1 monospace;cursor:pointer;pointer-events:auto;";
+    closeEl.addEventListener("click", () => {
+      if (this._overlay === el) this._overlay = null;
+      el.remove();
+    });
     const timerEl = document.createElement("div");
     timerEl.style.cssText = "color:#aaa;font-size:13px;";
-    el.appendChild(taskEl); el.appendChild(timerEl);
+    el.appendChild(closeEl);
+    el.appendChild(taskEl);
+    el.appendChild(timerEl);
     document.body.appendChild(el);
     this._overlay = el;
 

@@ -7,6 +7,8 @@
  *    `EvalSuccess` ({passed, reason, score}) directly:
  *      - objectDistance({ target, thresholdM })
  *      - radiusContains({ targets, radiusM })
+ *      - searchEvidence({ minTravelM, minHeadingTravelDeg, minViewpoints })
+ *      - orderedRegionVisits({ regions })
  *
  * 2. Low-level helpers if you want to write the scoring inline:
  *      - findAsset(query, sceneState) → AssetEntry | null
@@ -32,6 +34,14 @@ export interface EvalSuccess {
   passed: boolean;
   reason?: string;
   score?: number;
+}
+
+/** Pose-history evidence collected by the browser after `evalStart`. */
+export interface EvalMetrics {
+  pathLengthM: number;
+  headingTravelDeg: number;
+  distinctViewpoints: number;
+  trajectory: Vec3[];
 }
 
 // ── Low-level helpers ────────────────────────────────────────────────────────
@@ -123,5 +133,106 @@ export function radiusContains(
     passed: d <= radiusM,
     score: d,
     reason: `${d.toFixed(3)}m to centroid of ${found.length} targets${missingNote} (radius ${radiusM}m)`,
+  };
+}
+
+export interface SearchEvidenceOpts {
+  minTravelM?: number;
+  minHeadingTravelDeg?: number;
+  minViewpoints?: number;
+}
+
+export interface AxisAlignedRegion {
+  name: string;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export interface OrderedRegionVisitsOpts {
+  regions: AxisAlignedRegion[];
+}
+
+function regionContainsPoint(region: AxisAlignedRegion, point: Vec3): boolean {
+  return point.x >= region.minX && point.x <= region.maxX &&
+    point.z >= region.minZ && point.z <= region.maxZ;
+}
+
+/**
+ * Require a physical trajectory to visit calibrated regions in order and end
+ * in the final region.
+ *
+ * Region coordinates are scorer-only ground truth. They are never included in
+ * the task string or exposed as an agent tool.
+ */
+export function orderedRegionVisits(
+  ctx: { metrics: EvalMetrics },
+  { regions }: OrderedRegionVisitsOpts,
+): EvalSuccess {
+  if (regions.length === 0) {
+    return { passed: false, reason: "no ordered regions specified" };
+  }
+
+  let nextRegion = 0;
+  for (const point of ctx.metrics.trajectory) {
+    if (
+      nextRegion < regions.length &&
+      regionContainsPoint(regions[nextRegion], point)
+    ) {
+      nextRegion++;
+    }
+  }
+
+  const finalRegion = regions[regions.length - 1];
+  const finalPoint = ctx.metrics.trajectory.at(-1);
+  const endedInFinalRegion = finalPoint !== undefined &&
+    regionContainsPoint(finalRegion, finalPoint);
+  const passed = nextRegion === regions.length && endedInFinalRegion;
+  const visitedNames = regions.slice(0, nextRegion).map((region) =>
+    region.name
+  );
+  const nextName = regions[nextRegion]?.name;
+  return {
+    passed,
+    reason: passed
+      ? `visited ${
+        regions.map((region) => region.name).join(" -> ")
+      } and ended in ${finalRegion.name}`
+      : `visited ${visitedNames.join(" -> ") || "none"}; ${
+        nextName
+          ? `next required ${nextName}`
+          : `did not end in ${finalRegion.name}`
+      }`,
+  };
+}
+
+/**
+ * Require physical search motion before accepting a final-position rubric.
+ *
+ * A viewpoint is a pose separated from every prior viewpoint by at least
+ * 0.75m or 45 degrees. This deliberately measures only externally observable
+ * robot motion; it does not claim that continuous camera publication proves
+ * the model called `observe`.
+ */
+export function searchEvidence(
+  ctx: { metrics: EvalMetrics },
+  {
+    minTravelM = 0,
+    minHeadingTravelDeg = 0,
+    minViewpoints = 1,
+  }: SearchEvidenceOpts,
+): EvalSuccess {
+  const { pathLengthM, headingTravelDeg, distinctViewpoints } = ctx.metrics;
+  const passed = pathLengthM >= minTravelM &&
+    headingTravelDeg >= minHeadingTravelDeg &&
+    distinctViewpoints >= minViewpoints;
+  return {
+    passed,
+    reason: `${pathLengthM.toFixed(2)}m travelled (min ${minTravelM}m), ` +
+      `${
+        headingTravelDeg.toFixed(0)
+      }° heading travel (min ${minHeadingTravelDeg}°), ` +
+      `${distinctViewpoints} distinct viewpoints (min ${minViewpoints})`,
   };
 }
