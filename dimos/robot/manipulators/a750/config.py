@@ -100,7 +100,6 @@ def make_a750_model_config(
     name: str = "arm",
     *,
     joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
 ) -> RobotModelConfig:
     dof = 6
     local_joint_names = joint_names(dof)
@@ -126,7 +125,6 @@ def make_a750_model_config(
             dof,
             joint_prefix=joint_prefix,
         ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
         home_joints=A750_HOME_JOINTS,
     )

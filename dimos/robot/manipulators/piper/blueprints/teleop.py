@@ -63,7 +63,7 @@ keyboard_teleop_piper = autoconnect(
                 priority=20,
                 params={"timeout": 0.0, "default_positions": [0.0]},
             ),
-            trajectory_task(_piper_keyboard_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_keyboard_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -100,7 +100,7 @@ coordinator_teleop_piper = autoconnect(
                     "gripper_closed_pos": 0.0,
                 },
             ),
-            trajectory_task(_piper_teleop_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(
