@@ -242,6 +242,10 @@ def test_create_planning_stack_defaults_to_roboplan(
         "dimos.manipulation.planning.factory.create_planner",
         return_value=planner,
     )
+    mocker.patch(
+        "dimos.manipulation.planning.factory.create_trajectory_parametrizer",
+        return_value=mocker.MagicMock(name="trajectory_parametrizer"),
+    )
 
     result = create_planning_stack(robot_config)
 
