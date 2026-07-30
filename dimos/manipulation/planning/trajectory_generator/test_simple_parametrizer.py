@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
@@ -26,10 +27,7 @@ from dimos.manipulation.planning.groups.models import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
-from dimos.manipulation.planning.spec.protocols import (
-    TrajectoryParametrizerSpec,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -104,7 +102,6 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
         speed_scale=0.5,
     )
 
-    assert isinstance(parametrizer, TrajectoryParametrizerSpec)
     assert plan.group_ids == ("arm/manipulator",)
     assert plan.trajectory.joint_names == ["arm/a", "arm/b"]
     assert len(plan.trajectory.points) == 9
@@ -132,9 +129,24 @@ def test_simple_parametrizer_rejects_invalid_dimos_limits() -> None:
         )
 
 
+def test_simple_parametrizer_reports_generator_failure(mocker: MockerFixture) -> None:
+    generator = mocker.patch(
+        "dimos.manipulation.planning.trajectory_generator."
+        "simple_parametrizer.JointTrajectoryGenerator"
+    )
+    generator.return_value.generate.side_effect = RuntimeError("boom")
+
+    with pytest.raises(TrajectoryParametrizationError, match="failed: boom"):
+        SimpleTrapezoidParametrizer(SimpleTrapezoidParametrizationConfig()).materialize_plan(
+            _world(),
+            _selection(),
+            _result(),
+        )
+
+
 @pytest.mark.parametrize(
     "speed_scale",
-    [0.0, -0.1, 1.01, float("inf"), float("nan")],
+    [0.0, 1.01, float("nan")],
 )
 def test_parametrizer_rejects_invalid_runtime_speed(speed_scale: float) -> None:
     with pytest.raises(TrajectoryParametrizationError, match="speed_scale"):

@@ -44,7 +44,6 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 class RecordingGenerator:
     calls: list[list[list[float]]] = []
     limits: tuple[list[float], list[float]] | None = None
-    fail = False
 
     def __init__(
         self,
@@ -59,8 +58,6 @@ class RecordingGenerator:
 
     def generate(self, waypoints: list[list[float]]) -> JointTrajectory:
         RecordingGenerator.calls.append(waypoints)
-        if RecordingGenerator.fail:
-            raise RuntimeError("boom")
         return JointTrajectory(
             points=[
                 TrajectoryPoint(
@@ -93,7 +90,6 @@ def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -
 def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     RecordingGenerator.calls = []
     RecordingGenerator.limits = None
-    RecordingGenerator.fail = False
     monkeypatch.setattr(
         "dimos.manipulation.planning.trajectory_generator."
         "simple_parametrizer.JointTrajectoryGenerator",
@@ -185,88 +181,6 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     request = module._planner.plan_cartesian_path.call_args.kwargs
     assert request["start"].name == names
     assert request["auxiliary_groups"] == ()
-
-
-@pytest.mark.parametrize(
-    ("timestamps", "velocities", "message"),
-    [
-        ([0.0, 0.0], [[0.0, 0.0], [0.1, 0.1]], "strictly increasing"),
-        ([0.0, 0.1], [[], [0.1, 0.1]], "velocity dimension"),
-    ],
-)
-def test_cartesian_plan_rejects_malformed_timed_results(
-    monkeypatch, module_factory, timestamps, velocities, message
-):
-    module = _module(monkeypatch, module_factory)
-    module._state = ManipulationState.IDLE
-    names = ["left/b", "left/a"]
-    start = JointState(name=names, position=[0.0, 0.0])
-    path = [
-        JointState(name=names, position=[0.0, 0.0], velocity=velocities[0]),
-        JointState(name=names, position=[0.2, 0.1], velocity=velocities[1]),
-    ]
-    module._world_monitor.current_global_joint_state.return_value = start
-    module._planner.plan_cartesian_path.return_value = PlanningResult(
-        status=PlanningStatus.SUCCESS,
-        path=path,
-        timestamps=timestamps,
-    )
-
-    result = module.generate_cartesian_plan(
-        {
-            "left/group": (
-                Transform.identity(),
-                Transform(translation=Vector3(0.01, 0.0, 0.0)),
-            )
-        },
-        RoboPlanCartesianPathConfig(),
-    )
-
-    assert result is None
-    assert module._last_plan is None
-    assert message in module._error_message
-
-
-@pytest.mark.parametrize(
-    ("path", "message"),
-    [
-        (_path(["left/a", "left/b"], [0.0, 0.0], [1.0, 1.0]), "joint names"),
-        (_path(["left/b", "left/a"], [0.0], [1.0]), "dimension"),
-        (_path(["left/b", "left/a"], [0.0, float("nan")], [1.0, 1.0]), "non-finite"),
-    ],
-)
-def test_rejects_malformed_or_nonfinite_waypoints(monkeypatch, module_factory, path, message):
-    module = _module(monkeypatch, module_factory)
-    module._planner.plan_selected_joint_path.return_value = PlanningResult(
-        status=PlanningStatus.SUCCESS, path=path
-    )
-
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
-    assert message in module._error_message
-
-
-def test_rejects_invalid_limits_and_generator_failure_without_caching(monkeypatch, module_factory):
-    module = _module(monkeypatch, module_factory)
-    module._robots["left"][1].max_velocity = 0.0
-    names = ["left/b", "left/a"]
-    path = _path(names, [0.0, 0.0], [1.0, 1.0])
-    module._planner.plan_selected_joint_path.return_value = PlanningResult(
-        status=PlanningStatus.SUCCESS, path=path
-    )
-
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
-    assert RecordingGenerator.calls == []
-
-    module = _module(monkeypatch, module_factory)
-    RecordingGenerator.fail = True
-    module._planner.plan_selected_joint_path.return_value = PlanningResult(
-        status=PlanningStatus.SUCCESS, path=path
-    )
-    assert not module._plan_selected_path(("left/group",), path[0], path[-1], 1)
-    assert module._last_plan is None
-    assert len(RecordingGenerator.calls) == 1
 
 
 def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, module_factory):

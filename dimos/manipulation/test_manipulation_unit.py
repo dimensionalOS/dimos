@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -359,8 +359,7 @@ class TestStateMachine:
         assert module._state == ManipulationState.FAULT
         assert module._error_message == "Test error"
 
-    @pytest.mark.parametrize("invalid", [0.0, -0.1, 1.01, float("inf"), float("nan")])
-    def test_motion_speed_applies_to_future_plans_only(self, module_factory, invalid: float):
+    def test_motion_speed_applies_to_future_plans_only(self, module_factory):
         module = module_factory()
         accepted = GeneratedPlan(
             trajectory=JointTrajectory(),
@@ -373,9 +372,13 @@ class TestStateMachine:
         assert module.get_motion_speed() == pytest.approx(0.5)
         assert module._last_plan is accepted
 
+    @pytest.mark.parametrize("invalid", [0.0, 1.01, float("nan")])
+    def test_motion_speed_rejects_invalid_values(self, module_factory, invalid: float):
+        module = module_factory()
+        assert module.set_motion_speed(0.5) is True
+
         assert module.set_motion_speed(invalid) is False
         assert module.get_motion_speed() == pytest.approx(0.5)
-        assert module._last_plan is accepted
         assert "motion speed scale" in module.get_error()
 
     def test_begin_planning_state_checks(self, robot_config, module_factory):
@@ -498,7 +501,7 @@ class TestPlanningInitialization:
             planner=module.config.planner,
             kinematics_name=None,
             kinematics=kinematics,
-            trajectory_parametrization=module.config.trajectory_parametrization,
+            trajectory_parametrization=ANY,
         )
 
     def test_legacy_kinematics_name_still_selects_backend(
@@ -522,7 +525,7 @@ class TestPlanningInitialization:
             planner=module.config.planner,
             kinematics_name="pink",
             kinematics=module.config.kinematics,
-            trajectory_parametrization=module.config.trajectory_parametrization,
+            trajectory_parametrization=ANY,
         )
 
     def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:

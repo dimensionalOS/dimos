@@ -81,7 +81,6 @@ class FakeModule:
         self.state = "COMPLETED"
         self.error = ""
         self.has_plan = True
-        self.motion_speed = 1.0
         self.plan = GeneratedPlan(
             group_ids=("arm/manipulator",),
             trajectory=JointTrajectory(
@@ -126,13 +125,6 @@ class FakeModule:
 
     def has_planned_path(self) -> bool:
         return self.has_plan
-
-    def get_motion_speed(self) -> float:
-        return self.motion_speed
-
-    def set_motion_speed(self, speed_scale: float) -> bool:
-        self.motion_speed = speed_scale
-        return True
 
     def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
         self.topology_calls += 1
@@ -283,15 +275,6 @@ def test_status_is_compact_and_does_not_read_topology_or_telemetry() -> None:
     assert module.topology_calls == 0
     assert module.telemetry_calls == 0
     assert monitor.telemetry_calls == 0
-
-
-def test_motion_speed_delegates_to_module() -> None:
-    operator, module, _ = _operator()
-
-    assert operator.get_motion_speed() == 1.0
-    assert operator.set_motion_speed(0.5) is True
-    assert operator.get_motion_speed() == 0.5
-    assert module.motion_speed == 0.5
 
 
 def test_evaluate_joint_target_accepts_exact_global_selection_domain() -> None:

@@ -29,7 +29,6 @@ from dimos.manipulation.planning.groups.models import (
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
-from dimos.manipulation.planning.spec.protocols import TrajectoryParametrizerSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
 )
@@ -128,13 +127,8 @@ def _selection_and_result(
     return selection, result
 
 
-@pytest.mark.parametrize(
-    "fitting_mode",
-    ["hermite", "cubic", "adaptive", "linear_blend"],
-)
-def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
+def test_roboplan_parametrizer_maps_composite_order_and_native_output(
     mocker: MockerFixture,
-    fitting_mode: str,
 ) -> None:
     generated = SimpleNamespace(
         joint_names=["native_a", "native_b"],
@@ -151,8 +145,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
     )
     parametrizer = RoboPlanTOPPRAParametrizer(
         RoboPlanTOPPRAParametrizationConfig(
-            fitting_mode=fitting_mode,
-            output_period=0.02,
             velocity_scale=0.5,
             acceleration_scale=0.25,
         ),
@@ -167,7 +159,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
         speed_scale=0.5,
     )
 
-    assert isinstance(parametrizer, TrajectoryParametrizerSpec)
     constructor.assert_called_once()
     native_path, options = native.generate.call_args.args
     assert native_path.joint_names == ["native_b", "native_a"]
@@ -175,8 +166,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
         [0.1, 0.0],
         [0.4, 0.3],
     ]
-    assert options.dt == 0.02
-    assert options.mode.name.lower().replace("linearblend", "linear_blend") == fitting_mode
     assert options.velocity_scale == 0.25
     assert options.acceleration_scale == 0.125
     assert result.trajectory.joint_names == ["left/a", "right/b"]

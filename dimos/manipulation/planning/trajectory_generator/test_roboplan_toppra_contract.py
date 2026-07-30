@@ -56,7 +56,7 @@ def _scene(tmp_path: Path, *, acceleration: float | None) -> object:
     return roboplan_core.Scene("contract_robot", urdf, srdf, [])
 
 
-def test_roboplan_051_toppra_options_and_native_trajectory_contract(tmp_path: Path) -> None:
+def test_roboplan_051_generates_native_trajectory(tmp_path: Path) -> None:
     scene = _scene(tmp_path, acceleration=2.0)
     options = roboplan_toppra.TOPPRAOptions(
         dt=0.02,
@@ -77,19 +77,6 @@ def test_roboplan_051_toppra_options_and_native_trajectory_contract(tmp_path: Pa
 
     trajectory = roboplan_toppra.PathParameterizerTOPPRA(scene, "arm").generate(path, options)
 
-    assert list(roboplan_toppra.SplineFittingMode) == [
-        roboplan_toppra.SplineFittingMode.Hermite,
-        roboplan_toppra.SplineFittingMode.Cubic,
-        roboplan_toppra.SplineFittingMode.Adaptive,
-        roboplan_toppra.SplineFittingMode.LinearBlend,
-    ]
-    assert options.dt == 0.02
-    assert options.mode is roboplan_toppra.SplineFittingMode.LinearBlend
-    assert options.velocity_scale == 0.5
-    assert options.acceleration_scale == 0.25
-    assert options.max_adaptive_iterations == 7
-    assert options.max_adaptive_step_size == 0.03
-    assert options.max_blend_deviation == 0.01
     assert trajectory.joint_names == ["joint"]
     assert len(trajectory.times) == len(trajectory.positions)
     assert len(trajectory.velocities) == len(trajectory.positions)

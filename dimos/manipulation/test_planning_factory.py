@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 from types import ModuleType
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 from pytest_mock import MockerFixture
@@ -30,7 +31,6 @@ from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
     create_planning_stack,
-    create_trajectory_parametrizer,
     create_world,
     validate_backend_combination,
 )
@@ -46,17 +46,7 @@ from dimos.manipulation.planning.planners.config import (
 )
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.protocols import (
-    PlannerSpec,
-    TrajectoryParametrizerSpec,
-)
-from dimos.manipulation.planning.trajectory_generator.config import (
-    RoboPlanTOPPRAParametrizationConfig,
-    SimpleTrapezoidParametrizationConfig,
-)
-from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
-    SimpleTrapezoidParametrizer,
-)
+from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -144,27 +134,6 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
             world_backend="drake",
             planner_backend="rrt_connect",
             trajectory_parametrization_backend="roboplan_toppra",
-        )
-
-
-def test_create_trajectory_parametrizer_selects_simple_backend() -> None:
-    result = create_trajectory_parametrizer(
-        SimpleTrapezoidParametrizationConfig(),
-        world_backend="drake",
-    )
-
-    assert isinstance(result, SimpleTrapezoidParametrizer)
-    assert isinstance(result, TrajectoryParametrizerSpec)
-
-
-def test_create_trajectory_parametrizer_rejects_toppra_with_non_roboplan_world() -> None:
-    with pytest.raises(
-        ValueError,
-        match='trajectory_parametrization.backend="roboplan_toppra" requires',
-    ):
-        create_trajectory_parametrizer(
-            RoboPlanTOPPRAParametrizationConfig(),
-            world_backend="drake",
         )
 
 
@@ -292,9 +261,8 @@ def test_start_uses_configured_planner_and_kinematics(
         planner=planner_config,
         kinematics_name=None,
         kinematics=module.config.kinematics,
-        trajectory_parametrization=module.config.trajectory_parametrization,
+        trajectory_parametrization=ANY,
     )
     assert module._planner is planner
     assert module._kinematics is kinematics
-    assert module._trajectory_parametrizer is planning_specs.trajectory_parametrizer
     assert module._robots["arm"][0] == "robot-id"

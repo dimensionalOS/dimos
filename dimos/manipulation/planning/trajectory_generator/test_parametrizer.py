@@ -153,6 +153,22 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     assert plan.trajectory.points[-1].velocities == [0.3, 0.0]
 
 
+def test_timed_planner_result_requires_velocity_for_each_joint() -> None:
+    parametrizer = _FixedParametrizer(_output())
+    path = _path()
+
+    with pytest.raises(TrajectoryParametrizationError, match="velocity dimension"):
+        parametrizer.materialize_plan(
+            MagicMock(spec=WorldSpec),
+            _selection(),
+            PlanningResult(
+                status=PlanningStatus.SUCCESS,
+                path=path,
+                timestamps=[0.0, 0.5, 1.0],
+            ),
+        )
+
+
 def test_rejects_backend_trajectory_with_nonincreasing_time() -> None:
     output = _output()
     output.points[-1].time_from_start = 0.0
@@ -179,12 +195,39 @@ def test_rejects_backend_trajectory_that_changes_path_goal() -> None:
         )
 
 
-def test_rejects_malformed_path_before_invoking_backend() -> None:
+@pytest.mark.parametrize(
+    ("path", "message"),
+    [
+        (
+            [
+                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
+                JointState(name=["wrong/a", "wrong/b"], position=[0.4, 0.0]),
+            ],
+            "joint names",
+        ),
+        (
+            [
+                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
+                JointState(name=["arm/a", "arm/b"], position=[0.4]),
+            ],
+            "dimension",
+        ),
+        (
+            [
+                JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
+                JointState(name=["arm/a", "arm/b"], position=[float("nan"), 0.0]),
+            ],
+            "non-finite",
+        ),
+    ],
+)
+def test_rejects_malformed_path_before_invoking_backend(
+    path: list[JointState],
+    message: str,
+) -> None:
     parametrizer = _FixedParametrizer(_output())
-    path = _path()
-    path[1].name = ["wrong/a", "wrong/b"]
 
-    with pytest.raises(TrajectoryParametrizationError, match="joint names"):
+    with pytest.raises(TrajectoryParametrizationError, match=message):
         parametrizer.materialize_plan(
             MagicMock(spec=WorldSpec),
             _selection(),
