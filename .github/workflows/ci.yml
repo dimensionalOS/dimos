@@ -392,34 +392,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)' && exit 1
         shell: bash
-      - name: Collect crash diagnostics
+      - name: Print crash diagnostics
         if: failure()
-        continue-on-error: true
         shell: bash
         run: |
-          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
-          # Runs that never crashed leave empty files; drop them so the artifact
-          # is either meaningful or absent.
-          find "$dir" -type f -empty -delete 2>/dev/null || true
           shopt -s nullglob
-          files=("$dir"/*.log)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
-            exit 0
-          fi
-          for f in "${files[@]}"; do
+          for f in "$DIMOS_CRASH_DIR"/*.log; do
             echo "::group::$(basename "$f")"
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Upload crash diagnostics
-        if: failure()
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: crash-dumps-${{ matrix.os }}-${{ matrix.pyver }}-${{ github.run_attempt }}
-          path: ${{ env.DIMOS_CRASH_DIR }}
-          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -697,32 +679,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
         shell: bash
-      - name: Collect crash diagnostics
+      - name: Print crash diagnostics
         if: failure()
-        continue-on-error: true
         shell: bash
         run: |
-          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
-          find "$dir" -type f -empty -delete 2>/dev/null || true
           shopt -s nullglob
-          files=("$dir"/*.log)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
-            exit 0
-          fi
-          for f in "${files[@]}"; do
+          for f in "$DIMOS_CRASH_DIR"/*.log; do
             echo "::group::$(basename "$f")"
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Upload crash diagnostics
-        if: failure()
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: crash-dumps-selfhosted-${{ matrix.os }}-${{ github.run_attempt }}
-          path: ${{ env.DIMOS_CRASH_DIR }}
-          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
@@ -870,32 +836,16 @@ jobs:
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
           uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
-      - name: Collect crash diagnostics
+      - name: Print crash diagnostics
         if: failure()
-        continue-on-error: true
         shell: bash
         run: |
-          dir="${DIMOS_CRASH_DIR:-${RUNNER_TEMP}/pytest-crash}"
-          find "$dir" -type f -empty -delete 2>/dev/null || true
           shopt -s nullglob
-          files=("$dir"/*.log)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No crash dumps: this failure was not a hard crash (segfault/abort)."
-            exit 0
-          fi
-          for f in "${files[@]}"; do
+          for f in "$DIMOS_CRASH_DIR"/*.log; do
             echo "::group::$(basename "$f")"
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Upload crash diagnostics
-        if: failure()
-        continue-on-error: true
-        uses: actions/upload-artifact@v7
-        with:
-          name: crash-dumps-selfhosted-large-${{ github.run_attempt }}
-          path: ${{ env.DIMOS_CRASH_DIR }}
-          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage
