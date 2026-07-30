@@ -130,10 +130,10 @@ def _arm_crash_dumps() -> None:
             tempfile.gettempdir(), "pytest-crash"
         )
         worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+        crash_path = pathlib.Path(base) / f"crash-{worker}-{os.getpid()}.log"
         try:
-            directory = pathlib.Path(base)
-            directory.mkdir(parents=True, exist_ok=True)
-            _crash_log = open(directory / f"crash-{worker}-{os.getpid()}.log", "w")
+            crash_path.parent.mkdir(parents=True, exist_ok=True)
+            _crash_log = crash_path.open("w")
         except OSError as exc:  # never let diagnostics break a test run
             print(f"crash diagnostics disabled ({base}): {exc}")
             return
