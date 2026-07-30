@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "mint dev",
-    "build": "mint build",
+    "build": "mint export --output \"${TMPDIR:-/tmp}/dimos-mintlify-export.zip\"",
     "validate": "mint validate"
   },
   "devDependencies": {

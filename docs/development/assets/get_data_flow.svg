@@ -1,0 +1,25 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1209.61 170.928">
+<path d="M9.66,111.168L236.914,111.168A7.5 7.5 0 0 0 244.414 103.668L244.414,67.26A7.5 7.5 0 0 0 236.914 59.76L9.66,59.76A7.5 7.5 0 0 0 2.16 67.26L2.16,103.668A7.5 7.5 0 0 0 9.66 111.168Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="123.287" y="85.464" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">get_data(name)</text>
+<polygon points="302.014,85.464 290.494,89.784 290.494,81.144" style="fill:rgb(255,255,255)"/>
+<path d="M244.414,85.464L296.254,85.464"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M309.514,128.304L500.538,128.304A7.5 7.5 0 0 0 508.038 120.804L508.038,50.124A7.5 7.5 0 0 0 500.538 42.624L309.514,42.624A7.5 7.5 0 0 0 302.014 50.124L302.014,120.804A7.5 7.5 0 0 0 309.514 128.304Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="405.026" y="75.384" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Check</text>
+<text x="405.026" y="95.544" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">data/{name}</text>
+<polygon points="594.438,27.864 582.918,32.184 582.918,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M508.038,85.464L551.238,85.464L551.238,27.864L588.678,27.864"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M601.938,53.568L778.078,53.568A7.5 7.5 0 0 0 785.578 46.068L785.578,9.66A7.5 7.5 0 0 0 778.078 2.16L601.938,2.16A7.5 7.5 0 0 0 594.438 9.66L594.438,46.068A7.5 7.5 0 0 0 601.938 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="690.008" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Return path</text>
+<polygon points="594.438,143.064 582.918,147.384 582.918,138.744" style="fill:rgb(255,255,255)"/>
+<path d="M508.038,85.464L551.238,85.464L551.238,143.064L588.678,143.064"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M601.938,168.768L727.159,168.768A7.5 7.5 0 0 0 734.659 161.268L734.659,124.86A7.5 7.5 0 0 0 727.159 117.36L601.938,117.36A7.5 7.5 0 0 0 594.438 124.86L594.438,161.268A7.5 7.5 0 0 0 601.938 168.768Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="664.548" y="143.064" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Pull LFS</text>
+<polygon points="777.859,143.064 766.339,147.384 766.339,138.744" style="fill:rgb(255,255,255)"/>
+<path d="M734.659,143.064L772.099,143.064"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M785.359,168.768L965.612,168.768A7.5 7.5 0 0 0 973.112 161.268L973.112,124.86A7.5 7.5 0 0 0 965.612 117.36L785.359,117.36A7.5 7.5 0 0 0 777.859 124.86L777.859,161.268A7.5 7.5 0 0 0 785.359 168.768Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="875.485" y="143.064" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Decompress</text>
+<polygon points="1016.31,143.064 1004.79,147.384 1004.79,138.744" style="fill:rgb(255,255,255)"/>
+<path d="M973.112,143.064L1010.55,143.064"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M1023.81,168.768L1199.95,168.768A7.5 7.5 0 0 0 1207.45 161.268L1207.45,124.86A7.5 7.5 0 0 0 1199.95 117.36L1023.81,117.36A7.5 7.5 0 0 0 1016.31 124.86L1016.31,161.268A7.5 7.5 0 0 0 1023.81 168.768Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="1111.88" y="143.064" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Return path</text>
+</svg>

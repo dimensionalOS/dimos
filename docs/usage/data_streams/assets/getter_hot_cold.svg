@@ -1,0 +1,71 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 979.1 622.33">
+<path d="M9.66,53.568L183.646,53.568A7.5 7.5 0 0 0 191.146 46.068L191.146,9.66A7.5 7.5 0 0 0 183.646 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,46.068A7.5 7.5 0 0 0 9.66 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="96.6528" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">getter_hot()</text>
+<path d="M25.1314,176.976L168.174,176.976A7.5 7.5 0 0 0 175.674 169.476L175.674,133.068A7.5 7.5 0 0 0 168.174 125.568L25.1314,125.568A7.5 7.5 0 0 0 17.6314 133.068L17.6314,169.476A7.5 7.5 0 0 0 25.1314 176.976Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="96.6528" y="151.272" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">subscribe</text>
+<polygon points="96.6528,125.568 92.3328,114.048 100.973,114.048" style="fill:rgb(255,255,255)"/>
+<path d="M96.6528,53.568L96.6528,119.808"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<polygon points="247.674,151.272 236.154,155.592 236.154,146.952" style="fill:rgb(255,255,255)"/>
+<path d="M175.674,151.272L241.914,151.272"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M255.174,176.976L348.474,176.976A7.5 7.5 0 0 0 355.974 169.476L355.974,133.068A7.5 7.5 0 0 0 348.474 125.568L255.174,125.568A7.5 7.5 0 0 0 247.674 133.068L247.674,169.476A7.5 7.5 0 0 0 255.174 176.976Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="301.824" y="151.272" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Cache</text>
+<path d="M10.7314,190.368L362.874,190.368A7.5 7.5 0 0 0 370.374 182.868L370.374,97.068A7.5 7.5 0 0 0 362.874 89.568L10.7314,89.568A7.5 7.5 0 0 0 3.23136 97.068L3.23136,182.868A7.5 7.5 0 0 0 10.7314 190.368Z"  style="fill:none;stroke-width:2.16;stroke:rgb(92,159,240);stroke-dasharray:7.2,7.2;" />
+<text x="186.803" y="111.888" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">blocking</text>
+<polygon points="427.974,151.272 416.454,155.592 416.454,146.952" style="fill:rgb(255,255,255)"/>
+<path d="M355.974,151.272L422.214,151.272"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M435.474,176.976L527.598,176.976A7.5 7.5 0 0 0 535.098 169.476L535.098,133.068A7.5 7.5 0 0 0 527.598 125.568L435.474,125.568A7.5 7.5 0 0 0 427.974 133.068L427.974,169.476A7.5 7.5 0 0 0 435.474 176.976Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="481.536" y="151.272" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">getter</text>
+<polygon points="607.098,187.272 595.578,191.592 595.578,182.952" style="fill:rgb(255,255,255)"/>
+<path d="M535.098,151.272L578.298,151.272L578.298,187.272L601.338,187.272"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<text x="647.879" y="187.272" text-anchor="middle" fill="rgb(140,189,242)" dominant-baseline="central">call()</text>
+<polygon points="746.26,187.272 734.74,191.592 734.74,182.952" style="fill:rgb(255,255,255)"/>
+<path d="M688.66,187.272L740.5,187.272"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="798.791" y="187.272" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">instant</text>
+<polygon points="607.098,252.072 595.578,256.392 595.578,247.752" style="fill:rgb(255,255,255)"/>
+<path d="M535.098,151.272L578.298,151.272L578.298,252.072L601.338,252.072"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<text x="647.879" y="252.072" text-anchor="middle" fill="rgb(140,189,242)" dominant-baseline="central">call()</text>
+<polygon points="746.26,252.072 734.74,256.392 734.74,247.752" style="fill:rgb(255,255,255)"/>
+<path d="M688.66,252.072L740.5,252.072"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="798.791" y="252.072" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">instant</text>
+<text x="186.803" y="219.888" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">always subscribed</text>
+<path d="M9.66,330.983L197.354,330.983A7.5 7.5 0 0 0 204.854 323.483L204.854,287.075A7.5 7.5 0 0 0 197.354 279.575L9.66,279.575A7.5 7.5 0 0 0 2.16 287.075L2.16,323.483A7.5 7.5 0 0 0 9.66 330.983Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="103.507" y="305.279" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">getter_cold()</text>
+<polygon points="103.507,374.183 99.1872,362.663 107.827,362.663" style="fill:rgb(255,255,255)"/>
+<path d="M103.507,330.983L103.507,368.423"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M57.445,425.591L149.569,425.591A7.5 7.5 0 0 0 157.069 418.091L157.069,381.683A7.5 7.5 0 0 0 149.569 374.183L57.445,374.183A7.5 7.5 0 0 0 49.945 381.683L49.945,418.091A7.5 7.5 0 0 0 57.445 425.591Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="103.507" y="399.887" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">getter</text>
+<polygon points="229.069,443.087 217.549,447.407 217.549,438.767" style="fill:rgb(255,255,255)"/>
+<path d="M157.069,399.887L200.269,399.887L200.269,443.087L223.309,443.087"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<text x="269.85" y="443.087" text-anchor="middle" fill="rgb(140,189,242)" dominant-baseline="central">call()</text>
+<polygon points="368.231,443.087 356.711,447.407 356.711,438.767" style="fill:rgb(255,255,255)"/>
+<path d="M310.631,443.087L362.471,443.087"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="437.956" y="443.087" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">subscribe</text>
+<polygon points="565.281,443.087 553.761,447.407 553.761,438.767" style="fill:rgb(255,255,255)"/>
+<path d="M507.681,443.087L559.521,443.087"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="600.877" y="443.087" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">wait</text>
+<polygon points="694.074,443.087 682.554,447.407 682.554,438.767" style="fill:rgb(255,255,255)"/>
+<path d="M636.474,443.087L688.314,443.087"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="736.497" y="443.087" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">value</text>
+<polygon points="836.519,443.087 824.999,447.407 824.999,438.767" style="fill:rgb(255,255,255)"/>
+<path d="M778.919,443.087L830.759,443.087"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="900.628" y="443.087" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">dispose  </text>
+<path d="M219.973,490.57L969.44,490.57A7.5 7.5 0 0 0 976.94 483.07L976.94,397.27A7.5 7.5 0 0 0 969.44 389.77L219.973,389.77A7.5 7.5 0 0 0 212.473 397.27L212.473,483.07A7.5 7.5 0 0 0 219.973 490.57Z"  style="fill:none;stroke-width:2.16;stroke:rgb(92,159,240);stroke-dasharray:7.2,7.2;" />
+<text x="594.706" y="412.09" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">blocking</text>
+<polygon points="229.069,572.687 217.549,577.007 217.549,568.367" style="fill:rgb(255,255,255)"/>
+<path d="M157.069,399.887L200.269,399.887L200.269,572.687L223.309,572.687"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<text x="269.85" y="572.687" text-anchor="middle" fill="rgb(140,189,242)" dominant-baseline="central">call()</text>
+<polygon points="368.231,572.687 356.711,577.007 356.711,568.367" style="fill:rgb(255,255,255)"/>
+<path d="M310.631,572.687L362.471,572.687"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="437.956" y="572.687" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">subscribe</text>
+<polygon points="565.281,572.687 553.761,577.007 553.761,568.367" style="fill:rgb(255,255,255)"/>
+<path d="M507.681,572.687L559.521,572.687"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="600.877" y="572.687" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">wait</text>
+<polygon points="694.074,572.687 682.554,577.007 682.554,568.367" style="fill:rgb(255,255,255)"/>
+<path d="M636.474,572.687L688.314,572.687"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="736.497" y="572.687" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">value</text>
+<polygon points="836.519,572.687 824.999,577.007 824.999,568.367" style="fill:rgb(255,255,255)"/>
+<path d="M778.919,572.687L830.759,572.687"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="900.628" y="572.687" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">dispose  </text>
+<path d="M219.973,620.17L969.44,620.17A7.5 7.5 0 0 0 976.94 612.67L976.94,526.87A7.5 7.5 0 0 0 969.44 519.37L219.973,519.37A7.5 7.5 0 0 0 212.473 526.87L212.473,612.67A7.5 7.5 0 0 0 219.973 620.17Z"  style="fill:none;stroke-width:2.16;stroke:rgb(92,159,240);stroke-dasharray:7.2,7.2;" />
+<text x="594.706" y="541.69" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">blocking</text>
+</svg>

@@ -14,7 +14,6 @@
 from pathlib import Path
 import sys
 
-from docutils import nodes
 import tomllib
 
 _REPO_ROOT = Path(__file__).parents[1]
@@ -40,11 +39,14 @@ github_repo_url = f"{github_url}/{github_repo_slug}"
 # -- General configuration ---------------------------------------------------
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",  # parse the Google-style ``Args:``/``Returns:`` docstrings
     "sphinx.ext.extlinks",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
+    "sphinx_codeautolink",
+    "sphinx_design",
 ]
 
 try:
@@ -55,9 +57,24 @@ except ImportError:
     # Spelling is optional locally (e.g. unavailable in Windows), checked in CI.
     pass
 
-source_suffix = ".rst"
+source_suffix = {
+    ".md": "markdown",
+    ".rst": "restructuredtext",
+}
 master_doc = "index"
-exclude_patterns = ["_build"]
+exclude_patterns = [
+    "_build",
+    # Empty placeholder: keep its source intact, but do not publish a blank page.
+    "capabilities/perception/index.md",
+]
+
+# MyST keeps Markdown authoring compatible with Sphinx roles and directives.
+# ``colon_fence`` makes nested directives (cards, grids, notes) readable without
+# backtick-fence collisions, while substitutions preserve the diagrams inherited
+# from the original documentation.
+myst_enable_extensions = ["colon_fence", "substitution"]
+myst_heading_anchors = 3
+myst_substitutions = {"release": release}
 
 # The default language to highlight source code in.
 highlight_language = "python3"
@@ -109,23 +126,68 @@ extlinks = {
 
 # -- Options for HTML output -------------------------------------------------
 
-# The default theme for now; a dedicated theme is added in a later PR.
-html_theme = "alabaster"
+html_theme = "pydata_sphinx_theme"
+html_title = "Dimensional · DimOS"
+html_logo = "_static/dimensional-logo-master-transparent.png"
+html_favicon = "_static/favicon.png"
+html_static_path = ["_static"]
+html_css_files = ["dimensional.css"]
+templates_path = ["_templates"]
+html_sidebars = {
+    "**": ["sidebar-collapse.html", "sidebar-global-nav.html"],
+}
+html_context = {
+    # Match the hosted documentation while still respecting the reader's saved
+    # theme choice. PyData's switcher exposes light, dark, and system modes.
+    "default_mode": "dark",
+}
+html_theme_options = {
+    # Use supported theme regions instead of positioning sidebar fragments as
+    # a custom header. This keeps the mobile menu and theme switcher native.
+    "navbar_start": ["navbar-logo"],
+    "navbar_center": ["search-button-field"],
+    "navbar_end": ["navbar-icon-links"],
+    # Persistent items stay in the top bar at mobile widths instead of moving
+    # into the navigation drawer.
+    "navbar_persistent": ["theme-switcher"],
+    "navbar_align": "content",
+    "search_bar_text": "Search docs",
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": github_repo_url,
+            "icon": "fa-brands fa-github",
+            "type": "fontawesome",
+        },
+    ],
+    # Avoid a second toolbar between the global header and the document title.
+    "article_header_start": [],
+    "article_header_end": [],
+    "primary_sidebar_end": [],
+    "secondary_sidebar_items": ["page-toc"],
+    "show_nav_level": 1,
+    "show_toc_level": 2,
+    "navigation_with_keys": True,
+    "back_to_top_button": True,
+}
 
 # -- Options for the spelling builder ----------------------------------------
 
 spelling_warning = True
 # Acronyms (LCM, ROS, RPC, SLAM) and CamelCase names (DimOS, MuJoCo, NumPy, WebRTC)
-# are skipped automatically. Code entities use their Python-domain roles (:mod:,
-# :func:, :class:), abbreviations/programs use :abbr:/:program:, and product names use
-# the custom :brand: role (registered in setup() below) — all skipped by the checker —
-# so the wordlist only holds genuine prose vocabulary.
+# are skipped automatically. API names use linked inline code, and the wordlist holds
+# product names and genuine prose vocabulary.
 spelling_ignore_acronyms = True
 spelling_ignore_wiki_words = True
 
 # -- Nitpicky mode -----------------------------------------------------------
 
 nitpicky = True
+# ``highlight_language`` makes otherwise untyped literal blocks use the Python
+# lexer. Code-autolink safely skips non-Python examples (logs, file trees, and
+# configuration snippets); do not promote those expected parse failures to
+# strict-build warnings.
+suppress_warnings = ["codeautolink.parse_block"]
 nitpick_ignore: list[tuple[str, str]] = [
     # TypeVars / ParamSpecs rendered in signatures — type parameters, not
     # documentable targets.
@@ -134,9 +196,47 @@ nitpick_ignore: list[tuple[str, str]] = [
     ("py:class", "R"),
     ("py:class", "dimos.core.stream.T"),
     ("py:class", "dimos.core.core.T"),
+    ("py:class", "dimos.agents.annotation.F"),
+    ("py:class", "dimos.types.timestamped.PRIMARY"),
+    ("py:class", "dimos.types.timestamped.SECONDARY"),
+    ("py:class", "dimos.utils.reactive.T"),
+    ("py:class", "dimos.utils.reactive.LatestReader"),
+    ("py:class", "dimos.memory2.transform.T"),
     # Upstream entities that are not documented.
     ("py:class", "langchain_core.messages.base.BaseMessage"),
     ("py:class", "distributed.ActorFuture"),
+    ("py:class", "NDArray"),
+    ("py:class", "np.int8"),
+    ("py:class", "open3d.cuda.pybind.geometry.PointCloud"),
+    ("py:class", "open3d.cuda.pybind.t.geometry.PointCloud"),
+    # Types referenced by documented signatures but not part of this API slice.
+    ("py:class", "dimos.msgs.protocol.DimosMsg"),
+    ("py:class", "dimos.protocol.pubsub.impl.zenohpubsub.Topic"),
+    ("py:class", "dimos.msgs.trajectory_msgs.TrajectoryPoint.TrajectoryPoint"),
+    ("py:class", "VoxelGrid"),
+    ("py:class", "dimos.hardware.whole_body.spec.WholeBodyConfig"),
+    ("py:class", "WorldRobotID"),
+    ("py:class", "PlanningGroup"),
+    ("py:class", "JointState"),
+    # A prose return condition in align_timestamped's Google-style docstring.
+    ("py:class", "If single secondary observable"),
+    # Supporting memory and visualization types outside the documented slice.
+    ("py:class", "LayoutAlgo"),
+    ("py:class", "EmbeddingModel"),
+    ("py:class", "EmbeddedObservation"),
+    ("py:class", "dimos.memory2.backend.Backend"),
+    ("py:class", "dimos.memory2.transform.Transformer"),
+    ("py:class", "dimos.memory2.type.filter.StreamQuery"),
+    ("py:class", "dimos.memory2.transform.FnIterTransformer"),
+    ("py:class", "FnIterTransformer"),
+    ("py:class", "Observation"),
+    ("py:class", "DeferredColor"),
+    ("py:class", "dimos.memory2.vis.plot.plot.TimeAxis"),
+    ("py:class", "GeoPoint"),
+    ("py:class", "GeoPose"),
+    ("py:class", "ColorLike"),
+    ("py:class", "dimos.perception.detection.type.detection2d.base.Detection2D"),
+    ("py:class", "dimos.memory2.type.observation.Observation"),
     # TODO(PY315): Fix these references with lazy imports.
     ("py:class", "Observable"),
     ("py:class", "DisposableBase"),
@@ -155,17 +255,10 @@ nitpick_ignore_regex = [
 
 
 def setup(app):
-    """Register a ``:brand:`` role for product names that have no built-in role.
+    def shorten_long_class_signatures(app, what, name, obj, options, signature, return_annotation):
+        """Collapse generated constructors that would overwhelm the API page."""
+        if what == "class" and signature and len(signature) > 120:
+            return "(...)", return_annotation
+        return None
 
-    The role wraps its text in an inline node — a ``<span class="brand">`` — so it
-    renders as ordinary prose, can be styled via CSS, and is skipped by the spelling
-    checker.
-    """
-
-    def brand(name, rawtext, text, lineno, inliner, options=None, content=None):
-        # A structural ``inline`` node (rather than tagging a Text node) survives
-        # doctree pickling — CI builds html before spelling — and carries a
-        # ``brand`` class for styling.
-        return [nodes.inline(rawtext, text, classes=["brand"])], []
-
-    app.add_role("brand", brand)
+    app.connect("autodoc-process-signature", shorten_long_class_signatures)

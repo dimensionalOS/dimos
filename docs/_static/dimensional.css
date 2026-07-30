@@ -1,0 +1,146 @@
+/*
+ * DimOS presentation layer.
+ *
+ * PyData Sphinx Theme owns the responsive header, sidebars, page outline, and
+ * theme switcher. Keep this file to stable theme tokens and small brand
+ * refinements so upstream layout fixes continue to apply.
+ */
+
+:root {
+  --dimos-cyan-light: #087994;
+  --dimos-cyan-dark: #55d2ec;
+  --dimos-header-height: 3.75rem;
+}
+
+html[data-theme="light"] {
+  --pst-color-primary: var(--dimos-cyan-light);
+  --pst-color-secondary: #5f4b9e;
+  --pst-color-background: #ffffff;
+  --pst-color-on-background: #f5f7f8;
+  --pst-color-surface: #eef2f3;
+  --pst-color-on-surface: #172126;
+  --pst-color-text-base: #27343a;
+  --pst-color-text-muted: #5f6e75;
+  --pst-color-border: #d7dfe2;
+}
+
+html[data-theme="dark"] {
+  --pst-color-primary: var(--dimos-cyan-dark);
+  --pst-color-secondary: #c4adff;
+  --pst-color-background: #080a0b;
+  --pst-color-on-background: #0d1113;
+  --pst-color-surface: #151b1e;
+  --pst-color-on-surface: #e9eef0;
+  --pst-color-text-base: #d6dfe2;
+  --pst-color-text-muted: #9aa8ae;
+  --pst-color-border: #293236;
+}
+
+/* Keep the same broad proportions as the hosted Mintlify documentation. */
+.bd-page-width {
+  max-width: 90rem;
+}
+
+.bd-header {
+  min-height: var(--dimos-header-height);
+  border-bottom: 1px solid var(--pst-color-border);
+  box-shadow: none;
+}
+
+.bd-header .navbar-header-items {
+  gap: 1rem;
+}
+
+.navbar-brand {
+  min-width: 9rem;
+}
+
+.navbar-brand img {
+  width: 9rem;
+  max-height: 2rem;
+  object-fit: contain;
+}
+
+html[data-theme="light"] .navbar-brand img {
+  filter: brightness(0.38) saturate(1.25);
+}
+
+.navbar-persistent--mobile .search-button-field,
+.navbar-header-items__center .search-button-field {
+  border-color: var(--pst-color-border);
+  border-radius: 0.65rem;
+  background: var(--pst-color-on-background);
+}
+
+.bd-sidebar-primary {
+  border-right: 1px solid var(--pst-color-border);
+}
+
+.bd-sidebar-secondary {
+  border-left: 1px solid var(--pst-color-border);
+}
+
+.bd-main .bd-content .bd-article-container {
+  max-width: 46rem;
+}
+
+.bd-article h1 {
+  margin-top: 0;
+  font-size: clamp(2rem, 4vw, 2.65rem);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+
+.bd-article h2 {
+  margin-top: 2.75rem;
+  letter-spacing: -0.02em;
+}
+
+.bd-article p,
+.bd-article li {
+  line-height: 1.68;
+}
+
+.bd-sidebar-primary .sidebar-primary-items__start {
+  margin-bottom: 0;
+}
+
+.bd-links .current > a,
+.bd-links a:hover {
+  color: var(--pst-color-primary);
+}
+
+.toc-entry a.nav-link.active {
+  border-left-color: var(--pst-color-primary);
+  color: var(--pst-color-primary);
+}
+
+.sd-card {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.8rem;
+  background: var(--pst-color-on-background);
+  box-shadow: none;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.sd-card-hover:hover {
+  border-color: var(--pst-color-primary);
+  transform: translateY(-2px);
+}
+
+.sd-card-title {
+  color: var(--pst-color-on-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-card {
+    transition: none;
+  }
+
+  .sd-card-hover:hover {
+    transform: none;
+  }
+}

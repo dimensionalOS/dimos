@@ -108,7 +108,7 @@ def build_file_index(root: Path, tracked_files: list[Path] | None = None) -> dic
 
 def build_doc_index(root: Path, tracked_files: list[Path] | None = None) -> dict[str, list[Path]]:
     """
-    Build an index mapping lowercase doc names to .md file paths.
+    Build an index mapping lowercase doc names to Markdown and RST paths.
 
     For docs/usage/modules.md, creates entry:
     - "modules" -> [Path("docs/usage/modules.md")]
@@ -121,12 +121,16 @@ def build_doc_index(root: Path, tracked_files: list[Path] | None = None) -> dict
         tracked_files = get_git_tracked_files(root)
 
     for rel_path in tracked_files:
-        if rel_path.suffix != ".md":
+        # ``docs-old`` is a temporary Mintlify fallback, not a second canonical
+        # documentation tree. Indexing it would make every shared page ambiguous.
+        if rel_path.parts and rel_path.parts[0] == "docs-old":
+            continue
+        if rel_path.suffix not in {".md", ".rst"}:
             continue
 
         stem = rel_path.stem.lower()
 
-        # For index.md files, also index by parent directory name
+        # For index files, also index by parent directory name.
         if stem == "index":
             parent_name = rel_path.parent.name.lower()
             if parent_name:

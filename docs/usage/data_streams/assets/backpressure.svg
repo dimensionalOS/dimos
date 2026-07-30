@@ -1,0 +1,15 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 452.886 117">
+<path d="M9.66,67.68L95.149,67.68A7.5 7.5 0 0 0 102.649 60.18L102.649,9.66A7.5 7.5 0 0 0 95.149 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,60.18A7.5 7.5 0 0 0 9.66 67.68Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="52.4045" y="24.84" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Camera</text>
+<text x="52.4045" y="45" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">60 fps</text>
+<polygon points="160.249,34.92 148.729,39.24 148.729,30.6" style="fill:rgb(255,255,255)"/>
+<path d="M102.649,34.92L154.489,34.92"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M167.749,60.624L259.678,60.624A7.5 7.5 0 0 0 267.178 53.124L267.178,16.716A7.5 7.5 0 0 0 259.678 9.216L167.749,9.216A7.5 7.5 0 0 0 160.249 16.716L160.249,53.124A7.5 7.5 0 0 0 167.749 60.624Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="213.713" y="34.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">queue</text>
+<polygon points="324.778,34.92 313.258,39.24 313.258,30.6" style="fill:rgb(255,255,255)"/>
+<path d="M267.178,34.92L319.018,34.92"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M332.278,67.68L443.226,67.68A7.5 7.5 0 0 0 450.726 60.18L450.726,9.66A7.5 7.5 0 0 0 443.226 2.16L332.278,2.16A7.5 7.5 0 0 0 324.778 9.66L324.778,60.18A7.5 7.5 0 0 0 332.278 67.68Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="387.752" y="24.84" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ML Model</text>
+<text x="387.752" y="45" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">2 fps</text>
+<text x="213.713" y="99.72" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">items pile up!</text>
+</svg>

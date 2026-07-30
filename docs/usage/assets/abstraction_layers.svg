@@ -1,0 +1,20 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 796.32 105.84">
+<path d="M17.16,59.76L131.16,59.76A15 15 0 0 0 146.16 44.76L146.16,17.16A15 15 0 0 0 131.16 2.16L17.16,2.16A15 15 0 0 0 2.16 17.16L2.16,44.76A15 15 0 0 0 17.16 59.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="74.16" y="30.96" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Blueprints</text>
+<polygon points="218.16,30.96 206.64,35.28 206.64,26.64" style="fill:rgb(255,255,255)"/>
+<path d="M146.16,30.96L212.4,30.96"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M225.66,59.76L354.66,59.76A7.5 7.5 0 0 0 362.16 52.26L362.16,9.66A7.5 7.5 0 0 0 354.66 2.16L225.66,2.16A7.5 7.5 0 0 0 218.16 9.66L218.16,52.26A7.5 7.5 0 0 0 225.66 59.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="290.16" y="30.96" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Modules</text>
+<polygon points="434.16,30.96 422.64,35.28 422.64,26.64" style="fill:rgb(255,255,255)"/>
+<path d="M362.16,30.96L428.4,30.96"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M441.66,59.76L570.66,59.76A7.5 7.5 0 0 0 578.16 52.26L578.16,9.66A7.5 7.5 0 0 0 570.66 2.16L441.66,2.16A7.5 7.5 0 0 0 434.16 9.66L434.16,52.26A7.5 7.5 0 0 0 441.66 59.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="506.16" y="30.96" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Transports</text>
+<polygon points="650.16,30.96 638.64,35.28 638.64,26.64" style="fill:rgb(255,255,255)"/>
+<path d="M578.16,30.96L644.4,30.96"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M657.66,59.76L786.66,59.76A7.5 7.5 0 0 0 794.16 52.26L794.16,9.66A7.5 7.5 0 0 0 786.66 2.16L657.66,2.16A7.5 7.5 0 0 0 650.16 9.66L650.16,52.26A7.5 7.5 0 0 0 657.66 59.76Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="722.16" y="30.96" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">PubSub</text>
+<text x="88.56" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">robot configs</text>
+<text x="290.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera, nav</text>
+<text x="506.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">LCM, SHM, ROS</text>
+<text x="722.16" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">pub/sub API</text>
+</svg>

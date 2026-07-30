@@ -1,0 +1,22 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 612.023 205.2">
+<path d="M9.66,145.44L128.027,145.44A7.5 7.5 0 0 0 135.527 137.94L135.527,67.26A7.5 7.5 0 0 0 128.027 59.76L9.66,59.76A7.5 7.5 0 0 0 2.16 67.26L2.16,137.94A7.5 7.5 0 0 0 9.66 145.44Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="68.8435" y="92.52" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Primary</text>
+<text x="68.8435" y="112.68" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">arrives</text>
+<polygon points="185.927,102.6 174.407,106.92 174.407,98.28" style="fill:rgb(255,255,255)"/>
+<path d="M135.527,102.6L180.167,102.6"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M193.427,145.44L368.784,145.44A7.5 7.5 0 0 0 376.284 137.94L376.284,67.26A7.5 7.5 0 0 0 368.784 59.76L193.427,59.76A7.5 7.5 0 0 0 185.927 67.26L185.927,137.94A7.5 7.5 0 0 0 193.427 145.44Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="281.105" y="92.52" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Check</text>
+<text x="281.105" y="112.68" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">secondaries</text>
+<polygon points="477.084,45 465.564,49.32 465.564,40.68" style="fill:rgb(255,255,255)"/>
+<path d="M376.284,102.6L426.684,102.6L426.684,45L471.324,45"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M484.584,87.84L577.491,87.84A7.5 7.5 0 0 0 584.991 80.34L584.991,9.66A7.5 7.5 0 0 0 577.491 2.16L484.584,2.16A7.5 7.5 0 0 0 477.084 9.66L477.084,80.34A7.5 7.5 0 0 0 484.584 87.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="531.037" y="34.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Emit</text>
+<text x="531.037" y="55.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">match</text>
+<text x="419.484" y="23.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">all found</text>
+<polygon points="477.084,160.2 465.564,164.52 465.564,155.88" style="fill:rgb(255,255,255)"/>
+<path d="M376.284,102.6L426.684,102.6L426.684,160.2L471.324,160.2"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M484.584,203.04L602.363,203.04A7.5 7.5 0 0 0 609.863 195.54L609.863,124.86A7.5 7.5 0 0 0 602.363 117.36L484.584,117.36A7.5 7.5 0 0 0 477.084 124.86L477.084,195.54A7.5 7.5 0 0 0 484.584 203.04Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="543.473" y="150.12" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Buffer</text>
+<text x="543.473" y="170.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">primary</text>
+<text x="419.484" y="181.8" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">waiting...</text>
+</svg>

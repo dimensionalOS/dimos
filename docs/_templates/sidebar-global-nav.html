@@ -1,0 +1,21 @@
+{#
+  PyData normally suppresses its section-navigation template on the root page
+  and starts other pages at the current section. Use a separate template name
+  and start at the master toctree so every page has the same global navigation
+  while retaining PyData's generated markup and collapse behavior.
+#}
+{% set show_nav_level = meta['html_theme.show_nav_level'] if (meta is defined and meta is not none and 'html_theme.show_nav_level' in meta) else theme_show_nav_level %}
+<nav class="bd-docs-nav bd-links" aria-label="{{ _('Documentation navigation') }}">
+  <p class="bd-links__title" role="heading" aria-level="1">{{ _("Documentation") }}</p>
+  <div class="bd-toc-item navbar-nav">
+    {{- generate_toctree_html(
+      "sidebar",
+      startdepth=0,
+      show_nav_level=show_nav_level | int,
+      maxdepth=theme_navigation_depth | int,
+      collapse=theme_collapse_navigation | tobool,
+      includehidden=theme_sidebar_includehidden | tobool,
+      titles_only=True
+    ) -}}
+  </div>
+</nav>

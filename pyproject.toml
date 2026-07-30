@@ -482,6 +482,10 @@ docs = [
     # ``Literal[...]`` and large field-default annotations into invalid references.
     # Revisit for the ``.. autotype::`` directive once those are fixed upstream.
     "sphinx<9; python_version >= '3.12'",
+    "myst-parser>=5,<6; python_version >= '3.12'",
+    "pydata-sphinx-theme; python_version >= '3.12'",
+    "sphinx-codeautolink==0.18.1; python_version >= '3.12'",
+    "sphinx-design; python_version >= '3.12'",
     "sphinxcontrib-spelling; platform_system != 'Windows' and python_version >= '3.12'",
     "dimos[agents,web]",
 ]
