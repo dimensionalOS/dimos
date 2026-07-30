@@ -23,7 +23,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast, get_args, get_origin
 
 # macOS Open3D uses LLVM libomp, which (when OMP_WAIT_POLICY is unset) still
 # actively spins for KMP_BLOCKTIME (default 200ms) after each parallel region.
@@ -39,13 +39,21 @@ if sys.platform == "darwin":
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.config_flags import (
+    ConfigLeaf,
+    FlagResolutionError,
+    display_type,
+    expand_field_flags,
+    iter_config_leaves,
+    leaf_flag_annotations,
+    split_run_tokens,
+)
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
@@ -63,7 +71,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+    from dimos.core.coordination.blueprints import Blueprint
 
 logger = setup_logger()
 
@@ -174,117 +182,46 @@ main.command()(shell)
 main.add_typer(cache_app, name="cache")
 
 
-def arg_help(
-    config: type[BaseModel],
-    blueprint: Blueprint,
-    indent: str = "    ",
-    module: str = "",
-    _atom: BlueprintAtom | None = None,
-    _defaults: BaseModel | dict[str, Any] | None = None,
-) -> str:
-    # Imported here for performance reasons.
-    from dimos.core.coordination.blueprints import config_key
+def _run_option_flags() -> tuple[str, ...]:
+    """Long flags the `run` command consumes itself, wherever they appear."""
+    group = typer.main.get_command(main)
+    run_command = group.commands["run"]  # type: ignore[attr-defined]
+    return tuple(
+        opt
+        for param in run_command.params
+        for opt in (*param.opts, *param.secondary_opts)
+        if opt.startswith("--")
+    )
+
+
+def arg_help(config: type[BaseModel], blueprint: Blueprint, indent: str = "    ") -> str:
+    leaves = list(iter_config_leaves(config, blueprint))
+    annotations = leaf_flag_annotations(leaves, _run_option_flags())
 
     output = ""
-    for k, info in config.model_fields.items():
-        if k in ("g", "instance_name"):
-            continue
-        t: object = info.annotation
-        if isinstance(t, types.GenericAlias):
-            # Can't be specified on CLI
+    groups: tuple[str, ...] = ()
+    for leaf in leaves:
+        if leaf.path[0] == "g":
             continue
 
-        fallback = _field_default(info)
-        field_defaults = _get_default_value(_defaults, k, fallback)
-        t = _unwrap_base_model_annotation(t, field_defaults)
+        parents = leaf.path[:-1]
+        shared = 0
+        while shared < min(len(groups), len(parents)) and groups[shared] == parents[shared]:
+            shared += 1
+        for depth in range(shared, len(parents)):
+            output += f"{indent}{'  ' * depth}{'.'.join(parents[: depth + 1])}:\n"
+        groups = parents
 
-        if inspect.isclass(t) and issubclass(t, BaseModel):
-            output += f"{indent}{module}{k}:\n"
-            if _atom is None:
-                # Root BlueprintConfig fields are blueprint atoms, except schema
-                # branches such as transports.* that have no backing atom.
-                bp = next((bp for bp in blueprint.blueprints if config_key(bp.name) == k), None)
-                defaults = bp.kwargs if bp is not None else field_defaults
-            else:
-                # Nested BaseModel fields belong to the current atom and must not
-                # be atom-looked-up.
-                bp = _atom
-                defaults = field_defaults
-            output += arg_help(
-                t,
-                blueprint,
-                indent=indent + "  ",
-                module=module + k + ".",
-                _atom=bp,
-                _defaults=defaults,
-            )
+        required = "[Required] " if leaf.required else ""
+        if leaf.default is not PydanticUndefined:
+            default = f" (default: {leaf.default})"
         else:
-            # Use __name__ to avoid "<class 'int'>" style output on basic types.
-            display_type = t.__name__ if isinstance(t, type) else t
-            has_default = _has_default_value(_defaults, k)
-            required = "[Required] " if info.is_required() and not has_default else ""
-            d = field_defaults
-            default = f" (default: {d})" if d is not PydanticUndefined else ""
-            output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
+            default = ""
+        output += (
+            f"{indent}{'  ' * len(parents)}* {required}{leaf.dotted}: "
+            f"{display_type(leaf.annotation)}{default}{annotations[leaf.path]}\n"
+        )
     return output
-
-
-def _field_default(info: FieldInfo) -> Any:
-    if info.default is not PydanticUndefined:
-        return info.default
-    if info.default_factory is not None:
-        return info.get_default(call_default_factory=True)
-    return PydanticUndefined
-
-
-def _unwrap_base_model_annotation(annotation: object, defaults: object) -> object:
-    # TODO(PY314): if isinstance(annotation, Union):
-    if get_origin(annotation) not in {Union, types.UnionType}:
-        return annotation
-
-    candidates = tuple(
-        u for u in get_args(annotation) if inspect.isclass(u) and issubclass(u, BaseModel)
-    )
-    if not candidates:
-        return annotation
-    return _select_base_model_candidate(candidates, defaults)
-
-
-def _select_base_model_candidate(
-    candidates: tuple[type[BaseModel], ...], defaults: object
-) -> type[BaseModel]:
-    backend = _backend_default(defaults)
-    if backend is not PydanticUndefined:
-        for candidate in candidates:
-            backend_info = candidate.model_fields.get("backend")
-            if backend_info is not None and _field_default(backend_info) == backend:
-                return candidate
-    return candidates[0]
-
-
-def _backend_default(defaults: object) -> object:
-    if isinstance(defaults, BaseModel):
-        return getattr(defaults, "backend", PydanticUndefined)
-    if isinstance(defaults, dict):
-        return defaults.get("backend", PydanticUndefined)
-    return PydanticUndefined
-
-
-def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) -> bool:
-    if isinstance(defaults, BaseModel):
-        return key in defaults.model_fields_set
-    if isinstance(defaults, dict):
-        return key in defaults
-    return False
-
-
-def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
-    if isinstance(defaults, BaseModel):
-        if key in defaults.model_fields_set:
-            return getattr(defaults, key)
-    if isinstance(defaults, dict):
-        return defaults.get(key, fallback)
-    return fallback
 
 
 def load_config_args(
@@ -322,11 +259,15 @@ def load_config_args(
         # own keys but must not wipe the rest of the g subtree built above.
         kwargs.setdefault("g", {}).update(cli_g_overrides)
 
-    # We don't need this config, but this atleast validates the user input first.
-    # This will help catch misspellings and similar mistakes.
+    # We do not need this config, but validate user input before deploying.
     config(**kwargs)
 
     return kwargs  # type: ignore[no-any-return]
+
+
+def _exit_bad_flags(error: FlagResolutionError) -> NoReturn:
+    typer.echo(f"Error: {error}", err=True)
+    raise typer.Exit(2)
 
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
@@ -344,7 +285,7 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
-@main.command()
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @cache_usage_locked
 def run(
     ctx: typer.Context,
@@ -384,6 +325,14 @@ def run(
 
     setup_exception_handler()
 
+    # Unknown long flags (and their values) fall through to the variadic
+    # argument in original order; blueprint names come first, everything from
+    # the first dash onwards is a field flag resolved against the config tree.
+    try:
+        names, flag_tokens = split_run_tokens(robot_types)
+    except FlagResolutionError as error:
+        _exit_bad_flags(error)
+
     cli_config_overrides: dict[str, Any] = ctx.obj
 
     # These flags are accepted on `run` itself, not just as global options.
@@ -401,7 +350,7 @@ def run(
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
 
-    blueprint_name = "-".join(robot_types)
+    blueprint_name = "-".join(names)
     run_id = generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
@@ -413,7 +362,7 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
+    blueprint = autoconnect(*map(get_by_name_or_exit, names))
 
     if disable:
         disabled_classes = tuple(
@@ -422,16 +371,26 @@ def run(
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     blueprint = _with_relay_bridge(blueprint)
+    blueprint_config = blueprint.config()
 
     if show_help:
         print("Blueprint arguments:")
-        print("  Override with --option/-o module.field=value.")
-        print("  Nested config paths use dotted names, e.g. module.nested.field=value.")
-        print(arg_help(blueprint.config(), blueprint))
+        print("  Set a field with its bracketed flag, e.g. --map-file recording_go2.")
+        print("  Shared names show their address flag, e.g. --go2connection.frame-id map.")
+        print(arg_help(blueprint_config, blueprint))
         return
 
-    blueprint_config = blueprint.config()
-    kwargs = load_config_args(blueprint_config, blueprint_args, config_path, cli_config_overrides)
+    # Resolve after relay-bridge composition and against the model that validates.
+    leaves: list[ConfigLeaf] = list(iter_config_leaves(blueprint_config, blueprint))
+    try:
+        expanded = expand_field_flags(flag_tokens, leaves)
+    except FlagResolutionError as error:
+        _exit_bad_flags(error)
+
+    # Field flags are sugar for -o, so an explicit -o for the same key wins.
+    kwargs = load_config_args(
+        blueprint_config, [*expanded, *blueprint_args], config_path, cli_config_overrides
+    )
 
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
@@ -461,7 +420,7 @@ def run(
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
             log_dir=str(log_dir),
-            cli_args=list(robot_types),
+            cli_args=list(names),
             config_overrides=cli_config_overrides,
             original_argv=sys.argv,
         )
@@ -476,7 +435,7 @@ def run(
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
             log_dir=str(log_dir),
-            cli_args=list(robot_types),
+            cli_args=list(names),
             config_overrides=cli_config_overrides,
             original_argv=sys.argv,
         )

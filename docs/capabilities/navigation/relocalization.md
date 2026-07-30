@@ -91,8 +91,14 @@ Test alignment without the robot. `unitree-go2-relocalization` is `unitree-go2` 
 
 ```bash
 dimos --replay --replay-db recording_go2 run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file=recording_go2
+  --map-file recording_go2
 ```
+
+`--map-file` resolves to `relocalizationmodule.map_file` because no other module in this
+blueprint declares that field. Use the address flag
+`--relocalizationmodule.map-file recording_go2` (or the equivalent
+`-o relocalizationmodule.map_file=recording_go2`) when an explicit module address is
+needed.
 
 `map_file` resolves `{DB_NAME}.pc2.lcm` with the same search order as above (cwd, then project root, then `data/`).
 
@@ -121,8 +127,8 @@ Watch alignment in Rerun, which is enabled by default on Go2 blueprints:
 Run the replay test first. On hardware, use the same blueprint and `map_file`:
 
 ```bash
-dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file=recording_go2
+dimos run unitree-go2-relocalization --robot-ip {YOUR_ROBOT_IP} \
+  --map-file recording_go2
 ```
 
 Before sending navigation goals, walk through this checklist:
@@ -169,7 +175,10 @@ Note that [`CostMapper`](/dimos/mapping/costmapper.py) builds the costmap from t
 
 ## Configuration reference
 
-CLI overrides use blueprint module config (`-o relocalizationmodule.<field>=…`):
+CLI overrides use blueprint module config. Each field below is unique to
+`RelocalizationModule` in this blueprint, so `--<field> <value>` reaches it directly;
+the address flag `--relocalizationmodule.<field> <value>` and
+`-o relocalizationmodule.<field>=...` always work:
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -189,14 +198,14 @@ Constants are not overridable via CLI today:
 To accept all candidates for visualization only (not for production nav):
 
 ```bash
--o relocalizationmodule.fitness_threshold=0.0
+--fitness-threshold 0.0
 ```
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Relocalization module disabled (no map_file configured)` | Missing `-o relocalizationmodule.map_file=…` | Set `map_file` to your premap stem |
+| `Relocalization module disabled (no map_file configured)` | Missing `--map-file …` | Set `map_file` to your premap stem |
 | File not found for `.pc2.lcm` | Export not run or wrong cwd | Run `dimos map global … --export` and check cwd or `data/` |
 | Long stretch of `relocalize skipped` | Map still accumulating points | Wait or drive slowly through mapped geometry |
 | Repeated `relocalize rejected` | Poor overlap with premap or wrong space | Start in a known area and check premap in `.rrd` |

@@ -76,7 +76,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
-| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
+| `--help` | Display the available configuration options, each with the field flag that addresses it |
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -120,6 +120,47 @@ When `--daemon` is used, the process:
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
 4. Prints run ID, PID, log path, and MCP endpoint
+
+#### Config Field Flags
+
+After the blueprint names, set a field with `--field-name value` when that name belongs
+to exactly one field in the resolved blueprint configuration. Field names use kebab-case,
+and DimOS also walks ordinary nested Pydantic models.
+
+```bash
+dimos run unitree-go2-relocalization --robot-ip 192.168.0.116 \
+  --map-file recording_go2
+```
+
+Every field flag takes one following value, including booleans. GlobalConfig fields such
+as `--robot-ip` can be placed after `run` and are matched against the selected blueprint.
+
+If more than one module declares the field, the command fails before starting anything
+and lists the address flags that qualify it:
+
+```text
+Error: --map-file matches multiple config fields; use a full address flag:
+  --costmapper.map-file
+  --relocalizationmodule.map-file
+```
+
+An address flag spells out the full config path in kebab-case, takes a value like any
+field flag, and works for every field:
+
+```bash
+dimos run unitree-go2 --go2connection.frame-id map
+```
+
+`dimos run <blueprint> --help` shows the short flag for unique names and the address
+flag for shared ones:
+
+```text
+* relocalizationmodule.map_file: str | None (default: None) [--map-file]
+* go2connection.frame_id: str | None (default: None) [--go2connection.frame-id]
+```
+
+Field flags are shorthand for `-o module.field=value`, so an explicit `-o` for the same
+path wins.
 
 #### Adding a New Blueprint
 

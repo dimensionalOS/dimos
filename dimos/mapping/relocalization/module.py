@@ -44,9 +44,8 @@ MAP_SUFFIX = ".pc2.lcm"
 
 
 class Config(ModuleConfig):
-    map_file: str | None = (
-        None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
-    )
+    # e.g. `--map-file go2_hongkong_office_twopass_map`; use -o when ambiguous.
+    map_file: str | None = None
     publish_loaded_map: bool = False
     fitness_threshold: float = 0.45
     use_carving: bool = True

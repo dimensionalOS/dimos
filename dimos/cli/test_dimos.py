@@ -14,12 +14,13 @@
 
 from pathlib import Path
 import sys
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 import pytest
 from typer.testing import CliRunner
 
+import dimos.cli.dimos as dimos_cli
 from dimos.cli.dimos import (
     _normalize_simulation_argv,
     _with_relay_bridge,
@@ -29,11 +30,16 @@ from dimos.cli.dimos import (
 )
 import dimos.cli.spy.run_spy as run_spy
 from dimos.core.coordination.blueprints import autoconnect
+import dimos.core.coordination.module_coordinator as module_coordinator
+import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.coordination.worker_manager_python as worker_manager_python
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+import dimos.core.run_registry as run_registry
 from dimos.robot import external_blueprints as external
+import dimos.robot.get_all_blueprints as get_all_blueprints
 import dimos.utils.cache as cache_utils
+import dimos.utils.logging_config as logging_config
 
 
 @pytest.mark.parametrize(
@@ -95,59 +101,23 @@ def test_blueprint_arg_help():
     # List output produces better diff in pytest error output.
     assert output.split("\n") == [
         "    testmodulea:",
-        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodulea.frame_id_prefix: str | None (default: None)",
-        "      * testmodulea.frame_id: str | None (default: None)",
-        "      * testmodulea.min_interval_sec: float (default: 0.1)",
-        "      * testmodulea.entity_prefix: str (default: world)",
-        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: native)",
+        "      * testmodulea.default_rpc_timeout: float (default: 120.0)"
+        " [--testmodulea.default-rpc-timeout]",
+        "      * testmodulea.frame_id_prefix: str | None (default: None)"
+        " [--testmodulea.frame-id-prefix]",
+        "      * testmodulea.frame_id: str | None (default: None) [--testmodulea.frame-id]",
+        "      * testmodulea.min_interval_sec: float (default: 0.1) [--min-interval-sec]",
+        "      * testmodulea.entity_prefix: str (default: world) [--entity-prefix]",
+        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none']"
+        " (default: native) [--viewer-mode]",
         "    testmoduleb:",
-        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
-        "      * testmoduleb.frame_id_prefix: str | None (default: None)",
-        "      * testmoduleb.frame_id: str | None (default: None)",
-        "      * testmoduleb.memory_limit: str (default: 25%)",
-        "      * testmoduleb.ip: str (default: 127.0.0.1)",
-        "",
-    ]
-
-
-def test_blueprint_arg_help_extra_args():
-    """Test defaults passed to .blueprint() override."""
-
-    class ConfigA(ModuleConfig):
-        frame_id_prefix: str | None = None
-        min_interval_sec: float = 0.1
-        entity_prefix: str = "world"
-        viewer_mode: Literal["native", "web", "connect", "none"] = "native"
-
-    class TestModuleA(Module):
-        config: ConfigA
-
-    class ConfigB(ModuleConfig):
-        memory_limit: str = "25%"
-        ip: str = "127.0.0.1"
-
-    class TestModuleB(Module):
-        config: ConfigB
-
-    module_a = TestModuleA.blueprint(frame_id_prefix="foo", viewer_mode="web")
-    blueprint = autoconnect(module_a, TestModuleB.blueprint(ip="1.1.1.1"))
-    output = arg_help(blueprint.config(), blueprint)
-    # List output produces better diff in pytest error output.
-    assert output.split("\n") == [
-        "    testmodulea:",
-        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodulea.frame_id_prefix: str | None (default: foo)",
-        "      * testmodulea.frame_id: str | None (default: None)",
-        "      * testmodulea.min_interval_sec: float (default: 0.1)",
-        "      * testmodulea.entity_prefix: str (default: world)",
-        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
-        "    testmoduleb:",
-        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
-        "      * testmoduleb.frame_id_prefix: str | None (default: None)",
-        "      * testmoduleb.frame_id: str | None (default: None)",
-        "      * testmoduleb.memory_limit: str (default: 25%)",
-        "      * testmoduleb.ip: str (default: 1.1.1.1)",
+        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)"
+        " [--testmoduleb.default-rpc-timeout]",
+        "      * testmoduleb.frame_id_prefix: str | None (default: None)"
+        " [--testmoduleb.frame-id-prefix]",
+        "      * testmoduleb.frame_id: str | None (default: None) [--testmoduleb.frame-id]",
+        "      * testmoduleb.memory_limit: str (default: 25%) [--testmoduleb.memory-limit]",
+        "      * testmoduleb.ip: str (default: 127.0.0.1) [--ip]",
         "",
     ]
 
@@ -192,29 +162,6 @@ def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
             local_relay=original_local_relay,
             relay_url=original_relay_url,
         )
-
-
-def test_blueprint_arg_help_required():
-    """Test required arguments."""
-
-    class Config(ModuleConfig):
-        foo: int
-        spam: str = "eggs"
-
-    class TestModule(Module):
-        config: Config
-
-    blueprint = TestModule.blueprint()
-    output = arg_help(blueprint.config(), blueprint)
-    assert output.split("\n") == [
-        "    testmodule:",
-        "      * testmodule.default_rpc_timeout: float (default: 120.0)",
-        "      * testmodule.frame_id_prefix: str | None (default: None)",
-        "      * testmodule.frame_id: str | None (default: None)",
-        "      * [Required] testmodule.foo: int",
-        "      * testmodule.spam: str (default: eggs)",
-        "",
-    ]
 
 
 def test_list_blueprints_groups_builtin_and_external(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -362,11 +309,11 @@ def test_blueprint_arg_help_nested_config_paths():
     output = arg_help(blueprint.config(), blueprint)
 
     assert "      testmodule.nested:" in output
-    assert "        * testmodule.nested.enabled: bool (default: True)" in output
-    assert "        * testmodule.nested.mode: str (default: manual)" in output
+    assert "        * testmodule.nested.enabled: bool (default: True) [--enabled]" in output
+    assert "        * testmodule.nested.mode: str (default: manual) [--mode]" in output
 
 
-def test_blueprint_arg_help_uses_nested_backend_defaults():
+def test_help_expands_the_union_variant_matching_the_backend_default():
     class DisabledConfig(BaseModel):
         backend: Literal["disabled"] = "disabled"
 
@@ -380,15 +327,142 @@ def test_blueprint_arg_help_uses_nested_backend_defaults():
     class TestModule(Module):
         config: Config
 
-    blueprint = TestModule.blueprint(nested={"backend": "enabled", "level": 3})
+    blueprint = TestModule.blueprint(nested={"backend": "enabled"})
     output = arg_help(blueprint.config(), blueprint)
 
-    assert "      testmodule.nested:" in output
-    assert (
-        "        * testmodule.nested.backend: typing.Literal['enabled'] (default: enabled)"
-        in output
+    # A broken selection falls back to the first variant, which has no `level`.
+    assert "testmodule.nested.level" in output
+
+
+class RunConfigA(ModuleConfig):
+    entity_prefix: str = "world"
+
+
+class RunModuleA(Module):
+    config: RunConfigA
+
+
+class RunConfigB(ModuleConfig):
+    lookahead: float = 1.0
+
+
+class RunModuleB(Module):
+    config: RunConfigB
+
+
+@pytest.fixture
+def stubbed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Drive `dimos run` to completion without starting any process."""
+    recorded: dict[str, Any] = {}
+
+    class FakeCoordinator:
+        n_modules = 1
+
+        @classmethod
+        def build(cls, blueprint, blueprint_args=None):
+            recorded["blueprint"] = blueprint
+            recorded["kwargs"] = dict(blueprint_args or {})
+            return cls()
+
+        def health_check(self) -> bool:
+            return False  # `--daemon` stops here instead of forking
+
+        def stop(self) -> None: ...
+
+        def start_rpc_service(self) -> None: ...
+
+        def loop(self) -> None: ...
+
+    class FakeEntry:
+        def __init__(self, **fields: Any) -> None:
+            recorded["entry"] = fields
+
+        def save(self) -> None: ...
+
+        def remove(self) -> None: ...
+
+    blueprints = {"alpha": RunModuleA.blueprint(), "beta": RunModuleB.blueprint()}
+    monkeypatch.setattr(module_coordinator, "ModuleCoordinator", FakeCoordinator)
+    monkeypatch.setattr(run_registry, "RunEntry", FakeEntry)
+    monkeypatch.setattr(run_registry, "cleanup_stale", lambda: 0)
+    monkeypatch.setattr(process_lifecycle, "spawn_watchdog", lambda *a, **k: None)
+    monkeypatch.setattr(dimos_cli, "install_signal_handlers", lambda *a, **k: None)
+    monkeypatch.setattr(dimos_cli, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(logging_config, "set_run_log_dir", lambda _log_dir: None)
+    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", lambda name: blueprints[name])
+    monkeypatch.setattr(
+        get_all_blueprints, "get_module_by_name_or_exit", lambda name: blueprints[name.lower()]
     )
-    assert "        * testmodule.nested.level: int (default: 3)" in output
+    monkeypatch.setenv("DIMOS_RUN_ID", "")
+    return recorded
+
+
+def test_run_keeps_field_flags_out_of_the_run_id_and_registry(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", "--entity-prefix", "hall"])
+
+    assert result.exit_code == 0, result.output
+    entry = stubbed_run["entry"]
+    assert entry["blueprint"] == "alpha-beta"
+    assert entry["cli_args"] == ["alpha", "beta"]
+    assert entry["run_id"].endswith("-alpha-beta")
+    assert stubbed_run["kwargs"]["runmodulea"]["entity_prefix"] == "hall"
+
+
+def test_run_matches_global_config_fields_after_the_blueprint(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        ["run", "alpha", "--robot-ip", "192.168.0.116", "--entity-prefix", "hall"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["kwargs"]["g"]["robot_ip"] == "192.168.0.116"
+    assert stubbed_run["kwargs"]["runmodulea"]["entity_prefix"] == "hall"
+
+
+def test_run_options_still_parse_after_field_flags(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    argv = ["run", "alpha", "beta", "--entity-prefix", "hall"]
+    result = CliRunner().invoke(main, [*argv, "--disable", "Beta", "-o", "g.dtop=true"])
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["kwargs"]["runmodulea"]["entity_prefix"] == "hall"
+    assert stubbed_run["kwargs"]["g"]["dtop"] == "true"
+    assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
+
+
+def test_run_rejects_an_ambiguous_field_flag(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", "--frame-id", "map"])
+
+    assert result.exit_code == 2
+    assert "--runmodulea.frame-id" in result.output
+    assert "--runmoduleb.frame-id" in result.output
+    assert "kwargs" not in stubbed_run  # nothing was built
+
+
+def test_run_accepts_an_address_flag_for_an_ambiguous_field(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", "--runmoduleb.frame-id", "map"])
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["kwargs"]["runmoduleb"]["frame_id"] == "map"
+    assert "frame_id" not in stubbed_run["kwargs"].get("runmodulea", {})
+
+
+def test_run_help_lists_field_flags(
+    isolated_cache_locks: None, stubbed_run: dict[str, Any]
+) -> None:
+    result = CliRunner().invoke(main, ["run", "alpha", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "* runmodulea.entity_prefix: str (default: world) [--entity-prefix]" in result.output
 
 
 def test_nested_blueprint_config_defaults_survive_cli_override(tmp_path, monkeypatch):
