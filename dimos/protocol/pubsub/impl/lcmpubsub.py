@@ -125,9 +125,13 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
         lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
-            if self.l is None:
-                return
-            self.l.unsubscribe(lcm_subscription)
+            # lcm-python's unsubscribe is not safe against a concurrently
+            # dispatching handle_timeout (nulls the subscription's fields under
+            # the handler → segfault), so serialize with the _lcm_loop poll.
+            with self._l_lock:
+                if self.l is None:
+                    return
+                self.l.unsubscribe(lcm_subscription)
 
         return unsubscribe
 

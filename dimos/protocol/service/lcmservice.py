@@ -64,7 +64,7 @@ class LCMService(Service):
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _loop_running: threading.Event
-    _l_lock: threading.Lock
+    _l_lock: threading.RLock
     _start_lock: threading.Lock
     _thread: threading.Thread | None
     _call_thread_pool: ThreadPoolExecutor | None = None
@@ -79,7 +79,9 @@ class LCMService(Service):
         else:
             self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
-        self._l_lock = threading.Lock()
+        # RLock: unsubscribe takes it and may run inside a subscription
+        # callback on the loop thread, which already holds it in _lcm_loop.
+        self._l_lock = threading.RLock()
         self._start_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._loop_running = threading.Event()
@@ -107,7 +109,7 @@ class LCMService(Service):
         self._stop_event = threading.Event()
         self._loop_running = threading.Event()
         self._thread = None
-        self._l_lock = threading.Lock()
+        self._l_lock = threading.RLock()
         self._start_lock = threading.Lock()
         self._call_thread_pool = None
         self._call_thread_pool_lock = threading.RLock()
