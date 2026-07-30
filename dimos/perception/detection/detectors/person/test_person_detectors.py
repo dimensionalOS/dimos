@@ -17,7 +17,7 @@ import pytest
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
-pytestmark = pytest.mark.self_hosted
+pytestmark = pytest.mark.self_hosted_serial
 
 
 @pytest.fixture(scope="session")

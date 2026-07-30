@@ -28,7 +28,7 @@ from dimos.perception.image_embedding import ImageEmbeddingProvider
 from dimos.stream.video_provider import VideoProvider
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 

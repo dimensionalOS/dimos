@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
+import fcntl
 from functools import cache
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -218,12 +222,35 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
     )
 
 
+@contextmanager
+def _fetch_lock() -> Iterator[None]:
+    # get_data runs concurrently in xdist workers and in thread pools within a
+    # test; pulls and extractions into the shared data dir must serialize
+    # across both (flock covers processes and, via separate fds, threads).
+    lock_path = get_data_dir() / ".lock"
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 def _decompress_archive(filename: str | Path) -> Path:
     target_dir = get_data_dir()
     filename_path = Path(filename)
-    with tarfile.open(filename_path, "r:gz") as tar:
-        tar.extractall(target_dir)
-    return target_dir / filename_path.name.replace(".tar.gz", "")
+    dest = target_dir / filename_path.name.replace(".tar.gz", "")
+    # Extract to a temp dir and rename into place: get_data's fast path checks
+    # existence without the lock, so a partial extraction must never be visible
+    # at the final path.
+    tmp_dir = Path(tempfile.mkdtemp(prefix=".extract-", dir=target_dir))
+    try:
+        with tarfile.open(filename_path, "r:gz") as tar:
+            tar.extractall(tmp_dir)
+        (tmp_dir / dest.name).rename(dest)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return dest
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
@@ -301,7 +328,10 @@ def get_data(name: str | Path) -> Path:
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
     # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    with _fetch_lock():
+        archive_path = data_dir / archive_name
+        if not archive_path.exists():  # another process may have won the lock first
+            archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
 
     # return full path including nested components
     if nested_path:

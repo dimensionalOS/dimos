@@ -186,6 +186,9 @@ pytest -s dimos/path/to/tool_file.py
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
+* `self_hosted_serial`: like `self_hosted`, but must not run concurrently with other tests (GPU,
+  exclusive hardware/display). CI runs these in a serial step while the rest of the self-hosted
+  suite runs in parallel under xdist.
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.

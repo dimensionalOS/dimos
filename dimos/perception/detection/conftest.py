@@ -220,7 +220,11 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
         if lidar_frame is None:
             raise ValueError("No lidar frame found")
 
-        camera_transform = moment["tf"].get("camera_optical", lidar_frame.frame_id)
+        # Look up at this moment's timestamp: the session tf is shared by every
+        # test file on an xdist worker, so "latest" depends on which file ran first.
+        camera_transform = moment["tf"].get(
+            "camera_optical", lidar_frame.frame_id, moment["odom_frame"].ts
+        )
         if camera_transform is None:
             raise ValueError("No camera_optical transform in tf")
 
@@ -257,8 +261,10 @@ def object_db_module(get_moment):
         # Process 2D detections
         imageDetections2d = module2d.process_image_frame(moment["image_frame"])
 
-        # Get camera transform
-        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
+        # Get camera transform at this moment's timestamp (see get_moment_3dpc)
+        camera_transform = moment["tf"].get(
+            "camera_optical", moment["lidar_frame"].frame_id, moment["odom_frame"].ts
+        )
 
         # Process 3D detections
         imageDetections3d = module3d.process_frame(

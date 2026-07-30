@@ -28,6 +28,8 @@ from dimos.utils.data import get_data
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
 
+pytestmark = pytest.mark.self_hosted_serial
+
 
 # You can also run lcm-spy to confirm that messages are being published
 
@@ -39,7 +41,6 @@ if TYPE_CHECKING:
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -99,7 +100,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
@@ -156,7 +156,6 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
         (MoondreamVlModel, "Moondream"),
     ],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_multi optimization - single image, multiple queries."""
@@ -207,7 +206,6 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
         (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
 )
-@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_resize(
     model_class: "type[VlModel]",

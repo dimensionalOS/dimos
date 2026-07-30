@@ -29,6 +29,8 @@ PointStamped.msg_name = "geometry_msgs.PointStamped"
 from dimos.utils.testing.collector import CallbackCollector
 from dimos.utils.testing.replay import TimedSensorReplay
 
+pytestmark = pytest.mark.self_hosted_serial
+
 
 def ros_node():
     ros = DimosROS()
@@ -70,7 +72,6 @@ def test_basic_conversion(publisher, subscriber):
 
 
 @pytest.mark.skipif_no_ros
-@pytest.mark.self_hosted
 def test_pointcloud2_pubsub(publisher, subscriber):
     """Test PointCloud2 publish/subscribe through ROS.
 

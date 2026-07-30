@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 from pathlib import Path
 import subprocess
+import tarfile
+import time
 
 import pytest
 
@@ -415,3 +418,36 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+def test_get_data_concurrent_extraction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent get_data callers must never observe a partially-extracted archive."""
+    src_dir = tmp_path / "src" / "bigdata"
+    src_dir.mkdir(parents=True)
+    for i in range(200):
+        (src_dir / f"f{i:03d}.txt").write_text(str(i))
+    archive = tmp_path / "src" / "bigdata.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(src_dir, arcname="bigdata")
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(data, "get_data_dir", lambda extra_path=None: data_dir)
+
+    pulls: list[str | Path] = []
+
+    def fake_pull(filename: str | Path) -> Path:
+        pulls.append(filename)
+        time.sleep(0.05)  # widen the race window
+        return archive
+
+    monkeypatch.setattr(data, "_pull_lfs_archive", fake_pull)
+
+    def fetch(_: int) -> int:
+        return len(list(data.get_data("bigdata").iterdir()))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(fetch, range(8)))
+
+    assert counts == [200] * 8
+    assert len(pulls) == 1

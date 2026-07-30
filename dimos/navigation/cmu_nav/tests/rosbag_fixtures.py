@@ -22,11 +22,13 @@ then capturing and comparing outputs with deviation scores.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import threading
 import time
-from typing import Any
+from typing import IO, Any
 
 import lcm as lcmlib
 import numpy as np
@@ -172,24 +174,47 @@ class NativeProcessRunner:
     binary_path: str
     args: list[str]
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
+    _stderr_file: IO[bytes] | None = field(default=None, repr=False)
 
     def start(self, capture_stderr: bool = False) -> None:
+        # Spool stderr to a file, never a PIPE: nothing drains the pipe while
+        # the test runs, so a binary that logs >64KB would block on write and
+        # silently stop processing.
+        stderr: int | IO[bytes] = subprocess.DEVNULL
+        if capture_stderr:
+            self._stderr_file = tempfile.TemporaryFile()
+            stderr = self._stderr_file
         self.process = subprocess.Popen(
             [self.binary_path, *self.args],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
+            stderr=stderr,
             start_new_session=True,
         )
 
     def stop(self, timeout: float = 3.0) -> None:
-        if self.process is not None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-            self.process = None
+        if self.process is None:
+            return
+        already_dead = self.process.poll() is not None
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        returncode = self.process.returncode
+        self.process = None
+        if self._stderr_file is not None:
+            self._stderr_file.seek(0, os.SEEK_END)
+            size = self._stderr_file.tell()
+            self._stderr_file.seek(max(0, size - 8192))
+            tail = self._stderr_file.read().decode(errors="replace")
+            self._stderr_file.close()
+            self._stderr_file = None
+            state = "had already exited" if already_dead else "stopped"
+            logger.info(
+                f"{Path(self.binary_path).name} {state} with code {returncode}; "
+                f"stderr tail ({size} bytes total):\n{tail}"
+            )
 
     @property
     def is_running(self) -> bool:

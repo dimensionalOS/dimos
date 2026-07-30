@@ -405,7 +405,7 @@ class TestSensorOffset:
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
 
 
-@pytest.mark.self_hosted
+@pytest.mark.self_hosted_serial
 @pytest.mark.skipif(not _is_linux_x86, reason="Unity binary requires Linux x86_64")
 @pytest.mark.skipif(not _has_display, reason="Unity requires DISPLAY (X11)")
 class TestLiveUnity:
