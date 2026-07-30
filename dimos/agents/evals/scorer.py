@@ -56,7 +56,13 @@ import math
 from pathlib import Path
 from typing import Any
 
-from dimos.agents.evals.contracts import AnswerRecord, Outcome, QuestionSpec, ScoreResult
+from dimos.agents.evals.contracts import (
+    AnswerRecord,
+    Outcome,
+    QuestionSpec,
+    RetrievalRecord,
+    ScoreResult,
+)
 
 #: Outcomes that report what the agent did. These are the results the rates
 #: below are computed over: each one is a choice the agent made (or declined to
@@ -114,12 +120,24 @@ class RunObservation:
     ``agent_wall_time_s`` is the turn alone; ``total_wall_time_s`` includes
     building the coordinator (dominated by loading CLIP in the memory worker),
     which is harness cost and must not be reported as model latency.
+
+    ``run_id`` is the stamp of the sweep this observation belongs to; it travels
+    onto the ``AnswerRecord`` so repeated runs of one configuration stay
+    distinguishable in a shard directory.
+
+    ``retrievals`` is the one field on this record that nothing here classifies,
+    scores or aggregates: it is carried through to the ``AnswerRecord`` verbatim
+    so the shard records *what the memory returned*, and is deliberately absent
+    from :func:`classify_outcome` and :func:`score`. See
+    ``contracts.RetrievalRecord`` for why observability is kept strictly out of
+    the verdict.
     """
 
     question_id: str
     model_id: str
     prompt_id: str
     prompt_sha256: str
+    run_id: str
     finished: bool
     agent_wall_time_s: float
     total_wall_time_s: float
@@ -127,6 +145,7 @@ class RunObservation:
     tool_queries: list[str] = field(default_factory=list)
     tool_errors: list[str] = field(default_factory=list)
     harness_error: str | None = None
+    retrievals: list[RetrievalRecord] = field(default_factory=list)
 
 
 def prompt_sha256(system_prompt: str | None) -> str:
@@ -162,7 +181,7 @@ def classify_outcome(observation: RunObservation) -> Outcome:
     against a configuration would price infrastructure flakiness as spatial
     ability.
 
-    >>> classify_outcome(RunObservation("q", "m", "p", "s", True, 1.0, 2.0))
+    >>> classify_outcome(RunObservation("q", "m", "p", "s", "run-1", True, 1.0, 2.0))
     'no_prediction'
     """
     if observation.harness_error is not None:
@@ -201,6 +220,9 @@ def build_answer_record(observation: RunObservation) -> AnswerRecord:
     The first goal is the scored one; when several were set they are all listed
     in ``error`` so the shard keeps the evidence for ``multiple_predictions``.
     ``wall_time_s`` is the turn only -- coordinator build time is harness cost.
+
+    ``retrievals`` is passed straight through: it is diagnostic observability and
+    takes no part in the outcome or the score.
     """
     outcome = classify_outcome(observation)
     first = observation.goals[0] if observation.goals else None
@@ -216,8 +238,10 @@ def build_answer_record(observation: RunObservation) -> AnswerRecord:
         model_id=observation.model_id,
         prompt_id=observation.prompt_id,
         prompt_sha256=observation.prompt_sha256,
+        run_id=observation.run_id,
         wall_time_s=observation.agent_wall_time_s,
         error=_observation_detail(observation, outcome),
+        retrievals=list(observation.retrievals),
     )
 
 
@@ -231,7 +255,7 @@ def score(question: QuestionSpec, answer: AnswerRecord) -> ScoreResult:
     >>> q = QuestionSpec("q1", "sofa", "couch", "Where is the sofa?",
     ...                  1.0, 2.0, 0.4, 3, 0.2, "renamed", threshold_m=1.5)
     >>> a = AnswerRecord("q1", "predicted", 1.5, 2.5, 0.0, 1, True, ["sofa"],
-    ...                  "gpt-5.6-luna", "baseline", "0" * 64, 3.2)
+    ...                  "gpt-5.6-luna", "baseline", "0" * 64, "run-1", 3.2)
     >>> r = score(q, a)
     >>> r.passed, round(r.error_m, 3)
     (True, 0.707)
@@ -338,8 +362,9 @@ def errors_m(results: Iterable[ScoreResult]) -> list[float]:
 #     {"kind": "answer", "data": {...AnswerRecord...}}
 #     {"kind": "score",  "data": {...ScoreResult...}}
 #
-# A configuration (one point series in the plot) is identified by the
-# ``(model_id, prompt_id)`` pair carried on every answer record.
+# A configuration (one row of the plot) is identified by the
+# ``(model_id, prompt_id)`` pair carried on every answer record; ``run_id``
+# separates repeated sweeps of that same pair, which the row aggregates.
 
 _KIND_ANSWER = "answer"
 _KIND_SCORE = "score"
@@ -385,7 +410,10 @@ def read_shard(path: str | Path) -> list[ScoredCase]:
         envelope = json.loads(line)
         kind, data = envelope.get("kind"), envelope.get("data")
         if kind == _KIND_ANSWER:
-            answer = AnswerRecord(**data)
+            # `from_dict`, not `AnswerRecord(**data)`: the nested `retrievals`
+            # have to be rebuilt as records rather than left as plain dicts, or a
+            # shard read back compares unequal to the one that was written.
+            answer = AnswerRecord.from_dict(data)
             if answer.question_id in answers:
                 raise ValueError(
                     f"{path}:{lineno}: duplicate answer for question "
@@ -420,25 +448,32 @@ def read_shards(paths: Iterable[str | Path]) -> list[ScoredCase]:
     """Read several shard files into one flat list, in the order given.
 
     Raises ``ValueError`` when two files carry the same
-    ``(model_id, prompt_id, question_id)``. ``read_shard`` already refuses a
-    repeat *within* one file, but the documented workflow renders a whole shard
-    directory, and a re-run appends new timestamped files next to the old ones
-    rather than replacing them. Silently concatenating both would double that
-    configuration's denominator and average two different runs into one row of
-    the figure -- a figure that is wrong in a way nobody can see.
+    ``(model_id, prompt_id, question_id, run_id)``. ``read_shard`` already
+    refuses a repeat *within* one file; this is the same rule across a directory,
+    because the documented workflow renders one, and a crashed-and-restarted
+    case appends a new timestamped file next to its half-written predecessor.
+    Silently concatenating both would count that question twice inside one run --
+    a figure that is wrong in a way nobody can see.
+
+    ``run_id`` is part of the key, so *deliberately* repeating a configuration
+    is not an error: two runs of one arm are two measurements of a stochastic
+    agent, and the renderer plots them as one row that says ``runs 2``. What
+    stays an error is the same run appearing twice.
     """
     cases: list[ScoredCase] = []
-    seen: dict[tuple[str, str, str], Path] = {}
+    seen: dict[tuple[str, str, str, str], Path] = {}
     for raw_path in paths:
         path = Path(raw_path)
         for case in read_shard(path):
-            key = (case.answer.model_id, case.answer.prompt_id, case.answer.question_id)
+            answer = case.answer
+            key = (answer.model_id, answer.prompt_id, answer.question_id, answer.run_id)
             first = seen.get(key)
             if first is not None:
                 raise ValueError(
                     f"{first} and {path} both hold question {key[2]!r} for "
-                    f"configuration ({key[0]!r}, {key[1]!r}); rendering both would "
-                    "count it twice -- render one run's shards at a time"
+                    f"configuration ({key[0]!r}, {key[1]!r}) in run {key[3]!r}; "
+                    "rendering both would count it twice -- a repeated measurement "
+                    "needs its own run_id"
                 )
             seen[key] = path
             cases.append(case)

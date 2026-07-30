@@ -8,9 +8,9 @@
     "note": "structural pillar, and the scene has several similar ones"
   },
   "bookstore": {
-    "status": "renamed",
+    "status": "dropped",
     "display_name": "liquor shelf",
-    "note": "backlit bottle display shelf; the label is wrong but the contents are unambiguous"
+    "note": "backlit bottle display shelf; the label is wrong but the contents are unambiguous. Dropped because it sits centrally among the other questions: teacher viewpoints of the houseplant, the storage boxes and the snack rack all fall inside its pass radius (1.15 m / 2.65 m / 2.67 m vs radius 2.689 m), so a wrong-object retrieval could pass it. Dropped per the confusability gate; restore it as 'renamed' if the pass radius ever stops being a viewing distance."
   },
   "computer tower": {
     "status": "dropped",
@@ -73,9 +73,9 @@
     "note": "corrugated shutter surface, not an askable object"
   },
   "server room": {
-    "status": "renamed",
+    "status": "dropped",
     "display_name": "snack rack",
-    "note": "shelf bay with hanging snack packets"
+    "note": "shelf bay with hanging snack packets; the label and the crop are fine, but it is the most confusable row in the table: viewpoints of the houseplant (2.07 m), the storage boxes (1.96 m) and the row of white bottles (1.74 m) all fall inside its 2.24 m radius, and its own viewpoints fall inside the bottle shelf's. Dropped per the confusability gate; restore it as 'renamed' if the pass radius ever stops being a viewing distance."
   },
   "shaver": {
     "status": "dropped",

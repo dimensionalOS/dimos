@@ -27,8 +27,8 @@ a *tool-routing and query-formulation comparison*, not a ranking of spatial
 ability -- the coordinates come from ``SpatialMemory``'s deterministic CLIP
 top-1, and the model only decides whether to call the tool, what query to
 send, and how many times. What it asserts is correspondingly narrow: every
-question produced a paired, attributable record, and none of them failed
-inside the harness. The numbers live in the shards.
+question produced a paired, attributable record, and none of them came back as
+something other than a measurement of the agent. The numbers live in the shards.
 
 **The smoke** (``test_full_chain_pipeline``) needs no key. It ingests a thin
 slice of the replay, asks one question with a recorded model transcript, and
@@ -47,7 +47,9 @@ Running the sweep locally::
     DIMOS_EVAL_SHARD_DIR=.ignore.eval-shards \\
     uv run pytest dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted
 
-    # then turn the four shards into the one figure
+    # then turn the four shards into the one figure. Thresholds are per question
+    # (questions.THRESHOLD_MARGIN_M); --threshold-m draws the cap as a reference
+    # line, not the line any single dot was scored against.
     uv run python -m dimos.agents.evals.render \\
         --shards .ignore.eval-shards --out error_distribution.png --threshold-m 3.5
 
@@ -74,6 +76,7 @@ from dimos.agents.evals.contracts import QuestionSpec
 from dimos.agents.evals.questions import slugify
 from dimos.agents.evals.render import MAX_PNG_BYTES, render_figure
 from dimos.agents.evals.scorer import (
+    BROKEN_OUTCOMES,
     RunObservation,
     append_shard,
     broken_count,
@@ -151,20 +154,32 @@ def load_question_set(path: Path = QUESTIONS_PATH) -> list[QuestionSpec]:
     return [QuestionSpec.from_json(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def shard_path(directory: Path, model_id: str, prompt_id: str) -> Path:
+def shard_path(directory: Path, model_id: str, prompt_id: str, run_id: str) -> Path:
     """A shard filename no other case can produce.
 
     Contract: one file per pytest case. The configuration names the file so a
-    directory of shards is readable without opening them, and the timestamp and
-    pid keep repeated runs (and parallel workers) from appending to each other.
+    directory of shards is readable without opening them, and the run stamp --
+    the same ``run_id`` the records inside carry -- keeps repeated runs (and
+    parallel workers) from appending to each other. Filename and content agree by
+    construction, so a shard can be attributed to its run without opening it.
     """
-    stamp = time.strftime("%Y%m%dT%H%M%S")
-    return directory / f"{slugify(model_id)}__{prompt_id}__{stamp}-{os.getpid()}.jsonl"
+    return directory / f"{slugify(model_id)}__{prompt_id}__{run_id}.jsonl"
 
 
 @pytest.fixture(scope="module")
 def question_set() -> list[QuestionSpec]:
     return load_question_set()
+
+
+@pytest.fixture(scope="module")
+def run_id() -> str:
+    """One stamp for the whole sweep: its cases are arms of a single run.
+
+    Module-scoped on purpose. The four (model, prompt) cases are one sweep, and
+    the renderer aggregates by ``run_id`` -- giving each case its own would make
+    a repeat of the sweep indistinguishable from the sweep itself.
+    """
+    return f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
 
 
 @pytest.fixture
@@ -204,7 +219,7 @@ def shard_dir(tmp_path: Path) -> Path:
 
 @pytest.mark.self_hosted
 @pytest.mark.skipif_no_openai
-# Six questions x (a real LLM turn + a coordinator build that loads CLIP in the
+# Every question x (a real LLM turn + a coordinator build that loads CLIP in the
 # memory worker) outlasts the default per-test timeout.
 @pytest.mark.timeout(2400)
 @pytest.mark.parametrize("model_id", MODEL_IDS)
@@ -214,6 +229,7 @@ def test_goal_selection_sweep(
     question_set: list[QuestionSpec],
     ingested_store: tuple[str, str],
     shard_dir: Path,
+    run_id: str,
     model_id: str,
     prompt_id: str,
     system_prompt: str,
@@ -222,12 +238,12 @@ def test_goal_selection_sweep(
 
     This case is one row of the figure. It asserts only what would mean the
     measurement is invalid -- a missing question, a record attributed to the
-    wrong configuration, or a failure inside the harness rather than in the
+    wrong configuration, or a failure of the *measurement* rather than of the
     agent. Whether the agent finds the elevator is the *result*, and lives in
     the shard, not in an assertion.
     """
     db_path, collection = ingested_store
-    out = shard_path(shard_dir, model_id, prompt_id)
+    out = shard_path(shard_dir, model_id, prompt_id, run_id)
 
     for question in question_set:
         observation = spatial_eval_setup(
@@ -236,6 +252,7 @@ def test_goal_selection_sweep(
             prompt_id=prompt_id,
             system_prompt=system_prompt,
             model=model_id,
+            run_id=run_id,
             db_path=db_path,
             collection_name=collection,
         )
@@ -254,8 +271,21 @@ def test_goal_selection_sweep(
     assert {case.answer.model_id for case in cases} == {model_id}
     assert {case.answer.prompt_id for case in cases} == {prompt_id}
     assert {case.answer.prompt_sha256 for case in cases} == {prompt_sha256(system_prompt)}
-    broken = [case.result.reason for case in cases if case.result.outcome == "harness_error"]
-    assert broken == [], f"the harness failed, so these questions were never measured: {broken}"
+    assert {case.answer.run_id for case in cases} == {run_id}
+    # Every BROKEN_OUTCOMES member, not just harness_error: a turn that never
+    # finished and a skill that raised are equally not measurements of the agent,
+    # and a row assembled from them would be a row of missing data wearing a
+    # pass rate. The rates already exclude them, which is exactly why the run has
+    # to be repeated rather than reported.
+    broken = [
+        f"{case.answer.question_id}: {case.result.reason}"
+        for case in cases
+        if case.result.outcome in BROKEN_OUTCOMES
+    ]
+    assert broken == [], (
+        f"{len(broken)} question(s) were never measured, so this run has to be "
+        f"repeated rather than read: {broken}"
+    )
 
 
 @pytest.mark.self_hosted
@@ -265,6 +295,7 @@ def test_goal_selection_sweep(
 def test_full_chain_pipeline(
     spatial_eval_setup: Callable[..., RunObservation],
     question_set: list[QuestionSpec],
+    run_id: str,
     tmp_path: Path,
 ) -> None:
     """Replay -> store -> agent -> goal -> score -> shard -> figure, with no API key.
@@ -276,6 +307,13 @@ def test_full_chain_pipeline(
     skill sets is captured out of its worker process, and that the result
     survives scoring, the shard format and the renderer. It cannot fail because
     a model is bad, and it cannot pass because a model is good.
+
+    It therefore validates the *mechanism*, not the answer, and deliberately does
+    not assert ``passed``: the store is a thin slice of the replay, so the top-1
+    frame CLIP retrieves for "elevator door" may well be metres from the
+    reference, and a scoring FAIL is an acceptable outcome of a working chain.
+    Asserting the verdict here would make the smoke lane fail whenever the slice
+    got thinner, which is a property of the fixture, not a regression.
 
     The store is a thin slice of the replay (``SMOKE_SAMPLE_HZ``), ingested
     through the shipped ``ingest.py`` entry point in its own process: that is
@@ -320,6 +358,7 @@ def test_full_chain_pipeline(
         prompt_id="smoke",
         system_prompt=PROMPT_SPATIAL,
         model_fixture=SMOKE_MODEL_FIXTURE,
+        run_id=run_id,
         db_path=store_dir / "chroma",
         collection_name=dataset,
     )
@@ -332,9 +371,14 @@ def test_full_chain_pipeline(
     figure = render_figure(
         cases, tmp_path / "error_distribution.png", threshold_m=question.threshold_m
     )
+    # The retrieval read-back is logged, never asserted: it is a diagnostic that
+    # must not be able to fail a run (see ``conftest._replay_retrievals``), so
+    # asserting it here would convert exactly the property it is built around
+    # into a gate. What the shard holds is visible in the line below.
     logger.info(
         f"[full chain] {question.question_id}: {result.reason} "
-        f"(ingested {SMOKE_SAMPLE_HZ} Hz slice, {figure.stat().st_size} byte figure)"
+        f"(ingested {SMOKE_SAMPLE_HZ} Hz slice, {figure.stat().st_size} byte figure, "
+        f"retrievals {[(r.query, round(r.x, 3), round(r.y, 3)) for r in answer.retrievals]})"
     )
 
     assert observation.harness_error is None, observation.harness_error

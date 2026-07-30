@@ -54,7 +54,8 @@
     "dropped_envelope_height": 0,
     "dropped_envelope_range": 21,
     "dropped_min_points": 379,
-    "dropped_no_points_in_bbox": 688,
+    "dropped_no_lidar_match": 0,
+    "dropped_no_points_in_detection": 688,
     "frames_detected": 452,
     "frames_too_dark": 588,
     "frames_visited": 1040,
@@ -64,6 +65,8 @@
     "labels_no_qualified_cluster": 115,
     "labels_qualified": 26,
     "location_groups": 19,
+    "measured_from_bbox": 1040,
+    "measured_from_mask": 0,
     "raw_detections": 1728,
     "surviving_measurements": 496
   },
@@ -83,10 +86,10 @@
     "min_gray": 30.0,
     "min_independent_views": 2,
     "min_points": 20,
-    "min_view_dt_s": 1.0,
+    "point_selection": "bbox",
     "sample_hz": 4.0
   },
-  "generated_utc": "2026-07-29T08:04:38+00:00",
+  "generated_utc": "2026-07-30T08:24:15+00:00",
   "generator": "dimos/agents/evals/teacher.py",
   "location_groups": [
     {
@@ -327,7 +330,7 @@
   ],
   "n_references": 26,
   "note": "Human review of these labels is recorded in review.json alongside this file; labels absent from that overlay default to dropped. Labels sharing a location_group are the same physical place under different detector names and must be resolved in review before any of them becomes a question.",
-  "pipeline_version": "spatial-goal-eval/teacher/1",
+  "pipeline_version": "spatial-goal-eval/teacher/2",
   "raw_labels": [
     "arcade machine",
     "beam",
@@ -357,9 +360,9 @@
     "wine cooler"
   ],
   "timing": {
-    "detection_sweep_s": 75.22,
+    "detection_sweep_s": 62.15,
     "lidar_dt_ms_max_abs": 84.0,
-    "wallclock_s": 88.35,
-    "yoloe_inference_ms_median": 141.0
+    "wallclock_s": 68.48,
+    "yoloe_inference_ms_median": 120.9
   }
 }

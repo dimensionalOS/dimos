@@ -24,7 +24,8 @@ globs. Shards are the per-case JSONL files written by
 ``dimos.agents.evals.scorer.append_shard`` -- one file per pytest case, tagged
 lines carrying an ``AnswerRecord`` and a ``ScoreResult`` per question. Each
 ``(model_id, prompt_id)`` pair found across the shards becomes one row of the
-figure.
+figure; repeated runs of one pair (distinct ``run_id``) are aggregated into that
+row rather than split, and the row then reports ``runs n``.
 
 The figure is a per-configuration strip of measured errors (one dot per
 question that produced a goal, a marker at the median) annotated with
@@ -33,6 +34,11 @@ matter as much as the dots, because a configuration that rarely answers can
 otherwise look accurate. The rates divide by the agent-attributable results
 only, so a row that lost questions to the harness also prints ``broken n``:
 the denominator the percentages are over is never left to be guessed at.
+
+The pass threshold is per question (``questions.THRESHOLD_MARGIN_M``), so
+``--threshold-m`` draws one reference line rather than the line each dot was
+scored against; pass or fail per dot is not readable off the figure and is not
+meant to be. The verdicts live in the shards.
 
 Output is checked against the repository's 75 KB large-file limit and the run
 fails if the PNG exceeds it, so a sample figure can be committed alongside the
@@ -87,6 +93,12 @@ def group_by_configuration(
 ) -> OrderedDict[tuple[str, str], list[ScoredCase]]:
     """Group scored cases by configuration, keyed by ``(model_id, prompt_id)``.
 
+    ``run_id`` is deliberately *not* part of the key: repeating a configuration
+    measures the same thing twice, so both runs belong on one row -- every error
+    plotted, the rates over all of them, and the run count in the annotation.
+    Splitting them into two rows would invite reading run-to-run noise as a
+    difference between configurations.
+
     Insertion order is kept so the figure's rows follow the shard order the
     caller passed rather than an arbitrary hash order.
     """
@@ -99,19 +111,24 @@ def group_by_configuration(
 def _summary(cases: Sequence[ScoredCase]) -> str:
     """One-line stats annotation for a configuration row.
 
-    ``n_pred``/``n_total`` counts every case in the row, while the two rates
-    divide by the agent-attributable ones only. ``broken n`` names the
+    ``n_pred``/``n_total`` counts every case in the row -- across runs, so
+    ``n_total`` is the question count times ``runs`` -- while the two rates
+    divide by the agent-attributable ones among them. ``broken n`` names the
     difference, so a row whose percentages are computed over a shrunken sample
     says so; it is omitted when nothing broke, which is the normal case.
+    ``runs n`` appears only when the row aggregates more than one, since a
+    single-run row is the normal case and needs no qualifier.
     """
     results = [case.result for case in cases]
     n_pred = len(errors_m(results))
     n_broken = broken_count(results)
+    n_runs = len({case.answer.run_id for case in cases})
     broken = f"  broken {n_broken}" if n_broken else ""
+    runs = f"  runs {n_runs}" if n_runs > 1 else ""
     return (
         f"n_pred {n_pred}/{len(results)}  "
         f"no-prediction {no_prediction_rate(results):.0%}  "
-        f"pass {pass_rate(results):.0%}{broken}"
+        f"pass {pass_rate(results):.0%}{broken}{runs}"
     )
 
 

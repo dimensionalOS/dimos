@@ -34,10 +34,13 @@ from dimos.agents.evals.render import (
     group_by_configuration,
     render_figure,
 )
-from dimos.agents.evals.scorer import ScoredCase, append_shard
+from dimos.agents.evals.scorer import ScoredCase, append_shard, read_shards
 
 MODELS = ("gpt-5.6-luna", "openai:gpt-4o")
 PROMPTS = ("shipping", "spatial")
+
+#: One sweep's stamp; a repeat of the same configuration carries another.
+RUN_ID = "20260730T091500-4242"
 
 
 def make_case(
@@ -46,6 +49,7 @@ def make_case(
     prompt_id: str = "spatial",
     error_m: float | None = 0.8,
     outcome: Outcome = "predicted",
+    run_id: str = RUN_ID,
 ) -> ScoredCase:
     answer = AnswerRecord(
         question_id=question_id,
@@ -59,6 +63,7 @@ def make_case(
         model_id=model_id,
         prompt_id=prompt_id,
         prompt_sha256="0" * 64,
+        run_id=run_id,
         wall_time_s=3.0,
     )
     result = ScoreResult(
@@ -212,6 +217,40 @@ def test_main_renders_a_directory_of_shards_and_reports_the_counts(
     # Nothing broke, so the annotation does not carry a broken count at all.
     assert "broken" not in printed
     assert out.stat().st_size <= render.MAX_PNG_BYTES
+
+
+def test_two_runs_of_one_configuration_are_one_row(tmp_path: Path) -> None:
+    """Repeating a configuration adds measurements to its row, not a second row.
+
+    Two rows would invite reading run-to-run noise as a difference between
+    configurations, and would halve each row's apparent sample. The annotation
+    says ``runs 2`` so the doubled ``n_total`` is explained rather than
+    surprising, and every error from both runs is plotted.
+    """
+    shards = tmp_path / "shards"
+    for run_id in (RUN_ID, "20260730T104500-4243"):
+        write_shard(
+            shards / f"gpt-5-6-luna__spatial__{run_id}.jsonl",
+            [
+                make_case(f"go2-bigoffice-q{index}", error_m=error_m, run_id=run_id)
+                for index, error_m in enumerate((0.35, 0.9, 1.4))
+            ],
+        )
+    out = tmp_path / "error_distribution.png"
+
+    assert render.main(["--shards", str(shards), "--out", str(out), "--threshold-m", "1.5"]) == 0
+
+    cases = read_shards(collect_shard_paths([str(shards)]))
+    grouped = group_by_configuration(cases)
+    assert list(grouped) == [("gpt-5.6-luna", "spatial")]
+    assert render._summary(cases) == "n_pred 6/6  no-prediction 0%  pass 100%  runs 2"
+    assert out.stat().st_size <= render.MAX_PNG_BYTES
+
+
+def test_a_single_run_row_says_nothing_about_runs() -> None:
+    """``runs 1`` is the normal case, so it is left out rather than stated."""
+    cases = [make_case(f"q{index}", error_m=0.4) for index in range(3)]
+    assert render._summary(cases) == "n_pred 3/3  no-prediction 0%  pass 100%"
 
 
 def test_the_annotation_names_the_measurements_the_rates_dropped() -> None:

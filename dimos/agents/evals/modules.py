@@ -152,6 +152,14 @@ class RecordingNavigationSkillContainer(NavigationSkillContainer):
     the decorator is re-applied with the same capabilities, and the docstring
     -- which *is* the tool description the model sees -- is inherited verbatim
     rather than copied, so it cannot drift from the shipping skill.
+
+    "Same capabilities" is a hand-copy of the shipping decorator's arguments, and
+    the eval is only measuring the shipping tool as long as it stays one: a
+    change over there (a new capability, or the ``background`` lifecycle the TODO
+    in ``navigation.py`` asks for) would otherwise leave the eval exercising a
+    tool the MCP server treats differently. ``test_harness.py`` pins the two sets
+    of ``__skill_*__`` attributes to each other so that drift fails a test
+    instead of quietly changing what the eval measures.
     """
 
     def __init__(self, **kwargs: Any) -> None:

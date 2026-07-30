@@ -37,10 +37,14 @@ every value actually used is echoed into ``manifest.json``:
    — the Go2 front camera is equidistant, and the points are projected directly
    rather than rectified first
 6. gather the points landing inside the bbox shrunk by ``--bbox-shrink`` toward
-   its center, because bbox corners are mostly background
+   its center, because bbox corners are mostly background. The weights are a
+   ``-seg`` variant and every detection does carry a pixel-level mask, which
+   would be the tighter claim — ``--point-selection mask`` uses it — but as
+   shipped those masks are not aligned with the frame; see
+   :data:`PointSelection` for the measurement
 7. drop points below ``--ground-z`` in the map frame *before* the point-count
-   and spread gates: the floor is the largest single source of in-bbox points
-   and otherwise drags every reference down onto z≈0
+   and spread gates: the floor is the largest single source of in-detection
+   points and otherwise drags every reference down onto z≈0
 8. require ``--min-points`` of them and a depth IQR within ``--max-iqr``; the
    candidate position is the map-frame median of the [p25,p75] depth inliers
 9. keep only candidates inside the envelope (``--max-range``, ``--max-height``),
@@ -48,10 +52,9 @@ every value actually used is echoed into ``manifest.json``:
    sensibly be asked to drive to
 10. cluster a label's candidates greedily within ``--cluster-radius``, and
     qualify a cluster only if it has at least ``--min-independent-views``
-    pairwise-independent views (the robot moved ``--min-baseline`` between them,
-    or ``--min-view-dt`` elapsed) and an XY spread within ``--max-spread``.
-    Independence is what stops a fast sampling rate from manufacturing
-    agreement out of near-duplicate frames.
+    pairwise-independent views (the robot moved ``--min-baseline`` between them)
+    and an XY spread within ``--max-spread``. Independence is what stops a fast
+    sampling rate from manufacturing agreement out of near-duplicate frames.
 11. emit a label only if *exactly one* of its clusters qualifies: two qualified
     clusters mean the scene holds two instances a question could not
     distinguish, so the label is dropped rather than guessed at
@@ -65,9 +68,14 @@ The output is a *replay-derived reference*, not ground truth — geometric
 concentration is not semantic correctness. Labels therefore pass through a
 human review overlay before they become questions (see ``questions.py``).
 
-Determinism: the same replay and the same flags produce a byte-identical
-``refs.jsonl``. Only the timing and timestamp fields of ``manifest.json`` vary
-between runs, which is why the two artifacts are separate files.
+Determinism: on one machine, the same replay and the same flags produce a
+byte-identical ``refs.jsonl`` — every gate is a pure function of the recorded
+data, and nothing samples on wall-clock. It is *not* a claim across machines:
+the positions are medians of detector output, and the detector's own output
+depends on the device it ran on (``cpu`` vs. ``cuda``) and on the torch build,
+which the manifest records for exactly that reason. Only the timing and
+timestamp fields of ``manifest.json`` vary between runs on one machine, which
+is why the two artifacts are separate files.
 """
 
 from __future__ import annotations
@@ -83,7 +91,7 @@ from pathlib import Path
 import statistics
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import cv2
 import numpy as np
@@ -100,15 +108,10 @@ if TYPE_CHECKING:
     # gate helpers below (and `--help`) have no use for.
     from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector
 
-# Ultralytics pip-installs missing extras the first time a model runs. A
-# reference generator must never mutate its own environment mid-sweep, so this
-# is set before the deferred YOLOe import in `_load_detector`.
-os.environ["YOLO_AUTOINSTALL"] = "false"
-
 #: Bumped whenever a change to this file can move a reference position. It is
 #: recorded in the manifest, so a table can always be traced back to the code
 #: that produced it.
-PIPELINE_VERSION = "spatial-goal-eval/teacher/1"
+PIPELINE_VERSION = "spatial-goal-eval/teacher/2"
 
 DEFAULT_DATASET = "go2_bigoffice"
 DEFAULT_YOLOE_MODEL = "yoloe-11s-seg-pf.pt"
@@ -138,6 +141,33 @@ _FALLBACK_D = (
 _FALLBACK_SIZE = (1280, 720)
 
 
+#: How the points belonging to one detection are chosen. ``"bbox"`` takes the
+#: bbox shrunk toward its center; ``"mask"`` takes the detector's own
+#: segmentation mask, falling back to the shrunk bbox for a detection that
+#: carries no usable one.
+#:
+#: ``"bbox"`` is the default even though the mask is the tighter claim, and the
+#: reason is measured rather than assumed. The prompt-free weights *are* a
+#: ``-seg`` variant: every detection arrives as a ``Detection2DSeg`` with an
+#: image-sized 0/255 mask. But those masks are built by resizing ultralytics'
+#: ``masks.data`` — which lives in the **letterboxed** model-input space —
+#: straight to the image size (``Detection2DSeg.from_ultralytics_result``), so
+#: the padding is stretched along with the content. On this 1280x720 recording
+#: the mask sits 12-19 px *below* the object: over 45 detections the mask's top
+#: edge is a median +12.0 px from its own bbox's top edge (up to +19 px, and
+#: detections whose bbox starts at y=0 have masks starting at y=19), while the
+#: left and right edges agree to within a few pixels. A vertical offset is
+#: exactly what a LiDAR point test cannot absorb, and switching this default to
+#: ``"mask"`` on this replay stops four labels qualifying at all (``bookstore``,
+#: ``elevator door``, ``organization``, ``server room``; ``min_points`` drops rise
+#: 379 -> 454) and moves ``window sill`` 1.9 m -- which costs two of the four
+#: committed questions outright and moves a third. The flag stays so the mask path
+#: is one flag away once the alignment is fixed in ``dimos/perception``, and so
+#: that measurement can be reproduced.
+PointSelection = Literal["mask", "bbox"]
+POINT_SELECTIONS: tuple[PointSelection, ...] = ("mask", "bbox")
+
+
 @dataclass(frozen=True)
 class GateParams:
     """Every threshold in the pipeline, in pipeline order.
@@ -145,12 +175,19 @@ class GateParams:
     The defaults are the frozen values the shipped reference table was
     generated with. The whole object is serialized into the manifest, so a
     table always travels with the gates that produced it.
+
+    ``point_selection`` is the one member that is not a threshold: it names
+    *which pixels of a detection* may contribute points, and the manifest funnel
+    additionally reports how many measurements each path actually produced (a
+    mask-mode run still falls back per detection, so the configured mode alone
+    does not say what happened).
     """
 
     sample_hz: float = 4.0
     min_gray: float = 30.0
     conf: float = 0.25
     lidar_tolerance_s: float = 0.5
+    point_selection: PointSelection = "bbox"
     bbox_shrink: float = 0.15
     front_z_m: float = 0.05
     ground_z_m: float = 0.10
@@ -160,7 +197,6 @@ class GateParams:
     max_height_m: float = 1.2
     cluster_radius_m: float = 0.75
     min_baseline_m: float = 0.3
-    min_view_dt_s: float = 1.0
     min_independent_views: int = 2
     max_spread_m: float = 0.5
     link_radius_m: float = 0.75
@@ -186,8 +222,15 @@ class Camera:
 class Measurement:
     """One detection that survived projection: a label with a map-frame position.
 
-    Constructing one implies at least one non-ground LiDAR point landed in the
-    shrunk bbox, so every gate downstream can assume a position exists.
+    Constructing one implies at least one non-ground LiDAR point landed on the
+    detection, so every gate downstream can assume a position exists.
+
+    The last three fields are the audit trail ``--crops`` draws, not inputs to
+    any gate: ``point_source`` says whether the mask or the bbox fallback chose
+    the points, ``mask_outline`` is the mask's external contours in pixel
+    coordinates, and ``inlier_uv`` holds the pixels of exactly the points whose
+    map-frame median became ``world_xyz``. A human can therefore check the
+    *geometry* of a reference on the crop, not only the plausibility of a label.
     """
 
     ts: float
@@ -201,6 +244,9 @@ class Measurement:
     depth_m: float
     depth_iqr_m: float
     range_m: float
+    point_source: PointSelection
+    mask_outline: tuple[tuple[tuple[int, int], ...], ...]
+    inlier_uv: tuple[tuple[float, float], ...]
 
 
 @dataclass(frozen=True)
@@ -250,7 +296,14 @@ class ScanStats:
     frames_without_lidar: int = 0
     raw_detections: int = 0
     below_conf: int = 0
-    no_points_in_bbox: int = 0
+    #: Detections on a frame that had no LiDAR message within the tolerance.
+    #: They were counted into ``raw_detections`` and can never become
+    #: measurements, so the funnel has to name them or its arithmetic silently
+    #: stops adding up on any recording with a LiDAR gap.
+    no_lidar_match: int = 0
+    no_points_in_detection: int = 0
+    measured_from_mask: int = 0
+    measured_from_bbox: int = 0
     sweep_s: float = 0.0
     inference_s: list[float] = field(default_factory=list)
     lidar_dt_ms: list[float] = field(default_factory=list)
@@ -367,44 +420,87 @@ def shrink_bbox(
     return cx - half_w, cy - half_h, cx + half_w, cy + half_h
 
 
-def measure_bbox(
+@dataclass(frozen=True)
+class PointMeasurement:
+    """The points one detection claimed, and the position they voted for."""
+
+    n_points: int
+    depth_median_m: float
+    depth_iqr_m: float
+    world_xyz: tuple[float, float, float]
+    #: Which rule picked the points -- ``"mask"`` or the ``"bbox"`` fallback.
+    source: PointSelection
+    #: Pixels of the [p25, p75] depth inliers, i.e. of exactly the points whose
+    #: median is ``world_xyz``. Carried for the review crops.
+    inlier_uv: tuple[tuple[float, float], ...]
+
+
+def points_on_mask(uv: NDArray[np.float64], mask: NDArray[np.uint8]) -> NDArray[np.bool_]:
+    """Which projected pixels land on *mask*.
+
+    The pixel is the nearest integer sample of the mask, clipped to its bounds:
+    ``Projector.project`` already dropped everything outside ``[0, width)`` x
+    ``[0, height)``, so the clip only catches a coordinate that rounds up onto
+    the far edge.
+    """
+    height, width = mask.shape[:2]
+    cols = np.clip(np.rint(uv[:, 0]).astype(np.intp), 0, width - 1)
+    rows = np.clip(np.rint(uv[:, 1]).astype(np.intp), 0, height - 1)
+    return np.asarray(mask[rows, cols] > 0)
+
+
+def measure_detection(
     uv: NDArray[np.float64],
     depth: NDArray[np.float64],
     world: NDArray[np.float64],
     bbox: tuple[float, float, float, float],
+    mask: NDArray[np.uint8] | None,
     params: GateParams,
-) -> tuple[int, float, float, tuple[float, float, float]] | None:
-    """Estimate the map-frame position of whatever *bbox* contains.
+) -> PointMeasurement | None:
+    """Estimate the map-frame position of whatever one detection covers.
 
-    Returns ``(n_points, median_depth, depth_iqr, world_xyz)``, or ``None`` when
-    no non-ground point landed in the shrunk box. The position is the map-frame
-    median of the points whose optical depth falls in [p25, p75]: trimming in
-    depth stops a foreground railing or a background wall inside the box from
-    pulling the estimate, and needs no fisheye unprojection.
+    Returns ``None`` when no non-ground point landed on the detection. The
+    position is the map-frame median of the points whose optical depth falls in
+    [p25, p75]: trimming in depth stops a foreground railing or a background
+    wall from pulling the estimate, and needs no fisheye unprojection.
+
+    Which pixels count as "on the detection" is the mask when there is one and
+    ``params.point_selection`` asks for it, and the shrunk bbox otherwise. The
+    mask *would* be much the tighter claim -- a bbox around a shelf bay is mostly
+    the aisle in front of it -- which is why the path exists at all; see
+    :data:`PointSelection` for why it is not the default on this recording.
+    Nothing here intersects the two: a mask is either trusted as the detector's
+    own pixel-level answer or not used, and mixing them would hide which one an
+    odd position came from.
     """
-    x1, y1, x2, y2 = shrink_bbox(bbox, params.bbox_shrink)
-    inside = (
-        (uv[:, 0] >= x1)
-        & (uv[:, 0] <= x2)
-        & (uv[:, 1] >= y1)
-        & (uv[:, 1] <= y2)
-        & (world[:, 2] >= params.ground_z_m)
-    )
+    usable_mask = mask if params.point_selection == "mask" else None
+    source: PointSelection
+    if usable_mask is not None:
+        selected = points_on_mask(uv, usable_mask)
+        source = "mask"
+    else:
+        x1, y1, x2, y2 = shrink_bbox(bbox, params.bbox_shrink)
+        selected = (uv[:, 0] >= x1) & (uv[:, 0] <= x2) & (uv[:, 1] >= y1) & (uv[:, 1] <= y2)
+        source = "bbox"
+
+    inside = selected & (world[:, 2] >= params.ground_z_m)
     n_points = int(inside.sum())
     if n_points == 0:
         return None
 
-    depths, points = depth[inside], world[inside]
+    pixels, depths, points = uv[inside], depth[inside], world[inside]
     p25, p75 = float(np.percentile(depths, 25)), float(np.percentile(depths, 75))
     keep = (depths >= p25) & (depths <= p75)
     if not keep.any():  # degenerate: every point sits at one depth
         keep = np.ones(len(depths), dtype=bool)
     position = np.median(points[keep], axis=0)
-    return (
-        n_points,
-        float(np.median(depths)),
-        p75 - p25,
-        (float(position[0]), float(position[1]), float(position[2])),
+    return PointMeasurement(
+        n_points=n_points,
+        depth_median_m=float(np.median(depths)),
+        depth_iqr_m=p75 - p25,
+        world_xyz=(float(position[0]), float(position[1]), float(position[2])),
+        source=source,
+        inlier_uv=tuple((float(u), float(v)) for u, v in pixels[keep]),
     )
 
 
@@ -415,6 +511,14 @@ def _load_detector(conf: float, model_name: str) -> tuple[Yoloe2DDetector, dict[
     silently substitute for each other, so the mode is pinned here rather than
     exposed as a flag.
     """
+    # Ultralytics pip-installs missing extras the first time a model runs. A
+    # reference generator must never mutate its own environment mid-sweep, so
+    # this is set here -- before the deferred YOLOe import below, and only in a
+    # process that is actually about to run the model, so merely importing this
+    # module (for `--help`, or for the gate helpers the tests exercise) does not
+    # reach into the environment.
+    os.environ["YOLO_AUTOINSTALL"] = "false"
+
     from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 
     detector = Yoloe2DDetector(model_name=model_name, prompt_mode=YoloePromptMode.LRPC, conf=conf)
@@ -428,13 +532,49 @@ def _load_detector(conf: float, model_name: str) -> tuple[Yoloe2DDetector, dict[
     return detector, info
 
 
+def detection_mask(detection: Any, camera: Camera) -> NDArray[np.uint8] | None:
+    """The detection's segmentation mask, or ``None`` when there is none to use.
+
+    ``Detection2DSeg`` carries an image-sized ``[H, W]`` uint8 mask (0/255) and
+    the other ``Detection2D`` subclasses carry none at all, so the attribute is
+    read defensively. A mask whose shape does not match the calibration the
+    points were projected with is refused rather than indexed: the pixel
+    coordinates would silently address the wrong sample.
+    """
+    mask = getattr(detection, "mask", None)
+    if mask is None:
+        return None
+    array = np.asarray(mask)
+    if array.ndim != 2 or array.shape != (camera.height, camera.width):
+        return None
+    return array.astype(np.uint8, copy=False)
+
+
+def mask_outline(mask: NDArray[np.uint8] | None) -> tuple[tuple[tuple[int, int], ...], ...]:
+    """External contours of *mask*, as plain pixel tuples for the review crops.
+
+    Contours rather than the mask itself: a 1280x720 mask per surviving
+    detection is hundreds of megabytes over a sweep, while its outline is what a
+    crop can actually show.
+    """
+    if mask is None:
+        return ()
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return tuple(
+        tuple((int(point[0][0]), int(point[0][1])) for point in contour)
+        for contour in contours
+        if len(contour) >= 2
+    )
+
+
 def scan(
     dataset: str, params: GateParams, yoloe_model: str, progress: bool = True
 ) -> tuple[list[Measurement], ScanStats, dict[str, Any]]:
     """Sweep *dataset* once and return every detection that got a position."""
     from dimos.memory2.cli.dataset import open_dataset
 
-    projector = Projector(load_camera(), load_base_to_optical(), params.front_z_m)
+    camera = load_camera()
+    projector = Projector(camera, load_base_to_optical(), params.front_z_m)
     detector, detector_info = _load_detector(params.conf, yoloe_model)
 
     measurements: list[Measurement] = []
@@ -478,7 +618,12 @@ def scan(
 
             nearby = list(lidar.at(obs.ts, tolerance=params.lidar_tolerance_s))
             if not nearby:
+                # These detections were already counted as raw, and nothing can
+                # place them: without a sweep there is no geometry. Counting them
+                # into their own bucket is what keeps the funnel's arithmetic
+                # (raw - drops == surviving) true on a recording with a gap.
                 stats.frames_without_lidar += 1
+                stats.no_lidar_match += len(detections)
                 continue
             cloud = min(nearby, key=lambda o: abs(o.ts - obs.ts))
             stats.lidar_dt_ms.append((cloud.ts - obs.ts) * 1000.0)
@@ -493,11 +638,16 @@ def scan(
                     float(detection.bbox[2]),
                     float(detection.bbox[3]),
                 )
-                measured = measure_bbox(uv, depth, world, bbox, params)
+                mask = detection_mask(detection, camera)
+                measured = measure_detection(uv, depth, world, bbox, mask, params)
                 if measured is None:
-                    stats.no_points_in_bbox += 1
+                    stats.no_points_in_detection += 1
                     continue
-                n_points, depth_m, depth_iqr_m, world_xyz = measured
+                if measured.source == "mask":
+                    stats.measured_from_mask += 1
+                else:
+                    stats.measured_from_bbox += 1
+                world_xyz = measured.world_xyz
                 measurements.append(
                     Measurement(
                         ts=float(obs.ts),
@@ -507,12 +657,15 @@ def scan(
                         mean_gray=mean_gray,
                         robot_xyz=robot_xyz,
                         world_xyz=world_xyz,
-                        n_points=n_points,
-                        depth_m=depth_m,
-                        depth_iqr_m=depth_iqr_m,
+                        n_points=measured.n_points,
+                        depth_m=measured.depth_median_m,
+                        depth_iqr_m=measured.depth_iqr_m,
                         range_m=math.hypot(
                             world_xyz[0] - robot_xyz[0], world_xyz[1] - robot_xyz[1]
                         ),
+                        point_source=measured.source,
+                        mask_outline=mask_outline(mask if measured.source == "mask" else None),
+                        inlier_uv=measured.inlier_uv,
                     )
                 )
 
@@ -551,9 +704,19 @@ def independent_views(views: list[Measurement], params: GateParams) -> list[Meas
     """Largest greedily-built subset of *views* whose every pair is independent.
 
     Two views are independent when the robot moved at least ``min_baseline_m``
-    between them, or at least ``min_view_dt_s`` elapsed — either one rules out
-    "the same instant seen twice". Greedy in timestamp order is a lower bound on
-    the true maximum clique, which keeps the gate conservative.
+    between them. Independence is **spatial only, deliberately**: what a second
+    view is supposed to add is a second line of sight, and a ground robot that
+    sat still for a minute has one line of sight however many frames it took.
+    An earlier version also accepted "at least a second elapsed", which counted
+    a static re-observation as verification and so overstated what two views
+    prove -- and on the reference recording it never mattered: rerunning the
+    whole sweep with that branch removed produced a byte-identical ``refs.jsonl``
+    and an identical funnel (26 labels qualified either way, 250 clusters dropped
+    for too few independent views either way). It was a claim the table did not
+    need, so it is gone.
+
+    Greedy in timestamp order is a lower bound on the true maximum clique, which
+    keeps the gate conservative.
     """
     selected: list[Measurement] = []
     for view in sorted(views, key=lambda m: m.ts):
@@ -563,8 +726,7 @@ def independent_views(views: list[Measurement], params: GateParams) -> list[Meas
 
 
 def _is_independent(a: Measurement, b: Measurement, params: GateParams) -> bool:
-    baseline = math.dist(a.robot_xyz, b.robot_xyz)
-    return baseline >= params.min_baseline_m or abs(a.ts - b.ts) >= params.min_view_dt_s
+    return math.dist(a.robot_xyz, b.robot_xyz) >= params.min_baseline_m
 
 
 def _cluster_by_position(
@@ -786,6 +948,65 @@ def write_refs(references: list[Reference], path: Path) -> None:
     path.write_text("".join(f"{r.to_json()}\n" for r in ordered))
 
 
+def measurement_drops(stats: ScanStats, gate_drops: Counter[str]) -> dict[str, int]:
+    """Every counted detection that never became a measurement, by reason.
+
+    The keys of this mapping *are* the funnel's detection-level drop buckets, and
+    the identity a reader relies on is ``raw_detections`` minus their sum equals
+    ``surviving_measurements``. Keeping them in one place is what makes that hold
+    by construction: a new discard path adds a key here, and both the funnel and
+    its consistency check follow. ``dropped_no_lidar_match`` is the bucket that
+    was missing -- it stays 0 on a recording whose LiDAR never gaps, so the
+    arithmetic looked right until one does.
+    """
+    return {
+        "dropped_below_conf": stats.below_conf,
+        "dropped_no_lidar_match": stats.no_lidar_match,
+        "dropped_no_points_in_detection": stats.no_points_in_detection,
+        "dropped_min_points": gate_drops["min_points"],
+        "dropped_depth_iqr": gate_drops["depth_iqr"],
+        "dropped_envelope_range": gate_drops["envelope_range"],
+        "dropped_envelope_height": gate_drops["envelope_height"],
+    }
+
+
+def build_funnel(
+    stats: ScanStats,
+    gate_drops: Counter[str],
+    diagnostics: QualifyDiagnostics,
+    n_location_groups: int,
+) -> dict[str, int]:
+    """The sweep's counts, as the manifest reports them.
+
+    Detection-level drops come from :func:`measurement_drops` and settle
+    ``surviving_measurements``; the cluster- and label-level numbers below them
+    describe what happened to those survivors afterwards and are deliberately
+    *not* part of that subtraction.
+    """
+    dropped = measurement_drops(stats, gate_drops)
+    return {
+        "frames_visited": stats.frames_visited,
+        "frames_too_dark": stats.frames_too_dark,
+        "frames_detected": stats.frames_detected,
+        "frames_without_pose": stats.frames_without_pose,
+        "frames_without_lidar": stats.frames_without_lidar,
+        "raw_detections": stats.raw_detections,
+        **dropped,
+        "surviving_measurements": stats.raw_detections - sum(dropped.values()),
+        "measured_from_mask": stats.measured_from_mask,
+        "measured_from_bbox": stats.measured_from_bbox,
+        "clusters_formed": diagnostics.clusters_formed,
+        "dropped_clusters_insufficient_independent_views": diagnostics.cluster_drops[
+            "insufficient_independent_views"
+        ],
+        "dropped_clusters_spread_too_large": diagnostics.cluster_drops["spread_too_large"],
+        "labels_no_qualified_cluster": diagnostics.label_verdicts["no_qualified_cluster"],
+        "labels_ambiguous_multi_instance": diagnostics.label_verdicts["ambiguous_multi_instance"],
+        "labels_qualified": diagnostics.label_verdicts["qualified"],
+        "location_groups": n_location_groups,
+    }
+
+
 def build_manifest(
     dataset: str,
     params: GateParams,
@@ -830,37 +1051,7 @@ def build_manifest(
             ],
         },
         "gates": asdict(params),
-        "funnel": {
-            "frames_visited": stats.frames_visited,
-            "frames_too_dark": stats.frames_too_dark,
-            "frames_detected": stats.frames_detected,
-            "frames_without_pose": stats.frames_without_pose,
-            "frames_without_lidar": stats.frames_without_lidar,
-            "raw_detections": stats.raw_detections,
-            "dropped_below_conf": stats.below_conf,
-            "dropped_no_points_in_bbox": stats.no_points_in_bbox,
-            "dropped_min_points": gate_drops["min_points"],
-            "dropped_depth_iqr": gate_drops["depth_iqr"],
-            "dropped_envelope_range": gate_drops["envelope_range"],
-            "dropped_envelope_height": gate_drops["envelope_height"],
-            "surviving_measurements": (
-                stats.raw_detections
-                - stats.below_conf
-                - stats.no_points_in_bbox
-                - sum(gate_drops.values())
-            ),
-            "clusters_formed": diagnostics.clusters_formed,
-            "dropped_clusters_insufficient_independent_views": diagnostics.cluster_drops[
-                "insufficient_independent_views"
-            ],
-            "dropped_clusters_spread_too_large": diagnostics.cluster_drops["spread_too_large"],
-            "labels_no_qualified_cluster": diagnostics.label_verdicts["no_qualified_cluster"],
-            "labels_ambiguous_multi_instance": diagnostics.label_verdicts[
-                "ambiguous_multi_instance"
-            ],
-            "labels_qualified": diagnostics.label_verdicts["qualified"],
-            "location_groups": len(location_groups),
-        },
+        "funnel": build_funnel(stats, gate_drops, diagnostics, len(location_groups)),
         "timing": {
             "wallclock_s": round(wallclock_s, 2),
             "detection_sweep_s": round(stats.sweep_s, 2),
@@ -875,46 +1066,146 @@ def build_manifest(
     }
 
 
-def write_crops(dataset: str, members: dict[str, list[Measurement]], out_dir: Path) -> int:
-    """Write one review crop per reference, from its brightest contributing frame.
+#: pyproject.toml [tool.largefiles] max_size_kb -- a committed crop has to fit.
+MAX_CROP_BYTES = 75 * 1024
+
+#: Longest edge, then JPEG quality, tried in order until a crop fits
+#: :data:`MAX_CROP_BYTES`. The first entry is what every crop the recording has
+#: produced so far encodes to; the rest exist so an unusually detailed frame
+#: degrades instead of failing the commit.
+_CROP_ENCODINGS: tuple[tuple[int, int], ...] = ((512, 85), (448, 80), (384, 75), (320, 70))
+
+# BGR overlay colors, in drawing order.
+_MASK_COLOR = (255, 200, 0)  # cyan-ish: the detector's pixel-level claim
+_BBOX_COLOR = (0, 255, 0)  # green: the detector's box
+_INLIER_COLOR = (0, 220, 255)  # amber: the LiDAR points that voted
+_REFERENCE_COLOR = (255, 0, 255)  # magenta: where the vote landed
+
+
+def _encode_crop(crop: NDArray[np.uint8]) -> bytes:
+    """JPEG-encode *crop*, shrinking it until it fits :data:`MAX_CROP_BYTES`."""
+    height, width = crop.shape[:2]
+    encoded = b""
+    for longest_edge, quality in _CROP_ENCODINGS:
+        scale = min(1.0, longest_edge / max(height, width))
+        resized = (
+            crop
+            if scale == 1.0
+            else cv2.resize(
+                crop,
+                (max(1, int(width * scale)), max(1, int(height * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        )
+        ok, buffer = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise RuntimeError("cv2.imencode failed on a review crop")
+        encoded = buffer.tobytes()
+        if len(encoded) <= MAX_CROP_BYTES:
+            return encoded
+    raise ValueError(
+        f"a review crop is {len(encoded)} bytes at the smallest encoding "
+        f"{_CROP_ENCODINGS[-1]}, over the {MAX_CROP_BYTES}-byte large-file limit"
+    )
+
+
+def _reference_pixel(
+    projector: Projector, reference: Reference, pose_tuple: tuple[float, ...]
+) -> tuple[int, int] | None:
+    """Project a reference position into one frame, or ``None`` if it is not in it."""
+    uv, _, _, _ = projector.project(
+        np.array([[reference.x, reference.y, reference.z]], dtype=np.float64), pose_tuple
+    )
+    if len(uv) == 0:
+        return None
+    return round(float(uv[0][0])), round(float(uv[0][1]))
+
+
+def write_crops(
+    dataset: str,
+    members: dict[str, list[Measurement]],
+    references: list[Reference],
+    out_dir: Path,
+) -> int:
+    """Write one audit crop per reference, from its brightest contributing frame.
 
     These are the images a human looks at before deciding whether a detector
-    label is a thing that can honestly be asked about.
+    label is a thing that can honestly be asked about -- and, since the position
+    is what the eval actually scores against, whether the *geometry* behind it
+    holds up. Each crop therefore carries the whole chain for that frame: the
+    mask outline (when the mask chose the points), the detector's box, the
+    projected LiDAR inliers whose median became the position, and that final
+    position projected back into the frame as a separate marker. A label that
+    looks right while its marker sits on the far wall is exactly the failure a
+    label-only crop cannot show.
+
+    The frame is the one the detection was made on: ``at(ts, tolerance)`` is a
+    pure predicate over a stream that iterates in time order, so ``.first()`` on
+    a window returns its *earliest* member -- which is a different frame, with
+    the boxes of this one drawn onto it. The nearest member is selected
+    explicitly instead, exactly as ``scan`` does when pairing LiDAR.
+
+    Crops are named after the question id the label would produce, so a crop and
+    a shard can be lined up without a lookup table.
     """
+    from dimos.agents.evals.questions import slugify
     from dimos.memory2.cli.dataset import open_dataset
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    projector = Projector(load_camera(), load_base_to_optical(), GateParams().front_z_m)
+    by_label = {reference.raw_label: reference for reference in references}
     written = 0
     store = open_dataset(dataset)
     with store:
         images: Stream[Any] = store.stream("color_image")
         for label in sorted(members):
             best = max(members[label], key=lambda m: m.mean_gray)
-            obs = images.at(best.ts, tolerance=0.2).first()
-            frame = cv2.cvtColor(obs.data.data, cv2.COLOR_RGB2BGR)
+            window = list(images.at(best.ts, tolerance=0.2))
+            if not window:
+                continue
+            obs = min(window, key=lambda o: abs(o.ts - best.ts))
+            frame: NDArray[np.uint8] = cv2.cvtColor(obs.data.data, cv2.COLOR_RGB2BGR)
+
+            for contour in best.mask_outline:
+                cv2.polylines(
+                    frame,
+                    [np.array(contour, dtype=np.int32).reshape(-1, 1, 2)],
+                    True,
+                    _MASK_COLOR,
+                    2,
+                )
             x1, y1, x2, y2 = best.bbox
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), _BBOX_COLOR, 2)
+            for u, v in best.inlier_uv:
+                cv2.circle(frame, (round(u), round(v)), 2, _INLIER_COLOR, -1)
+
             margin_x, margin_y = 0.12 * (x2 - x1), 0.12 * (y2 - y1)
-            cx1, cy1 = max(int(x1 - margin_x), 0), max(int(y1 - margin_y), 0)
-            cx2 = min(int(x2 + margin_x), frame.shape[1])
-            cy2 = min(int(y2 + margin_y), frame.shape[0])
+            left, top = x1 - margin_x, y1 - margin_y
+            right, bottom = x2 + margin_x, y2 + margin_y
+
+            reference = by_label.get(label)
+            pose_tuple = obs.pose_tuple
+            marker = (
+                _reference_pixel(projector, reference, pose_tuple)
+                if reference is not None and pose_tuple is not None
+                else None
+            )
+            if marker is not None:
+                cv2.drawMarker(frame, marker, _REFERENCE_COLOR, cv2.MARKER_CROSS, 44, 3)
+                cv2.circle(frame, marker, 15, _REFERENCE_COLOR, 3)
+                # The reference is a viewing-distance away from the box it was
+                # measured in, so it often projects outside it. Widen the crop
+                # rather than cropping the one marker a reviewer has to check.
+                left, top = min(left, marker[0] - 16.0), min(top, marker[1] - 16.0)
+                right, bottom = max(right, marker[0] + 16.0), max(bottom, marker[1] + 16.0)
+
+            cx1, cy1 = max(int(left), 0), max(int(top), 0)
+            cx2 = min(int(right), frame.shape[1])
+            cy2 = min(int(bottom), frame.shape[0])
             crop = frame[cy1:cy2, cx1:cx2]
             if crop.size == 0:
                 continue
-            cv2.rectangle(
-                crop,
-                (int(x1 - cx1), int(y1 - cy1)),
-                (int(x2 - cx1), int(y2 - cy1)),
-                (0, 255, 0),
-                2,
-            )
-            height, width = crop.shape[:2]
-            scale = 320.0 / max(height, width)
-            if scale < 1.0:
-                crop = cv2.resize(
-                    crop, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA
-                )
-            name = "".join(c if c.isalnum() else "_" for c in label)
-            cv2.imwrite(str(out_dir / f"{name}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            (out_dir / f"{slugify(dataset)}-{slugify(label)}.jpg").write_bytes(_encode_crop(crop))
             written += 1
     return written
 
@@ -960,6 +1251,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="max |dt| (s) between a frame and the LiDAR message paired with it",
     )
     parser.add_argument(
+        "--point-selection",
+        choices=POINT_SELECTIONS,
+        default=defaults.point_selection,
+        help=(
+            "which pixels of a detection may contribute points: its segmentation "
+            "mask, or the shrunk bbox (the fallback a detection without a mask "
+            "gets either way)"
+        ),
+    )
+    parser.add_argument(
         "--bbox-shrink",
         type=float,
         default=defaults.bbox_shrink,
@@ -975,19 +1276,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ground-z",
         type=float,
         default=defaults.ground_z_m,
-        help="reject in-bbox points below this map-frame height (m); applied first",
+        help="reject in-detection points below this map-frame height (m); applied first",
     )
     parser.add_argument(
         "--min-points",
         type=int,
         default=defaults.min_points,
-        help="min non-ground points in the shrunk bbox",
+        help="min non-ground points on the detection (mask or shrunk bbox)",
     )
     parser.add_argument(
         "--max-iqr",
         type=float,
         default=defaults.max_depth_iqr_m,
-        help="max in-bbox depth inter-quartile range (m)",
+        help="max in-detection depth inter-quartile range (m)",
     )
     parser.add_argument(
         "--max-range",
@@ -1012,12 +1313,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=defaults.min_baseline_m,
         help="robot displacement (m) that makes two views independent",
-    )
-    parser.add_argument(
-        "--min-view-dt",
-        type=float,
-        default=defaults.min_view_dt_s,
-        help="elapsed time (s) that makes two views independent",
     )
     parser.add_argument(
         "--min-independent-views",
@@ -1058,6 +1353,7 @@ def main(argv: list[str]) -> int:
         min_gray=args.min_gray,
         conf=args.conf,
         lidar_tolerance_s=args.lidar_tolerance,
+        point_selection=args.point_selection,
         bbox_shrink=args.bbox_shrink,
         front_z_m=args.front_z,
         ground_z_m=args.ground_z,
@@ -1067,7 +1363,6 @@ def main(argv: list[str]) -> int:
         max_height_m=args.max_height,
         cluster_radius_m=args.cluster_radius,
         min_baseline_m=args.min_baseline,
-        min_view_dt_s=args.min_view_dt,
         min_independent_views=args.min_independent_views,
         max_spread_m=args.max_spread,
         link_radius_m=args.link_radius,
@@ -1099,15 +1394,18 @@ def main(argv: list[str]) -> int:
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
     if args.crops:
-        n_crops = write_crops(args.dataset, members, out_dir / "crops")
+        n_crops = write_crops(args.dataset, members, references, out_dir / "crops")
         print(f"crops:     {n_crops} -> {out_dir / 'crops'}")
 
     funnel = manifest["funnel"]
     print(
         f"frames:    {stats.frames_visited} visited, {stats.frames_too_dark} too dark, "
         f"{stats.frames_detected} detected on\n"
-        f"detections:{stats.raw_detections} raw -> {funnel['surviving_measurements']} measurements "
-        f"-> {funnel['clusters_formed']} clusters\n"
+        f"detections:{stats.raw_detections} raw -> "
+        f"{funnel['measured_from_mask'] + funnel['measured_from_bbox']} placed "
+        f"({funnel['measured_from_mask']} by mask, {funnel['measured_from_bbox']} by bbox) -> "
+        f"{funnel['surviving_measurements']} past the gates -> "
+        f"{funnel['clusters_formed']} clusters\n"
         f"references:{len(references)} qualified of {len({m.label for m in kept})} labels, "
         f"on {len(location_groups)} distinct locations\n"
         f"wallclock: {manifest['timing']['wallclock_s']}s "

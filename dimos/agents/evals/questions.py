@@ -28,7 +28,7 @@ about it under ``display_name``) or ``dropped`` (never ask). A label the overlay
 does not mention is **dropped**: silence is not approval, and an unreviewed
 label is exactly the kind that turns out to be a wall or a light streak.
 
-Three conditions abort the run rather than emit a subtly broken question set:
+Four conditions abort the run rather than emit a subtly broken question set:
 
 * **Duplicate display names.** Two questions with the same wording have no
   single right answer, and renaming is how duplicates get introduced.
@@ -37,12 +37,19 @@ Three conditions abort the run rather than emit a subtly broken question set:
   score the same place twice and mark an agent wrong for the name it did not
   guess. Review has to keep one and drop the rest.
 * **A question no agent could pass.** The threshold is an observation
-  envelope, not a point-accuracy tolerance (see :data:`DEFAULT_THRESHOLD_M`),
-  so a reference the teacher only ever saw from further away than the
-  threshold is unpassable however well the agent behaves. Each kept question
-  is checked against the nearest viewpoint in its own reference row's
-  ``robot_poses``, which makes "every committed question is passable on the
-  teacher's own evidence" an enforced invariant rather than a hope.
+  envelope, not a point-accuracy tolerance (see :data:`THRESHOLD_MARGIN_M`), so
+  a reference the teacher only ever saw from further away than the threshold is
+  unpassable however well the agent behaves. Each threshold is now *derived*
+  from the nearest viewpoint in its own reference row's ``robot_poses``, so this
+  holds by construction below the cap; the check stays because it is the
+  invariant the artifact is read under, and at the cap it can still fire.
+* **Two questions one retrieval could answer.** Two adjacent objects can share
+  a viewing position: if any pose the teacher saw *B* from lies inside *A*'s
+  pass radius, an agent that retrieved *B* passes *A*, and *A* has stopped
+  measuring whether the agent found *A*. This is the location-group rule one
+  step out -- a group catches two names for one object, this catches two objects
+  one viewpoint answers for -- and it is checked in both directions, because the
+  two radii differ.
 
 The question wording comes from one fixed template. The instruction about *how*
 to answer belongs to the system prompt under test and is deliberately not part
@@ -66,16 +73,29 @@ QUESTION_TEMPLATE = "Where is the {display_name}? Use your navigation tools to g
 
 VALID_STATUSES = ("verified", "renamed", "dropped")
 
-#: Pass threshold in metres: the teacher's observation envelope
-#: (``teacher.GateParams.max_range_m``, 3.2 m) plus margin. "Passed" therefore
-#: means the selected goal lies within the range the object was actually
-#: observed from -- the task-level claim "the robot ends up at the object" --
-#: and deliberately not point accuracy. It cannot mean point accuracy: the
-#: shipping ``navigate_with_text`` builds its goal from the *robot pose* of the
-#: retrieved frame, so even a perfect retrieval lands roughly one viewing
+#: Added to a question's own nearest teacher viewpoint to get its pass
+#: threshold. The threshold is an *observation envelope*, not point accuracy:
+#: the shipping ``navigate_with_text`` builds its goal from the *robot pose* of
+#: the retrieved frame, so even a perfect retrieval lands about one viewing
 #: distance away from the LiDAR-derived object centroid the reference holds.
-#: The fine-grained signal is ``error_m``, which the figure plots in full.
-DEFAULT_THRESHOLD_M = 3.5
+#: "Passed" therefore means "the goal is about as close as the teacher itself
+#: ever got", and the margin is the slack for a retrieval that picked a
+#: different frame of the same object. It is per question because the viewing
+#: distances are: a 3.5 m radius around an object the teacher stood 0.9 m from
+#: is wide enough to swallow half the room, which is how two neighbouring
+#: objects end up sharing an answer. The fine-grained signal is ``error_m``,
+#: which the figure plots in full.
+THRESHOLD_MARGIN_M = 0.5
+
+#: Ceiling on the derived threshold: the teacher's own observation envelope
+#: (``teacher.GateParams.max_range_m``, 3.2 m), rounded up. It sits *above* the
+#: envelope, so an object measured at the furthest range the teacher accepts is
+#: still passable, and *below* envelope-plus-margin, so it starts binding at a
+#: 3.0 m viewing distance rather than never. Without a ceiling every question
+#: would be passable by construction, including one about an object the robot
+#: only ever saw from across the room -- the cap is what keeps the passability
+#: check below able to fire at all.
+MAX_THRESHOLD_M = 3.5
 
 
 def load_refs(path: Path) -> list[dict[str, Any]]:
@@ -97,8 +117,67 @@ def slugify(text: str) -> str:
     return "-".join(part for part in slug.split("-") if part)
 
 
+def nearest_viewpoint_m(ref: dict[str, Any]) -> float:
+    """XY distance from a reference to the closest pose it was observed from.
+
+    ``inf`` when the row records no poses at all, which is a row carrying no
+    evidence that the object was ever reached.
+    """
+    return min(
+        (math.hypot(pose[0] - ref["x"], pose[1] - ref["y"]) for pose in ref["robot_poses"]),
+        default=float("inf"),
+    )
+
+
+def threshold_for(ref: dict[str, Any], margin_m: float, cap_m: float) -> float:
+    """This reference's pass radius: its own nearest viewpoint plus *margin_m*.
+
+    Capped at *cap_m*, and rounded to the precision the reference positions
+    themselves carry so the artifact stays diffable.
+    """
+    return round(min(nearest_viewpoint_m(ref) + margin_m, cap_m), 4)
+
+
+def confusability_problems(kept: list[tuple[QuestionSpec, dict[str, Any]]]) -> list[str]:
+    """Report every ordered pair of questions one retrieval could answer for both.
+
+    For questions *A* and *B*: if the teacher ever saw *B* from a pose inside
+    *A*'s pass radius, then an agent that retrieves a *B* frame -- the wrong
+    object -- sets a goal that passes *A*. *A* then measures the neighbourhood
+    rather than the object, and no scored number can show it. Ordered pairs
+    because the radii differ: *A* can be confusable with *B* without the reverse
+    holding.
+
+    Distance is map-frame XY, matching the scorer, and the reported number is the
+    offending viewpoint's distance so a reviewer can see how far inside it sits.
+    """
+    problems: list[str] = []
+    for spec, _ in kept:
+        for other_spec, other_ref in kept:
+            if other_spec.question_id == spec.question_id:
+                continue
+            nearest = min(
+                (
+                    math.hypot(pose[0] - spec.ref_x, pose[1] - spec.ref_y)
+                    for pose in other_ref["robot_poses"]
+                ),
+                default=float("inf"),
+            )
+            if nearest <= spec.threshold_m:
+                problems.append(
+                    f"{spec.raw_label!r} is confusable with {other_spec.raw_label!r}: a "
+                    f"viewpoint of {other_spec.raw_label!r} is {nearest:.2f} m from the "
+                    f"{spec.raw_label!r} reference, inside its {spec.threshold_m} m pass "
+                    "radius, so retrieving the wrong object would pass this question"
+                )
+    return problems
+
+
 def build_questions(
-    refs: list[dict[str, Any]], review: dict[str, dict[str, Any]], threshold_m: float
+    refs: list[dict[str, Any]],
+    review: dict[str, dict[str, Any]],
+    threshold_cap_m: float = MAX_THRESHOLD_M,
+    margin_m: float = THRESHOLD_MARGIN_M,
 ) -> tuple[list[QuestionSpec], list[str], dict[str, int]]:
     """Apply *review* to *refs*.
 
@@ -106,18 +185,23 @@ def build_questions(
     run, and the per-status counts. Problems are collected rather than raised at
     the first one, so a reviewer sees every offending label in one pass.
 
-    The last check each surviving question faces is passability: the reference
-    row records the poses the teacher observed the object from, so the nearest
-    of them is the closest a viewpoint-shaped goal can legitimately land. A
-    question whose nearest viewpoint is already at or beyond *threshold_m* is
-    reported as a problem instead of being emitted -- scoring it would measure
-    the recording's geometry rather than the agent.
+    Each question's ``threshold_m`` is its own: the nearest pose the teacher
+    observed that object from, plus *margin_m*, capped at *threshold_cap_m* (see
+    :data:`THRESHOLD_MARGIN_M`). A per-question radius is what keeps a question
+    about an object the robot practically touched from also being satisfied by
+    the shelf behind it.
+
+    The last two checks are passability -- a question whose own nearest viewpoint
+    is at or beyond its (capped) threshold could not be passed by any agent --
+    and confusability across the kept set, which needs every threshold to exist
+    first and therefore runs once at the end.
     """
     problems: list[str] = []
     counts = dict.fromkeys(VALID_STATUSES, 0)
     counts["unreviewed"] = 0
 
     questions: list[QuestionSpec] = []
+    kept: list[tuple[QuestionSpec, dict[str, Any]]] = []
     kept_groups: dict[str, str] = {}
     kept_names: dict[str, str] = {}
     kept_ids: dict[str, str] = {}
@@ -180,14 +264,12 @@ def build_questions(
         # LiDAR-derived object centroid. An object the teacher never got closer
         # to than the threshold therefore cannot be reached by any agent, and a
         # question set holding one reports a failure that is not the agent's.
-        nearest_viewpoint_m = min(
-            (math.hypot(pose[0] - ref["x"], pose[1] - ref["y"]) for pose in ref["robot_poses"]),
-            default=float("inf"),
-        )
-        if nearest_viewpoint_m >= threshold_m:
+        nearest = nearest_viewpoint_m(ref)
+        threshold_m = threshold_for(ref, margin_m, threshold_cap_m)
+        if nearest >= threshold_m:
             problems.append(
                 f"{raw_label!r}: unpassable by construction: nearest teacher viewpoint "
-                f"{nearest_viewpoint_m:.2f} m >= threshold {threshold_m} m"
+                f"{nearest:.2f} m >= threshold {threshold_m} m"
             )
             continue
 
@@ -195,23 +277,25 @@ def build_questions(
         kept_groups[group] = raw_label
         kept_ids[question_id] = raw_label
 
-        questions.append(
-            QuestionSpec(
-                question_id=question_id,
-                display_name=display_name,
-                raw_label=raw_label,
-                question_text=QUESTION_TEMPLATE.format(display_name=display_name),
-                ref_x=ref["x"],
-                ref_y=ref["y"],
-                ref_z=ref["z"],
-                n_views=ref["n_independent_views"],
-                spread_m=ref["spread_m"],
-                human_review=status,
-                threshold_m=threshold_m,
-            )
+        spec = QuestionSpec(
+            question_id=question_id,
+            display_name=display_name,
+            raw_label=raw_label,
+            question_text=QUESTION_TEMPLATE.format(display_name=display_name),
+            ref_x=ref["x"],
+            ref_y=ref["y"],
+            ref_z=ref["z"],
+            n_views=ref["n_independent_views"],
+            spread_m=ref["spread_m"],
+            human_review=status,
+            threshold_m=threshold_m,
         )
+        questions.append(spec)
+        kept.append((spec, ref))
 
     questions.sort(key=lambda q: q.question_id)
+    kept.sort(key=lambda pair: pair[0].question_id)
+    problems.extend(confusability_problems(kept))
     return questions, problems, counts
 
 
@@ -227,15 +311,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review", required=True, help="review.json: raw_label -> verdict")
     parser.add_argument("--out", required=True, help="questions.jsonl to write")
     parser.add_argument(
-        "--threshold-m",
+        "--threshold-margin-m",
         type=float,
-        default=DEFAULT_THRESHOLD_M,
+        default=THRESHOLD_MARGIN_M,
         help=(
-            "map-frame XY distance within which a goal counts as correct; the "
-            "default is the teacher's observation envelope plus margin, so "
-            "'passed' means the robot ends up at the object rather than on it "
+            "added to each question's own nearest teacher viewpoint to get the "
+            "map-frame XY distance within which its goal counts as correct, so "
+            "'passed' means the robot ends up about as close as the teacher did "
             "(the continuous signal is error_m)"
         ),
+    )
+    parser.add_argument(
+        "--threshold-cap-m",
+        type=float,
+        default=MAX_THRESHOLD_M,
+        help="ceiling on the derived per-question threshold (metres)",
     )
     return parser
 
@@ -245,7 +335,9 @@ def main(argv: list[str]) -> int:
     refs = load_refs(Path(args.refs))
     review = load_review(Path(args.review))
 
-    questions, problems, counts = build_questions(refs, review, args.threshold_m)
+    questions, problems, counts = build_questions(
+        refs, review, args.threshold_cap_m, args.threshold_margin_m
+    )
 
     unmatched = sorted(set(review) - {ref["raw_label"] for ref in refs})
     if unmatched:
@@ -265,9 +357,13 @@ def main(argv: list[str]) -> int:
         return 1
 
     Path(args.out).write_text("".join(f"{q.to_json()}\n" for q in questions))
+    thresholds = sorted(q.threshold_m for q in questions)
+    span = f"{thresholds[0]}-{thresholds[-1]} m" if thresholds else "n/a"
     print(
         f"reviewed:  {counts['verified']} verified, {counts['renamed']} renamed, "
         f"{counts['dropped']} dropped, {counts['unreviewed']} unreviewed (dropped)\n"
+        f"threshold: {span} per question (nearest viewpoint + "
+        f"{args.threshold_margin_m} m, capped at {args.threshold_cap_m} m)\n"
         f"questions: {len(questions)} -> {args.out}"
     )
     return 0

@@ -22,6 +22,7 @@ denominator, and the shard format the renderer reads back.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import math
@@ -30,7 +31,13 @@ from typing import Any
 
 import pytest
 
-from dimos.agents.evals.contracts import AnswerRecord, Outcome, QuestionSpec, ScoreResult
+from dimos.agents.evals.contracts import (
+    AnswerRecord,
+    Outcome,
+    QuestionSpec,
+    RetrievalRecord,
+    ScoreResult,
+)
 from dimos.agents.evals.scorer import (
     GoalRecord,
     RunObservation,
@@ -48,6 +55,18 @@ from dimos.agents.evals.scorer import (
 )
 
 PROMPT = "You are a mobile robot assistant."
+
+#: One sweep's stamp. Every record of one run carries it; a *second* run of the
+#: same configuration carries a different one, which is what keeps the two apart.
+RUN_ID = "20260730T091500-4242"
+
+#: What the memory returned for the agent's query, re-asked after the turn. Pure
+#: observability: the tests below assert it survives into the shard *and* that
+#: nothing about the verdict moves when it is there.
+RETRIEVALS = [
+    RetrievalRecord(query="liquor shelf", x=1.0, y=0.0, distance=0.7412),
+    RetrievalRecord(query="shelf with bottles", x=1.2, y=-0.3, distance=0.8004),
+]
 
 
 def make_question(question_id: str = "q1", **overrides: Any) -> QuestionSpec:
@@ -76,6 +95,7 @@ def make_observation(**overrides: Any) -> RunObservation:
         "model_id": "gpt-5.6-luna",
         "prompt_id": "spatial",
         "prompt_sha256": prompt_sha256(PROMPT),
+        "run_id": RUN_ID,
         "finished": True,
         "agent_wall_time_s": 3.0,
         "total_wall_time_s": 27.0,
@@ -102,6 +122,7 @@ def make_answer(question_id: str = "q1", outcome: Outcome = "predicted", **kw: A
         "model_id": "gpt-5.6-luna",
         "prompt_id": "spatial",
         "prompt_sha256": prompt_sha256(PROMPT),
+        "run_id": RUN_ID,
         "wall_time_s": 3.0,
         "error": None,
     }
@@ -216,6 +237,55 @@ def test_answer_record_records_a_tool_call_that_produced_no_goal() -> None:
     assert answer.tool_invoked is True
     assert (answer.goal_x, answer.goal_y, answer.n_goals) == (None, None, 0)
     assert answer.error is None
+
+
+def test_answer_record_carries_the_retrievals_through_untouched() -> None:
+    """What the memory returned is observability, and the shard has to hold it.
+
+    The scored answer channel is ``(x, y, yaw)``, which cannot tell "found the
+    right object" from "found a neighbour inside the pass radius" -- the failure
+    the confusability gate in ``questions.py`` has to prevent by dropping
+    questions. Recording the retrieval is what would make identity-level scoring
+    possible later, so it has to reach the shard now.
+    """
+    answer = build_answer_record(
+        make_observation(
+            goals=[goal(1.0, 0.0)],
+            tool_queries=["liquor shelf", "shelf with bottles"],
+            retrievals=RETRIEVALS,
+        )
+    )
+    assert answer.retrievals == RETRIEVALS
+    assert [record.query for record in answer.retrievals] == answer.tool_queries
+
+
+def test_retrievals_change_nothing_about_the_outcome_or_the_score() -> None:
+    """The diagnostic is inert: same observation, same verdict, retrievals or not.
+
+    Asserted as an equality between two whole records rather than field by field,
+    so a future scoring rule that started reading ``retrievals`` -- turning a
+    diagnostic into a pass criterion by accident -- fails here.
+    """
+    question = make_question()
+    bare = make_observation(goals=[goal(0.3, 0.4)], tool_queries=["liquor shelf"])
+    observed = make_observation(
+        goals=[goal(0.3, 0.4)], tool_queries=["liquor shelf"], retrievals=RETRIEVALS
+    )
+
+    assert classify_outcome(bare) == classify_outcome(observed)
+
+    bare_answer, observed_answer = build_answer_record(bare), build_answer_record(observed)
+    assert observed_answer.retrievals == RETRIEVALS
+    assert bare_answer == replace(observed_answer, retrievals=[])
+    assert score(question, bare_answer) == score(question, observed_answer)
+
+    with_retrievals = [score(question, observed_answer)]
+    without = [score(question, bare_answer)]
+    assert (pass_rate(with_retrievals), no_prediction_rate(with_retrievals)) == (
+        pass_rate(without),
+        no_prediction_rate(without),
+    )
+    assert errors_m(with_retrievals) == errors_m(without)
 
 
 def test_answer_record_explains_a_timeout_and_a_tool_error() -> None:
@@ -407,6 +477,26 @@ def test_shard_round_trips_pairs_in_file_order(tmp_path: Path) -> None:
     assert cases[1].result.outcome == "no_prediction"
 
 
+def test_shard_round_trips_the_retrievals_as_records(tmp_path: Path) -> None:
+    """``read_shard`` has to rebuild the nested list, not hand back dicts.
+
+    ``append_shard`` writes ``retrievals`` as JSON objects, and the read path
+    constructs the record from that dict; without ``AnswerRecord.from_dict`` the
+    round trip would come back with dicts inside -- unequal to what was written,
+    and a ``.query`` attribute short of what the schema promises. The smoke lane
+    asserts ``cases[0].answer == answer``, so this is exactly the equality it
+    rests on.
+    """
+    path = tmp_path / "gpt-5-6-luna__spatial.jsonl"
+    answer = make_answer("q1", goal_x=0.3, goal_y=0.4, retrievals=RETRIEVALS)
+    append_shard(path, answer, score(make_question("q1"), answer))
+
+    (case,) = read_shard(path)
+    assert case.answer == answer
+    assert case.answer.retrievals == RETRIEVALS
+    assert all(isinstance(record, RetrievalRecord) for record in case.answer.retrievals)
+
+
 def test_append_shard_refuses_to_pair_records_from_different_questions(tmp_path: Path) -> None:
     path = tmp_path / "shard.jsonl"
     with pytest.raises(ValueError, match="different questions"):
@@ -455,22 +545,43 @@ def test_read_shards_concatenates_in_the_order_given(tmp_path: Path) -> None:
     assert [case.answer.question_id for case in read_shards(reversed(paths))] == ["q2", "q1"]
 
 
-def test_read_shards_rejects_the_same_question_twice_across_files(tmp_path: Path) -> None:
-    """A re-run leaves its old shards behind, and the renderer reads the directory.
+def test_read_shards_rejects_the_same_run_twice_across_files(tmp_path: Path) -> None:
+    """One run's records may appear once, however many files they are spread over.
 
-    Shard filenames carry a timestamp, so a second run of one configuration
-    adds files rather than replacing them. Concatenating both would double that
-    configuration's denominator and average two runs into one row -- a figure
-    that is wrong in the one way nobody can see by looking at it.
+    A case that died and was restarted leaves a half-written shard next to the
+    new one, both tagged with the same ``run_id``. Concatenating them would count
+    those questions twice inside one run -- a figure that is wrong in the one way
+    nobody can see by looking at it -- so it is refused.
     """
-    first = tmp_path / "gpt-5-6-luna__spatial__20260729T090000-1.jsonl"
-    second = tmp_path / "gpt-5-6-luna__spatial__20260729T101500-2.jsonl"
+    first = tmp_path / f"gpt-5-6-luna__spatial__{RUN_ID}.jsonl"
+    second = tmp_path / f"gpt-5-6-luna__spatial__{RUN_ID}-retry.jsonl"
     for path in (first, second):
         answer = make_answer("q1")
         append_shard(path, answer, score(make_question("q1"), answer))
 
     with pytest.raises(ValueError, match="both hold question 'q1'"):
         read_shards([first, second])
+
+
+def test_read_shards_keeps_two_runs_of_one_configuration(tmp_path: Path) -> None:
+    """Repeating a configuration is a measurement, not a mistake.
+
+    The same question under the same (model, prompt) is exactly what a second
+    sweep produces, and averaging over repeats is how a stochastic agent gets
+    measured. Only the ``run_id`` distinguishes the records, so it is what the
+    duplicate key rests on -- and the renderer aggregates both into one row.
+    """
+    paths = []
+    for run_id in (RUN_ID, "20260730T104500-4243"):
+        path = tmp_path / f"gpt-5-6-luna__spatial__{run_id}.jsonl"
+        answer = make_answer("q1", run_id=run_id)
+        append_shard(path, answer, score(make_question("q1"), answer))
+        paths.append(path)
+
+    assert [case.answer.run_id for case in read_shards(paths)] == [
+        RUN_ID,
+        "20260730T104500-4243",
+    ]
 
 
 def test_read_shards_keeps_configurations_apart(tmp_path: Path) -> None:

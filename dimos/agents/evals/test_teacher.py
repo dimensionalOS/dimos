@@ -16,16 +16,20 @@
 
 The sweep that produces ``Measurement`` objects needs a replay, a detector and
 a GPU-shaped afternoon; everything that decides what those measurements *mean*
-needs neither, and that is where the table's credibility comes from. Three
-things are checked here, all on hand-built inputs:
+needs neither, and that is where the table's credibility comes from. Four
+things are checked here, all on hand-built inputs or on the committed artifact:
 
 * the **qualification rules** -- which views count as independent, how
   candidates cluster, which gate claims a drop, when a label is too ambiguous
   to ask about, and how one object collecting several names is caught;
-* the **projection and bbox measurement**, on synthetic points whose pixels and
+* the **projection and point selection**, on synthetic points whose pixels and
   world median are computed by hand, so a frame, sign or axis-order mistake in
   the step that turns LiDAR into a position fails here rather than silently
-  moving every reference;
+  moving every reference. Both selection paths are covered: the shrunk bbox that
+  the table is built with, and the mask path that is one flag away;
+* the **two copies of the calibration**, which a recalibration would otherwise
+  silently split, and the **funnel arithmetic**, which is the only thing making
+  the manifest a description of one sweep rather than a pile of counters;
 * the **committed table itself**, against invariants a future pipeline change
   must not break -- each reference sits about one measured depth from the
   nearest pose it was seen from, and every committed question is passable on
@@ -34,6 +38,8 @@ things are checked here, all on hand-built inputs:
 
 from __future__ import annotations
 
+from collections import Counter
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -43,7 +49,7 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.agents.evals.contracts import QuestionSpec
-from dimos.agents.evals.questions import load_refs
+from dimos.agents.evals.questions import load_refs, nearest_viewpoint_m
 from dimos.agents.evals.teacher import (
     _FALLBACK_D,
     _FALLBACK_K,
@@ -52,14 +58,20 @@ from dimos.agents.evals.teacher import (
     GateParams,
     Measurement,
     Projector,
+    QualifyDiagnostics,
     Reference,
+    ScanStats,
     _cluster_by_position,
     _one_view_per_frame,
     _xy_spread,
     apply_gates,
     assign_location_groups,
+    build_funnel,
     independent_views,
-    measure_bbox,
+    load_camera,
+    measure_detection,
+    measurement_drops,
+    points_on_mask,
     qualify,
     shrink_bbox,
 )
@@ -92,6 +104,10 @@ def make_measurement(
         "depth_m": 2.0,
         "depth_iqr_m": 0.2,
         "range_m": 2.0,
+        # The audit trail the crops draw; no gate reads it.
+        "point_source": "bbox",
+        "mask_outline": (),
+        "inlier_uv": ((150.0, 180.0),),
     }
     fields.update(overrides)
     return Measurement(**fields)
@@ -169,12 +185,21 @@ def test_views_are_independent_when_the_robot_moved() -> None:
     assert independent_views(views, GATES) == views
 
 
-def test_views_are_independent_when_enough_time_passed() -> None:
+def test_time_alone_does_not_make_two_views_independent() -> None:
+    """Independence is spatial: a parked robot has one line of sight, not two.
+
+    The two views are 90 seconds apart from the same spot, which an earlier
+    "or enough time elapsed" rule accepted. It should not be: what a second view
+    is supposed to contribute is a second angle on the object, and a static
+    re-observation contributes agreement with itself. On the reference recording
+    the rule never actually decided anything -- rerunning the sweep without it
+    produced a byte-identical table -- so it was a claim the numbers did not need.
+    """
     views = [
-        make_measurement(0.0, (1.0, 2.0, 0.5)),
-        make_measurement(1.5, (1.0, 2.0, 0.5)),
+        make_measurement(0.0, (1.0, 2.0, 0.5), robot_xyz=(0.0, 0.0, 0.3)),
+        make_measurement(90.0, (1.0, 2.0, 0.5), robot_xyz=(0.05, 0.0, 0.3)),
     ]
-    assert independent_views(views, GATES) == views
+    assert [v.ts for v in independent_views(views, GATES)] == [0.0]
 
 
 def test_near_duplicate_frames_count_as_one_view() -> None:
@@ -190,14 +215,14 @@ def test_near_duplicate_frames_count_as_one_view() -> None:
 def test_independent_views_is_greedy_in_timestamp_order() -> None:
     """Greedy is a lower bound on the largest independent set, i.e. conservative.
 
-    The middle view is neither far enough nor late enough from the first, so it
-    is skipped even though keeping it instead would also have yielded two views.
-    Selection is by timestamp, so shuffling the input cannot change the answer.
+    The middle view is not far enough from the first, so it is skipped even
+    though keeping it instead would also have yielded two views. Selection is by
+    timestamp, so shuffling the input cannot change the answer.
     """
     views = [
         make_measurement(0.0, (1.0, 2.0, 0.5), robot_xyz=(0.0, 0.0, 0.3)),
         make_measurement(0.5, (1.0, 2.0, 0.5), robot_xyz=(0.2, 0.0, 0.3)),
-        make_measurement(1.2, (1.0, 2.0, 0.5), robot_xyz=(0.25, 0.0, 0.3)),
+        make_measurement(1.2, (1.0, 2.0, 0.5), robot_xyz=(0.5, 0.0, 0.3)),
     ]
     assert [v.ts for v in independent_views(views, GATES)] == [0.0, 1.2]
     assert [v.ts for v in independent_views(list(reversed(views)), GATES)] == [0.0, 1.2]
@@ -321,10 +346,15 @@ def test_a_label_seen_only_once_does_not_qualify() -> None:
 
 
 def test_a_label_whose_views_disagree_about_where_it_is_does_not_qualify() -> None:
+    """Three independent views that cannot agree on a position are not a reference.
+
+    The robot moves between all three, so the independence gate has no claim on
+    the drop; what fails is the spread.
+    """
     measurements = [
-        make_measurement(0.0, (0.0, 0.0, 0.5)),
-        make_measurement(1.1, (0.45, 0.0, 0.5)),
-        make_measurement(2.2, (0.9, 0.0, 0.5)),
+        make_measurement(0.0, (0.0, 0.0, 0.5), robot_xyz=(0.0, -2.0, 0.3)),
+        make_measurement(1.1, (0.45, 0.0, 0.5), robot_xyz=(0.5, -2.0, 0.3)),
+        make_measurement(2.2, (0.9, 0.0, 0.5), robot_xyz=(1.0, -2.0, 0.3)),
     ]
     references, diagnostics, _ = qualify(measurements, GATES, "go2_bigoffice")
 
@@ -563,7 +593,7 @@ def test_projection_keeps_pixels_depths_and_world_points_index_aligned() -> None
     assert uv[1] == pytest.approx((CX, CY))  # the second survivor is dead ahead
 
 
-# --- measuring a bbox -------------------------------------------------------
+# --- measuring one detection ------------------------------------------------
 
 BBOX = (100.0, 100.0, 300.0, 300.0)
 #: The centre of ``BBOX``, i.e. inside it however hard it is shrunk.
@@ -572,65 +602,79 @@ INSIDE_UV = (200.0, 200.0)
 #: to (285, 285) -- because bbox corners are mostly background.
 OUTSIDE_SHRUNK_UV = (110.0, 110.0)
 
+#: Frame size the synthetic masks below are built at; only its bounds matter.
+MASK_SHAPE = (400, 400)
+
 
 def projection(
     rows: list[tuple[tuple[float, float], float, tuple[float, float, float]]],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Build the ``(uv, depth, world)`` triple ``measure_bbox`` consumes."""
+    """Build the ``(uv, depth, world)`` triple ``measure_detection`` consumes."""
     uv = np.array([row[0] for row in rows], dtype=np.float64)
     depth = np.array([row[1] for row in rows], dtype=np.float64)
     world = np.array([row[2] for row in rows], dtype=np.float64)
     return uv, depth, world
 
 
-def test_measure_bbox_reports_the_depth_cluster_and_ignores_its_tails() -> None:
+def mask_over(*regions: tuple[int, int, int, int]) -> NDArray[np.uint8]:
+    """A 0/255 mask like ``Detection2DSeg`` carries, set over *regions* (x1,y1,x2,y2)."""
+    mask = np.zeros(MASK_SHAPE, dtype=np.uint8)
+    for x1, y1, x2, y2 in regions:
+        mask[y1:y2, x1:x2] = 255
+    return mask
+
+
+def test_measure_detection_reports_the_depth_cluster_and_ignores_its_tails() -> None:
     """The position is the map-frame median of the [p25, p75] depth inliers.
 
-    The box holds a railing in front of the object and a wall behind it, both
-    of which are legitimate in-box points -- they count toward ``n_points`` --
-    but neither may move the position.
+    The detection holds a railing in front of the object and a wall behind it,
+    both of which are legitimate in-detection points -- they count toward
+    ``n_points`` -- but neither may move the position.
     """
     rows = (
         [(INSIDE_UV, 0.8, (0.8, 0.0, 0.5))] * 2  # foreground railing
         + [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 10  # the object itself
         + [(INSIDE_UV, 6.0, (6.0, 0.0, 0.5))] * 2  # wall behind it
     )
-    measured = measure_bbox(*projection(rows), BBOX, GATES)
+    measured = measure_detection(*projection(rows), BBOX, None, GATES)
 
     assert measured is not None
-    n_points, depth_median, depth_iqr, world_xyz = measured
-    assert n_points == 14  # every non-ground in-box point, not just the inliers
-    assert depth_median == pytest.approx(2.0)
-    assert depth_iqr == pytest.approx(0.0)
-    assert world_xyz == pytest.approx((2.0, 0.0, 0.5))
+    assert measured.n_points == 14  # every non-ground in-box point, not just the inliers
+    assert measured.depth_median_m == pytest.approx(2.0)
+    assert measured.depth_iqr_m == pytest.approx(0.0)
+    assert measured.world_xyz == pytest.approx((2.0, 0.0, 0.5))
+    # The pixels of exactly the inliers, for the audit crop -- the two tails are
+    # in `n_points` but must not be shown as having voted.
+    assert len(measured.inlier_uv) == 10
+    assert set(measured.inlier_uv) == {INSIDE_UV}
 
 
-def test_measure_bbox_rejects_the_floor_before_it_can_vote() -> None:
-    """The floor is the largest single source of in-bbox points.
+def test_measure_detection_rejects_the_floor_before_it_can_vote() -> None:
+    """The floor is the largest single source of in-detection points.
 
     Here it is also the *majority* of them, so a median that included it would
     put the reference on the ground several metres short of the object -- which
     is what the ground gate exists to prevent.
     """
     rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 3 + [(INSIDE_UV, 1.0, (1.0, 0.0, 0.02))] * 5
-    measured = measure_bbox(*projection(rows), BBOX, GATES)
+    measured = measure_detection(*projection(rows), BBOX, None, GATES)
 
     assert measured is not None
-    n_points, _, _, world_xyz = measured
-    assert n_points == 3
-    assert world_xyz == pytest.approx((2.0, 0.0, 0.5))
+    assert measured.n_points == 3
+    assert measured.world_xyz == pytest.approx((2.0, 0.0, 0.5))
 
 
-def test_measure_bbox_only_looks_inside_the_shrunk_box() -> None:
+def test_measure_detection_only_looks_inside_the_shrunk_box() -> None:
     rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 3 + [
         (OUTSIDE_SHRUNK_UV, 9.0, (9.0, 0.0, 0.5)),
         ((400.0, 400.0), 9.0, (9.0, 9.0, 0.5)),  # outside the raw box entirely
     ]
-    measured = measure_bbox(*projection(rows), BBOX, GATES)
+    measured = measure_detection(*projection(rows), BBOX, None, GATES)
 
     assert measured is not None
-    assert measured[0] == 3
-    assert measured[3] == pytest.approx((2.0, 0.0, 0.5))
+    assert measured.n_points == 3
+    assert measured.source == "bbox"
+    assert measured.world_xyz == pytest.approx((2.0, 0.0, 0.5))
 
 
 @pytest.mark.parametrize(
@@ -642,56 +686,221 @@ def test_measure_bbox_only_looks_inside_the_shrunk_box() -> None:
     ],
     ids=["all_ground", "all_outside", "empty"],
 )
-def test_measure_bbox_reports_nothing_rather_than_guessing(
+def test_measure_detection_reports_nothing_rather_than_guessing(
     rows: list[tuple[tuple[float, float], float, tuple[float, float, float]]], reason: str
 ) -> None:
     uv, depth, world = (
         projection(rows) if rows else (np.zeros((0, 2)), np.zeros(0), np.zeros((0, 3)))
     )
-    assert measure_bbox(uv, depth, world, BBOX, GATES) is None, reason
+    assert measure_detection(uv, depth, world, BBOX, None, GATES) is None, reason
 
 
-def test_a_bbox_straddling_two_depths_reports_an_iqr_the_gate_drops() -> None:
+def test_a_detection_straddling_two_depths_reports_an_iqr_the_gate_drops() -> None:
     """The IQR is the "is this one object?" signal, and it has to reach the gate.
 
-    A box spanning a near shelf and a far wall has no honest single position;
-    ``measure_bbox`` still returns one, and ``apply_gates`` is what throws it
-    away -- so the number it hands over must actually be wide.
+    A detection spanning a near shelf and a far wall has no honest single
+    position; ``measure_detection`` still returns one, and ``apply_gates`` is
+    what throws it away -- so the number it hands over must actually be wide.
     """
     # Enough points on each side that the earlier `min_points` gate has no
     # claim on the drop: the one under test is the depth spread.
     rows = [(INSIDE_UV, 1.0, (1.0, 0.0, 0.5))] * 12 + [(INSIDE_UV, 5.0, (5.0, 0.0, 0.5))] * 12
-    measured = measure_bbox(*projection(rows), BBOX, GATES)
+    measured = measure_detection(*projection(rows), BBOX, None, GATES)
 
     assert measured is not None
-    n_points, depth_median, depth_iqr, world_xyz = measured
-    assert n_points >= GATES.min_points
-    assert depth_iqr > GATES.max_depth_iqr_m
+    assert measured.n_points >= GATES.min_points
+    assert measured.depth_iqr_m > GATES.max_depth_iqr_m
 
     straddling = make_measurement(
-        0.0, world_xyz, n_points=n_points, depth_m=depth_median, depth_iqr_m=depth_iqr
+        0.0,
+        measured.world_xyz,
+        n_points=measured.n_points,
+        depth_m=measured.depth_median_m,
+        depth_iqr_m=measured.depth_iqr_m,
     )
     kept, drops = apply_gates([straddling], GATES)
     assert kept == []
     assert dict(drops) == {"depth_iqr": 1}
 
 
+# --- mask-based point selection ---------------------------------------------
+#
+# Off by default (`teacher.PointSelection` records the measurement that decided
+# it: as shipped, `Detection2DSeg` masks are letterbox-misaligned with the frame
+# by 12-19 px on this recording). The path is still exercised here, because the
+# reason it is off is a property of that data, not of this code.
+
+MASK_GATES = GateParams(point_selection="mask")
+
+
+def test_points_on_mask_tests_the_pixel_the_point_landed_on() -> None:
+    """Nearest-integer sample, and a coordinate that rounds off the sensor is clipped.
+
+    The last point is 0.3 px inside the frame and rounds to ``(400, 400)``, one
+    past the last row and column: projection guarantees a pixel is *within* the
+    image, which is not the same as rounding to a valid index, and indexing on it
+    unclipped would raise rather than answer.
+    """
+    mask = mask_over((100, 100, 200, 200), (390, 390, 400, 400))
+    uv = np.array([[150.0, 150.0], [150.4, 199.4], [250.0, 150.0], [399.7, 399.7]])
+    assert points_on_mask(uv, mask).tolist() == [True, True, False, True]
+
+
+def test_mask_selection_ignores_points_the_box_would_have_admitted() -> None:
+    """The point of a mask: a bbox around an L-shaped object is mostly not it.
+
+    Both points sit inside the shrunk bbox, so bbox selection cannot tell them
+    apart; the mask covers only the left half, and the wall point behind the
+    object's right half is exactly the kind of point that quietly moves a
+    reference.
+    """
+    rows = [((150.0, 200.0), 2.0, (2.0, 0.0, 0.5))] * 4 + [
+        ((250.0, 200.0), 9.0, (9.0, 0.0, 0.5))
+    ] * 4
+    mask = mask_over((100, 100, 200, 300))  # left half of BBOX only
+
+    masked = measure_detection(*projection(rows), BBOX, mask, MASK_GATES)
+    boxed = measure_detection(*projection(rows), BBOX, None, GATES)
+
+    assert masked is not None and boxed is not None
+    assert masked.source == "mask"
+    assert masked.n_points == 4
+    assert masked.world_xyz == pytest.approx((2.0, 0.0, 0.5))
+    assert boxed.source == "bbox"
+    assert boxed.n_points == 8
+    assert boxed.world_xyz != pytest.approx(masked.world_xyz)
+
+
+def test_a_detection_without_a_mask_falls_back_to_the_shrunk_box() -> None:
+    """Mask mode is per detection: a plain ``Detection2DBBox`` still gets measured.
+
+    The fallback has to be visible in the result rather than inferred, because
+    the manifest reports how many measurements each path produced -- a mask-mode
+    run that quietly measured everything by bbox would otherwise look like a
+    mask-mode run.
+    """
+    rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 4
+    measured = measure_detection(*projection(rows), BBOX, None, MASK_GATES)
+
+    assert measured is not None
+    assert measured.source == "bbox"
+    assert measured.n_points == 4
+
+
+def test_bbox_mode_ignores_a_mask_that_is_there() -> None:
+    """``--point-selection bbox`` means bbox, not "bbox unless a mask turns up"."""
+    rows = [((150.0, 200.0), 2.0, (2.0, 0.0, 0.5)), ((250.0, 200.0), 9.0, (9.0, 0.0, 0.5))]
+    mask = mask_over((100, 100, 200, 300))
+
+    measured = measure_detection(*projection(rows), BBOX, mask, GATES)
+    assert measured is not None
+    assert measured.source == "bbox"
+    assert measured.n_points == 2
+
+
+def test_an_empty_mask_reports_nothing_rather_than_falling_back() -> None:
+    """A mask the detector left blank is an answer, not a missing one.
+
+    Falling back to the box here would silently measure the background of a
+    detection whose own segmentation claimed nothing, which is the opposite of
+    what mask selection is for.
+    """
+    rows = [(INSIDE_UV, 2.0, (2.0, 0.0, 0.5))] * 4
+    assert measure_detection(*projection(rows), BBOX, mask_over(), MASK_GATES) is None
+
+
+# --- the calibration ---------------------------------------------------------
+
+
+def test_the_inlined_fallback_calibration_matches_the_packaged_yaml() -> None:
+    """The two copies of the Go2 front-camera calibration must not diverge.
+
+    ``load_camera`` reads ``dimos/robot/unitree/go2/front_camera_720.yaml`` and
+    silently falls back to constants copied out of it, so an install without
+    package data still runs. A copy is a copy: if the yaml is ever recalibrated,
+    the fallback would keep projecting with the old intrinsics and the only
+    symptom would be reference positions that moved on machines where the
+    package data was missing.
+    """
+    camera = load_camera()
+    if "fallback" in camera.source:
+        pytest.skip(f"packaged calibration is unreachable here ({camera.source})")
+
+    assert tuple(camera.matrix.reshape(-1).tolist()) == pytest.approx(_FALLBACK_K)
+    assert tuple(camera.distortion.reshape(-1).tolist()) == pytest.approx(_FALLBACK_D)
+    assert (camera.width, camera.height) == _FALLBACK_SIZE
+
+
+# --- the funnel --------------------------------------------------------------
+
+
+def test_the_funnel_accounts_for_every_counted_detection() -> None:
+    """``raw_detections`` minus the drop buckets is ``surviving_measurements``.
+
+    Built on numbers chosen so every bucket is non-empty, including
+    ``dropped_no_lidar_match``: detections on a frame whose LiDAR message was
+    missing were already counted as raw and can never be placed, so before they
+    had a bucket the identity quietly stopped holding on any recording with a
+    gap -- and the reference recording has none, so nothing said so.
+    """
+    stats = ScanStats(
+        raw_detections=100,
+        below_conf=3,
+        no_lidar_match=7,
+        no_points_in_detection=20,
+        measured_from_bbox=70,
+    )
+    drops: Counter[str] = Counter(
+        {"min_points": 11, "depth_iqr": 5, "envelope_range": 2, "envelope_height": 1}
+    )
+    funnel = build_funnel(stats, drops, QualifyDiagnostics(), 4)
+
+    assert sum(measurement_drops(stats, drops).values()) == 49
+    assert funnel["surviving_measurements"] == 100 - 49 == 51
+    assert funnel["dropped_no_lidar_match"] == 7
+
+
+def test_the_committed_manifests_funnel_adds_up() -> None:
+    """The same identity, on the artifact rather than on hand-built counters.
+
+    ``measurement_drops`` names the buckets, so this reads them back out of the
+    committed manifest instead of re-listing them -- a new drop path that forgets
+    to update the manifest fails here.
+    """
+    funnel = json.loads((REFERENCE_DIR / "manifest.json").read_text())["funnel"]
+    buckets = measurement_drops(ScanStats(), Counter())
+
+    dropped = sum(funnel[key] for key in buckets)
+    assert funnel["raw_detections"] - dropped == funnel["surviving_measurements"]
+    # Everything that got a position was measured by one path or the other.
+    placed = funnel["measured_from_mask"] + funnel["measured_from_bbox"]
+    assert (
+        placed
+        == funnel["raw_detections"]
+        - funnel["dropped_below_conf"]
+        - funnel["dropped_no_lidar_match"]
+        - funnel["dropped_no_points_in_detection"]
+    )
+
+
 # --- the committed table ----------------------------------------------------
-
-
-def nearest_viewpoint_m(ref: dict[str, Any]) -> float:
-    """XY distance from a reference to the closest pose it was observed from."""
-    return min(math.hypot(pose[0] - ref["x"], pose[1] - ref["y"]) for pose in ref["robot_poses"])
-
 
 #: How far ``nearest_viewpoint_m`` may sit from the depth the same row reports.
 #: The two are measured differently -- one is the closest of several poses, the
 #: other the median optical depth over the cluster, from a camera 0.3 m ahead of
 #: base_link -- so they are only ever approximately equal. The widest gap in the
 #: committed table is 0.79 m, on ``dollhouse``: the white service robot that
-#: moves between sightings, which is exactly why review dropped it. The check is
-#: not calibration; it is a tripwire for a frame, sign or unit mistake, and any
-#: of those moves this by metres.
+#: moves between sightings, which is exactly why review dropped it.
+#:
+#: What this tolerance can and cannot catch is worth being exact about, because
+#: 0.9 m sounds like a calibration check and is not one. It catches metre-scale
+#: mistakes -- projecting in the wrong frame, a dropped sign, a swapped axis
+#: order, metres read as something else -- each of which moves this by metres. It
+#: does **not** catch the 0.3 m camera offset: forgetting ``BASE_TO_OPTICAL``'s
+#: translation shifts every depth by 0.3 m, which stays comfortably inside the
+#: tolerance and inside the honest spread of the table. That case is covered by
+#: ``test_a_point_on_the_optical_axis_lands_on_the_principal_point`` instead,
+#: which asserts the offset exactly.
 MAX_VIEWPOINT_DEPTH_MISMATCH_M = 0.9
 
 
@@ -700,8 +909,8 @@ def test_every_reference_sits_about_one_measured_depth_from_its_nearest_viewpoin
 
     They come from three different places -- the LiDAR sweep, the recorded pose
     and the optical-frame depths -- so a future change that projects into the
-    wrong frame, drops a sign, or forgets the camera offset breaks their
-    agreement long before it produces a table anyone would question by eye.
+    wrong frame, drops a sign or swaps an axis order breaks their agreement long
+    before it produces a table anyone would question by eye.
     """
     for ref in load_refs(REFERENCE_DIR / "refs.jsonl"):
         mismatch = nearest_viewpoint_m(ref) - ref["depth_median_m"]

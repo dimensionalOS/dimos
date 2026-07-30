@@ -38,7 +38,8 @@ Three details are load-bearing:
 
 Attach to the result with the same ``db_path`` and ``collection_name`` this run
 prints, plus ``new_memory=False`` — the default is ``True``, which deletes the
-collection on construction.
+collection on construction. ``assert_store_ingested`` below is the check the eval
+runs before it attaches, because attaching to the *wrong* name succeeds quietly.
 """
 
 from __future__ import annotations
@@ -63,6 +64,53 @@ DEFAULT_SAMPLE_HZ = 1.0
 #: read-only copy taken right after the ingest succeeds.
 VISUAL_MEMORY_NAME = "visual_memory.pkl"
 VISUAL_MEMORY_BACKUP_NAME = "visual_memory.pkl.bak"
+
+
+def assert_store_ingested(db_path: str | Path, collection_name: str) -> int:
+    """Check that *collection_name* exists in *db_path* and holds frames.
+
+    Returns the frame count. Raises ``RuntimeError`` naming both, plus the
+    command that builds one, otherwise.
+
+    Worth its own check because the failure it catches is silent: the answering
+    path constructs ``SpatialMemory`` with ``new_memory=False``, which reaches
+    ChromaDB through ``get_or_create_collection`` -- so a typo'd collection name,
+    or a ``db_path`` pointing one directory above the real ``chroma/``, produces
+    an *empty* collection instead of an error. Every question then legitimately
+    answers "no prediction", and the run looks like a model that never found
+    anything. Called from the test process before the ~20 s coordinator build, so
+    a misconfigured sweep fails in seconds rather than after an hour of shards
+    that mean nothing.
+    """
+    import chromadb
+
+    hint = (
+        f"build one with: uv run python -m dimos.agents.evals.ingest --dataset "
+        f"{DEFAULT_DATASET} --out-dir <dir> --collection {collection_name}"
+    )
+    if not Path(db_path).is_dir():
+        # Checked before the client is built: `PersistentClient` would create the
+        # directory, so the guard would otherwise leave an empty store behind
+        # while reporting a missing collection.
+        raise RuntimeError(
+            f"{str(db_path)!r} is not a directory; it must be the chroma/ directory "
+            f"the ingest wrote, not the directory above it. {hint}"
+        )
+    try:
+        collection = chromadb.PersistentClient(path=str(db_path)).get_collection(collection_name)
+    except Exception as exc:
+        raise RuntimeError(
+            f"no chroma collection {collection_name!r} in {db_path!r} "
+            f"({type(exc).__name__}: {exc}); the answering path would silently "
+            f"create it empty and score every question as no_prediction. {hint}"
+        ) from exc
+    count = collection.count()
+    if count == 0:
+        raise RuntimeError(
+            f"chroma collection {collection_name!r} in {db_path!r} is empty, so "
+            f"every question would score as no_prediction. {hint}"
+        )
+    return int(count)
 
 
 class SampleCounts:

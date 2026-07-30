@@ -37,12 +37,21 @@ real ``McpServer``/``McpClient`` -- with observation-only modules at the edges
   ``FakeCamera`` publishes nothing, so ``_latest_image`` stays ``None`` and
   ``_get_bbox_for_current_frame`` returns before any external call, tracker or
   no tracker. The eval reaches the semantic-map path it scores either way.
+
+After the turn, and before teardown, the fixture asks the *same* memory what
+each of the agent's queries retrieves, so the shard records what was retrieved
+and not only where the agent went (see :func:`_replay_retrievals`). That is a
+read-only query against a store this run never writes to, it costs ~0.1 s per
+query, and it is a diagnostic: every failure of it is swallowed, because a
+measurement that already succeeded must not be invalidated by an observation
+bolted onto it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from itertools import count
+import os
 from pathlib import Path
 from threading import Event
 import time
@@ -52,6 +61,8 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 import pytest
 
+from dimos.agents.evals.contracts import RetrievalRecord
+from dimos.agents.evals.ingest import assert_store_ingested
 from dimos.agents.evals.modules import (
     FakeCamera,
     FakeOdom,
@@ -65,6 +76,7 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
+from dimos.core.module import ModuleBase
 from dimos.core.transport import pLCMTransport
 from dimos.utils.logging_config import setup_logger
 
@@ -79,6 +91,120 @@ logger = setup_logger()
 DEFAULT_ANSWER_TIMEOUT_S = 180.0
 DEFAULT_IDLE_TIMEOUT_S = 120.0
 DEFAULT_SUBSCRIPTION_TIMEOUT_S = 30.0
+
+#: Substituted when a retrieval result carries no distance, matching what the
+#: shipping skill does with the same hole (``1.0 - (result.get("distance") or 1)``
+#: in ``dimos/agents/skills/navigation.py``): it reads as "no usable similarity"
+#: rather than as a perfect match, which a ``0.0`` default would.
+_NO_DISTANCE = 1.0
+
+
+def _top_retrieval(query: str, results: Any) -> RetrievalRecord | None:
+    """The top hit of one ``query_by_text`` return, or ``None`` if there is none.
+
+    Worth extracting because the shape is not the obvious one.
+    ``SpatialVectorDB._process_query_results`` enumerates chroma's **per-query**
+    lists, so a single-text query comes back as *one* result object, not one per
+    hit: its ``metadata`` is the list of hits and its ``distance``/``id`` belong
+    to the top one. The pose therefore lives in ``metadata[0]``, which is exactly
+    how ``navigate_with_text`` reads it (``_get_goal_pose_from_result``).
+
+    Returns ``None`` -- never raises, never guesses -- for anything that is not
+    that shape: an empty answer, a memory whose metadata carries no ``pos_x`` /
+    ``pos_y``, or a stub that answers something else entirely. This is a
+    diagnostic, so an unrecognized shape is recorded as "nothing", not as a
+    coordinate somebody might later read as a measurement.
+
+    >>> _top_retrieval("houseplant", [{"metadata": [{"pos_x": 1.0, "pos_y": -2.0}],
+    ...                                "distance": 0.25}])
+    RetrievalRecord(query='houseplant', x=1.0, y=-2.0, distance=0.25)
+    >>> _top_retrieval("houseplant", []) is None
+    True
+    """
+    if not results:
+        return None
+    first = results[0]
+    metadata = first.get("metadata") if isinstance(first, Mapping) else None
+    if isinstance(metadata, Mapping):
+        top: Mapping[str, Any] = metadata
+    elif isinstance(metadata, Sequence) and metadata and isinstance(metadata[0], Mapping):
+        top = metadata[0]
+    else:
+        return None
+    if "pos_x" not in top or "pos_y" not in top:
+        return None
+    distance = first.get("distance")
+    return RetrievalRecord(
+        query=query,
+        x=float(top["pos_x"]),
+        y=float(top["pos_y"]),
+        distance=float(distance) if distance is not None else _NO_DISTANCE,
+    )
+
+
+def _queryable_module(blueprint: Blueprint) -> type[ModuleBase] | None:
+    """The module of *blueprint* that answers ``query_by_text``, if one does.
+
+    The blueprint is resolved rather than the shipping ``SpatialMemory`` being
+    assumed, because the memory module is a parameter of the fixture: the
+    hermetic lanes substitute their own. A substitute without the RPC is a
+    legitimate configuration (the re-query is a diagnostic, not a requirement),
+    so this reports ``None`` and the caller skips with a note.
+    """
+    for atom in blueprint.blueprints:
+        if hasattr(atom.module, "query_by_text"):
+            return atom.module
+    return None
+
+
+def _replay_retrievals(
+    coordinator: ModuleCoordinator, blueprint: Blueprint, queries: Sequence[str]
+) -> list[RetrievalRecord]:
+    """Re-ask the spatial memory what each of *queries* retrieves.
+
+    Deterministic rather than a second sample: the store is attached read-only
+    and ``query_by_text`` is a CLIP embedding against it, so re-asking the same
+    text after the turn reproduces what the agent's tool call got. Queries are
+    de-duplicated with order preserved -- an agent that asks the same thing twice
+    gets one record, and the list stays joinable against ``tool_queries``.
+
+    **This never fails a run.** It is observability bolted onto a measurement
+    that is already complete, so every failure path returns an empty list and
+    logs; the caller must not turn it into a ``harness_error``. On a partial
+    failure the records collected so far are dropped too: a list that silently
+    omits one query is worse than an absent one, because a reader joining it
+    against ``tool_queries`` cannot tell the two apart.
+    """
+    started = time.perf_counter()
+    try:
+        module = _queryable_module(blueprint)
+        if module is None:
+            logger.info(
+                "Spatial eval: the spatial memory blueprint in use exposes no "
+                "query_by_text; recording no retrievals for this question"
+            )
+            return []
+        memory = coordinator.get_instance(module)
+        if memory is None:
+            logger.info(f"Spatial eval: {module.__name__} is not deployed; no retrievals recorded")
+            return []
+        records: list[RetrievalRecord] = []
+        for query in dict.fromkeys(queries):
+            record = _top_retrieval(query, memory.query_by_text(query, limit=1))
+            if record is not None:
+                records.append(record)
+    except Exception:
+        logger.warning(
+            "Spatial eval: retrieval read-back failed; recording no retrievals. "
+            "This is a diagnostic and does not invalidate the run.",
+            exc_info=True,
+        )
+        return []
+    logger.info(
+        f"Spatial eval: recorded {len(records)} retrieval(s) for {len(set(queries))} "
+        f"distinct query/ies in {time.perf_counter() - started:.2f}s"
+    )
+    return records
 
 
 @pytest.fixture
@@ -103,7 +229,13 @@ def spatial_eval_setup(
         ``model_fixture`` is set, so accepting both would silently score a
         recording instead of the requested model.
     ``db_path`` / ``collection_name``
-        The ingested spatial memory to answer from.
+        The ingested spatial memory to answer from. Checked with
+        ``assert_store_ingested`` before anything is built, whenever the shipping
+        ``SpatialMemory`` blueprint is the one being used.
+    ``run_id``
+        Which sweep this measurement belongs to; defaults to one stamp per
+        fixture instantiation, i.e. per test, so every question of one sweep
+        shares it and a repeat of that sweep does not collide with it.
     ``answer_timeout_s`` / ``idle_timeout_s`` / ``subscription_timeout_s``
         The fixture's outer wait and the runner's two inner waits.
     ``spatial_memory_blueprint``
@@ -116,9 +248,20 @@ def spatial_eval_setup(
     only, no verdict. Harness failures are captured into
     ``harness_error`` rather than raised, so a sweep records an attributable
     outcome for every question instead of losing the run.
+
+    The observation also carries ``retrievals``: after the turn, each distinct
+    tool query is re-asked of the spatial memory so the shard records *what was
+    retrieved*, not only where the agent went. That is diagnostic observability
+    and nothing scores it -- see ``contracts.RetrievalRecord`` and
+    :func:`_replay_retrievals`, which cannot fail a run.
     """
     run_index = count()
     active: dict[str, Any] = {}
+    # One stamp per fixture instantiation, i.e. per test: the questions of one
+    # sweep are one run and must share a run_id, while a second sweep -- of the
+    # same configuration, deliberately repeated -- must get its own or the
+    # renderer cannot tell a repeat from a duplicate.
+    default_run_id = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
 
     def shutdown() -> str | None:
         """Tear down whatever the last run built; report a failure instead of raising.
@@ -153,6 +296,7 @@ def spatial_eval_setup(
         system_prompt: str | None = None,
         model: str | None = None,
         model_fixture: str | Path | None = None,
+        run_id: str | None = None,
         answer_timeout_s: float = DEFAULT_ANSWER_TIMEOUT_S,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         subscription_timeout_s: float = DEFAULT_SUBSCRIPTION_TIMEOUT_S,
@@ -170,6 +314,12 @@ def spatial_eval_setup(
                 f"({idle_timeout_s}), otherwise every slow turn is reported as a "
                 "fixture timeout and the runner's own error is never seen"
             )
+        if spatial_memory_blueprint is None:
+            # Raised, not captured as a harness_error: a store that is not there
+            # is a misconfiguration of the run, not a failed measurement of it.
+            # Checked here, before the ~20 s coordinator build, so a whole sweep
+            # against the wrong collection name costs seconds.
+            assert_store_ingested(db_path, collection_name)
 
         client_kwargs: dict[str, Any] = {
             "system_prompt": system_prompt,
@@ -202,6 +352,7 @@ def spatial_eval_setup(
         goals: list[GoalRecord] = []
         tool_queries: list[str] = []
         tool_errors: list[str] = []
+        retrievals: list[RetrievalRecord] = []
         harness_error: str | None = None
         agent_seconds = 0.0
         started = time.perf_counter()
@@ -241,6 +392,13 @@ def spatial_eval_setup(
             skills = coordinator.get_instance(RecordingNavigationSkillContainer)
             tool_queries = list(skills.get_queries() or [])
             tool_errors = list(skills.get_tool_errors() or [])
+
+            # Diagnostic, and last: the measurement above is already complete, so
+            # this must not be able to spoil it. `_replay_retrievals` swallows
+            # everything, which is why it sits inside this `try` without being
+            # able to reach the `except` below. It needs the coordinator alive, so
+            # it runs before `shutdown()` in the `finally`.
+            retrievals = _replay_retrievals(coordinator, memory_blueprint, tool_queries)
         except Exception as exc:
             logger.error(f"Spatial eval harness failed on question {question_id!r}", exc_info=True)
             harness_error = f"{type(exc).__name__}: {exc}"
@@ -253,6 +411,7 @@ def spatial_eval_setup(
             model_id=model_id,
             prompt_id=prompt_id,
             prompt_sha256=prompt_sha256(system_prompt),
+            run_id=run_id or default_run_id,
             finished=finished,
             agent_wall_time_s=agent_seconds,
             total_wall_time_s=time.perf_counter() - started,
@@ -260,6 +419,7 @@ def spatial_eval_setup(
             tool_queries=tool_queries,
             tool_errors=tool_errors,
             harness_error=harness_error,
+            retrievals=retrievals,
         )
 
     yield run_question
