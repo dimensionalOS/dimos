@@ -20,11 +20,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum, auto
 import threading
 from types import MappingProxyType
+from typing import cast
 
 import attrs
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -190,7 +192,14 @@ class PlanExecutionManager:
                 )
 
             try:
-                result = self._coordinator.execute_trajectory(trajectory)
+                result = cast(
+                    "TrajectoryExecutionResult",
+                    self._coordinator.task_invoke(
+                        JOINT_TRAJECTORY_TASK_NAME,
+                        "execute",
+                        {"trajectory": trajectory},
+                    ),
+                )
             except Exception as exc:
                 logger.exception("Coordinator execute RPC failed")
                 return ExecutionDispatchResult(
@@ -214,7 +223,13 @@ class PlanExecutionManager:
         """Cancel coordinator trajectory execution."""
         with self._operation_lock:
             try:
-                return self._coordinator.cancel_trajectory()
+                return cast(
+                    "TrajectoryCancellationResult",
+                    self._coordinator.task_invoke(
+                        JOINT_TRAJECTORY_TASK_NAME,
+                        "cancel",
+                    ),
+                )
             except Exception as exc:
                 logger.exception("Coordinator cancel RPC failed")
                 return TrajectoryCancellationResult(

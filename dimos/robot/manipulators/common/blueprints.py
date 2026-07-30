@@ -22,33 +22,28 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+)
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
-    DEFAULT_TRAJECTORY_TASK_NAME,
     EEF_TWIST_TASK_NAME,
-    trajectory_task_name,
 )
 
 
 def trajectory_task(
     hardware: HardwareComponent,
     *additional_hardware: HardwareComponent,
-    name: str | None = None,
     priority: int = 10,
     start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     hardware_components = (hardware, *additional_hardware)
     return TaskConfig(
-        name=name
-        or (
-            trajectory_task_name(hardware.hardware_id)
-            if not additional_hardware
-            else DEFAULT_TRAJECTORY_TASK_NAME
-        ),
+        name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
         joint_names=[
             joint_name for component in hardware_components for joint_name in component.joints
@@ -154,9 +149,3 @@ def planner(
     if visualization is not None:
         module_kwargs["visualization"] = visualization
     return ManipulationModule.blueprint(**module_kwargs)
-
-
-def default_trajectory_task_name(hardware_id: str) -> str:
-    if hardware_id == "arm":
-        return DEFAULT_TRAJECTORY_TASK_NAME
-    return trajectory_task_name(hardware_id)

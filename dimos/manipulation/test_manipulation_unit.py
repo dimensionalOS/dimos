@@ -24,6 +24,7 @@ from pytest_mock import MockerFixture
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -60,8 +61,15 @@ def _control_coordinator(
     cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
 ) -> MagicMock:
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+
+    def task_invoke(_task_name: str, method: str, _kwargs: object = None) -> object:
+        if method == "execute":
+            return TrajectoryExecutionResult(execute_status)
+        if method == "cancel":
+            return TrajectoryCancellationResult(cancel_status)
+        raise AssertionError(f"unexpected task command {method}")
+
+    coordinator.task_invoke.side_effect = task_invoke
     return coordinator
 
 
@@ -319,7 +327,10 @@ class TestStateMachine:
         assert module._state == ManipulationState.COMPLETED
 
         assert module.cancel() is True
-        module._control_coordinator.cancel_trajectory.assert_called_once_with()
+        assert module._control_coordinator.task_invoke.call_args_list[-1].args == (
+            JOINT_TRAJECTORY_TASK_NAME,
+            "cancel",
+        )
         assert module._state == ManipulationState.IDLE
 
     def test_reset_not_during_execution(self, module_factory):
@@ -881,8 +892,12 @@ class TestPlanningGroupApis:
 
         assert module.execute_plan() is True
 
-        mock_coordinator.execute_trajectory.assert_called_once()
-        payload = mock_coordinator.execute_trajectory.call_args.args[0]
+        payload = mock_coordinator.task_invoke.call_args.args[2]["trajectory"]
+        mock_coordinator.task_invoke.assert_called_once_with(
+            JOINT_TRAJECTORY_TASK_NAME,
+            "execute",
+            {"trajectory": payload},
+        )
         assert payload.joint_names == ["left_coord_j1", "k0"]
         assert [point.time_from_start for point in payload.points] == [0.0, 2.5]
         assert [point.positions for point in payload.points] == [[0.0, 1.0], [0.5, 1.5]]
@@ -1016,6 +1031,76 @@ class TestExecute:
 
         assert module.execute() is False
         assert module._state == ManipulationState.IDLE
+
+    def test_execute_plan_can_dispatch_cached_plan_repeatedly(self, module_factory):
+        coordinator = _control_coordinator()
+        module = module_factory(coordinator)
+        _install_generated_plan(module, _one_joint_config(), MagicMock(), [0.0], [1.0])
+
+        assert module.execute_plan()
+        assert module.execute_plan()
+        assert [call.args[:2] for call in coordinator.task_invoke.call_args_list] == [
+            (JOINT_TRAJECTORY_TASK_NAME, "execute"),
+            (JOINT_TRAJECTORY_TASK_NAME, "execute"),
+        ]
+
+    def test_direct_plan_does_not_replace_cached_plan(self, module_factory):
+        coordinator = _control_coordinator()
+        module = module_factory(coordinator)
+        config = _one_joint_config()
+        _install_generated_plan(module, config, MagicMock(), [0.0], [1.0])
+        cached = module._last_plan
+        assert cached is not None
+        direct = GeneratedPlan(
+            group_ids=(f"{config.name}/manipulator",),
+            trajectory=_generated_plan_trajectory([f"{config.name}/j0"], [0.0], [2.0]),
+            path=[
+                JointState(name=[f"{config.name}/j0"], position=[0.0]),
+                JointState(name=[f"{config.name}/j0"], position=[2.0]),
+            ],
+            status=PlanningStatus.SUCCESS,
+        )
+
+        assert module.execute_plan(plan=direct)
+
+        assert module._last_plan is cached
+        dispatched = coordinator.task_invoke.call_args.args[2]["trajectory"]
+        assert dispatched.points[-1].positions == [2.0]
+
+    def test_known_coordinator_rejection_restores_previous_state(self, module_factory):
+        coordinator = _control_coordinator(
+            execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH
+        )
+        module = module_factory(coordinator)
+        _install_generated_plan(module, _one_joint_config(), MagicMock(), [0.0], [1.0])
+        module._state = ManipulationState.COMPLETED
+
+        assert not module.execute_plan()
+
+        assert module._state is ManipulationState.COMPLETED
+        assert module._last_plan is not None
+
+    def test_uncertain_execute_projects_to_fault(self, module_factory):
+        coordinator = _control_coordinator()
+        coordinator.task_invoke.side_effect = TimeoutError("timed out")
+        module = module_factory(coordinator)
+        _install_generated_plan(module, _one_joint_config(), MagicMock(), [0.0], [1.0])
+
+        assert not module.execute_plan()
+
+        assert module._state is ManipulationState.FAULT
+        assert "timed out" in module.get_error()
+
+    def test_uncertain_cancel_projects_to_fault(self, module_factory):
+        coordinator = _control_coordinator()
+        coordinator.task_invoke.side_effect = TimeoutError("timed out")
+        module = module_factory(coordinator)
+        module._state = ManipulationState.EXECUTING
+
+        assert not module.cancel()
+
+        assert module._state is ManipulationState.FAULT
+        assert "timed out" in module.get_error()
 
 
 class TestRobotModelConfigMapping:

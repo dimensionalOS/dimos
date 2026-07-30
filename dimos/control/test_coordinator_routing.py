@@ -338,7 +338,13 @@ class TestTwistRouting:
 
     def test_twist_not_subscribed_without_base_or_velocity_capable_task(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name="joint_trajectory",
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 
@@ -500,7 +506,13 @@ class TestTwistCardContract:
 class TestSubscriptionLifecycle:
     def test_streams_without_consumers_are_not_subscribed(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name="joint_trajectory",
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 

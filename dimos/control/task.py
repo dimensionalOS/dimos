@@ -27,8 +27,13 @@ Use the t_now passed in CoordinatorState.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from weakref import ReferenceType, ref
+
+import attrs
 
 from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
@@ -39,6 +44,18 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.quest.quest_types import Buttons
+
+
+def _immutable_joint_mapping(
+    value: Mapping[JointName, float],
+) -> Mapping[JointName, float]:
+    """Detach a mapping from its caller and expose a read-only copy."""
+    return MappingProxyType(dict(value))
+
+
+def _immutable_imu_mapping(value: Mapping[str, IMUState]) -> Mapping[str, IMUState]:
+    """Detach an IMU mapping from its caller and expose a read-only copy."""
+    return MappingProxyType(dict(value))
 
 
 @dataclass(frozen=True)
@@ -65,7 +82,7 @@ class ResourceClaim:
         return bool(self.joints & other.joints)
 
 
-@dataclass
+@attrs.frozen(slots=False)
 class JointStateSnapshot:
     """Aggregated joint states from all hardware.
 
@@ -79,9 +96,18 @@ class JointStateSnapshot:
         timestamp: Unix timestamp when state was read
     """
 
-    joint_positions: dict[JointName, float] = field(default_factory=dict)
-    joint_velocities: dict[JointName, float] = field(default_factory=dict)
-    joint_efforts: dict[JointName, float] = field(default_factory=dict)
+    joint_positions: Mapping[JointName, float] = attrs.field(
+        factory=dict,
+        converter=_immutable_joint_mapping,
+    )
+    joint_velocities: Mapping[JointName, float] = attrs.field(
+        factory=dict,
+        converter=_immutable_joint_mapping,
+    )
+    joint_efforts: Mapping[JointName, float] = attrs.field(
+        factory=dict,
+        converter=_immutable_joint_mapping,
+    )
     timestamp: float = 0.0
 
     def get_position(self, joint_name: JointName) -> float | None:
@@ -97,7 +123,7 @@ class JointStateSnapshot:
         return self.joint_efforts.get(joint_name)
 
 
-@dataclass
+@attrs.frozen(slots=False)
 class CoordinatorState:
     """Complete state snapshot for tasks to read.
 
@@ -115,9 +141,46 @@ class CoordinatorState:
     """
 
     joints: JointStateSnapshot
-    imu: dict[str, IMUState] = field(default_factory=dict)
+    imu: Mapping[str, IMUState] = attrs.field(
+        factory=dict,
+        converter=_immutable_imu_mapping,
+    )
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
+
+
+@attrs.frozen(slots=False)
+class ControlTaskContext:
+    """Coordinator-owned services available to a registered base task.
+
+    The context itself carries no runtime state. Its callbacks always resolve
+    against the coordinator that owns the task registration.
+    """
+
+    get_state: Callable[[], CoordinatorState | None]
+
+
+@attrs.frozen(slots=True, weakref_slot=True)
+class _TaskRegistration:
+    """Registration-owned lease for one task's coordinator context access."""
+
+    context: ControlTaskContext
+
+    @classmethod
+    def acquire(
+        cls,
+        task: BaseControlTask,
+        context: ControlTaskContext,
+    ) -> _TaskRegistration:
+        """Create the task's exclusive registration lease."""
+        existing = task._registration() if task._registration is not None else None
+        if existing is not None:
+            raise RuntimeError(
+                f"Control task {task.name!r} is already registered with another coordinator"
+            )
+        registration = cls(context=context)
+        task._registration = ref(registration)
+        return registration
 
 
 @dataclass
@@ -328,11 +391,24 @@ class BaseControlTask(ControlTask):
     """
 
     _name: str
+    _registration: ReferenceType[_TaskRegistration] | None = None
 
     @property
     def name(self) -> str:
         """Unique task identifier, backed by ``self._name``."""
         return self._name
+
+    @property
+    def context(self) -> ControlTaskContext:
+        """Return the registered coordinator's context.
+
+        A task can be configured before registration, but coordinator services
+        are intentionally unavailable until the task is registered.
+        """
+        registration = self._registration() if self._registration is not None else None
+        if registration is None:
+            raise RuntimeError(f"Control task {self.name!r} is not registered with a coordinator")
+        return registration.context
 
     def on_buttons(self, msg: Buttons) -> bool:
         """No-op default."""

@@ -47,13 +47,12 @@ from dimos.control.hardware_interface import (
     ConnectedWholeBody,
 )
 from dimos.control.routing import Routing
-from dimos.control.task import ControlTask
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JointTrajectoryTask,
-    TrajectoryCancellationResult,
-    TrajectoryCancellationStatus,
-    TrajectoryExecutionResult,
-    TrajectoryExecutionStatus,
+from dimos.control.task import (
+    BaseControlTask,
+    ControlTask,
+    ControlTaskContext,
+    CoordinatorState,
+    _TaskRegistration,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
@@ -69,7 +68,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -147,7 +145,7 @@ class ControlCoordinator(Module):
         ...     ],
         ...     tasks=[
         ...         TaskConfig(
-        ...             name="traj_arm",
+        ...             name="joint_trajectory",
         ...             type="trajectory",
         ...             joint_names=make_joints("arm", 7),
         ...             priority=10,
@@ -195,8 +193,15 @@ class ControlCoordinator(Module):
 
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
+        self._task_registrations: dict[TaskName, _TaskRegistration] = {}
         self._task_lock = threading.Lock()
-        self._trajectory_task: JointTrajectoryTask | None = None
+
+        # The tick loop atomically replaces the latest complete observation.
+        # This lock is deliberately independent from task dispatch so task
+        # commands can read state without coupling tick and command progress.
+        self._latest_state: CoordinatorState | None = None
+        self._state_lock = threading.Lock()
+        self._task_context = ControlTaskContext(get_state=self._get_latest_state)
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
         # port -> (task, handler, routing). Guarded by _task_lock; entries are
@@ -222,6 +227,21 @@ class ControlCoordinator(Module):
         }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
+
+    def _get_latest_state(self) -> CoordinatorState | None:
+        """Return the latest complete tick observation, if a tick has run."""
+        with self._state_lock:
+            return self._latest_state
+
+    def _set_latest_state(self, state: CoordinatorState) -> None:
+        """Atomically publish one complete tick observation."""
+        with self._state_lock:
+            self._latest_state = state
+
+    def _clear_latest_state(self) -> None:
+        """Clear observations across runtime discontinuities."""
+        with self._state_lock:
+            self._latest_state = None
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
@@ -459,29 +479,6 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Execute a trajectory through the coordinator's sole trajectory task."""
-        current_positions = self.get_joint_positions()
-        with self._task_lock:
-            if self._trajectory_task is None:
-                return TrajectoryExecutionResult(
-                    TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
-                    "Control coordinator has no trajectory task",
-                )
-            return self._trajectory_task.execute(trajectory, current_positions)
-
-    @rpc
-    def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
-        with self._task_lock:
-            if self._trajectory_task is None:
-                return TrajectoryCancellationResult(
-                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-                    "Control coordinator has no trajectory task",
-                )
-            return self._trajectory_task.cancel()
-
-    @rpc
     def add_task(
         self,
         task: ControlTask,
@@ -504,21 +501,26 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
-            if isinstance(task, JointTrajectoryTask):
-                if self._trajectory_task is not None:
-                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
-                self._trajectory_task = task
+            registration = (
+                _TaskRegistration.acquire(task, self._task_context)
+                if isinstance(task, BaseControlTask)
+                else None
+            )
             if task_type is not None:
                 try:
                     self._register_routes(task, task_type, stream_bind)
                     self._task_commands[task.name] = self._commands_for(task_type)
                 except Exception:
-                    if task is self._trajectory_task:
-                        self._trajectory_task = None
+                    for entries in self._routes.values():
+                        entries[:] = [entry for entry in entries if entry[0] is not task]
+                    self._task_commands.pop(task.name, None)
+                    registration = None
                     raise
             else:
                 self._task_commands[task.name] = frozenset()
             self._tasks[task.name] = task
+            if registration is not None:
+                self._task_registrations[task.name] = registration
             logger.info(f"Added task {task.name}")
         self._sync_stream_subscriptions()
         return True
@@ -533,8 +535,7 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
-            if task is self._trajectory_task:
-                self._trajectory_task = None
+            self._task_registrations.pop(task_name, None)
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -783,6 +784,7 @@ class ControlCoordinator(Module):
         without tearing down the coordinator. The result covers declaring
         tasks only.
         """
+        self._clear_latest_state()
         results: dict[str, bool] = {}
         with self._task_lock:
             for name, task in self._tasks.items():
@@ -803,41 +805,30 @@ class ControlCoordinator(Module):
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
-        """Invoke a task command. Pass t_now=None to auto-inject current time.
+        """Invoke a command declared by the task type's ``TASK_EXPOSES`` card.
 
-        Commands declared in the task's TASK_EXPOSES card are validated
-        against the method's own signature before dispatch; a bad kwarg name
-        or missing required argument raises to the caller. Undeclared methods
-        still dispatch exactly as before but log a nudge to declare them.
+        Arguments are validated against the method's own signature before
+        dispatch. Missing tasks, undeclared methods, invalid arguments, and
+        handler exceptions propagate to the caller.
         """
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return None
+                raise KeyError(f"task_invoke({task_name!r}, {method!r}): task not found")
 
             kwargs = dict(kwargs or {})
+            declared = self._task_commands.get(task_name, frozenset())
+            if method not in declared:
+                raise AttributeError(
+                    f"task_invoke({task_name!r}, {method!r}): command is not exposed; "
+                    f"declared commands: {sorted(declared)}"
+                )
 
             # Auto-inject t_now if requested (None means "use current time")
             if "t_now" in kwargs and kwargs["t_now"] is None:
                 kwargs["t_now"] = time.perf_counter()
 
-            if method in self._task_commands.get(task_name, frozenset()):
-                return self._invoke_declared(task, task_name, method, kwargs)
-
-            if not hasattr(task, method):
-                raise AttributeError(
-                    f"task_invoke({task_name!r}, {method!r}): task has no such method; "
-                    f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
-                )
-            # TODO: Make TASK_EXPOSES an enforced RPC allowlist after migrating callers
-            # that rely on reflective access to undeclared task methods.
-            logger.warning(
-                "undeclared task_invoke; declare it in TASK_EXPOSES",
-                task_name=task_name,
-                method=method,
-            )
-            return getattr(task, method)(**kwargs)
+            return self._invoke_declared(task, task_name, method, kwargs)
 
     def _invoke_declared(
         self, task: ControlTask, task_name: TaskName, method: str, kwargs: dict[str, Any]
@@ -968,6 +959,7 @@ class ControlCoordinator(Module):
             tasks=self._tasks,
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
+            observation_callback=self._set_latest_state,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
@@ -997,6 +989,7 @@ class ControlCoordinator(Module):
 
         if self._tick_loop:
             self._tick_loop.stop()
+        self._clear_latest_state()
 
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():

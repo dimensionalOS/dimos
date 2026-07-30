@@ -199,7 +199,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     hardware=[_mock_arm_hw, _mock_twist_base()],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name="joint_trajectory",
             type="trajectory",
             joint_names=_mock_arm_hw.joints,
             priority=10,

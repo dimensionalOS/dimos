@@ -22,7 +22,7 @@ is compute-only and relies on the coordinator for timing.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
@@ -45,12 +45,13 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
+
 
 class TrajectoryExecutionStatus(Enum):
     """Semantic outcome of a trajectory execution request."""
 
     ACCEPTED = auto()
-    NO_TRAJECTORY_TASK = auto()
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
@@ -69,7 +70,6 @@ class TrajectoryCancellationStatus(Enum):
 
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
-    NO_TRAJECTORY_TASK = auto()
     UNCERTAIN = auto()
 
 
@@ -145,24 +145,22 @@ class JointTrajectoryTask(BaseControlTask):
 
     Example:
         >>> task = JointTrajectoryTask(
-        ...     name="traj_left",
-        ...     config=JointTrajectoryTaskConfig(
+        ...     JointTrajectoryTaskConfig(
         ...         joint_names=["left/joint1", "left/joint2"],
         ...         priority=10,
         ...     ),
         ... )
         >>> coordinator.add_task(task)
-        >>> task.execute(my_trajectory, current_positions)
+        >>> task.execute(my_trajectory)
     """
 
-    def __init__(self, name: str, config: JointTrajectoryTaskConfig) -> None:
+    def __init__(self, config: JointTrajectoryTaskConfig) -> None:
         """Initialize trajectory task.
 
         Args:
-            name: Unique task name
             config: Task configuration
         """
-        self._name = name
+        self._name = JOINT_TRAJECTORY_TASK_NAME
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
@@ -173,7 +171,9 @@ class JointTrajectoryTask(BaseControlTask):
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
 
-        logger.info(f"JointTrajectoryTask {name} initialized for joints: {config.joint_names}")
+        logger.info(
+            f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
+        )
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -300,13 +300,11 @@ class JointTrajectoryTask(BaseControlTask):
     def execute(
         self,
         trajectory: JointTrajectory,
-        current_positions: Mapping[str, float],
     ) -> TrajectoryExecutionResult:
         """Start executing a trajectory.
 
         Args:
             trajectory: Trajectory to execute
-            current_positions: Authoritative positions from the coordinator.
 
         Returns:
             Semantic execution acceptance result.
@@ -331,6 +329,13 @@ class JointTrajectoryTask(BaseControlTask):
                 "Trajectory structure or joints are invalid",
             )
 
+        state = self.context.get_state()
+        if state is None:
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+                "Coordinator state is unavailable before the first control tick",
+            )
+        current_positions = state.joints.joint_positions
         first_positions = trajectory.points[0].positions
         for joint_name, planned_position in zip(
             trajectory.joint_names, first_positions, strict=True
@@ -421,9 +426,12 @@ class JointTrajectoryTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+    if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
+        raise ValueError(
+            f"trajectory task name must be {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
+        )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
-        cfg.name,
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,

@@ -448,7 +448,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
     ],
     tasks=[
         TaskConfig(
-            name="traj_arm",                          # Task name (used by ManipulationModule RPC)
+            name="joint_trajectory",                  # Canonical trajectory task name
             type="trajectory",                        # Trajectory execution task
             joint_names=[f"arm_joint{i+1}" for i in range(6)],
             priority=10,                              # Higher priority wins arbitration
@@ -468,6 +468,12 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 | `address` | Connection info passed to adapter's `__init__` as `address` kwarg. |
 | `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm_joint1", ..., "arm_joint6"]`. |
 | `auto_enable` | If `True`, servos are enabled automatically when the coordinator starts. |
+
+Manipulation dispatches through
+`task_invoke("joint_trajectory", "execute", {"trajectory": trajectory})`.
+The coordinator intentionally has no trajectory-specific RPC; trajectory
+support is optional and belongs to the registered task. Do not derive the task
+name from the hardware ID or override it in a blueprint.
 | `task.name` | Name used by the ManipulationModule to invoke trajectory execution via RPC. |
 | `task.type` | Task type: `"trajectory"`, `"servo"`, `"velocity"`, or `"cartesian_ik"`. |
 | `task.priority` | Priority for per-joint arbitration. Higher number wins. |

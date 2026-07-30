@@ -48,7 +48,9 @@ Single deterministic loop at 100Hz:
 Tasks are passive controllers called by the coordinator:
 
 ```python
-class MyController:
+from dimos.control.task import BaseControlTask
+
+class MyController(BaseControlTask):
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints={"joint1", "joint2"}, priority=10)
 
@@ -61,14 +63,23 @@ class MyController:
         )
 ```
 
+Registering a `BaseControlTask` grants it a frozen, stateless
+`ControlTaskContext` for the lifetime of that registration. A command handler
+can transparently call `self.context.get_state()` to read the coordinator's
+latest complete tick observation. Removing the task revokes access; stopping
+and restarting the coordinator preserves it. The read returns `None` before
+the first tick and after stop or runtime reset; it does not perform a hardware
+read or a freshness check. `CoordinatorState`, `JointStateSnapshot`, and their
+mappings are read-only.
+
 ### Priority & Arbitration
 Higher priority always wins. Arbitration happens every tick:
 
 ```
-traj_arm (priority=10) wants joint1 = 0.5
-safety   (priority=100) wants joint1 = 0.0
+joint_trajectory (priority=10) wants joint1 = 0.5
+safety           (priority=100) wants joint1 = 0.0
                               ↓
-                    safety wins, traj_arm preempted
+                    safety wins, joint_trajectory preempted
 ```
 
 ### Preemption
@@ -118,7 +129,7 @@ my_robot = ControlCoordinator.blueprint(
     ],
     tasks=[
         TaskConfig(
-            name="trajectory",
+            name="joint_trajectory",
             type="trajectory",
             joint_names=[...],  # union of both arms
             priority=10,
@@ -136,8 +147,24 @@ my_robot = ControlCoordinator.blueprint(
 | `list_joints()` | List all joint names |
 | `list_tasks()` | List task names |
 | `get_joint_positions()` | Get current positions |
-| `execute_trajectory(traj)` | Execute through the sole trajectory task |
-| `cancel_trajectory()` | Cancel the sole trajectory task |
+| `task_invoke(task, command, kwargs)` | Invoke a command declared by a task card |
+
+Trajectory execution is an optional task capability, not a coordinator RPC.
+The trajectory package enforces the canonical task name `joint_trajectory`:
+
+```python
+result = coordinator.task_invoke(
+    "joint_trajectory",
+    "execute",
+    {"trajectory": trajectory},
+)
+coordinator.task_invoke("joint_trajectory", "cancel")
+```
+
+`TASK_EXPOSES` in a task package's `_registry.py` is a strict remote-command
+allowlist. Missing tasks raise an error, undeclared commands raise
+`AttributeError`, invalid arguments raise `TypeError` before the handler runs,
+and handler results or exceptions pass through unchanged.
 
 ## Control Modes
 
@@ -152,9 +179,9 @@ Tasks output commands in one of three modes:
 ## Writing a Custom Task
 
 ```python
-from dimos.control.task import ControlTask, ResourceClaim, JointCommandOutput, ControlMode
+from dimos.control.task import BaseControlTask, ResourceClaim, JointCommandOutput, ControlMode
 
-class PIDController:
+class PIDController(BaseControlTask):
     def __init__(self, joints: list[str], priority: int = 10):
         self._name = "pid_controller"
         self._claim = ResourceClaim(joints=frozenset(joints), priority=priority)

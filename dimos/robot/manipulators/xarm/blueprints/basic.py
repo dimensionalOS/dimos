@@ -84,7 +84,7 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name="joint_trajectory",
             type="trajectory",
             joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
             priority=10,

@@ -148,9 +148,10 @@ Preview and execution consume the stored trajectory; they do not lazily
 parameterize the geometric path. Preview forwards the raw globally named
 trajectory through the visualization boundary, where renderers project it to
 their robot-local visuals while preserving stored timestamps. Execution
-translates selected joint names at the coordinator boundary and invokes the
-coordinator's sole trajectory task once without filling omitted joints in the
-RPC trajectory. The task remains planning-group agnostic, claims its full
+translates selected joint names at the coordinator boundary and invokes
+`execute` on the canonical `joint_trajectory` task through the coordinator's
+generic task-command RPC, without filling omitted joints in the trajectory.
+The task remains planning-group agnostic, claims its full
 configured joint set, and holds omitted joints while executing the active
 planned subset. A newly accepted trajectory replaces the task's current
 trajectory.

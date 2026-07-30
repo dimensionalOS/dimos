@@ -33,7 +33,6 @@ from typing import Any
 
 import pytest
 
-import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -149,20 +148,9 @@ class TestTaskInvoke:
         assert coordinator.task_invoke("traj_arm", "get_state") == "ABORTED"
         assert task.executed is traj
 
-    def test_injects_t_now_when_none(self, coordinator):
-        task = CommandRecordingTask("traj_arm")
-        coordinator.add_task(task, task_type="trajectory")
-
-        result = coordinator.task_invoke("traj_arm", "record_time", {"t_now": None})
-
-        assert isinstance(result, float)
-        assert task.t_now_seen == result
-
-    def test_unknown_task_warns_and_returns_none(self, coordinator, mocker):
-        warn = mocker.patch.object(coord_mod.logger, "warning")
-
-        assert coordinator.task_invoke("nope", "execute", {}) is None
-        assert warn.called
+    def test_unknown_task_raises(self, coordinator):
+        with pytest.raises(KeyError, match="nope"):
+            coordinator.task_invoke("nope", "execute", {})
 
     def test_unknown_method_raises(self, coordinator):
         task = CommandRecordingTask("traj_arm")
@@ -264,16 +252,13 @@ class TestValidatedDispatch:
         assert task.armed is True
         assert task.arm_calls == [None]
 
-    def test_undeclared_existing_method_warns_but_dispatches(self, coordinator, mocker):
+    def test_undeclared_existing_method_is_absent(self, coordinator):
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
-        warn = mocker.patch.object(coord_mod.logger, "warning")
 
-        result = coordinator.task_invoke("traj_arm", "record_time", {"t_now": None})
-
-        assert isinstance(result, float)  # legacy dispatch still happened
-        assert task.t_now_seen == result
-        assert any("undeclared task_invoke" in str(c.args[0]) for c in warn.call_args_list)
+        with pytest.raises(AttributeError, match="record_time"):
+            coordinator.task_invoke("traj_arm", "record_time", {"t_now": None})
+        assert task.t_now_seen is None
 
     def test_typo_method_raises_and_names_declared_commands(self, coordinator):
         task = CommandRecordingTask("traj_arm")

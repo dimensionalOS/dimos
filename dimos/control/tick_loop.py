@@ -95,6 +95,7 @@ class TickLoop:
         tasks: dict[TaskName, ControlTask],
         task_lock: threading.Lock,
         joint_to_hardware: dict[JointName, HardwareId],
+        observation_callback: Callable[[CoordinatorState], None] | None = None,
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
         frame_id: str = "coordinator",
@@ -106,6 +107,7 @@ class TickLoop:
         self._tasks = tasks
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
+        self._observation_callback = observation_callback
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
         self._frame_id = frame_id
@@ -180,6 +182,9 @@ class TickLoop:
         joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
         state = CoordinatorState(joints=joint_states, imu=imu_states, t_now=t_now, dt=dt)
+
+        if self._observation_callback:
+            self._observation_callback(state)
 
         commands = self._compute_all_tasks(state)
 

@@ -186,5 +186,5 @@ planning/
 pytest dimos/manipulation/test_manipulation_unit.py -v
 
 # Integration tests (requires Drake)
-pytest dimos/e2e_tests/test_manipulation_module.py -v
+pytest dimos/manipulation/test_manipulation_drake_integration.py -v
 ```

@@ -28,15 +28,14 @@ Usage:
 
     # Terminal 2: Run this client
     python -m dimos.manipulation.control.coordinator_client
-    python -m dimos.manipulation.control.coordinator_client --task traj_left
-    python -m dimos.manipulation.control.coordinator_client --task traj_right
+    python -m dimos.manipulation.control.coordinator_client --task joint_trajectory
 
 How it works:
     1. Connects to ControlCoordinator via LCM RPC
     2. Queries available hardware/tasks/joints
     3. You add waypoints (joint positions)
     4. Generates trajectory with trapezoidal velocity profile
-    5. Sends trajectory to coordinator via execute_trajectory() RPC
+    5. Invokes the canonical trajectory task through the generic task-command RPC
     6. Coordinator's tick loop executes it at 100Hz
 """
 
@@ -44,11 +43,12 @@ from __future__ import annotations
 
 import math
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -77,10 +77,10 @@ class CoordinatorClient:
 
         # Query state
         print(client.list_hardware())  # ['left_arm', 'right_arm']
-        print(client.list_tasks())     # ['traj_left', 'traj_right']
+        print(client.list_tasks())     # ['joint_trajectory']
 
         # Setup for a task
-        client.select_task("traj_left")
+        client.select_task(JOINT_TRAJECTORY_TASK_NAME)
 
         # Get current position and create trajectory
         current = client.get_current_positions()
@@ -88,7 +88,11 @@ class CoordinatorClient:
         trajectory = client.generate_trajectory([current, target])
 
         # Execute
-        client.execute_trajectory(trajectory)
+        client.task_invoke(
+            JOINT_TRAJECTORY_TASK_NAME,
+            "execute",
+            {"trajectory": trajectory},
+        )
     """
 
     def __init__(self) -> None:
@@ -124,19 +128,9 @@ class CoordinatorClient:
         """Get current joint positions for all joints."""
         return self._rpc.get_joint_positions() or {}
 
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Execute through the coordinator's sole trajectory task."""
-        return cast(
-            "TrajectoryExecutionResult",
-            self._rpc.execute_trajectory(trajectory),
-        )
-
-    def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
-        return cast(
-            "TrajectoryCancellationResult",
-            self._rpc.cancel_trajectory(),
-        )
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any] | None = None) -> Any:
+        """Invoke a command exposed by a registered control task."""
+        return self._rpc.task_invoke(task_name, method, kwargs)
 
     def select_task(self, task_name: str) -> bool:
         """
@@ -152,25 +146,9 @@ class CoordinatorClient:
 
         self._current_task = task_name
 
-        # Get joints for this task (infer from task name pattern)
-        # e.g., "traj_left" -> joints starting with "left_arm_" (hardware_id based naming)
-        # e.g., "traj_arm" -> joints starting with "arm_"
+        # The canonical trajectory task can span every configured manipulator.
         all_joints = self.list_joints()
-
-        # Try to infer hardware_id from task name
-        if "_" in task_name:
-            suffix = task_name.split("_", 1)[1]  # "traj_left" -> "left"
-            # Try both patterns: exact suffix (e.g., "arm/") and with "_arm" suffix (e.g., "left_arm/")
-            task_joints = [j for j in all_joints if j.startswith(suffix + "/")]
-            if not task_joints:
-                # Try with "_arm" suffix for dual-arm setups (left -> left_arm)
-                task_joints = [j for j in all_joints if j.startswith(suffix + "_arm/")]
-        else:
-            task_joints = all_joints
-
-        if not task_joints:
-            # Fallback: use all joints
-            task_joints = all_joints
+        task_joints = all_joints
 
         self._task_joints[task_name] = task_joints
 
@@ -428,7 +406,14 @@ class CoordinatorShell:
         preview_trajectory(self._generated_trajectory, self._joints())
         confirm = input("\nExecute? [y/N]: ").strip().lower()
         if confirm == "y":
-            result = self._client.execute_trajectory(self._generated_trajectory)
+            result = cast(
+                "TrajectoryExecutionResult",
+                self._client.task_invoke(
+                    JOINT_TRAJECTORY_TASK_NAME,
+                    "execute",
+                    {"trajectory": self._generated_trajectory},
+                ),
+            )
             if result.status is TrajectoryExecutionStatus.ACCEPTED:
                 print(
                     "Trajectory accepted "
@@ -445,7 +430,10 @@ class CoordinatorShell:
 
     def cancel(self) -> None:
         """Cancel active trajectory."""
-        result = self._client.cancel_trajectory()
+        result = cast(
+            "TrajectoryCancellationResult",
+            self._client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "cancel"),
+        )
         if result.status is TrajectoryCancellationStatus.CANCELLED:
             print("Cancelled")
         else:
@@ -615,18 +603,15 @@ Examples:
   # Single arm (with coordinator-mock running)
   python -m dimos.manipulation.control.coordinator_client
 
-  # Dual arm - control left arm
-  python -m dimos.manipulation.control.coordinator_client --task traj_left
-
-  # Dual arm - control right arm
-  python -m dimos.manipulation.control.coordinator_client --task traj_right
+  # Explicit canonical task selection
+  python -m dimos.manipulation.control.coordinator_client --task joint_trajectory
         """,
     )
     parser.add_argument(
         "--task",
         type=str,
-        default="traj_arm",
-        help="Initial task to control (default: traj_arm)",
+        default=JOINT_TRAJECTORY_TASK_NAME,
+        help=f"Initial task to control (default: {JOINT_TRAJECTORY_TASK_NAME})",
     )
     parser.add_argument(
         "--vel",

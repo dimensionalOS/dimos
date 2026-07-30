@@ -244,14 +244,15 @@ def test_unarmed_task_holds_current_pose_without_running_policy(
     unarmed_task: G1GrootWBCTask, joints_29: list[str], patched_ort: list[str]
 ) -> None:
     unarmed_task.start()
+    positions = {n: 0.0 for n in joints_29}
+    for i, name in enumerate(joints_29[:15]):
+        positions[name] = 0.1 * (i + 1)
     snap = JointStateSnapshot(
-        joint_positions={n: 0.0 for n in joints_29},
+        joint_positions=positions,
         joint_velocities={n: 0.0 for n in joints_29},
         joint_efforts={n: 0.0 for n in joints_29},
         timestamp=100.0,
     )
-    for i, name in enumerate(joints_29[:15]):
-        snap.joint_positions[name] = 0.1 * (i + 1)
 
     out = None
     for _ in range(30):
