@@ -14,8 +14,12 @@ RoboPlan 0.5.1 provides TOPP-RA with Hermite, cubic, adaptive, and linear-blend 
 - Preserve the existing simple segmented-trapezoid behavior as a compatibility backend.
 - Add RoboPlan TOPP-RA for any planner path represented in `RoboPlanWorld`.
 - Convert and validate a path before constructing or caching `GeneratedPlan`.
+- Preserve and validate planner-native timed trajectories without parametrizing them again.
+- Allow an operator to reduce the speed of future plans from Viser without
+  changing the selected backend or mutating an accepted plan.
 - Preserve the source path while allowing bounded backend interpolation between waypoints.
-- Keep preview and execution on the exact trajectory accepted during planning.
+- Keep preview and execution on the accepted trajectory's time domain, allowing
+  robot-local joint projection but no regeneration or retiming.
 - Use URDF-backed RoboPlan velocity and acceleration limits and fail clearly when they are unavailable.
 - Retain current public manipulation RPC, skill, MCP, stream, and execution signatures.
 
@@ -41,6 +45,14 @@ Add a typed `TrajectoryParametrizationConfig` under manipulation planning config
 
 The configuration factory validates the complete backend combination during startup. `roboplan_toppra` requires a finalized `RoboPlanWorld`; a non-RoboPlan world is rejected before planning. The selected parametrizer is constructed once and retained by `ManipulationModule`.
 
+The module also owns a runtime next-plan speed scale in `(0, 1]`, initially
+`1.0`. This is not backend selection or persistent configuration. Each new
+untimed path materialization captures the current scale and multiplies the
+configured velocity and acceleration reductions. Planner-native Cartesian
+planning receives the same scale through its per-request velocity and
+acceleration fields before it creates authoritative timing. Changing the scale
+does not invalidate, reparametrize, or retime an existing `GeneratedPlan`.
+
 ### Adapter Protocol
 
 Introduce a small adapter `Protocol`, distinct from an RPC-oriented DimOS `Spec`, for path-to-trajectory conversion. Its input contains:
@@ -58,25 +70,22 @@ The RoboPlan adapter may cache one native TOPP-RA parameterizer per selected gro
 
 ### Plan materialization
 
-Retain `GeneratedPlan` as the canonical accepted aggregate:
+Retain `GeneratedPlan` as the canonical accepted aggregate. An untimed
+`PlanningResult.path` passes through canonical input validation, the
+startup-selected `TrajectoryParametrizer`, and canonical timed-output
+validation before becoming `GeneratedPlan(path + trajectory)`.
 
-```text
-PlanningResult.path
-        │
-        ▼
-canonical input validation
-        │
-        ▼
-startup-selected TrajectoryParametrizer
-        │
-        ▼
-canonical timed-output validation
-        │
-        ▼
-GeneratedPlan(path + trajectory)
-```
+A planner-native timed result already sits on the trajectory side of this
+boundary. It bypasses `TrajectoryParametrizer`, retains its planner-defined
+timestamps and velocities, and passes through the same canonical timed-output
+validation before becoming `GeneratedPlan(path + trajectory)`. This bypass is
+not fallback: no alternative parametrization backend is selected or invoked.
 
 Replace the direct `JointTrajectoryGenerator` construction inside materialization with the selected adapter. A failure at either parametrization or validation leaves `_last_plan` unset and follows the existing planning-epoch failure path. No separate public `GeneratedTrajectory` lifecycle is added.
+
+Keep the existing planner-native timed materialization path for results such as
+RoboPlan Cartesian planning. It must not invoke the selected parametrizer or
+discard bounded/time-optimal TCP timing semantics.
 
 Canonical validation retains the current strong invariants: exact global joint ordering, finite and dimensionally aligned positions/velocities, first time at zero, strictly increasing times, positive duration for non-noop motion, and preserved start/goal. It also checks returned motion against the applicable velocity and acceleration limits with a documented numerical tolerance. Where RoboPlan exposes native accelerations, validate them before converting to the current positions/velocities-only message; otherwise derive the acceleration check consistently from velocity samples.
 
@@ -95,7 +104,12 @@ RoboPlan owns collision checking for a fitted curve against its authoritative sc
 
 ### Other DimOS surfaces
 
-No streams, transports, module references, blueprint composition, RPC signatures, skills, MCP tools, CLI commands, or generated registry inputs change. Existing preview and execution flows consume the stored `GeneratedPlan.trajectory`. No `all_blueprints.py` regeneration is expected.
+No streams, transports, module references, blueprint composition, existing RPC signatures, skills, MCP tools, CLI commands, or generated registry inputs change. The Viser control uses additive speed-setting RPCs on the existing manipulation operator seam. Existing preview and execution flows consume the stored `GeneratedPlan.trajectory`. No `all_blueprints.py` regeneration is expected.
+
+Viser exposes the runtime scale as a `Next plan speed` slider from `0.05` to
+`1.0` in `0.05` steps. The control is disabled during an active panel
+operation. It calls the UI-neutral `ManipulationOperator`, which delegates to
+the module's runtime getter/setter; Viser does not own trajectory generation.
 
 ## Decisions
 
@@ -107,7 +121,11 @@ Alternative: restore frontier's public `GeneratedPlan`/`GeneratedTrajectory`/dis
 
 ### Select one backend for the run
 
-Backend selection is startup configuration. A selected backend's failure fails materialization; no other backend is attempted.
+Backend selection is startup configuration. Every untimed geometric path that
+requires path-to-trajectory conversion uses the selected backend. A selected
+backend's failure fails materialization; no other backend is attempted.
+Planner-native timed results skip conversion because they are already
+trajectories, not because a backend failed.
 
 Alternative: fall back to the simple backend after TOPP-RA failure. Rejected because it silently changes timing and stop behavior.
 
@@ -141,7 +159,8 @@ Alternative: wire current scalar/list DimOS fields into RoboPlan. Rejected becau
 - Missing or invalid URDF motion limits fail rather than selecting generic defaults.
 - The TOPP-RA reduction scales are constrained to safe ranges and cannot raise URDF limits.
 - Simulation uses the same materialized trajectory path as hardware and is the primary manual QA surface.
-- Preview must show the exact stored trajectory later dispatched by execution.
+- Preview must show the stored trajectory later projected into robot-local
+  joint order for execution without regeneration or retiming.
 - Replay behavior is unaffected because no stream or replay-data format changes.
 - Manual QA should compare simple and TOPP-RA trajectories for the same RoboPlan-world path, check smooth traversal of interior waypoints, and verify explicit failures for missing limits and incompatible startup configuration before any hardware trial.
 

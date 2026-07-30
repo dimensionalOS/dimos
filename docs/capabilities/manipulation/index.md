@@ -115,6 +115,37 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+Trajectory parametrization is a separate startup choice. Joint-space planners
+normally return an untimed geometric path; DimOS accepts the plan only after
+the selected backend converts that path to a validated timed trajectory:
+
+```bash
+# Compatibility behavior: independent trapezoids between path waypoints
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.trajectory_parametrization.backend=simple_trapezoid
+
+# Continuous TOPP-RA timing, available with RoboPlanWorld
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.world_backend=roboplan \
+  -o manipulationmodule.trajectory_parametrization.backend=roboplan_toppra \
+  -o manipulationmodule.trajectory_parametrization.fitting_mode=linear_blend
+```
+
+Exactly one backend is constructed for the stack lifetime. There is no
+cross-backend fallback. `roboplan_toppra` may parametrize paths from either
+RoboPlan's planner or the generic RRT planner, but it requires
+`world_backend=roboplan` because it reuses that world's model, groups, and URDF
+motion limits. A planner-native result that already has timestamps and
+velocities bypasses path parametrization and retains its existing timing after
+canonical validation.
+
+The Viser panel's **Next plan speed** slider provides runtime speed tuning from
+`0.05` to `1.0`. Changing it leaves the accepted plan and any active execution
+unchanged; press **Plan** again to generate motion at the new scale. For
+joint-space planning the value reduces the selected parametrizer's configured
+velocity and acceleration scales. For Cartesian planning Viser puts the same
+scale into the native planning request before its timestamps are generated.
+
 RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
@@ -250,9 +281,11 @@ not need extra setup because it observes the Drake world directly.
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
 Viser projects the globally named trajectory into robot-local preview ghosts and
 plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execute freshness is enforced by the manipulation
-module/operator immediately before dispatch, not by Viser-side telemetry
-snapshots.
+scales the stored delays. Execution projects that same accepted trajectory into
+each robot's local joint order while preserving timestamps and velocities; it
+does not regenerate or retime it. Execute freshness is enforced by the
+manipulation module/operator immediately before dispatch, not by Viser-side
+telemetry snapshots.
 
 ### Perception + Agent
 

@@ -26,6 +26,16 @@ from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathCon
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.trajectory_generator.config import (
+    SimpleTrapezoidParametrizationConfig,
+)
+from dimos.manipulation.planning.trajectory_generator.parametrizer import (
+    ParametrizedTrajectory,
+    TrajectoryParametrizationRequest,
+)
+from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
+    SimpleTrapezoidParametrizer,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -41,9 +51,14 @@ class RecordingGenerator:
     fail = False
 
     def __init__(
-        self, num_joints: int, max_velocity: list[float], max_acceleration: list[float]
+        self,
+        num_joints: int,
+        max_velocity: list[float],
+        max_acceleration: list[float],
+        points_per_segment: int = 50,
     ) -> None:
         self.num_joints = num_joints
+        self.points_per_segment = points_per_segment
         RecordingGenerator.limits = (list(max_velocity), list(max_acceleration))
 
     def generate(self, waypoints: list[list[float]]) -> JointTrajectory:
@@ -60,6 +75,18 @@ class RecordingGenerator:
                 for index, point in enumerate(waypoints)
             ]
         )
+
+
+class FixedParametrizer:
+    uses_request_limits = False
+
+    def __init__(self, result: ParametrizedTrajectory) -> None:
+        self.result = result
+        self.requests: list[TrajectoryParametrizationRequest] = []
+
+    def parametrize(self, request: TrajectoryParametrizationRequest) -> ParametrizedTrajectory:
+        self.requests.append(request)
+        return self.result
 
 
 def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -> RobotModelConfig:
@@ -84,7 +111,9 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     RecordingGenerator.limits = None
     RecordingGenerator.fail = False
     monkeypatch.setattr(
-        "dimos.manipulation.manipulation_module.JointTrajectoryGenerator", RecordingGenerator
+        "dimos.manipulation.planning.trajectory_generator."
+        "simple_parametrizer.JointTrajectoryGenerator",
+        RecordingGenerator,
     )
     left = _robot("left", ["a", "b"], 1.0, 2.0)
     right = _robot("right", ["c"], 3.0, 4.0)
@@ -97,6 +126,9 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     module._world_monitor.world = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
     module._planner = MagicMock()
+    module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
+        SimpleTrapezoidParametrizationConfig()
+    )
     module._state = ManipulationState.PLANNING
     module._planning_epoch = 1
     return module
@@ -261,3 +293,115 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, mo
 
     module._wait_for_trajectory_completion(timeout=0.0)
     assert RecordingGenerator.calls == []
+
+
+def test_materialization_accepts_bounded_fitting_without_interior_waypoint(
+    monkeypatch,
+    module_factory,
+):
+    module = _module(monkeypatch, module_factory)
+    names = ["left/b", "left/a"]
+    source_path = [
+        JointState(name=names, position=[0.0, 0.0]),
+        JointState(name=names, position=[0.2, 0.1]),
+        JointState(name=names, position=[0.4, 0.0]),
+    ]
+    trajectory = JointTrajectory(
+        joint_names=names,
+        points=[
+            TrajectoryPoint(
+                time_from_start=0.0,
+                positions=[0.0, 0.0],
+                velocities=[0.0, 0.0],
+            ),
+            TrajectoryPoint(
+                time_from_start=0.5,
+                positions=[0.4, 0.0],
+                velocities=[0.0, 0.0],
+            ),
+        ],
+    )
+    parametrizer = FixedParametrizer(
+        ParametrizedTrajectory(
+            trajectory=trajectory,
+            velocity_limits=(1.0, 1.0),
+            acceleration_limits=(2.0, 2.0),
+            accelerations=((0.0, 0.0), (0.0, 0.0)),
+        )
+    )
+    module._trajectory_parametrizer = parametrizer
+    assert module.set_motion_speed(0.4)
+
+    path, result = module._materialize_generated_plan(("left/group",), source_path)
+
+    assert [state.position for state in path] == [
+        [0.0, 0.0],
+        [0.2, 0.1],
+        [0.4, 0.0],
+    ]
+    assert result is trajectory
+    assert len(parametrizer.requests) == 1
+    assert parametrizer.requests[0].speed_scale == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize(
+    ("velocities", "accelerations", "message"),
+    [
+        ([[0.0, 0.0], [1.1, 0.0]], ((0.0, 0.0), (0.0, 0.0)), "velocity exceeds"),
+        ([[0.0, 0.0], [0.0, 0.0]], ((0.0, 0.0), (2.1, 0.0)), "acceleration exceeds"),
+    ],
+)
+def test_materialization_rejects_parametrized_motion_limit_violations(
+    monkeypatch,
+    module_factory,
+    velocities,
+    accelerations,
+    message,
+):
+    module = _module(monkeypatch, module_factory)
+    names = ["left/b", "left/a"]
+    path = _path(names, [0.0, 0.0], [0.4, 0.0])
+    module._trajectory_parametrizer = FixedParametrizer(
+        ParametrizedTrajectory(
+            trajectory=JointTrajectory(
+                joint_names=names,
+                points=[
+                    TrajectoryPoint(
+                        time_from_start=0.0,
+                        positions=[0.0, 0.0],
+                        velocities=velocities[0],
+                    ),
+                    TrajectoryPoint(
+                        time_from_start=0.5,
+                        positions=[0.4, 0.0],
+                        velocities=velocities[1],
+                    ),
+                ],
+            ),
+            velocity_limits=(1.0, 1.0),
+            acceleration_limits=(2.0, 2.0),
+            accelerations=accelerations,
+        )
+    )
+
+    with pytest.raises(ValueError, match=message):
+        module._materialize_generated_plan(("left/group",), path)
+
+
+def test_materialization_validates_real_simple_backend(
+    monkeypatch,
+    module_factory,
+):
+    module = _module(monkeypatch, module_factory)
+    module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
+        SimpleTrapezoidParametrizationConfig()
+    )
+    names = ["left/b", "left/a"]
+
+    path, trajectory = module._materialize_generated_plan(
+        ("left/group",),
+        _path(names, [0.0, 0.0], [0.2, 0.1]),
+    )
+
+    assert path[-1].position == [0.2, 0.1]
+    assert trajectory.points[-1].positions == [0.2, 0.1]

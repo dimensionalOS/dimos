@@ -968,6 +968,12 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
 
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,

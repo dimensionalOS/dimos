@@ -2,7 +2,7 @@
 
 ### Requirement: A single trajectory parametrization backend is selected at startup
 
-The manipulation stack SHALL select exactly one trajectory parametrization backend during startup and SHALL use that backend for every plan materialized during that run.
+The manipulation stack SHALL select exactly one trajectory parametrization backend during startup and SHALL use that backend for every untimed geometric path materialized during that run.
 
 #### Scenario: Simple backend is selected
 - **GIVEN** a manipulation stack configured with the simple trajectory parametrization backend
@@ -22,6 +22,13 @@ The manipulation stack SHALL select exactly one trajectory parametrization backe
 - **THEN** initialization MUST fail with an actionable configuration error
 - **AND** planning MUST NOT begin with a backend that cannot operate against the configured world
 
+#### Scenario: Planner returns a timed trajectory
+- **GIVEN** a planner returns a trajectory with authoritative timestamps and velocities
+- **WHEN** the generated plan is materialized
+- **THEN** the system MUST preserve and canonically validate the planner-provided timing
+- **AND** it MUST NOT invoke a trajectory parametrization backend
+- **AND** this bypass MUST NOT be treated as backend fallback
+
 ### Requirement: Parametrization completes before a generated plan is accepted
 
 The manipulation stack SHALL convert an accepted geometric path into a timed trajectory before exposing or caching the corresponding generated plan.
@@ -37,6 +44,12 @@ The manipulation stack SHALL convert an accepted geometric path into a timed tra
 - **WHEN** the selected backend cannot produce a valid timed trajectory
 - **THEN** the system MUST report plan materialization failure
 - **AND** it MUST NOT cache or expose that path as an executable generated plan
+
+#### Scenario: Existing planner timing is accepted
+- **GIVEN** a planner has returned a valid timed trajectory
+- **WHEN** canonical timed-output validation succeeds
+- **THEN** the system SHALL construct and cache one generated plan containing the source path and planner-native trajectory
+- **AND** preview and execution MUST consume that same trajectory without retiming
 
 ### Requirement: Parametrization converts a path into continuous timed motion
 
@@ -118,7 +131,35 @@ The manipulation stack MUST NOT silently switch to another trajectory parametriz
 Trajectory parametrization SHALL integrate without changing the public plan, preview, execute, skill, MCP, or stream signatures.
 
 #### Scenario: Existing preview and execution flow
-- **GIVEN** a generated plan was successfully materialized by either supported backend
+- **GIVEN** a generated plan was successfully materialized from either an untimed path or a planner-native timed trajectory
 - **WHEN** a caller invokes the existing preview or execute surface
 - **THEN** the caller MUST use the same public operation and argument shape as before
-- **AND** the accepted stored trajectory MUST be previewed or dispatched without retiming
+- **AND** execution MAY project the accepted stored trajectory into robot-local joint order
+- **AND** the accepted timestamps and velocities MUST be previewed or dispatched without regeneration or retiming
+
+### Requirement: Viser controls the speed of future plans
+
+The manipulation Viser panel SHALL expose a bounded runtime speed scale for
+plans generated after the setting changes.
+
+#### Scenario: Operator reduces next-plan speed
+- **GIVEN** the Viser panel is idle and displays a fresh accepted plan
+- **WHEN** the operator moves `Next plan speed` to a value in `(0, 1]`
+- **THEN** the module MUST retain that value for future planning
+- **AND** the existing accepted plan MUST remain unchanged and executable
+
+#### Scenario: A new untimed path is planned
+- **GIVEN** a runtime next-plan speed below `1.0`
+- **WHEN** an untimed geometric path is materialized
+- **THEN** the selected parametrizer MUST multiply its configured velocity and acceleration reduction scales by the runtime scale
+
+#### Scenario: A new Cartesian path is planned from Viser
+- **GIVEN** a runtime next-plan speed below `1.0`
+- **WHEN** Viser requests planner-native Cartesian planning
+- **THEN** the request MUST carry that velocity and acceleration scale
+- **AND** the returned planner-native timing MUST still bypass path parametrization
+
+#### Scenario: Speed changes during an active panel operation
+- **GIVEN** the Viser panel is planning, previewing, executing, cancelling, or clearing
+- **WHEN** the speed control is rendered
+- **THEN** it MUST be disabled until the operation becomes idle

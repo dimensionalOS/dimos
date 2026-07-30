@@ -49,6 +49,7 @@ from dimos.manipulation.planning.factory import (
     KinematicsName,
     WorldBackend,
     create_planning_specs,
+    create_trajectory_parametrizer,
     create_world,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
@@ -81,8 +82,16 @@ from dimos.manipulation.planning.spec.models import (
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
+from dimos.manipulation.planning.trajectory_generator.config import (
+    SimpleTrapezoidParametrizationConfig,
+    TrajectoryParametrizationConfig,
+)
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
+)
+from dimos.manipulation.planning.trajectory_generator.parametrizer import (
+    TrajectoryParametrizationRequest,
+    TrajectoryParametrizer,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.manipulation.visualization.config import (
@@ -102,6 +111,10 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+_TRAJECTORY_POSITION_TOLERANCE = 1e-6
+_TRAJECTORY_LIMIT_RELATIVE_TOLERANCE = 1e-2
+_TRAJECTORY_LIMIT_ABSOLUTE_TOLERANCE = 1e-8
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
 RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
@@ -145,6 +158,9 @@ class ManipulationModuleConfig(ModuleConfig):
         default_factory=NoManipulationVisualizationConfig
     )
     planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
+    trajectory_parametrization: TrajectoryParametrizationConfig = Field(
+        default_factory=SimpleTrapezoidParametrizationConfig
+    )
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
@@ -177,11 +193,13 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
+        self._motion_speed_scale = 1.0
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
+        self._trajectory_parametrizer: TrajectoryParametrizer | None = None
 
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
         self._robots: RobotRegistry = {}
@@ -234,6 +252,7 @@ class ManipulationModule(Module):
             planner=self.config.planner,
             kinematics_name=self.config.kinematics_name,
             kinematics=self.config.kinematics,
+            trajectory_parametrization=self.config.trajectory_parametrization,
         )
         self._world_monitor = planning_specs.world_monitor
         self._planner = planning_specs.planner
@@ -256,6 +275,11 @@ class ManipulationModule(Module):
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
+        self._trajectory_parametrizer = create_trajectory_parametrizer(
+            self.config.trajectory_parametrization,
+            world=world,
+            world_backend=self.config.world_backend,
+        )
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
@@ -421,6 +445,27 @@ class ManipulationModule(Module):
             Error message or empty string
         """
         return self._error_message
+
+    @rpc
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        """Set a runtime speed reduction for plans generated in the future.
+
+        Existing accepted plans and dispatched trajectories remain unchanged.
+        Plan again after changing this value.
+        """
+        if not math.isfinite(speed_scale) or speed_scale <= 0.0 or speed_scale > 1.0:
+            self._record_error("motion speed scale must be finite, > 0, and <= 1")
+            return False
+        with self._lock:
+            self._motion_speed_scale = float(speed_scale)
+            self._error_message = ""
+        return True
+
+    @rpc
+    def get_motion_speed(self) -> float:
+        """Return the runtime speed reduction used for future plans."""
+        with self._lock:
+            return self._motion_speed_scale
 
     @rpc
     def cancel(self) -> bool:
@@ -621,6 +666,10 @@ class ManipulationModule(Module):
         trajectory: JointTrajectory,
         expected_names: Sequence[str],
         waypoints: Sequence[Sequence[float]],
+        *,
+        velocity_limits: Sequence[float] | None = None,
+        acceleration_limits: Sequence[float] | None = None,
+        accelerations: Sequence[Sequence[float]] | None = None,
     ) -> None:
         expected = list(expected_names)
         if list(trajectory.joint_names) != expected:
@@ -647,14 +696,97 @@ class ManipulationModule(Module):
         non_noop = any(list(waypoint) != list(waypoints[0]) for waypoint in waypoints[1:])
         if non_noop and trajectory.duration <= 0.0:
             raise ValueError("Generated trajectory duration must be positive")
-        waypoint_index = 0
-        for point in trajectory.points:
-            if list(point.positions) == list(waypoints[waypoint_index]):
-                waypoint_index += 1
-                if waypoint_index == len(waypoints):
-                    break
-        if waypoint_index != len(waypoints):
-            raise ValueError("Generated trajectory does not contain ordered waypoint boundaries")
+        if not self._positions_close(trajectory.points[0].positions, waypoints[0]):
+            raise ValueError("Generated trajectory does not preserve the path start")
+        if not self._positions_close(trajectory.points[-1].positions, waypoints[-1]):
+            raise ValueError("Generated trajectory does not preserve the path goal")
+        if velocity_limits is not None:
+            self._validate_motion_limits(
+                trajectory,
+                velocity_limits,
+                acceleration_limits,
+                accelerations,
+            )
+
+    @staticmethod
+    def _positions_close(first: Sequence[float], second: Sequence[float]) -> bool:
+        return len(first) == len(second) and all(
+            math.isclose(
+                left,
+                right,
+                rel_tol=0.0,
+                abs_tol=_TRAJECTORY_POSITION_TOLERANCE,
+            )
+            for left, right in zip(first, second, strict=True)
+        )
+
+    def _validate_motion_limits(
+        self,
+        trajectory: JointTrajectory,
+        velocity_limits: Sequence[float],
+        acceleration_limits: Sequence[float] | None,
+        accelerations: Sequence[Sequence[float]] | None,
+    ) -> None:
+        expected_dimension = len(trajectory.joint_names)
+        if len(velocity_limits) != expected_dimension:
+            raise ValueError("Velocity limits do not match selected joints")
+        self._assert_valid_motion_limits(velocity_limits, "velocity")
+        for point_index, point in enumerate(trajectory.points):
+            self._assert_within_limits(
+                point.velocities,
+                velocity_limits,
+                f"Generated point {point_index} velocity",
+            )
+        if acceleration_limits is None:
+            return
+        if len(acceleration_limits) != expected_dimension:
+            raise ValueError("Acceleration limits do not match selected joints")
+        self._assert_valid_motion_limits(acceleration_limits, "acceleration")
+        if accelerations is not None:
+            if len(accelerations) != len(trajectory.points):
+                raise ValueError("Acceleration samples do not match trajectory points")
+            for point_index, values in enumerate(accelerations):
+                if len(values) != expected_dimension:
+                    raise ValueError(
+                        f"Generated point {point_index} acceleration dimension mismatch"
+                    )
+                self._assert_finite_sequence(values, f"Generated point {point_index} accelerations")
+                self._assert_within_limits(
+                    values,
+                    acceleration_limits,
+                    f"Generated point {point_index} acceleration",
+                )
+            return
+        for point_index in range(1, len(trajectory.points)):
+            previous = trajectory.points[point_index - 1]
+            current = trajectory.points[point_index]
+            dt = current.time_from_start - previous.time_from_start
+            derived = [
+                (current_velocity - previous_velocity) / dt
+                for previous_velocity, current_velocity in zip(
+                    previous.velocities, current.velocities, strict=True
+                )
+            ]
+            self._assert_within_limits(
+                derived,
+                acceleration_limits,
+                f"Generated interval {point_index - 1}:{point_index} acceleration",
+            )
+
+    @staticmethod
+    def _assert_valid_motion_limits(values: Sequence[float], label: str) -> None:
+        if any(not math.isfinite(value) or value <= 0.0 for value in values):
+            raise ValueError(f"Invalid {label} limits")
+
+    @staticmethod
+    def _assert_within_limits(values: Sequence[float], limits: Sequence[float], label: str) -> None:
+        for joint_index, (value, limit) in enumerate(zip(values, limits, strict=True)):
+            tolerance = max(
+                _TRAJECTORY_LIMIT_ABSOLUTE_TOLERANCE,
+                limit * _TRAJECTORY_LIMIT_RELATIVE_TOLERANCE,
+            )
+            if abs(value) > limit + tolerance:
+                raise ValueError(f"{label} exceeds joint {joint_index} limit: {value} vs {limit}")
 
     def _materialize_generated_plan(
         self, group_ids: tuple[PlanningGroupID, ...], result_path: Sequence[JointState]
@@ -664,19 +796,33 @@ class ManipulationModule(Module):
         expected_names = list(selection.joint_names)
         path = [JointState(state) for state in result_path]
         waypoints = self._validate_selected_path(path, expected_names)
-        velocities, accelerations = self._limits_for_global_joints(expected_names)
-        generator = JointTrajectoryGenerator(
-            num_joints=len(expected_names),
-            max_velocity=velocities,
-            max_acceleration=accelerations,
+        if self._trajectory_parametrizer is None:
+            raise ValueError("Trajectory parametrizer is not initialized")
+        velocity_limits: tuple[float, ...] | None = None
+        acceleration_limits: tuple[float, ...] | None = None
+        if self._trajectory_parametrizer.uses_request_limits:
+            velocities, accelerations = self._limits_for_global_joints(expected_names)
+            velocity_limits = tuple(velocities)
+            acceleration_limits = tuple(accelerations)
+        parametrized = self._trajectory_parametrizer.parametrize(
+            TrajectoryParametrizationRequest(
+                group_ids=group_ids,
+                joint_names=tuple(expected_names),
+                path=tuple(path),
+                velocity_limits=velocity_limits,
+                acceleration_limits=acceleration_limits,
+                speed_scale=self.get_motion_speed(),
+            )
         )
-        generated = generator.generate(waypoints)
-        trajectory = JointTrajectory(
-            joint_names=expected_names,
-            points=generated.points,
-            timestamp=generated.timestamp,
+        trajectory = parametrized.trajectory
+        self._validate_generated_trajectory(
+            trajectory,
+            expected_names,
+            waypoints,
+            velocity_limits=parametrized.velocity_limits,
+            acceleration_limits=parametrized.acceleration_limits,
+            accelerations=parametrized.accelerations,
         )
-        self._validate_generated_trajectory(trajectory, expected_names, waypoints)
         return path, trajectory
 
     def _materialize_timed_generated_plan(

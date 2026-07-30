@@ -10,18 +10,21 @@ DimOS needs an explicit path-to-trajectory parametrization boundary that can ret
 - Preserve the existing simple trapezoid behavior as a selectable compatibility backend.
 - Add a RoboPlan TOPP-RA backend for any geometric path planned against `RoboPlanWorld`, independent of which planner produced that path.
 - Parametrize immediately after geometric planning and only construct/cache a `GeneratedPlan` after trajectory generation and validation succeed.
+- Preserve planner-native timed trajectories without parametrizing them again; validate and store their existing timing.
 - Allow the selected backend to perform bounded interpolation or curve fitting while converting the source path into a timed trajectory.
 - Use RoboPlan scene limits sourced from URDF velocity and acceleration limits; fail explicitly when required limits or the selected backend are unavailable.
 - Do not switch parametrization backends after startup or fall back to another backend when parametrization fails.
+- Add a Viser "Next plan speed" control that applies a bounded runtime reduction
+  scale to future plans without mutating an already accepted plan.
 - Exclude geometric path shortcutting, waypoint simplification, path-specific resampling, and formal DimOS per-joint limit overrides from this change.
 - Pin the optional RoboPlan dependency to version `0.5.1`.
 
 ## Affected DimOS Surfaces
 
-- Modules/streams: manipulation plan materialization, planning configuration/models, a trajectory-parametrizer adapter protocol, RoboPlan world/model integration, and timed-trajectory validation; no stream contract changes.
-- Blueprints/CLI: manipulation blueprint configuration gains a startup-selectable parametrization backend; no new CLI command or blueprint name is introduced.
+- Modules/streams: manipulation plan materialization, planning configuration/models, a trajectory-parametrizer adapter protocol, RoboPlan world/model integration, and timed-trajectory validation; planner-native timed results bypass path parametrization and no stream contracts change.
+- Blueprints/CLI: manipulation blueprint configuration gains a startup-selectable parametrization backend; Viser gains a next-plan speed slider; no new CLI command or blueprint name is introduced.
 - Skills/MCP: existing plan, preview, and execute surfaces retain their signatures; unsuccessful parametrization makes planning fail before preview or execution.
-- Hardware/simulation/replay: hardware and simulation execute the exact trajectory accepted during planning; RoboPlan TOPP-RA requires URDF velocity and acceleration limits. Replay behavior is unchanged.
+- Hardware/simulation/replay: hardware and simulation preserve the accepted trajectory's time domain during robot-local joint projection; RoboPlan TOPP-RA requires URDF velocity and acceleration limits. Replay behavior is unchanged.
 - Docs/generated registries: manipulation planning documentation and dependency guidance require updates; no generated blueprint registry change is expected.
 
 ## Capabilities

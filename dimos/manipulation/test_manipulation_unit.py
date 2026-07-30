@@ -45,6 +45,12 @@ from dimos.manipulation.planning.spec.models import (
     IKResult,
     PlanningResult,
 )
+from dimos.manipulation.planning.trajectory_generator.config import (
+    SimpleTrapezoidParametrizationConfig,
+)
+from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
+    SimpleTrapezoidParametrizer,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -193,6 +199,12 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
             TrajectoryPoint(time_from_start=time_from_start, positions=positions)
             for time_from_start, positions in points
         ],
+    )
+
+
+def _enable_simple_parametrization(module: ManipulationModule) -> None:
+    module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
+        SimpleTrapezoidParametrizationConfig()
     )
 
 
@@ -348,6 +360,25 @@ class TestStateMachine:
         assert module._state == ManipulationState.FAULT
         assert module._error_message == "Test error"
 
+    @pytest.mark.parametrize("invalid", [0.0, -0.1, 1.01, float("inf"), float("nan")])
+    def test_motion_speed_applies_to_future_plans_only(self, module_factory, invalid: float):
+        module = module_factory()
+        accepted = GeneratedPlan(
+            trajectory=JointTrajectory(),
+            group_ids=("arm/manipulator",),
+            path=[JointState(name=["arm/j0"], position=[0.0])],
+        )
+        module._last_plan = accepted
+
+        assert module.set_motion_speed(0.5) is True
+        assert module.get_motion_speed() == pytest.approx(0.5)
+        assert module._last_plan is accepted
+
+        assert module.set_motion_speed(invalid) is False
+        assert module.get_motion_speed() == pytest.approx(0.5)
+        assert module._last_plan is accepted
+        assert "motion speed scale" in module.get_error()
+
     def test_begin_planning_state_checks(self, robot_config, module_factory):
         """_begin_planning only allowed from IDLE or COMPLETED."""
         module = module_factory()
@@ -468,6 +499,7 @@ class TestPlanningInitialization:
             planner=module.config.planner,
             kinematics_name=None,
             kinematics=kinematics,
+            trajectory_parametrization=module.config.trajectory_parametrization,
         )
 
     def test_legacy_kinematics_name_still_selects_backend(
@@ -491,6 +523,7 @@ class TestPlanningInitialization:
             planner=module.config.planner,
             kinematics_name="pink",
             kinematics=module.config.kinematics,
+            trajectory_parametrization=module.config.trajectory_parametrization,
         )
 
     def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
@@ -623,6 +656,7 @@ class TestPlanningGroupApis:
             (0.0, [0.0, 0.0, 0.0]), (1.0, [0.1, 0.2, 0.3])
         )
         module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
+        _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.planning_groups = registry
@@ -707,6 +741,7 @@ class TestPlanningGroupApis:
             (0.0, [0.0, 0.0, 0.0]), (1.0, [0.1, 0.2, 0.3])
         )
         module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
+        _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.planning_groups = registry

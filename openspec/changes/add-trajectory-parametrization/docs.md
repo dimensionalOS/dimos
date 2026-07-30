@@ -8,13 +8,14 @@
   - the `RoboPlanWorld` compatibility requirement;
   - supported RoboPlan fitting modes and bounded deviation;
   - no cross-backend fallback;
-  - URDF limit ownership and explicit missing-limit failures.
+  - URDF limit ownership and explicit missing-limit failures;
+  - Viser next-plan speed behavior and its non-retroactive boundary.
 
 ## Contributor Docs
 
 - No new standalone contributor guide is required.
 - If implementation reveals a non-obvious RoboPlan packaging or URDF 1.2 limit convention, add a focused note under `docs/development/` rather than expanding user-facing architecture prose.
-- Keep the architecture decisions under `docs/adr/` and ensure the OpenSpec design remains consistent with them.
+- Keep the architecture decisions under `docs/development/adr/` and ensure the OpenSpec design remains consistent with them.
 
 ## Coding-Agent Docs
 

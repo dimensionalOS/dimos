@@ -43,3 +43,31 @@ _Avoid_: Path, trajectory
 **Trajectory Parametrization**:
 The conversion of a geometric path into a timed trajectory under motion limits, including the bounded interpolation needed to define continuous motion between waypoints.
 _Avoid_: Path planning, trajectory generation
+
+**Planner-Native Timed Result**:
+A planner result that already contains authoritative timestamps and velocities.
+It bypasses trajectory parametrization, retains its time domain, and still
+receives canonical timed-trajectory validation.
+_Avoid_: Parametrization fallback
+
+## Trajectory Parametrization Boundary
+
+Each manipulation stack selects one parametrization backend at startup.
+Untimed geometric paths use that backend before a `GeneratedPlan` can be
+accepted. A failure does not switch backends and leaves no executable plan
+cached. Planner-native timed results skip conversion because they are already
+timed trajectories, not because the selected backend failed.
+
+`simple_trapezoid` uses the current DimOS motion-limit resolution.
+`roboplan_toppra` is available only with `RoboPlanWorld` and uses finite,
+positive URDF velocity and extended acceleration limits from the RoboPlan
+scene. It does not substitute the current generic DimOS limit fields. Preview
+and execution share the accepted trajectory time domain; execution may only
+project global joints into robot-local order without regenerating or retiming.
+
+**Next-Plan Speed**:
+A runtime reduction scale in `(0, 1]` applied when generating a future
+trajectory. Changing it never mutates or retimes an accepted `GeneratedPlan`;
+the operator must plan again. Viser exposes this policy through its
+`Next plan speed` slider.
+_Avoid_: Playback speed, execution override
