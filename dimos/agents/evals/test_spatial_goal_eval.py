@@ -36,6 +36,19 @@ scores and plots the answer. It validates the *pipeline* -- ingest, harness,
 memory query, goal capture, scoring, shard, figure -- and says nothing
 whatsoever about model quality.
 
+Re-recording the smoke's transcript. ``MockModel`` reads ``RECORD`` itself: with
+it set, the fixture path is *written* from a live turn instead of replayed
+(``dimos/agents/testing/mock_model.py``), so the transcript is whatever the
+shipping client's own model path returned, rather than hand-written JSON. It has
+to be re-recorded whenever :data:`SMOKE_QUESTION_ID` changes, because the query in
+it is that question's display name and the assertion below checks the two agree::
+
+    RECORD=1 OPENAI_API_KEY=... uv run pytest \\
+        dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted -k full_chain
+
+Then run it again *without* ``RECORD`` to confirm the recording plays back
+keyless, which is the state the lane ships in.
+
 Running the sweep locally::
 
     # once: build the store the sweep answers from (~1 min)
@@ -137,9 +150,14 @@ PROMPT_SPATIAL = (
 #: moves this eval, which is the signal it exists to give.
 PROMPTS = (("shipping", SYSTEM_PROMPT), ("spatial", PROMPT_SPATIAL))
 
-#: The smoke test's question, and the query in its recorded transcript.
-SMOKE_QUESTION_ID = "go2-bigoffice-elevator-door"
-SMOKE_TOOL_QUERY = "elevator door"
+#: The smoke test's question, and the query in its recorded transcript. The
+#: transcript is recorded against *this* question -- the query below is the
+#: question's own ``display_name``, which is what a model answering it would send
+#: to ``navigate_with_text`` -- so the playback exercises the shipping skill on
+#: the question the shard says it ran. Re-record after changing either (see the
+#: docstring above for the ``RECORD`` flow).
+SMOKE_QUESTION_ID = "go2-bigoffice-organization"
+SMOKE_TOOL_QUERY = "stack of storage boxes"
 SMOKE_MODEL_FIXTURE = Path(__file__).parent / "fixtures" / "test_full_chain_pipeline.json"
 
 #: Frames per second of *recorded* time for the smoke ingest: enough of the
@@ -310,7 +328,7 @@ def test_full_chain_pipeline(
 
     It therefore validates the *mechanism*, not the answer, and deliberately does
     not assert ``passed``: the store is a thin slice of the replay, so the top-1
-    frame CLIP retrieves for "elevator door" may well be metres from the
+    frame CLIP retrieves for :data:`SMOKE_TOOL_QUERY` may well be metres from the
     reference, and a scoring FAIL is an acceptable outcome of a working chain.
     Asserting the verdict here would make the smoke lane fail whenever the slice
     got thinner, which is a property of the fixture, not a regression.

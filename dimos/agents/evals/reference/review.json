@@ -29,7 +29,8 @@
     "note": "generic goods shelf bay; class-ambiguous in a retail scene"
   },
   "elevator door": {
-    "status": "verified"
+    "status": "dropped",
+    "note": "reference point sits on the blank side wall adjacent to a dark shutter surface \u2014 bbox contamination pulled the inlier median off the object (caught by multi-frame context verification after passing two rounds of single-crop review); a corridor-region question would belong to a room-level question type (#1913)"
   },
   "glass wall": {
     "status": "dropped",
@@ -41,7 +42,7 @@
   },
   "houseplant": {
     "status": "verified",
-    "note": "potted plant, unique in the scene"
+    "note": "potted plant, unique in the scene; plausible from close-range crops (frond silhouette, spread 0.125 m); far-frame context neither confirms nor refutes"
   },
   "ice sculpture": {
     "status": "dropped",

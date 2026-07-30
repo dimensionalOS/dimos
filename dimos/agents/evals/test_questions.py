@@ -49,9 +49,11 @@ REFERENCE_DIR = Path(__file__).parent / "reference"
 #: the PR's reported counts and the sweep's runtime are all quoted against it.
 #: Two of the six labels review had otherwise kept were dropped by the
 #: confusability gate: at viewpoint granularity this scene's objects stand close
-#: enough together that one retrieval answers for several, and the four that
-#: remain are the largest conflict-free subset of the six (see ``review.json``).
-EXPECTED_QUESTION_COUNT = 4
+#: enough together that one retrieval answers for several. A third, ``elevator
+#: door``, was dropped afterwards on cross-frame evidence -- its reference sits on
+#: a blank side wall, which two rounds of single-crop review had passed (see
+#: ``review.json``), leaving three.
+EXPECTED_QUESTION_COUNT = 3
 
 
 def make_ref(raw_label: str, location_group: str, **overrides: Any) -> dict[str, Any]:
@@ -495,7 +497,7 @@ def test_slugify_collapses_runs_of_punctuation() -> None:
 
 
 def test_committed_question_set_is_what_the_committed_inputs_produce() -> None:
-    """The shipped artifacts are re-derivable, and the set is K=4.
+    """The shipped artifacts are re-derivable, and the set is K=3.
 
     ``reference/questions.jsonl`` is what the live sweep reads, so it must stay
     exactly what ``refs.jsonl`` plus ``review.json`` produce -- an artifact

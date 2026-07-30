@@ -6,7 +6,7 @@
         {
           "name": "navigate_with_text",
           "args": {
-            "query": "elevator door"
+            "query": "stack of storage boxes"
           },
           "id": "call_gate0_1",
           "type": "tool_call"
@@ -14,7 +14,7 @@
       ]
     },
     {
-      "content": "I am heading to the elevator door.",
+      "content": "I am heading to the stack of storage boxes.",
       "tool_calls": []
     }
   ]

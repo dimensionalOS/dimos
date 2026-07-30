@@ -1066,150 +1066,6 @@ def build_manifest(
     }
 
 
-#: pyproject.toml [tool.largefiles] max_size_kb -- a committed crop has to fit.
-MAX_CROP_BYTES = 75 * 1024
-
-#: Longest edge, then JPEG quality, tried in order until a crop fits
-#: :data:`MAX_CROP_BYTES`. The first entry is what every crop the recording has
-#: produced so far encodes to; the rest exist so an unusually detailed frame
-#: degrades instead of failing the commit.
-_CROP_ENCODINGS: tuple[tuple[int, int], ...] = ((512, 85), (448, 80), (384, 75), (320, 70))
-
-# BGR overlay colors, in drawing order.
-_MASK_COLOR = (255, 200, 0)  # cyan-ish: the detector's pixel-level claim
-_BBOX_COLOR = (0, 255, 0)  # green: the detector's box
-_INLIER_COLOR = (0, 220, 255)  # amber: the LiDAR points that voted
-_REFERENCE_COLOR = (255, 0, 255)  # magenta: where the vote landed
-
-
-def _encode_crop(crop: NDArray[np.uint8]) -> bytes:
-    """JPEG-encode *crop*, shrinking it until it fits :data:`MAX_CROP_BYTES`."""
-    height, width = crop.shape[:2]
-    encoded = b""
-    for longest_edge, quality in _CROP_ENCODINGS:
-        scale = min(1.0, longest_edge / max(height, width))
-        resized = (
-            crop
-            if scale == 1.0
-            else cv2.resize(
-                crop,
-                (max(1, int(width * scale)), max(1, int(height * scale))),
-                interpolation=cv2.INTER_AREA,
-            )
-        )
-        ok, buffer = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, quality])
-        if not ok:
-            raise RuntimeError("cv2.imencode failed on a review crop")
-        encoded = buffer.tobytes()
-        if len(encoded) <= MAX_CROP_BYTES:
-            return encoded
-    raise ValueError(
-        f"a review crop is {len(encoded)} bytes at the smallest encoding "
-        f"{_CROP_ENCODINGS[-1]}, over the {MAX_CROP_BYTES}-byte large-file limit"
-    )
-
-
-def _reference_pixel(
-    projector: Projector, reference: Reference, pose_tuple: tuple[float, ...]
-) -> tuple[int, int] | None:
-    """Project a reference position into one frame, or ``None`` if it is not in it."""
-    uv, _, _, _ = projector.project(
-        np.array([[reference.x, reference.y, reference.z]], dtype=np.float64), pose_tuple
-    )
-    if len(uv) == 0:
-        return None
-    return round(float(uv[0][0])), round(float(uv[0][1]))
-
-
-def write_crops(
-    dataset: str,
-    members: dict[str, list[Measurement]],
-    references: list[Reference],
-    out_dir: Path,
-) -> int:
-    """Write one audit crop per reference, from its brightest contributing frame.
-
-    These are the images a human looks at before deciding whether a detector
-    label is a thing that can honestly be asked about -- and, since the position
-    is what the eval actually scores against, whether the *geometry* behind it
-    holds up. Each crop therefore carries the whole chain for that frame: the
-    mask outline (when the mask chose the points), the detector's box, the
-    projected LiDAR inliers whose median became the position, and that final
-    position projected back into the frame as a separate marker. A label that
-    looks right while its marker sits on the far wall is exactly the failure a
-    label-only crop cannot show.
-
-    The frame is the one the detection was made on: ``at(ts, tolerance)`` is a
-    pure predicate over a stream that iterates in time order, so ``.first()`` on
-    a window returns its *earliest* member -- which is a different frame, with
-    the boxes of this one drawn onto it. The nearest member is selected
-    explicitly instead, exactly as ``scan`` does when pairing LiDAR.
-
-    Crops are named after the question id the label would produce, so a crop and
-    a shard can be lined up without a lookup table.
-    """
-    from dimos.agents.evals.questions import slugify
-    from dimos.memory2.cli.dataset import open_dataset
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    projector = Projector(load_camera(), load_base_to_optical(), GateParams().front_z_m)
-    by_label = {reference.raw_label: reference for reference in references}
-    written = 0
-    store = open_dataset(dataset)
-    with store:
-        images: Stream[Any] = store.stream("color_image")
-        for label in sorted(members):
-            best = max(members[label], key=lambda m: m.mean_gray)
-            window = list(images.at(best.ts, tolerance=0.2))
-            if not window:
-                continue
-            obs = min(window, key=lambda o: abs(o.ts - best.ts))
-            frame: NDArray[np.uint8] = cv2.cvtColor(obs.data.data, cv2.COLOR_RGB2BGR)
-
-            for contour in best.mask_outline:
-                cv2.polylines(
-                    frame,
-                    [np.array(contour, dtype=np.int32).reshape(-1, 1, 2)],
-                    True,
-                    _MASK_COLOR,
-                    2,
-                )
-            x1, y1, x2, y2 = best.bbox
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), _BBOX_COLOR, 2)
-            for u, v in best.inlier_uv:
-                cv2.circle(frame, (round(u), round(v)), 2, _INLIER_COLOR, -1)
-
-            margin_x, margin_y = 0.12 * (x2 - x1), 0.12 * (y2 - y1)
-            left, top = x1 - margin_x, y1 - margin_y
-            right, bottom = x2 + margin_x, y2 + margin_y
-
-            reference = by_label.get(label)
-            pose_tuple = obs.pose_tuple
-            marker = (
-                _reference_pixel(projector, reference, pose_tuple)
-                if reference is not None and pose_tuple is not None
-                else None
-            )
-            if marker is not None:
-                cv2.drawMarker(frame, marker, _REFERENCE_COLOR, cv2.MARKER_CROSS, 44, 3)
-                cv2.circle(frame, marker, 15, _REFERENCE_COLOR, 3)
-                # The reference is a viewing-distance away from the box it was
-                # measured in, so it often projects outside it. Widen the crop
-                # rather than cropping the one marker a reviewer has to check.
-                left, top = min(left, marker[0] - 16.0), min(top, marker[1] - 16.0)
-                right, bottom = max(right, marker[0] + 16.0), max(bottom, marker[1] + 16.0)
-
-            cx1, cy1 = max(int(left), 0), max(int(top), 0)
-            cx2 = min(int(right), frame.shape[1])
-            cy2 = min(int(bottom), frame.shape[0])
-            crop = frame[cy1:cy2, cx1:cx2]
-            if crop.size == 0:
-                continue
-            (out_dir / f"{slugify(dataset)}-{slugify(label)}.jpg").write_bytes(_encode_crop(crop))
-            written += 1
-    return written
-
-
 def _build_parser() -> argparse.ArgumentParser:
     defaults = GateParams()
     parser = argparse.ArgumentParser(
@@ -1335,7 +1191,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--crops",
         action="store_true",
-        help="also write one review crop per reference into <out-dir>/crops",
+        help=(
+            "also write the two review images per reference into <out-dir>/crops: "
+            "<question-id>.jpg (sharpest LiDAR-confirmed frame, for identifying the "
+            "object) and <question-id>_measurement.jpg (the detection frame, for "
+            "checking the geometry)"
+        ),
     )
     parser.add_argument(
         "--note",
@@ -1394,8 +1255,18 @@ def main(argv: list[str]) -> int:
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
     if args.crops:
-        n_crops = write_crops(args.dataset, members, references, out_dir / "crops")
-        print(f"crops:     {n_crops} -> {out_dir / 'crops'}")
+        # Deferred, and one-way: `crops` imports this module for the projection
+        # and the gates, and nothing here may depend on it -- the review images
+        # are presentation, and the table must be identical without them.
+        from dimos.agents.evals.crops import write_crops
+
+        crops = write_crops(args.dataset, members, references, out_dir / "crops")
+        print(f"crops:     {crops.written} -> {out_dir / 'crops'}")
+        # Printed, never swallowed: every note is a reference whose review images
+        # are weaker than the picker intends, which a reviewer has to know before
+        # reading them.
+        for note in crops.notes:
+            print(f"  note:    {note}")
 
     funnel = manifest["funnel"]
     print(
