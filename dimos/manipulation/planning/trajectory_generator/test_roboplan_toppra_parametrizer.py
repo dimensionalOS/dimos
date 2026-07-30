@@ -46,8 +46,8 @@ pytestmark = pytest.mark.self_hosted
 
 
 class _Scene:
-    def __init__(self, *, missing_acceleration: bool = False) -> None:
-        self.missing_acceleration = missing_acceleration
+    def __init__(self, *, unbounded_acceleration: bool = False) -> None:
+        self.unbounded_acceleration = unbounded_acceleration
 
     def getVelocityLimitVectors(self, group_name: str) -> tuple[np.ndarray, np.ndarray]:
         assert group_name == "composite"
@@ -55,7 +55,7 @@ class _Scene:
 
     def getAccelerationLimitVectors(self, group_name: str) -> tuple[np.ndarray, np.ndarray]:
         assert group_name == "composite"
-        maximum = np.finfo(np.float64).max if self.missing_acceleration else 4.0
+        maximum = np.finfo(np.float64).max if self.unbounded_acceleration else 4.0
         return np.asarray([-6.0, -maximum]), np.asarray([6.0, maximum])
 
 
@@ -68,7 +68,7 @@ class _World(RoboPlanWorld):
         yield self.model
 
 
-def _model(*, missing_acceleration: bool = False) -> RoboPlanModel:
+def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     group = RoboPlanGroup(
         group_ids=("left/arm", "right/arm"),
         name="composite",
@@ -76,7 +76,7 @@ def _model(*, missing_acceleration: bool = False) -> RoboPlanModel:
         public_names=("right/b", "left/a"),
     )
     return RoboPlanModel(
-        scene=_Scene(missing_acceleration=missing_acceleration),
+        scene=_Scene(unbounded_acceleration=unbounded_acceleration),
         groups={frozenset(group.group_ids): group},
         legacy_group_ids={},
         native_joint_by_global={},
@@ -183,7 +183,7 @@ def test_roboplan_parametrizer_maps_composite_order_and_native_output(
     ]
 
 
-def test_roboplan_parametrizer_rejects_missing_urdf_acceleration_without_fallback(
+def test_roboplan_parametrizer_rejects_unbounded_scene_acceleration(
     mocker: MockerFixture,
 ) -> None:
     constructor = mocker.patch(
@@ -200,7 +200,7 @@ def test_roboplan_parametrizer_rejects_missing_urdf_acceleration_without_fallbac
         match="no usable URDF acceleration limit for joint 'left/a'",
     ):
         parametrizer.materialize_plan(
-            _World(_model(missing_acceleration=True)),
+            _World(_model(unbounded_acceleration=True)),
             selection,
             result,
         )

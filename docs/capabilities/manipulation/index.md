@@ -124,8 +124,7 @@ the selected backend converts that path to a validated timed trajectory:
 dimos run xarm7-planner-coordinator \
   -o manipulationmodule.trajectory_parametrization.backend=simple_trapezoid
 
-# After adding finite velocity and acceleration limits to the robot URDF,
-# omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
+# Omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
 dimos run xarm7-planner-coordinator
 
 # Equivalent explicit TOPP-RA selection
@@ -147,9 +146,9 @@ RoboPlan's planner or the generic RRT planner, but it requires
 motion limits. A planner-native result that already has timestamps and
 velocities bypasses path parametrization and retains its existing timing after
 canonical validation. Explicit configuration overrides the world-based default.
-The bundled xArm URDF currently lacks the extended acceleration attribute, so
-use `simple_trapezoid` for that stock model or add the required URDF limits
-before testing `roboplan_toppra`.
+RoboPlan model composition preserves authored acceleration limits and inserts a
+temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+acceleration overrides will replace this fallback.
 
 The Viser panel's **Next plan speed** slider provides runtime speed tuning from
 `0.05` to `1.0`. Changing it leaves the accepted plan and any active execution

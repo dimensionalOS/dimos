@@ -483,8 +483,10 @@ Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
 parametrizer, DimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
-each selected planning group must provide finite, positive velocity and
-extended acceleration limits:
+each selected planning group must provide finite, positive velocity limits.
+Authored extended acceleration limits take precedence; when absent, DimOS
+temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
+model composition:
 
 ```xml
 <joint name="joint1" type="revolute">

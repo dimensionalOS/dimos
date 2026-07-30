@@ -165,7 +165,10 @@ and planning groups. Selecting it with another world fails during startup.
 DimOS pins RoboPlan to `0.5.1` for this integration.
 
 For every selected movable joint, the RoboPlan URDF must provide a finite,
-positive velocity limit and an extended acceleration limit:
+positive velocity limit. DimOS uses an authored extended acceleration limit
+when present; otherwise it temporarily inserts a global `2.0 rad/s²` fallback
+while composing the RoboPlan model. Formal per-joint acceleration overrides
+will replace this fallback.
 
 ```xml
 <limit

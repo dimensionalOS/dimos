@@ -1930,6 +1930,30 @@ def test_scene_receives_generated_model_contents_inline(
     assert world._scene.constructor_kwargs["package_paths"] == []
 
 
+def test_composed_model_fills_only_missing_acceleration_limits(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    tree = ET.parse(robot_config.model_path)
+    authored = tree.find("./joint[@name='joint1']/limit")
+    assert authored is not None
+    authored.set("acceleration", "3.5")
+    tree.write(robot_config.model_path)
+
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    urdf = ET.fromstring(world._scene.constructor_kwargs["urdf"])
+    acceleration_by_joint = {
+        joint.get("name"): limit.get("acceleration")
+        for joint in urdf.findall("./joint")
+        if (limit := joint.find("./limit")) is not None
+    }
+    assert acceleration_by_joint == {
+        "joint1": "3.5",
+        "joint2": "2.0",
+        "joint3": "2.0",
+    }
+
+
 def test_base_pose_is_written_to_composed_model(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
