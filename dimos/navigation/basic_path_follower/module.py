@@ -33,6 +33,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -69,6 +70,7 @@ class BasicPathFollower(Module):
     path: In[Path]
     odometry: In[Odometry]
     stop_movement: In[Bool]
+    tf: In[TFMessage]
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]
@@ -102,7 +104,7 @@ class BasicPathFollower(Module):
 
     def _on_odometry(self, msg: Odometry) -> None:
         if self._base_pose is None:
-            self._base_pose = OdomBasePose(self.tf, self.config.base_frame)
+            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
         pose = self._base_pose.resolve(msg)
         if pose is None:
             return

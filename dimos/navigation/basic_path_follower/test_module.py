@@ -22,7 +22,7 @@ from dimos.protocol.tf.tf import MultiTBuffer
 
 
 class FakeTF(MultiTBuffer):
-    def stop(self) -> None:
+    def dispose(self) -> None:
         pass
 
 

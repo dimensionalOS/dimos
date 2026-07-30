@@ -39,9 +39,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
@@ -73,6 +73,7 @@ class ObjectTracking(Module):
     detection2darray: Out[Detection2DArray]
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -115,9 +116,6 @@ class ObjectTracking(Module):
         self.stop_tracking = threading.Event()
         self.tracking_rate = 30.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
-
-        # Initialize TF publisher
-        self.tf = TF()
 
         # Store latest detections for RPC access
         self._latest_detection2d: Detection2DArray | None = None
@@ -505,7 +503,7 @@ class ObjectTracking(Module):
                         child_frame_id="tracked_object",
                         ts=header.ts,
                     )
-                    self.tf.publish(tracked_object_tf)
+                    self.tf.publish(TFMessage(tracked_object_tf))
 
         # Store latest detections for RPC access
         self._latest_detection2d = detection2darray

@@ -20,6 +20,7 @@ with any physics backend (Drake, MuJoCo, PyBullet, etc.).
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import time
 from typing import TYPE_CHECKING
@@ -27,13 +28,16 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.planners.selected_joint_space import (
     SelectedJointSpace,
     normalize_selection_target,
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import (
+    CartesianTarget,
     JointPath,
+    PlanningGroupID,
     PlanningResult,
     WorldRobotID,
 )
@@ -283,6 +287,22 @@ class RRTConnectPlanner:
             f"No path found after {max_iterations} iterations",
             time.time() - start_time,
             max_iterations,
+        )
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+    ) -> PlanningResult:
+        """Report that RRT-Connect does not support Cartesian path planning."""
+        return PlanningResult(
+            status=PlanningStatus.UNSUPPORTED,
+            message="RRT-Connect does not support Cartesian path planning",
         )
 
     def _extend_selected_tree(

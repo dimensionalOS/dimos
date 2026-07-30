@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
@@ -84,6 +85,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     @property
     def _camera_link(self) -> str:
@@ -422,7 +424,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if tracking_tf is not None:
             transforms.append(tracking_tf)
 
-        self.tf.publish(*transforms)
+        self.tf.publish(TFMessage(*transforms))
 
     def _generate_pointcloud(self) -> None:
         with self._pointcloud_lock:

@@ -102,7 +102,6 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
-        coordinator_task_name=f"traj_{resolved_name}",
         home_joints=[0.0] * 7,
     )
 
@@ -140,6 +139,5 @@ def openarm_single_model_config() -> RobotModelConfig:
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
-        coordinator_task_name="traj_arm",
         home_joints=[0.0] * 7,
     )

@@ -22,10 +22,14 @@ class DimosCliCall:
     process: subprocess.Popen[bytes] | None
     demo_args: list[str] | None = None
     mcp_port: int | None = None
-    simulator: str = "mujoco"
+    # None: no --simulation flag (e.g. replay runs via --robot-ip fake).
+    simulator: str | None = "mujoco"
 
     def __init__(self) -> None:
         self.process = None
+        # Root-level CLI flags (before the subcommand), e.g. ["--robot-ip", "fake"].
+        self.global_args: list[str] = []
+        self.extra_env: dict[str, str] = {}
 
     def start(self) -> None:
         if self.demo_args is None:
@@ -45,18 +49,19 @@ class DimosCliCall:
         # overrides whose module is absent from the blueprint, but rejects
         # unknown `-o` keys outright. Blueprints without an mcpclient (e.g.
         # `coordinator-mock`) would otherwise fail config validation.
-        global_overrides: list[str] = []
+        global_overrides: list[str] = list(self.global_args)
         env = os.environ.copy()
+        env.update(self.extra_env)
         if self.mcp_port is not None:
             global_overrides += ["--mcp-port", str(self.mcp_port)]
             env["MCPCLIENT__MCP_SERVER_URL"] = f"http://localhost:{self.mcp_port}/mcp"
+        if self.simulator is not None:
+            global_overrides += ["--simulation", self.simulator]
 
         self.process = subprocess.Popen(
             [
                 "dimos",
                 *global_overrides,
-                "--simulation",
-                self.simulator,
                 *args,
             ],
             start_new_session=True,
@@ -64,20 +69,29 @@ class DimosCliCall:
         )
 
     def stop(self) -> None:
-        if self.process is None:
+        # Detach before signalling so stop() is idempotent: once the first
+        # call reaps the process its pgid can be recycled, and a second
+        # killpg could hit an unrelated process group.
+        process, self.process = self.process, None
+        if process is None:
             return
 
         try:
             # Send SIGTERM to the entire process group so child processes
             # (e.g. the mujoco viewer subprocess) are also terminated.
-            os.killpg(self.process.pid, signal.SIGTERM)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                # The group is already gone: the process exited on its own
+                # and an earlier poll()/wait() reaped it.
+                return
 
             # Record the time when we sent the kill signal
             shutdown_start = time.time()
 
             # Wait for the process to terminate with a 30-second timeout
             try:
-                self.process.wait(timeout=30)
+                process.wait(timeout=30)
                 shutdown_duration = time.time() - shutdown_start
 
                 # Verify it shut down in time
@@ -87,18 +101,18 @@ class DimosCliCall:
                 )
             except subprocess.TimeoutExpired:
                 # If we reach here, the process didn't terminate in 30 seconds
-                os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait()  # Clean up
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()  # Clean up
                 raise AssertionError(
                     "Process did not shut down within 30 seconds after receiving SIGTERM"
                 )
 
         except Exception:
             # Clean up if something goes wrong
-            if self.process.poll() is None:  # Process still running
+            if process.poll() is None:  # Process still running
                 try:
-                    os.killpg(self.process.pid, signal.SIGKILL)
+                    os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                self.process.wait()
+                process.wait()
             raise

@@ -48,6 +48,13 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -62,6 +69,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -92,6 +100,8 @@ class ControlCoordinatorConfig(ModuleConfig):
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
+    # Transitional: goes away once every consumer reads per-robot streams.
+    publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
@@ -186,6 +196,7 @@ class ControlCoordinator(Module):
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
+        self._trajectory_task: JointTrajectoryTask | None = None
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
         # port -> (task, handler, routing). Guarded by _task_lock; entries are
@@ -312,6 +323,24 @@ class ControlCoordinator(Module):
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
+    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
+        name = f"{hardware_id}_joints"
+        port = getattr(self, name, None)
+        if isinstance(port, Out):
+            return port
+        if not name.isidentifier():
+            raise ValueError(
+                f"publish_robot_joint_states is on but hardware_id {hardware_id!r} cannot name "
+                f"an output port — rename it so `{name}` is a valid Python identifier"
+            )
+        raise ValueError(
+            f"publish_robot_joint_states is on but hardware {hardware_id!r} has no output "
+            f"port — add `{name}: Out[JointState]` to your coordinator subclass"
+        )
+
+    def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
+        self._robot_joint_port(hardware_id).publish(msg)
+
     @rpc
     def add_hardware(
         self,
@@ -335,6 +364,9 @@ class ControlCoordinator(Module):
                 f"hardware_type={component.hardware_type.value} but got "
                 f"{type(adapter).__name__}"
             )
+
+        if self.config.publish_robot_joint_states:
+            self._robot_joint_port(component.hardware_id)
 
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
@@ -427,6 +459,29 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task."""
+        current_positions = self.get_joint_positions()
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.execute(trajectory, current_positions)
+
+    @rpc
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
+        with self._task_lock:
+            if self._trajectory_task is None:
+                return TrajectoryCancellationResult(
+                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
+                    "Control coordinator has no trajectory task",
+                )
+            return self._trajectory_task.cancel()
+
+    @rpc
     def add_task(
         self,
         task: ControlTask,
@@ -449,9 +504,18 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if isinstance(task, JointTrajectoryTask):
+                if self._trajectory_task is not None:
+                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                self._trajectory_task = task
             if task_type is not None:
-                self._register_routes(task, task_type, stream_bind)
-                self._task_commands[task.name] = self._commands_for(task_type)
+                try:
+                    self._register_routes(task, task_type, stream_bind)
+                    self._task_commands[task.name] = self._commands_for(task_type)
+                except Exception:
+                    if task is self._trajectory_task:
+                        self._trajectory_task = None
+                    raise
             else:
                 self._task_commands[task.name] = frozenset()
             self._tasks[task.name] = task
@@ -469,6 +533,8 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
+            if task is self._trajectory_task:
+                self._trajectory_task = None
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -764,6 +830,8 @@ class ControlCoordinator(Module):
                     f"task_invoke({task_name!r}, {method!r}): task has no such method; "
                     f"declared commands: {sorted(self._task_commands.get(task_name, frozenset()))}"
                 )
+            # TODO: Make TASK_EXPOSES an enforced RPC allowlist after migrating callers
+            # that rely on reflective access to undeclared task methods.
             logger.warning(
                 "undeclared task_invoke; declare it in TASK_EXPOSES",
                 task_name=task_name,
@@ -869,6 +937,17 @@ class ControlCoordinator(Module):
             logger.warning("Coordinator already running")
             return
 
+        if type(self) is not ControlCoordinator and self.config.instance_name is None:
+            logger.warning(
+                f"Coordinator subclass {type(self).__name__} has no instance_name, so it "
+                f"serves RPCs under '{type(self).__name__}' — the shipped clients look for "
+                "'ControlCoordinator'. Pass instance_name='ControlCoordinator' in the blueprint."
+            )
+
+        if self.config.publish_robot_joint_states:
+            for component in self.config.hardware:
+                self._robot_joint_port(component.hardware_id)
+
         super().start()
 
         # Setup hardware and tasks from config (if any)
@@ -879,6 +958,9 @@ class ControlCoordinator(Module):
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
         )
+        publish_robot_cb = (
+            self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
+        )
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -887,6 +969,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )

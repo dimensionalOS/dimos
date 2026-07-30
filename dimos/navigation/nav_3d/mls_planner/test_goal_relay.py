@@ -24,7 +24,7 @@ MOUNT_Z = 0.163
 
 
 class FakeTF(MultiTBuffer):
-    """In-memory tf with the stop() hook and call counter the module tests need."""
+    """In-memory tf with the dispose() hook and call counter the module tests need."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -34,7 +34,7 @@ class FakeTF(MultiTBuffer):
         self.gets += 1
         return super().get(*args, **kwargs)
 
-    def stop(self) -> None:
+    def dispose(self) -> None:
         pass
 
 

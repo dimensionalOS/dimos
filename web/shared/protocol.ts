@@ -5,16 +5,27 @@
 // Framing (see web/README.md for the upstream-bug rationale):
 // - Control stream frame: u32-LE length | UTF-8 JSON.
 // - Datagram: raw UTF-8 JSON, no length prefix.
-// - Data frame (one message per stream): u32-LE headerLen | u32-LE payloadLen
-//   | header JSON | payload. Receivers count bytes and must never treat
-//   stream EOF as a message boundary (Deno 2.6.x delays FIN by up to ~1 s).
+// - Data frame: u32-LE headerLen | u32-LE payloadLen | header JSON | payload.
+//   Latest channels send one frame per stream; a reliable channel packs its
+//   frames back to back on one persistent stream. Receivers count bytes and
+//   must never treat stream EOF as a message boundary (Deno 2.6.x delays FIN
+//   by up to ~1 s, and a persistent stream has no EOF between frames).
 //
 // Validation policy (mirrored in protocol.py): decoders validate shape
 // strictly, and receivers drop invalid or unknown messages -- a peer's bytes
 // must never kill a session. Framing-level corruption (absurd length
 // prefixes) throws and kills only the affected stream.
 
-export const PROTOCOL_VERSION = 1;
+import { type ChannelSpec, type Delivery, isChannelSpec } from "./manifest.ts";
+
+// Channel/manifest domain types live in manifest.ts; re-exported so protocol
+// consumers keep a single import surface.
+export type { ChannelSpec, Delivery } from "./manifest.ts";
+
+// v2: a reliable channel packs all its frames onto one persistent stream (v1
+// carried one frame per stream), which a v1 receiver would misread as a
+// single frame. Bump on any change an old peer would silently misparse.
+export const PROTOCOL_VERSION = 2;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -24,12 +35,24 @@ export const MAX_HEADER_LEN = 65536;
 export const MAX_DATA_FRAME_BYTES = 64 * 1024 * 1024;
 
 export type Role = "robot" | "viewer";
-export type Delivery = "latest" | "reliable";
+
+export interface RobotInfo {
+  id: string;
+  name: string;
+  model: string;
+}
+
+export interface RobotManifest {
+  channels: ChannelSpec[];
+}
 
 export interface HelloMsg {
   t: "hello";
   v: number;
   role: Role;
+  // role=robot only: identity + channel manifest, registered by the relay.
+  robot?: RobotInfo;
+  manifest?: RobotManifest;
 }
 
 export interface WelcomeMsg {
@@ -55,6 +78,44 @@ export interface ErrorMsg {
   message: string;
 }
 
+// Session messages (T2): robot registration, viewer watch + per-channel
+// subscriptions, and the relay->robot subscription snapshot.
+export interface RobotsMsg {
+  t: "robots";
+  robots: RobotInfo[];
+}
+
+export interface WatchMsg {
+  t: "watch";
+  robotId: string;
+}
+
+export interface ManifestMsg {
+  t: "manifest";
+  robotId: string;
+  channels: ChannelSpec[];
+}
+
+export interface SubMsg {
+  t: "sub";
+  ch: string;
+}
+
+export interface UnsubMsg {
+  t: "unsub";
+  ch: string;
+}
+
+// Relay->robot: the full set of channels with >= 1 subscribed viewer. A
+// snapshot (not a delta) because it rides lossy datagrams: any single delivery
+// heals the state. `n` is monotonic per robot; receivers ignore stale/reordered
+// snapshots.
+export interface SubsMsg {
+  t: "subs";
+  chs: string[];
+  n: number;
+}
+
 // Teleop datagrams (carried from T6 on; declared here so the wire format is
 // pinned by fixtures from day one).
 export interface TwistMsg {
@@ -72,12 +133,14 @@ export interface StopMsg {
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
+export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
 export type TeleopMsg = TwistMsg | StopMsg;
-export type Msg = ControlMsg | TeleopMsg;
+export type Msg = ControlMsg | SessionMsg | TeleopMsg;
 
-// Data-plane frame header. `delivery` tells the relay how to forward the
-// frame without a manifest (T1 only; the T2+ manifest replaces it). `meta`
-// carries encoding-specific extras (e.g. {w, h} for images).
+// Data-plane frame header. `delivery` tells the relay how to forward frames
+// on channels the robot's manifest does not declare (the manifest's delivery
+// wins when present). `meta` carries encoding-specific extras (e.g. {w, h}
+// for images).
 export interface FrameHeader {
   ch: string;
   seq: number;
@@ -96,15 +159,22 @@ const enc = new TextEncoder();
 // corrupted bytes into channel names or message fields.
 const dec = new TextDecoder("utf-8", { fatal: true });
 
-// Runtime field validation, mirror of _MSG_FIELD_KINDS in protocol.py:
+// Runtime field validation, mirrored by the pydantic models in protocol.py:
 // "string" is a JSON string, "number" any JSON number (booleans excluded by
-// typeof).
+// typeof). Structured fields (nested objects/arrays) are checked by
+// MSG_VALIDATORS below.
 const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   hello: { v: "number", role: "string" },
   welcome: { v: "number" },
   ping: { n: "number", ts: "number" },
   pong: { n: "number", ts: "number" },
   error: { code: "string", message: "string" },
+  robots: {},
+  watch: { robotId: "string" },
+  manifest: { robotId: "string" },
+  sub: { ch: "string" },
+  unsub: { ch: "string" },
+  subs: { n: "number" },
   twist: { vx: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
 };
@@ -113,15 +183,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isRobotInfo(value: unknown): value is RobotInfo {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.model === "string"
+  );
+}
+
+// Structural checks for nested fields, run after the flat MSG_FIELDS pass.
+// Optional fields (hello.robot/manifest) accept absent but reject null: JSON
+// encoders on both sides omit absent fields and never emit null.
+const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
+  hello: (v) =>
+    (v.robot === undefined || isRobotInfo(v.robot)) &&
+    (v.manifest === undefined ||
+      (isRecord(v.manifest) &&
+        Array.isArray(v.manifest.channels) &&
+        v.manifest.channels.every(isChannelSpec))),
+  robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
+  manifest: (v) => Array.isArray(v.channels) && v.channels.every(isChannelSpec),
+  subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
+};
+
 /** Validated message from parsed JSON; null for unknown or malformed ones. */
 export function msgFromUnknown(value: unknown): Msg | null {
   if (!isRecord(value) || typeof value.t !== "string") return null;
-  const fields = MSG_FIELDS[value.t];
+  const fields = Object.hasOwn(MSG_FIELDS, value.t) ? MSG_FIELDS[value.t] : undefined;
   if (fields === undefined) return null;
   for (const [name, kind] of Object.entries(fields)) {
     const actual = typeof value[name];
     if (actual !== kind) return null;
   }
+  const structural = Object.hasOwn(MSG_VALIDATORS, value.t) ? MSG_VALIDATORS[value.t] : undefined;
+  if (structural !== undefined && !structural(value)) return null;
   return value as unknown as Msg;
 }
 
@@ -247,28 +343,93 @@ export function concatBytes(chunks: Uint8Array[], limit: number): Uint8Array {
 }
 
 /**
- * Incremental reader for a single-message stream. Returns the frame as soon
- * as headerLen + payloadLen bytes have arrived; never waits for EOF. Bytes
- * past the frame are ignored. Chunks are held by reference and copied once
- * at completion (a per-push merge is quadratic at multi-MB frame sizes).
+ * Framing/header corruption on a data-frame stream. `frames` carries the
+ * frames decoded before the corrupt one so the caller can still deliver them
+ * before dropping the stream (framing is unrecoverable mid-stream).
  */
-export class DataFrameReader {
-  #chunks: Uint8Array[] = [];
-  #size = 0;
-  #lens: { headerLen: number; payloadLen: number; total: number } | null = null;
-  #done = false;
+export class DataFrameStreamError extends Error {
+  constructor(message: string, readonly frames: DataFrame[]) {
+    super(message);
+    this.name = "DataFrameStreamError";
+  }
+}
 
-  push(chunk: Uint8Array): DataFrame | null {
-    if (this.#done) return null;
-    this.#chunks.push(chunk);
-    this.#size += chunk.byteLength;
-    if (this.#lens === null && this.#size >= 8) {
-      this.#lens = peekDataFrameLengths(concatBytes(this.#chunks, 8));
+/**
+ * Incremental reader for a stream carrying sequential data frames (a reliable
+ * channel's persistent stream; a latest stream is the one-frame case). Frames
+ * are returned as soon as their bytes have arrived; EOF is never a boundary.
+ *
+ * Chunks are queued behind a read cursor, never concatenated: a completed
+ * frame is copied out exactly once, so a 64 MiB frame arriving in 64 KiB
+ * chunks costs 64 MiB of copying, not gigabytes. On corruption push() throws
+ * DataFrameStreamError (with the frames decoded before it) and the reader
+ * rejects all further input.
+ */
+export class DataFrameStreamReader {
+  #chunks: Uint8Array[] = [];
+  #head = 0; // index of the chunk holding the read cursor
+  #cursor = 0; // byte offset into #chunks[#head]
+  #size = 0; // unread bytes across all queued chunks
+  #failed: string | null = null;
+
+  push(chunk: Uint8Array): DataFrame[] {
+    if (this.#failed !== null) throw new DataFrameStreamError(this.#failed, []);
+    if (chunk.byteLength > 0) {
+      this.#chunks.push(chunk);
+      this.#size += chunk.byteLength;
     }
-    if (this.#lens === null || this.#size < this.#lens.total) return null;
-    this.#done = true;
-    const frame = decodeDataFrame(concatBytes(this.#chunks, this.#lens.total));
-    this.#chunks = [];
-    return frame;
+    const frames: DataFrame[] = [];
+    try {
+      while (this.#size >= 8) {
+        const lens = peekDataFrameLengths(this.#peek(8))!;
+        if (this.#size < lens.total) break;
+        frames.push(decodeDataFrame(this.#take(lens.total)));
+      }
+    } catch (e) {
+      this.#failed = (e as Error).message;
+      throw new DataFrameStreamError(this.#failed, frames);
+    } finally {
+      this.#chunks.splice(0, this.#head);
+      this.#head = 0;
+    }
+    return frames;
+  }
+
+  /** First `n` unread bytes without consuming them (requires #size >= n). */
+  #peek(n: number): Uint8Array {
+    const first = this.#chunks[this.#head];
+    if (first.byteLength - this.#cursor >= n) {
+      return first.subarray(this.#cursor, this.#cursor + n);
+    }
+    const out = new Uint8Array(n);
+    let off = 0;
+    let cursor = this.#cursor;
+    for (let i = this.#head; off < n; i++) {
+      const chunk = this.#chunks[i];
+      const step = Math.min(chunk.byteLength - cursor, n - off);
+      out.set(chunk.subarray(cursor, cursor + step), off);
+      off += step;
+      cursor = 0;
+    }
+    return out;
+  }
+
+  /** Consume `n` unread bytes into one fresh buffer (requires #size >= n). */
+  #take(n: number): Uint8Array {
+    const out = new Uint8Array(n);
+    let off = 0;
+    while (off < n) {
+      const chunk = this.#chunks[this.#head];
+      const step = Math.min(chunk.byteLength - this.#cursor, n - off);
+      out.set(chunk.subarray(this.#cursor, this.#cursor + step), off);
+      off += step;
+      this.#cursor += step;
+      if (this.#cursor === chunk.byteLength) {
+        this.#head++;
+        this.#cursor = 0;
+      }
+    }
+    this.#size -= n;
+    return out;
   }
 }

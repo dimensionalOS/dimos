@@ -73,6 +73,12 @@
         <div>round-trips</div>
         <pre id="rtt">control: -    datagram: -</pre>
       </div>
+      <div class="card">
+        <div>robots</div>
+        <pre id="robots">-</pre>
+        <div>manifest</div>
+        <pre id="manifest">-</pre>
+      </div>
     </div>
     <div class="card">
       <table id="stats">
@@ -128,50 +134,72 @@
         };
       }
 
-      // Read one data frame by byte count; never wait for EOF (the relay's FIN can
-      // arrive up to ~1 s late on Deno 2.6.x).
-      async function readDataFrame(stream) {
+      // Read data frames by byte count; never wait for EOF (the relay's FIN
+      // can arrive up to ~1 s late on Deno 2.6.x). A latest stream carries
+      // one frame, a reliable channel's persistent stream carries them back
+      // to back; no cancel, which would reset a persistent stream. Chunks are
+      // queued behind a read cursor so each frame is copied out exactly once
+      // (keep in sync with DataFrameStreamReader in web/shared/protocol.ts).
+      async function readDataFrames(stream, onFrame) {
         const reader = stream.getReader();
         const chunks = [];
-        let size = 0;
-        let total = null;
-        let head = new Uint8Array(0);
+        let head = 0; // index of the chunk holding the read cursor
+        let cursor = 0; // byte offset into chunks[head]
+        let size = 0; // unread bytes across all queued chunks
+        // First `n` unread bytes; consuming advances the cursor.
+        const gather = (n, consume) => {
+          const first = chunks[head];
+          if (!consume && first.byteLength - cursor >= n) {
+            return first.subarray(cursor, cursor + n);
+          }
+          const out = new Uint8Array(n);
+          let off = 0;
+          let i = head;
+          let at = cursor;
+          while (off < n) {
+            const chunk = chunks[i];
+            const step = Math.min(chunk.byteLength - at, n - off);
+            out.set(chunk.subarray(at, at + step), off);
+            off += step;
+            at += step;
+            if (at === chunk.byteLength) {
+              i++;
+              at = 0;
+            }
+          }
+          if (consume) {
+            head = i;
+            cursor = at;
+            size -= n;
+          }
+          return out;
+        };
         try {
-          while (total === null || size < total) {
+          while (true) {
             const { value, done } = await reader.read();
             if (value && value.byteLength) {
               chunks.push(value);
               size += value.byteLength;
-              if (total === null) {
-                const merged = new Uint8Array(Math.min(size, 8));
-                let off = 0;
-                for (const c of chunks) {
-                  for (let i = 0; i < c.byteLength && off < 8; i++) merged[off++] = c[i];
-                }
-                head = merged;
-                if (size >= 8) {
-                  const dv = new DataView(head.buffer);
-                  total = 8 + dv.getUint32(0, true) + dv.getUint32(4, true);
-                }
+              while (size >= 8) {
+                const prefix = gather(8, false);
+                const dv = new DataView(prefix.buffer, prefix.byteOffset);
+                const hlen = dv.getUint32(0, true);
+                const total = 8 + hlen + dv.getUint32(4, true);
+                if (size < total) break;
+                const frame = gather(total, true);
+                onFrame(
+                  JSON.parse(dec.decode(frame.subarray(8, 8 + hlen))),
+                  frame.subarray(8 + hlen),
+                );
               }
+              chunks.splice(0, head);
+              head = 0;
             }
             if (done) break;
           }
         } finally {
-          reader.releaseLock(); // no cancel: the late FIN closes the stream
+          reader.releaseLock();
         }
-        if (total === null || size < total) throw new Error("stream ended mid-frame");
-        const buf = new Uint8Array(size);
-        let off = 0;
-        for (const c of chunks) {
-          buf.set(c, off);
-          off += c.byteLength;
-        }
-        const hlen = new DataView(buf.buffer).getUint32(0, true);
-        return {
-          header: JSON.parse(dec.decode(buf.subarray(8, 8 + hlen))),
-          payload: buf.subarray(8 + hlen, total),
-        };
       }
 
       // ---- per-channel stats ----
@@ -273,6 +301,129 @@
         $("rtt").textContent = `control: ${rtts.control}    datagram: ${rtts.datagram}`;
       }
 
+      // Local auto-select policy lives here, not in the relay: watch the
+      // first listed robot (a robot picker is Cockpit/T12 territory).
+      let watched = null;
+      function renderRobots(robots) {
+        $("robots").textContent = robots.length
+          ? robots.map((r) => `${r.id === watched ? "> " : "  "}${r.id} (${r.model})`).join(
+            "\n",
+          )
+          : "none connected";
+      }
+
+      // One relay session: resolves when it closes (the caller reconnects).
+      async function connectOnce() {
+        const info = await (await fetch("/api/info")).json();
+        say(`connecting to ${info.wtUrl} ...`);
+        const opts = {};
+        if (info.certHash) {
+          opts.serverCertificateHashes = [{
+            algorithm: "sha-256",
+            value: Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0)),
+          }];
+        }
+        const wt = new WebTransport(info.wtUrl, opts);
+        await wt.ready;
+        say(`connected to ${info.wtUrl} (protocol v${info.v})`, "ok");
+        wt.closed.then(
+          (i) => say(`session closed: ${JSON.stringify(i)}`, "bad"),
+          (e) => say(`session lost: ${e.message ?? e}`, "bad"),
+        );
+
+        const timers = [];
+        try {
+          // control stream: hello -> welcome + robots -> watch -> manifest ->
+          // sub every channel; ping every second
+          const control = await wt.createBidirectionalStream();
+          const cw = control.writable.getWriter();
+          const pending = new Map(); // n -> send time
+          let pingN = 0;
+          cw.write(encodeControlFrame({ t: "hello", v: info.v, role: "viewer" }));
+          (async () => {
+            const push = controlFrameReader();
+            for await (const chunk of control.readable) {
+              for (const msg of push(chunk)) {
+                if (msg.t === "welcome") {
+                  say(`connected, welcome received (protocol v${msg.v})`, "ok");
+                } else if (msg.t === "error") {
+                  say(`relay error: ${msg.code}: ${msg.message}`, "bad");
+                } else if (msg.t === "robots") {
+                  if (msg.robots.length && !msg.robots.some((r) => r.id === watched)) {
+                    watched = msg.robots[0].id;
+                  }
+                  renderRobots(msg.robots);
+                  // (Re-)watch: idempotent, refreshes the manifest, and after
+                  // a robot restart it reattaches this viewer's channels.
+                  if (msg.robots.length) {
+                    cw.write(encodeControlFrame({ t: "watch", robotId: watched })).catch(
+                      () => {},
+                    );
+                  }
+                } else if (msg.t === "manifest") {
+                  $("manifest").textContent = msg.channels.length
+                    ? msg.channels
+                      .map((c) => `${c.ch}  ${c.encoding} ${c.delivery} <=${c.maxHz} Hz`)
+                      .join("\n")
+                    : "no channels";
+                  for (const c of msg.channels) {
+                    cw.write(encodeControlFrame({ t: "sub", ch: c.ch })).catch(() => {});
+                  }
+                  say(`watching ${msg.robotId} (${msg.channels.length} channels)`, "ok");
+                } else if (msg.t === "pong" && pending.has(msg.n)) {
+                  rtts.control = `${
+                    (performance.now() - pending.get(msg.n)).toFixed(1)
+                  } ms`;
+                  pending.delete(msg.n);
+                  showRtt();
+                }
+              }
+            }
+          })().catch(() => {});
+          timers.push(setInterval(() => {
+            pending.set(++pingN, performance.now());
+            cw.write(encodeControlFrame({ t: "ping", n: pingN, ts: Date.now() / 1000 }))
+              .catch(() => {});
+          }, 1000));
+
+          // datagram ping every second (the relay answers these itself)
+          const dgw = wt.datagrams.writable.getWriter();
+          const dgPending = new Map();
+          let dgN = 0;
+          timers.push(setInterval(() => {
+            dgPending.set(++dgN, performance.now());
+            dgw.write(
+              enc.encode(JSON.stringify({ t: "ping", n: dgN, ts: Date.now() / 1000 })),
+            ).catch(() => {});
+          }, 1000));
+          (async () => {
+            for await (const d of wt.datagrams.readable) {
+              try {
+                const msg = JSON.parse(dec.decode(d));
+                if (msg.t === "pong" && dgPending.has(msg.n)) {
+                  rtts.datagram = `${
+                    (performance.now() - dgPending.get(msg.n)).toFixed(1)
+                  } ms`;
+                  dgPending.delete(msg.n);
+                  showRtt();
+                }
+              } catch { /* not JSON */ }
+            }
+          })().catch(() => {});
+
+          // data plane: latest = one uni stream per frame, reliable = one
+          // persistent stream per channel; both end with the session
+          for await (const stream of wt.incomingUnidirectionalStreams) {
+            readDataFrames(stream, onFrame).catch(() => {});
+          }
+        } finally {
+          for (const t of timers) clearInterval(t);
+          try {
+            wt.close();
+          } catch { /* already gone */ }
+        }
+      }
+
       async function main() {
         if (!window.isSecureContext) {
           return say(
@@ -288,89 +439,20 @@
             "bad",
           );
         }
-        const info = await (await fetch("/api/info")).json();
-        say(`connecting to ${info.wtUrl} ...`);
-        const opts = {};
-        if (info.certHash) {
-          opts.serverCertificateHashes = [{
-            algorithm: "sha-256",
-            value: Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0)),
-          }];
-        }
-        let wt;
-        try {
-          wt = new WebTransport(info.wtUrl, opts);
-          await wt.ready;
-        } catch (e) {
-          return say(
-            `WebTransport connect failed: ${e.message ?? e}<br>` +
-              "hints: relay running? firewall blocking UDP? cert older than its 10-day validity?",
-            "bad",
-          );
-        }
-        say(`connected to ${info.wtUrl} (protocol v${info.v})`, "ok");
-        wt.closed.then(
-          (i) => say(`session closed: ${JSON.stringify(i)}`, "bad"),
-          (e) => say(`session lost: ${e.message ?? e}`, "bad"),
-        );
-
-        // control stream: hello -> welcome, then ping every second
-        const control = await wt.createBidirectionalStream();
-        const cw = control.writable.getWriter();
-        const pending = new Map(); // n -> send time
-        let pingN = 0;
-        cw.write(encodeControlFrame({ t: "hello", v: info.v, role: "viewer" }));
-        (async () => {
-          const push = controlFrameReader();
-          for await (const chunk of control.readable) {
-            for (const msg of push(chunk)) {
-              if (msg.t === "welcome") {
-                say(`connected, welcome received (protocol v${msg.v})`, "ok");
-              } else if (msg.t === "error") {
-                say(`relay error: ${msg.code}: ${msg.message}`, "bad");
-              } else if (msg.t === "pong" && pending.has(msg.n)) {
-                rtts.control = `${(performance.now() - pending.get(msg.n)).toFixed(1)} ms`;
-                pending.delete(msg.n);
-                showRtt();
-              }
-            }
+        // Reconnect loop: survives relay/dimos restarts. The HTTP port is
+        // stable across restarts; the QUIC port + cert are re-read each time.
+        for (;;) {
+          try {
+            await connectOnce();
+            say("session closed - reconnecting...", "bad");
+          } catch (e) {
+            say(
+              `connect failed: ${e.message ?? e} - retrying<br>` +
+                "hints: relay running? firewall blocking UDP? cert older than its validity?",
+              "bad",
+            );
           }
-        })().catch(() => {});
-        setInterval(() => {
-          pending.set(++pingN, performance.now());
-          cw.write(encodeControlFrame({ t: "ping", n: pingN, ts: Date.now() / 1000 }))
-            .catch(() => {});
-        }, 1000);
-
-        // datagram ping every second (the relay answers these itself)
-        const dgw = wt.datagrams.writable.getWriter();
-        const dgPending = new Map();
-        let dgN = 0;
-        setInterval(() => {
-          dgPending.set(++dgN, performance.now());
-          dgw.write(
-            enc.encode(JSON.stringify({ t: "ping", n: dgN, ts: Date.now() / 1000 })),
-          ).catch(() => {});
-        }, 1000);
-        (async () => {
-          for await (const d of wt.datagrams.readable) {
-            try {
-              const msg = JSON.parse(dec.decode(d));
-              if (msg.t === "pong" && dgPending.has(msg.n)) {
-                rtts.datagram = `${
-                  (performance.now() - dgPending.get(msg.n)).toFixed(1)
-                } ms`;
-                dgPending.delete(msg.n);
-                showRtt();
-              }
-            } catch { /* not JSON */ }
-          }
-        })().catch(() => {});
-
-        // data plane: one uni stream per frame
-        for await (const stream of wt.incomingUnidirectionalStreams) {
-          readDataFrame(stream).then(({ header, payload }) => onFrame(header, payload))
-            .catch(() => {});
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
       main().catch((e) => say(`debug page failed: ${e.message ?? e}`, "bad"));

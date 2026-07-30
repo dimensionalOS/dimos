@@ -17,8 +17,8 @@ import time
 
 import pytest
 
+from dimos.cli.plot import bar
 from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
-from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data
 
 pytestmark = pytest.mark.self_hosted

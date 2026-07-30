@@ -30,8 +30,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+    from dimos.manipulation.planning.planners.config import CartesianPathConfig
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
+        CartesianTarget,
         IKResult,
         Obstacle,
         PlanningGroupID,
@@ -83,16 +85,20 @@ class WorldSpec(Protocol):
         ...
 
     # Obstacle Management
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle to the world. Returns unique obstacle ID."""
+    def add_obstacle(self, obstacle: Obstacle) -> str | None:
+        """Add an obstacle, returning a non-empty native ID if inserted."""
         ...
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle. Returns True if removed."""
         ...
 
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
+        """Replace the complete obstacle identified by obstacle.name."""
+        ...
+
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
-        """Update obstacle pose. Returns True if updated."""
+        """Update only an obstacle pose. Returns True if updated."""
         ...
 
     def clear_obstacles(self) -> None:
@@ -198,6 +204,26 @@ class VisualizationSpec(Protocol):
         """Receive one-shot visualization session metadata after world startup."""
         ...
 
+    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
+        """Render or otherwise accept an obstacle added to the planning world."""
+        ...
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        """Replace a complete obstacle representation."""
+        ...
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        """Update only an obstacle representation's pose."""
+        ...
+
+    def remove_vis_obstacle(self, obstacle_id: str) -> None:
+        """Remove an obstacle representation from the visualization."""
+        ...
+
+    def clear_vis_obstacles(self) -> None:
+        """Clear obstacle representations from the visualization."""
+        ...
+
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         ...
@@ -288,6 +314,19 @@ class PlannerSpec(Protocol):
         max_iterations: int = 5000,
     ) -> PlanningResult:
         """Plan a collision-free path for an ordered planning-group selection."""
+        ...
+
+    def plan_cartesian_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        start: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
+        *,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
+    ) -> PlanningResult:
+        """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...
 
     def get_name(self) -> str:

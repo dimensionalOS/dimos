@@ -27,10 +27,18 @@ import pytest
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
-from dimos.manipulation.planning.spec.enums import PlanningStatus
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
+from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    Obstacle,
+    PlanningSceneInfo,
+    VisualizationSession,
+)
 from dimos.manipulation.visualization.operator import TargetEvaluationResult
-from dimos.manipulation.visualization.viser import scene as scene_module
+from dimos.manipulation.visualization.viser import (
+    scene as scene_module,
+    visualizer as visualizer_module,
+)
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -54,6 +62,7 @@ from dimos.manipulation.visualization.viser.scene import (
 )
 from dimos.manipulation.visualization.viser.state import (
     PanelPlanState,
+    PlanningMode,
     PlanStatus,
     TargetEvaluationRequest,
     TargetStatus,
@@ -61,6 +70,7 @@ from dimos.manipulation.visualization.viser.state import (
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -171,7 +181,6 @@ class Config:
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
-    coordinator_task_name: str | None = None
     pre_grasp_offset: float = 0.0
 
     def __post_init__(self) -> None:
@@ -201,6 +210,9 @@ class Module:
             for robot_name in robots
         }
         self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
+        self.cartesian_plans: list[tuple[dict[str, PoseStamped], object, tuple[str, ...]]] = []
+        self.cartesian_plan_success = True
+        self.error = ""
         self.executions = 0
         self.cancelled = 0
         self.cleared = 0
@@ -249,7 +261,7 @@ class Module:
         return "IDLE"
 
     def get_error(self) -> str:
-        return ""
+        return self.error
 
     def reset(self) -> SimpleNamespace:
         return SimpleNamespace(is_success=lambda: True)
@@ -370,6 +382,22 @@ class Operator:
     def plan_to_pose(self, request: object) -> GeneratedPlan:
         return self.module.make_plan(tuple(request.pose_targets))  # type: ignore[attr-defined]
 
+    def plan_cartesian(self, request: object) -> GeneratedPlan | None:
+        self.module.cartesian_plans.append(
+            (
+                dict(request.pose_targets),  # type: ignore[attr-defined]
+                request.config,  # type: ignore[attr-defined]
+                tuple(request.auxiliary_group_ids),  # type: ignore[attr-defined]
+            )
+        )
+        group_ids = tuple(
+            (
+                *request.pose_targets.keys(),  # type: ignore[attr-defined]
+                *request.auxiliary_group_ids,  # type: ignore[attr-defined]
+            )
+        )
+        return self.module.make_plan(group_ids) if self.module.cartesian_plan_success else None
+
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
         return self.module.preview_plan()
 
@@ -431,6 +459,28 @@ def states(*robots: str) -> dict[str, JointState]:
     return {robot: JointState({"name": ["j1", "j2"], "position": [0.1, 0.2]}) for robot in robots}
 
 
+def obstacle(
+    obstacle_type: ObstacleType,
+    dimensions: tuple[float, ...] = (),
+    *,
+    color: tuple[float, float, float, float] = (0.2, 0.4, 0.6, 0.75),
+    mesh_path: str | None = None,
+) -> Obstacle:
+    return Obstacle(
+        "test obstacle",
+        obstacle_type,
+        PoseStamped(
+            ts=1.0,
+            frame_id="world",
+            position=[1.0, 2.0, 3.0],
+            orientation=[0.1, 0.2, 0.3, 0.4],
+        ),
+        dimensions,
+        color,
+        mesh_path,
+    )
+
+
 def test_panel_contract_group_order_defaults_and_controls(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
@@ -462,6 +512,7 @@ def test_panel_contract_group_order_defaults_and_controls(
     ]
     assert gui.state.selected_group_ids == ("arm/manipulator",)
     assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
+    assert server.gui.dropdowns[1].options == ["Joint space", "Cartesian space"]
     assert [
         (slider.label, slider.min, slider.max, slider.value) for slider in server.gui.sliders
     ] == [("arm/manipulator/j1", -1.0, 1.0, 0.1)]
@@ -539,6 +590,77 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
+
+
+def test_cartesian_space_mode_plans_absolute_pose_targets_with_auxiliary_groups(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pose_group = group("arm", "manipulator", ("j1",), pose=True)
+    auxiliary_group = group("arm", "gripper", ("j2",))
+    gui, module, server = panel([pose_group, auxiliary_group], states("arm"))
+    gui._toggle_group_selected(auxiliary_group.id)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+    gui._submit_plan()
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert len(module.cartesian_plans) == 1
+    targets, config, auxiliary_ids = module.cartesian_plans[0]
+    assert tuple(targets) == (pose_group.id,)
+    assert targets[pose_group.id].frame_id == "world"
+    assert config.speed_mode == "bounded"  # type: ignore[attr-defined]
+    assert auxiliary_ids == (auxiliary_group.id,)
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+    assert gui.state.last_result == "plan_cartesian_space=True"
+
+
+def test_changing_planning_mode_marks_existing_plan_stale(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    gui.state.plan_state.status = PlanStatus.FRESH
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert gui.state.plan_state.status == PlanStatus.STALE
+
+
+def test_cartesian_failure_surfaces_backend_error_without_fallback(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    module.cartesian_plan_success = False
+    module.error = "Cartesian planning failed: UNSUPPORTED"
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    gui._submit_plan()
+
+    assert len(module.cartesian_plans) == 1
+    assert module.plans == []
+    assert gui.state.plan_state.status == PlanStatus.FAILED
+    assert gui.state.error == "Cartesian planning failed: UNSUPPORTED"
 
 
 def test_initialization_waits_for_complete_fresh_telemetry(
@@ -1314,3 +1436,369 @@ def test_joint_evaluation_updates_active_gizmo_from_computed_group_pose() -> Non
     assert control.position == (0.7, 0.8, 0.9)
     assert control.wxyz == (0.4, 0.1, 0.2, 0.3)
     gui.close()
+
+
+@pytest.mark.parametrize(
+    ("obstacle_type", "dimensions", "method", "shape"),
+    [
+        (ObstacleType.BOX, (1.0, 2.0, 3.0), "add_box", (1.0, 2.0, 3.0)),
+        (ObstacleType.SPHERE, (0.4,), "add_icosphere", 0.4),
+        (ObstacleType.CYLINDER, (0.5, 1.5), "add_cylinder", (0.5, 1.5)),
+    ],
+)
+def test_scene_renders_obstacle_geometry_with_pose_color_and_visibility(
+    obstacle_type: ObstacleType,
+    dimensions: tuple[float, ...],
+    method: str,
+    shape: object,
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def add_shape(path: str, **kwargs: object) -> Handle:
+        calls.append((method, path, kwargs))
+        return Handle(visible=bool(kwargs["visible"]))
+
+    setattr(server.scene, method, add_shape)
+    scene = ViserManipulationScene(server, Urdf)
+
+    scene.add_vis_obstacle("shape", obstacle(obstacle_type, dimensions))
+
+    assert calls == [
+        (
+            method,
+            "/manipulation/obstacles/shape",
+            {
+                "dimensions" if method == "add_box" else "radius": shape
+                if method != "add_cylinder"
+                else shape[0],
+                **({} if method != "add_cylinder" else {"height": shape[1]}),
+                "color": (51, 102, 153),
+                "opacity": 0.75,
+                "position": (1.0, 2.0, 3.0),
+                "wxyz": (0.4, 0.1, 0.2, 0.3),
+                "visible": True,
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "bad_color",
+    [
+        (0.1, 0.2, 0.3),
+        (float("nan"), 0.2, 0.3, 0.4),
+        (0.1, 0.2, 0.3, 1.5),
+    ],
+)
+def test_scene_uses_fallback_appearance_and_proxy_for_invalid_obstacles(
+    bad_color: tuple[float, ...],
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def add_box(path: str, **kwargs: object) -> Handle:
+        calls.append((path, kwargs))
+        return Handle(visible=bool(kwargs["visible"]))
+
+    server.scene.add_box = add_box
+    server.scene.add_label = (
+        lambda path, text, **kwargs: calls.append((path, {"text": text, **kwargs})) or Handle()
+    )
+    scene = ViserManipulationScene(server, Urdf)
+
+    scene.add_vis_obstacle("bad", obstacle(ObstacleType.BOX, (1.0, 2.0, 3.0), color=bad_color))
+
+    assert calls[0][0].endswith("/bad")
+    assert calls[0][1]["color"] == (55, 190, 210)
+    assert calls[0][1]["opacity"] == 0.55
+
+
+def test_scene_replaces_invalid_box_geometry_with_a_visible_proxy() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, dict[str, object]]] = []
+    server.scene.add_box = lambda path, **kwargs: calls.append((path, kwargs)) or Handle()
+    server.scene.add_label = (
+        lambda path, text, **kwargs: calls.append((path, {"text": text, **kwargs})) or Handle()
+    )
+    scene = ViserManipulationScene(server, Urdf)
+
+    scene.add_vis_obstacle("invalid", obstacle(ObstacleType.BOX, (1.0,)))
+
+    assert calls[0][0].endswith("mesh-failure-proxy")
+    assert calls[0][1]["visible"] is True
+    assert "box dimensions" in str(calls[1][1]["text"])
+
+
+def test_scene_mesh_rendering_accepts_scene_meshes_and_falls_back_on_load_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    mesh_calls: list[tuple[str, object, object, dict[str, object]]] = []
+    server.scene.add_mesh_simple = lambda path, vertices, faces, **kwargs: (
+        mesh_calls.append((path, vertices, faces, kwargs)) or Handle()
+    )
+    scene = ViserManipulationScene(server, Urdf)
+
+    mesh = SimpleNamespace(
+        dump=lambda concatenate: SimpleNamespace(
+            vertices=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], faces=[[0, 1, 2]]
+        )
+    )
+    monkeypatch.setattr(scene_module.trimesh, "load_mesh", lambda *_args, **_kwargs: mesh)
+    scene.add_vis_obstacle("mesh", obstacle(ObstacleType.MESH, mesh_path="triangle.obj"))
+    assert mesh_calls[0][0] == "/manipulation/obstacles/mesh"
+    assert mesh_calls[0][1].shape == (3, 3)
+    assert mesh_calls[0][2].shape == (1, 3)
+
+    fallback_paths: list[str] = []
+    server.scene.add_box = lambda path, **kwargs: fallback_paths.append(path) or Handle(
+        visible=bool(kwargs["visible"])
+    )
+    server.scene.add_label = lambda path, *_args, **_kwargs: fallback_paths.append(path) or Handle()
+    monkeypatch.setattr(
+        scene_module.trimesh,
+        "load_mesh",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("missing")),
+    )
+    scene.add_vis_obstacle("missing", obstacle(ObstacleType.MESH, mesh_path="missing.obj"))
+    assert fallback_paths == [
+        "/manipulation/obstacles/missing/mesh-failure-proxy",
+        "/manipulation/obstacles/missing/mesh-failure-label",
+    ]
+
+
+def test_scene_obstacle_visibility_replacement_cleanup_and_closed_state() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    handles: list[Handle] = []
+    server.scene.add_box = (
+        lambda _path, **kwargs: handles.append(Handle(visible=bool(kwargs["visible"])))
+        or handles[-1]
+    )
+    scene = ViserManipulationScene(server, Urdf)
+    item = obstacle(ObstacleType.BOX, (1.0, 1.0, 1.0))
+
+    scene.add_vis_obstacle("box", item)
+    checkbox = server.gui.add_checkbox("unused", initial_value=True)
+    checkbox.on_update(lambda event: scene.set_obstacles_visible(event.target.value))
+    checkbox.callback(SimpleNamespace(target=SimpleNamespace(value=False)))
+    assert handles[0].visible is False
+    scene.add_vis_obstacle("box", item)
+    assert handles[0].removed is True
+    scene.clear_vis_obstacles()
+    assert handles[-1].removed is True
+    scene.close()
+    count = len(handles)
+    scene.add_vis_obstacle("closed", item)
+    scene.set_obstacles_visible(True)
+    assert len(handles) == count
+
+
+def test_scene_complete_and_pose_updates_preserve_atomic_obstacle_state() -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    calls: list[tuple[str, dict[str, object], Handle]] = []
+
+    def add_box(path: str, **kwargs: object) -> Handle:
+        handle = Handle(visible=bool(kwargs["visible"]))
+        calls.append((path, kwargs, handle))
+        return handle
+
+    server.scene.add_box = add_box
+    scene = ViserManipulationScene(server, Urdf)
+    item = obstacle(ObstacleType.BOX, (1.0, 2.0, 3.0))
+    scene.add_vis_obstacle("shape", item)
+    moved_pose = PoseStamped(position=[7.0, 8.0, 9.0], orientation=[0.0, 0.0, 0.0, 1.0])
+
+    scene.update_vis_obstacle_pose("shape", moved_pose)
+
+    assert len(calls) == 2
+    assert calls[0][2].removed is True
+    assert calls[1][1]["dimensions"] == (1.0, 2.0, 3.0)
+    assert calls[1][1]["position"] == (7.0, 8.0, 9.0)
+    assert scene._obstacles["shape"].dimensions == (1.0, 2.0, 3.0)
+
+
+def test_scene_updates_handle_unknown_ids_proxy_failures_and_warning_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.scene.add_grid = lambda *_args, **_kwargs: Handle()
+    server.scene.add_box = lambda *_args, **_kwargs: Handle()
+    server.scene.add_icosphere = lambda *_args, **_kwargs: Handle()
+    server.scene.add_label = lambda *_args, **_kwargs: Handle()
+    scene = ViserManipulationScene(server, Urdf)
+
+    scene.update_vis_obstacle_pose("missing", PoseStamped())
+    monkeypatch.setattr(
+        scene_module.trimesh,
+        "load_mesh",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("missing")),
+    )
+    with pytest.raises(RuntimeError, match="renderer used a proxy"):
+        scene.update_vis_obstacle(obstacle(ObstacleType.MESH, mesh_path="missing.obj"))
+
+    scene.show_obstacle_warning("first warning")
+    warning = scene._obstacle_warning_handle
+    assert warning is not None
+    scene.show_obstacle_warning("updated warning")
+    assert warning.content == "updated warning"
+    monkeypatch.setattr(
+        server.gui,
+        "add_markdown",
+        lambda _message: (_ for _ in ()).throw(RuntimeError("GUI unavailable")),
+    )
+    scene._obstacle_warning_handle = None
+    scene.show_obstacle_warning("ignored warning")
+
+
+def test_visualizer_forwards_obstacle_operations_and_ignores_them_after_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, _config: ViserVisualizationConfig) -> None:
+            pass
+
+        def start(self) -> Server:
+            calls.append(("start",))
+            return Server()
+
+        def close(self) -> None:
+            calls.append(("runtime-close",))
+
+    class FakeScene:
+        def __init__(self, _server: Server, _viser_urdf: object) -> None:
+            calls.append(("scene-create",))
+
+        def add_vis_obstacle(self, obstacle_id: str, value: Obstacle) -> None:
+            calls.append(("add", obstacle_id, value))
+
+        def update_vis_obstacle(self, value: Obstacle) -> None:
+            calls.append(("update", value))
+
+        def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+            calls.append(("update-pose", obstacle_id, pose))
+
+        def show_obstacle_warning(self, message: str) -> None:
+            calls.append(("warning", message))
+
+        def remove_vis_obstacle(self, obstacle_id: str) -> None:
+            calls.append(("remove", obstacle_id))
+
+        def clear_vis_obstacles(self) -> None:
+            calls.append(("clear",))
+
+        def close(self) -> None:
+            calls.append(("scene-close",))
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    item = obstacle(ObstacleType.SPHERE, (0.5,))
+
+    visualizer.initialize(VisualizationSession(PlanningSceneInfo(robots={})))
+    visualizer.add_vis_obstacle("sphere", item)
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose("sphere", item.pose)
+    visualizer.remove_vis_obstacle("sphere")
+    visualizer.clear_vis_obstacles()
+    assert calls == [
+        ("start",),
+        ("scene-create",),
+        ("add", "sphere", item),
+        ("update", item),
+        ("update-pose", "sphere", item.pose),
+        ("remove", "sphere"),
+        ("clear",),
+    ]
+
+    visualizer.close()
+    visualizer.add_vis_obstacle("ignored", item)
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose("ignored", item.pose)
+    visualizer.remove_vis_obstacle("ignored")
+    visualizer.clear_vis_obstacles()
+    assert calls == [
+        ("start",),
+        ("scene-create",),
+        ("add", "sphere", item),
+        ("update", item),
+        ("update-pose", "sphere", item.pose),
+        ("remove", "sphere"),
+        ("clear",),
+        ("scene-close",),
+        ("runtime-close",),
+    ]
+
+
+def test_visualizer_handles_update_failure_once_and_exposes_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, _config: ViserVisualizationConfig) -> None:
+            pass
+
+        def start(self) -> Server:
+            return Server()
+
+        def close(self) -> None:
+            return None
+
+    class FakeScene:
+        def __init__(self, _server: Server, _viser_urdf: object) -> None:
+            pass
+
+        def update_vis_obstacle(self, value: Obstacle) -> None:
+            calls.append(("update", value.name))
+            raise RuntimeError("renderer failed")
+
+        def update_vis_obstacle_pose(self, obstacle_id: str, _pose: PoseStamped) -> None:
+            calls.append(("update-pose", obstacle_id))
+            raise RuntimeError("pose renderer failed")
+
+        def show_obstacle_warning(self, message: str) -> None:
+            calls.append(("warning", message))
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(visualizer_module, "ViserRuntime", FakeRuntime)
+    monkeypatch.setattr(visualizer_module, "ViserManipulationScene", FakeScene)
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    item = obstacle(ObstacleType.SPHERE, (0.5,))
+    visualizer.initialize(VisualizationSession(PlanningSceneInfo(robots={})))
+
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose(item.name, item.pose)
+
+    assert calls[0] == ("update", item.name)
+    assert calls[1][0] == "warning"
+    assert item.name in str(calls[1][1])
+    assert calls[2] == ("update-pose", item.name)
+    assert calls[3][0] == "warning"
+    assert item.name in str(calls[3][1])
+    assert len(calls) == 4
+
+
+def test_visualizer_update_is_a_noop_when_start_produces_no_scene(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    visualizer = ViserManipulationVisualizer(config=ViserVisualizationConfig(panel_enabled=False))
+    monkeypatch.setattr(visualizer, "_ensure_started", lambda: None)
+    item = obstacle(ObstacleType.SPHERE, (0.5,))
+
+    visualizer.update_vis_obstacle(item)
+    visualizer.update_vis_obstacle_pose(item.name, item.pose)

@@ -24,6 +24,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
 from dimos.utils.logging_config import setup_logger
 
@@ -44,6 +45,7 @@ class GoalRelay(Module):
 
     odometry: In[Odometry]
     goal: In[PointStamped]
+    tf: In[TFMessage]
 
     start_pose: Out[PoseStamped]
     goal_pose: Out[PoseStamped]
@@ -61,7 +63,7 @@ class GoalRelay(Module):
 
     def _on_odometry(self, msg: Odometry) -> None:
         if self._base_pose is None:
-            self._base_pose = OdomBasePose(self.tf, self.config.base_frame)
+            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
         start = self._base_pose.resolve(msg)
         if start is None:
             return

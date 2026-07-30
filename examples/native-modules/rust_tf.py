@@ -33,8 +33,10 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.stream import IO
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 _RUST_DIR = Path(__file__).parent / "rust"
 _EXAMPLES = _RUST_DIR / "target" / "release"
@@ -43,6 +45,8 @@ _BUILD = "cargo build --release"
 
 class TfProducer(Module):
     """Publishes a time-varying a -> b -> c transform chain onto /tf."""
+
+    tf: IO[TFMessage]
 
     _running: bool = False
 
@@ -57,7 +61,7 @@ class TfProducer(Module):
         while self._running:
             t = time.time() - start
             now = time.time()
-            self.tf.publish(
+            self.tfbuffer.publish(
                 Transform(
                     translation=Vector3(0.0, math.cos(t), math.sin(t)),
                     frame_id="a",
