@@ -126,8 +126,10 @@ _crash_log = None
 def _arm_crash_dumps() -> None:
     global _crash_log
     if _crash_log is None:
+        # RUNNER_TEMP is the per-job temp dir on CI runners; /tmp on the
+        # self-hosted machines is shared between jobs and never cleaned.
         base = os.environ.get("DIMOS_CRASH_DIR") or os.path.join(
-            tempfile.gettempdir(), "pytest-crash"
+            os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "pytest-crash"
         )
         worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
         crash_path = pathlib.Path(base) / f"crash-{worker}-{os.getpid()}.log"
