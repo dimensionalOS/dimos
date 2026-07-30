@@ -26,14 +26,12 @@ from torchreid import utils as torchreid_utils
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.data import get_data
+from dimos.utils.model_artifacts import OSNET_ARTIFACTS, resolve_model_family_artifact
 
 
-# osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
-# into dimos/data/models_torchreid/
-# feel free to add more
 class TorchReIDModelConfig(EmbeddingModelConfig):
     model_name: str = "osnet_x1_0"
+    model_path: str | None = None
 
 
 class TorchReIDModel(EmbeddingModel, LocalModel):
@@ -44,9 +42,14 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
     @cached_property
     def _model(self) -> torchreid_utils.FeatureExtractor:
         self._ensure_cuda_initialized()
+        model_path = resolve_model_family_artifact(
+            OSNET_ARTIFACTS,
+            f"{self.config.model_name}.pth",
+            self.config.model_path,
+        )
         return torchreid_utils.FeatureExtractor(
             model_name=self.config.model_name,
-            model_path=str(get_data("models_torchreid") / (self.config.model_name + ".pth")),
+            model_path=str(model_path),
             device=self.config.device,
         )
 

@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 from ultralytics import YOLO  # type: ignore[attr-defined]
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.model_artifacts import YOLO11_ARTIFACTS, resolve_model_family_artifact
 
 logger = setup_logger()
 
@@ -27,12 +29,17 @@ logger = setup_logger()
 class Yolo2DDetector(Detector):
     def __init__(
         self,
-        model_path: str = "models_yolo",
+        model_path: str | Path | None = None,
         model_name: str = "yolo11n.pt",
         device: str | None = None,
     ) -> None:
+        resolved_model = resolve_model_family_artifact(
+            YOLO11_ARTIFACTS,
+            model_name,
+            model_path,
+        )
         self.model = YOLO(
-            get_data(model_path) / model_name,
+            resolved_model,
             task="detect",
         )
 

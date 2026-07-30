@@ -2,7 +2,9 @@
 title: "Data Loading"
 ---
 
-The [`get_data`](/dimos/utils/data.py) function provides access to test data and model files, handling Git LFS downloads automatically.
+The [`get_data`](/dimos/utils/data.py) function provides access to datasets and packaged
+runtime assets, handling Git LFS downloads automatically. Public machine-learning model
+weights are resolved separately from their canonical Hugging Face repositories.
 
 ## Basic Usage
 
@@ -74,16 +76,21 @@ Image shape: (771, 1024, 3)
 ### Loading Model Checkpoints
 
 ```python skip
-from dimos.utils.data import get_data
+from dimos.utils.model_artifacts import YOLO11_ARTIFACTS, resolve_model_artifact
 
-model_dir = get_data("models_yolo")
-checkpoint = model_dir / "yolo11n.pt"
+checkpoint = resolve_model_artifact(YOLO11_ARTIFACTS["yolo11n.pt"])
 print(f"Checkpoint: {checkpoint.name} ({checkpoint.stat().st_size // 1024}KB)")
 ```
 
 ```results
 Checkpoint: yolo11n.pt (5482KB)
 ```
+
+Each public model artifact records its canonical provider, immutable revision,
+filename, checksum, and upstream license in
+[`model_artifacts.py`](/dimos/utils/model_artifacts.py). Model loaders may accept an
+explicit local path for offline or custom deployments. Do not upload third-party
+weights to a DimOS or personal mirror.
 
 ### Loading Recorded Data for Replay
 
@@ -124,7 +131,8 @@ Loaded pointcloud with 63672 points
 
 ## Data Directory Structure
 
-Data files live in `data/` at the repo root. Large files are stored in `data/.lfs/` as `.tar.gz` archives tracked by Git LFS.
+Data files live in `data/` at the repo root. Large non-model assets are stored in
+`data/.lfs/` as `.tar.gz` archives tracked by Git LFS.
 
 <details>
 <summary>Diagram</summary>

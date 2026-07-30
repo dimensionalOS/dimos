@@ -49,12 +49,13 @@ RUN conda run -n app pip install --no-cache-dir --no-build-isolation torch-scatt
 
 # Additional dependencies
 RUN conda run -n app pip install --no-cache-dir \
-    numpy trimesh pillow pyrender imageio scipy
+    numpy trimesh pillow pyrender imageio scipy huggingface_hub==0.36.2
 
-# Model checkpoints from LFS archive
-COPY data/.lfs/models_graspgen.tar.gz /tmp/
-RUN tar -xzf /tmp/models_graspgen.tar.gz -C /app/GraspGen/ && \
-    rm /tmp/models_graspgen.tar.gz
+# Download exact public checkpoints from the canonical GraspGen repository.
+COPY dimos/utils/model_artifacts.py /tmp/model_artifacts.py
+COPY dimos/manipulation/grasping/docker_context/materialize_models.py /tmp/materialize_models.py
+RUN conda run -n app python /tmp/materialize_models.py && \
+    rm -rf /root/.cache/huggingface /tmp/model_artifacts.py /tmp/materialize_models.py
 
 # Verify checkpoints exist
 RUN test -f /app/GraspGen/checkpoints/graspgen_robotiq_2f_140_gen.pth || \

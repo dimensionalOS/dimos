@@ -31,8 +31,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.model_artifacts import EDGETAM, resolve_model_artifact
 
 if TYPE_CHECKING:
     from sam2.sam2_video_predictor import SAM2VideoPredictor
@@ -56,6 +56,7 @@ class EdgeTAMProcessor(Detector):
 
     def __init__(
         self,
+        checkpoint_path: str | Path | None = None,
     ) -> None:
         local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
 
@@ -89,7 +90,7 @@ class EdgeTAMProcessor(Detector):
 
         _svp.tqdm = lambda iterable, *a, **kw: iterable
 
-        ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
+        ckpt_path = str(resolve_model_artifact(EDGETAM, checkpoint_path))
 
         sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
         missing_keys, unexpected_keys = self._predictor.load_state_dict(sd)

@@ -23,11 +23,12 @@ import torch.nn.functional as F  # noqa: N812
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.data import get_data
+from dimos.utils.model_artifacts import MOBILECLIP2_S4, resolve_model_artifact
 
 
 class MobileCLIPModelConfig(EmbeddingModelConfig):
     model_name: str = "MobileCLIP2-S4"
+    model_path: str | None = None
 
 
 class MobileCLIPModel(EmbeddingModel, LocalModel):
@@ -38,7 +39,12 @@ class MobileCLIPModel(EmbeddingModel, LocalModel):
     @cached_property
     def _model_and_preprocess(self) -> tuple[Any, Any]:
         """Load model and transforms (open_clip returns them together)."""
-        model_path = get_data("models_mobileclip") / (self.config.model_name + ".pt")
+        if self.config.model_name != "MobileCLIP2-S4":
+            raise ValueError(
+                f"Model {self.config.model_name!r} has no pinned canonical artifact; "
+                "pass model_path only with the supported MobileCLIP2-S4 architecture"
+            )
+        model_path = resolve_model_artifact(MOBILECLIP2_S4, self.config.model_path)
         model, _, preprocess = open_clip.create_model_and_transforms(
             self.config.model_name, pretrained=str(model_path)
         )
