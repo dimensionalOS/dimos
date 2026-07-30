@@ -81,7 +81,7 @@ def _module_with_coordinator(
             )
         ],
     )
-    module._robots = {"arm": ("arm_id", config, MagicMock())}
+    module._robots = {"arm": ("arm_id", config)}
     module._initialize_execution()
     return module
 

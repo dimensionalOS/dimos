@@ -23,16 +23,19 @@ import numpy as np
 import roboplan.core as roboplan_core
 import roboplan.toppra as roboplan_toppra
 
+from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
 )
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
+    BaseTrajectoryParametrizer,
     ParametrizedTrajectory,
     TrajectoryParametrizationError,
-    TrajectoryParametrizationRequest,
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -45,32 +48,38 @@ class _GroupParametrizer:
     acceleration_limits: tuple[float, ...]
 
 
-class RoboPlanTOPPRAParametrizer:
+class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
     """Convert selected-joint paths with a finalized RoboPlan scene."""
 
     def __init__(
         self,
-        world: RoboPlanWorld,
         config: RoboPlanTOPPRAParametrizationConfig,
     ) -> None:
-        self._world = world
         self._config = config
         self._groups: dict[frozenset[str], _GroupParametrizer] = {}
 
-    @property
-    def uses_request_limits(self) -> bool:
-        """RoboPlan uses only limits from its authoritative scene."""
-        return False
-
-    def parametrize(self, request: TrajectoryParametrizationRequest) -> ParametrizedTrajectory:
+    def _parametrize_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        path: tuple[JointState, ...],
+        speed_scale: float,
+    ) -> ParametrizedTrajectory:
+        if not isinstance(world, RoboPlanWorld):
+            raise TrajectoryParametrizationError("RoboPlan TOPP-RA requires RoboPlanWorld")
         try:
-            with self._world.parametrization_model() as model:
-                resolved = self._resolve_group(model, request)
-                native_path = self._native_path(resolved.group, request)
+            with world.parametrization_model() as model:
+                resolved = self._resolve_group(model, selection)
+                native_path = self._native_path(resolved.group, selection, path)
                 native_trajectory = resolved.native.generate(
-                    native_path, self._options(request.speed_scale)
+                    native_path, self._options(speed_scale)
                 )
-                return self._canonical_result(resolved, request, native_trajectory)
+                return self._canonical_result(
+                    resolved,
+                    selection,
+                    speed_scale,
+                    native_trajectory,
+                )
         except TrajectoryParametrizationError:
             raise
         except (IndexError, KeyError, RuntimeError, TypeError, ValueError) as exc:
@@ -81,18 +90,18 @@ class RoboPlanTOPPRAParametrizer:
     def _resolve_group(
         self,
         model: RoboPlanModel,
-        request: TrajectoryParametrizationRequest,
+        selection: PlanningGroupSelection,
     ) -> _GroupParametrizer:
-        key = frozenset(request.group_ids)
+        key = frozenset(selection.group_ids)
         cached = self._groups.get(key)
         if cached is not None:
             return cached
         group = model.groups.get(key)
         if group is None:
             raise TrajectoryParametrizationError(
-                f"RoboPlan has no generated group for {list(request.group_ids)}"
+                f"RoboPlan has no generated group for {list(selection.group_ids)}"
             )
-        expected = set(request.joint_names)
+        expected = set(selection.joint_names)
         if expected != set(group.public_names):
             raise TrajectoryParametrizationError(
                 f"RoboPlan group '{group.name}' does not match selected joints"
@@ -144,9 +153,10 @@ class RoboPlanTOPPRAParametrizer:
     @staticmethod
     def _native_path(
         group: RoboPlanGroup,
-        request: TrajectoryParametrizationRequest,
+        selection: PlanningGroupSelection,
+        path_states: tuple[JointState, ...],
     ) -> Any:
-        public_index = {name: index for index, name in enumerate(request.joint_names)}
+        public_index = {name: index for index, name in enumerate(selection.joint_names)}
         path = roboplan_core.JointPath()
         path.joint_names = list(group.native_names)
         path.positions = [
@@ -154,7 +164,7 @@ class RoboPlanTOPPRAParametrizer:
                 [state.position[public_index[public_name]] for public_name in group.public_names],
                 dtype=np.float64,
             )
-            for state in request.path
+            for state in path_states
         ]
         return path
 
@@ -177,7 +187,8 @@ class RoboPlanTOPPRAParametrizer:
     @staticmethod
     def _canonical_result(
         resolved: _GroupParametrizer,
-        request: TrajectoryParametrizationRequest,
+        selection: PlanningGroupSelection,
+        speed_scale: float,
         native_trajectory: Any,
     ) -> ParametrizedTrajectory:
         native_names = tuple(native_trajectory.joint_names)
@@ -191,7 +202,7 @@ class RoboPlanTOPPRAParametrizer:
                 strict=True,
             )
         )
-        output_indices = [native_index[native_by_public[name]] for name in request.joint_names]
+        output_indices = [native_index[native_by_public[name]] for name in selection.joint_names]
         times = [float(value) for value in native_trajectory.times]
         positions = list(native_trajectory.positions)
         velocities = list(native_trajectory.velocities)
@@ -228,14 +239,14 @@ class RoboPlanTOPPRAParametrizer:
         )
         return ParametrizedTrajectory(
             trajectory=JointTrajectory(
-                joint_names=list(request.joint_names),
+                joint_names=list(selection.joint_names),
                 points=points,
             ),
             velocity_limits=tuple(
-                velocity_by_public[name] * request.speed_scale for name in request.joint_names
+                velocity_by_public[name] * speed_scale for name in selection.joint_names
             ),
             acceleration_limits=tuple(
-                acceleration_by_public[name] * request.speed_scale for name in request.joint_names
+                acceleration_by_public[name] * speed_scale for name in selection.joint_names
             ),
             accelerations=canonical_accelerations,
         )

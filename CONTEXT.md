@@ -58,6 +58,11 @@ accepted. A failure does not switch backends and leaves no executable plan
 cached. Planner-native timed results skip conversion because they are already
 timed trajectories, not because the selected backend failed.
 
+`TrajectoryParametrizerSpec` owns the conversion boundary, including canonical
+trajectory validation and construction of the `GeneratedPlan`.
+`ManipulationModule` selects the planning groups, delegates that conversion,
+and atomically stores the accepted result.
+
 `simple_trapezoid` uses the current DimOS motion-limit resolution.
 `roboplan_toppra` is available only with `RoboPlanWorld` and uses finite,
 positive URDF velocity and extended acceleration limits from the RoboPlan

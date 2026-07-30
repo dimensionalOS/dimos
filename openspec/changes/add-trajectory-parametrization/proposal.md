@@ -21,7 +21,7 @@ DimOS needs an explicit path-to-trajectory parametrization boundary that can ret
 
 ## Affected DimOS Surfaces
 
-- Modules/streams: manipulation plan materialization, planning configuration/models, a trajectory-parametrizer adapter protocol, RoboPlan world/model integration, and timed-trajectory validation; planner-native timed results bypass path parametrization and no stream contracts change.
+- Modules/streams: manipulation plan materialization, planning configuration/models, a `TrajectoryParametrizerSpec` beside the existing planning Specs, RoboPlan world/model integration, and timed-trajectory validation; planner-native timed results bypass backend path conversion and no stream contracts change.
 - Blueprints/CLI: manipulation blueprint configuration gains a startup-selectable parametrization backend; Viser gains a next-plan speed slider; no new CLI command or blueprint name is introduced.
 - Skills/MCP: existing plan, preview, and execute surfaces retain their signatures; unsuccessful parametrization makes planning fail before preview or execution.
 - Hardware/simulation/replay: hardware and simulation preserve the accepted trajectory's time domain during robot-local joint projection; RoboPlan TOPP-RA requires URDF velocity and acceleration limits. Replay behavior is unchanged.

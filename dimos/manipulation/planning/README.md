@@ -97,6 +97,11 @@ validates joint ordering, dimensions, finite values, strictly increasing time,
 start and goal preservation, and applicable velocity and acceleration limits.
 A failure leaves no executable plan cached.
 
+This boundary is exposed internally as `TrajectoryParametrizerSpec`, alongside
+`PlannerSpec` and `WorldSpec`. Its implementations own conversion, validation,
+and `GeneratedPlan` construction; `ManipulationModule` only supplies the world,
+selected planning groups, planning result, and next-plan speed.
+
 A planner may instead return a trajectory that already contains timestamps and
 velocities. That result is already on the trajectory side of the boundary, so
 DimOS skips parametrization, preserves its timing, and applies the same

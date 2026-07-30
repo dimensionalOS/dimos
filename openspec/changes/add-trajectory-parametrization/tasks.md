@@ -3,8 +3,12 @@
 - [x] 1.1 Pin `roboplan==0.5.1` in manipulation and lint dependencies and regenerate `uv.lock`.
 - [x] 1.2 Add a focused RoboPlan 0.5.1 binding contract test covering TOPP-RA construction, fitting-mode names, options, native trajectory fields, and missing-limit behavior.
 - [x] 1.3 Add typed startup configuration for `simple_trapezoid` and `roboplan_toppra`, including validated common scales/output period and backend-specific fitting controls.
-- [x] 1.4 Add the internal trajectory-parametrizer adapter Protocol and typed request/failure boundary without introducing a separate public generated-trajectory lifecycle.
+- [x] 1.4 Add the typed trajectory-parametrizer implementation and failure
+  boundary without introducing a separate generated-trajectory lifecycle.
 - [x] 1.5 Extend planning factory validation so exactly one parametrizer is constructed at startup and `roboplan_toppra` with a non-RoboPlan world fails before planning.
+- [x] 1.6 Move the public parametrization interface to
+  `TrajectoryParametrizerSpec` beside the other planning Specs, include it in
+  `PlanningSpecs`, and hide backend limit ownership from callers.
 
 ## 2. Parametrization Backends
 
@@ -18,7 +22,8 @@
 ## 3. Plan Materialization and Validation
 
 - [x] 3.1 Construct and retain the selected trajectory parametrizer during manipulation planning initialization.
-- [x] 3.2 Route `_materialize_generated_plan()` through the selected adapter while preserving the source `JointState` path unchanged in `GeneratedPlan`.
+- [x] 3.2 Route untimed successful planning output through the selected adapter
+  while preserving the source `JointState` path unchanged in `GeneratedPlan`.
 - [x] 3.2a Preserve the existing planner-native timed-result path so it bypasses parametrization, retains its timestamps and velocities, and still receives canonical timed-output validation.
 - [x] 3.3 Preserve planning-epoch atomicity so parametrization or output-validation failure leaves no cached executable plan.
 - [x] 3.4 Extend canonical timed-trajectory validation for exact global joint ordering, dimensions, finite values, zero start time, strictly increasing times, positive non-noop duration, and start/goal preservation.
@@ -29,6 +34,10 @@
   immutable when the setting changes.
 - [x] 3.8 Add the Viser `Next plan speed` slider through
   `ManipulationOperator`, including active-operation disabling.
+- [x] 3.9 Make `TrajectoryParametrizerSpec` own successful
+  `PlanningResult`-to-`GeneratedPlan` materialization, infer the timed-result
+  bypass from timestamps, and remove materialization/validation plus the dead
+  per-robot generator from `ManipulationModule`.
 
 ## 4. Automated Tests
 
@@ -41,6 +50,8 @@
 - [x] 4.7 Add runtime-scale and Viser tests covering valid/invalid values,
   future-plan application, Cartesian request scaling, current-plan
   preservation, and active-operation disabling.
+- [x] 4.8 Move materialization contract tests to the parametrizer Spec seam
+  while retaining module tests for planning-epoch failure and atomic storage.
 
 ## 5. Documentation
 

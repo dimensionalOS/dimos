@@ -2,7 +2,7 @@
 
 `ManipulationModule._materialize_generated_plan()` currently validates a planner path, resolves selected-joint limits, directly constructs `JointTrajectoryGenerator`, and stores its output beside the source path in `GeneratedPlan`. `JointTrajectoryGenerator` creates an independent trapezoidal profile for each adjacent waypoint pair, so every interior waypoint is a stop. Dense paths consequently execute much more slowly than their geometric length and robot limits imply.
 
-The current execution architecture is intentionally atomic: a cached `GeneratedPlan` contains both its source path and executable `JointTrajectory`, and `PlanExecutionManager` dispatches that stored trajectory without regenerating it. This design preserves that contract while introducing a deep path-to-trajectory adapter seam.
+The current execution architecture is intentionally atomic: a cached `GeneratedPlan` contains both its source path and executable `JointTrajectory`, and `PlanExecutionManager` dispatches that stored trajectory without regenerating it. This design preserves that contract while introducing a deep trajectory-parametrization planning seam.
 
 RoboPlan 0.5.1 provides TOPP-RA with Hermite, cubic, adaptive, and linear-blend curve-fitting modes. Its parameterizer owns collision preservation for fitted curves and obtains absolute velocity and acceleration limits from its RoboPlan scene. The DimOS `RobotModelConfig` motion-limit fields are currently informal and are not authoritative for this backend.
 
@@ -43,7 +43,7 @@ Add a typed `TrajectoryParametrizationConfig` under manipulation planning config
 - simple-backend point density/minimum segment controls needed for compatibility;
 - RoboPlan spline-fitting mode and its adaptive/blend controls.
 
-The configuration factory validates the complete backend combination during startup. `roboplan_toppra` requires a finalized `RoboPlanWorld`; a non-RoboPlan world is rejected before planning. The selected parametrizer is constructed once and retained by `ManipulationModule`.
+The configuration factory validates the complete backend combination during startup. `roboplan_toppra` requires `RoboPlanWorld`; a non-RoboPlan world is rejected before planning. The selected parametrizer is constructed once with the other planning roles and retained by `ManipulationModule` through `TrajectoryParametrizerSpec`.
 
 The module also owns a runtime next-plan speed scale in `(0, 1]`, initially
 `1.0`. This is not backend selection or persistent configuration. Each new
@@ -53,18 +53,34 @@ planning receives the same scale through its per-request velocity and
 acceleration fields before it creates authoritative timing. Changing the scale
 does not invalidate, reparametrize, or retime an existing `GeneratedPlan`.
 
-### Adapter Protocol
+### Trajectory parametrizer Spec
 
-Introduce a small adapter `Protocol`, distinct from an RPC-oriented DimOS `Spec`, for path-to-trajectory conversion. Its input contains:
+Add `TrajectoryParametrizerSpec` beside `PlannerSpec`, `WorldSpec`, and
+`KinematicsSpec` in the planning spec package. Its single materialization
+operation accepts the active `WorldSpec`, ordered `PlanningGroupSelection`,
+successful `PlanningResult`, and runtime speed scale. It returns the canonical
+`GeneratedPlan` or raises a typed failure that the module converts into its
+existing planning error surface.
 
-- selected planning-group IDs;
-- exact global joint ordering;
-- the validated source `JointState` path;
-- backend configuration.
+This interface owns the complete successful-result conversion:
 
-Its output is the canonical `JointTrajectory`, or it raises/returns a typed failure that plan materialization converts into the module's existing planning error surface. The adapter must not mutate the input path.
+- copy and validate the source path;
+- preserve and validate planner-native timing when timestamps are present;
+- otherwise invoke the startup-selected geometric-path implementation;
+- validate the canonical timed trajectory and applicable motion limits;
+- construct `GeneratedPlan` with the unchanged source path and result metadata.
 
-The simple adapter wraps `JointTrajectoryGenerator` and receives its existing DimOS-resolved limits. The RoboPlan adapter owns a finalized `RoboPlanWorld`/`RoboPlanModel` reference, resolves the selected group from the model, converts global names to native RoboPlan ordering, invokes `PathParameterizerTOPPRA`, and converts the native result back to exact selected global ordering.
+The backend-specific path conversion remains private implementation. The simple
+implementation wraps `JointTrajectoryGenerator` and resolves its existing
+DimOS limits through `WorldSpec` robot configuration. The RoboPlan
+implementation requires `RoboPlanWorld` at operation time, resolves the
+selected group from its finalized model, converts global names to native
+RoboPlan ordering, invokes `PathParameterizerTOPPRA`, and converts the native
+result back to exact selected global ordering.
+
+The public Spec does not expose backend limit ownership. In particular it has
+no `uses_request_limits` capability flag and no caller-supplied optional limit
+fields.
 
 The RoboPlan adapter may cache one native TOPP-RA parameterizer per selected group set. This is internal optimization; construction and use must remain safe under the manipulation module's existing planning concurrency rules.
 
@@ -72,20 +88,28 @@ The RoboPlan adapter may cache one native TOPP-RA parameterizer per selected gro
 
 Retain `GeneratedPlan` as the canonical accepted aggregate. An untimed
 `PlanningResult.path` passes through canonical input validation, the
-startup-selected `TrajectoryParametrizer`, and canonical timed-output
-validation before becoming `GeneratedPlan(path + trajectory)`.
+startup-selected `TrajectoryParametrizerSpec`, and canonical timed-output
+validation before the same operation returns
+`GeneratedPlan(path + trajectory)`.
 
 A planner-native timed result already sits on the trajectory side of this
-boundary. It bypasses `TrajectoryParametrizer`, retains its planner-defined
-timestamps and velocities, and passes through the same canonical timed-output
-validation before becoming `GeneratedPlan(path + trajectory)`. This bypass is
-not fallback: no alternative parametrization backend is selected or invoked.
+boundary. `TrajectoryParametrizerSpec` detects timestamps in `PlanningResult`,
+does not invoke its backend-specific path conversion, retains the
+planner-defined timestamps and velocities, and applies the same canonical
+timed-output validation before returning
+`GeneratedPlan(path + trajectory)`. This bypass is not fallback: no alternative
+parametrization backend is selected or invoked.
 
-Replace the direct `JointTrajectoryGenerator` construction inside materialization with the selected adapter. A failure at either parametrization or validation leaves `_last_plan` unset and follows the existing planning-epoch failure path. No separate public `GeneratedTrajectory` lifecycle is added.
+Remove path validation, motion-limit resolution, timed-result conversion, and
+trajectory validation from `ManipulationModule`. The module selects planning
+groups, invokes `TrajectoryParametrizerSpec.materialize_plan()`, and atomically
+stores the returned plan only if its planning epoch remains current. A failure
+leaves `_last_plan` unset and follows the existing planning-epoch failure path.
+No separate public `GeneratedTrajectory` lifecycle is added.
 
-Keep the existing planner-native timed materialization path for results such as
-RoboPlan Cartesian planning. It must not invoke the selected parametrizer or
-discard bounded/time-optimal TCP timing semantics.
+Remove the unused per-robot `JointTrajectoryGenerator` retained by the module's
+robot registry. Keep the generator implementation only behind the
+`simple_trapezoid` backend and its separate coordinator-control use.
 
 Canonical validation retains the current strong invariants: exact global joint ordering, finite and dimensionally aligned positions/velocities, first time at zero, strictly increasing times, positive duration for non-noop motion, and preserved start/goal. It also checks returned motion against the applicable velocity and acceleration limits with a documented numerical tolerance. Where RoboPlan exposes native accelerations, validate them before converting to the current positions/velocities-only message; otherwise derive the acceleration check consistently from velocity samples.
 

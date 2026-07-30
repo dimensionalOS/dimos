@@ -14,6 +14,10 @@
 
 """Compatibility trajectory parametrizer using segmented trapezoids."""
 
+import math
+
+from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -21,51 +25,52 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
+    BaseTrajectoryParametrizer,
     ParametrizedTrajectory,
     TrajectoryParametrizationError,
-    TrajectoryParametrizationRequest,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
-class SimpleTrapezoidParametrizer:
+class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
     """Wrap the existing trajectory generator behind the adapter protocol."""
 
     def __init__(self, config: SimpleTrapezoidParametrizationConfig) -> None:
         self._config = config
 
-    @property
-    def uses_request_limits(self) -> bool:
-        """The compatibility backend uses limits resolved from DimOS config."""
-        return True
-
-    def parametrize(self, request: TrajectoryParametrizationRequest) -> ParametrizedTrajectory:
-        if request.velocity_limits is None or request.acceleration_limits is None:
-            raise TrajectoryParametrizationError(
-                "Simple trapezoid parametrization requires DimOS motion limits"
-            )
+    def _parametrize_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        path: tuple[JointState, ...],
+        speed_scale: float,
+    ) -> ParametrizedTrajectory:
+        request_velocity_limits, request_acceleration_limits = self._selected_limits(
+            world,
+            selection,
+        )
         velocity_limits = tuple(
-            value * self._config.velocity_scale * request.speed_scale
-            for value in request.velocity_limits
+            value * self._config.velocity_scale * speed_scale for value in request_velocity_limits
         )
         acceleration_limits = tuple(
-            value * self._config.acceleration_scale * request.speed_scale
-            for value in request.acceleration_limits
+            value * self._config.acceleration_scale * speed_scale
+            for value in request_acceleration_limits
         )
         try:
             generator = JointTrajectoryGenerator(
-                num_joints=len(request.joint_names),
+                num_joints=len(selection.joint_names),
                 max_velocity=list(velocity_limits),
                 max_acceleration=list(acceleration_limits),
                 points_per_segment=self._config.points_per_segment,
             )
-            generated = generator.generate([list(state.position) for state in request.path])
+            generated = generator.generate([list(state.position) for state in path])
         except (IndexError, RuntimeError, TypeError, ValueError) as exc:
             raise TrajectoryParametrizationError(
                 f"Simple trapezoid parametrization failed: {exc}"
             ) from exc
         trajectory = JointTrajectory(
-            joint_names=list(request.joint_names),
+            joint_names=list(selection.joint_names),
             points=generated.points,
             timestamp=generated.timestamp,
         )
@@ -74,3 +79,35 @@ class SimpleTrapezoidParametrizer:
             velocity_limits=velocity_limits,
             acceleration_limits=acceleration_limits,
         )
+
+    @staticmethod
+    def _selected_limits(
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+    ) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        configs = {}
+        for robot_id in world.get_robot_ids():
+            config = world.get_robot_config(robot_id)
+            configs[config.name] = config
+        velocities: list[float] = []
+        accelerations: list[float] = []
+        for global_name in selection.joint_names:
+            if "/" not in global_name:
+                raise TrajectoryParametrizationError(f"Joint '{global_name}' is not globally named")
+            robot_name, local_name = global_name.split("/", 1)
+            selected_config = configs.get(robot_name)
+            if selected_config is None:
+                raise TrajectoryParametrizationError(f"Unknown robot for joint '{global_name}'")
+            if local_name not in selected_config.joint_names:
+                raise TrajectoryParametrizationError(f"Unknown local joint '{global_name}'")
+            velocity = float(selected_config.max_velocity)
+            acceleration = float(selected_config.max_acceleration)
+            if not math.isfinite(velocity) or velocity <= 0.0:
+                raise TrajectoryParametrizationError(f"Invalid velocity limit for '{global_name}'")
+            if not math.isfinite(acceleration) or acceleration <= 0.0:
+                raise TrajectoryParametrizationError(
+                    f"Invalid acceleration limit for '{global_name}'"
+                )
+            velocities.append(velocity)
+            accelerations.append(acceleration)
+        return tuple(velocities), tuple(accelerations)

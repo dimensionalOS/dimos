@@ -12,41 +12,82 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the compatibility trajectory parametrizer."""
+"""Tests for the compatibility trajectory parametrizer Spec implementation."""
+
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.manipulation.planning.groups.models import (
+    PlanningGroup,
+    PlanningGroupSelection,
+)
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.spec.protocols import (
+    TrajectoryParametrizerSpec,
+    WorldSpec,
+)
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     TrajectoryParametrizationError,
-    TrajectoryParametrizationRequest,
 )
 from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
     SimpleTrapezoidParametrizer,
 )
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-def _request(*, speed_scale: float = 1.0) -> TrajectoryParametrizationRequest:
-    names = ("arm/a", "arm/b")
-    return TrajectoryParametrizationRequest(
-        group_ids=("arm/manipulator",),
-        joint_names=names,
-        path=(
-            JointState(name=list(names), position=[0.0, 0.0]),
-            JointState(name=list(names), position=[0.2, 0.1]),
-            JointState(name=list(names), position=[0.4, 0.0]),
-        ),
-        velocity_limits=(2.0, 4.0),
-        acceleration_limits=(6.0, 8.0),
-        speed_scale=speed_scale,
+def _selection() -> PlanningGroupSelection:
+    return PlanningGroupSelection.from_groups(
+        (
+            PlanningGroup(
+                id="arm/manipulator",
+                robot_name="arm",
+                group_name="manipulator",
+                joint_names=("arm/a", "arm/b"),
+                local_joint_names=("a", "b"),
+                base_link="base",
+                tip_link="tip",
+            ),
+        )
     )
 
 
-def test_simple_parametrizer_preserves_segmented_trapezoid_behavior() -> None:
-    request = _request(speed_scale=0.5)
+def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
+    config = RobotModelConfig(
+        name="arm",
+        model_path=Path("/robot.urdf"),
+        base_pose=PoseStamped(),
+        joint_names=["a", "b"],
+        base_link="base",
+        max_velocity=velocity,
+        max_acceleration=acceleration,
+    )
+    world = MagicMock(spec=WorldSpec)
+    world.get_robot_ids.return_value = ["arm-id"]
+    world.get_robot_config.return_value = config
+    return world
+
+
+def _result() -> PlanningResult:
+    names = ["arm/a", "arm/b"]
+    return PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[
+            JointState(name=names, position=[0.0, 0.0]),
+            JointState(name=names, position=[0.2, 0.1]),
+            JointState(name=names, position=[0.4, 0.0]),
+        ],
+    )
+
+
+def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
     parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig(
             velocity_scale=0.5,
@@ -54,41 +95,52 @@ def test_simple_parametrizer_preserves_segmented_trapezoid_behavior() -> None:
             points_per_segment=4,
         )
     )
+    result = _result()
 
-    result = parametrizer.parametrize(request)
+    plan = parametrizer.materialize_plan(
+        _world(),
+        _selection(),
+        result,
+        speed_scale=0.5,
+    )
 
-    assert parametrizer.uses_request_limits
-    assert result.velocity_limits == (0.5, 1.0)
-    assert result.acceleration_limits == (0.75, 1.0)
-    assert result.accelerations is None
-    assert result.trajectory.joint_names == list(request.joint_names)
-    assert len(result.trajectory.points) == 9
-    assert result.trajectory.points[0].positions == [0.0, 0.0]
-    assert result.trajectory.points[4].positions == [0.2, 0.1]
-    assert result.trajectory.points[-1].positions == [0.4, 0.0]
-    assert [state.position for state in request.path] == [
+    assert isinstance(parametrizer, TrajectoryParametrizerSpec)
+    assert plan.group_ids == ("arm/manipulator",)
+    assert plan.trajectory.joint_names == ["arm/a", "arm/b"]
+    assert len(plan.trajectory.points) == 9
+    assert plan.trajectory.points[0].positions == [0.0, 0.0]
+    assert plan.trajectory.points[4].positions == [0.2, 0.1]
+    assert plan.trajectory.points[-1].positions == [0.4, 0.0]
+    assert [state.position for state in result.path] == [
         [0.0, 0.0],
         [0.2, 0.1],
         [0.4, 0.0],
     ]
 
 
-def test_simple_parametrizer_requires_dimos_limits() -> None:
-    request = _request()
-    request = TrajectoryParametrizationRequest(
-        group_ids=request.group_ids,
-        joint_names=request.joint_names,
-        path=request.path,
-    )
+def test_simple_parametrizer_rejects_invalid_dimos_limits() -> None:
+    parametrizer = SimpleTrapezoidParametrizer(SimpleTrapezoidParametrizationConfig())
 
     with pytest.raises(
         TrajectoryParametrizationError,
-        match="requires DimOS motion limits",
+        match="Invalid velocity limit for 'arm/a'",
     ):
-        SimpleTrapezoidParametrizer(SimpleTrapezoidParametrizationConfig()).parametrize(request)
+        parametrizer.materialize_plan(
+            _world(velocity=0.0),
+            _selection(),
+            _result(),
+        )
 
 
-@pytest.mark.parametrize("speed_scale", [0.0, -0.1, 1.01, float("inf"), float("nan")])
-def test_parametrization_request_rejects_invalid_runtime_speed(speed_scale: float) -> None:
-    with pytest.raises(ValueError, match="speed_scale"):
-        _request(speed_scale=speed_scale)
+@pytest.mark.parametrize(
+    "speed_scale",
+    [0.0, -0.1, 1.01, float("inf"), float("nan")],
+)
+def test_parametrizer_rejects_invalid_runtime_speed(speed_scale: float) -> None:
+    with pytest.raises(TrajectoryParametrizationError, match="speed_scale"):
+        SimpleTrapezoidParametrizer(SimpleTrapezoidParametrizationConfig()).materialize_plan(
+            _world(),
+            _selection(),
+            _result(),
+            speed_scale=speed_scale,
+        )

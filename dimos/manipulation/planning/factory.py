@@ -30,14 +30,14 @@ from dimos.manipulation.planning.planners.config import (
     ManipulationPlannerConfig,
     RoboPlanPlannerConfig,
 )
-from dimos.manipulation.planning.spec.protocols import PlannerSpec
+from dimos.manipulation.planning.spec.protocols import (
+    PlannerSpec,
+    TrajectoryParametrizerSpec,
+)
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
     SimpleTrapezoidParametrizationConfig,
     TrajectoryParametrizationConfig,
-)
-from dimos.manipulation.planning.trajectory_generator.parametrizer import (
-    TrajectoryParametrizer,
 )
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
@@ -59,6 +59,7 @@ class PlanningSpecs:
     world_monitor: WorldMonitor
     kinematics: KinematicsSpec
     planner: PlannerSpec
+    trajectory_parametrizer: TrajectoryParametrizerSpec
 
 
 WorldBackend: TypeAlias = Literal["drake", "roboplan"]
@@ -114,9 +115,8 @@ def validate_backend_combination(
 def create_trajectory_parametrizer(
     config: TrajectoryParametrizationConfig,
     *,
-    world: WorldSpec,
     world_backend: str,
-) -> TrajectoryParametrizer:
+) -> TrajectoryParametrizerSpec:
     """Construct the one startup-selected path parametrizer."""
     if config.backend == "roboplan_toppra" and world_backend != "roboplan":
         raise ValueError(
@@ -132,11 +132,8 @@ def create_trajectory_parametrizer(
         from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametrizer import (
             RoboPlanTOPPRAParametrizer,
         )
-        from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
-        if not isinstance(world, RoboPlanWorld):
-            raise ValueError("RoboPlan TOPP-RA requires a finalized RoboPlanWorld instance")
-        return RoboPlanTOPPRAParametrizer(world, config)
+        return RoboPlanTOPPRAParametrizer(config)
     raise TypeError(f"Unsupported trajectory parametrization config: {type(config).__name__}")
 
 
@@ -244,6 +241,10 @@ def create_planning_specs(
         world_monitor=WorldMonitor(world=world),
         kinematics=create_kinematics(config=kinematics),
         planner=create_planner(config=planner, world=world, world_backend=world_backend),
+        trajectory_parametrizer=create_trajectory_parametrizer(
+            trajectory_parametrization,
+            world_backend=world_backend,
+        ),
     )
 
 

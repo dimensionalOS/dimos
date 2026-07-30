@@ -23,17 +23,24 @@ from pytest_mock import MockerFixture
 
 pytest.importorskip("roboplan.toppra")
 
+from dimos.manipulation.planning.groups.models import (
+    PlanningGroup,
+    PlanningGroupSelection,
+)
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.spec.protocols import TrajectoryParametrizerSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
 )
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     TrajectoryParametrizationError,
-    TrajectoryParametrizationRequest,
 )
 from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametrizer import (
     RoboPlanTOPPRAParametrizer,
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
+from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 pytestmark = pytest.mark.self_hosted
@@ -53,7 +60,7 @@ class _Scene:
         return np.asarray([-6.0, -maximum]), np.asarray([6.0, maximum])
 
 
-class _World:
+class _World(RoboPlanWorld):
     def __init__(self, model: RoboPlanModel) -> None:
         self.model = model
 
@@ -79,19 +86,35 @@ def _model(*, missing_acceleration: bool = False) -> RoboPlanModel:
     )
 
 
-def _request(
+def _selection_and_result(
     names: tuple[str, str] = ("left/a", "right/b"),
-    *,
-    speed_scale: float = 1.0,
-) -> TrajectoryParametrizationRequest:
+) -> tuple[PlanningGroupSelection, PlanningResult]:
     positions_by_name = {
         "left/a": (0.0, 0.3),
         "right/b": (0.1, 0.4),
     }
-    return TrajectoryParametrizationRequest(
-        group_ids=("right/arm", "left/arm"),
-        joint_names=names,
-        path=(
+    groups_by_name = {
+        "left/a": PlanningGroup(
+            id="left/arm",
+            robot_name="left",
+            group_name="arm",
+            joint_names=("left/a",),
+            local_joint_names=("a",),
+            base_link="base",
+        ),
+        "right/b": PlanningGroup(
+            id="right/arm",
+            robot_name="right",
+            group_name="arm",
+            joint_names=("right/b",),
+            local_joint_names=("b",),
+            base_link="base",
+        ),
+    }
+    selection = PlanningGroupSelection.from_groups(tuple(groups_by_name[name] for name in names))
+    result = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[
             JointState(
                 name=list(names),
                 position=[positions_by_name[name][0] for name in names],
@@ -100,11 +123,9 @@ def _request(
                 name=list(names),
                 position=[positions_by_name[name][1] for name in names],
             ),
-        ),
-        velocity_limits=(999.0, 999.0),
-        acceleration_limits=(999.0, 999.0),
-        speed_scale=speed_scale,
+        ],
     )
+    return selection, result
 
 
 @pytest.mark.parametrize(
@@ -119,8 +140,8 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
         joint_names=["native_a", "native_b"],
         times=[0.0, 0.5],
         positions=[np.asarray([0.0, 0.1]), np.asarray([0.3, 0.4])],
-        velocities=[np.asarray([0.0, 0.0]), np.asarray([0.6, 0.2])],
-        accelerations=[np.asarray([0.0, 0.0]), np.asarray([1.2, 0.4])],
+        velocities=[np.asarray([0.0, 0.0]), np.asarray([0.2, 0.2])],
+        accelerations=[np.asarray([0.0, 0.0]), np.asarray([0.4, 0.4])],
     )
     native = mocker.MagicMock()
     native.generate.return_value = generated
@@ -130,7 +151,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
         return_value=native,
     )
     parametrizer = RoboPlanTOPPRAParametrizer(
-        _World(_model()),
         RoboPlanTOPPRAParametrizationConfig(
             fitting_mode=fitting_mode,
             output_period=0.02,
@@ -138,11 +158,17 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
             acceleration_scale=0.25,
         ),
     )
-    request = _request(speed_scale=0.5)
+    world = _World(_model())
+    selection, planning_result = _selection_and_result()
 
-    result = parametrizer.parametrize(request)
+    result = parametrizer.materialize_plan(
+        world,
+        selection,
+        planning_result,
+        speed_scale=0.5,
+    )
 
-    assert not parametrizer.uses_request_limits
+    assert isinstance(parametrizer, TrajectoryParametrizerSpec)
     constructor.assert_called_once()
     native_path, options = native.generate.call_args.args
     assert native_path.joint_names == ["native_b", "native_a"]
@@ -154,8 +180,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
     assert options.mode.name.lower().replace("linearblend", "linear_blend") == fitting_mode
     assert options.velocity_scale == 0.25
     assert options.acceleration_scale == 0.125
-    assert result.velocity_limits == (0.25, 0.5)
-    assert result.acceleration_limits == (0.5, 0.75)
     assert result.trajectory.joint_names == ["left/a", "right/b"]
     assert [point.positions for point in result.trajectory.points] == [
         [0.0, 0.1],
@@ -163,10 +187,12 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
     ]
     assert [point.velocities for point in result.trajectory.points] == [
         [0.0, 0.0],
-        [0.6, 0.2],
+        [0.2, 0.2],
     ]
-    assert result.accelerations == ((0.0, 0.0), (1.2, 0.4))
-    assert [state.position for state in request.path] == [[0.0, 0.1], [0.3, 0.4]]
+    assert [state.position for state in planning_result.path] == [
+        [0.0, 0.1],
+        [0.3, 0.4],
+    ]
 
 
 def test_roboplan_parametrizer_rejects_missing_urdf_acceleration_without_fallback(
@@ -177,15 +203,19 @@ def test_roboplan_parametrizer_rejects_missing_urdf_acceleration_without_fallbac
         "roboplan_toppra_parametrizer.roboplan_toppra.PathParameterizerTOPPRA"
     )
     parametrizer = RoboPlanTOPPRAParametrizer(
-        _World(_model(missing_acceleration=True)),
         RoboPlanTOPPRAParametrizationConfig(),
     )
+    selection, result = _selection_and_result()
 
     with pytest.raises(
         TrajectoryParametrizationError,
         match="no usable URDF acceleration limit for joint 'left/a'",
     ):
-        parametrizer.parametrize(_request())
+        parametrizer.materialize_plan(
+            _World(_model(missing_acceleration=True)),
+            selection,
+            result,
+        )
 
     constructor.assert_not_called()
 
@@ -196,9 +226,9 @@ def test_cached_group_limits_follow_each_request_joint_order(
     generated = SimpleNamespace(
         joint_names=["native_b", "native_a"],
         times=[0.0, 0.5],
-        positions=[np.asarray([0.0, 0.1]), np.asarray([0.3, 0.4])],
-        velocities=[np.asarray([0.0, 0.0]), np.asarray([0.6, 0.2])],
-        accelerations=[np.asarray([0.0, 0.0]), np.asarray([1.2, 0.4])],
+        positions=[np.asarray([0.1, 0.0]), np.asarray([0.4, 0.3])],
+        velocities=[np.asarray([0.0, 0.0]), np.asarray([0.2, 0.4])],
+        accelerations=[np.asarray([0.0, 0.0]), np.asarray([0.4, 0.8])],
     )
     native = mocker.MagicMock()
     native.generate.return_value = generated
@@ -208,18 +238,26 @@ def test_cached_group_limits_follow_each_request_joint_order(
         return_value=native,
     )
     parametrizer = RoboPlanTOPPRAParametrizer(
-        _World(_model()),
         RoboPlanTOPPRAParametrizationConfig(
             velocity_scale=0.5,
             acceleration_scale=0.25,
         ),
     )
+    world = _World(_model())
+    canonical_selection, canonical_result = _selection_and_result()
+    reversed_selection, reversed_result = _selection_and_result(("right/b", "left/a"))
 
-    canonical = parametrizer.parametrize(_request())
-    reversed_order = parametrizer.parametrize(_request(("right/b", "left/a")))
+    canonical = parametrizer.materialize_plan(
+        world,
+        canonical_selection,
+        canonical_result,
+    )
+    reversed_order = parametrizer.materialize_plan(
+        world,
+        reversed_selection,
+        reversed_result,
+    )
 
     constructor.assert_called_once()
-    assert canonical.velocity_limits == (0.5, 1.0)
-    assert canonical.acceleration_limits == (1.0, 1.5)
-    assert reversed_order.velocity_limits == (1.0, 0.5)
-    assert reversed_order.acceleration_limits == (1.5, 1.0)
+    assert canonical.trajectory.joint_names == ["left/a", "right/b"]
+    assert reversed_order.trajectory.joint_names == ["right/b", "left/a"]
