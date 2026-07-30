@@ -81,7 +81,6 @@ def robot_config() -> RobotModelConfig:
                 tip_link="tcp",
             )
         ],
-        coordinator_task_name="traj_arm",
     )
 
 
