@@ -65,7 +65,7 @@ export function pickAutoWatch(robots: RobotInfo[]): RobotInfo | null {
 // Encodings whose subscription costs real encode CPU and bandwidth;
 // subscribed only when a panel this build can render binds them. T7 moves
 // all subscription decisions to panels.
-const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1"]);
+const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
 
 /** True when this build can put the channel to use: it has a decoder, and a
  * panel-only encoding is additionally bound by a renderable panel. */
@@ -167,10 +167,13 @@ class Session {
                 break;
               }
               this.status.update({ lastError: null });
+              // Adopt before subscribing: a sub can trigger an immediate
+              // frame (the bridge replays the cached costmap), and #ingest
+              // drops everything while no manifest is adopted.
+              this.#applyManifest(manifest);
               for (const spec of subscribableChannels(manifest.channels, manifest.panels)) {
                 await send({ t: "sub", ch: spec.ch });
               }
-              this.#applyManifest(manifest);
               break;
             }
             case "error": {
