@@ -25,14 +25,13 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
     from rerun._baseclasses import Archetype
 
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -84,6 +83,8 @@ class PointCloud2(Timestamped):
         frame_id: str = "world",
         ts: float | None = None,
     ) -> None:
+        import open3d as o3d  # type: ignore[import-untyped]
+
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
 
@@ -101,6 +102,8 @@ class PointCloud2(Timestamped):
 
     def _ensure_tensor_initialized(self) -> None:
         """Ensure _pcd_tensor and _pcd_legacy_cache exist (handles unpickled old objects)."""
+        import open3d as o3d  # type: ignore[import-untyped]
+
         # Always ensure _pcd_legacy_cache exists
         if not hasattr(self, "_pcd_legacy_cache"):
             self._pcd_legacy_cache = None
@@ -137,6 +140,9 @@ class PointCloud2(Timestamped):
 
     def __setstate__(self, state: dict[str, object]) -> None:
         """Restore from pickled state."""
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         points_obj = state.pop("_pcd_numpy", None)
         points: np.ndarray[tuple[int, int], np.dtype[np.float32]] = (
             points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
@@ -157,6 +163,8 @@ class PointCloud2(Timestamped):
 
     @pointcloud.setter
     def pointcloud(self, value: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud) -> None:
+        import open3d as o3d  # type: ignore[import-untyped]
+
         if isinstance(value, o3d.t.geometry.PointCloud):
             self._pcd_tensor = value
         elif len(value.points) == 0:
@@ -190,6 +198,9 @@ class PointCloud2(Timestamped):
         Returns:
             PointCloud2 instance
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         pcd_t = o3d.t.geometry.PointCloud()
         pcd_t.point["positions"] = o3c.Tensor(points.astype(np.float32), dtype=o3c.float32)
         if intensities is not None:
@@ -222,6 +233,8 @@ class PointCloud2(Timestamped):
         Returns:
             PointCloud2 instance with colored points
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+
         # Get color as RGB numpy array
         color_data = color_image.to_rgb().data
         if hasattr(color_data, "get"):  # CuPy array
@@ -309,6 +322,8 @@ class PointCloud2(Timestamped):
 
     def points(self):  # type: ignore[no-untyped-def]
         """Get points (returns tensor positions, use as_numpy() for numpy array)."""
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         self._ensure_tensor_initialized()
         if "positions" not in self._pcd_tensor.point:
             return o3c.Tensor(np.zeros((0, 3), dtype=np.float32))
@@ -347,6 +362,8 @@ class PointCloud2(Timestamped):
         Returns:
             New PointCloud2 instance with transformed points in the new frame
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+
         points, _ = self.as_numpy()
 
         if len(points) == 0:
@@ -543,6 +560,9 @@ class PointCloud2(Timestamped):
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> PointCloud2:
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         msg = LCMPointCloud2.lcm_decode(data)
 
         if msg.width == 0 or msg.height == 0:
@@ -782,6 +802,8 @@ class PointCloud2(Timestamped):
             # Remove points above 1.5m (e.g., ceiling)
             filtered_pc = pointcloud.filter_by_height(max_height=1.5)
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+
         # Validate that at least one threshold is provided
         if min_height is None and max_height is None:
             raise ValueError("At least one of min_height or max_height must be specified")
