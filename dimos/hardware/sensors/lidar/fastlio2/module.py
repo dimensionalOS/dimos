@@ -64,7 +64,7 @@ TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
 class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
-    build_command: str | None = "nix build .#fastlio2_native"
+    build_command: str | None = "nix build -L .#fastlio2_native"
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
     # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
     # DIMOS_FASTLIO_HOST_IP.
