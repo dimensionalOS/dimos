@@ -583,7 +583,11 @@ yourarm_planner = manipulation_module(
 # topic, so no `.transports(...)` override is needed.
 ```
 
-To use continuous TOPP-RA timing instead, select RoboPlan for the world and
+You may omit `trajectory_parametrization` when the world-based default is
+appropriate: `world_backend="roboplan"` selects `roboplan_toppra`, while
+`world_backend="drake"` selects `simple_trapezoid`.
+
+To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
 parametrizer after adding the URDF limits described above:
 
 ```python skip

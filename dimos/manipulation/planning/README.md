@@ -98,6 +98,10 @@ and start and goal preservation. Each backend is responsible for generating
 motion within the velocity and acceleration limits it receives. A failure
 leaves no executable plan cached.
 
+When `trajectory_parametrization` is omitted, the world selects the matching
+default: `RoboPlanWorld` uses `roboplan_toppra`, while `DrakeWorld` uses
+`simple_trapezoid`. An explicit backend always overrides that default.
+
 This boundary is exposed internally as `TrajectoryParametrizerSpec`, alongside
 `PlannerSpec` and `WorldSpec`. Its implementations own conversion, validation,
 and `GeneratedPlan` construction; `ManipulationModule` only supplies the world,
@@ -122,8 +126,7 @@ pass it to the native planner before that planner produces timestamps.
 
 ## Trajectory Parametrization
 
-The default compatibility backend retains the existing segmented trapezoidal
-behavior:
+The compatibility backend retains the existing segmented trapezoidal behavior:
 
 ```python skip
 ManipulationModuleConfig(

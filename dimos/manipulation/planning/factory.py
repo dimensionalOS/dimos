@@ -82,9 +82,13 @@ def validate_backend_combination(
     world_backend: str = "roboplan",
     planner_backend: str = "roboplan",
     kinematics_name: str = DEFAULT_KINEMATICS_NAME,
-    trajectory_parametrization_backend: str = "simple_trapezoid",
+    trajectory_parametrization_backend: str | None = None,
 ) -> None:
     """Validate manipulation backend choices before constructing the stack."""
+    if trajectory_parametrization_backend is None:
+        trajectory_parametrization_backend = (
+            "roboplan_toppra" if world_backend == "roboplan" else "simple_trapezoid"
+        )
     if world_backend not in SUPPORTED_WORLD_BACKENDS:
         raise ValueError(
             f"Unknown backend: {world_backend}. Available: {list(SUPPORTED_WORLD_BACKENDS)}"
@@ -228,7 +232,11 @@ def create_planning_specs(
     if planner is None:
         planner = RoboPlanPlannerConfig()
     if trajectory_parametrization is None:
-        trajectory_parametrization = SimpleTrapezoidParametrizationConfig()
+        trajectory_parametrization = (
+            RoboPlanTOPPRAParametrizationConfig()
+            if world_backend == "roboplan"
+            else SimpleTrapezoidParametrizationConfig()
+        )
 
     validate_backend_combination(
         world_backend=world_backend,

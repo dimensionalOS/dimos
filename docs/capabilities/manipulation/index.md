@@ -120,15 +120,24 @@ normally return an untimed geometric path; DimOS accepts the plan only after
 the selected backend converts that path to a validated timed trajectory:
 
 ```bash
-# Compatibility behavior: independent trapezoids between path waypoints
+# Stock xArm compatibility test: independent trapezoids on RoboPlanWorld
 dimos run xarm7-planner-coordinator \
   -o manipulationmodule.trajectory_parametrization.backend=simple_trapezoid
 
-# Continuous TOPP-RA timing, available with RoboPlanWorld
+# After adding finite velocity and acceleration limits to the robot URDF,
+# omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
+dimos run xarm7-planner-coordinator
+
+# Equivalent explicit TOPP-RA selection
 dimos run xarm7-planner-coordinator \
   -o manipulationmodule.world_backend=roboplan \
   -o manipulationmodule.trajectory_parametrization.backend=roboplan_toppra \
   -o manipulationmodule.trajectory_parametrization.fitting_mode=linear_blend
+
+# DrakeWorld selects simple_trapezoid when no parametrizer is specified
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.world_backend=drake \
+  -o manipulationmodule.planner.backend=rrt_connect
 ```
 
 Exactly one backend is constructed for the stack lifetime. There is no
@@ -137,7 +146,10 @@ RoboPlan's planner or the generic RRT planner, but it requires
 `world_backend=roboplan` because it reuses that world's model, groups, and URDF
 motion limits. A planner-native result that already has timestamps and
 velocities bypasses path parametrization and retains its existing timing after
-canonical validation.
+canonical validation. Explicit configuration overrides the world-based default.
+The bundled xArm URDF currently lacks the extended acceleration attribute, so
+use `simple_trapezoid` for that stock model or add the required URDF limits
+before testing `roboplan_toppra`.
 
 The Viser panel's **Next plan speed** slider provides runtime speed tuning from
 `0.05` to `1.0`. Changing it leaves the accepted plan and any active execution

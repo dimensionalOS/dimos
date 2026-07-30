@@ -86,7 +86,6 @@ from dimos.manipulation.planning.spec.protocols import (
     TrajectoryParametrizerSpec,
 )
 from dimos.manipulation.planning.trajectory_generator.config import (
-    SimpleTrapezoidParametrizationConfig,
     TrajectoryParametrizationConfig,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
@@ -149,8 +148,12 @@ class ManipulationModuleConfig(ModuleConfig):
         default_factory=NoManipulationVisualizationConfig
     )
     planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
-    trajectory_parametrization: TrajectoryParametrizationConfig = Field(
-        default_factory=SimpleTrapezoidParametrizationConfig
+    trajectory_parametrization: TrajectoryParametrizationConfig | None = Field(
+        default=None,
+        description=(
+            "Path parametrizer selected at startup. Omit to use roboplan_toppra "
+            "with RoboPlanWorld or simple_trapezoid with DrakeWorld."
+        ),
     )
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
