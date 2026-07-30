@@ -26,7 +26,6 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 )
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
-    ParametrizedTrajectory,
     TrajectoryParametrizationError,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -45,7 +44,7 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
         selection: PlanningGroupSelection,
         path: tuple[JointState, ...],
         speed_scale: float,
-    ) -> ParametrizedTrajectory:
+    ) -> JointTrajectory:
         request_velocity_limits, request_acceleration_limits = self._selected_limits(
             world,
             selection,
@@ -69,15 +68,10 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
             raise TrajectoryParametrizationError(
                 f"Simple trapezoid parametrization failed: {exc}"
             ) from exc
-        trajectory = JointTrajectory(
+        return JointTrajectory(
             joint_names=list(selection.joint_names),
             points=generated.points,
             timestamp=generated.timestamp,
-        )
-        return ParametrizedTrajectory(
-            trajectory=trajectory,
-            velocity_limits=velocity_limits,
-            acceleration_limits=acceleration_limits,
         )
 
     @staticmethod

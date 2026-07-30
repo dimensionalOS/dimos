@@ -94,8 +94,9 @@ A joint-space planner normally returns an untimed geometric path. Before DimOS
 accepts a `GeneratedPlan`, the one trajectory-parametrization backend selected
 at startup converts that path into a timed `JointTrajectory`. DimOS then
 validates joint ordering, dimensions, finite values, strictly increasing time,
-start and goal preservation, and applicable velocity and acceleration limits.
-A failure leaves no executable plan cached.
+and start and goal preservation. Each backend is responsible for generating
+motion within the velocity and acceleration limits it receives. A failure
+leaves no executable plan cached.
 
 This boundary is exposed internally as `TrajectoryParametrizerSpec`, alongside
 `PlannerSpec` and `WorldSpec`. Its implementations own conversion, validation,

@@ -141,7 +141,6 @@ def test_roboplan_parametrizer_maps_composite_order_options_and_native_output(
         times=[0.0, 0.5],
         positions=[np.asarray([0.0, 0.1]), np.asarray([0.3, 0.4])],
         velocities=[np.asarray([0.0, 0.0]), np.asarray([0.2, 0.2])],
-        accelerations=[np.asarray([0.0, 0.0]), np.asarray([0.4, 0.4])],
     )
     native = mocker.MagicMock()
     native.generate.return_value = generated
@@ -220,7 +219,7 @@ def test_roboplan_parametrizer_rejects_missing_urdf_acceleration_without_fallbac
     constructor.assert_not_called()
 
 
-def test_cached_group_limits_follow_each_request_joint_order(
+def test_cached_group_preserves_each_request_joint_order(
     mocker: MockerFixture,
 ) -> None:
     generated = SimpleNamespace(
@@ -228,7 +227,6 @@ def test_cached_group_limits_follow_each_request_joint_order(
         times=[0.0, 0.5],
         positions=[np.asarray([0.1, 0.0]), np.asarray([0.4, 0.3])],
         velocities=[np.asarray([0.0, 0.0]), np.asarray([0.2, 0.4])],
-        accelerations=[np.asarray([0.0, 0.0]), np.asarray([0.4, 0.8])],
     )
     native = mocker.MagicMock()
     native.generate.return_value = generated
@@ -237,12 +235,7 @@ def test_cached_group_limits_follow_each_request_joint_order(
         "roboplan_toppra_parametrizer.roboplan_toppra.PathParameterizerTOPPRA",
         return_value=native,
     )
-    parametrizer = RoboPlanTOPPRAParametrizer(
-        RoboPlanTOPPRAParametrizationConfig(
-            velocity_scale=0.5,
-            acceleration_scale=0.25,
-        ),
-    )
+    parametrizer = RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig())
     world = _World(_model())
     canonical_selection, canonical_result = _selection_and_result()
     reversed_selection, reversed_result = _selection_and_result(("right/b", "left/a"))

@@ -27,7 +27,6 @@ from dimos.manipulation.planning.spec.models import PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
-    ParametrizedTrajectory,
     TrajectoryParametrizationError,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -36,7 +35,7 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 class _FixedParametrizer(BaseTrajectoryParametrizer):
-    def __init__(self, output: ParametrizedTrajectory) -> None:
+    def __init__(self, output: JointTrajectory) -> None:
         self.output = output
         self.calls: list[float] = []
 
@@ -46,7 +45,7 @@ class _FixedParametrizer(BaseTrajectoryParametrizer):
         selection: PlanningGroupSelection,
         path: tuple[JointState, ...],
         speed_scale: float,
-    ) -> ParametrizedTrajectory:
+    ) -> JointTrajectory:
         self.calls.append(speed_scale)
         return self.output
 
@@ -75,37 +74,25 @@ def _path() -> list[JointState]:
     ]
 
 
-def _output(
-    *,
-    velocities: tuple[list[float], list[float]] = ([0.0, 0.0], [0.0, 0.0]),
-    accelerations: tuple[tuple[float, float], tuple[float, float]] = (
-        (0.0, 0.0),
-        (0.0, 0.0),
-    ),
-) -> ParametrizedTrajectory:
-    return ParametrizedTrajectory(
-        trajectory=JointTrajectory(
-            joint_names=["arm/a", "arm/b"],
-            points=[
-                TrajectoryPoint(
-                    time_from_start=0.0,
-                    positions=[0.0, 0.0],
-                    velocities=velocities[0],
-                ),
-                TrajectoryPoint(
-                    time_from_start=0.5,
-                    positions=[0.4, 0.0],
-                    velocities=velocities[1],
-                ),
-            ],
-        ),
-        velocity_limits=(1.0, 1.0),
-        acceleration_limits=(2.0, 2.0),
-        accelerations=accelerations,
+def _output() -> JointTrajectory:
+    return JointTrajectory(
+        joint_names=["arm/a", "arm/b"],
+        points=[
+            TrajectoryPoint(
+                time_from_start=0.0,
+                positions=[0.0, 0.0],
+                velocities=[0.0, 0.0],
+            ),
+            TrajectoryPoint(
+                time_from_start=0.5,
+                positions=[0.4, 0.0],
+                velocities=[0.0, 0.0],
+            ),
+        ],
     )
 
 
-def test_materializes_bounded_fitting_and_preserves_source_path() -> None:
+def test_materializes_trajectory_and_preserves_source_path() -> None:
     parametrizer = _FixedParametrizer(_output())
     source_path = _path()
 
@@ -127,7 +114,7 @@ def test_materializes_bounded_fitting_and_preserves_source_path() -> None:
         [0.4, 0.0],
     ]
     assert plan.path is not source_path
-    assert plan.trajectory is parametrizer.output.trajectory
+    assert plan.trajectory is parametrizer.output
     assert plan.planning_time == 0.2
     assert plan.iterations == 12
     assert parametrizer.calls == [0.4]
@@ -166,21 +153,25 @@ def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
     assert plan.trajectory.points[-1].velocities == [0.3, 0.0]
 
 
-@pytest.mark.parametrize(
-    ("velocities", "accelerations", "message"),
-    [
-        (([0.0, 0.0], [1.1, 0.0]), ((0.0, 0.0), (0.0, 0.0)), "velocity exceeds"),
-        (([0.0, 0.0], [0.0, 0.0]), ((0.0, 0.0), (2.1, 0.0)), "acceleration exceeds"),
-    ],
-)
-def test_rejects_parametrized_motion_limit_violations(
-    velocities: tuple[list[float], list[float]],
-    accelerations: tuple[tuple[float, float], tuple[float, float]],
-    message: str,
-) -> None:
-    parametrizer = _FixedParametrizer(_output(velocities=velocities, accelerations=accelerations))
+def test_rejects_backend_trajectory_with_nonincreasing_time() -> None:
+    output = _output()
+    output.points[-1].time_from_start = 0.0
+    parametrizer = _FixedParametrizer(output)
 
-    with pytest.raises(TrajectoryParametrizationError, match=message):
+    with pytest.raises(TrajectoryParametrizationError, match="strictly increasing"):
+        parametrizer.materialize_plan(
+            MagicMock(spec=WorldSpec),
+            _selection(),
+            PlanningResult(status=PlanningStatus.SUCCESS, path=_path()),
+        )
+
+
+def test_rejects_backend_trajectory_that_changes_path_goal() -> None:
+    output = _output()
+    output.points[-1].positions = [0.3, 0.0]
+    parametrizer = _FixedParametrizer(output)
+
+    with pytest.raises(TrajectoryParametrizationError, match="path goal"):
         parametrizer.materialize_plan(
             MagicMock(spec=WorldSpec),
             _selection(),
