@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Process-wide library defaults.
-# Modules that need different settings can override in their own start().
+"""Platform-appropriate zenoh system configurators."""
+
+import platform
+
+from dimos.protocol.service.system_configurator.base import SystemConfigurator
+from dimos.protocol.service.system_configurator.zenoh import MemlockConfiguratorLinux
 
 
-def apply_library_config() -> None:
-    """Apply process-wide library defaults. Call once per process."""
-    # Limit OpenCV internal threads to avoid idle thread contention.
-    try:
-        import cv2
+def zenoh_configurators() -> list[SystemConfigurator]:
+    """Return the platform-appropriate zenoh system configurators.
 
-        cv2.setNumThreads(2)
-    except ImportError:
-        pass
+    macOS has no RLIMIT_MEMLOCK equivalent gating POSIX shm, so it needs none.
+    """
+    if platform.system() == "Linux":
+        return [MemlockConfiguratorLinux()]
+    return []

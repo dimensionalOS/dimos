@@ -20,7 +20,6 @@ import base64
 import os
 import pickle
 
-import cv2
 import numpy as np
 
 from dimos.utils.logging_config import setup_logger
@@ -61,6 +60,8 @@ class VisualMemory:
             image_id: Unique identifier for the image
             image: The image data as a numpy array
         """
+        import cv2
+
         # Encode the image to base64 for storage
         success, encoded_image = cv2.imencode(".jpg", image)
         if not success:
@@ -84,6 +85,8 @@ class VisualMemory:
         Returns:
             The decoded image as a numpy array, or None if not found
         """
+        import cv2
+
         if image_id not in self.images:
             logger.warning(
                 f"Image not found in storage for ID {image_id}. Incomplete or corrupted image storage."

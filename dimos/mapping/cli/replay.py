@@ -35,14 +35,10 @@ from pathlib import Path
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-import rerun as rr
 import typer
 
 from dimos.memory2.utils.progress import progress
 
-# Heavy dimos imports (mapping/memory2 → torch, scipy, open3d) are deferred into
-# main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
-# same pattern in dimos/mapping/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -66,6 +62,8 @@ def _log_clouds(
     pipelines where calling :py:meth:`Stream.count` would materialize the
     whole pipeline.
     """
+    import rerun as rr
+
     n = total if total is not None else stream.count()
     with progress(n, label) as bar:
         for obs in stream:
@@ -89,6 +87,8 @@ def _log_path(
     ``entity`` every ``emit_every`` poses (and once more at the end). Frames
     without a pose are skipped.
     """
+    import rerun as rr
+
     n = stream.count()
     points: list[tuple[float, float, float]] = []
     last_ts: float | None = None
@@ -174,7 +174,9 @@ def main(
     ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
-    from dimos.mapping.voxels import VoxelMapTransformer
+    import rerun as rr
+
+    from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory2.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory2.transform import throttle
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

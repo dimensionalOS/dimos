@@ -22,7 +22,6 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-import cv2
 import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
@@ -184,6 +183,8 @@ class SpatialMemory(Module):
 
     @rpc
     def start(self) -> None:
+        import cv2
+
         super().start()
 
         # Subscribe to LCM streams

@@ -15,10 +15,8 @@
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -178,6 +176,8 @@ class ObjectSceneRegistrationModule(Module):
 
     def _get_object_mask(self, object_id: str) -> NDArray[np.uint8] | None:
         """Get dilated mask for an object by ID."""
+        import cv2
+
         for obj in self._object_db.get_all_objects():
             if obj.object_id != object_id:
                 continue
@@ -201,6 +201,8 @@ class ObjectSceneRegistrationModule(Module):
         voxel_size: float = 0.01,
     ) -> PointCloud2 | None:
         """Get full scene pointcloud from depth, including table/surfaces for collision filtering."""
+        import open3d as o3d  # type: ignore[import-untyped]
+
         scene_snapshot = self._latest_scene_snapshot
         if scene_snapshot is None or self._camera_info is None:
             return None
