@@ -1,6 +1,8 @@
 # Manipulation Planning
 
-This context describes requests for planning robot motion through joint and Cartesian spaces.
+This context describes requests for planning robot motion through joint and
+Cartesian spaces, assigning time to that motion, and executing it through robot
+control.
 
 ## Language
 
@@ -25,3 +27,19 @@ A Cartesian timing policy that resolves the requested path into joint space and 
 
 **Custom Planner Components**:
 Backend-native solver tasks, constraints, and barriers injected as live objects. These are outside standard Cartesian planning and require a separate constrained-IK interface.
+
+**Geometric Path**:
+An ordered sequence of robot configurations describing where a robot may move, without prescribing when it reaches them.
+_Avoid_: Untimed trajectory, parametrized path
+
+**Timed Trajectory**:
+A robot motion expressed on a shared time domain, including timed configurations and their motion derivatives where available.
+_Avoid_: Parametrized path, timed path
+
+**Generated Plan**:
+The accepted manipulation result pairing a geometric path with the timed trajectory prepared for preview and execution.
+_Avoid_: Path, trajectory
+
+**Trajectory Parametrization**:
+The conversion of a geometric path into a timed trajectory under motion limits, including the bounded interpolation needed to define continuous motion between waypoints.
+_Avoid_: Path planning, trajectory generation
