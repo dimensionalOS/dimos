@@ -18,7 +18,7 @@ dimos list
 # --- Go2 quadruped ---
 dimos --replay run unitree-go2                  # perception + mapping, replay data
 dimos --replay run unitree-go2 --daemon         # same, backgrounded
-dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + skills + MCP server
+dimos --replay run unitree-go2-agentic          # + LLM agent (gpt-5.6-luna) + skills + MCP server
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
@@ -40,9 +40,9 @@ dimos restart          # stop + re-run with same original args
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
-| `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
-| `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
-| `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
+| `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
+| `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
+| `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
 | `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
@@ -105,7 +105,7 @@ dimos/
 │   │   ├── blueprints.py           # Blueprint, autoconnect()
 │   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
 │   │   ├── python_worker.py        # Forkserver workers + Actor IPC
-│   │   └── worker_manager_*.py     # Python / docker worker pools
+│   │   └── worker_manager*.py      # Worker pool protocol + Python implementation
 │   ├── global_config.py     # GlobalConfig (env vars, CLI flags, .env)
 │   └── run_registry.py      # Per-run tracking + log paths
 ├── cli/                     # `dimos` CLI entry point (typer) + TUI tools (spy, dtop, apriltag)
@@ -121,10 +121,9 @@ dimos/
 │       ├── drone_tracking_module.py    # Visual object tracking
 │       └── drone_visual_servoing_controller.py  # Visual servoing
 ├── agents/
-│   ├── agent.py             # Agent module (LangGraph-based)
 │   ├── system_prompt.py     # Default Go2 system prompt
 │   ├── annotation.py        # @skill decorator
-│   ├── mcp/                 # McpServer, McpClient, McpAdapter
+│   ├── mcp/                 # McpServer, McpClient, McpAdapter (the LangGraph agent lives here)
 │   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
@@ -136,8 +135,8 @@ docs/
 ├── usage/blueprints.md      # Blueprint composition guide
 ├── usage/configuration.md   # GlobalConfig + Configurable pattern
 ├── development/testing.md   # Fast/slow tests, pytest usage
-├── development/dimos_run.md # CLI usage, adding blueprints
-└── agents/                  # Agent system documentation
+├── usage/cli.md             # CLI usage, adding blueprints
+└── capabilities/agents/     # Agent system documentation
 ```
 
 ---
@@ -252,10 +251,10 @@ Run registry: `~/.local/state/dimos/runs/<run-id>.json`
 |------|------------------------------|
 | **Docstring is mandatory** | `ValueError` at startup — module fails to register, all skills disappear |
 | **Type-annotate every param** | Missing annotation → no `"type"` in schema — LLM has no type info |
-| **Return `str`** | `None` return → agent hears "It has started. You will be updated later." |
+| **Return `str`** (or an object with `agent_encode()`, e.g. `SkillResult`) | Other values are `str()`-ified — a `None` return reaches the agent as the literal string `"None"` |
 | **Full docstring verbatim in `description`** | Keep `Args:` block concise — it appears in every tool-call prompt |
 
-Supported param types: `str`, `int`, `float`, `bool`, `list[str]`, `list[float]`. Avoid complex nested types.
+Prefer simple param types: `str`, `int`, `float`, `bool`, `list[str]`, `list[float]`. Nested types work — the schema comes from pydantic — but keep them shallow.
 
 #### Minimal correct skill
 
@@ -326,8 +325,8 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 1. Pick the right container (robot-specific or `dimos/agents/skills/`).
 2. `@skill` + mandatory docstring + type annotations on all params.
 3. If it needs another module's RPC, use the Spec pattern.
-4. Return a descriptive `str`.
-5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
+4. Return a descriptive `str`, or a `SkillResult`.
+5. Update the system prompt if the skill needs usage guidance — `dimos/agents/system_prompt.py`, or the robot-specific prompt.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
 ---
@@ -342,7 +341,7 @@ uv run pytest
 ./bin/pytest-slow
 
 # Single file
-uv run pytest dimos/core/test_blueprints.py -v
+uv run pytest dimos/core/coordination/test_blueprints.py -v
 
 # Mypy
 uv run mypy dimos/
@@ -395,6 +394,6 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 - Visualization: `docs/usage/visualization.md`
 - Configuration: `docs/usage/configuration.md`
 - Testing: `docs/development/testing.md`
-- CLI / dimos run: `docs/development/dimos_run.md`
+- CLI / dimos run: `docs/usage/cli.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/coding-agents/`
+- Agent system: `docs/capabilities/agents/`
