@@ -40,6 +40,20 @@ Attach to the result with the same ``db_path`` and ``collection_name`` this run
 prints, plus ``new_memory=False`` — the default is ``True``, which deletes the
 collection on construction. ``assert_store_ingested`` below is the check the eval
 runs before it attaches, because attaching to the *wrong* name succeeds quietly.
+
+**The eval's store layout is one of these per recording**, under a single root
+the sweep is pointed at with ``DIMOS_EVAL_STORE_ROOT``::
+
+    <root>/<dataset>/chroma          # what --out-dir <root>/<dataset> writes
+    <root>/<dataset>/visual_memory.pkl
+
+so a machine holds every dataset's store side by side and the sweep resolves
+one from the dataset name alone (:func:`dataset_store`). The collection name is
+the dataset name — not a convention imposed by the eval but *this script's own
+default*, since ``--collection`` falls back to ``Path(args.dataset).stem``. An
+operator who runs the printed command therefore gets a store the sweep finds,
+and :func:`ingest_command` builds exactly that command so the skip message and
+the path the sweep looks in cannot drift apart.
 """
 
 from __future__ import annotations
@@ -65,6 +79,32 @@ DEFAULT_SAMPLE_HZ = 1.0
 VISUAL_MEMORY_NAME = "visual_memory.pkl"
 VISUAL_MEMORY_BACKUP_NAME = "visual_memory.pkl.bak"
 
+#: Sub-directory of ``--out-dir`` ChromaDB is persisted into. The eval must be
+#: pointed at *this* directory, not at the one above it (see the docstring).
+CHROMA_DIR_NAME = "chroma"
+
+
+def dataset_store(store_root: str | Path, dataset: str) -> Path:
+    """The chroma directory holding *dataset*'s store under *store_root*.
+
+    The one place the multi-dataset layout is written down. Callers that need
+    the collection name use the dataset name itself, which is what this script
+    defaults ``--collection`` to.
+    """
+    return Path(store_root) / dataset / CHROMA_DIR_NAME
+
+
+def ingest_command(store_root: str | Path, dataset: str) -> str:
+    """The command that builds the store :func:`dataset_store` resolves to.
+
+    Derived from the same two values, so a skip message telling an operator what
+    to run cannot name a directory the sweep does not then look in.
+    """
+    return (
+        "uv run python -m dimos.agents.evals.ingest "
+        f"--dataset {dataset} --out-dir {Path(store_root) / dataset}"
+    )
+
 
 def assert_store_ingested(db_path: str | Path, collection_name: str) -> int:
     """Check that *collection_name* exists in *db_path* and holds frames.
@@ -84,10 +124,9 @@ def assert_store_ingested(db_path: str | Path, collection_name: str) -> int:
     """
     import chromadb
 
-    hint = (
-        f"build one with: uv run python -m dimos.agents.evals.ingest --dataset "
-        f"{DEFAULT_DATASET} --out-dir <dir> --collection {collection_name}"
-    )
+    # The collection name is the dataset name under the layout above, so the
+    # command that rebuilds this store follows from the name that is missing.
+    hint = f"build one with: {ingest_command('<store root>', collection_name)}"
     if not Path(db_path).is_dir():
         # Checked before the client is built: `PersistentClient` would create the
         # directory, so the guard would otherwise leave an empty store behind
@@ -196,7 +235,7 @@ def ingest(
     memory = SpatialMemory(
         collection_name=collection,
         new_memory=True,  # this run *is* the ingest; later runs attach with False
-        db_path=str(out_dir / "chroma"),
+        db_path=str(out_dir / CHROMA_DIR_NAME),
         visual_memory_path=str(out_dir / VISUAL_MEMORY_NAME),
         output_dir=str(out_dir / "images"),
         # Sampling is done above, on recorded timestamps; see the module docstring.
@@ -234,7 +273,7 @@ def ingest(
             f"timing:     {finished - started:.1f}s total, "
             f"{constructed - started:.1f}s of it constructing SpatialMemory\n"
             f"attach via: SpatialMemory(collection_name={collection!r}, "
-            f"db_path={str(out_dir / 'chroma')!r}, new_memory=False)"
+            f"db_path={str(out_dir / CHROMA_DIR_NAME)!r}, new_memory=False)"
         )
     finally:
         # Not optional: constructing SpatialMemory starts ~18 non-daemon threads

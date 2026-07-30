@@ -1,0 +1,61 @@
+{
+  "aqua": {
+    "note": "Extreme motion blur: a white/orange horizontally striped face with a teal block at right, reading as stacked packaged goods on a shelf. No identifiable object noun; a store has many such stacks (class-ambiguous). loc-01 duplicate with 'gift bag'.",
+    "status": "dropped"
+  },
+  "bookstore": {
+    "note": "Motion-blurred view down a store aisle: a diagonal run of cyan backlit ceiling panels over a dark-blue chiller bay, other product shelves at right. Bbox covers the aisle region, not an object, and the reference z=0.43 m sits at the shelf plinth rather than at the ceiling lights that dominate the crop. Region non-object.",
+    "status": "dropped"
+  },
+  "church bench": {
+    "note": "Depth 0.76 m close-up of a long, low, flat-topped matte-black mass against a white wall. Silhouette only, no legs/seat/texture resolvable, so a bench cannot be confirmed; unverifiable.",
+    "status": "dropped"
+  },
+  "entrance hall": {
+    "note": "Corner of a white-framed glass office pod on casters, with a potted plant and umbrella stand behind it. Label is a region non-object, and the visible object is another instance of the same pod class seen at loc-02, so it is class-ambiguous.",
+    "status": "dropped"
+  },
+  "fridge": {
+    "note": "Heavily blurred dark grey/black slab-like mass with one vertical edge, lit from the left; no door, handle, seal, or grille visible. Could equally be a cabinet, a dark panel stack, or a doorway shadow. Unverifiable. loc-06 duplicate with 'podium'.",
+    "status": "dropped"
+  },
+  "gift bag": {
+    "note": "Same loc-01 shelf as 'aqua', same extreme blur: orange/yellow packs at left, teal cartons with white roundels at right, i.e. stacked packaged product. No confident noun, and one name maximum is allowed per location group.",
+    "status": "dropped"
+  },
+  "houseplant": {
+    "display_name": "houseplant",
+    "note": "Clearly a large potted plant: tall arching green leaves in a dark tapered pot standing on the grey floor next to a white pillar/pod. Label is a fair name. Caveat: a similar potted plant appears in the background of the loc-05 crop; it is most likely this same plant seen from ~2.3 m away, but if the space has several floor plants this becomes class-ambiguous.",
+    "status": "verified"
+  },
+  "national flag": {
+    "note": "A blue/violet triangular wedge under a dark elliptical form, with a violet quadrilateral spilling onto a wood floor and a pale pole at left. Reads more like a downward light beam / backlit display than a flag; no fabric, hoist, or emblem visible. Unverifiable.",
+    "status": "dropped"
+  },
+  "newsstand": {
+    "display_name": "toilet paper display",
+    "note": "Blue-lit retail bay whose bottom shelf holds large white plastic-wrapped toilet-paper multipacks stacked in a pyramid, with rows of white paper rolls on the illuminated top shelf. Not a newsstand. Reference z=0.4 m matches the multipack stack. Renamed to the visible paper-goods content, which is unique in this recording.",
+    "status": "renamed"
+  },
+  "office desk": {
+    "display_name": "wooden meeting table",
+    "note": "A large dark-wood table with a row of black chairs tucked underneath and cables hanging from the tabletop to the floor. 'Office desk' understates a multi-seat communal table, so renamed to the visible furniture. Reference z=0.53 m matches the tabletop.",
+    "status": "renamed"
+  },
+  "podium": {
+    "note": "Same loc-06 object as 'fridge' from an adjacent frame: an unresolvable dark vertical mass, no lectern top, base, or panel edges visible. Unverifiable, and only one name per location group is allowed.",
+    "status": "dropped"
+  },
+  "storage box": {
+    "note": "Smallest crop (165x122) and almost entirely under-exposed; even at 3x with autocontrast only faint horizontal banding and sensor noise are visible. Nothing identifiable. Unverifiable.",
+    "status": "dropped"
+  },
+  "ticket booth": {
+    "note": "Floor-level close-up of a glossy white rounded shell with a purple-to-magenta gradient stripe curving down its left side and a hard shadow beneath. Cannot be resolved as a booth, a lit pillar, or the white mobile service robot; given the robot is dynamic and this shape is consistent with it, dropped rather than guessed.",
+    "status": "dropped"
+  },
+  "vanity": {
+    "note": "Object is identifiable (a light-grey two-door metal cabinet on casters, wheels visible at the base) and 'vanity' is wrong, but dropped for confusability: this question's own teacher viewpoints sit 2.18 m and 2.60 m from the 'toilet paper display' reference, inside that question's 2.73 m threshold, so keeping both makes the paper-goods question invalid. Dropped this one because the cabinet is the intruder and its rename ('rolling metal cabinet') rests on weaker visual evidence than the paper-goods bay.",
+    "status": "dropped"
+  }
+}

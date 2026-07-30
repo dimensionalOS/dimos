@@ -27,6 +27,12 @@ lines carrying an ``AnswerRecord`` and a ``ScoreResult`` per question. Each
 figure; repeated runs of one pair (distinct ``run_id``) are aggregated into that
 row rather than split, and the row then reports ``runs n``.
 
+**Point it at one dataset's shard directory** -- the sweep writes
+``$DIMOS_EVAL_SHARD_DIR/<dataset>/``, and this is invoked once per such
+directory. Rows are keyed by ``(model_id, prompt_id)`` and nothing else, so a
+run over a directory holding two recordings' shards would silently average one
+row's dots across two rooms, two question sets and two threshold ranges.
+
 The figure is a per-configuration strip of measured errors (one dot per
 question that produced a goal, a marker at the median) annotated with
 ``n_pred / n_total``, the no-prediction rate and the pass rate -- the counts

@@ -709,11 +709,17 @@ def independent_views(views: list[Measurement], params: GateParams) -> list[Meas
     sat still for a minute has one line of sight however many frames it took.
     An earlier version also accepted "at least a second elapsed", which counted
     a static re-observation as verification and so overstated what two views
-    prove -- and on the reference recording it never mattered: rerunning the
-    whole sweep with that branch removed produced a byte-identical ``refs.jsonl``
-    and an identical funnel (26 labels qualified either way, 250 clusters dropped
+    prove -- and on ``go2_bigoffice`` it never mattered: rerunning the whole
+    sweep with that branch removed produced a byte-identical ``refs.jsonl`` and
+    an identical funnel (26 labels qualified either way, 250 clusters dropped
     for too few independent views either way). It was a claim the table did not
     need, so it is gone.
+
+    On ``go2_short`` it does bite, once, and on exactly the row it was removed
+    to catch: ``beauty salon`` qualified under the old rule on two views whose
+    baseline was **4.4 mm**, spanning 1.1 s of the robot standing still. It is
+    absent from that dataset's 14 references, and review had independently
+    dropped it as class-ambiguous, so nothing downstream moves.
 
     Greedy in timestamp order is a lower bound on the true maximum clique, which
     keeps the gate conservative.

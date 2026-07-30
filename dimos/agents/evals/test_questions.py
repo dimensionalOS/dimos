@@ -17,14 +17,15 @@
 Everything a reviewer can get wrong is checked here, because the failure mode
 is silent: a question set with two names for one shelf, or with a name the
 reviewer never actually looked at, still runs and still produces a number.
-The last test re-derives the committed question set from the committed
-reference table and review overlay, so the shipped artifacts cannot drift
-apart from the code that made them.
+The last two tests re-derive *every committed* question set from its own
+reference table and review overlay, so no shipped artifact can drift apart from
+the code that made it, and check that two recordings' question ids stay
+disjoint. They are parametrized over ``reference_sets.dataset_names()``, so a
+new recording is covered by committing its directory.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -41,19 +42,8 @@ from dimos.agents.evals.questions import (
     slugify,
     threshold_for,
 )
+from dimos.agents.evals.reference_sets import dataset_dir, dataset_names, load_question_set
 from dimos.agents.evals.teacher import GateParams
-
-REFERENCE_DIR = Path(__file__).parent / "reference"
-
-#: The number of questions the shipped table holds. Frozen because the figure,
-#: the PR's reported counts and the sweep's runtime are all quoted against it.
-#: Two of the six labels review had otherwise kept were dropped by the
-#: confusability gate: at viewpoint granularity this scene's objects stand close
-#: enough together that one retrieval answers for several. A third, ``elevator
-#: door``, was dropped afterwards on cross-frame evidence -- its reference sits on
-#: a blank side wall, which two rounds of single-crop review had passed (see
-#: ``review.json``), leaving three.
-EXPECTED_QUESTION_COUNT = 3
 
 
 def make_ref(raw_label: str, location_group: str, **overrides: Any) -> dict[str, Any]:
@@ -496,26 +486,51 @@ def test_slugify_collapses_runs_of_punctuation() -> None:
     assert slugify("gpt-5.6-luna") == "gpt-5-6-luna"
 
 
-def test_committed_question_set_is_what_the_committed_inputs_produce() -> None:
-    """The shipped artifacts are re-derivable, and the set is K=3.
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_committed_question_set_is_what_the_committed_inputs_produce(dataset: str) -> None:
+    """Every shipped question set is exactly what its own inputs produce.
 
-    ``reference/questions.jsonl`` is what the live sweep reads, so it must stay
-    exactly what ``refs.jsonl`` plus ``review.json`` produce -- an artifact
-    edited by hand, or left behind by a change to the rules above, would move
-    every score without anything failing. That includes the thresholds, which are
-    now derived per question and so cannot be eyeballed.
+    ``reference/<dataset>/questions.jsonl`` is what the live sweep reads, so it
+    must stay exactly what that dataset's ``refs.jsonl`` plus ``review.json``
+    produce -- an artifact edited by hand, or left behind by a change to the
+    rules above, would move every score without anything failing. That includes
+    the thresholds, which are derived per question and so cannot be eyeballed.
+
+    The assertions are invariants rather than a frozen question count, and the
+    parametrization comes from discovery rather than from a list: adding a
+    recording is adding a directory, and a K that had to be declared here would
+    be a second place to forget it. The per-dataset counts the PR text and the
+    figures quote are recorded in ``reference/README.md``, next to the funnel
+    they came out of.
     """
-    refs = load_refs(REFERENCE_DIR / "refs.jsonl")
-    review = load_review(REFERENCE_DIR / "review.json")
+    directory = dataset_dir(dataset)
+    refs = load_refs(directory / "refs.jsonl")
+    review = load_review(directory / "review.json")
     questions, problems, _ = build_questions(refs, review)
-    committed = [
-        QuestionSpec.from_json(line)
-        for line in (REFERENCE_DIR / "questions.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
+    committed = load_question_set(dataset)
 
     assert problems == []
     assert questions == committed
-    assert len(committed) == EXPECTED_QUESTION_COUNT
-    assert len({q.question_id for q in committed}) == EXPECTED_QUESTION_COUNT
-    assert len({q.display_name for q in committed}) == EXPECTED_QUESTION_COUNT
+    assert committed, f"{dataset!r} ships an empty question set"
+    assert len({q.question_id for q in committed}) == len(committed)
+    assert len({q.display_name for q in committed}) == len(committed)
+
+
+def test_question_ids_are_unique_across_every_committed_dataset() -> None:
+    """No two recordings can produce the same question id.
+
+    ``question_id`` is ``<dataset slug>-<raw label slug>``, and it is the join
+    key everywhere downstream: shard lines, the figure's rows, and any
+    longitudinal comparison across runs. Two datasets sharing one -- a second
+    recording of the same room, or a dataset name that slugifies onto another's
+    -- would silently merge two different objects into one series. Nothing in
+    ``build_questions`` can catch that, because it only ever sees one table.
+    """
+    seen: dict[str, str] = {}
+    for dataset in dataset_names():
+        for question in load_question_set(dataset):
+            collision = seen.setdefault(question.question_id, dataset)
+            assert collision == dataset, (
+                f"question id {question.question_id!r} is shipped by both "
+                f"{collision!r} and {dataset!r}"
+            )

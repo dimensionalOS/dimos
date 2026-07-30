@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The runs that need a robot recording: the 2x2 sweep and a full-chain smoke.
+"""The runs that need a robot recording: the dataset sweep and a full-chain smoke.
 
 Both lanes are ``self_hosted``. Everything the eval decides -- classification,
 scoring, question rules, the figure -- is covered by the synthetic unit tests
@@ -20,21 +20,33 @@ next to this file; what is left here is the part that can only be checked by
 actually driving the shipping agent, and it needs an ingested spatial memory
 (and, for the sweep, an API key).
 
-**The sweep** (``test_goal_selection_sweep``) is the measurement: two system
-prompts (the shipping default, and one that names the spatial memory) x two
-models over the whole committed question set, one JSONL shard per case. It is
-a *tool-routing and query-formulation comparison*, not a ranking of spatial
-ability -- the coordinates come from ``SpatialMemory``'s deterministic CLIP
-top-1, and the model only decides whether to call the tool, what query to
-send, and how many times. What it asserts is correspondingly narrow: every
-question produced a paired, attributable record, and none of them came back as
-something other than a measurement of the agent. The numbers live in the shards.
+**The sweep** (``test_goal_selection_sweep``) is the measurement: every
+recording the reference tree ships questions for x two system prompts (the
+shipping default, and one that names the spatial memory) x two models, one JSONL
+shard per case. It is a *tool-routing and query-formulation comparison*, not a
+ranking of spatial ability -- the coordinates come from ``SpatialMemory``'s
+deterministic CLIP top-1, and the model only decides whether to call the tool,
+what query to send, and how many times. What it asserts is correspondingly
+narrow: every question produced a paired, attributable record, and none of them
+came back as something other than a measurement of the agent. The numbers live
+in the shards.
+
+The dataset arm is discovered, not listed: ``reference_sets.dataset_names()``
+globs ``reference/*/questions.jsonl``, so a new recording enters the sweep by
+having its artifact directory committed and nothing here changes. Each dataset's
+cases answer from **that dataset's own store** and write into **that dataset's
+own shard directory**, because a question set, a spatial memory and a figure are
+only comparable within one recording.
 
 **The smoke** (``test_full_chain_pipeline``) needs no key. It ingests a thin
-slice of the replay, asks one question with a recorded model transcript, and
+slice of one replay, asks one question with a recorded model transcript, and
 scores and plots the answer. It validates the *pipeline* -- ingest, harness,
 memory query, goal capture, scoring, shard, figure -- and says nothing
-whatsoever about model quality.
+whatsoever about model quality. It stays pinned to :data:`SMOKE_DATASET` while
+the sweep fans out over every dataset: the transcript is a recording of one
+model answering one question about one room, so a smoke that took its replay
+from an environment variable would play a ``go2_bigoffice`` transcript against
+whatever store it was pointed at and still pass.
 
 Re-recording the smoke's transcript. ``MockModel`` reads ``RECORD`` itself: with
 it set, the fixture path is *written* from a live turn instead of replayed
@@ -51,20 +63,37 @@ keyless, which is the state the lane ships in.
 
 Running the sweep locally::
 
-    # once: build the store the sweep answers from (~1 min)
+    # once per recording, into one root, one sub-directory per dataset (~1 min
+    # each). --collection is left off deliberately: ingest.py defaults it to the
+    # dataset name, which is the name the sweep then looks the collection up by.
+    ROOT=~/.local/state/dimos/spatial-eval
     uv run python -m dimos.agents.evals.ingest \\
-        --dataset go2_bigoffice --out-dir ~/.local/state/dimos/spatial-eval
+        --dataset go2_bigoffice --out-dir $ROOT/go2_bigoffice
+    uv run python -m dimos.agents.evals.ingest \\
+        --dataset go2_short --out-dir $ROOT/go2_short
 
-    DIMOS_EVAL_DB_PATH=~/.local/state/dimos/spatial-eval/chroma \\
-    DIMOS_EVAL_COLLECTION=go2_bigoffice \\
+    DIMOS_EVAL_STORE_ROOT=$ROOT \\
     DIMOS_EVAL_SHARD_DIR=.ignore.eval-shards \\
     uv run pytest dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted
 
-    # then turn the four shards into the one figure. Thresholds are per question
-    # (questions.THRESHOLD_MARGIN_M); --threshold-m draws the cap as a reference
-    # line, not the line any single dot was scored against.
+A root holding only some of the datasets is a supported state, not an error:
+the cases of a dataset with no store skip with the command that builds it, and
+the rest of the sweep runs. Only a ``DIMOS_EVAL_STORE_ROOT`` that does not exist
+at all fails, because that is a typo rather than a partly-provisioned machine.
+
+Shards land in ``$DIMOS_EVAL_SHARD_DIR/<dataset>/``, and **the renderer is
+invoked once per dataset directory**::
+
     uv run python -m dimos.agents.evals.render \\
-        --shards .ignore.eval-shards --out error_distribution.png --threshold-m 3.5
+        --shards .ignore.eval-shards/go2_bigoffice \\
+        --out error_distribution_go2_bigoffice.png --threshold-m 3.5
+
+One figure per recording, because the x axis is a distance error against that
+recording's own references: pooling two recordings' dots into one plot would
+average over two different rooms, two question sets and two threshold ranges.
+Thresholds are per question (``questions.THRESHOLD_MARGIN_M``); ``--threshold-m``
+draws the cap as a reference line, not the line any single dot was scored
+against.
 
 Note for a first run on a fresh machine: ``navigate_with_text`` tries tagged
 locations before the semantic map, and that path makes ChromaDB instantiate
@@ -85,8 +114,9 @@ import time
 
 import pytest
 
-from dimos.agents.evals.contracts import QuestionSpec
+from dimos.agents.evals.ingest import CHROMA_DIR_NAME, dataset_store, ingest_command
 from dimos.agents.evals.questions import slugify
+from dimos.agents.evals.reference_sets import dataset_names, load_question_set
 from dimos.agents.evals.render import MAX_PNG_BYTES, render_figure
 from dimos.agents.evals.scorer import (
     BROKEN_OUTCOMES,
@@ -107,19 +137,24 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-REFERENCE_DIR = Path(__file__).parent / "reference"
-QUESTIONS_PATH = REFERENCE_DIR / "questions.jsonl"
+#: Root of the per-dataset stores the sweep answers from: one sub-directory per
+#: dataset, each holding what ``ingest.py --out-dir <root>/<dataset>`` wrote
+#: (``ingest.dataset_store`` resolves one). A single root rather than a
+#: ``db_path``/``collection`` pair because with several recordings the pair
+#: would have to be re-exported per dataset, and the two halves could be made
+#: to disagree -- a ``go2_short`` collection name against a ``go2_bigoffice``
+#: chroma directory attaches to an *empty* collection and scores every question
+#: as no_prediction.
+STORE_ROOT_ENV = "DIMOS_EVAL_STORE_ROOT"
 
-#: Where the sweep reads its ingested store from, and writes its shards to.
-#: ``DIMOS_EVAL_DB_PATH`` is the ``chroma/`` directory ``ingest.py`` produced,
-#: not the directory above it.
-DB_PATH_ENV = "DIMOS_EVAL_DB_PATH"
-COLLECTION_ENV = "DIMOS_EVAL_COLLECTION"
+#: Where shards are written: one sub-directory per dataset underneath.
 SHARD_DIR_ENV = "DIMOS_EVAL_SHARD_DIR"
 
-#: Replay the smoke test ingests its slice from (an LFS artifact in ``data/``).
-DATASET_ENV = "DIMOS_EVAL_DATASET"
-DEFAULT_DATASET = "go2_bigoffice"
+#: The dataset arm of the sweep: every recording the committed reference tree
+#: ships a question set for, discovered at import so ``--collect-only`` shows
+#: the real case list. Sorted, so case ids -- and the shard directories named
+#: after them -- do not depend on directory iteration order.
+DATASETS = dataset_names()
 
 #: Frozen model arms. ``gpt-5.6-luna`` is the shipping default and is routed to
 #: the OpenAI *Responses* API with reasoning effort, while ``openai:gpt-5.6-sol`` is
@@ -150,12 +185,15 @@ PROMPT_SPATIAL = (
 #: moves this eval, which is the signal it exists to give.
 PROMPTS = (("shipping", SYSTEM_PROMPT), ("spatial", PROMPT_SPATIAL))
 
-#: The smoke test's question, and the query in its recorded transcript. The
-#: transcript is recorded against *this* question -- the query below is the
-#: question's own ``display_name``, which is what a model answering it would send
-#: to ``navigate_with_text`` -- so the playback exercises the shipping skill on
-#: the question the shard says it ran. Re-record after changing either (see the
-#: docstring above for the ``RECORD`` flow).
+#: The smoke test's recording, question, and the query in its recorded
+#: transcript. The transcript is recorded against *this* question of *this*
+#: dataset -- the query below is the question's own ``display_name``, which is
+#: what a model answering it would send to ``navigate_with_text`` -- so the
+#: playback exercises the shipping skill on the question the shard says it ran.
+#: Pinned rather than swept or read from the environment: a transcript is not
+#: transferable between recordings. Re-record after changing any of the three
+#: (see the docstring above for the ``RECORD`` flow).
+SMOKE_DATASET = "go2_bigoffice"
 SMOKE_QUESTION_ID = "go2-bigoffice-organization"
 SMOKE_TOOL_QUERY = "stack of storage boxes"
 SMOKE_MODEL_FIXTURE = Path(__file__).parent / "fixtures" / "test_full_chain_pipeline.json"
@@ -167,11 +205,6 @@ SMOKE_SAMPLE_HZ = 0.2
 SMOKE_INGEST_TIMEOUT_S = 600.0
 
 
-def load_question_set(path: Path = QUESTIONS_PATH) -> list[QuestionSpec]:
-    """Read the committed question set, in file order."""
-    return [QuestionSpec.from_json(line) for line in path.read_text().splitlines() if line.strip()]
-
-
 def shard_path(directory: Path, model_id: str, prompt_id: str, run_id: str) -> Path:
     """A shard filename no other case can produce.
 
@@ -180,59 +213,83 @@ def shard_path(directory: Path, model_id: str, prompt_id: str, run_id: str) -> P
     the same ``run_id`` the records inside carry -- keeps repeated runs (and
     parallel workers) from appending to each other. Filename and content agree by
     construction, so a shard can be attributed to its run without opening it.
+    The dataset is not in the name because it is the *directory*: the renderer
+    consumes one dataset's directory at a time.
     """
     return directory / f"{slugify(model_id)}__{prompt_id}__{run_id}.jsonl"
-
-
-@pytest.fixture(scope="module")
-def question_set() -> list[QuestionSpec]:
-    return load_question_set()
 
 
 @pytest.fixture(scope="module")
 def run_id() -> str:
     """One stamp for the whole sweep: its cases are arms of a single run.
 
-    Module-scoped on purpose. The four (model, prompt) cases are one sweep, and
-    the renderer aggregates by ``run_id`` -- giving each case its own would make
-    a repeat of the sweep indistinguishable from the sweep itself.
+    Module-scoped on purpose. The (dataset, model, prompt) cases are one sweep,
+    and the renderer aggregates by ``run_id`` -- giving each case its own would
+    make a repeat of the sweep indistinguishable from the sweep itself. It spans
+    datasets as well as arms: the same stamp appearing under two dataset
+    directories is what says the two were measured together.
     """
     return f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
 
 
 @pytest.fixture
-def ingested_store() -> tuple[str, str]:
-    """The ``(db_path, collection)`` of a store built by ``ingest.py``.
+def ingested_store() -> Callable[[str], Path]:
+    """Resolve one dataset's chroma directory under ``$DIMOS_EVAL_STORE_ROOT``.
 
-    Skipping when the environment does not name a store is deliberate, and is
-    the same shape as the repository's other recording-backed self-hosted tests
-    (``dimos/navigation/cmu_nav/tests/rosbag_fixtures.py``): the store is a
-    machine-local artifact an operator produces once, not a dependency of the
-    package. A *named* store that is missing is a different thing -- that is a
-    misconfiguration, and it fails.
+    A callable rather than a value because the answer depends on the case's
+    dataset, and the three outcomes are deliberately different:
+
+    * **root unset** -- skip. The store is a machine-local artifact an operator
+      produces once, not a dependency of the package; this is the same shape as
+      the repository's other recording-backed self-hosted tests
+      (``dimos/navigation/cmu_nav/tests/rosbag_fixtures.py``).
+    * **root set but absent** -- fail. That is a typo, not an unprovisioned
+      machine, and silently skipping a whole sweep because of one is how a
+      "green" self-hosted lane ends up measuring nothing.
+    * **root present, this dataset's store absent** -- skip *these* cases, with
+      the command that builds it. Provisioning is per recording, so a machine
+      that has ingested one dataset must still be able to sweep it.
+
+    The collection name is the dataset name (``ingest.py``'s own default), and
+    ``conftest`` still runs ``assert_store_ingested`` against it before building
+    anything -- a store directory that exists but holds the wrong or an empty
+    collection is a misconfiguration and raises there.
     """
-    db_path = os.environ.get(DB_PATH_ENV)
-    collection = os.environ.get(COLLECTION_ENV)
-    if not db_path or not collection:
-        pytest.skip(
-            f"no ingested spatial memory: set {DB_PATH_ENV} (the chroma/ directory) and "
-            f"{COLLECTION_ENV}. Build one with: uv run python -m dimos.agents.evals.ingest "
-            f"--dataset {DEFAULT_DATASET} --out-dir <dir>"
-        )
-    if not Path(db_path).is_dir():
-        pytest.fail(
-            f"{DB_PATH_ENV}={db_path!r} does not exist; it must be the chroma/ directory "
-            "written by dimos.agents.evals.ingest"
-        )
-    return db_path, collection
+
+    def resolve(dataset: str) -> Path:
+        root = os.environ.get(STORE_ROOT_ENV)
+        if not root:
+            pytest.skip(
+                f"no ingested spatial memory: set {STORE_ROOT_ENV} to the directory "
+                f"holding one store per dataset. Build this one with: "
+                f"{ingest_command('<store root>', dataset)}"
+            )
+        store_root = Path(root).expanduser()
+        if not store_root.is_dir():
+            pytest.fail(
+                f"{STORE_ROOT_ENV}={root!r} does not exist; it must be the directory "
+                f"holding one dimos.agents.evals.ingest output per dataset"
+            )
+        db_path = dataset_store(store_root, dataset)
+        if not db_path.is_dir():
+            pytest.skip(
+                f"no ingested store for dataset {dataset!r}: {db_path} does not exist "
+                f"(other datasets under {STORE_ROOT_ENV} are unaffected). Build it "
+                f"with: {ingest_command(store_root, dataset)}"
+            )
+        return db_path
+
+    return resolve
 
 
 @pytest.fixture
-def shard_dir(tmp_path: Path) -> Path:
-    """Where cases write their shards: ``$DIMOS_EVAL_SHARD_DIR``, else throwaway."""
-    directory = Path(os.environ.get(SHARD_DIR_ENV) or tmp_path / "shards")
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+def shard_root(tmp_path: Path) -> Path:
+    """Root of the shard tree: ``$DIMOS_EVAL_SHARD_DIR``, else throwaway.
+
+    Cases write into ``<root>/<dataset>/``; the renderer is pointed at one of
+    those sub-directories at a time.
+    """
+    return Path(os.environ.get(SHARD_DIR_ENV) or tmp_path / "shards").expanduser()
 
 
 @pytest.mark.self_hosted
@@ -242,25 +299,33 @@ def shard_dir(tmp_path: Path) -> Path:
 @pytest.mark.timeout(2400)
 @pytest.mark.parametrize("model_id", MODEL_IDS)
 @pytest.mark.parametrize(("prompt_id", "system_prompt"), PROMPTS, ids=[p[0] for p in PROMPTS])
+@pytest.mark.parametrize("dataset", DATASETS)
 def test_goal_selection_sweep(
     spatial_eval_setup: Callable[..., RunObservation],
-    question_set: list[QuestionSpec],
-    ingested_store: tuple[str, str],
-    shard_dir: Path,
+    ingested_store: Callable[[str], Path],
+    shard_root: Path,
     run_id: str,
+    dataset: str,
     model_id: str,
     prompt_id: str,
     system_prompt: str,
 ) -> None:
-    """Ask every question under one (model, prompt) configuration and record it.
+    """Ask one recording's questions under one (model, prompt) arm and record it.
 
-    This case is one row of the figure. It asserts only what would mean the
-    measurement is invalid -- a missing question, a record attributed to the
-    wrong configuration, or a failure of the *measurement* rather than of the
-    agent. Whether the agent finds the elevator is the *result*, and lives in
-    the shard, not in an assertion.
+    This case is one row of that dataset's figure. It asserts only what would
+    mean the measurement is invalid -- a missing question, a record attributed
+    to the wrong configuration, or a failure of the *measurement* rather than of
+    the agent. Whether the agent finds the elevator is the *result*, and lives
+    in the shard, not in an assertion.
+
+    The timeout is per case, i.e. per (dataset, model, prompt): adding a
+    recording adds cases rather than lengthening one, so the budget a single
+    case needs does not move when the sweep grows.
     """
-    db_path, collection = ingested_store
+    db_path = ingested_store(dataset)
+    question_set = load_question_set(dataset)
+    shard_dir = shard_root / dataset
+    shard_dir.mkdir(parents=True, exist_ok=True)
     out = shard_path(shard_dir, model_id, prompt_id, run_id)
 
     for question in question_set:
@@ -272,7 +337,7 @@ def test_goal_selection_sweep(
             model=model_id,
             run_id=run_id,
             db_path=db_path,
-            collection_name=collection,
+            collection_name=dataset,
         )
         answer = build_answer_record(observation)
         append_shard(out, answer, score(question, answer))
@@ -280,7 +345,8 @@ def test_goal_selection_sweep(
     cases = read_shard(out)
     results = [case.result for case in cases]
     logger.info(
-        f"[{model_id} / {prompt_id}] {out}: n_pred {len(errors_m(results))}/{len(results)}, "
+        f"[{dataset} / {model_id} / {prompt_id}] {out}: "
+        f"n_pred {len(errors_m(results))}/{len(results)}, "
         f"no-prediction {no_prediction_rate(results):.0%}, pass {pass_rate(results):.0%}, "
         f"broken {broken_count(results)}"
     )
@@ -312,7 +378,6 @@ def test_goal_selection_sweep(
 @pytest.mark.timeout(1200)
 def test_full_chain_pipeline(
     spatial_eval_setup: Callable[..., RunObservation],
-    question_set: list[QuestionSpec],
     run_id: str,
     tmp_path: Path,
 ) -> None:
@@ -336,14 +401,17 @@ def test_full_chain_pipeline(
     The store is a thin slice of the replay (``SMOKE_SAMPLE_HZ``), ingested
     through the shipped ``ingest.py`` entry point in its own process: that is
     how an operator builds one, and it keeps CLIP and ChromaDB's thread pool
-    out of the pytest process.
+    out of the pytest process. It is :data:`SMOKE_DATASET`'s replay and only
+    ever that one -- the transcript being replayed was recorded against a
+    question of that recording -- so this lane does not fan out with the sweep,
+    and it builds its own throwaway store rather than reading
+    ``$DIMOS_EVAL_STORE_ROOT``.
     """
-    dataset = os.environ.get(DATASET_ENV) or DEFAULT_DATASET
-    replay = Path(dataset) if Path(dataset).suffix else get_data_dir() / f"{dataset}.db"
+    replay = get_data_dir() / f"{SMOKE_DATASET}.db"
     if not replay.exists():
         pytest.skip(
             f"replay {replay} is not present; pull it with: git lfs pull "
-            f'--include="data/.lfs/{dataset}.db.tar.gz"'
+            f'--include="data/.lfs/{SMOKE_DATASET}.db.tar.gz"'
         )
 
     store_dir = tmp_path / "store"
@@ -357,7 +425,7 @@ def test_full_chain_pipeline(
             "--out-dir",
             str(store_dir),
             "--collection",
-            dataset,
+            SMOKE_DATASET,
             "--sample-hz",
             str(SMOKE_SAMPLE_HZ),
             "--quiet",
@@ -369,6 +437,7 @@ def test_full_chain_pipeline(
     )
     assert ingest.returncode == 0, f"ingest failed:\n{ingest.stdout}\n{ingest.stderr}"
 
+    question_set = load_question_set(SMOKE_DATASET)
     question = next(q for q in question_set if q.question_id == SMOKE_QUESTION_ID)
     observation = spatial_eval_setup(
         question_id=question.question_id,
@@ -377,8 +446,8 @@ def test_full_chain_pipeline(
         system_prompt=PROMPT_SPATIAL,
         model_fixture=SMOKE_MODEL_FIXTURE,
         run_id=run_id,
-        db_path=store_dir / "chroma",
-        collection_name=dataset,
+        db_path=store_dir / CHROMA_DIR_NAME,
+        collection_name=SMOKE_DATASET,
     )
     answer = build_answer_record(observation)
     result = score(question, answer)

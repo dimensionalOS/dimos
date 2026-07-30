@@ -21,8 +21,8 @@ taken from decides what review can catch -- and the first version of this got it
 wrong in a way worth keeping written down: it drew everything on the *brightest
 frame a detection fired in*, which is a frame chosen for exposure while the robot
 was moving. Reviewers passed a reference twice whose marker sat on a blank side
-wall (see ``reference/review.json``, ``elevator door``), because no single blurred
-crop could show it.
+wall (see ``reference/go2_bigoffice/review.json``, ``elevator door``), because no
+single blurred crop could show it.
 
 So each reference gets two images, answering the two different questions review
 asks (:func:`write_crops`):

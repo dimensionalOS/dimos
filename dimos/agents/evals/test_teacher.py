@@ -30,10 +30,13 @@ things are checked here, all on hand-built inputs or on the committed artifact:
 * the **two copies of the calibration**, which a recalibration would otherwise
   silently split, and the **funnel arithmetic**, which is the only thing making
   the manifest a description of one sweep rather than a pile of counters;
-* the **committed table itself**, against invariants a future pipeline change
-  must not break -- each reference sits about one measured depth from the
+* the **committed tables themselves**, against invariants a future pipeline
+  change must not break -- each reference sits about one measured depth from the
   nearest pose it was seen from, and every committed question is passable on
-  that same evidence.
+  that same evidence. These run once per dataset the reference tree ships
+  (``reference_sets.dataset_names()``), so a second recording is held to the
+  same invariants as the first without a test edit, and a pipeline change that
+  only holds on the recording it was tuned against fails here.
 """
 
 from __future__ import annotations
@@ -41,15 +44,14 @@ from __future__ import annotations
 from collections import Counter
 import json
 import math
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.agents.evals.contracts import QuestionSpec
 from dimos.agents.evals.questions import load_refs, nearest_viewpoint_m
+from dimos.agents.evals.reference_sets import dataset_dir, dataset_names, load_question_set
 from dimos.agents.evals.teacher import (
     _FALLBACK_D,
     _FALLBACK_K,
@@ -80,8 +82,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 GATES = GateParams()
-
-REFERENCE_DIR = Path(__file__).parent / "reference"
 
 
 def make_measurement(
@@ -860,14 +860,15 @@ def test_the_funnel_accounts_for_every_counted_detection() -> None:
     assert funnel["dropped_no_lidar_match"] == 7
 
 
-def test_the_committed_manifests_funnel_adds_up() -> None:
-    """The same identity, on the artifact rather than on hand-built counters.
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_the_committed_manifests_funnel_adds_up(dataset: str) -> None:
+    """The same identity, on the artifacts rather than on hand-built counters.
 
-    ``measurement_drops`` names the buckets, so this reads them back out of the
+    ``measurement_drops`` names the buckets, so this reads them back out of each
     committed manifest instead of re-listing them -- a new drop path that forgets
     to update the manifest fails here.
     """
-    funnel = json.loads((REFERENCE_DIR / "manifest.json").read_text())["funnel"]
+    funnel = json.loads((dataset_dir(dataset) / "manifest.json").read_text())["funnel"]
     buckets = measurement_drops(ScanStats(), Counter())
 
     dropped = sum(funnel[key] for key in buckets)
@@ -883,14 +884,15 @@ def test_the_committed_manifests_funnel_adds_up() -> None:
     )
 
 
-# --- the committed table ----------------------------------------------------
+# --- the committed tables ---------------------------------------------------
 
 #: How far ``nearest_viewpoint_m`` may sit from the depth the same row reports.
 #: The two are measured differently -- one is the closest of several poses, the
 #: other the median optical depth over the cluster, from a camera 0.3 m ahead of
 #: base_link -- so they are only ever approximately equal. The widest gap in the
-#: committed table is 0.79 m, on ``dollhouse``: the white service robot that
-#: moves between sightings, which is exactly why review dropped it.
+#: committed tables is 0.79 m, on ``go2_bigoffice``'s ``dollhouse``: the white
+#: service robot that moves between sightings, which is exactly why review
+#: dropped it. ``go2_short``'s widest is 0.69 m, on its ``houseplant``.
 #:
 #: What this tolerance can and cannot catch is worth being exact about, because
 #: 0.9 m sounds like a calibration check and is not one. It catches metre-scale
@@ -904,7 +906,10 @@ def test_the_committed_manifests_funnel_adds_up() -> None:
 MAX_VIEWPOINT_DEPTH_MISMATCH_M = 0.9
 
 
-def test_every_reference_sits_about_one_measured_depth_from_its_nearest_viewpoint() -> None:
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_every_reference_sits_about_one_measured_depth_from_its_nearest_viewpoint(
+    dataset: str,
+) -> None:
     """``x``/``y``, ``robot_poses`` and ``depth_median_m`` have to agree.
 
     They come from three different places -- the LiDAR sweep, the recorded pose
@@ -912,15 +917,17 @@ def test_every_reference_sits_about_one_measured_depth_from_its_nearest_viewpoin
     wrong frame, drops a sign or swaps an axis order breaks their agreement long
     before it produces a table anyone would question by eye.
     """
-    for ref in load_refs(REFERENCE_DIR / "refs.jsonl"):
+    for ref in load_refs(dataset_dir(dataset) / "refs.jsonl"):
         mismatch = nearest_viewpoint_m(ref) - ref["depth_median_m"]
         assert abs(mismatch) <= MAX_VIEWPOINT_DEPTH_MISMATCH_M, (
-            f"{ref['raw_label']!r}: nearest viewpoint {nearest_viewpoint_m(ref):.2f} m vs "
-            f"depth median {ref['depth_median_m']:.2f} m ({mismatch:+.2f} m apart)"
+            f"{dataset}/{ref['raw_label']!r}: nearest viewpoint "
+            f"{nearest_viewpoint_m(ref):.2f} m vs depth median "
+            f"{ref['depth_median_m']:.2f} m ({mismatch:+.2f} m apart)"
         )
 
 
-def test_every_committed_question_is_passable_on_the_teachers_own_evidence() -> None:
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_every_committed_question_is_passable_on_the_teachers_own_evidence(dataset: str) -> None:
     """The invariant ``questions.build_questions`` enforces, asserted on the artifact.
 
     The scored goal is a viewpoint, so a question whose object was never seen
@@ -928,12 +935,8 @@ def test_every_committed_question_is_passable_on_the_teachers_own_evidence() -> 
     agent behaved. This is the same check as the generator's, run against the
     committed files rather than against whatever the generator was last fed.
     """
-    refs = {ref["raw_label"]: ref for ref in load_refs(REFERENCE_DIR / "refs.jsonl")}
-    questions = [
-        QuestionSpec.from_json(line)
-        for line in (REFERENCE_DIR / "questions.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
+    refs = {ref["raw_label"]: ref for ref in load_refs(dataset_dir(dataset) / "refs.jsonl")}
+    questions = load_question_set(dataset)
 
     assert questions
     for question in questions:
