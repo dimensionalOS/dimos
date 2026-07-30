@@ -1,3 +1,0 @@
-# Parametrize during plan materialization
-
-Trajectory parametrization runs immediately after untimed geometric planning, before a `GeneratedPlan` is accepted or cached. Planner-native timed results already sit on the trajectory side of this boundary, so they bypass parametrization while retaining canonical validation. Preview and execution therefore consume the same validated time domain; execution may project globally named joints into robot-local order but does not regenerate or retime the trajectory. A runtime next-plan speed reduction is captured while producing a new trajectory and never changes an accepted plan. Parametrization failures prevent an untimed plan from being presented as ready rather than surfacing during execution.
