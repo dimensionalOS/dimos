@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -57,6 +58,7 @@ class RelocalizationModule(Module):
     global_map: In[PointCloud2]
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -168,7 +170,7 @@ class RelocalizationModule(Module):
             return
         if self.config.publish_loaded_map:
             self.loaded_map.publish(self._premap)
-        self.tf.publish(tf.now())
+        self.tf.publish(TFMessage(tf.now()))
 
     def _on_merge_input(self, pair: tuple[PointCloud2, Transform | None]) -> None:
         local, tf = pair

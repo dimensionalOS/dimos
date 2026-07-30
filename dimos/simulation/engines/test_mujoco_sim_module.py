@@ -139,18 +139,9 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
             def disconnect(self) -> None:
                 pass
 
-        class _FakeTf:
-            transforms: tuple[Any, ...] = ()
-
-            def publish(self, *transforms: Any) -> None:
-                self.transforms = transforms
-
-            def stop(self) -> None:
-                pass
-
-        fake_tf = _FakeTf()
+        messages: list[Any] = []
         module._engine = _FakeEngine()
-        module._tf = fake_tf
+        module.tf.subscribe(messages.append)
         frame = CameraFrame(
             rgb=np.zeros((1, 1, 3), dtype=np.uint8),
             depth=np.ones((1, 1), dtype=np.float32),
@@ -164,7 +155,7 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
 
         module._publish_tf(10.0, frame)
 
-        color_tf, depth_tf, camera_link_tf = fake_tf.transforms
+        color_tf, depth_tf, camera_link_tf = messages[-1].transforms
         assert color_tf.frame_id == "link7"
         assert color_tf.child_frame_id == "wrist_camera_color_optical_frame"
         assert np.allclose(color_tf.translation.to_numpy(), [0.0, 0.0, 1.0])

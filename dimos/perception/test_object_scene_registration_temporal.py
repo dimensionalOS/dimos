@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -24,7 +24,6 @@ import pytest
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.protocol.tf.tf import TFSpec
 
 
 class _FakeTF:
@@ -36,7 +35,7 @@ class _FakeTF:
         self.calls.append((args, kwargs))
         return self.result
 
-    def stop(self) -> None:
+    def dispose(self) -> None:
         pass
 
 
@@ -62,7 +61,7 @@ def test_temporal_tf_lookup_uses_bounded_image_timestamp(
     monkeypatch: Any, module: ObjectSceneRegistrationModule
 ) -> None:
     tf = _FakeTF(MagicMock())
-    module._tf = cast("TFSpec", tf)
+    module._tf = tf  # type: ignore[assignment]
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
@@ -83,7 +82,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
 ) -> None:
     old_transform = MagicMock(name="old_transform")
     tf = _FakeTF(old_transform)
-    module._tf = cast("TFSpec", tf)
+    module._tf = tf  # type: ignore[assignment]
     monkeypatch.setattr(
         "dimos.perception.object_scene_registration.Object.from_2d_to_list",
         lambda **_: [],
@@ -115,7 +114,7 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
 ) -> None:
     depth = _image(3.0)
     transform = MagicMock(name="transform")
-    module._tf = cast("TFSpec", _FakeTF(transform))
+    module._tf = _FakeTF(transform)  # type: ignore[assignment]
     module._latest_scene_snapshot = (depth, transform)
 
     class _PointCloud:

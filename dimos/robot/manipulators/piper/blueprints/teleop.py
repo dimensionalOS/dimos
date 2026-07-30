@@ -20,7 +20,9 @@ from dimos.control.components import make_gripper_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import Out
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
     eef_twist_task,
@@ -63,7 +65,7 @@ keyboard_teleop_piper = autoconnect(
                 priority=20,
                 params={"timeout": 0.0, "default_positions": [0.0]},
             ),
-            trajectory_task(_piper_keyboard_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_keyboard_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -84,8 +86,15 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
 
 _piper_teleop_hw = piper_hardware("arm", gripper_open_position=0.07, gripper_closed_position=0.0)
 
+
+class _PiperTeleopCoordinator(ControlCoordinator):
+    arm_joints: Out[JointState]
+
+
 coordinator_teleop_piper = autoconnect(
-    ControlCoordinator.blueprint(
+    _PiperTeleopCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        publish_robot_joint_states=True,
         hardware=[_piper_teleop_hw],
         tasks=[
             teleop_ik_task(
@@ -100,7 +109,7 @@ coordinator_teleop_piper = autoconnect(
                     "gripper_closed_pos": 0.0,
                 },
             ),
-            trajectory_task(_piper_teleop_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(

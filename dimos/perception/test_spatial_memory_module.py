@@ -25,8 +25,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
@@ -78,6 +80,8 @@ class VideoReplayModule(Module):
 class OdometryReplayModule(Module):
     """Module that replays odometry data and publishes to the tf system."""
 
+    tf: Out[TFMessage]
+
     def __init__(self, odom_path: str, **kwargs: Any) -> None:
         super().__init__()
         self.odom_path = odom_path
@@ -85,7 +89,7 @@ class OdometryReplayModule(Module):
 
     def _publish_tf(self, odom: Odometry) -> None:
         """Convert odometry to TF transforms and publish."""
-        self.tf.publish(Transform.from_pose("base_link", odom))
+        self.tf.publish(TFMessage(Transform.from_pose("base_link", odom)))
 
     @rpc
     def start(self) -> None:
@@ -158,6 +162,10 @@ async def test_spatial_memory_module_with_replay(dimos, tmp_path):
 
     # Connect video stream
     spatial_memory.color_image.connect(video_module.video_out)
+
+    # Wire tf ports onto a shared /tf transport
+    odom_module.set_transport("tf", make_transport("/tf", TFMessage))
+    spatial_memory.set_transport("tf", make_transport("/tf", TFMessage))
 
     # Start all modules
     video_module.start()

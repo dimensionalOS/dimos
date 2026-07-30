@@ -58,6 +58,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
 
@@ -74,7 +75,7 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build .#pointlio_native"
+    build_command: str | None = "nix build -L .#pointlio_native"
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
@@ -170,6 +171,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -181,23 +183,16 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
-            Transform(
-                frame_id=self.frame_id,
-                child_frame_id=self.config.sensor_frame_id,
-                translation=Vector3(
-                    msg.pose.position.x,
-                    msg.pose.position.y,
-                    msg.pose.position.z,
-                ),
-                rotation=Quaternion(
-                    msg.pose.orientation.x,
-                    msg.pose.orientation.y,
-                    msg.pose.orientation.z,
-                    msg.pose.orientation.w,
-                ),
-                # Match the odometry ts exactly; no `or time.time()` fallback (a
-                # real ts of 0.0 must not become wall time).
-                ts=msg.ts,
+            TFMessage(
+                Transform(
+                    frame_id=self.frame_id,
+                    child_frame_id=self.config.sensor_frame_id,
+                    translation=Vector3(msg.pose.position),
+                    rotation=Quaternion(msg.pose.orientation),
+                    # Match the odometry ts exactly; no `or time.time()` fallback (a
+                    # real ts of 0.0 must not become wall time).
+                    ts=msg.ts,
+                )
             )
         )
 

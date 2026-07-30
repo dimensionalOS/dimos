@@ -42,12 +42,13 @@ from aioquic.quic.events import ConnectionTerminated, QuicEvent
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
     DataFrame,
-    DataFrameReader,
+    DataFrameStreamError,
+    DataFrameStreamReader,
     Error,
     FrameHeader,
+    Manifest,
     Msg,
     Pong,
-    ProtocolError,
     Welcome,
     decode_datagram,
     encode_data_frame,
@@ -56,8 +57,20 @@ from dimos.web.relay_bridge.protocol import (
 
 logger = setup_logger()
 
-# Received data frames waiting for the consumer; drop-oldest beyond this.
+# Received data frames waiting for the consumer; drop-oldest beyond either
+# bound. The byte bound is what matters against a hostile/compromised relay:
+# 256 frames of near-MAX_DATA_FRAME_BYTES would otherwise retain ~16 GiB.
 _FRAME_QUEUE_MAX = 256
+_FRAME_QUEUE_MAX_BYTES = 128 * 1024 * 1024
+
+# Realistic payload caps for channels whose encoding is known from the
+# watched robot's manifest (frames themselves carry no encoding);
+# MAX_DATA_FRAME_BYTES stays the outer bound for everything else. Generous:
+# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B.
+_MAX_PAYLOAD_BYTES = {
+    "jpeg.v1": 8 * 1024 * 1024,
+    "pose.json.v1": 64 * 1024,
+}
 
 # Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
 # the consumer; drop-oldest beyond this. Snapshots are idempotent and resent,
@@ -67,6 +80,41 @@ _CONTROL_QUEUE_MAX = 64
 # The relay's abort of its send half surfaces as a stream reset; also used
 # when this side resets a stale latest-wins stream.
 STALE_STREAM_ERROR_CODE = 0x01
+
+
+class _FrameQueue:
+    """Drop-oldest frame buffer bounded by frame count and total payload bytes.
+
+    Single event loop only (put from the protocol callback, get from the
+    consumer task), so the plain byte counter is safe.
+    """
+
+    def __init__(self, max_frames: int, max_bytes: int) -> None:
+        self._queue: asyncio.Queue[DataFrame] = asyncio.Queue()
+        self._max_frames = max_frames
+        self._max_bytes = max_bytes
+        self.bytes = 0
+        self.dropped = 0
+
+    def qsize(self) -> int:
+        return self._queue.qsize()
+
+    def put_nowait(self, frame: DataFrame) -> None:
+        """Enqueue, evicting oldest frames until both bounds hold (a single
+        frame over the byte bound still enqueues once it is alone)."""
+        size = len(frame.payload)
+        while self._queue.qsize() > 0 and (
+            self._queue.qsize() >= self._max_frames or self.bytes + size > self._max_bytes
+        ):
+            self.bytes -= len(self._queue.get_nowait().payload)
+            self.dropped += 1
+        self._queue.put_nowait(frame)
+        self.bytes += size
+
+    async def get(self) -> DataFrame:
+        frame = await self._queue.get()
+        self.bytes -= len(frame.payload)
+        return frame
 
 
 def make_quic_configuration(insecure: bool) -> QuicConfiguration:
@@ -95,13 +143,16 @@ class SessionProtocol(QuicConnectionProtocol):
         # delivery poll consult it so they stop the moment the relay dies.
         self.closed = asyncio.Event()
         self.relay_error: Error | None = None
-        self.frames: asyncio.Queue[DataFrame] = asyncio.Queue(maxsize=_FRAME_QUEUE_MAX)
-        self.frames_dropped = 0
+        self.frames = _FrameQueue(_FRAME_QUEUE_MAX, _FRAME_QUEUE_MAX_BYTES)
+        self.frames_oversized = 0
         self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue(maxsize=_CONTROL_QUEUE_MAX)
         self.control_dropped = 0
         self.session_id: int | None = None
         self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
-        self._frame_readers: dict[int, DataFrameReader | None] = {}
+        self._frame_readers: dict[int, DataFrameStreamReader | None] = {}
+        # ch -> encoding, learned from manifest messages; arms the
+        # per-encoding payload caps in _MAX_PAYLOAD_BYTES.
+        self._encodings: dict[str, str] = {}
 
     def open_session(self, authority: str, path: str) -> None:
         self.session_id = self._quic.get_next_available_stream_id()
@@ -138,6 +189,10 @@ class SessionProtocol(QuicConnectionProtocol):
         elif isinstance(event, WebTransportStreamDataReceived):
             self._stream_data_received(event.stream_id, event.data, event.stream_ended)
 
+    @property
+    def frames_dropped(self) -> int:
+        return self.frames.dropped
+
     def _control_msg_received(self, msg: Msg) -> None:
         if isinstance(msg, Welcome):
             self.welcomed.set()
@@ -150,6 +205,8 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
         else:
+            if isinstance(msg, Manifest):
+                self._encodings.update({c.ch: c.encoding for c in msg.channels})
             # Session messages (subs snapshots, robots, manifest, ...) go to
             # the consumer queue; see RelayClient.control_messages().
             if self.control_msgs.full():
@@ -158,28 +215,36 @@ class SessionProtocol(QuicConnectionProtocol):
             self.control_msgs.put_nowait(msg)
 
     def _stream_data_received(self, stream_id: int, data: bytes, ended: bool) -> None:
-        # None marks a stream whose frame is already complete (the late FIN
-        # arrives up to ~1 s afterwards; any trailing bytes are ignored).
-        reader = self._frame_readers.get(stream_id, DataFrameReader())
+        # A latest stream carries one frame; a reliable channel's persistent
+        # stream carries them back to back, so frames dispatch on byte count
+        # (the peer's FIN can be seconds late). None poisons a stream that
+        # produced a bad frame: framing is unrecoverable mid-stream.
+        reader = self._frame_readers.get(stream_id, DataFrameStreamReader())
         if reader is not None:
             self._frame_readers[stream_id] = reader
             try:
-                frame = reader.push(data)
-            except ProtocolError as e:
+                frames = reader.push(data)
+            except DataFrameStreamError as e:
+                # Frames decoded before the corruption still count; the
+                # stream itself is unrecoverable.
                 logger.warning(f"bad data frame on stream {stream_id}: {e}")
-                frame = None
+                frames = e.frames
                 self._frame_readers[stream_id] = None
             except Exception:
                 # Network ingress: no decoder bug may escape into aioquic's
                 # datagram callback and tear down the whole session.
                 logger.exception(f"unexpected error decoding data frame on stream {stream_id}")
-                frame = None
+                frames = []
                 self._frame_readers[stream_id] = None
-            if frame is not None:
-                self._frame_readers[stream_id] = None
-                if self.frames.full():
-                    self.frames.get_nowait()
-                    self.frames_dropped += 1
+            for frame in frames:
+                limit = _MAX_PAYLOAD_BYTES.get(self._encodings.get(frame.header.ch, ""))
+                if limit is not None and len(frame.payload) > limit:
+                    self.frames_oversized += 1
+                    logger.warning(
+                        f"dropping {frame.header.ch} frame: {len(frame.payload)} B over "
+                        f"the {limit} B cap for its encoding"
+                    )
+                    continue
                 self.frames.put_nowait(frame)
         if ended:
             self._frame_readers.pop(stream_id, None)

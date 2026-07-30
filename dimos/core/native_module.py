@@ -426,20 +426,15 @@ class NativeModule(Module):
             cwd=self.config.cwd,
             env={**os.environ, **self.config.extra_env},
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
-        stdout, stderr = proc.communicate()
-        build_elapsed = time.perf_counter() - build_start
-
-        stdout_lines = stdout.decode("utf-8", errors="replace").splitlines()
-        stderr_lines = stderr.decode("utf-8", errors="replace").splitlines()
-
-        for line in stdout_lines:
-            if line.strip():
+        assert proc.stdout is not None
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if line:
                 logger.info(line, module=self._module_label)
-        for line in stderr_lines:
-            if line.strip():
-                logger.warning(line, module=self._module_label)
+        proc.wait()
+        build_elapsed = time.perf_counter() - build_start
 
         if proc.returncode != 0:
             raise RuntimeError(

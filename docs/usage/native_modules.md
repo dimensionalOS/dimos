@@ -258,13 +258,15 @@ autoconnect(
 ## Auto Building
 
 If `build_command` is set in the module config, and the executable doesn't exist when `start()` is called, NativeModule runs the build command automatically.
-Build output is piped through structlog (stdout at `info`, stderr at `warning`).
+Build output is streamed line by line through structlog at `info`, with stderr merged into
+stdout. `nix build` prints no build logs unless `-L` is passed, so the built-in modules all
+include it.
 
 ```python skip
 class MyLidarConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/my_lidar"
-    build_command: str | None = "nix build .#my_lidar"
+    build_command: str | None = "nix build -L .#my_lidar"
 ```
 
 `cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module

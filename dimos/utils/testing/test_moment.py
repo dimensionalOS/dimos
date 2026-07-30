@@ -16,11 +16,13 @@ import time
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
 from dimos.utils.data import get_data
@@ -54,9 +56,11 @@ class Go2Moment(Moment):
         return connection.GO2Connection._odom_to_tf(odom)
 
     def publish(self) -> None:
-        t = TF()
+        tf_transport = make_transport("/tf", TFMessage)
+        t = TF(tf_transport)
         t.publish(*self.transforms)
-        t.stop()
+        t.dispose()
+        tf_transport.stop()
 
         camera_info = connection._camera_info_static()
         camera_info.ts = time.time()
