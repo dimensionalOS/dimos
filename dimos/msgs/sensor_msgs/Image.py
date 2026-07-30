@@ -21,13 +21,11 @@ import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
 
-import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-import rerun as rr
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
@@ -157,6 +155,8 @@ class Image(Timestamped):
         filepath: str | os.PathLike[str],
         format: ImageFormat = ImageFormat.RGB,
     ) -> Image:
+        import cv2
+
         arr = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
         if arr is None:
             raise ValueError(f"Could not load image from {filepath}")
@@ -188,6 +188,8 @@ class Image(Timestamped):
 
     def to_opencv(self) -> np.ndarray:
         """Convert to OpenCV BGR format."""
+        import cv2
+
         arr = self.data
         if self.format == ImageFormat.BGR:
             return arr
@@ -211,6 +213,8 @@ class Image(Timestamped):
         return self.data
 
     def to_rgb(self) -> Image:
+        import cv2
+
         if self.format == ImageFormat.RGB:
             return self.copy()
         arr = self.data
@@ -244,6 +248,8 @@ class Image(Timestamped):
         return self.copy()
 
     def to_bgr(self) -> Image:
+        import cv2
+
         if self.format == ImageFormat.BGR:
             return self.copy()
         arr = self.data
@@ -281,6 +287,8 @@ class Image(Timestamped):
         return self.copy()
 
     def to_grayscale(self) -> Image:
+        import cv2
+
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()
         if self.format == ImageFormat.BGR:
@@ -309,6 +317,8 @@ class Image(Timestamped):
 
     def to_rerun(self) -> Any:
         """Convert to a Rerun archetype: JPEG-encoded for color images, raw for depth."""
+        import rerun as rr
+
         match self.format:
             case ImageFormat.DEPTH | ImageFormat.DEPTH16:
                 return rr.DepthImage(self.data)
@@ -317,7 +327,11 @@ class Image(Timestamped):
             case _:
                 return rr.EncodedImage(contents=self.to_jpeg_bytes(), media_type="image/jpeg")
 
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
+    def resize(self, width: int, height: int, interpolation: int | None = None) -> Image:
+        import cv2
+
+        if interpolation is None:
+            interpolation = cv2.INTER_LINEAR
         return Image(
             data=cv2.resize(self.data, (width, height), interpolation=interpolation),
             format=self.format,
@@ -326,7 +340,7 @@ class Image(Timestamped):
         )
 
     def resize_to_fit(
-        self, max_width: int, max_height: int, interpolation: int = cv2.INTER_LINEAR
+        self, max_width: int, max_height: int, interpolation: int | None = None
     ) -> tuple[Image, float]:
         """Resize image to fit within max dimensions while preserving aspect ratio.
 
@@ -389,6 +403,8 @@ class Image(Timestamped):
         Downsamples to ~160px wide before computing Laplacian variance
         for fast evaluation (~10-20x cheaper than full-res Sobel).
         """
+        import cv2
+
         gray = self.to_grayscale().data
         # Downsample to ~160px wide for cheap evaluation
         h, w = gray.shape[:2]
@@ -401,6 +417,8 @@ class Image(Timestamped):
         return float(np.clip((np.log10(lap_var + 1) - 1.0) / 3.0, 0.0, 1.0))
 
     def save(self, filepath: str) -> bool:
+        import cv2
+
         arr = self.to_opencv()
         return cv2.imwrite(filepath, arr)
 
@@ -421,6 +439,8 @@ class Image(Timestamped):
         Returns:
             Base64-encoded JPEG representation of the image.
         """
+        import cv2
+
         bgr_image = self.to_bgr().to_opencv()
         height, width = bgr_image.shape[:2]
 

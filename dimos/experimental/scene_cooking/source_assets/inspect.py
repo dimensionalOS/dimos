@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
 
 @dataclass(frozen=True)
@@ -168,6 +167,8 @@ def _inspect_usd(path: Path) -> SceneAssetStats:
 
 
 def _inspect_open3d(path: Path) -> SceneAssetStats:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     mesh = o3d.io.read_triangle_mesh(str(path))
     if len(mesh.triangles) == 0:
         raise RuntimeError(f"empty mesh: {path}")

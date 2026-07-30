@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import sys
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -128,7 +129,8 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
     fake_o3d.camera.PinholeCameraIntrinsic.return_value = MagicMock()
     fake_o3d.geometry.Image.return_value = MagicMock()
     fake_o3d.geometry.PointCloud.create_from_depth_image.return_value = pointcloud
-    monkeypatch.setattr("dimos.perception.object_scene_registration.o3d", fake_o3d)
+    # open3d is imported inside the method under test, so swap the module itself
+    monkeypatch.setitem(sys.modules, "open3d", fake_o3d)
 
     result = MagicMock()
     result.transform.side_effect = lambda used_transform: (
