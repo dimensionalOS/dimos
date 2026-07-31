@@ -170,30 +170,54 @@ class NativeProcessRunner:
     """Start and manage a native module C++ process for testing."""
 
     binary_path: str
-    args: list[str]
+    args: list[str] = field(default_factory=list)
+    stdin_blob: bytes | None = None
+    env: dict[str, str] | None = None
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
+    stderr: str = ""
+    returncode: int | None = None
 
     def start(self, capture_stderr: bool = False) -> None:
         self.process = subprocess.Popen(
             [self.binary_path, *self.args],
+            stdin=subprocess.PIPE if self.stdin_blob is not None else None,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             start_new_session=True,
+            env=self.env,
         )
+        if self.stdin_blob is not None:
+            assert self.process.stdin is not None
+            self.process.stdin.write(self.stdin_blob)
+            self.process.stdin.close()
 
     def stop(self, timeout: float = 3.0) -> None:
-        if self.process is not None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-            self.process = None
+        if self.process is None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        if self.process.stderr is not None:
+            self.stderr = self.process.stderr.read().decode(errors="replace")
+            self.process.stderr.close()
+        self.returncode = self.process.returncode
+        self.process = None
 
     @property
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+    def exit_report(self) -> str:
+        """Exit status and captured stderr, to append to an assertion message."""
+        if self.returncode is None:
+            return ""
+        report = f"\n{Path(self.binary_path).name} exited with {self.returncode}"
+        if self.stderr:
+            report += f"\nstderr:\n{self.stderr.rstrip()}"
+        return report
 
 
 def feed_at_original_timing(

@@ -31,22 +31,24 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.memory2.module import MemoryModuleConfig
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.type.detection3d.object import Object
-from dimos.perception.detection.world_belief import (
+from dimos.experimental.world_belief.recall import DEFAULT_CLIP_MODEL
+from dimos.experimental.world_belief.world_belief import (
     DEFAULT_DINO_MODEL,
     WorldBelief,
     WorldBeliefConfig,
 )
-from dimos.perception.recall import DEFAULT_CLIP_MODEL
-from dimos.perception.worldbelief_recorder import WorldBeliefRecorderSpec
+from dimos.experimental.world_belief.worldbelief_recorder import (
+    WorldBeliefRecorderSpec,
+)
+from dimos.memory2.module import MemoryModuleConfig
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.perception.scene_scan import SceneScanner
+    from dimos.experimental.world_belief.scene_scan import SceneScanner
 
 _STATE_DIR = STATE_DIR / "worldbelief"
 _HISTORY_PATH = _STATE_DIR / "worldbelief_history.db"
@@ -141,12 +143,14 @@ class WorldBeliefModule(Module):
         Callers hold ``_engine_lock`` while initializing or using it."""
         scanner: SceneScanner | None = getattr(self, "_live_scanner", None)
         if scanner is None:
+            from dimos.experimental.world_belief.scene_scan import (
+                SceneScanner as _SceneScanner,
+            )
             from dimos.models.embedding.dino import DINOModel
             from dimos.perception.detection.detectors.yoloe import (
                 Yoloe2DDetector,
                 YoloePromptMode,
             )
-            from dimos.perception.scene_scan import SceneScanner as _SceneScanner
 
             bcfg = self._belief_config()
             self._belief = WorldBelief(bcfg)
@@ -196,7 +200,10 @@ class WorldBeliefModule(Module):
 
     def _index_recall_frames(self, read_store: Any, hist_store: Any, rec_path: str) -> None:
         """Incrementally index one recording for recall; failures are non-fatal."""
-        from dimos.perception.recall import build_frame_clip_index, index_cursor_stream_name
+        from dimos.experimental.world_belief.recall import (
+            build_frame_clip_index,
+            index_cursor_stream_name,
+        )
 
         try:
             source_end = float(read_store.stream("color_image", Image).last().ts)
@@ -229,12 +236,14 @@ class WorldBeliefModule(Module):
         """
         import copy as _copy
 
+        from dimos.experimental.world_belief.scene_scan import (
+            ScanIncompleteError,
+        )
         from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.perception.detection.type.detection3d.object import (
+        from dimos.perception.experimental.object import (
             aggregate_pointclouds,
             to_detection3d_array,
         )
-        from dimos.perception.scene_scan import ScanIncompleteError
 
         requested = self.config.scan_prompts if prompt is None else prompt
         if not isinstance(requested, list) or any(
@@ -330,8 +339,8 @@ class WorldBeliefModule(Module):
         """
         from contextlib import nullcontext
 
+        from dimos.experimental.world_belief.recall import recall as _recall
         from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.perception.recall import recall as _recall
 
         text = text.strip()
         if not text:

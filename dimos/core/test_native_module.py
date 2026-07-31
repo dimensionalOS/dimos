@@ -48,9 +48,8 @@ def args_file(tmp_path: Path) -> str:
     return str(tmp_path / "native_echo_args.json")
 
 
-def read_json_file(path: str) -> dict[str, str]:
-    """Read and parse --key value pairs from the echo output file."""
-    raw: list[str] = json.loads(Path(path).read_text())
+def parse_cli_args(raw: list[str]) -> dict[str, str]:
+    """Parse --key value pairs out of a native module arg list."""
     result = {}
     i = 0
     while i < len(raw):
@@ -62,10 +61,22 @@ def read_json_file(path: str) -> dict[str, str]:
     return result
 
 
+def read_json_file(path: str) -> dict[str, str]:
+    """Read and parse --key value pairs from the echo output file."""
+    return parse_cli_args(json.loads(Path(path).read_text()))
+
+
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
     output_file: str | None = None
     die_after: float | None = None
+    some_param: float = 1.5
+
+
+class StubFrameIdConfig(NativeModuleConfig):
+    executable: str = _ECHO
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     some_param: float = 1.5
 
 
@@ -197,6 +208,27 @@ def test_autoconnect(args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def test_base_field_not_sent_without_opt_in() -> None:
+    """Native config structs reject unknown keys, so a base field stays Python-side."""
+    config = StubNativeConfig(frame_id="odom")
+    assert "frame_id" not in config.to_config_dict()
+    assert "frame_id" not in parse_cli_args(config.to_cli_args())
+
+
+def test_base_field_sent_when_opted_in() -> None:
+    config = StubFrameIdConfig(frame_id="odom")
+    assert config.to_config_dict()["frame_id"] == "odom"
+    assert parse_cli_args(config.to_cli_args())["frame_id"] == "odom"
+
+
+def test_framework_fields_never_sent() -> None:
+    """Opting one base field in must not carry the subprocess plumbing with it."""
+    config = StubFrameIdConfig(frame_id="odom", cwd="/tmp", extra_args=["--x"])
+    plumbing = set(NativeModuleConfig.model_fields) - {"frame_id"}
+    assert not plumbing & set(config.to_config_dict())
+    assert not plumbing & set(parse_cli_args(config.to_cli_args()))
 
 
 def _capture_logs(

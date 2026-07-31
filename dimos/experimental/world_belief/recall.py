@@ -132,8 +132,14 @@ def confirm_object_position(
     window_s: float = 2.0,
 ) -> Any | None:
     """The object's position: two-frame DINO confirmation, or one-frame without DINO."""
-    from dimos.perception.detection.world_belief import WorldBelief, WorldBeliefConfig
-    from dimos.perception.scene_scan import ScanIncompleteError, SceneScanner
+    from dimos.experimental.world_belief.scene_scan import (
+        ScanIncompleteError,
+        SceneScanner,
+    )
+    from dimos.experimental.world_belief.world_belief import (
+        WorldBelief,
+        WorldBeliefConfig,
+    )
 
     scanner = SceneScanner(
         detector=detector,

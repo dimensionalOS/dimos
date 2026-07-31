@@ -42,7 +42,6 @@ from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
-from dimos.perception.common.utils import draw_bounding_box
 from dimos.utils.logging_config import setup_logger
 from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
 
@@ -299,12 +298,8 @@ class SecurityModule(Module):
             area=f"{best.bbox_2d_volume():.0f}px",
         )
 
-        annotated = draw_bounding_box(
-            image.data.copy(),
-            list(best.bbox),
-            label=best.name,
-            confidence=best.confidence,
-        )
+        annotated = image.data.copy()
+        best.draw_on(annotated)
         if isinstance(best, Detection2DPerson):
             _draw_skeleton(annotated, best)
         self.detection.publish(Image.from_numpy(annotated, format=image.format))
