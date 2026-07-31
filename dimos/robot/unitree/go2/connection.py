@@ -24,7 +24,6 @@ from pydantic import Field
 from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -284,6 +283,8 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
+        import rerun.blueprint as rrb
+
         """Return Rerun view blueprints for GO2 camera visualization."""
         return [
             rrb.Spatial2DView(

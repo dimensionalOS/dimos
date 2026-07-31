@@ -43,7 +43,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -665,6 +664,8 @@ class UnityBridgeModule(Module):
             self._send_queue.put(("__raw__", frame))
 
     def _handle_unity_message(self, topic: str, data: bytes) -> None:
+        import cv2
+
         if topic == "/registered_scan":
             pc_result = deserialize_pointcloud2(data)
             if pc_result is not None:

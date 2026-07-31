@@ -15,7 +15,6 @@
 from pathlib import Path
 import time
 
-import cv2
 import numpy as np
 
 from ..base.stream_base import AnnotatorType, StreamBase, TransportType
@@ -83,6 +82,8 @@ class GenesisStream(StreamBase):
 
     def stream(self) -> None:
         """Start the streaming loop."""
+        import cv2
+
         try:
             print("[Stream] Starting Genesis camera stream...")
             frame_count = 0

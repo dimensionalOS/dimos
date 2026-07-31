@@ -25,17 +25,25 @@ import time
 import types
 from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
 
-# macOS Open3D uses LLVM libomp, which (when OMP_WAIT_POLICY is unset) still
-# actively spins for KMP_BLOCKTIME (default 200ms) after each parallel region.
-# Several point-cloud workers each owning a core-sized pool then yield-spin
-# between frames and burn whole cores in kernel time (measured: replay dropped
-# from ~1120% to ~70% CPU on a 12-core Mac with these set). Linux Open3D links
-# libgomp, whose unset default is only a short spin then sleep, so leave it
-# alone. Set before any library loads libomp; workers inherit via the
-# forkserver. User environment overrides win.
-if sys.platform == "darwin":
-    os.environ.setdefault("KMP_BLOCKTIME", "0")
-    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+# Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
+# cores and spin-waits at barriers (libgomp: ~300k pause iterations per region;
+# libomp: KMP_BLOCKTIME of active spinning after each region). With ~10 worker
+# processes each owning core-sized pools this oversubscribes ~10x: measured
+# 12% of all cycles spinning in gomp_barrier_wait_end and load avg 30-50 at
+# ~50% CPU. PASSIVE wait + small pools cut a 10 Hz open3d workload 3.7x
+# (1.10 -> 0.30 cores) and ~50 threads/worker -> ~10. Must be set before any
+# library loads its OpenMP runtime (libgomp reads env at load, OpenBLAS spawns
+# its pool at import); workers inherit via the forkserver. User env wins.
+os.environ.setdefault("KMP_BLOCKTIME", "0")
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("GOMP_SPINCOUNT", "0")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+# cv2 reads this at import for its parallel_for pool; replaces the eager
+# `import cv2; cv2.setNumThreads(2)` the worker entrypoint used to do.
+os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
