@@ -351,7 +351,7 @@ def spatial_eval_setup(
         memory_blueprint = spatial_memory_blueprint
         if memory_blueprint is None:
             # ~4s: deferred so collecting this directory doesn't pay for CLIP.
-            from dimos.perception.spatial_perception import SpatialMemory
+            from dimos.perception.experimental.spatial_perception import SpatialMemory
 
             memory_blueprint = SpatialMemory.blueprint(
                 collection_name=collection_name,

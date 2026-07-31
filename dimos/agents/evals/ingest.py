@@ -225,7 +225,7 @@ def ingest(
     import reactivex as rx
 
     from dimos.memory2.cli.dataset import open_dataset
-    from dimos.perception.spatial_perception import SpatialMemory
+    from dimos.perception.experimental.spatial_perception import SpatialMemory
 
     started = time.monotonic()
     counts = SampleCounts()
