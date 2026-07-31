@@ -123,7 +123,7 @@ class BrokerProvider(AsyncProviderBase):
         if not config.api_key:
             raise RuntimeError(
                 "BrokerConfig.api_key required "
-                "(set -o transports.broker.api_key=dtk_live_... or "
+                "(set --transports.broker.api-key=dtk_live_... or "
                 "TRANSPORTS__BROKER__API_KEY=dtk_live_...; "
                 "create one in the teleop dashboard: New Key)"
             )

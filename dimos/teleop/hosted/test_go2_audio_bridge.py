@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.module import Module
 from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.blueprints.cloudflare import teleop_hosted_go2_transport
@@ -86,11 +87,11 @@ def test_stereo_audio_is_mixed_and_resampled_for_go2() -> None:
 
 
 def test_hosted_blueprint_accepts_speaker_override() -> None:
-    config = teleop_hosted_go2_transport.config()
+    parser = BlueprintConfigParser(teleop_hosted_go2_transport)
 
-    resolved = config(**{"go2audiobridgemodule": {"speaker": "enabled"}})
+    parsed = parser.parse(environ={}, overrides={"go2audiobridgemodule": {"speaker": "enabled"}})
 
-    assert resolved.go2audiobridgemodule.speaker == "enabled"
+    assert parsed.module_kwargs("go2audiobridgemodule")["speaker"] == "enabled"
 
 
 def test_auto_mode_disables_speaker_when_audio_hub_probe_fails(

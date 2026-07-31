@@ -462,7 +462,7 @@ class CloudflareTransport(WebRTCTransport[M]):
     """WebRTC via the hosted teleop broker + Cloudflare Realtime SFU.
 
     Config kwargs flow into :class:`BrokerConfig`; unset fields fall back to
-    the blueprint config flow (``-o transports.broker.<field>=...`` or the
+    the blueprint config flow (``--transports.broker.<field>=...`` or the
     ``TRANSPORTS__BROKER__<FIELD>=...`` env form).
 
     Blueprint usage::

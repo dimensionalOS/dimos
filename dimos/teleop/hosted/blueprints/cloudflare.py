@@ -151,7 +151,7 @@ teleop_hosted_go2_multicam = (
 
 
 # Distinct classes only because blueprints can't yet run two instances of one
-# module. Serials: -o frontcamera.serial_number=... -o wristcamera.serial_number=...
+# module. Serials: --frontcamera.serial-number=... --wristcamera.serial-number=...
 class FrontCamera(RealSenseCamera):
     pass
 
