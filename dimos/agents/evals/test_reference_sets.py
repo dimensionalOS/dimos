@@ -38,6 +38,12 @@ from dimos.agents.evals.reference_sets import (
 #: ``reference/go2_short/README.md``), and the sweep reads none of them.
 DATASET_ARTIFACTS = ("refs.jsonl", "manifest.json", "review.json", QUESTIONS_NAME)
 
+#: The two names ``crops.write_crops`` gives one reference's review images:
+#: ``<question_id>.jpg`` (identification) and ``<question_id>_measurement.jpg``
+#: (the detection frame the position came from).
+CROP_SUFFIX = ".jpg"
+MEASUREMENT_SUFFIX = "_measurement"
+
 
 def test_a_dataset_is_a_directory_that_ships_a_question_set(tmp_path: Path) -> None:
     """Discovery is the glob, sorted -- and a directory without questions is not one.
@@ -76,3 +82,32 @@ def test_every_committed_dataset_ships_the_whole_artifact_set(dataset: str) -> N
         assert path.is_file(), f"{dataset!r} ships no {artifact}"
         assert path.stat().st_size > 0, f"{dataset!r} ships an empty {artifact}"
     assert load_question_set(dataset), f"{dataset!r} ships an empty question set"
+
+
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_every_committed_crop_belongs_to_a_question_of_its_own_dataset(dataset: str) -> None:
+    """``crops/`` holds review images for *this* dataset's questions, and nothing else.
+
+    The direction that matters is crop -> question, not the reverse: a question
+    may legitimately ship without images (``go2_short``'s meeting table, whose
+    every candidate frame contains an identifiable person), so a missing pair is
+    not a failure. A crop with *no* question is -- it is either an image for a
+    label review dropped, left behind when the question set was regenerated, or
+    one copied out of the wrong dataset's ``--crops`` run. Both survive every
+    other test here, because nothing in the eval reads a crop: the images exist
+    only for a human auditor, who would be reading evidence for a question that
+    is not being asked.
+    """
+    questions = {question.question_id for question in load_question_set(dataset)}
+    crops = dataset_dir(dataset) / "crops"
+    if not crops.is_dir():
+        pytest.skip(f"{dataset!r} ships no crops directory")
+
+    stray = [
+        path.name
+        for path in sorted(crops.iterdir())
+        if path.stem.removesuffix(MEASUREMENT_SUFFIX) not in questions or path.suffix != CROP_SUFFIX
+    ]
+    assert stray == [], (
+        f"{dataset!r} ships crop file(s) that belong to no question in its questions.jsonl: {stray}"
+    )

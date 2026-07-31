@@ -134,7 +134,7 @@ def make_reference(raw_label: str, x: float, y: float = 0.0, z: float = 0.0) -> 
     )
 
 
-# --- per-measurement gates --------------------------------------------------
+# Per-measurement gates.
 
 
 def test_gate_params_derive_the_sampling_gap_from_the_rate() -> None:
@@ -174,7 +174,7 @@ def test_the_first_failing_gate_claims_the_drop() -> None:
     assert dict(drops) == {"min_points": 1}
 
 
-# --- view independence ------------------------------------------------------
+# View independence.
 
 
 def test_views_are_independent_when_the_robot_moved() -> None:
@@ -228,7 +228,7 @@ def test_independent_views_is_greedy_in_timestamp_order() -> None:
     assert [v.ts for v in independent_views(list(reversed(views)), GATES)] == [0.0, 1.2]
 
 
-# --- clustering -------------------------------------------------------------
+# Clustering.
 
 
 def test_clustering_separates_distinct_places() -> None:
@@ -292,7 +292,7 @@ def test_xy_spread_is_the_widest_disagreement_and_ignores_height() -> None:
     assert spread == pytest.approx(0.5)
 
 
-# --- label qualification ----------------------------------------------------
+# Label qualification.
 
 
 def test_a_label_seen_from_two_independent_views_qualifies() -> None:
@@ -363,7 +363,7 @@ def test_a_label_whose_views_disagree_about_where_it_is_does_not_qualify() -> No
     assert diagnostics.label_verdicts["no_qualified_cluster"] == 1
 
 
-# --- location groups --------------------------------------------------------
+# Location groups.
 
 
 def test_location_groups_link_transitively() -> None:
@@ -436,7 +436,7 @@ def test_labels_stacked_on_top_of_each_other_are_one_location() -> None:
     assert table[0]["max_pairwise_m"] == pytest.approx(0.1)
 
 
-# --- projection -------------------------------------------------------------
+# Projection.
 #
 # The step that turns a LiDAR sweep into a pixel is where a frame, sign or
 # axis-order mistake hides best: it moves every reference by a plausible-looking
@@ -593,7 +593,7 @@ def test_projection_keeps_pixels_depths_and_world_points_index_aligned() -> None
     assert uv[1] == pytest.approx((CX, CY))  # the second survivor is dead ahead
 
 
-# --- measuring one detection ------------------------------------------------
+# Measuring one detection.
 
 BBOX = (100.0, 100.0, 300.0, 300.0)
 #: The centre of ``BBOX``, i.e. inside it however hard it is shrunk.
@@ -723,7 +723,7 @@ def test_a_detection_straddling_two_depths_reports_an_iqr_the_gate_drops() -> No
     assert dict(drops) == {"depth_iqr": 1}
 
 
-# --- mask-based point selection ---------------------------------------------
+# Mask-based point selection.
 #
 # Off by default (`teacher.PointSelection` records the measurement that decided
 # it: as shipped, `Detection2DSeg` masks are letterbox-misaligned with the frame
@@ -809,7 +809,7 @@ def test_an_empty_mask_reports_nothing_rather_than_falling_back() -> None:
     assert measure_detection(*projection(rows), BBOX, mask_over(), MASK_GATES) is None
 
 
-# --- the calibration ---------------------------------------------------------
+# The calibration.
 
 
 def test_the_inlined_fallback_calibration_matches_the_packaged_yaml() -> None:
@@ -831,7 +831,7 @@ def test_the_inlined_fallback_calibration_matches_the_packaged_yaml() -> None:
     assert (camera.width, camera.height) == _FALLBACK_SIZE
 
 
-# --- the funnel --------------------------------------------------------------
+# The funnel.
 
 
 def test_the_funnel_accounts_for_every_counted_detection() -> None:
@@ -884,7 +884,7 @@ def test_the_committed_manifests_funnel_adds_up(dataset: str) -> None:
     )
 
 
-# --- the committed tables ---------------------------------------------------
+# The committed tables.
 
 #: How far ``nearest_viewpoint_m`` may sit from the depth the same row reports.
 #: The two are measured differently -- one is the closest of several poses, the

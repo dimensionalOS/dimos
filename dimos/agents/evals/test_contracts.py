@@ -131,7 +131,7 @@ def test_answer_record_round_trip_without_a_goal() -> None:
         n_goals=0,
         tool_invoked=True,
         tool_queries=["houseplant"],
-        model_id="openai:gpt-4o",
+        model_id="openai:gpt-5.6-sol",
         prompt_id="shipping",
         prompt_sha256="b" * 64,
         run_id="20260730T091500-4242",

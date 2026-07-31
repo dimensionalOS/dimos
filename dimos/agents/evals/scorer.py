@@ -353,7 +353,7 @@ def errors_m(results: Iterable[ScoreResult]) -> list[float]:
     return [r.error_m for r in results if r.error_m is not None]
 
 
-# --- JSONL shards -----------------------------------------------------------
+# JSONL shards.
 #
 # One shard file per pytest case (contract: parallel cases must never share a
 # file). Each line is a tagged envelope so answers and scores can live in the
@@ -449,16 +449,26 @@ def read_shards(paths: Iterable[str | Path]) -> list[ScoredCase]:
 
     Raises ``ValueError`` when two files carry the same
     ``(model_id, prompt_id, question_id, run_id)``. ``read_shard`` already
-    refuses a repeat *within* one file; this is the same rule across a directory,
-    because the documented workflow renders one, and a crashed-and-restarted
-    case appends a new timestamped file next to its half-written predecessor.
-    Silently concatenating both would count that question twice inside one run --
-    a figure that is wrong in a way nobody can see.
+    refuses a repeat *within* one file; this is the same rule across a
+    directory, because the documented workflow renders one and concatenating a
+    duplicate would count that question twice -- a figure that is wrong in a way
+    nobody can see.
 
     ``run_id`` is part of the key, so *deliberately* repeating a configuration
     is not an error: two runs of one arm are two measurements of a stochastic
     agent, and the renderer plots them as one row that says ``runs 2``. What
-    stays an error is the same run appearing twice.
+    stays an error is the same run appearing twice, i.e. two shard files written
+    by one ``run_id`` -- parallel workers, or the same directory rendered twice
+    through overlapping ``--shards`` patterns.
+
+    **What this does not catch: a crashed and restarted sweep.** ``run_id`` is
+    stamped per pytest module run, so the restart gets a fresh one and its
+    half-written predecessor sits in the directory under a different key. Both
+    are read, and the questions the first run reached before it died are plotted
+    twice -- legibly, as ``runs 2`` on a row whose ``n_total`` is larger than
+    the question count, which is the signal to look. Deleting the abandoned
+    shard is the fix; no rule here can distinguish it from a repeat that was
+    meant.
     """
     cases: list[ScoredCase] = []
     seen: dict[tuple[str, str, str, str], Path] = {}

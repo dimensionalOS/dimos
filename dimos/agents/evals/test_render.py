@@ -36,7 +36,7 @@ from dimos.agents.evals.render import (
 )
 from dimos.agents.evals.scorer import ScoredCase, append_shard, read_shards
 
-MODELS = ("gpt-5.6-luna", "openai:gpt-4o")
+MODELS = ("gpt-5.6-luna", "openai:gpt-5.6-sol")
 PROMPTS = ("shipping", "spatial")
 
 #: One sweep's stamp; a repeat of the same configuration carries another.
@@ -112,7 +112,7 @@ def write_shard(path: Path, cases: list[ScoredCase]) -> Path:
     return path
 
 
-# --- collecting shards ------------------------------------------------------
+# Collecting shards.
 
 
 def test_collect_shard_paths_accepts_a_file_a_directory_and_a_glob(tmp_path: Path) -> None:
@@ -132,7 +132,7 @@ def test_collect_shard_paths_refuses_to_render_nothing(tmp_path: Path) -> None:
         collect_shard_paths([str(tmp_path / "does-not-exist" / "*.jsonl")])
 
 
-# --- grouping ---------------------------------------------------------------
+# Grouping.
 
 
 def test_cases_group_by_model_and_prompt_together() -> None:
@@ -140,7 +140,7 @@ def test_cases_group_by_model_and_prompt_together() -> None:
     cases = [
         make_case("q1", model_id="gpt-5.6-luna", prompt_id="shipping"),
         make_case("q2", model_id="gpt-5.6-luna", prompt_id="spatial"),
-        make_case("q3", model_id="openai:gpt-4o", prompt_id="shipping"),
+        make_case("q3", model_id="openai:gpt-5.6-sol", prompt_id="shipping"),
         make_case("q4", model_id="gpt-5.6-luna", prompt_id="shipping"),
     ]
     grouped = group_by_configuration(cases)
@@ -148,7 +148,7 @@ def test_cases_group_by_model_and_prompt_together() -> None:
     assert list(grouped) == [
         ("gpt-5.6-luna", "shipping"),
         ("gpt-5.6-luna", "spatial"),
-        ("openai:gpt-4o", "shipping"),
+        ("openai:gpt-5.6-sol", "shipping"),
     ]
     assert [case.answer.question_id for case in grouped["gpt-5.6-luna", "shipping"]] == ["q1", "q4"]
 
@@ -161,7 +161,7 @@ def test_grouping_follows_the_order_the_shards_were_given() -> None:
     assert backward == [("b", "spatial"), ("a", "spatial")]
 
 
-# --- the figure -------------------------------------------------------------
+# The figure.
 
 
 def test_figure_of_the_full_sweep_fits_the_large_file_limit(tmp_path: Path) -> None:
@@ -176,6 +176,50 @@ def test_figure_of_the_full_sweep_fits_the_large_file_limit(tmp_path: Path) -> N
 def test_figure_needs_something_to_plot(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no scored cases"):
         render_figure([], tmp_path / "empty.png")
+
+
+def test_two_recordings_shards_are_refused_rather_than_pooled(tmp_path: Path) -> None:
+    """The failure mode that produces a plausible figure instead of a broken one.
+
+    Rows are keyed by ``(model_id, prompt_id)`` alone, so two recordings under
+    one shard directory land in the same row: dots pooled across two rooms, two
+    question sets and two threshold ranges, with nothing on the figure saying
+    so. Both dataset names are in the message because the operator has to know
+    which directories they collapsed.
+    """
+    cases = [make_case("go2-bigoffice-houseplant"), make_case("go2-short-houseplant")]
+
+    with pytest.raises(ValueError) as excinfo:
+        render_figure(cases, tmp_path / "pooled.png")
+
+    message = str(excinfo.value)
+    assert "go2-bigoffice" in message
+    assert "go2-short" in message
+    assert not (tmp_path / "pooled.png").exists()
+
+
+def test_main_refuses_a_shard_directory_holding_two_recordings(tmp_path: Path) -> None:
+    """The gate is reachable the way an operator actually reaches it.
+
+    ``--shards`` takes a directory, and the mistake is pointing it at the sweep
+    root instead of at one ``<dataset>/`` beneath it.
+    """
+    shards = tmp_path / "shards"
+    write_shard(shards / "gpt-5-6-luna__spatial__a.jsonl", [make_case("go2-bigoffice-houseplant")])
+    write_shard(shards / "gpt-5-6-luna__spatial__b.jsonl", [make_case("go2-short-houseplant")])
+
+    with pytest.raises(ValueError, match="2 datasets"):
+        render.main(["--shards", str(shards), "--out", str(tmp_path / "pooled.png")])
+
+
+def test_a_dataset_is_the_first_two_tokens_of_a_question_id() -> None:
+    """The key the gate is built on, spelled out against the committed ids.
+
+    Label slugs vary in length and contain hyphens of their own, so the dataset
+    is read off the front rather than by stripping from the back.
+    """
+    assert render.dataset_of("go2-bigoffice-window-sill") == "go2-bigoffice"
+    assert render.dataset_of("go2-short-office-desk") == "go2-short"
 
 
 def test_an_oversized_figure_fails_and_is_not_left_behind(
@@ -291,7 +335,9 @@ def test_the_row_marker_is_the_median_of_that_rows_errors(
 
     monkeypatch.setattr(render.statistics, "median", spy)
     errors = (0.35, 0.9, 1.4, 2.05)
-    cases = [make_case(f"q{index}", error_m=error) for index, error in enumerate(errors)]
+    cases = [
+        make_case(f"go2-bigoffice-q{index}", error_m=error) for index, error in enumerate(errors)
+    ]
     render_figure(cases, tmp_path / "median.png")
 
     assert medianed == [list(errors)]

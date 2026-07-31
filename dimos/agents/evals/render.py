@@ -30,8 +30,10 @@ row rather than split, and the row then reports ``runs n``.
 **Point it at one dataset's shard directory** -- the sweep writes
 ``$DIMOS_EVAL_SHARD_DIR/<dataset>/``, and this is invoked once per such
 directory. Rows are keyed by ``(model_id, prompt_id)`` and nothing else, so a
-run over a directory holding two recordings' shards would silently average one
-row's dots across two rooms, two question sets and two threshold ranges.
+run over a directory holding two recordings' shards would otherwise silently
+average one row's dots across two rooms, two question sets and two threshold
+ranges. :func:`render_figure` refuses that input outright rather than plotting
+it -- see :func:`dataset_of` for how a question id names its dataset.
 
 The figure is a per-configuration strip of measured errors (one dot per
 question that produced a goal, a marker at the median) annotated with
@@ -94,6 +96,47 @@ def collect_shard_paths(patterns: Sequence[str]) -> list[Path]:
     return paths
 
 
+def dataset_of(question_id: str) -> str:
+    """The dataset a question id belongs to: its first two hyphen-joined tokens.
+
+    ``questions.py`` builds every id as ``<dataset slug>-<raw label slug>``,
+    where the dataset slug is the recording's own name with its underscore
+    turned into a hyphen -- ``go2_bigoffice`` -> ``go2-bigoffice-organization``,
+    ``go2_short`` -> ``go2-short-houseplant``. The label slug is what varies in
+    length and can itself contain hyphens, so the *prefix* is the readable end:
+    two tokens, taken from the front.
+
+    A blunt key on purpose. It is used only to refuse a mixed input, so it has
+    to be derivable from the shard alone -- the shards carry question ids, not
+    dataset names -- and it must not need the reference tree to be present.
+    """
+    return "-".join(question_id.split("-")[:2])
+
+
+def assert_single_dataset(cases: Sequence[ScoredCase]) -> None:
+    """Refuse an input whose question ids come from more than one dataset.
+
+    The figure's x axis is a distance error against one recording's references,
+    and its rows are keyed by ``(model_id, prompt_id)`` alone. Two recordings'
+    shards in one input therefore do not produce a wrong-looking figure -- they
+    produce a *plausible* one whose dots are pooled across two rooms, two
+    question sets and two threshold ranges, with nothing on it saying so.
+
+    Raises ``ValueError`` naming every dataset found, because the fix is to
+    invoke the renderer once per ``$DIMOS_EVAL_SHARD_DIR/<dataset>/`` and the
+    operator needs to know which ones they collapsed.
+    """
+    datasets = sorted({dataset_of(case.answer.question_id) for case in cases})
+    if len(datasets) > 1:
+        raise ValueError(
+            f"the shards hold questions from {len(datasets)} datasets ({', '.join(datasets)}); "
+            "one figure is one recording -- its x axis is a distance error against that "
+            "recording's own references, so pooling them would average across rooms, "
+            "question sets and threshold ranges. Render each "
+            "$DIMOS_EVAL_SHARD_DIR/<dataset>/ directory separately."
+        )
+
+
 def group_by_configuration(
     cases: Sequence[ScoredCase],
 ) -> OrderedDict[tuple[str, str], list[ScoredCase]]:
@@ -148,9 +191,15 @@ def render_figure(
 ) -> Path:
     """Draw the error-distribution figure and save it as a PNG.
 
-    Raises ``ValueError`` if the saved file exceeds :data:`MAX_PNG_BYTES`; the
-    oversized file is removed rather than left behind for someone to commit.
+    Raises ``ValueError`` if *cases* mix two recordings (:func:`assert_single_dataset`),
+    or if the saved file exceeds :data:`MAX_PNG_BYTES`; the oversized file is
+    removed rather than left behind for someone to commit.
     """
+    # Before matplotlib is even imported: a mixed input is an operator error, and
+    # the gate belongs here rather than in `main` so a programmatic caller cannot
+    # route around it.
+    assert_single_dataset(cases)
+
     import matplotlib
 
     matplotlib.use("Agg")  # headless: this runs in CI and over SSH

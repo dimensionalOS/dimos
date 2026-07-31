@@ -8,7 +8,7 @@
           "args": {
             "query": "stack of storage boxes"
           },
-          "id": "call_gate0_1",
+          "id": "call_smoke_nav_1",
           "type": "tool_call"
         }
       ]

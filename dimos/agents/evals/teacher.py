@@ -93,7 +93,6 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
 
@@ -378,6 +377,11 @@ class Projector:
         ``world_points`` stay index-aligned, so a pixel test also selects the
         corresponding map-frame point.
         """
+        # Function-local, here and below: cv2 loads a large native extension
+        # into every process that transitively imports this module
+        # (dimos/codebase_checks/test_inline_heavy_imports.py).
+        import cv2
+
         x, y, z, qx, qy, qz, qw = pose_tuple
         world_to_base = Transform(translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw))
         world_to_optical = (world_to_base + self.base_to_optical).to_matrix()
@@ -557,6 +561,8 @@ def mask_outline(mask: NDArray[np.uint8] | None) -> tuple[tuple[tuple[int, int],
     detection is hundreds of megabytes over a sweep, while its outline is what a
     crop can actually show.
     """
+    import cv2
+
     if mask is None:
         return ()
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -571,6 +577,8 @@ def scan(
     dataset: str, params: GateParams, yoloe_model: str, progress: bool = True
 ) -> tuple[list[Measurement], ScanStats, dict[str, Any]]:
     """Sweep *dataset* once and return every detection that got a position."""
+    import cv2
+
     from dimos.memory2.cli.dataset import open_dataset
 
     camera = load_camera()

@@ -47,7 +47,6 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
 
@@ -83,6 +82,11 @@ _REFERENCE_COLOR = (255, 0, 255)  # magenta: where the vote landed
 
 def _encode_crop(crop: NDArray[np.uint8]) -> bytes:
     """JPEG-encode *crop*, shrinking it until it fits :data:`MAX_CROP_BYTES`."""
+    # Function-local, here and below: cv2 loads a large native extension into
+    # every process that transitively imports this module, and nothing outside
+    # `--crops` needs it (dimos/codebase_checks/test_inline_heavy_imports.py).
+    import cv2
+
     height, width = crop.shape[:2]
     encoded = b""
     for longest_edge, quality in _CROP_ENCODINGS:
@@ -152,9 +156,22 @@ CROP_MIN_GRAY_FALLBACK = 30.0
 #: *extrapolated* marker: on this recording the sharpest frames of a candidate
 #: window are often taken from 2-4 m back, where the reference projects above the
 #: Go2 LiDAR's vertical field of view and the sweep says nothing at all about it.
-#: It does **not** certify the object -- points near a reference sitting on a
-#: blank wall are the wall's, and the dropped ``elevator door`` reference passed
-#: this gate on every candidate frame. Only cross-frame context caught that one.
+#:
+#: Two things it deliberately does not do, both of which a reader will otherwise
+#: assume from the word "supported":
+#:
+#: * It constrains the marker **only on the near side**. Together with the
+#:   occlusion guard below, what a passing frame asserts is that nothing stands
+#:   *in front of* the marker -- a surface some distance *behind* it passes
+#:   unremarked, so a marker can float in front of the thing it names. That is
+#:   the ``go2_short`` meeting table: the sweep reads +0.71 m at the marker
+#:   pixel, through the see-through gap under the tabletop, while the support
+#:   points within 0.4 m are the tabletop itself
+#:   (``reference/go2_short/README.md``).
+#: * It does **not** certify the object -- points near a reference sitting on a
+#:   blank wall are the wall's, and the dropped ``elevator door`` reference
+#:   passed this gate on every candidate frame. Only cross-frame context caught
+#:   that one. Identity is a question for the human, and always was.
 CROP_SUPPORT_RADIUS_M = 0.40
 CROP_MIN_SUPPORT_POINTS = 20
 
@@ -164,9 +181,22 @@ CROP_MIN_SUPPORT_POINTS = 20
 #: may not be nearer than the reference's own depth by more than
 #: :data:`CROP_OCCLUSION_SLACK_M`. If it is, something stands between the camera
 #: and the object, and the crop would show that something. The slack absorbs the
-#: thickness of a sweep on a surface; a frame with too few points at the marker
-#: is *unknown* rather than occluded, and the support count above still has to
-#: pass.
+#: thickness of a sweep on a surface.
+#:
+#: **One-sided by construction**: only a *nearer* surface is a rejection. A
+#: median depth behind the marker means the marker is in front of whatever the
+#: sweep hit there, which is what a see-through gap looks like and is a
+#: cosmetic complaint about the drawing, not evidence that the crop shows the
+#: wrong thing -- so it passes. See the meeting-table note above.
+#:
+#: A frame with fewer than :data:`CROP_MIN_MARKER_POINTS` at the marker records
+#: ``occluded=None``, i.e. *unknown*, and :attr:`CropCandidate.confirmed` treats
+#: unknown as not-occluded (``is not True``). Deliberate: at this radius most
+#: sweeps have only a handful of returns at any one pixel, so failing on
+#: unknown would reject frames for the LiDAR's angular resolution rather than
+#: for anything in the scene. The support count above is what still has to
+#: pass, and it is counted in 3-D over the whole window rather than at the
+#: single pixel.
 CROP_MARKER_RADIUS_PX = 14
 CROP_MIN_MARKER_POINTS = 3
 CROP_OCCLUSION_SLACK_M = 0.30
@@ -292,6 +322,8 @@ def laplacian_sharpness(gray: NDArray[np.uint8], region: tuple[int, int, int, in
     Measured locally, around the projected reference, because a frame can be
     sharp on the far wall and smeared on the object the crop is about.
     """
+    import cv2
+
     x1, y1, x2, y2 = region
     patch = gray[y1:y2, x1:x2]
     if patch.size == 0:
@@ -312,7 +344,10 @@ class MarkerSupport:
     #: on; ``None`` when too few points are there to take a median of.
     seen_depth_m: float | None
     #: ``True``/``False`` from :data:`CROP_OCCLUSION_SLACK_M`, ``None`` when
-    #: ``seen_depth_m`` is.
+    #: ``seen_depth_m`` is -- i.e. *unknown*, which
+    #: :attr:`CropCandidate.confirmed` counts as not-occluded by design. Only a
+    #: surface nearer than the reference is ever ``True``; one behind it is not
+    #: occlusion.
     occluded: bool | None
     #: Pixels of the supporting points, drawn on the crop as the evidence.
     support_uv: tuple[tuple[float, float], ...]
@@ -375,7 +410,13 @@ class CropCandidate:
 
     @property
     def confirmed(self) -> bool:
-        """Does this frame's sweep vouch for the marker, unoccluded?"""
+        """Does this frame's sweep vouch for the marker, and is nothing in front of it?
+
+        ``is not True`` rather than ``is False``: unknown occlusion passes, for
+        the reason given at :data:`CROP_MIN_MARKER_POINTS`. "Confirmed" is a
+        statement about the *geometry being measured rather than extrapolated*,
+        and only on the near side -- it says nothing about what the object is.
+        """
         return (
             self.support.n_support >= CROP_MIN_SUPPORT_POINTS and self.support.occluded is not True
         )
@@ -465,6 +506,8 @@ def _measurement_crop(
     the geometry land on the object", and it can only be the frame the detection
     was made on -- the box and the inlier pixels mean nothing on another frame.
     """
+    import cv2
+
     obs = _nearest_observation(images, detection.ts, tolerance=0.2)
     if obs is None:
         return None
@@ -504,6 +547,8 @@ def _measurement_crop(
 
 def _draw_reference_marker(frame: NDArray[np.uint8], marker: tuple[int, int]) -> None:
     """Draw the "the vote landed here" marker, identically on both crops."""
+    import cv2
+
     cv2.drawMarker(frame, marker, _REFERENCE_COLOR, cv2.MARKER_CROSS, 44, 3)
     cv2.circle(frame, marker, 15, _REFERENCE_COLOR, 3)
 
@@ -533,6 +578,8 @@ def crop_candidates(
     behind it; by default it is the contributing detection nearest in time, whose
     box and depth are the closest thing to a measurement of this object's size.
     """
+    import cv2
+
     reference_xyz = (reference.x, reference.y, reference.z)
     stamps = sorted({detection.ts for detection in detections})
     by_ts = {detection.ts: detection for detection in detections}
@@ -606,6 +653,8 @@ def _identification_crop(
     *sharper* than the frame it came from, which is the one thing an image used
     to judge sharpness must never do.
     """
+    import cv2
+
     obs = _nearest_observation(images, candidate.ts, tolerance=0.05)
     if obs is None:
         return None

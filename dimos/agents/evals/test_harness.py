@@ -70,7 +70,7 @@ def test_the_recording_skill_keeps_the_shipping_skills_metadata() -> None:
     assert recording.__doc__ is shipping.__doc__
 
 
-# --- the ingested store -----------------------------------------------------
+# The ingested store.
 
 
 def test_a_bogus_collection_name_fails_before_anything_is_built(tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ def test_a_populated_collection_passes_and_reports_its_size(tmp_path: Path) -> N
     assert assert_store_ingested(tmp_path, "go2_bigoffice") == 2
 
 
-# --- the retrieval read-back ------------------------------------------------
+# The retrieval read-back.
 
 
 class MemoryLikeModule(Module):

@@ -168,12 +168,22 @@ def _replay_retrievals(
     de-duplicated with order preserved -- an agent that asks the same thing twice
     gets one record, and the list stays joinable against ``tool_queries``.
 
-    **This never fails a run.** It is observability bolted onto a measurement
-    that is already complete, so every failure path returns an empty list and
-    logs; the caller must not turn it into a ``harness_error``. On a partial
-    failure the records collected so far are dropped too: a list that silently
-    omits one query is worse than an absent one, because a reader joining it
-    against ``tool_queries`` cannot tell the two apart.
+    **Every exception is swallowed.** It is observability bolted onto a
+    measurement that is already complete, so each failure path returns an empty
+    list and logs; the caller must not turn it into a ``harness_error``. On a
+    partial failure the records collected so far are dropped too: a list that
+    silently omits one query is worse than an absent one, because a reader
+    joining it against ``tool_queries`` cannot tell the two apart.
+
+    What it is *not* is unbounded. ``query_by_text`` is an RPC into the memory's
+    worker process, so a worker that stops answering is bounded by the
+    module-level RPC timeout rather than by anything here: no per-method
+    override is registered for ``query_by_text``
+    (``dimos/protocol/rpc/spec.py::DEFAULT_RPC_TIMEOUTS``), so it falls back to
+    ``ModuleConfig.default_rpc_timeout``, currently 120 s, after which
+    ``call_sync`` raises ``TimeoutError`` and the ``except`` below records
+    nothing. The worst case is therefore that timeout once per *distinct* query
+    -- typically one -- added to a turn that has already been measured.
     """
     started = time.perf_counter()
     try:
@@ -245,15 +255,18 @@ def spatial_eval_setup(
         store. Everything else in the blueprint is fixed.
 
     Returns a :class:`~dimos.agents.evals.scorer.RunObservation`: raw signal
-    only, no verdict. Harness failures are captured into
-    ``harness_error`` rather than raised, so a sweep records an attributable
-    outcome for every question instead of losing the run.
+    only, no verdict. Harness failures are captured into ``harness_error``
+    rather than raised, so a sweep records *something* for every question
+    instead of dying part-way through and losing the questions it had already
+    answered. What it records is a ``harness_error``, which scores as a BROKEN
+    outcome -- explicitly **not** attributable to the agent, excluded from every
+    rate, and a reason to repeat the run rather than to read it.
 
     The observation also carries ``retrievals``: after the turn, each distinct
     tool query is re-asked of the spatial memory so the shard records *what was
     retrieved*, not only where the agent went. That is diagnostic observability
     and nothing scores it -- see ``contracts.RetrievalRecord`` and
-    :func:`_replay_retrievals`, which cannot fail a run.
+    :func:`_replay_retrievals`, whose exceptions are all swallowed.
     """
     run_index = count()
     active: dict[str, Any] = {}

@@ -2,9 +2,14 @@
 
 This directory holds **one sub-directory per recording** — each the committed
 output of the offline reference pipeline for that recording, plus the
-human-review evidence its questions rest on. Nothing there is hand-measured;
-everything is reproducible from the recording with the commands at the bottom.
-This file is the protocol those sub-directories are produced and audited under.
+human-review evidence its questions rest on. Nothing there is hand-measured: the
+positions and every gate that produced them reproduce mechanically from the
+recording with the commands at the bottom. The **review verdicts are recorded
+human judgment** — `verified` / `renamed` / `dropped`, each with the reason it
+was reached — so they are auditable against the committed crops and the
+recording, but they are not recomputable, and re-running the pipeline does not
+re-derive them. This file is the protocol those sub-directories are produced and
+audited under.
 
 ## Datasets
 
@@ -26,7 +31,7 @@ matched up without a lookup table.
 | file | what it is |
 |---|---|
 | `<dataset>/refs.jsonl` | every label that survived the geometric gates: position, views, spread, per-view robot poses, `location_group` |
-| `<dataset>/manifest.json` | every gate value used, the full yield funnel, the location-group conflict table, dataset/weights hashes, timing |
+| `<dataset>/manifest.json` | every gate value used, the full yield funnel, the location-group conflict table, the camera and extrinsics it projected with, the detector model file and its settings, and the run's timing |
 | `<dataset>/review.json` | the human verdict per label — `verified` / `renamed` / `dropped`, each with its reason |
 | `<dataset>/questions.jsonl` | the question set: only labels the review kept, after the passability and confusability gates. The only file the live sweep reads |
 | `<dataset>/crops/<question_id>.jpg` | identification frame: sharpest LiDAR-supported frame near a contributing view, with the reference position and inlier points drawn |
@@ -61,10 +66,14 @@ recordings. The review protocol, in increasing order of effort:
 Every verdict lands in that dataset's `review.json` with its reason; the funnel
 in its `manifest.json` records what the gates dropped before review ever ran.
 Review keeps few labels, per dataset: of `go2_bigoffice`'s 26 qualified labels
-it kept 3, and of `go2_short`'s 14 it kept 3. Most drops are validity exclusions
-(dynamic objects, multiple identical instances, mutually confusable neighbors)
-rather than pipeline errors — objects with no unique answer to "where is X"
-make no valid question.
+it kept 3, and of `go2_short`'s 14 it kept 3. About half the drops are validity
+exclusions (dynamic objects, multiple identical instances, mutually confusable
+neighbors, region labels naming no object) rather than pipeline errors — nothing
+with no unique answer to "where is X" makes a valid question. The others are
+labels no crop could confirm, most often because the frame is too dark or too
+motion-blurred to resolve anything, plus one reference the geometry put in the
+wrong place. `review.json` carries the reason for each, so the split can be
+recounted rather than taken from this paragraph.
 
 ## Reproducing
 
@@ -77,5 +86,7 @@ uv run python -m dimos.agents.evals.questions --refs <dir>/refs.jsonl \
 
 `refs.jsonl` reproduces byte-identically on one machine; `manifest.json` varies
 only in its timestamp and timing fields. `--crops` writes an image pair for
-*every* reference; what a dataset directory commits is the pairs for its own
-questions, copied out of that run.
+every reference it can render a supported frame for: a reference with no
+LiDAR-confirmed candidate in its window gets no identification image, and the
+run's `CropReport` says why. What a dataset directory commits is the pairs for
+its own questions, copied out of that run.

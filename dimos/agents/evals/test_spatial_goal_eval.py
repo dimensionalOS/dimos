@@ -18,7 +18,9 @@ Both lanes are ``self_hosted``. Everything the eval decides -- classification,
 scoring, question rules, the figure -- is covered by the synthetic unit tests
 next to this file; what is left here is the part that can only be checked by
 actually driving the shipping agent, and it needs an ingested spatial memory
-(and, for the sweep, an API key).
+(and, for the sweep, an API key). The one exception is the store-provisioning
+guard at the bottom of this file: it decides whether a machine skips or fails
+*before* either lane runs, so a recording cannot be what checks it.
 
 **The sweep** (``test_goal_selection_sweep``) is the measurement: every
 recording the reference tree ships questions for x two system prompts (the
@@ -48,18 +50,24 @@ model answering one question about one room, so a smoke that took its replay
 from an environment variable would play a ``go2_bigoffice`` transcript against
 whatever store it was pointed at and still pass.
 
-Re-recording the smoke's transcript. ``MockModel`` reads ``RECORD`` itself: with
-it set, the fixture path is *written* from a live turn instead of replayed
-(``dimos/agents/testing/mock_model.py``), so the transcript is whatever the
-shipping client's own model path returned, rather than hand-written JSON. It has
-to be re-recorded whenever :data:`SMOKE_QUESTION_ID` changes, because the query in
-it is that question's display name and the assertion below checks the two agree::
+The committed transcript. :data:`SMOKE_MODEL_FIXTURE` is a **hand-maintained
+minimal transcript** in the repository's ``model_fixture`` format -- one tool
+call and one closing message -- replayed by ``MockModel``. It is not a capture
+of any model's output and is not evidence about one: it exists to drive the
+pipeline through the shipping tool path deterministically and without a key.
+It has to be updated whenever :data:`SMOKE_QUESTION_ID` changes, because the
+query in it is that question's display name and the test asserts the two agree.
+
+``MockModel`` also reads ``RECORD`` (``dimos/agents/testing/mock_model.py``):
+with it set the fixture path is *written* from a live turn instead of replayed,
+which is a convenient way to regenerate a starting point::
 
     RECORD=1 OPENAI_API_KEY=... uv run pytest \\
         dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted -k full_chain
 
-Then run it again *without* ``RECORD`` to confirm the recording plays back
-keyless, which is the state the lane ships in.
+A transcript produced that way still has to be trimmed to the minimal shape
+above and then replayed *without* ``RECORD`` to confirm it plays back keyless,
+which is the state the lane ships in.
 
 Running the sweep locally::
 
@@ -76,10 +84,13 @@ Running the sweep locally::
     DIMOS_EVAL_SHARD_DIR=.ignore.eval-shards \\
     uv run pytest dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted
 
-A root holding only some of the datasets is a supported state, not an error:
+A root holding only *some* of the datasets is a supported state, not an error:
 the cases of a dataset with no store skip with the command that builds it, and
-the rest of the sweep runs. Only a ``DIMOS_EVAL_STORE_ROOT`` that does not exist
-at all fails, because that is a typo rather than a partly-provisioned machine.
+the rest of the sweep runs. Two states do fail rather than skip, because both
+mean the requested live run cannot happen at all: a
+``DIMOS_EVAL_STORE_ROOT`` that does not exist (a typo), and one that exists but
+holds no store for *any* discovered dataset (wrong root, or an ingest that never
+ran). Skipping either would leave the lane green having measured nothing.
 
 Shards land in ``$DIMOS_EVAL_SHARD_DIR/<dataset>/``, and **the renderer is
 invoked once per dataset directory**::
@@ -105,7 +116,7 @@ timing anything (a self-hosted runner needs egress to
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import os
 from pathlib import Path
 import subprocess
@@ -185,14 +196,14 @@ PROMPT_SPATIAL = (
 #: moves this eval, which is the signal it exists to give.
 PROMPTS = (("shipping", SYSTEM_PROMPT), ("spatial", PROMPT_SPATIAL))
 
-#: The smoke test's recording, question, and the query in its recorded
-#: transcript. The transcript is recorded against *this* question of *this*
+#: The smoke test's recording, question, and the query in its committed
+#: transcript. The transcript is written against *this* question of *this*
 #: dataset -- the query below is the question's own ``display_name``, which is
 #: what a model answering it would send to ``navigate_with_text`` -- so the
 #: playback exercises the shipping skill on the question the shard says it ran.
 #: Pinned rather than swept or read from the environment: a transcript is not
-#: transferable between recordings. Re-record after changing any of the three
-#: (see the docstring above for the ``RECORD`` flow).
+#: transferable between recordings. Update it after changing any of the three
+#: (see the docstring above).
 SMOKE_DATASET = "go2_bigoffice"
 SMOKE_QUESTION_ID = "go2-bigoffice-organization"
 SMOKE_TOOL_QUERY = "stack of storage boxes"
@@ -232,12 +243,13 @@ def run_id() -> str:
     return f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
 
 
-@pytest.fixture
-def ingested_store() -> Callable[[str], Path]:
+def resolve_ingested_store(dataset: str, datasets: Sequence[str] = DATASETS) -> Path:
     """Resolve one dataset's chroma directory under ``$DIMOS_EVAL_STORE_ROOT``.
 
-    A callable rather than a value because the answer depends on the case's
-    dataset, and the three outcomes are deliberately different:
+    *datasets* is every dataset the sweep is fanned out over; it is a parameter
+    only so the guard below can be tested without a recording.
+
+    The four outcomes are deliberately different:
 
     * **root unset** -- skip. The store is a machine-local artifact an operator
       produces once, not a dependency of the package; this is the same shape as
@@ -246,40 +258,60 @@ def ingested_store() -> Callable[[str], Path]:
     * **root set but absent** -- fail. That is a typo, not an unprovisioned
       machine, and silently skipping a whole sweep because of one is how a
       "green" self-hosted lane ends up measuring nothing.
-    * **root present, this dataset's store absent** -- skip *these* cases, with
-      the command that builds it. Provisioning is per recording, so a machine
-      that has ingested one dataset must still be able to sweep it.
+    * **root present and holding no store at all** -- fail. Setting the variable
+      is a request for a live run, and a root under which *no* discovered
+      dataset can answer cannot serve one: every case would skip and the lane
+      would report green having measured nothing, which is the same failure the
+      absent-root branch exists to prevent. Wrong root, or an ingest that never
+      ran.
+    * **root present, some dataset's store absent** -- skip *those* cases, with
+      the command that builds them. Provisioning is per recording, so a machine
+      that has ingested one dataset must still be able to sweep it, and a
+      partly-provisioned root is a supported state rather than an error.
 
     The collection name is the dataset name (``ingest.py``'s own default), and
     ``conftest`` still runs ``assert_store_ingested`` against it before building
     anything -- a store directory that exists but holds the wrong or an empty
     collection is a misconfiguration and raises there.
     """
-
-    def resolve(dataset: str) -> Path:
-        root = os.environ.get(STORE_ROOT_ENV)
-        if not root:
-            pytest.skip(
-                f"no ingested spatial memory: set {STORE_ROOT_ENV} to the directory "
-                f"holding one store per dataset. Build this one with: "
-                f"{ingest_command('<store root>', dataset)}"
-            )
-        store_root = Path(root).expanduser()
-        if not store_root.is_dir():
-            pytest.fail(
-                f"{STORE_ROOT_ENV}={root!r} does not exist; it must be the directory "
-                f"holding one dimos.agents.evals.ingest output per dataset"
-            )
-        db_path = dataset_store(store_root, dataset)
-        if not db_path.is_dir():
-            pytest.skip(
-                f"no ingested store for dataset {dataset!r}: {db_path} does not exist "
-                f"(other datasets under {STORE_ROOT_ENV} are unaffected). Build it "
-                f"with: {ingest_command(store_root, dataset)}"
-            )
+    root = os.environ.get(STORE_ROOT_ENV)
+    if not root:
+        pytest.skip(
+            f"no ingested spatial memory: set {STORE_ROOT_ENV} to the directory "
+            f"holding one store per dataset. Build this one with: "
+            f"{ingest_command('<store root>', dataset)}"
+        )
+    store_root = Path(root).expanduser()
+    if not store_root.is_dir():
+        pytest.fail(
+            f"{STORE_ROOT_ENV}={root!r} does not exist; it must be the directory "
+            f"holding one dimos.agents.evals.ingest output per dataset"
+        )
+    db_path = dataset_store(store_root, dataset)
+    if db_path.is_dir():
         return db_path
+    provisioned = [name for name in datasets if dataset_store(store_root, name).is_dir()]
+    if not provisioned:
+        pytest.fail(
+            f"{STORE_ROOT_ENV}={root!r} exists but holds no ingested store for any of "
+            f"{list(datasets)}: every case of the sweep would skip and the lane would "
+            f"report green having measured nothing. Build one with: "
+            f"{ingest_command(store_root, dataset)}"
+        )
+    pytest.skip(
+        f"no ingested store for dataset {dataset!r}: {db_path} does not exist "
+        f"(the sweep still runs {provisioned}). Build it with: "
+        f"{ingest_command(store_root, dataset)}"
+    )
 
-    return resolve
+
+@pytest.fixture
+def ingested_store() -> Callable[[str], Path]:
+    """The store resolver, as a fixture: a callable, because the answer is per case.
+
+    See :func:`resolve_ingested_store` for what each provisioning state does.
+    """
+    return resolve_ingested_store
 
 
 @pytest.fixture
@@ -383,13 +415,15 @@ def test_full_chain_pipeline(
 ) -> None:
     """Replay -> store -> agent -> goal -> score -> shard -> figure, with no API key.
 
-    **This validates the pipeline, not the model.** The agent's replies are a
-    recorded transcript played back by ``MockModel``, so the tool call and the
-    final message are fixed; what is under test is that a store ingested from
-    the replay answers a real ``navigate_with_text`` call, that the goal the
-    skill sets is captured out of its worker process, and that the result
-    survives scoring, the shard format and the renderer. It cannot fail because
-    a model is bad, and it cannot pass because a model is good.
+    **This validates the pipeline, not any model.** The agent's replies come
+    from :data:`SMOKE_MODEL_FIXTURE` -- a hand-maintained minimal transcript in
+    the repository's ``model_fixture`` format, replayed by ``MockModel`` -- so
+    the tool call and the final message are fixed and are not evidence about a
+    model. What is under test is that a store ingested from the replay answers a
+    real ``navigate_with_text`` call, that the goal the skill sets is captured
+    out of its worker process, and that the result survives scoring, the shard
+    format and the renderer. It cannot fail because a model is bad, and it
+    cannot pass because a model is good.
 
     It therefore validates the *mechanism*, not the answer, and deliberately does
     not assert ``passed``: the store is a thin slice of the replay, so the top-1
@@ -439,6 +473,13 @@ def test_full_chain_pipeline(
 
     question_set = load_question_set(SMOKE_DATASET)
     question = next(q for q in question_set if q.question_id == SMOKE_QUESTION_ID)
+    # The committed transcript's query is this question's display name. Checked
+    # before the run so a rename in review surfaces as "re-write the transcript"
+    # rather than as a tool_queries mismatch after a full ingest.
+    assert question.display_name == SMOKE_TOOL_QUERY, (
+        f"{SMOKE_QUESTION_ID} is now named {question.display_name!r}; "
+        f"{SMOKE_MODEL_FIXTURE.name} still queries {SMOKE_TOOL_QUERY!r}"
+    )
     observation = spatial_eval_setup(
         question_id=question.question_id,
         question_text=question.question_text,
@@ -458,9 +499,9 @@ def test_full_chain_pipeline(
     figure = render_figure(
         cases, tmp_path / "error_distribution.png", threshold_m=question.threshold_m
     )
-    # The retrieval read-back is logged, never asserted: it is a diagnostic that
-    # must not be able to fail a run (see ``conftest._replay_retrievals``), so
-    # asserting it here would convert exactly the property it is built around
+    # The retrieval read-back is logged, never asserted: it is a diagnostic
+    # whose every exception is swallowed (see ``conftest._replay_retrievals``),
+    # so asserting it here would convert exactly the property it is built around
     # into a gate. What the shard holds is visible in the line below.
     logger.info(
         f"[full chain] {question.question_id}: {result.reason} "
@@ -474,9 +515,77 @@ def test_full_chain_pipeline(
     # chain broke, not that the memory had nothing to offer.
     assert answer.outcome in {"predicted", "no_prediction"}, result.reason
     assert answer.tool_queries == [SMOKE_TOOL_QUERY], (
-        "the recorded transcript did not reach the shipping navigation skill"
+        "the committed transcript did not reach the shipping navigation skill"
     )
     assert answer.model_id == f"model_fixture:{SMOKE_MODEL_FIXTURE.name}"
     assert cases[0].answer == answer
     assert cases[0].result == result
     assert figure.stat().st_size <= MAX_PNG_BYTES
+
+
+def _provision(root: Path, *datasets: str) -> Path:
+    """Lay out *root* as an operator's store root holding *datasets*' stores."""
+    for dataset in datasets:
+        dataset_store(root, dataset).mkdir(parents=True)
+    return root
+
+
+def test_a_store_root_with_no_store_at_all_fails_rather_than_skipping_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setting the variable requests a live run; an empty root cannot serve one.
+
+    This is the state that used to produce a full sweep of clean skips: the
+    lane went green having measured nothing, which is indistinguishable from a
+    lane nobody had provisioned on purpose. It is a misconfiguration -- the
+    wrong root, or an ingest that never ran -- so it fails, and the failure
+    names the command that builds a store.
+    """
+    monkeypatch.setenv(STORE_ROOT_ENV, str(tmp_path))
+
+    with pytest.raises(pytest.fail.Exception) as excinfo:
+        resolve_ingested_store("go2_short", datasets=("go2_short", "go2_bigoffice"))
+
+    message = str(excinfo.value)
+    assert "holds no ingested store" in message
+    assert "dimos.agents.evals.ingest" in message
+
+
+def test_a_partly_provisioned_root_skips_only_the_datasets_it_cannot_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Provisioning is per recording, so one ingested dataset still sweeps.
+
+    The pair is the point: the same root that *skips* the dataset it has no
+    store for must *resolve* the one it does, so the guard above cannot be
+    satisfied by failing on every partly-provisioned machine.
+    """
+    monkeypatch.setenv(STORE_ROOT_ENV, str(_provision(tmp_path, "go2_short")))
+    datasets = ("go2_bigoffice", "go2_short")
+
+    assert resolve_ingested_store("go2_short", datasets=datasets) == dataset_store(
+        tmp_path, "go2_short"
+    )
+
+    with pytest.raises(pytest.skip.Exception) as excinfo:
+        resolve_ingested_store("go2_bigoffice", datasets=datasets)
+    assert "['go2_short']" in str(excinfo.value)
+
+
+def test_an_unset_root_skips_and_a_missing_one_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two states that bracket the ones above, kept honest together.
+
+    An unprovisioned machine is not a broken one -- the store is a local
+    artifact, so no variable means skip -- while a variable pointing at nothing
+    is a typo, and skipping on it is how a self-hosted lane silently stops
+    measuring.
+    """
+    monkeypatch.delenv(STORE_ROOT_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        resolve_ingested_store("go2_short")
+
+    monkeypatch.setenv(STORE_ROOT_ENV, str(tmp_path / "typo"))
+    with pytest.raises(pytest.fail.Exception, match="does not exist"):
+        resolve_ingested_store("go2_short")

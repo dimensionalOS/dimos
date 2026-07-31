@@ -130,7 +130,7 @@ def make_answer(question_id: str = "q1", outcome: Outcome = "predicted", **kw: A
     return AnswerRecord(**fields)
 
 
-# --- classification ---------------------------------------------------------
+# Classification.
 
 
 def test_goal_record_from_the_rpc_mapping() -> None:
@@ -193,7 +193,7 @@ def test_classification_ladder_puts_broken_measurements_first() -> None:
     )
 
 
-# --- answer records ---------------------------------------------------------
+# Answer records.
 
 
 def test_answer_record_carries_the_first_goal_and_the_run_configuration() -> None:
@@ -297,7 +297,7 @@ def test_answer_record_explains_a_timeout_and_a_tool_error() -> None:
     assert raised.error == "RuntimeError: boom; OSError: x"
 
 
-# --- scoring ----------------------------------------------------------------
+# Scoring.
 
 
 def test_score_measures_map_frame_xy_distance() -> None:
@@ -374,7 +374,7 @@ def test_score_refuses_a_prediction_without_a_goal() -> None:
         score(make_question(), make_answer(outcome="predicted", goal_x=None, goal_y=None))
 
 
-# --- aggregates -------------------------------------------------------------
+# Aggregates.
 
 
 def scored(outcome: Outcome, passed: bool = False, error_m: float | None = None) -> ScoreResult:
@@ -460,7 +460,7 @@ def test_prompt_sha256_hashes_the_text_and_treats_no_prompt_as_empty() -> None:
     assert prompt_sha256(None) == hashlib.sha256(b"").hexdigest()
 
 
-# --- shards -----------------------------------------------------------------
+# Shards.
 
 
 def test_shard_round_trips_pairs_in_file_order(tmp_path: Path) -> None:

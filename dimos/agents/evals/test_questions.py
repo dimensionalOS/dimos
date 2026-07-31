@@ -365,7 +365,7 @@ def test_a_reference_with_no_viewpoints_at_all_is_unpassable() -> None:
     assert "unpassable by construction" in problems[0]
 
 
-# --- per-question thresholds ------------------------------------------------
+# Per-question thresholds.
 
 
 def test_threshold_is_the_nearest_viewpoint_plus_the_margin() -> None:
@@ -394,7 +394,7 @@ def test_a_row_with_no_viewpoints_gets_the_cap_and_then_fails_passability() -> N
     assert threshold_for(empty, THRESHOLD_MARGIN_M, MAX_THRESHOLD_M) == MAX_THRESHOLD_M
 
 
-# --- confusable questions ---------------------------------------------------
+# Confusable questions.
 
 
 def test_two_objects_sharing_a_viewing_position_abort_the_run() -> None:

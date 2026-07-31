@@ -26,21 +26,28 @@ Each reference was checked across a strip of the approach — marker projected,
 supporting LiDAR points drawn, support counted per frame — the step that caught
 `go2_bigoffice`'s `elevator door`. All three passed.
 
+The figures below are approximate — they are read off a `--crops` run and are
+recorded to show the shape of the evidence, not as constants to assert against.
+They reproduce with the shipped tools (see [`../README.md`](../README.md)), and
+the exact counts move with the gate values in `crops.py`.
+
 | question | marker sits on | support | surface depth at marker vs reference |
 |---|---|---|---|
-| houseplant | the dark tapered pot of the large potted plant | 17/22 candidate frames supported, up to 139 pts | −0.06 m (median of 11 measurable frames) |
-| toilet paper display | the pyramid of white plastic-wrapped paper multipacks | 35/35 supported, up to 223 pts | −0.03 m (16 frames) |
-| wooden meeting table | the dark-wood table, just under the tabletop edge | 29/41 supported, up to 78 pts | **+0.71 m** (16 frames) — see below |
+| houseplant | the dark tapered pot of the large potted plant | supported in most candidate frames, ~140 pts at best | ≈ −0.06 m (median over the measurable frames) |
+| toilet paper display | the pyramid of white plastic-wrapped paper multipacks | supported in every candidate frame, ~220 pts at best | ≈ −0.03 m |
+| wooden meeting table | the dark-wood table, just under the tabletop edge | supported in roughly two thirds of candidate frames, ~80 pts at best | **≈ +0.71 m** — see below |
 
 **The meeting table's +0.71 m is cosmetic, not the `elevator door` pattern.**
 The marker falls in the see-through gap just under the tabletop, so the 14 px
 around it look *past* the table to the far side of the room, which is what the
-depth reads. Nothing occludes the marker, the marker is on the table in every
-frame of the strip, `z = 0.525 m` is tabletop height, and the 73 support points
-within 0.4 m of the reference are the tabletop itself. The visible consequence
-is that the marker reads as floating slightly below the tabletop rather than
-lying on it. It is recorded here because a reviewer checking the geometry will
-find the +0.71 m and otherwise have no explanation for it.
+depth reads. A surface *behind* the marker is not occlusion and the gate does
+not treat it as such (`crops.CROP_OCCLUSION_SLACK_M`); nothing stands in front
+of the marker, the marker is on the table in every frame of the strip,
+`z = 0.525 m` is tabletop height, and the support points within 0.4 m of the
+reference are the tabletop itself. The visible consequence is that the marker
+reads as floating slightly below the tabletop rather than lying on it. It is
+recorded here because a reviewer checking the geometry will find the +0.71 m and
+otherwise have no explanation for it.
 
 One caveat stays open, from review: a similar potted plant appears in the
 background of the `entrance hall` crop. It is most likely the same plant seen
@@ -55,12 +62,15 @@ For the meeting table, every candidate frame for this question contains an
 identifiable person; review images are omitted and reproducible locally via
 `uv run python -m dimos.agents.evals.teacher --dataset go2_short --out-dir <dir> --crops`.
 
-This is measured, not assumed: two people are seated at the table while the
-robot passes it. All 29 LiDAR-confirmed candidates inside the shipped ±1.0 s
-window were rendered and viewed, and all 29 show a seated person, most with the
-face clearly visible; widening to ±5 s adds 20 more confirmed candidates, all of
-which show the same people, while the 35 earlier candidates carry no support at
-all. Tightening the framing to `CROP_CONTEXT_SCALE = 1.0` moves the face out of
-the crop but keeps the person's torso, arm and legs in it. The question itself
-is unaffected — `questions.jsonl` is the only file the sweep reads — and the
-verification table above is what stands in for the images.
+This is checked, not assumed: two people are seated at the table while the robot
+passes it. Every LiDAR-confirmed candidate inside the shipped ±1.0 s window —
+about thirty of them — was rendered and viewed, and all of them show a seated
+person, most with the face clearly visible. Widening the window to ±5 s adds
+roughly twenty more confirmed candidates, all showing the same people, while the
+earlier frames carry no LiDAR support at all. Tightening the framing to
+`CROP_CONTEXT_SCALE = 1.0` moves the face out of the crop but keeps the person's
+torso, arm and legs in it. The counts are approximate for the same reason as the
+table above; the finding — that no candidate frame is publishable — is what the
+omission rests on. The question itself is unaffected (`questions.jsonl` is the
+only file the sweep reads), and the verification table above is what stands in
+for the images.

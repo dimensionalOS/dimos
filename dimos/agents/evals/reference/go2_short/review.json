@@ -16,7 +16,7 @@
     "status": "dropped"
   },
   "fridge": {
-    "note": "Heavily blurred dark grey/black slab-like mass with one vertical edge, lit from the left; no door, handle, seal, or grille visible. Could equally be a cabinet, a dark panel stack, or a doorway shadow. Unverifiable. loc-06 duplicate with 'podium'.",
+    "note": "Heavily blurred dark grey/black slab-like mass with one vertical edge, lit from the left; no door, handle, seal, or grille visible. Could equally be a cabinet, a dark panel stack, or a doorway shadow. Unverifiable. loc-05 duplicate with 'podium'.",
     "status": "dropped"
   },
   "gift bag": {
@@ -25,7 +25,7 @@
   },
   "houseplant": {
     "display_name": "houseplant",
-    "note": "Clearly a large potted plant: tall arching green leaves in a dark tapered pot standing on the grey floor next to a white pillar/pod. Label is a fair name. Caveat: a similar potted plant appears in the background of the loc-05 crop; it is most likely this same plant seen from ~2.3 m away, but if the space has several floor plants this becomes class-ambiguous.",
+    "note": "Clearly a large potted plant: tall arching green leaves in a dark tapered pot standing on the grey floor next to a white pillar/pod. Label is a fair name. Caveat: a similar potted plant appears in the background of the loc-04 crop; it is most likely this same plant seen from ~2.3 m away, but if the space has several floor plants this becomes class-ambiguous.",
     "status": "verified"
   },
   "national flag": {
@@ -43,7 +43,7 @@
     "status": "renamed"
   },
   "podium": {
-    "note": "Same loc-06 object as 'fridge' from an adjacent frame: an unresolvable dark vertical mass, no lectern top, base, or panel edges visible. Unverifiable, and only one name per location group is allowed.",
+    "note": "Same loc-05 object as 'fridge' from an adjacent frame: an unresolvable dark vertical mass, no lectern top, base, or panel edges visible. Unverifiable, and only one name per location group is allowed.",
     "status": "dropped"
   },
   "storage box": {
