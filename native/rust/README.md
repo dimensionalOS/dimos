@@ -153,6 +153,8 @@ let at_scan = self.tf.lookup("odom", &cloud.header.frame_id)
 
 Either way the result is `None` when no path connects the frames or no sample falls within the tolerance. It exposes its `nalgebra` parts via `translation()` (a `Vector3<f64>`) and `rotation()` (a `UnitQuaternion<f64>`). Lookups are nearest-in-time, not interpolated.
 
+A result composed over several edges carries the stamp of the stalest edge on the path, so `ts` reads as the age of the whole answer rather than of one hop. A chain mixing a live edge with a static one is only as fresh as the live edge, in either direction.
+
 `publish` sends transforms onto the same `tf` topic, the counterpart to Python's `tf.publish()`. Published transforms also feed the module's own graph, so a lookup right after the publish sees them. Build the isometry from `dimos_module::nalgebra`, re-exported so the version matches the SDK's types:
 
 ```rust

@@ -34,7 +34,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     voxel_size: float = 0.08
     robot_height: float = 0.3
     # Subtracted from the start pose z before snapping to a surface. Leave 0
-    # when the publisher already ground-projects.
+    # when the publisher already ground-projects via GoalRelay lidar_height.
+    # Set exactly one of the two: both set drops the start pose twice.
     start_z_offset_m: float = 0.0
     max_overhead_m: float = 2.0
 

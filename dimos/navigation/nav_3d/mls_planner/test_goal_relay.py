@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -21,6 +24,7 @@ from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
 MOUNT_Z = 0.163
+LIDAR_HEIGHT = 0.45
 
 
 class FakeTF(MultiTBuffer):
@@ -30,9 +34,23 @@ class FakeTF(MultiTBuffer):
         super().__init__()
         self.gets = 0
 
-    def get(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> Transform | None:
         self.gets += 1
-        return super().get(*args, **kwargs)
+        return super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
 
     def dispose(self) -> None:
         pass
@@ -57,30 +75,30 @@ def _odom(z: float = 3.0) -> Odometry:
     )
 
 
-def _relay(tf: FakeTF, **config) -> tuple[GoalRelay, list]:  # type: ignore[no-untyped-def]
+def _relay(tf: FakeTF, **config: Any) -> tuple[GoalRelay, list[PoseStamped]]:
     module = GoalRelay(**config)
     module._tf = tf
-    captured: list = []
+    captured: list[PoseStamped] = []
     module.start_pose.subscribe(captured.append)
     return module, captured
 
 
-def test_start_pose_is_ground_projected():
+def test_start_pose_is_ground_projected() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=0.45)
+    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
     try:
         module._on_odometry(_odom())
         # Base sits MOUNT_Z below the sensor, then drops by the base's height
         # above ground (0.45 - MOUNT_Z): together exactly the lidar height.
         assert len(captured) == 1
-        assert abs(captured[0].position.z - (3.0 - 0.45)) < 1e-9
+        assert abs(captured[0].position.z - (3.0 - LIDAR_HEIGHT)) < 1e-9
     finally:
         module.stop()
 
 
-def test_drops_frames_without_the_mount_tf():
-    module, captured = _relay(FakeTF(), lidar_height=0.45)
+def test_drops_frames_without_the_mount_tf() -> None:
+    module, captured = _relay(FakeTF(), lidar_height=LIDAR_HEIGHT)
     try:
         module._on_odometry(_odom())
         assert captured == []
@@ -88,10 +106,10 @@ def test_drops_frames_without_the_mount_tf():
         module.stop()
 
 
-def test_base_frame_odometry_is_dropped_rather_than_over_projected():
+def test_base_frame_odometry_is_dropped_rather_than_over_projected() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=0.45)
+    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
     try:
         odom = _odom()
         odom.child_frame_id = "base_link"
@@ -101,7 +119,7 @@ def test_base_frame_odometry_is_dropped_rather_than_over_projected():
         module.stop()
 
 
-def test_no_lidar_height_skips_the_ground_correction():
+def test_no_lidar_height_skips_the_ground_correction() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
     module, captured = _relay(tf)
@@ -113,15 +131,15 @@ def test_no_lidar_height_skips_the_ground_correction():
         module.stop()
 
 
-def test_mount_is_looked_up_once():
+def test_mount_is_looked_up_once() -> None:
     tf = FakeTF()
     tf.receive_transform(_mount())
-    module, captured = _relay(tf, lidar_height=0.45)
+    module, captured = _relay(tf, lidar_height=LIDAR_HEIGHT)
     try:
         module._on_odometry(_odom())
         module._on_odometry(_odom(z=4.0))
         assert len(captured) == 2
-        assert abs(captured[1].position.z - (4.0 - 0.45)) < 1e-9
+        assert abs(captured[1].position.z - (4.0 - LIDAR_HEIGHT)) < 1e-9
         assert tf.gets == 1
     finally:
         module.stop()

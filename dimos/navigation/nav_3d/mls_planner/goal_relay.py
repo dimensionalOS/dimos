@@ -34,7 +34,8 @@ logger = setup_logger()
 class GoalRelayConfig(ModuleConfig):
     base_frame: str = "base_link"
     # Lidar height above the ground while standing. None skips the ground
-    # correction.
+    # correction, leaving it to the planner's start_z_offset_m. Set exactly one
+    # of the two: both set drops the start pose to the ground twice.
     lidar_height: float | None = None
 
 

@@ -21,6 +21,8 @@ from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
 from dimos.protocol.tf.tf import MultiTBuffer
 
 IDENTITY = Quaternion(0.0, 0.0, 0.0, 1.0)
+MOUNT_Z = 0.163
+LIDAR_HEIGHT = 0.45
 
 
 class CountingTF(MultiTBuffer):
@@ -28,12 +30,26 @@ class CountingTF(MultiTBuffer):
         super().__init__()
         self.gets = 0
 
-    def get(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> Transform | None:
         self.gets += 1
-        return super().get(*args, **kwargs)
+        return super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
 
 
-def _mount(z: float = 0.163, pitch: float = 0.0) -> Transform:
+def _mount(z: float = MOUNT_Z, pitch: float = 0.0) -> Transform:
     return Transform(
         translation=Vector3(0.0, 0.0, z),
         rotation=Quaternion.from_euler(Vector3(0.0, pitch, 0.0)),
@@ -52,7 +68,7 @@ def _odom(orientation: Quaternion = IDENTITY) -> Odometry:
     )
 
 
-def test_translates_to_base_frame():
+def test_translates_to_base_frame() -> None:
     tf = MultiTBuffer()
     tf.receive_transform(_mount())
     pose = OdomBasePose(tf, "base_link").resolve(_odom())
@@ -61,10 +77,10 @@ def test_translates_to_base_frame():
     assert pose.ts == 1.0
     assert abs(pose.position.x - 1.0) < 1e-9
     assert abs(pose.position.y - 2.0) < 1e-9
-    assert abs(pose.position.z - (3.0 - 0.163)) < 1e-9
+    assert abs(pose.position.z - (3.0 - MOUNT_Z)) < 1e-9
 
 
-def test_composes_out_the_mount_pitch():
+def test_composes_out_the_mount_pitch() -> None:
     # A level body reads its own mount tilt as the sensor's world orientation, so
     # composing the mount out returns identity.
     mount = _mount(pitch=0.3)
@@ -75,7 +91,7 @@ def test_composes_out_the_mount_pitch():
     assert pose.orientation.angle_to(IDENTITY) < 1e-5
 
 
-def test_preserves_body_yaw_under_mount_tilt():
+def test_preserves_body_yaw_under_mount_tilt() -> None:
     mount = _mount(pitch=0.3)
     body = Quaternion.from_euler(Vector3(0.0, 0.0, 0.7))
     tf = MultiTBuffer()
@@ -85,7 +101,7 @@ def test_preserves_body_yaw_under_mount_tilt():
     assert pose.orientation.angle_to(body) < 1e-5
 
 
-def test_drops_frames_until_the_mount_leg_arrives():
+def test_drops_frames_until_the_mount_leg_arrives() -> None:
     tf = MultiTBuffer()
     resolver = OdomBasePose(tf, "base_link")
     assert resolver.resolve(_odom()) is None
@@ -94,7 +110,7 @@ def test_drops_frames_until_the_mount_leg_arrives():
     assert resolver.resolve(_odom()) is not None
 
 
-def test_missing_leg_lookups_are_throttled():
+def test_missing_leg_lookups_are_throttled() -> None:
     tf = CountingTF()
     resolver = OdomBasePose(tf, "base_link")
     assert resolver.resolve(_odom()) is None
@@ -102,7 +118,7 @@ def test_missing_leg_lookups_are_throttled():
     assert tf.gets == 1
 
 
-def test_mount_leg_is_looked_up_once():
+def test_mount_leg_is_looked_up_once() -> None:
     tf = CountingTF()
     tf.receive_transform(_mount())
     resolver = OdomBasePose(tf, "base_link")
@@ -111,7 +127,7 @@ def test_mount_leg_is_looked_up_once():
     assert tf.gets == 1
 
 
-def test_base_frame_odometry_passes_through():
+def test_base_frame_odometry_passes_through() -> None:
     resolver = OdomBasePose(MultiTBuffer(), "base_link")
     msg = Odometry(ts=1.0, frame_id="odom", child_frame_id="base_link")
     pose = resolver.resolve(msg)
@@ -119,5 +135,5 @@ def test_base_frame_odometry_passes_through():
     assert pose.frame_id == "odom"
 
 
-def test_base_height_above_ground():
-    assert abs(base_height_above_ground(0.45, _mount()) - (0.45 - 0.163)) < 1e-9
+def test_base_height_above_ground() -> None:
+    assert abs(base_height_above_ground(LIDAR_HEIGHT, _mount()) - (LIDAR_HEIGHT - MOUNT_Z)) < 1e-9

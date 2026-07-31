@@ -166,7 +166,6 @@ impl TBuffer {
         }
     }
 
-    // One transform for this edge: the latest sample, or the one nearest time.
     fn sample(
         &self,
         parent: &str,
@@ -222,7 +221,6 @@ impl MultiTBuffer {
         out
     }
 
-    // A single forward or reverse edge. Reverse returns the inverse.
     fn edge(
         &self,
         parent: &str,
@@ -260,12 +258,15 @@ impl MultiTBuffer {
             return Some(direct);
         }
         let path = self.bfs(parent, child, time, tolerance)?;
+        // A composition is only as fresh as its stalest edge.
+        let oldest = path.iter().map(|t| t.ts).fold(f64::INFINITY, f64::min);
         let mut steps = path.into_iter();
         let first = steps.next()?;
-        Some(steps.fold(first, |acc, step| acc.compose(&step)))
+        let mut composed = steps.fold(first, |acc, step| acc.compose(&step));
+        composed.ts = oldest;
+        Some(composed)
     }
 
-    // Shortest path of edges from parent to child.
     fn bfs(
         &self,
         parent: &str,
@@ -644,7 +645,6 @@ mod tests {
         assert_eq!(inv.child, "base_link");
     }
 
-    // A 30-degree yaw then a pure translation.
     #[test]
     fn composes_ros_example_chain() {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
@@ -665,7 +665,6 @@ mod tests {
         assert_eq!(t.child, "end_effector");
     }
 
-    // world->robot->sensor multi-hop composition.
     #[test]
     fn composes_multi_hop_chain() {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
@@ -675,6 +674,16 @@ mod tests {
         assert!((t.translation().x - 1.5).abs() < 1e-3);
         assert!((t.translation().y - 2.0).abs() < 1e-3);
         assert!((t.translation().z - 3.2).abs() < 1e-3);
+    }
+
+    #[test]
+    fn composed_stamp_is_the_stalest_edge() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("world", "robot", 700.0, (1.0, 0.0, 0.0), 0.0);
+        h.add("robot", "sensor", 1000.0, (0.5, 0.0, 0.0), 0.0);
+        assert_eq!(tf.get_latest("world", "sensor").unwrap().ts, 700.0);
+        // Both directions, so the answer does not depend on which end is queried.
+        assert_eq!(tf.get_latest("sensor", "world").unwrap().ts, 700.0);
     }
 
     #[test]
@@ -980,7 +989,6 @@ mod tests {
         buf.add(1.0, Isometry3::identity());
         buf.add(2.0, Isometry3::identity());
         buf.add(10.0, Isometry3::identity());
-        // The window is [5.0, 10.0]. The 1.0 and 2.0 samples are dropped.
         assert_eq!(buf.samples.len(), 1);
         assert!((buf.last().unwrap().ts - 10.0).abs() < 1e-9);
     }
@@ -1079,7 +1087,6 @@ mod tests {
         assert!((t.ts - 7.0).abs() < 1e-9);
     }
 
-    // Publish on one handle, dispatch the wire bytes into another graph.
     #[tokio::test]
     async fn publish_round_trips_through_route() {
         let (tf_out, mut rx, _h) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
