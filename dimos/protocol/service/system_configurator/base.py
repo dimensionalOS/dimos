@@ -78,9 +78,8 @@ class SystemConfigurator(ABC):
 
 def configure_system(checks: list[SystemConfigurator], check_only: bool = False) -> None:
     # Skip in test runs — we'd otherwise prompt for sudo from a non-
-    # interactive subprocess and kill the worker. The self-hosted CI
-    # runner has its host config baked in via the container image, so
-    # it doesn't need configurators to fix anything either.
+    # interactive subprocess and kill the worker. CI configures its hosts up
+    # front instead.
     if os.environ.get("PYTEST_VERSION"):
         logger.info("Pytest run detected: skipping system configuration.")
         return

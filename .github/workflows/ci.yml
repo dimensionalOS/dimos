@@ -533,6 +533,30 @@ jobs:
           path: /tmp/cmu-nav-natives-marker
           key: ${{ needs.cmu-nav-natives-marker.outputs.key }}
 
+  configure-runner-sysctls:
+    # Raises the host UDP receive buffers LCM needs. The self-hosted-tests
+    # container inherits them but cannot set them itself.
+    if: |
+      github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, base]
+    timeout-minutes: 5
+    permissions:
+      contents: read  # For fetching IDEAL_RMEM_SIZE via the contents API
+    steps:
+      - name: Apply LCM UDP buffer sysctls
+        # Fetched via the API rather than a checkout to keep this host job
+        # off the container job's workspace.
+        run: |
+          size=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/dimos/protocol/service/system_configurator/lcm.py?ref=${{ github.sha }}" \
+            | grep -oP 'IDEAL_RMEM_SIZE = \K[0-9_]+' | tr -d _)
+          echo "Applying rmem_default=rmem_max=$size"
+          printf 'net.core.rmem_default=%s\nnet.core.rmem_max=%s\n' "$size" "$size" \
+            | sudo -n tee /etc/sysctl.d/99-dimos-lcm.conf
+          sudo -n sysctl -w "net.core.rmem_default=$size" "net.core.rmem_max=$size"
+
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
     # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
@@ -618,6 +642,23 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Check kernel UDP receive buffers
+        # Undersized buffers silently drop point clouds and flake the lidar
+        # tests. Warns only, since a runner may not be patched yet.
+        if: matrix.os == 'Linux'
+        run: |
+          uv run python - <<'EOF'
+          from dimos.protocol.service.system_configurator.lcm import BufferConfiguratorLinux
+
+          configurator = BufferConfiguratorLinux()
+          if not configurator.check():
+              fix = "; ".join((configurator.explanation() or "").splitlines())
+              print(
+                  "::warning title=Kernel UDP receive buffers below LCM target::"
+                  "Large LCM messages may be dropped on this runner host and "
+                  f"lidar delivery tests may flake. Fix: {fix}"
+              )
+          EOF
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
