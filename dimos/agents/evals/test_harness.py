@@ -38,7 +38,10 @@ import pytest
 from dimos.agents.evals.conftest import _queryable_module, _top_retrieval
 from dimos.agents.evals.contracts import RetrievalRecord
 from dimos.agents.evals.ingest import assert_store_ingested
-from dimos.agents.evals.modules import RecordingNavigationSkillContainer, RecordingStubNavigation
+from dimos.agents.evals.testing.modules import (
+    RecordingNavigationSkillContainer,
+    RecordingStubNavigation,
+)
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.module import Module
 

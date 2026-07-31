@@ -63,14 +63,14 @@ import pytest
 
 from dimos.agents.evals.contracts import RetrievalRecord
 from dimos.agents.evals.ingest import assert_store_ingested
-from dimos.agents.evals.modules import (
+from dimos.agents.evals.scorer import GoalRecord, RunObservation, prompt_sha256
+from dimos.agents.evals.testing.modules import (
     FakeCamera,
     FakeOdom,
     RecordingNavigationSkillContainer,
     RecordingStubNavigation,
     TimedAgentTestRunner,
 )
-from dimos.agents.evals.scorer import GoalRecord, RunObservation, prompt_sha256
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
