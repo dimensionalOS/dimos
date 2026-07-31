@@ -14,7 +14,7 @@
 
 //! Transform client for native modules.
 //!
-//! Each `/tf` edge is buffered per `(parent, child)`, and [`Tf::get`] composes
+//! Each `/tf` edge is buffered per `(parent, child)`, and [`Tf::lookup`] composes
 //! the shortest path through the frame graph. Lookups are nearest-in-time within
 //! a tolerance, not interpolated. [`Tf::publish`] sends transforms onto the same
 //! topic and feeds the local graph.
@@ -294,32 +294,34 @@ pub struct Tf {
 }
 
 impl Tf {
-    /// The transform from `parent` to `child`.
+    /// Start a lookup of the transform from `parent` to `child`.
     ///
-    /// `time` selects the sample nearest that stamp (latest sample when `None`),
-    /// and `tolerance` bounds how far that sample may be in seconds. Returns
-    /// `None` when no path connects the frames or no sample is within tolerance.
-    pub fn get(
-        &self,
-        parent: &str,
-        child: &str,
-        time: Option<f64>,
-        tolerance: Option<f64>,
-    ) -> Option<Transform> {
-        self.buffer
-            .read()
-            .expect("tf buffer lock poisoned")
-            .get(parent, child, time, tolerance)
+    /// Refine it with [`Lookup::at`] and [`Lookup::tolerance`], then finish with
+    /// [`Lookup::get`]. Use [`Tf::get_latest`] when no refinement is needed.
+    ///
+    /// ```ignore
+    /// let at_scan = tf.lookup("map", "base_link").at(scan_ts).tolerance(0.1).get();
+    /// ```
+    pub fn lookup<'a>(&'a self, parent: &'a str, child: &'a str) -> Lookup<'a> {
+        Lookup {
+            tf: self,
+            parent,
+            child,
+            time: None,
+            tolerance: None,
+        }
     }
 
-    /// The latest available transform from `parent` to `child`.
+    /// The latest transform from `parent` to `child`.
+    ///
+    /// Shorthand for `lookup(parent, child).get()`.
     pub fn get_latest(&self, parent: &str, child: &str) -> Option<Transform> {
-        self.get(parent, child, None, None)
+        self.lookup(parent, child).get()
     }
 
     /// Publish transforms on the `tf` topic.
     ///
-    /// The transforms also feed the local graph, so a `get` right after sees
+    /// The transforms also feed the local graph, so a lookup right after sees
     /// them without waiting for the transport round trip.
     pub async fn publish(&self, transforms: &[Transform]) -> io::Result<()> {
         {
@@ -332,6 +334,42 @@ impl Tf {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
         crate::module::publish_encoded(&self.sender, msg.encode()).await
+    }
+}
+
+/// A transform lookup being built. Created by [`Tf::lookup`].
+pub struct Lookup<'a> {
+    tf: &'a Tf,
+    parent: &'a str,
+    child: &'a str,
+    time: Option<f64>,
+    tolerance: Option<f64>,
+}
+
+impl Lookup<'_> {
+    /// Take the sample nearest `time` rather than the latest one.
+    pub fn at(mut self, time: f64) -> Self {
+        self.time = Some(time);
+        self
+    }
+
+    /// Bound how far, in seconds, the chosen sample may sit from [`Lookup::at`].
+    pub fn tolerance(mut self, tolerance: f64) -> Self {
+        self.tolerance = Some(tolerance);
+        self
+    }
+
+    /// Resolve the lookup against the transforms buffered so far.
+    ///
+    /// `None` when no path connects the frames, or when the nearest sample is
+    /// outside the tolerance.
+    pub fn get(self) -> Option<Transform> {
+        self.tf.buffer.read().expect("tf buffer lock poisoned").get(
+            self.parent,
+            self.child,
+            self.time,
+            self.tolerance,
+        )
     }
 }
 
@@ -534,7 +572,7 @@ mod tests {
             t.ts
         );
         // Explicit query time is echoed back.
-        let at = tf.get("base_link", "base_link", Some(42.0), None).unwrap();
+        let at = tf.lookup("base_link", "base_link").at(42.0).get().unwrap();
         assert!((at.ts - 42.0).abs() < 1e-9);
     }
 
@@ -543,9 +581,9 @@ mod tests {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
         h.add("a", "b", 20.0, (2.0, 0.0, 0.0), 0.0);
-        let near_10 = tf.get("a", "b", Some(11.0), None).unwrap();
+        let near_10 = tf.lookup("a", "b").at(11.0).get().unwrap();
         assert!((near_10.translation().x - 1.0).abs() < 1e-9);
-        let near_20 = tf.get("a", "b", Some(18.0), None).unwrap();
+        let near_20 = tf.lookup("a", "b").at(18.0).get().unwrap();
         assert!((near_20.translation().x - 2.0).abs() < 1e-9);
     }
 
@@ -553,8 +591,8 @@ mod tests {
     fn time_query_outside_tolerance_returns_none() {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
-        assert!(tf.get("a", "b", Some(50.0), Some(1.0)).is_none());
-        assert!(tf.get("a", "b", Some(10.5), Some(1.0)).is_some());
+        assert!(tf.lookup("a", "b").at(50.0).tolerance(1.0).get().is_none());
+        assert!(tf.lookup("a", "b").at(10.5).tolerance(1.0).get().is_some());
     }
 
     #[test]
@@ -686,7 +724,7 @@ mod tests {
         let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
         h.add("a", "b", 12.0, (2.0, 0.0, 0.0), 0.0);
-        let t = tf.get("a", "b", Some(11.0), None).unwrap();
+        let t = tf.lookup("a", "b").at(11.0).get().unwrap();
         assert!((t.translation().x - 2.0).abs() < 1e-9);
     }
 

@@ -27,7 +27,7 @@ pub mod zenoh;
 pub use dimos_module_macros::{native_config, Module};
 pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
-pub use tf::{Tf, Transform};
+pub use tf::{Lookup, Tf, Transform};
 pub use transport::Transport;
 pub use zenoh::ZenohTransport;
 

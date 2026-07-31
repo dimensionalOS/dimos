@@ -131,9 +131,15 @@ impl VoxelMap {
 }
 ```
 
-`Tf` is a cheap-to-clone handle; the graph fills in the background as `tf` messages arrive. `get(parent, child, time, tolerance)` selects the sample nearest `time` (latest when `None`) and returns `None` when no path connects the frames or no sample falls within `tolerance` seconds. `get_latest` is the no-time shorthand. The result exposes its `nalgebra` parts via `translation()` (a `Vector3<f64>`) and `rotation()` (a `UnitQuaternion<f64>`). Lookups are nearest-in-time, not interpolated.
+`Tf` is a cheap-to-clone handle; the graph fills in the background as `tf` messages arrive. `get_latest(parent, child)` is the common case. For a query against a particular stamp, `lookup(parent, child)` starts one that `.at(time)` points at the sample nearest that stamp and `.tolerance(secs)` bounds how far that sample may sit from it, finished with `.get()`:
 
-`publish` sends transforms onto the same `tf` topic, the counterpart to Python's `tf.publish()`. Published transforms also feed the module's own graph, so a `get` right after the publish sees them. Build the isometry from `dimos_module::nalgebra`, re-exported so the version matches the SDK's types:
+```rust
+let at_scan = self.tf.lookup("map", "base_link").at(scan_ts).tolerance(0.1).get();
+```
+
+Either way the result is `None` when no path connects the frames or no sample falls within the tolerance. It exposes its `nalgebra` parts via `translation()` (a `Vector3<f64>`) and `rotation()` (a `UnitQuaternion<f64>`). Lookups are nearest-in-time, not interpolated.
+
+`publish` sends transforms onto the same `tf` topic, the counterpart to Python's `tf.publish()`. Published transforms also feed the module's own graph, so a lookup right after the publish sees them. Build the isometry from `dimos_module::nalgebra`, re-exported so the version matches the SDK's types:
 
 ```rust
 use dimos_module::nalgebra::Isometry3;
