@@ -25,7 +25,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::module::Route;
 
@@ -283,13 +283,47 @@ impl MultiTBuffer {
     }
 }
 
+// The graph plus the signal that it changed. Writes go through `update` so a
+// writer cannot leave a waiter asleep on a transform that has already landed.
+struct Graph {
+    buffer: RwLock<MultiTBuffer>,
+    changed: Notify,
+}
+
+impl Graph {
+    fn new(window_secs: f64) -> Self {
+        Self {
+            buffer: RwLock::new(MultiTBuffer::new(window_secs)),
+            changed: Notify::new(),
+        }
+    }
+
+    fn update(&self, edits: impl FnOnce(&mut MultiTBuffer)) {
+        edits(&mut self.buffer.write().expect("tf buffer lock poisoned"));
+        self.changed.notify_waiters();
+    }
+
+    fn get(
+        &self,
+        parent: &str,
+        child: &str,
+        time: Option<f64>,
+        tolerance: Option<f64>,
+    ) -> Option<Transform> {
+        self.buffer
+            .read()
+            .expect("tf buffer lock poisoned")
+            .get(parent, child, time, tolerance)
+    }
+}
+
 /// A cheap-to-clone handle for querying and publishing transforms.
 ///
 /// Obtain one from `Builder::tf` (or a `#[tf]` field on a `#[derive(Module)]`
 /// struct). The graph is filled in the background as `/tf` messages arrive.
 #[derive(Clone)]
 pub struct Tf {
-    buffer: Arc<RwLock<MultiTBuffer>>,
+    graph: Arc<Graph>,
     sender: mpsc::Sender<Vec<u8>>,
 }
 
@@ -324,12 +358,11 @@ impl Tf {
     /// The transforms also feed the local graph, so a lookup right after sees
     /// them without waiting for the transport round trip.
     pub async fn publish(&self, transforms: &[Transform]) -> io::Result<()> {
-        {
-            let mut buffer = self.buffer.write().expect("tf buffer lock poisoned");
+        self.graph.update(|buffer| {
             for t in transforms {
                 buffer.receive(&t.parent, &t.child, t.ts, t.iso);
             }
-        }
+        });
         let msg = lcm_msgs::tf2_msgs::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
@@ -359,17 +392,57 @@ impl Lookup<'_> {
         self
     }
 
+    fn resolve(&self) -> Option<Transform> {
+        self.tf
+            .graph
+            .get(self.parent, self.child, self.time, self.tolerance)
+    }
+
     /// Resolve the lookup against the transforms buffered so far.
     ///
     /// `None` when no path connects the frames, or when the nearest sample is
     /// outside the tolerance.
     pub fn get(self) -> Option<Transform> {
-        self.tf.buffer.read().expect("tf buffer lock poisoned").get(
-            self.parent,
-            self.child,
-            self.time,
-            self.tolerance,
-        )
+        self.resolve()
+    }
+
+    /// Resolve the lookup, waiting up to `timeout` for it to become possible.
+    ///
+    /// A message and the transform it needs arrive on separate topics, so the
+    /// transform for a given stamp is often merely late rather than absent.
+    /// Returns as soon as the lookup succeeds, or `None` at the deadline.
+    ///
+    /// [`Lookup::tolerance`] and this are different clocks: tolerance bounds how
+    /// far the chosen sample may sit from [`Lookup::at`] in message stamps,
+    /// `timeout` bounds how long to wait in wall time. Set a tolerance whenever
+    /// waiting, or the lookup is satisfied by anything inside the buffer window
+    /// and returns a stale transform immediately.
+    ///
+    /// This suspends the caller. Awaiting it inside a `handle_*` method parks
+    /// that module's whole dispatch loop, so every other topic it subscribes to
+    /// stops being served for the duration. Prefer [`Lookup::get`] there, and
+    /// move waiting onto a task of its own when the wait may be long.
+    pub async fn within(self, timeout: Duration) -> Option<Transform> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            // Registered before the resolve below, so a transform landing between
+            // the two still wakes this waiter instead of it sleeping out the
+            // whole timeout.
+            let changed = self.tf.graph.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+
+            if let Some(transform) = self.resolve() {
+                return Some(transform);
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            if tokio::time::timeout(remaining, changed).await.is_err() {
+                return None;
+            }
+        }
     }
 }
 
@@ -412,7 +485,7 @@ fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
 // module's existing recv loop dispatches tf traffic to it.
 struct TfRoute {
     topic: String,
-    buffer: Arc<RwLock<MultiTBuffer>>,
+    graph: Arc<Graph>,
 }
 
 impl Route for TfRoute {
@@ -429,17 +502,18 @@ impl Route for TfRoute {
                 return;
             }
         };
-        let mut buffer = self.buffer.write().expect("tf buffer lock poisoned");
-        for st in &msg.transforms {
-            let t = &st.transform.translation;
-            let q = &st.transform.rotation;
-            let iso = Isometry3::from_parts(
-                Translation3::new(t.x, t.y, t.z),
-                UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.x, q.y, q.z)),
-            );
-            let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
-            buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
-        }
+        self.graph.update(|buffer| {
+            for st in &msg.transforms {
+                let t = &st.transform.translation;
+                let q = &st.transform.rotation;
+                let iso = Isometry3::from_parts(
+                    Translation3::new(t.x, t.y, t.z),
+                    UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.x, q.y, q.z)),
+                );
+                let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
+                buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
+            }
+        });
     }
 }
 
@@ -450,12 +524,12 @@ pub(crate) fn tf_subscription(
     buffer_size: f64,
     sender: mpsc::Sender<Vec<u8>>,
 ) -> (Tf, Box<dyn Route>) {
-    let buffer = Arc::new(RwLock::new(MultiTBuffer::new(buffer_size)));
+    let graph = Arc::new(Graph::new(buffer_size));
     let tf = Tf {
-        buffer: Arc::clone(&buffer),
+        graph: Arc::clone(&graph),
         sender,
     };
-    let route = Box::new(TfRoute { topic, buffer });
+    let route = Box::new(TfRoute { topic, graph });
     (tf, route)
 }
 
@@ -470,21 +544,21 @@ mod tests {
     }
 
     fn tf_with_publish(buffer_size: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
-        let buffer = Arc::new(RwLock::new(MultiTBuffer::new(buffer_size)));
+        let graph = Arc::new(Graph::new(buffer_size));
         let (tx, rx) = mpsc::channel(8);
         (
             Tf {
-                buffer: Arc::clone(&buffer),
+                graph: Arc::clone(&graph),
                 sender: tx,
             },
             rx,
-            MultiHandle { buffer },
+            MultiHandle { graph },
         )
     }
 
     // Test-only writer that bypasses LCM and pushes edges straight into the graph.
     struct MultiHandle {
-        buffer: Arc<RwLock<MultiTBuffer>>,
+        graph: Arc<Graph>,
     }
 
     impl MultiHandle {
@@ -493,7 +567,8 @@ mod tests {
                 Translation3::new(xyz.0, xyz.1, xyz.2),
                 UnitQuaternion::from_euler_angles(0.0, 0.0, yaw),
             );
-            self.buffer.write().unwrap().receive(parent, child, ts, iso);
+            self.graph
+                .update(|buffer| buffer.receive(parent, child, ts, iso));
         }
     }
 
@@ -630,6 +705,135 @@ mod tests {
         let (tf, h) = tf_with(10.0);
         h.add("a", "b", 100.0, (1.0, 0.0, 0.0), 0.0);
         assert!(tf.get_latest("a", "b").is_some());
+    }
+
+    #[tokio::test]
+    async fn within_returns_without_waiting_when_already_buffered() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("a", "b", 5.0, (1.0, 0.0, 0.0), 0.0);
+        let t = tf
+            .lookup("a", "b")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_secs(30))
+            .await
+            .expect("already available");
+        assert!((t.translation().x - 1.0).abs() < 1e-9);
+    }
+
+    // Returns as soon as the transform lands, not at the deadline.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn within_resolves_when_the_transform_arrives_late() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            h.add("a", "b", 5.0, (1.0, 0.0, 0.0), 0.0);
+        });
+        let started = tokio::time::Instant::now();
+        let t = tf
+            .lookup("a", "b")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_secs(30))
+            .await
+            .expect("arrived inside the budget");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "waited {:?}, should have returned on arrival",
+            started.elapsed()
+        );
+        assert!((t.translation().x - 1.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn within_times_out_when_nothing_arrives() {
+        let (tf, _h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        let started = tokio::time::Instant::now();
+        let t = tf
+            .lookup("a", "b")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_millis(50))
+            .await;
+        assert!(t.is_none());
+        assert!(
+            started.elapsed() >= Duration::from_millis(50),
+            "returned early"
+        );
+    }
+
+    // The waiter is on a -> c, but what lands is b -> c. Waking only on the
+    // queried edge would sleep through the composition becoming possible.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn within_wakes_when_a_later_edge_completes_the_chain() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("a", "b", 5.0, (1.0, 0.0, 0.0), 0.0);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            h.add("b", "c", 5.0, (2.0, 0.0, 0.0), 0.0);
+        });
+        let t = tf
+            .lookup("a", "c")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_secs(30))
+            .await
+            .expect("chain completed inside the budget");
+        assert!(
+            (t.translation().x - 3.0).abs() < 1e-9,
+            "{}",
+            t.translation().x
+        );
+    }
+
+    // A waiting handler is woken by the transport's dispatch task, which its own
+    // stall cannot block. Guards against the wait deadlocking against tf intake.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn within_is_woken_by_a_transform_dispatched_through_the_route() {
+        let (tx, _rx) = mpsc::channel(8);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            route.try_dispatch(&stamped_message("a", "b", 5.0, 1.0));
+        });
+        let t = tf
+            .lookup("a", "b")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_secs(30))
+            .await
+            .expect("route dispatch woke the waiter");
+        assert!((t.translation().x - 1.0).abs() < 1e-9);
+    }
+
+    fn stamped_message(parent: &str, child: &str, ts: f64, x: f64) -> Vec<u8> {
+        use lcm_msgs::geometry_msgs::{
+            Quaternion as LQuat, Transform as LTransform, TransformStamped, Vector3 as LVec3,
+        };
+        use lcm_msgs::std_msgs::{Header, Time};
+        lcm_msgs::tf2_msgs::TFMessage {
+            transforms: vec![TransformStamped {
+                header: Header {
+                    seq: 0,
+                    stamp: Time {
+                        sec: ts as i32,
+                        nsec: 0,
+                    },
+                    frame_id: parent.to_string(),
+                },
+                child_frame_id: child.to_string(),
+                transform: LTransform {
+                    translation: LVec3 { x, y: 0.0, z: 0.0 },
+                    rotation: LQuat {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        w: 1.0,
+                    },
+                },
+            }],
+        }
+        .encode()
     }
 
     #[test]

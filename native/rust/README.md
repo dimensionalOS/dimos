@@ -137,6 +137,20 @@ impl VoxelMap {
 let at_scan = self.tf.lookup("map", "base_link").at(scan_ts).tolerance(0.1).get();
 ```
 
+A message and the transform it needs arrive on separate topics, so the transform for a given stamp is often merely late. `.within(duration)` replaces `.get()` to wait for one, returning as soon as the lookup succeeds or `None` at the deadline:
+
+```rust
+let at_scan = self.tf.lookup("odom", &cloud.header.frame_id)
+    .at(scan_ts)
+    .tolerance(0.02)
+    .within(Duration::from_millis(200))
+    .await;
+```
+
+`.tolerance()` and `.within()` are different clocks. Tolerance bounds how far the chosen sample may sit from `.at()` in message stamps — accuracy. `.within()` bounds how long to wait in wall time — patience. Always set a tolerance when waiting, or the lookup is satisfied by anything inside the buffer window and returns a stale transform immediately.
+
+`.within()` suspends the caller, and awaiting it inside a `handle_*` method parks that module's whole dispatch loop, so every other topic it subscribes to stops being served until it returns. Prefer `.get()` there; move waiting onto its own task when the wait may be long.
+
 Either way the result is `None` when no path connects the frames or no sample falls within the tolerance. It exposes its `nalgebra` parts via `translation()` (a `Vector3<f64>`) and `rotation()` (a `UnitQuaternion<f64>`). Lookups are nearest-in-time, not interpolated.
 
 `publish` sends transforms onto the same `tf` topic, the counterpart to Python's `tf.publish()`. Published transforms also feed the module's own graph, so a lookup right after the publish sees them. Build the isometry from `dimos_module::nalgebra`, re-exported so the version matches the SDK's types:
