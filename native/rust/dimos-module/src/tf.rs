@@ -26,6 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use tokio::sync::{mpsc, Notify};
+use tracing::warn;
 
 use crate::module::Route;
 
@@ -398,12 +399,28 @@ impl Lookup<'_> {
             .get(self.parent, self.child, self.time, self.tolerance)
     }
 
+    // A lookup that resolves to nothing is otherwise invisible: the caller sees
+    // None and the buffer says nothing about which frames or stamp missed.
+    fn warn_unresolved(&self) {
+        warn!(
+            parent = %self.parent,
+            child = %self.child,
+            at = self.time.unwrap_or_else(now_secs),
+            tolerance = self.tolerance.unwrap_or(f64::NAN),
+            "No transform found between frames",
+        );
+    }
+
     /// Resolve the lookup against the transforms buffered so far.
     ///
     /// `None` when no path connects the frames, or when the nearest sample is
     /// outside the tolerance.
     pub fn get(self) -> Option<Transform> {
-        self.resolve()
+        let found = self.resolve();
+        if found.is_none() {
+            self.warn_unresolved();
+        }
+        found
     }
 
     /// Resolve the lookup, waiting up to `timeout` for it to become possible.
@@ -435,11 +452,15 @@ impl Lookup<'_> {
             if let Some(transform) = self.resolve() {
                 return Some(transform);
             }
+            // Only the deadline warns. An intermediate miss is the normal state
+            // of a wait, not a failure.
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
+                self.warn_unresolved();
                 return None;
             }
             if tokio::time::timeout(remaining, changed).await.is_err() {
+                self.warn_unresolved();
                 return None;
             }
         }
@@ -834,6 +855,53 @@ mod tests {
             }],
         }
         .encode()
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn a_lookup_that_finds_nothing_warns_with_the_frames() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("world", "robot", 1.0, (1.0, 0.0, 0.0), 0.0);
+        assert!(tf.get_latest("world", "gripper").is_none());
+        assert!(logs_contain("No transform found between frames"));
+        assert!(logs_contain("gripper"));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn a_resolved_lookup_stays_quiet() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        h.add("world", "robot", 1.0, (1.0, 0.0, 0.0), 0.0);
+        assert!(tf.get_latest("world", "robot").is_some());
+        assert!(!logs_contain("No transform found between frames"));
+    }
+
+    // A wait in progress is not a failure, so only the deadline warns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tracing_test::traced_test]
+    async fn within_warns_only_once_it_gives_up() {
+        let (tf, h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            h.add("a", "b", 5.0, (1.0, 0.0, 0.0), 0.0);
+        });
+        assert!(tf
+            .lookup("a", "b")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_secs(30))
+            .await
+            .is_some());
+        assert!(!logs_contain("No transform found between frames"));
+
+        assert!(tf
+            .lookup("a", "missing")
+            .at(5.0)
+            .tolerance(0.1)
+            .within(Duration::from_millis(20))
+            .await
+            .is_none());
+        assert!(logs_contain("No transform found between frames"));
     }
 
     #[test]
