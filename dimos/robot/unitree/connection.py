@@ -272,11 +272,17 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     # Generic sync API call (we jump into the client thread)
-    def publish_request(self, topic: str, data: dict[Any, Any]) -> Any:
+    def publish_request(
+        self, topic: str, data: dict[Any, Any], timeout: float | None = None
+    ) -> Any:
         future = asyncio.run_coroutine_threadsafe(
             self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
         )
-        return future.result()
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            future.cancel()
+            raise
 
     @simple_mcache
     def raw_lidar_stream(self) -> Observable[RawLidarMsg]:

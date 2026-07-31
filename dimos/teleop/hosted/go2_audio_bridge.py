@@ -53,6 +53,7 @@ class Go2AudioBridgeConfig(ModuleConfig):
     queue_frames: int = Field(default=100, ge=1)
     chunk_interval_sec: float = Field(default=0.05, ge=0)
     megaphone_enter_delay_sec: float = Field(default=0.2, ge=0)
+    request_timeout_sec: float = Field(default=2.0, gt=0)
     target_peak: int = Field(default=12000, ge=1, le=32767)
     max_gain: float = Field(default=128.0, ge=1.0, le=256.0)
     noise_gate_peak: int = Field(default=32, ge=0, le=32767)
@@ -94,9 +95,16 @@ class Go2AudioBridgeModule(Module):
         except queue.Full:
             pass
         if self._worker is not None:
-            self._worker.join(timeout=2.0)
-            self._worker = None
-        self._exit_megaphone()
+            join_timeout = (
+                self.config.request_timeout_sec * 2 + self.config.megaphone_enter_delay_sec + 0.5
+            )
+            self._worker.join(timeout=join_timeout)
+            if self._worker.is_alive():
+                logger.error("Go2 audio bridge worker did not stop")
+            else:
+                self._worker = None
+        if self._worker is None:
+            self._exit_megaphone()
         super().stop()
 
     def _on_audio(self, frame: AudioEvent) -> None:
@@ -112,6 +120,7 @@ class Go2AudioBridgeModule(Module):
     def _run(self) -> None:
         pending: list[np.ndarray[Any, np.dtype[np.int16]]] = []
         pending_samples = 0
+        last_audible_at: float | None = None
         target_samples = max(1, TARGET_SAMPLE_RATE * self.config.batch_ms // 1000)
 
         while not self._stop_event.is_set():
@@ -122,20 +131,38 @@ class Go2AudioBridgeModule(Module):
                 pending.clear()
                 pending_samples = 0
                 self._exit_megaphone()
+                last_audible_at = None
                 continue
             if frame is None:
                 break
             pcm = self._to_mono_target_rate(frame)
             if pcm.size == 0:
                 continue
+            now = time.monotonic()
+            peak = int(np.max(np.abs(pcm.astype(np.int32))))
+            if peak > self.config.noise_gate_peak:
+                last_audible_at = now
             pending.append(pcm)
             pending_samples += pcm.size
             if pending_samples >= target_samples:
                 self._flush(pending)
                 pending.clear()
                 pending_samples = 0
+            if (
+                self._megaphone_active
+                and last_audible_at is not None
+                and now - last_audible_at >= self.config.idle_timeout_sec
+            ):
+                self._flush(pending)
+                pending.clear()
+                pending_samples = 0
+                self._exit_megaphone()
+                last_audible_at = now
 
-        self._flush(pending)
+        if self._stop_event.is_set():
+            self._exit_megaphone()
+        else:
+            self._flush(pending)
 
     def _ensure_speaker(self) -> bool:
         if self._speaker_available is not None:
@@ -161,8 +188,13 @@ class Go2AudioBridgeModule(Module):
             if not self._megaphone_active:
                 self._request(ENTER_MEGAPHONE)
                 self._megaphone_active = True
+                if self._stop_event.is_set():
+                    self._exit_megaphone()
+                    return
                 if self.config.megaphone_enter_delay_sec > 0:
-                    time.sleep(self.config.megaphone_enter_delay_sec)
+                    if self._stop_event.wait(self.config.megaphone_enter_delay_sec):
+                        self._exit_megaphone()
+                        return
             wav_data = self._wav_bytes(pcm)
             self._upload_wav(wav_data)
         except Exception:
@@ -175,6 +207,8 @@ class Go2AudioBridgeModule(Module):
         encoded = base64.b64encode(wav_data).decode("ascii")
         chunks = [encoded[i : i + 4096] for i in range(0, len(encoded), 4096)]
         for index, chunk in enumerate(chunks, 1):
+            if self._stop_event.is_set():
+                return
             self._request(
                 UPLOAD_MEGAPHONE,
                 {
@@ -185,7 +219,8 @@ class Go2AudioBridgeModule(Module):
                 },
             )
             if index < len(chunks) and self.config.chunk_interval_sec > 0:
-                time.sleep(self.config.chunk_interval_sec)
+                if self._stop_event.wait(self.config.chunk_interval_sec):
+                    return
 
     def _exit_megaphone(self) -> None:
         if not self._megaphone_active:
@@ -194,13 +229,14 @@ class Go2AudioBridgeModule(Module):
             self._request(EXIT_MEGAPHONE)
         except Exception:
             logger.debug("Failed to exit Go2 megaphone mode", exc_info=True)
-        finally:
+        else:
             self._megaphone_active = False
 
     def _request(self, api_id: int, parameter: dict[str, Any] | None = None) -> dict[Any, Any]:
         response = self.go2.publish_request(
             RTC_TOPIC["AUDIO_HUB_REQ"],
             {"api_id": api_id, "parameter": json.dumps(parameter or {})},
+            timeout=self.config.request_timeout_sec,
         )
         if not response:
             raise RuntimeError(f"Go2 audio request {api_id} returned no response")

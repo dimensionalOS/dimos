@@ -567,8 +567,8 @@ class WebRTCAudioTransport(Transport[AudioEvent]):
         selfstream: Stream[AudioEvent] | None = None,
     ) -> Callable[[], None]:
         provider = self._config.provider()
-        set_callback = getattr(provider, "set_audio_frame_callback", None)
-        if set_callback is None:
+        subscribe_audio = getattr(provider, "subscribe_audio_frames", None)
+        if subscribe_audio is None:
             raise NotImplementedError(f"{type(provider).__name__} does not support audio tracks")
 
         def _on_frame(pcm: bytes, sample_rate: int, channels: int) -> None:
@@ -581,14 +581,14 @@ class WebRTCAudioTransport(Transport[AudioEvent]):
                 )
             )
 
-        set_callback(_on_frame)
-        if not provider.is_connected:
-            provider.start()
-
-        def _unsubscribe() -> None:
-            set_callback(None)
-
-        return _unsubscribe
+        unsubscribe = subscribe_audio(_on_frame)
+        try:
+            if not provider.is_connected:
+                provider.start()
+        except BaseException:
+            unsubscribe()
+            raise
+        return unsubscribe
 
 
 class CloudflareAudioTransport(WebRTCAudioTransport):

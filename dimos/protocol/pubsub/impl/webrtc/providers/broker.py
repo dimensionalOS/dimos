@@ -149,6 +149,7 @@ class BrokerProvider(AsyncProviderBase):
         self._video_track: CameraVideoTrack | None = None
         # Operator-audio sink; None drops frames until set_audio_frame_callback().
         self._audio_frame_cb: Callable[[bytes, int, int], None] | None = None
+        self._audio_frame_callbacks: list[Callable[[bytes, int, int], None]] = []
         self._audio_task: asyncio.Task[None] | None = None
 
     @property
@@ -298,7 +299,20 @@ class BrokerProvider(AsyncProviderBase):
     def set_audio_frame_callback(self, cb: Callable[[bytes, int, int], None] | None) -> None:
         """Register a sink for received operator audio: cb(pcm_bytes, sample_rate,
         channels). Thread-safe to set; frames are dropped until it's wired."""
-        self._audio_frame_cb = cb
+        with self._lock:
+            self._audio_frame_cb = cb
+
+    def subscribe_audio_frames(self, cb: Callable[[bytes, int, int], None]) -> Callable[[], None]:
+        """Add an operator-audio sink and return an idempotent unsubscribe."""
+        with self._lock:
+            self._audio_frame_callbacks.append(cb)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if cb in self._audio_frame_callbacks:
+                    self._audio_frame_callbacks.remove(cb)
+
+        return unsubscribe
 
     def _attach_audio_receiver(self) -> None:
         """Fan the operator's inbound audio track to the sink callback."""
@@ -319,8 +333,11 @@ class BrokerProvider(AsyncProviderBase):
         try:
             while True:
                 frame = await track.recv()  # av.AudioFrame
-                cb = self._audio_frame_cb
-                if cb is None:
+                with self._lock:
+                    callbacks = list(self._audio_frame_callbacks)
+                    if self._audio_frame_cb is not None:
+                        callbacks.append(self._audio_frame_cb)
+                if not callbacks:
                     continue
                 try:
                     # aiortc's Opus decode yields packed s16: to_ndarray() is
@@ -328,10 +345,15 @@ class BrokerProvider(AsyncProviderBase):
                     # come from the layout, not the array shape.
                     pcm = frame.to_ndarray()
                     channels = len(frame.layout.channels) or 1
-                    cb(pcm.tobytes(), int(frame.sample_rate), channels)
                 except Exception:
-                    # A raising sink is a bug in the wired module, not the wire.
-                    logger.warning("audio sink callback error", exc_info=True)
+                    logger.warning("audio frame conversion error", exc_info=True)
+                    continue
+                for cb in callbacks:
+                    try:
+                        cb(pcm.tobytes(), int(frame.sample_rate), channels)
+                    except Exception:
+                        # A raising sink is a bug in the wired module, not the wire.
+                        logger.warning("audio sink callback error", exc_info=True)
         except Exception as e:
             logger.info("operator audio track ended (%s)", type(e).__name__)
 

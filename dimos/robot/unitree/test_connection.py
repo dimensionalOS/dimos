@@ -18,6 +18,7 @@ Pure-Python test suite with no hardware or network. Covers connect() error propa
 aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
@@ -73,6 +74,24 @@ def test_connect_success_completes_setup(built_connection: Any) -> None:
 
     driver.connect.assert_awaited_once()
     driver.datachannel.pub_sub.publish_request_new.assert_awaited_once()
+
+
+def test_publish_request_cancels_timed_out_coroutine(built_connection: Any) -> None:
+    conn, driver = built_connection
+    cancelled = asyncio.Event()
+
+    async def never_returns(*_args: Any) -> None:
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    driver.datachannel.pub_sub.publish_request_new.side_effect = never_returns
+
+    with pytest.raises(TimeoutError):
+        conn.publish_request("topic", {}, timeout=0.01)
+
+    assert asyncio.run_coroutine_threadsafe(cancelled.wait(), conn.loop).result(timeout=1.0) is True
 
 
 @pytest.mark.parametrize(

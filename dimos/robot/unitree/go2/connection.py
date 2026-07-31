@@ -482,15 +482,18 @@ class GO2Connection(Module, Camera, Pointcloud):
             return None
 
     @rpc
-    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
+    def publish_request(
+        self, topic: str, data: dict[str, Any], timeout: float | None = None
+    ) -> dict[Any, Any]:
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to
             data: The data dictionary to publish
+            timeout: Maximum seconds to wait for a response, or no limit
         Returns:
             The result of the publish request
         """
-        return self.connection.publish_request(topic, data)
+        return self.connection.publish_request(topic, data, timeout=timeout)
 
     @skill
     def observe(self) -> Image | None:

@@ -47,6 +47,7 @@ def bridge(monkeypatch: pytest.MonkeyPatch) -> Go2AudioBridgeModule:
         queue_frames=10,
         chunk_interval_sec=0.0,
         megaphone_enter_delay_sec=0.0,
+        request_timeout_sec=2.0,
         target_peak=12000,
         max_gain=128.0,
         noise_gate_peak=32,
@@ -161,6 +162,7 @@ def test_start_and_stop_manage_audio_subscription_and_worker(
     subscription = MagicMock()
     bridge.operator_audio.subscribe.return_value = subscription  # type: ignore[attr-defined]
     worker = mocker.patch("dimos.teleop.hosted.go2_audio_bridge.threading.Thread")
+    worker.return_value.is_alive.return_value = False
     mocker.patch.object(Module, "start")
     stop = mocker.patch.object(Module, "stop")
     register = mocker.patch.object(bridge, "register_disposable")
@@ -172,7 +174,7 @@ def test_start_and_stop_manage_audio_subscription_and_worker(
     bridge.operator_audio.subscribe.assert_called_once_with(bridge._on_audio)  # type: ignore[attr-defined]
     register.assert_called_once()
     worker.return_value.start.assert_called_once_with()
-    worker.return_value.join.assert_called_once_with(timeout=2.0)
+    worker.return_value.join.assert_called_once_with(timeout=4.5)
     exit_megaphone.assert_called_once_with()
     stop.assert_called_once_with()
 
@@ -235,10 +237,50 @@ def test_worker_exits_megaphone_after_idle_timeout(bridge: Go2AudioBridgeModule,
     exit_megaphone.assert_called_once_with()
 
 
+def test_worker_treats_continuous_silent_frames_as_idle(
+    bridge: Go2AudioBridgeModule, mocker
+) -> None:
+    audible = audio_frame(value=100)
+    silent = audio_frame(value=0)
+    mocker.patch.object(bridge._frames, "get", side_effect=[audible, silent, silent, None])
+    mocker.patch(
+        "dimos.teleop.hosted.go2_audio_bridge.time.monotonic",
+        side_effect=[0.0, 0.5, 1.1],
+    )
+
+    def flush(frames: list[np.ndarray[Any, np.dtype[np.int16]]]) -> None:
+        if frames and np.max(np.abs(frames[0])) > bridge.config.noise_gate_peak:
+            bridge._megaphone_active = True
+
+    mocker.patch.object(bridge, "_flush", side_effect=flush)
+    exit_megaphone = mocker.patch.object(
+        bridge, "_exit_megaphone", side_effect=lambda: setattr(bridge, "_megaphone_active", False)
+    )
+
+    bridge._run()
+
+    exit_megaphone.assert_called_once_with()
+
+
+def test_stop_does_not_race_cleanup_with_live_worker(bridge: Go2AudioBridgeModule, mocker) -> None:
+    worker = MagicMock()
+    worker.is_alive.return_value = True
+    bridge._worker = worker
+    exit_megaphone = mocker.patch.object(bridge, "_exit_megaphone")
+    stop = mocker.patch.object(Module, "stop")
+
+    bridge.stop()
+
+    assert bridge._worker is worker
+    exit_megaphone.assert_not_called()
+    stop.assert_called_once_with()
+
+
 def test_failed_upload_disables_auto_speaker(bridge: Go2AudioBridgeModule) -> None:
     bridge._speaker_available = True
 
-    def respond(_topic: str, request: dict[str, Any]) -> dict[str, Any]:
+    def respond(_topic: str, request: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        assert timeout == bridge.config.request_timeout_sec
         if request["api_id"] == UPLOAD_MEGAPHONE:
             raise RuntimeError("upload failed")
         return {"code": 0}
@@ -253,12 +295,18 @@ def test_failed_upload_disables_auto_speaker(bridge: Go2AudioBridgeModule) -> No
     assert bridge._megaphone_active is False
 
 
-def test_exit_megaphone_clears_state_even_when_request_fails(
+def test_exit_megaphone_preserves_state_for_retry_when_request_fails(
     bridge: Go2AudioBridgeModule,
 ) -> None:
     bridge._megaphone_active = True
     bridge.go2.publish_request.side_effect = RuntimeError("request failed")  # type: ignore[attr-defined]
 
+    bridge._exit_megaphone()
+
+    assert bridge._megaphone_active is True
+
+    bridge.go2.publish_request.side_effect = None  # type: ignore[attr-defined]
+    bridge.go2.publish_request.return_value = {"code": 0}  # type: ignore[attr-defined]
     bridge._exit_megaphone()
 
     assert bridge._megaphone_active is False

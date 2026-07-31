@@ -18,4 +18,6 @@ from dimos.spec.utils import Spec
 
 
 class GO2ConnectionSpec(Spec, Protocol):
-    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]: ...
+    def publish_request(
+        self, topic: str, data: dict[str, Any], timeout: float | None = None
+    ) -> dict[Any, Any]: ...
