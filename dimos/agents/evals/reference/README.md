@@ -6,7 +6,8 @@ human-review evidence its questions rest on. Nothing there is hand-measured: the
 positions and every gate that produced them reproduce mechanically from the
 recording with the commands at the bottom. The **review verdicts are recorded
 human judgment** — `verified` / `renamed` / `dropped`, each with the reason it
-was reached — so they are auditable against the committed crops and the
+was reached — so they are auditable against the review crops (regenerated with
+one command, at the bottom) and the
 recording, but they are not recomputable, and re-running the pipeline does not
 re-derive them. This file is the protocol those sub-directories are produced and
 audited under.
@@ -16,7 +17,7 @@ audited under.
 | dataset | questions | notes |
 |---|---|---|
 | [`go2_bigoffice`](go2_bigoffice) | 3 | Dim open-plan office; 1040 frames visited at 4 Hz, 26 labels qualified for review. The recording the keyless full-chain smoke and its frozen model transcript are pinned to. |
-| [`go2_short`](go2_short) | 3 | Office/retail interior; 214 frames visited at 4 Hz, 14 labels qualified for review. One of its three questions ships **without** review images, because every candidate frame for it contains an identifiable person — see [`go2_short/README.md`](go2_short/README.md). |
+| [`go2_short`](go2_short) | 3 | Office/retail interior; 214 frames visited at 4 Hz, 14 labels qualified for review. One of its three questions has **no publishable** review images at all, because every candidate frame for it contains an identifiable person — see [`go2_short/README.md`](go2_short/README.md). |
 
 A recording is part of the eval exactly when its directory holds a
 `questions.jsonl`: `reference_sets.dataset_names()` globs `*/questions.jsonl`,
@@ -37,9 +38,12 @@ matched up without a lookup table.
 | `<dataset>/crops/<question_id>.jpg` | identification frame: sharpest LiDAR-supported frame near a contributing view, with the reference position and inlier points drawn |
 | `<dataset>/crops/<question_id>_measurement.jpg` | the actual detection frame the measurement came from, with the detection box, in-box inliers and reference drawn |
 
-Crops are committed for the questions, not for every qualified label, and a
-question can ship without them if no publishable frame exists — stated in that
-dataset's README where it happens. They are presentation: `refs.jsonl` and
+Crops are rendered for the questions, not for every qualified label, and they
+ship out-of-band rather than in the tree: `*.jpg` is LFS-routed and the
+project's LFS endpoint does not take anonymous uploads from outside
+contributors, so regenerate them with the `--crops` command at the bottom. A
+question can also have no publishable frame at all — stated in that dataset's
+README where it happens. They are presentation: `refs.jsonl` and
 `manifest.json` are identical whether `--crops` ran or not, and nothing in the
 eval reads a crop.
 
@@ -88,5 +92,5 @@ uv run python -m dimos.agents.evals.questions --refs <dir>/refs.jsonl \
 only in its timestamp and timing fields. `--crops` writes an image pair for
 every reference it can render a supported frame for: a reference with no
 LiDAR-confirmed candidate in its window gets no identification image, and the
-run's `CropReport` says why. What a dataset directory commits is the pairs for
+run's `CropReport` says why. The pairs to review for a dataset are the ones for
 its own questions, copied out of that run.
