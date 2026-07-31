@@ -216,6 +216,13 @@ learning = [
     "h5py",     # HDF5 writer
 ]
 
+# Optional live inference for policies built with LeRobot. Keep this separate
+# from the dataset-only learning extra.
+lerobot = [
+    "lerobot==0.6.0; python_version >= '3.12'",
+    "transformers[torch]>=5.4,<5.6; python_version >= '3.12'",
+]
+
 agents = [
     "langchain>=1.2.3,<2",
     "langchain-core>=1.2.22,<2",
@@ -456,7 +463,6 @@ lint = [
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
-
     "aiortc>=1.14.0",
     "ipython",
     "openai-whisper",
@@ -492,8 +498,16 @@ tests-self-hosted = [
 ]
 
 [tool.uv]
-required-version = ">=0.9.17"
+required-version = ">=0.12.1"
 default-groups = ["tests"]
+conflicts = [
+    [{ extra = "lerobot" }, { extra = "all" }],
+    [{ extra = "lerobot" }, { extra = "base" }],
+    [{ extra = "lerobot" }, { extra = "perception" }],
+    [{ extra = "lerobot" }, { extra = "unitree" }],
+    [{ extra = "lerobot" }, { extra = "unitree-dds" }],
+    [{ extra = "lerobot" }, { group = "project-deps" }],
+]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
 override-dependencies = [
@@ -501,6 +515,9 @@ override-dependencies = [
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
     # core dep and clobbers it. Contrib is a superset, so never install plain.
     "opencv-python; sys_platform == 'never'",
+    # LeRobot requests the headless variant, which ships the same cv2/ tree.
+    # The core opencv-contrib-python dependency is already its functional superset.
+    "opencv-python-headless; sys_platform == 'never'",
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
@@ -575,6 +592,21 @@ warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+
+[[tool.mypy.overrides]]
+module = [
+    "lerobot.configs.policies",
+    "lerobot.configs.types",
+    "lerobot.policies.factory",
+    "lerobot.policies.pretrained",
+    "lerobot.policies.utils",
+    "lerobot.processor",
+    "lerobot.processor.core",
+    "lerobot.processor.pipeline",
+    "lerobot.utils.import_utils",
+]
+follow_untyped_imports = true
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
