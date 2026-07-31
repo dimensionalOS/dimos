@@ -162,7 +162,7 @@ impl TBuffer {
     ) -> Option<Transform> {
         let s = match time {
             None => self.last()?,
-            Some(t) => self.find_closest(t, tolerance)?,
+            Some(t) => self.find_closest(t, Some(tolerance.unwrap_or(self.window_secs)))?,
         };
         Some(Transform {
             parent: parent.to_string(),
@@ -593,6 +593,43 @@ mod tests {
         h.add("a", "b", 10.0, (1.0, 0.0, 0.0), 0.0);
         assert!(tf.lookup("a", "b").at(50.0).tolerance(1.0).get().is_none());
         assert!(tf.lookup("a", "b").at(10.5).tolerance(1.0).get().is_some());
+    }
+
+    #[test]
+    fn time_query_beyond_the_window_returns_none_without_a_tolerance() {
+        let (tf, h) = tf_with(10.0);
+        h.add("a", "b", 100.0, (1.0, 0.0, 0.0), 0.0);
+        assert!(tf.lookup("a", "b").at(50.0).get().is_none());
+    }
+
+    #[test]
+    fn time_query_inside_the_window_resolves_without_a_tolerance() {
+        let (tf, h) = tf_with(10.0);
+        h.add("a", "b", 100.0, (1.0, 0.0, 0.0), 0.0);
+        let t = tf
+            .lookup("a", "b")
+            .at(95.0)
+            .get()
+            .expect("within the window");
+        assert!((t.translation().x - 1.0).abs() < 1e-9);
+    }
+
+    // An explicit tolerance is the caller opting into staleness, so it widens
+    // past the window rather than being clamped by it.
+    #[test]
+    fn an_explicit_tolerance_reaches_past_the_window() {
+        let (tf, h) = tf_with(10.0);
+        h.add("a", "b", 100.0, (1.0, 0.0, 0.0), 0.0);
+        assert!(tf.lookup("a", "b").at(50.0).tolerance(60.0).get().is_some());
+    }
+
+    // The window bounds queries against a stamp, not the latest sample: with no
+    // `at`, the newest edge is returned however old it is.
+    #[test]
+    fn latest_is_not_bounded_by_the_window() {
+        let (tf, h) = tf_with(10.0);
+        h.add("a", "b", 100.0, (1.0, 0.0, 0.0), 0.0);
+        assert!(tf.get_latest("a", "b").is_some());
     }
 
     #[test]
