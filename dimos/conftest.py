@@ -112,6 +112,8 @@ def _has_turbojpeg() -> bool:
         return True
     except Exception:
         return False
+
+
 # A segfault in a C extension leaves NO kernel log line: faulthandler installs a
 # SIGSEGV handler, and the kernel only prints "segfault at ..." for *unhandled*
 # signals. The Python traceback is therefore the only evidence, and it has two
