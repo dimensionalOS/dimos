@@ -97,6 +97,7 @@ class TfListenerModule(NativeModule):
     """
 
     config: TfListenerConfig
+    tf: IO[TFMessage]
 
 
 class TfBroadcasterConfig(NativeModuleConfig):
@@ -110,6 +111,7 @@ class TfBroadcasterModule(NativeModule):
     """Rust module that publishes the c -> d transform."""
 
     config: TfBroadcasterConfig
+    tf: IO[TFMessage]
 
 
 if __name__ == "__main__":

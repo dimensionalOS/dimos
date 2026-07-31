@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NativeModule: blueprint-integrated wrapper for native (C/C++) executables.
+"""NativeModule: blueprint-integrated wrapper for native executables.
 
-A NativeModule is a thin Python Module subclass that declares In/Out ports
+A NativeModule is a thin Python Module subclass that declares In/Out/IO ports
 for blueprint wiring but delegates all real work to a managed subprocess.
-The native process receives its LCM topic names via CLI args and does
-pub/sub directly on the LCM multicast bus.
+The native process receives its topic names via CLI args, or as a JSON line on
+stdin when ``stdin_config`` is set, and does pub/sub on them directly.
 
 Example usage::
 
@@ -60,7 +60,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.transport_factory import tf_channel
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -179,15 +178,19 @@ class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and annotate ``config`` with a
+    Subclass this, declare In/Out/IO ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
 
-        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
+        <executable> --<port_name> <topic> ... --<config_field> <value> ... <extra_args>
 
-    The native process should parse these args and pub/sub on the given
-    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
+    Each topic is the wire channel for that port on the transport named by the
+    ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, those same topics plus
+    the config and any publisher QoS also arrive as one JSON line on stdin.
+
+    The native process should parse whichever it uses and pub/sub on the given
+    topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
     config: NativeModuleConfig
@@ -241,8 +244,7 @@ class NativeModule(Module):
         stdin_blob: bytes | None = None
         if self.config.stdin_config:
             config_dict = self.config.to_config_dict()
-            stdin_topics = {**topics, "tf": tf_channel()}
-            blob: dict[str, Any] = {"topics": stdin_topics, "config": config_dict or None}
+            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
             qos = self._collect_output_qos()
             if qos:
                 blob["qos"] = qos

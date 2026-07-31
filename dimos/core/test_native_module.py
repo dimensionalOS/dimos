@@ -188,6 +188,15 @@ def test_io_port_topic_reaches_the_native_process() -> None:
                 transport.stop()
 
 
+def test_tf_topic_comes_from_the_declared_port_only() -> None:
+    """No tf port declared means no tf topic, rather than a silently injected one."""
+    module = StubNativeModule(executable=_ECHO)
+    try:
+        assert "tf" not in module._collect_topics()
+    finally:
+        module.stop()
+
+
 def test_io_port_publisher_qos_reaches_the_native_process() -> None:
     module = StubIoModule(executable=_ECHO)
     transport = ZenohTransport(ZenohTopic("/tf", TFMessage, qos=QOS_NEVER_DROP))
