@@ -136,6 +136,19 @@ class ConnectedHardware:
 
         return result
 
+    def set_gripper_position(self, position: float) -> bool:
+        """Write a raw gripper position and retain it for partial arm commands."""
+        if not self._gripper_joints:
+            return False
+        if not self._initialized:
+            self._initialize_last_commanded()
+        if not self._adapter.write_gripper_position(position):
+            return False
+        normalized = self._physical_to_normalized(position)
+        for joint_name in self._gripper_joints:
+            self._last_commanded[joint_name] = normalized
+        return True
+
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
         """Write commands - allows partial joint sets, holds last for missing.
 

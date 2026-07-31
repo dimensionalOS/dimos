@@ -108,6 +108,7 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     grasp_pre_grasp_offset: FiniteFloat | None = Field(default=None, gt=0.0)
     grasp_retreat_offset: FiniteFloat | None = Field(default=None, gt=0.0)
     grasp_approach_vector: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0.0, 0.0, -1.0)
+    pick_suppress_all_object_obstacles: bool = False
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
     @model_validator(mode="after")
@@ -689,6 +690,14 @@ then refreshes perception obstacles.
             np.all(np.isfinite(values)) and np.isclose(np.linalg.norm(quaternion), 1.0, atol=1e-5)
         )
 
+    @staticmethod
+    def _candidate_retraction_vector(candidate: GraspCandidate, vector: Vector3) -> np.ndarray:
+        local = np.asarray([vector.x, vector.y, vector.z], dtype=float)
+        norm = np.linalg.norm(local)
+        if norm == 0.0:
+            return np.zeros(3, dtype=float)
+        return candidate.pose.orientation.to_rotation_matrix() @ (local / norm)
+
     def _select_feasible_grasp(
         self,
         candidates: list[GraspCandidate],
@@ -705,9 +714,15 @@ then refreshes perception obstacles.
         for rank, candidate in enumerate(candidates[:limit], start=1):
             if not self._valid_candidate(candidate):
                 transaction.rejections[_CandidateRejection.INVALID.value] += 1
+                logger.info(
+                    "Rejected grasp candidate rank=%d score=%.4f: invalid",
+                    rank,
+                    candidate.score,
+                )
                 continue
             pre_grasp = self._compute_pre_grasp_pose(candidate.pose, pre_offset, vector)
             retreat = self._compute_pre_grasp_pose(candidate.pose, retreat_offset, vector)
+            retraction = self._candidate_retraction_vector(candidate, vector)
             rejections = (
                 _CandidateRejection.PRE_GRASP_INFEASIBLE,
                 _CandidateRejection.GRASP_INFEASIBLE,
@@ -720,6 +735,22 @@ then refreshes perception obstacles.
             )
             if failed_index is not None:
                 transaction.rejections[rejections[failed_index].value] += 1
+                logger.info(
+                    "Rejected grasp candidate rank=%d score=%.4f retraction=(%.3f, %.3f, %.3f) "
+                    "grasp=(%.3f, %.3f, %.3f) pre_grasp=(%.3f, %.3f, %.3f): %s",
+                    rank,
+                    candidate.score,
+                    retraction[0],
+                    retraction[1],
+                    retraction[2],
+                    candidate.pose.position.x,
+                    candidate.pose.position.y,
+                    candidate.pose.position.z,
+                    pre_grasp.position.x,
+                    pre_grasp.position.y,
+                    pre_grasp.position.z,
+                    rejections[failed_index].value,
+                )
                 continue
             return _FeasibleGrasp(candidate, rank, pre_grasp, retreat)
 
@@ -904,7 +935,12 @@ then refreshes perception obstacles.
                     "WORLD_MONITOR_UNAVAILABLE", "Planning world monitor is unavailable"
                 )
 
-            with self._world_monitor.suppress_object_obstacle(detection.object_id) as suppression:
+            suppression_context = (
+                self._world_monitor.suppress_all_object_obstacles()
+                if self.config.pick_suppress_all_object_obstacles
+                else self._world_monitor.suppress_object_obstacle(detection.object_id)
+            )
+            with suppression_context as suppression:
                 sequence_start = None
                 lift_pose = self._safety_lift_pose(rname)
                 if lift_pose is not None:

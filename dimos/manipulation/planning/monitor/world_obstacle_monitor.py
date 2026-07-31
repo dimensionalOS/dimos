@@ -591,10 +591,39 @@ class WorldObstacleMonitor:
                         raise RuntimeError(f"failed to suppress obstacle for object '{object_id}'")
                     del self._object_obstacles[object_id]
                     handle.removed = True
+                    logger.info(f"Suppressed obstacle for object '{object_id}'")
         try:
             yield handle
         finally:
             self._release_object_suppression(handle)
+
+    @contextmanager
+    def suppress_all_object_obstacles(self) -> Iterator[ObjectObstacleSuppression]:
+        """Exclude all cached object obstacles for the lifetime of the context."""
+        handle = ObjectObstacleSuppression(object_id="*")
+        suppressed_ids: set[str] = set()
+        removed = 0
+        with self._lock:
+            suppressed_ids = set(self._object_cache) | set(self._object_obstacles)
+            for object_id in suppressed_ids:
+                self._object_suppressions[object_id] += 1
+            for object_id, obstacle_id in list(self._object_obstacles.items()):
+                if not self._parent.remove_obstacle(obstacle_id):
+                    for suppressed_id in suppressed_ids:
+                        depth = self._object_suppressions.get(suppressed_id, 0)
+                        if depth <= 1:
+                            self._object_suppressions.pop(suppressed_id, None)
+                        else:
+                            self._object_suppressions[suppressed_id] = depth - 1
+                    raise RuntimeError("failed to suppress all object obstacles")
+                del self._object_obstacles[object_id]
+                removed += 1
+            handle.removed = removed > 0
+            logger.info("Suppressed %d object obstacle(s)", removed)
+        try:
+            yield handle
+        finally:
+            self._release_all_object_suppressions(handle, suppressed_ids)
 
     def _release_object_suppression(self, handle: ObjectObstacleSuppression) -> None:
         object_id = handle.object_id
@@ -620,8 +649,47 @@ class WorldObstacleMonitor:
             obstacle_id = self._parent.add_obstacle(obstacle)
             if obstacle_id:
                 self._object_obstacles[object_id] = obstacle_id
+                logger.info(f"Restored obstacle for object '{object_id}'")
                 return
             handle.cleanup_error = f"failed to restore obstacle for object '{object_id}'"
+            logger.error(handle.cleanup_error)
+
+    def _release_all_object_suppressions(
+        self, handle: ObjectObstacleSuppression, object_ids: set[str]
+    ) -> None:
+        cached_objects: list[tuple[str, Object]] = []
+        with self._lock:
+            for object_id in object_ids:
+                depth = self._object_suppressions.get(object_id, 0)
+                if depth > 1:
+                    self._object_suppressions[object_id] = depth - 1
+                    continue
+                self._object_suppressions.pop(object_id, None)
+                entry = self._object_cache.get(object_id)
+                if entry is not None:
+                    cached_objects.append((object_id, entry[0]))
+
+        restored = 0
+        errors: list[str] = []
+        for object_id, cached in cached_objects:
+            obstacle = self._object_to_obstacle(cached)
+            with self._lock:
+                if self._object_suppressions.get(object_id, 0) > 0:
+                    continue
+                if object_id in self._object_obstacles:
+                    continue
+                obstacle_id = self._parent.add_obstacle(obstacle)
+                if obstacle_id:
+                    self._object_obstacles[object_id] = obstacle_id
+                    restored += 1
+                else:
+                    errors.append(object_id)
+        if restored:
+            logger.info("Restored %d object obstacle(s)", restored)
+        if errors:
+            handle.cleanup_error = "failed to restore obstacle(s) for object(s): " + ", ".join(
+                sorted(errors)
+            )
             logger.error(handle.cleanup_error)
 
     def clear_perception_obstacles(self) -> int:

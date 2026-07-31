@@ -325,6 +325,15 @@ class WorldMonitor:
         with self._obstacle_monitor.suppress_object_obstacle(object_id) as suppression:
             yield suppression
 
+    @contextmanager
+    def suppress_all_object_obstacles(self) -> Iterator[ObjectObstacleSuppression]:
+        """Temporarily exclude all perception objects from collision checking."""
+        if self._obstacle_monitor is None:
+            yield ObjectObstacleSuppression(object_id="*")
+            return
+        with self._obstacle_monitor.suppress_all_object_obstacles() as suppression:
+            yield suppression
+
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""
         if self._obstacle_monitor is not None:

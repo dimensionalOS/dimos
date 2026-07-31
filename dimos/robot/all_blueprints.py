@@ -154,6 +154,8 @@ all_blueprints = {
     "xarm-graspgenx-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_graspgenx_agent",
     "xarm-perception": "dimos.robot.manipulators.xarm.blueprints.perception:xarm_perception",
     "xarm-perception-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_agent",
+    "xarm-grasp-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_grasp_sim",
+    "xarm-grasp-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_grasp_sim_agent",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm6-planner-only": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_only",

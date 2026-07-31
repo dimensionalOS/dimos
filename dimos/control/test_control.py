@@ -66,6 +66,7 @@ def mock_adapter():
     adapter.read_joint_efforts.return_value = [0.0] * 6
     adapter.write_joint_positions.return_value = True
     adapter.write_joint_velocities.return_value = True
+    adapter.write_gripper_position.return_value = True
     adapter.set_control_mode.return_value = True
     return adapter
 
@@ -173,6 +174,24 @@ class TestJointStateSnapshot:
 
 
 class TestConnectedHardware:
+    def test_direct_gripper_command_updates_hold_last_value(self, mock_adapter):
+        mock_adapter.read_gripper_position.return_value = 0.0
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            gripper_joints=["arm/gripper"],
+        )
+        hardware = ConnectedHardware(mock_adapter, component)
+
+        assert hardware.set_gripper_position(0.85) is True
+        hardware.write_command({"arm/joint1": 0.1}, ControlMode.POSITION)
+
+        assert mock_adapter.write_gripper_position.call_args_list == [
+            ((0.85,), {}),
+            ((0.85,), {}),
+        ]
+
     def test_normalized_gripper_commands_are_mapped_at_hardware_boundary(self, mock_adapter):
         mock_adapter.read_gripper_position.return_value = 0.035
         component = HardwareComponent(
@@ -240,6 +259,24 @@ def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
 
 
 class TestControlCoordinatorLifecycle:
+    def test_gripper_rpc_updates_hardware_hold_last_value(
+        self, make_coordinator, mock_adapter, mocker
+    ):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            gripper_joints=["arm/gripper"],
+        )
+        hardware = ConnectedHardware(mock_adapter, component)
+        set_gripper_position = mocker.spy(hardware, "set_gripper_position")
+        coordinator = make_coordinator()
+        coordinator._hardware = {"arm": hardware}
+
+        assert coordinator.set_gripper_position("arm", 0.85) is True
+
+        set_gripper_position.assert_called_once_with(0.85)
+
     def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
         coordinator = make_coordinator()
         matching_task = RecordingTask("eef")

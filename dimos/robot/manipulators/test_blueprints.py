@@ -32,6 +32,7 @@ from dimos.manipulation.visualization.config import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.sim_object_scene import SimObjectScene
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.manipulators.a1z.blueprints.teleop import keyboard_teleop_a1z
 from dimos.robot.manipulators.a750.blueprints.teleop import keyboard_teleop_a750
@@ -48,7 +49,10 @@ from dimos.robot.manipulators.piper.blueprints.teleop import (
     coordinator_teleop_piper,
     keyboard_teleop_piper,
 )
-from dimos.robot.manipulators.xarm.blueprints.agentic import xarm_graspgenx_agent
+from dimos.robot.manipulators.xarm.blueprints.agentic import (
+    xarm_grasp_sim_agent,
+    xarm_graspgenx_agent,
+)
 from dimos.robot.manipulators.xarm.blueprints.basic import (
     dual_xarm6_planner,
     dual_xarm6_planner_coordinator,
@@ -57,6 +61,7 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
 )
 from dimos.robot.manipulators.xarm.blueprints.graspgenx import xarm_graspgenx
 from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
+from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_grasp_sim
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
     keyboard_teleop_xarm6,
     keyboard_teleop_xarm7,
@@ -240,6 +245,26 @@ def test_xarm_graspgenx_agent_composes_one_mcp_pair() -> None:
     assert _module_count(xarm_graspgenx_agent, ObjectSceneRegistrationModule) == 1
     assert _module_count(xarm_graspgenx_agent, GraspGenXModule) == 1
     assert _module_count(xarm_graspgenx_agent, PickAndPlaceModule) == 1
+
+
+def test_xarm_grasp_sim_uses_gt_scene_and_pick_diagnostics() -> None:
+    config = PickAndPlaceModuleConfig(**_module_kwargs(xarm_grasp_sim, PickAndPlaceModule))
+
+    assert _module_count(xarm_grasp_sim, ObjectSceneRegistrationModule) == 0
+    assert _module_count(xarm_grasp_sim, SimObjectScene) == 1
+    assert _module_count(xarm_grasp_sim, GraspGenXModule) == 1
+    assert _module_count(xarm_grasp_sim, PickAndPlaceModule) == 1
+    assert config.max_grasp_candidates_to_check == 30
+    assert config.pick_suppress_all_object_obstacles is True
+
+
+def test_xarm_grasp_sim_agent_keeps_gt_scene_provider() -> None:
+    assert _module_count(xarm_grasp_sim_agent, McpServer) == 1
+    assert _module_count(xarm_grasp_sim_agent, McpClient) == 1
+    assert _module_count(xarm_grasp_sim_agent, ObjectSceneRegistrationModule) == 0
+    assert _module_count(xarm_grasp_sim_agent, SimObjectScene) == 1
+    assert _module_count(xarm_grasp_sim_agent, GraspGenXModule) == 1
+    assert _module_count(xarm_grasp_sim_agent, PickAndPlaceModule) == 1
 
 
 def test_eef_twist_task_helper_uses_hardware_joints_and_default_name() -> None:

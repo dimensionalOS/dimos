@@ -868,7 +868,7 @@ class ControlCoordinator(Module):
             if isinstance(hw, ConnectedTwistBase):
                 logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
                 return False
-            return hw.adapter.write_gripper_position(position)
+            return hw.set_gripper_position(position)
 
     @rpc
     def get_gripper_position(self, hardware_id: str) -> float | None:

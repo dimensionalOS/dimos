@@ -60,6 +60,10 @@ XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+# Self-contained fork of the xarm7 model with an enclosed room (no skybox) and
+# six real tabletop manipulables, for the perception/grasp demo. Kept separate
+# from XARM7_SIM_PATH so teleop/basic blueprints keep the bare stock table.
+XARM_GRASP_SIM_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 XARM_GRIPPER_PARAMS = {
     "gripper_joint": make_gripper_joints("arm")[0],
     "gripper_open_pos": 0.85,
@@ -75,7 +79,7 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
         add_gripper=True,
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
-        pre_grasp_offset=0.05,
+        pre_grasp_offset=0.10,
     )
 
 

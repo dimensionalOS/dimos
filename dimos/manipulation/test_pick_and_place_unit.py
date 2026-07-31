@@ -523,6 +523,22 @@ class TestPickTransaction:
             mocker.call(Pose(0.4, 0.0, 0.3), "arm"),
         ]
 
+    def test_pick_can_suppress_all_object_obstacles_for_diagnostics(
+        self, module: PickAndPlaceModule, mocker: MockerFixture
+    ) -> None:
+        self._arrange_success(module, mocker)
+        module.config.pick_suppress_all_object_obstacles = True
+        all_suppression = SimpleNamespace(cleanup_error=None)
+        module._world_monitor.suppress_all_object_obstacles.return_value = nullcontext(  # type: ignore[union-attr]
+            all_suppression
+        )
+
+        result = module.pick("cup", object_id="abc12345")
+
+        assert result.is_success()
+        module._world_monitor.suppress_all_object_obstacles.assert_called_once_with()  # type: ignore[union-attr]
+        module._world_monitor.suppress_object_obstacle.assert_not_called()  # type: ignore[union-attr]
+
     def test_no_safety_lift_validates_candidates_from_current_state(
         self, module: PickAndPlaceModule, mocker: MockerFixture
     ) -> None:

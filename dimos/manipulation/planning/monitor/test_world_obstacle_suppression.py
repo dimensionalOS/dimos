@@ -128,6 +128,27 @@ def test_nested_suppression_removes_and_restores_once(mocker: MockerFixture) -> 
     assert "target" in monitor._object_obstacles
 
 
+def test_all_object_suppression_removes_and_restores_cached_objects(
+    mocker: MockerFixture,
+) -> None:
+    monitor, parent = _monitor(mocker)
+    monitor.on_objects([_object("target"), _object("other")])
+    monitor.refresh_obstacles()
+    parent.add_obstacle.reset_mock()
+    parent.remove_obstacle.reset_mock()
+
+    with monitor.suppress_all_object_obstacles() as suppression:
+        refreshed = monitor.refresh_obstacles()
+
+        assert suppression.removed is True
+        assert refreshed == []
+        assert monitor._object_obstacles == {}
+
+    assert set(monitor._object_obstacles) == {"target", "other"}
+    assert parent.remove_obstacle.call_count == 2
+    assert parent.add_obstacle.call_count == 2
+
+
 def test_suppression_restores_after_cancellation(mocker: MockerFixture) -> None:
     class Cancelled(BaseException):
         pass
