@@ -23,7 +23,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.perception.detection.type.detection3d.object import Object
+    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 

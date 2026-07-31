@@ -24,14 +24,18 @@ from dimos.constants import STATE_DIR
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
+from dimos.experimental.world_belief.worldbelief_module import (
+    WorldBeliefModule,
+)
+from dimos.experimental.world_belief.worldbelief_recorder import (
+    WorldBeliefRecorder,
+)
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.perception.worldbelief_module import WorldBeliefModule
-from dimos.perception.worldbelief_recorder import WorldBeliefRecorder
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
 from dimos.visualization.rerun.bridge import RerunBridgeModule

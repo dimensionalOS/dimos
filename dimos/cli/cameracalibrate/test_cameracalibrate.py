@@ -32,7 +32,6 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     write_camera_info_yaml,
 )
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
-from dimos.perception.common.utils import load_camera_info, load_camera_info_opencv
 
 
 def _synthetic_chessboard_gray(
@@ -158,12 +157,6 @@ def test_cli_folder_with_synthetic_images_writes_yaml_preview_and_camera_info(
     assert preview_image is not None
     assert preview_image.shape == (480, 640, 3)
 
-    info = load_camera_info(str(out), frame_id="camera_optical")
-    assert info.width == 640
-    assert info.height == 480
-    assert info.distortion_model == "plumb_bob"
-    assert info.header.frame_id == "camera_optical"
-
     dimos_info = DimosCameraInfo.from_yaml(str(out))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
@@ -234,10 +227,10 @@ def test_cli_folder_writes_only_explicit_yaml_and_prints_rms(tmp_path: Path) -> 
     assert out.exists()
     preview = tmp_path / "camera_info.preview.png"
     assert not preview.exists()
-    info = load_camera_info(str(out), frame_id="camera_optical")
-    assert info.width == 640
-    assert info.height == 480
-    assert info.distortion_model == "plumb_bob"
+    dimos_info = DimosCameraInfo.from_yaml(str(out))
+    assert dimos_info.width == 640
+    assert dimos_info.height == 480
+    assert dimos_info.distortion_model == "plumb_bob"
 
 
 def test_cli_folder_writes_explicit_yaml_and_preview(tmp_path: Path) -> None:
@@ -809,13 +802,6 @@ def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: 
         D=D,
         distortion_model="plumb_bob",
     )
-    info = load_camera_info(path, frame_id="camera_link")
-    assert info.width == 640
-    assert info.height == 480
-    assert info.distortion_model == "plumb_bob"
-    assert np.allclose(np.asarray(info.K, dtype=np.float64).reshape(3, 3), K)
-    assert np.allclose(np.asarray(info.D, dtype=np.float64).ravel(), D.ravel())
-
     dimos_info = DimosCameraInfo.from_yaml(path)
     assert dimos_info.width == 640
     assert dimos_info.height == 480
@@ -824,8 +810,8 @@ def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: 
     assert np.allclose(dimos_info.get_D_coeffs(), D)
 
 
-def test_write_camera_info_yaml_round_trip_load_camera_info_and_opencv(tmp_path: Path) -> None:
-    """YAML written by ``write_camera_info_yaml`` round-trips through both loaders."""
+def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
+    """YAML written by ``write_camera_info_yaml`` round-trips through ``CameraInfo.from_yaml``."""
     K = np.array([[600.0, 0.5, 400.0], [0.0, 605.0, 300.5], [0.0, 0.0, 1.0]], dtype=np.float64)
     D = np.array([-0.12, 0.08, 0.002, -0.001, 0.0], dtype=np.float64)
     R = np.array([[0.999, -0.01, 0.0], [0.01, 0.999, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -845,20 +831,6 @@ def test_write_camera_info_yaml_round_trip_load_camera_info_and_opencv(tmp_path:
         P=P,
         distortion_model="plumb_bob",
     )
-    info = load_camera_info(path, frame_id="camera_optical")
-    K_cv, D_cv = load_camera_info_opencv(path)
-
-    assert info.width == 800
-    assert info.height == 600
-    assert info.distortion_model == "plumb_bob"
-    assert info.header.frame_id == "camera_optical"
-    assert np.allclose(np.asarray(info.K, dtype=np.float64).reshape(3, 3), K)
-    assert np.allclose(np.asarray(info.D, dtype=np.float64).ravel(), D.ravel())
-    assert np.allclose(np.asarray(info.R, dtype=np.float64).reshape(3, 3), R)
-    assert np.allclose(np.asarray(info.P, dtype=np.float64).reshape(3, 4), P)
-    assert np.allclose(K_cv, K)
-    assert np.allclose(np.asarray(D_cv, dtype=np.float64).ravel(), D.ravel())
-
     dimos_info = DimosCameraInfo.from_yaml(path)
     assert dimos_info.width == 800
     assert dimos_info.height == 600
@@ -887,11 +859,11 @@ def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) 
         P=P,
         distortion_model="rational_polynomial",
     )
-    info = load_camera_info(path)
-    assert info.width == 320
-    assert info.height == 240
-    assert info.distortion_model == "rational_polynomial"
-    assert np.allclose(np.asarray(info.K, dtype=np.float64).reshape(3, 3), K)
-    assert np.allclose(np.asarray(info.D, dtype=np.float64).ravel(), D.ravel())
-    assert np.allclose(np.asarray(info.R, dtype=np.float64).reshape(3, 3), R)
-    assert np.allclose(np.asarray(info.P, dtype=np.float64).reshape(3, 4), P)
+    dimos_info = DimosCameraInfo.from_yaml(path)
+    assert dimos_info.width == 320
+    assert dimos_info.height == 240
+    assert dimos_info.distortion_model == "rational_polynomial"
+    assert np.allclose(dimos_info.get_K_matrix(), K)
+    assert np.allclose(dimos_info.get_D_coeffs(), D)
+    assert np.allclose(dimos_info.get_R_matrix(), R)
+    assert np.allclose(dimos_info.get_P_matrix(), P)

@@ -25,14 +25,18 @@ import uuid
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from dimos.models.embedding.base import Embedding
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.absence import ABSENT, PRESENT, classify_visibility
-from dimos.perception.detection.identity_features import (
+from dimos.experimental.world_belief.absence import (
+    ABSENT,
+    PRESENT,
+    classify_visibility,
+)
+from dimos.experimental.world_belief.identity_features import (
     add_diverse_embedding_view,
     gallery_cos,
     normalize_embedding,
 )
+from dimos.models.embedding.base import Embedding
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -42,7 +46,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.perception.detection.type.detection3d.object import Object
+    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
