@@ -84,6 +84,17 @@ Running the sweep locally::
     DIMOS_EVAL_SHARD_DIR=.ignore.eval-shards \\
     uv run pytest dimos/agents/evals/test_spatial_goal_eval.py -m self_hosted
 
+The model arms default to :data:`DEFAULT_MODEL_IDS`, which is what the numbers
+anyone reports should be measured on. A machine with different credentials can
+name its own, comma-separated, and sweep those instead::
+
+    DIMOS_EVAL_MODEL_IDS=ollama:qwen3:8b,openai:gpt-5.6-sol \\
+    DIMOS_EVAL_STORE_ROOT=$ROOT uv run pytest ... -m self_hosted
+
+Anything ``mcp_client._init_model`` accepts works, which is any LangChain
+provider prefix. Nothing downstream has to be told: ``model_id`` is on every
+shard line, in every shard filename, and is what the figure groups by.
+
 A root holding only *some* of the datasets is a supported state, not an error:
 the cases of a dataset with no store skip with the command that builds it, and
 the rest of the sweep runs. Two states do fail rather than skip, because both
@@ -167,14 +178,55 @@ SHARD_DIR_ENV = "DIMOS_EVAL_SHARD_DIR"
 #: after them -- do not depend on directory iteration order.
 DATASETS = dataset_names()
 
-#: Frozen model arms. ``gpt-5.6-luna`` is the shipping default and is routed to
-#: the OpenAI *Responses* API with reasoning effort, while ``openai:gpt-5.6-sol`` is
-#: routed to chat completions (``mcp_client._init_model``). The two arms
-#: therefore differ in API surface as well as in weights: that is deliberate --
-#: they are the two request paths the shipping client actually takes -- and it
-#: is why ``model_id`` is recorded on every shard line rather than being
-#: reconstructed from the filename.
-MODEL_IDS = ("gpt-5.6-luna", "openai:gpt-5.6-sol")
+#: Where a caller names its own model arms, comma-separated.
+MODEL_IDS_ENV = "DIMOS_EVAL_MODEL_IDS"
+
+#: The default model arms. ``gpt-5.6-luna`` is the shipping default and is routed
+#: to the OpenAI *Responses* API with reasoning effort, while
+#: ``openai:gpt-5.6-sol`` is routed to chat completions
+#: (``mcp_client._init_model``). The two arms therefore differ in API surface as
+#: well as in weights: that is deliberate -- they are the two request paths the
+#: shipping client actually takes -- and it is why ``model_id`` is recorded on
+#: every shard line rather than being reconstructed from the filename.
+DEFAULT_MODEL_IDS = ("gpt-5.6-luna", "openai:gpt-5.6-sol")
+
+
+def resolve_model_ids(raw: str | None) -> tuple[str, ...]:
+    """The arms to sweep: :data:`DEFAULT_MODEL_IDS`, or a caller's own list.
+
+    *raw* is the environment's value rather than read here, so this is testable
+    without touching the process environment.
+
+    The default is fixed so that "the eval" names one measurement: the arms the
+    committed numbers were taken on. It is not fixed to stop anyone else
+    measuring something -- ``mcp_client._init_model`` resolves any LangChain
+    provider prefix (``ollama:``, ``huggingface:``), and a machine with no
+    OpenAI credentials can sweep its own models by naming them here. That stays
+    honest without any further guard because model identity is carried
+    end-to-end: every shard *line* records ``model_id``, the shard *filename* is
+    built from it, and the figure groups by it, so an overridden run cannot be
+    read as, or appended to, a default one.
+
+    Set-but-empty raises rather than falling back to the default, for the same
+    reason :func:`resolve_ingested_store` fails on a set-but-absent root: a run
+    that quietly measured something other than what was asked for is worse than
+    one that stops and says so.
+    """
+    if raw is None:
+        return DEFAULT_MODEL_IDS
+    model_ids = tuple(part.strip() for part in raw.split(",") if part.strip())
+    if not model_ids:
+        raise ValueError(
+            f"{MODEL_IDS_ENV}={raw!r} names no model: set it to a comma-separated "
+            f"list of model ids (e.g. {','.join(DEFAULT_MODEL_IDS)}), or unset it "
+            f"to sweep the default arms"
+        )
+    return model_ids
+
+
+#: The arms this run sweeps. Resolved at import so ``--collect-only`` shows the
+#: real case list, the same as :data:`DATASETS`.
+MODEL_IDS = resolve_model_ids(os.environ.get(MODEL_IDS_ENV))
 
 #: Frozen prompt arms. Neither says anything about the shape of an answer: the
 #: constant task instruction is part of the question template
@@ -589,3 +641,40 @@ def test_an_unset_root_skips_and_a_missing_one_fails(
     monkeypatch.setenv(STORE_ROOT_ENV, str(tmp_path / "typo"))
     with pytest.raises(pytest.fail.Exception, match="does not exist"):
         resolve_ingested_store("go2_short")
+
+
+def test_unset_model_arms_are_the_committed_default() -> None:
+    """No variable means the arms the reported numbers were measured on.
+
+    The default is what makes "the eval" name one measurement rather than
+    whatever the last operator happened to export.
+    """
+    assert resolve_model_ids(None) == DEFAULT_MODEL_IDS
+    assert DEFAULT_MODEL_IDS == ("gpt-5.6-luna", "openai:gpt-5.6-sol")
+
+
+def test_named_model_arms_replace_the_default_and_tolerate_spacing() -> None:
+    """A caller's list wins outright -- it is not merged with the default.
+
+    Merging would make the sweep silently grow, and the shard directory would
+    then mix arms nobody asked for with arms somebody did. Whitespace around the
+    separators is the shape a hand-typed or shell-wrapped value arrives in.
+    """
+    assert resolve_model_ids("ollama:qwen3:8b") == ("ollama:qwen3:8b",)
+    assert resolve_model_ids(" openai:gpt-5.6-sol , ollama:qwen3:8b ,, ") == (
+        "openai:gpt-5.6-sol",
+        "ollama:qwen3:8b",
+    )
+
+
+def test_a_set_but_empty_model_arm_list_fails_rather_than_falling_back() -> None:
+    """The same rule as a set-but-absent store root: asked-for, so do not guess.
+
+    Falling back to the default here would answer a request to measure
+    *something else* by measuring the default and saying nothing -- the quiet
+    kind of wrong that a shard cannot expose, because the shard would look
+    exactly like a default run.
+    """
+    for raw in ("", "   ", " , , "):
+        with pytest.raises(ValueError, match=MODEL_IDS_ENV):
+            resolve_model_ids(raw)
