@@ -302,7 +302,7 @@ pub trait Module: Sized + Send + 'static {
 
 pub struct Builder {
     topics: HashMap<String, String>,
-    // Every port the module asked for a topic, matched against `topics` after build.
+    // Every port the module asked for a topic, matched against topics after build.
     requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     // One publish queue per output channel, drained by its own worker.
@@ -329,10 +329,8 @@ impl Builder {
             .unwrap_or_else(|| format!("/{port}"))
     }
 
-    // The coordinator sends one topic per declared Python port, so the ports
-    // this module claimed must be exactly that set. A port the module never
-    // asks for is dead wiring, and one the coordinator never sent would fall
-    // back to a bare `/{port}` that nothing else on the bus is using.
+    // A mismatch is dead wiring: an unclaimed topic reaches no port, and an
+    // unsent one leaves the port on a fallback name nothing else publishes to.
     pub(crate) fn enforce_topics_match_ports(&self) -> io::Result<()> {
         let provided: BTreeSet<&String> = self.topics.keys().collect();
         let requested: BTreeSet<&String> = self.requested.iter().collect();
@@ -349,7 +347,6 @@ impl Builder {
         ))
     }
 
-    // Registers a decoding route on the topic and hands back the receiving end.
     fn add_route<T: Send + 'static>(
         &mut self,
         topic: &str,
@@ -369,7 +366,6 @@ impl Builder {
         rx
     }
 
-    // Adds a publish queue for the topic and hands back the sending end.
     fn add_publisher(&mut self, topic: &str) -> mpsc::Sender<Vec<u8>> {
         let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         self.outputs.push((topic.to_string(), rx));

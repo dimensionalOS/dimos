@@ -25,10 +25,8 @@ Mount geometry (measured on the physical rig)
 - front_camera -> camera_optical: the standard ROS optical rotation (x-right, y-down,
   z-forward).
 
-The published tree is rooted at ``mid360_link``: Point-LIO owns the live
-``odom -> mid360_link`` edge, and the rerun bridge keys tf entities by child frame, so
-publishing the two edges above the lidar inverted keeps the static tree off the entity
-the live edge writes. The tf buffer composes either direction.
+The published tree is rooted at mid360_link so the static edges stay off the entities
+the live odom -> mid360_link edge writes. The tf buffer composes either direction.
 """
 
 from __future__ import annotations

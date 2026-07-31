@@ -31,21 +31,12 @@ logger = setup_logger()
 
 
 def base_height_above_ground(lidar_height: float, base_to_sensor: Transform) -> float:
-    """Height of the base frame origin above the ground while standing.
-
-    The lidar sits ``lidar_height`` above the ground and
-    ``base_to_sensor.translation.z`` above the base origin.
-    """
+    """Height of the base frame origin above the ground while standing."""
     return lidar_height - base_to_sensor.translation.z
 
 
 class OdomBasePose:
-    """Turn odometry messages into the base-frame pose they imply.
-
-    The odometry message itself carries the live parent -> child edge, so only the
-    static leg from the message's child frame to the base frame is looked up on tf,
-    once, then reused for every following message.
-    """
+    """Turn odometry messages into the base-frame pose they imply."""
 
     # While the leg is missing, retry the lookup at most this often. The buffer
     # warns on every miss, so per-message retries would flood the log.

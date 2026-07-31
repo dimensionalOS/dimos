@@ -37,9 +37,8 @@ pub struct Config {
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub robot_height: f32,
-    /// Subtracted from the start pose z before snapping to a surface. For start
-    /// poses stamped at the sensor instead of the ground; 0 when the publisher
-    /// already ground-projects.
+    /// Subtracted from the start pose z before snapping to a surface. 0 when
+    /// the publisher already ground-projects.
     #[validate(range(min = 0.0))]
     pub start_z_offset_m: f32,
     /// Ignore surface more than this far above the sensor.

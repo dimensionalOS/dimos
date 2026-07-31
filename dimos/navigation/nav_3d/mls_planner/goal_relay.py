@@ -26,9 +26,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):

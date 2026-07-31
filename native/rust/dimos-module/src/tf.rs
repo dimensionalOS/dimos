@@ -21,7 +21,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
@@ -32,6 +33,8 @@ use crate::module::Route;
 
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
+
+const WARN_INTERVAL: Duration = Duration::from_secs(1);
 
 fn now_secs() -> f64 {
     SystemTime::now()
@@ -153,7 +156,7 @@ impl TBuffer {
         }
     }
 
-    // One transform for this edge: the latest sample, or the one nearest `time`.
+    // One transform for this edge: the latest sample, or the one nearest time.
     fn sample(
         &self,
         parent: &str,
@@ -284,11 +287,14 @@ impl MultiTBuffer {
     }
 }
 
-// The graph plus the signal that it changed. Writes go through `update` so a
-// writer cannot leave a waiter asleep on a transform that has already landed.
+// The graph plus the signal that it changed. Every write notifies, so a writer
+// cannot leave a waiter asleep on a transform that has already landed.
 struct Graph {
     buffer: RwLock<MultiTBuffer>,
     changed: Notify,
+    // warn_throttled! keys its throttle on the call site and there is one site
+    // for every lookup, so one missing frame pair would mute all the others.
+    warned: Mutex<HashMap<(String, String), AtomicU64>>,
 }
 
 impl Graph {
@@ -296,7 +302,16 @@ impl Graph {
         Self {
             buffer: RwLock::new(MultiTBuffer::new(window_secs)),
             changed: Notify::new(),
+            warned: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn should_warn(&self, parent: &str, child: &str) -> bool {
+        let mut warned = self.warned.lock().expect("tf warn map lock poisoned");
+        let last = warned
+            .entry((parent.to_string(), child.to_string()))
+            .or_default();
+        crate::log::check_and_record(last, WARN_INTERVAL.as_nanos() as u64)
     }
 
     fn update(&self, edits: impl FnOnce(&mut MultiTBuffer)) {
@@ -402,6 +417,9 @@ impl Lookup<'_> {
     // A lookup that resolves to nothing is otherwise invisible: the caller sees
     // None and the buffer says nothing about which frames or stamp missed.
     fn warn_unresolved(&self) {
+        if !self.tf.graph.should_warn(self.parent, self.child) {
+            return;
+        }
         warn!(
             parent = %self.parent,
             child = %self.child,
@@ -423,22 +441,12 @@ impl Lookup<'_> {
         found
     }
 
-    /// Resolve the lookup, waiting up to `timeout` for it to become possible.
+    /// Resolve the lookup, waiting up to `timeout` for a late transform.
     ///
-    /// A message and the transform it needs arrive on separate topics, so the
-    /// transform for a given stamp is often merely late rather than absent.
     /// Returns as soon as the lookup succeeds, or `None` at the deadline.
-    ///
-    /// [`Lookup::tolerance`] and this are different clocks: tolerance bounds how
-    /// far the chosen sample may sit from [`Lookup::at`] in message stamps,
-    /// `timeout` bounds how long to wait in wall time. Set a tolerance whenever
-    /// waiting, or the lookup is satisfied by anything inside the buffer window
-    /// and returns a stale transform immediately.
-    ///
-    /// This suspends the caller. Awaiting it inside a `handle_*` method parks
-    /// that module's whole dispatch loop, so every other topic it subscribes to
-    /// stops being served for the duration. Prefer [`Lookup::get`] there, and
-    /// move waiting onto a task of its own when the wait may be long.
+    /// Awaiting this inside a `handle_*` method parks the module's whole
+    /// dispatch loop, so prefer [`Lookup::get`] there and move a long wait onto
+    /// a task of its own.
     pub async fn within(self, timeout: Duration) -> Option<Transform> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -527,10 +535,21 @@ impl Route for TfRoute {
             for st in &msg.transforms {
                 let t = &st.transform.translation;
                 let q = &st.transform.rotation;
-                let iso = Isometry3::from_parts(
-                    Translation3::new(t.x, t.y, t.z),
-                    UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.x, q.y, q.z)),
-                );
+                // Normalizing a zero-norm quaternion yields NaN, which would
+                // then resolve every lookup composing through this edge.
+                let Some(rotation) =
+                    UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
+                else {
+                    crate::error_throttled!(
+                        Duration::from_secs(1),
+                        topic = %self.topic,
+                        parent = %st.header.frame_id,
+                        child = %st.child_frame_id,
+                        "tf rotation is not a valid quaternion"
+                    );
+                    continue;
+                };
+                let iso = Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation);
                 let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
                 buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
             }
@@ -542,10 +561,10 @@ impl Route for TfRoute {
 // sender carries published messages to the tf topic's publish worker.
 pub(crate) fn tf_subscription(
     topic: String,
-    buffer_size: f64,
+    window_secs: f64,
     sender: mpsc::Sender<Vec<u8>>,
 ) -> (Tf, Box<dyn Route>) {
-    let graph = Arc::new(Graph::new(buffer_size));
+    let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
         graph: Arc::clone(&graph),
         sender,
@@ -559,13 +578,13 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
-    fn tf_with(buffer_size: f64) -> (Tf, MultiHandle) {
-        let (tf, _rx, handle) = tf_with_publish(buffer_size);
+    fn tf_with(window_secs: f64) -> (Tf, MultiHandle) {
+        let (tf, _rx, handle) = tf_with_publish(window_secs);
         (tf, handle)
     }
 
-    fn tf_with_publish(buffer_size: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
-        let graph = Arc::new(Graph::new(buffer_size));
+    fn tf_with_publish(window_secs: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
+        let graph = Arc::new(Graph::new(window_secs));
         let (tx, rx) = mpsc::channel(8);
         (
             Tf {
@@ -719,8 +738,8 @@ mod tests {
         assert!(tf.lookup("a", "b").at(50.0).tolerance(60.0).get().is_some());
     }
 
-    // The window bounds queries against a stamp, not the latest sample: with no
-    // `at`, the newest edge is returned however old it is.
+    // The window bounds queries against a stamp, not the latest sample. With no
+    // requested time, the newest edge is returned however old it is.
     #[test]
     fn latest_is_not_bounded_by_the_window() {
         let (tf, h) = tf_with(10.0);
@@ -828,10 +847,21 @@ mod tests {
     }
 
     fn stamped_message(parent: &str, child: &str, ts: f64, x: f64) -> Vec<u8> {
+        rotated_message(parent, child, ts, x, (0.0, 0.0, 0.0, 1.0))
+    }
+
+    fn rotated_message(
+        parent: &str,
+        child: &str,
+        ts: f64,
+        x: f64,
+        quat: (f64, f64, f64, f64),
+    ) -> Vec<u8> {
         use lcm_msgs::geometry_msgs::{
             Quaternion as LQuat, Transform as LTransform, TransformStamped, Vector3 as LVec3,
         };
         use lcm_msgs::std_msgs::{Header, Time};
+        let (x_q, y_q, z_q, w_q) = quat;
         lcm_msgs::tf2_msgs::TFMessage {
             transforms: vec![TransformStamped {
                 header: Header {
@@ -846,15 +876,27 @@ mod tests {
                 transform: LTransform {
                     translation: LVec3 { x, y: 0.0, z: 0.0 },
                     rotation: LQuat {
-                        x: 0.0,
-                        y: 0.0,
-                        z: 0.0,
-                        w: 1.0,
+                        x: x_q,
+                        y: y_q,
+                        z: z_q,
+                        w: w_q,
                     },
                 },
             }],
         }
         .encode()
+    }
+
+    #[test]
+    fn a_zero_rotation_on_the_wire_is_dropped_rather_than_stored_as_nan() {
+        let (tx, _rx) = mpsc::channel(4);
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        route.try_dispatch(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
+        assert!(tf.get_latest("a", "b").is_none());
+
+        route.try_dispatch(&stamped_message("a", "b", 6.0, 1.0));
+        let t = tf.get_latest("a", "b").expect("valid rotation is accepted");
+        assert!(t.rotation().coords.iter().all(|c| c.is_finite()));
     }
 
     #[test]
@@ -865,6 +907,25 @@ mod tests {
         assert!(tf.get_latest("world", "gripper").is_none());
         assert!(logs_contain("No transform found between frames"));
         assert!(logs_contain("gripper"));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn repeated_misses_warn_once_per_frame_pair() {
+        let (tf, _h) = tf_with(DEFAULT_TF_WINDOW_SECS);
+        for _ in 0..5 {
+            assert!(tf.get_latest("world", "gripper").is_none());
+        }
+        logs_assert(|lines: &[&str]| {
+            match lines.iter().filter(|l| l.contains("gripper")).count() {
+                1 => Ok(()),
+                n => Err(format!("expected 1 warning for the repeated pair, got {n}")),
+            }
+        });
+
+        // A pair that is throttled must not mute an unrelated one.
+        assert!(tf.get_latest("world", "camera").is_none());
+        assert!(logs_contain("camera"));
     }
 
     #[test]

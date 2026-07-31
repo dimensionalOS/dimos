@@ -33,9 +33,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     world_frame: str = "map"
     voxel_size: float = 0.08
     robot_height: float = 0.3
-    # Subtracted from the start pose z before snapping to a surface. For start
-    # poses stamped at the sensor instead of the ground; leave 0 when the
-    # publisher already ground-projects (GoalRelay does).
+    # Subtracted from the start pose z before snapping to a surface. Leave 0
+    # when the publisher already ground-projects.
     start_z_offset_m: float = 0.0
     max_overhead_m: float = 2.0
 

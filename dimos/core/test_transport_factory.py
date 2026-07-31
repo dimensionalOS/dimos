@@ -28,7 +28,6 @@ from dimos.core.transport_factory import (
     default_zenoh_qos,
     make_transport,
     rpc_backend,
-    tf_channel,
     transport_topic,
 )
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -52,14 +51,6 @@ def test_transport_topic_zenoh() -> None:
     assert transport_topic("/human_input", ZENOH) == "dimos/human_input"
     assert transport_topic("human_input", ZENOH) == "dimos/human_input"
     assert transport_topic("/coordinator/joint_state", ZENOH) == "dimos/coordinator/joint_state"
-
-
-def test_tf_channel_lcm() -> None:
-    assert tf_channel(LCM) == "/tf#tf2_msgs.TFMessage"
-
-
-def test_tf_channel_zenoh() -> None:
-    assert tf_channel(ZENOH) == "dimos/tf/tf2_msgs.TFMessage"
 
 
 def test_make_transport_lcm_typed() -> None:
