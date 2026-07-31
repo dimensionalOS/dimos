@@ -302,6 +302,8 @@ pub trait Module: Sized + Send + 'static {
 
 pub struct Builder {
     topics: HashMap<String, String>,
+    // Every port the module asked for a topic, matched against `topics` after build.
+    requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
@@ -312,17 +314,39 @@ impl Builder {
     pub(crate) fn new(topics: HashMap<String, String>) -> Self {
         Self {
             topics,
+            requested: BTreeSet::new(),
             routes: HashMap::new(),
             outputs: Vec::new(),
             tf: None,
         }
     }
 
-    fn topic_for(&self, port: &str) -> String {
+    fn topic_for(&mut self, port: &str) -> String {
+        self.requested.insert(port.to_string());
         self.topics
             .get(port)
             .cloned()
             .unwrap_or_else(|| format!("/{port}"))
+    }
+
+    // The coordinator sends one topic per declared Python port, so the ports
+    // this module claimed must be exactly that set. A port the module never
+    // asks for is dead wiring, and one the coordinator never sent would fall
+    // back to a bare `/{port}` that nothing else on the bus is using.
+    pub(crate) fn enforce_topics_match_ports(&self) -> io::Result<()> {
+        let provided: BTreeSet<&String> = self.topics.keys().collect();
+        let requested: BTreeSet<&String> = self.requested.iter().collect();
+        if provided == requested {
+            return Ok(());
+        }
+        let missing: Vec<&&String> = requested.difference(&provided).collect();
+        let unexpected: Vec<&&String> = provided.difference(&requested).collect();
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "topics do not match module ports: missing {missing:?}, unexpected {unexpected:?}"
+            ),
+        ))
     }
 
     // Registers a decoding route on the topic and hands back the receiving end.
@@ -500,6 +524,7 @@ where
 
     let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
+    builder.enforce_topics_match_ports()?;
 
     subscribe_routes(&transport, builder.routes).await?;
     // Kept alive until teardown so the subscriptions stay live.
@@ -816,13 +841,13 @@ mod tests {
 
     #[test]
     fn unmapped_port_falls_back_to_slash_port() {
-        let builder = builder_with_topics(&[]);
+        let mut builder = builder_with_topics(&[]);
         assert_eq!(builder.topic_for("cmd_vel"), "/cmd_vel");
     }
 
     #[test]
     fn mapped_port_uses_given_topic() {
-        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         assert_eq!(builder.topic_for("cmd_vel"), "/robot/cmd_vel");
     }
 
@@ -845,6 +870,50 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
+    }
+
+    #[test]
+    fn topics_matching_ports_exactly_pass() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd"), ("odom", "/robot/odom")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        builder.output("odom", |b: &Vec<u8>| b.clone());
+        builder.enforce_topics_match_ports().expect("exact match");
+    }
+
+    #[test]
+    fn a_port_the_coordinator_never_sent_is_rejected() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        builder.output("odom", |b: &Vec<u8>| b.clone());
+        let err = builder
+            .enforce_topics_match_ports()
+            .expect_err("odom has no topic");
+        assert!(err.to_string().contains("missing [\"odom\"]"), "{err}");
+    }
+
+    #[test]
+    fn a_topic_no_port_claimed_is_rejected() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd"), ("stale", "/robot/stale")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        let err = builder
+            .enforce_topics_match_ports()
+            .expect_err("stale is unclaimed");
+        assert!(err.to_string().contains("unexpected [\"stale\"]"), "{err}");
+    }
+
+    #[test]
+    fn a_tf_field_claims_the_tf_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/tf#tf2_msgs.TFMessage")]);
+        builder.tf();
+        builder.enforce_topics_match_ports().expect("tf claimed");
+    }
+
+    #[test]
+    fn a_module_with_no_ports_and_no_topics_passes() {
+        let builder = builder_with_topics(&[]);
+        builder
+            .enforce_topics_match_ports()
+            .expect("nothing to match");
     }
 
     #[test]
