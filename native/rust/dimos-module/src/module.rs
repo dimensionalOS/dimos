@@ -125,12 +125,39 @@ pub struct Output<T> {
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        let data = (self.encode)(msg);
-        self.sender
-            .send(data)
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
+        publish_encoded(&self.sender, (self.encode)(msg)).await
     }
+}
+
+/// A port that publishes to and subscribes on the same topic.
+///
+/// The transports deliver a message back to its own sender, so an `Io` port
+/// sees the whole topic including its own publishes.
+pub struct Io<T> {
+    pub topic: String,
+    receiver: mpsc::Receiver<T>,
+    encode: fn(&T) -> Vec<u8>,
+    sender: mpsc::Sender<Vec<u8>>,
+}
+
+impl<T> Io<T> {
+    pub async fn recv(&mut self) -> Option<T> {
+        self.receiver.recv().await
+    }
+
+    pub async fn publish(&self, msg: &T) -> io::Result<()> {
+        publish_encoded(&self.sender, (self.encode)(msg)).await
+    }
+}
+
+pub(crate) async fn publish_encoded(
+    sender: &mpsc::Sender<Vec<u8>>,
+    data: Vec<u8>,
+) -> io::Result<()> {
+    sender
+        .send(data)
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
 }
 
 /// Extract `(topics, config)` from an already-parsed config object. `run`
@@ -298,37 +325,68 @@ impl Builder {
             .unwrap_or_else(|| format!("/{port}"))
     }
 
+    // Registers a decoding route on the topic and hands back the receiving end.
+    fn add_route<T: Send + 'static>(
+        &mut self,
+        topic: &str,
+        decode: fn(&[u8]) -> io::Result<T>,
+    ) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        self.routes
+            .entry(topic.to_string())
+            .or_default()
+            .push(Box::new(TypedRoute {
+                topic: topic.to_string(),
+                decode,
+                sender: tx,
+                drop_count: AtomicU64::new(0),
+                last_log_ns: AtomicU64::new(0),
+            }));
+        rx
+    }
+
+    // Adds a publish queue for the topic and hands back the sending end.
+    fn add_publisher(&mut self, topic: &str) -> mpsc::Sender<Vec<u8>> {
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.to_string(), rx));
+        tx
+    }
+
     pub fn input<T: Send + 'static>(
         &mut self,
         port: &str,
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> Input<T> {
         let topic = self.topic_for(port);
-        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
-        self.routes
-            .entry(topic.clone())
-            .or_default()
-            .push(Box::new(TypedRoute {
-                topic: topic.clone(),
-                decode,
-                sender: tx,
-                drop_count: AtomicU64::new(0),
-                last_log_ns: AtomicU64::new(0),
-            }));
-        Input {
-            topic,
-            receiver: rx,
-        }
+        let receiver = self.add_route(&topic, decode);
+        Input { topic, receiver }
     }
 
     pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
         let topic = self.topic_for(port);
-        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        self.outputs.push((topic.clone(), rx));
+        let sender = self.add_publisher(&topic);
         Output {
             topic,
             encode,
-            sender: tx,
+            sender,
+        }
+    }
+
+    /// A port that both subscribes and publishes on one topic.
+    pub fn io<T: Send + 'static>(
+        &mut self,
+        port: &str,
+        decode: fn(&[u8]) -> io::Result<T>,
+        encode: fn(&T) -> Vec<u8>,
+    ) -> Io<T> {
+        let topic = self.topic_for(port);
+        let receiver = self.add_route(&topic, decode);
+        let sender = self.add_publisher(&topic);
+        Io {
+            topic,
+            receiver,
+            encode,
+            sender,
         }
     }
 
@@ -341,10 +399,9 @@ impl Builder {
             return tf.clone();
         }
         let topic = self.topic_for("tf");
-        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        self.outputs.push((topic.clone(), rx));
+        let sender = self.add_publisher(&topic);
         let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, tx);
+            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -791,6 +848,47 @@ mod tests {
     }
 
     #[test]
+    fn io_uses_mapped_topic() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        assert_eq!(io.topic, "/robot/cmd");
+    }
+
+    #[test]
+    fn io_registers_one_route_and_one_publisher_on_the_same_topic() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let _io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        assert_eq!(builder.routes.get("/robot/cmd").map(Vec::len), Some(1));
+        assert_eq!(builder.outputs.len(), 1);
+        assert_eq!(builder.outputs[0].0, "/robot/cmd");
+    }
+
+    #[tokio::test]
+    async fn io_receives_on_its_route_and_publishes_to_its_queue() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+
+        builder.routes["/robot/cmd"][0].try_dispatch(b"inbound");
+        assert_eq!(io.recv().await.expect("inbound message"), b"inbound");
+
+        io.publish(&b"outbound".to_vec()).await.expect("publish");
+        let (_, rx) = &mut builder.outputs[0];
+        assert_eq!(rx.recv().await.expect("published bytes"), b"outbound");
+    }
+
+    #[tokio::test]
+    async fn io_publish_errors_when_the_publish_worker_is_gone() {
+        let mut builder = builder_with_topics(&[]);
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        builder.outputs.clear();
+        let err = io
+            .publish(&b"x".to_vec())
+            .await
+            .expect_err("publish should fail with no worker");
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
     fn tf_uses_mapped_topic() {
         let mut builder = builder_with_topics(&[("tf", "/robot/tf")]);
         builder.tf();
@@ -1024,5 +1122,53 @@ mod tests {
         route.try_dispatch(&[1u8]); // now we warn
         assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
         assert!(logs_contain("handler was full"));
+    }
+
+    // Exercises the code #[derive(Module)] generates for an #[io] field.
+    mod derive_io {
+        use super::*;
+        use crate::Io;
+
+        struct Msg(Vec<u8>);
+
+        fn decode(bytes: &[u8]) -> io::Result<Msg> {
+            Ok(Msg(bytes.to_vec()))
+        }
+
+        fn encode(msg: &Msg) -> Vec<u8> {
+            msg.0.clone()
+        }
+
+        #[derive(crate::Module)]
+        struct Echo {
+            #[io(decode = decode, encode = encode)]
+            cmd: Io<Msg>,
+        }
+
+        impl Echo {
+            async fn handle_cmd(&mut self, msg: Msg) {
+                if msg.0 == b"ping" {
+                    self.cmd
+                        .publish(&Msg(b"pong".to_vec()))
+                        .await
+                        .expect("publish");
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn io_field_is_wired_to_its_handler_and_can_publish() {
+            let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
+            let mut echo = Echo::build(&mut builder, NoConfig);
+
+            builder.routes["/robot/cmd"][0].try_dispatch(b"ping");
+            // Dropping the routes closes the sender, so handle() drains and returns.
+            builder.routes.clear();
+            echo.handle().await;
+
+            let (topic, rx) = &mut builder.outputs[0];
+            assert_eq!(topic, "/robot/cmd");
+            assert_eq!(rx.recv().await.expect("handler reply"), b"pong");
+        }
     }
 }

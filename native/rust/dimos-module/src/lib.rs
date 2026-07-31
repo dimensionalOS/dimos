@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// #[derive(Module)] emits ::dimos_module paths, so tests in this crate that
+// derive Module need the crate to be nameable from inside itself.
+#[cfg(test)]
+extern crate self as dimos_module;
+
 pub mod lcm;
 pub mod log;
 pub mod module;
@@ -21,7 +26,7 @@ pub mod zenoh;
 
 pub use dimos_module_macros::{native_config, Module};
 pub use lcm::LcmTransport;
-pub use module::{run, Builder, Input, Module, ModuleConfig, NativeConfig, NoConfig, Output};
+pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Tf, Transform};
 pub use transport::Transport;
 pub use zenoh::ZenohTransport;

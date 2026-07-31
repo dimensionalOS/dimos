@@ -473,7 +473,7 @@ class NativeModule(Module):
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
-        for name in list(self.inputs) + list(self.outputs):
+        for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue
@@ -486,9 +486,9 @@ class NativeModule(Module):
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:
-        """Publisher QoS per output channel, keyed by channel."""
+        """Publisher QoS per published channel, keyed by channel."""
         qos_map: dict[str, dict[str, str]] = {}
-        for name in self.outputs:
+        for name in list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue

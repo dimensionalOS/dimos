@@ -26,6 +26,9 @@ struct MyModule {
     #[output(encode = Twist::encode)]
     out: Output<Twist>,
 
+    #[io(decode = Twist::decode, encode = Twist::encode)]
+    shared: Io<Twist>,
+
     #[config]
     config: MyConfig,
 }
@@ -36,6 +39,9 @@ impl MyModule {
 
     // processing function expected by cmd: Input
     async fn handle_cmd(&mut self, msg: Twist) { /* ... */ }
+
+    // processing function expected by shared: Io
+    async fn handle_shared(&mut self, msg: Twist) { /* ... */ }
 
     // teardown / clean up logic
     async fn on_stop(&mut self) { /* ... */ }
@@ -57,6 +63,7 @@ Every transport is compiled into the binary. `run_with_transport` opens the one 
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
+- `#[io(decode = fn, encode = fn, handler = fn)]`: on a field of type `Io<T>`, a port that publishes to and subscribes on one topic. `decode` and `encode` are required; `handler` defaults to `handle_<field_name>`. The transports deliver a message back to its own sender, so the handler also sees what the module publishes. Use `#[output]` instead when the module only publishes.
 - `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
 - `#[tf]`: on a field of type `Tf`. Subscribes to the `tf` topic, answers transform queries, and publishes transforms (see [Transforms](#transforms)). No arguments.
 - Unattributed fields are initialized via `Default::default()` and treated as module state.

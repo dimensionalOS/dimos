@@ -331,10 +331,7 @@ impl Tf {
         let msg = lcm_msgs::tf2_msgs::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
-        self.sender
-            .send(msg.encode())
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
+        crate::module::publish_encoded(&self.sender, msg.encode()).await
     }
 }
 
