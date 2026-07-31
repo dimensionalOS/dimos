@@ -18,11 +18,12 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from dimos.core.transport import WebRTCAudioTransport
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider
 from dimos.stream.audio.base import AudioEvent
 
 
 def test_webrtc_audio_transport_delivers_pcm_metadata() -> None:
-    provider = MagicMock()
+    provider = MagicMock(spec=AudioProvider)
     provider.is_connected = True
     unsubscribe = MagicMock()
     provider.subscribe_audio_frames.return_value = unsubscribe
@@ -45,7 +46,7 @@ def test_webrtc_audio_transport_delivers_pcm_metadata() -> None:
 
 
 def test_webrtc_audio_transport_keeps_other_subscribers_after_unsubscribe() -> None:
-    provider = MagicMock()
+    provider = MagicMock(spec=AudioProvider)
     provider.is_connected = True
     callbacks: list[Callable[[bytes, int, int], None]] = []
 

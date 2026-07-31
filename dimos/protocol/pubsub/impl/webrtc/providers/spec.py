@@ -69,6 +69,15 @@ class Provider(Protocol):
     def is_connected(self) -> bool: ...
 
 
+@runtime_checkable
+class AudioProvider(Provider, Protocol):
+    """Provider that receives decoded operator audio frames."""
+
+    def subscribe_audio_frames(
+        self, callback: Callable[[bytes, int, int], None]
+    ) -> Callable[[], None]: ...
+
+
 _providers: dict[ProviderConfig, Provider] = {}
 _providers_lock = threading.Lock()
 

@@ -228,7 +228,7 @@ class Go2AudioBridgeModule(Module):
         try:
             self._request(EXIT_MEGAPHONE)
         except Exception:
-            logger.debug("Failed to exit Go2 megaphone mode", exc_info=True)
+            logger.warning("Failed to exit Go2 megaphone mode", exc_info=True)
         else:
             self._megaphone_active = False
 

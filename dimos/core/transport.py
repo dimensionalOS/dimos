@@ -41,7 +41,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTop
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     PickleZenoh,
@@ -567,8 +567,7 @@ class WebRTCAudioTransport(Transport[AudioEvent]):
         selfstream: Stream[AudioEvent] | None = None,
     ) -> Callable[[], None]:
         provider = self._config.provider()
-        subscribe_audio = getattr(provider, "subscribe_audio_frames", None)
-        if subscribe_audio is None:
+        if not isinstance(provider, AudioProvider):
             raise NotImplementedError(f"{type(provider).__name__} does not support audio tracks")
 
         def _on_frame(pcm: bytes, sample_rate: int, channels: int) -> None:
@@ -581,7 +580,7 @@ class WebRTCAudioTransport(Transport[AudioEvent]):
                 )
             )
 
-        unsubscribe = subscribe_audio(_on_frame)
+        unsubscribe = provider.subscribe_audio_frames(_on_frame)
         try:
             if not provider.is_connected:
                 provider.start()
