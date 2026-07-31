@@ -149,7 +149,6 @@ class BrokerProvider(AsyncProviderBase):
         self._video_track: CameraVideoTrack | None = None
         # Operator-audio sink; None drops frames until set_audio_frame_callback().
         self._audio_frame_cb: Callable[[bytes, int, int], None] | None = None
-        self._audio_frame_callbacks: list[Callable[[bytes, int, int], None]] = []
         self._audio_task: asyncio.Task[None] | None = None
 
     @property
@@ -302,18 +301,6 @@ class BrokerProvider(AsyncProviderBase):
         with self._lock:
             self._audio_frame_cb = cb
 
-    def subscribe_audio_frames(self, cb: Callable[[bytes, int, int], None]) -> Callable[[], None]:
-        """Add an operator-audio sink and return an idempotent unsubscribe."""
-        with self._lock:
-            self._audio_frame_callbacks.append(cb)
-
-        def unsubscribe() -> None:
-            with self._lock:
-                if cb in self._audio_frame_callbacks:
-                    self._audio_frame_callbacks.remove(cb)
-
-        return unsubscribe
-
     def _attach_audio_receiver(self) -> None:
         """Fan the operator's inbound audio track to the sink callback."""
         assert self._pc is not None
@@ -334,10 +321,8 @@ class BrokerProvider(AsyncProviderBase):
             while True:
                 frame = await track.recv()  # av.AudioFrame
                 with self._lock:
-                    callbacks = list(self._audio_frame_callbacks)
-                    if self._audio_frame_cb is not None:
-                        callbacks.append(self._audio_frame_cb)
-                if not callbacks:
+                    callback = self._audio_frame_cb
+                if callback is None:
                     continue
                 try:
                     # aiortc's Opus decode yields packed s16: to_ndarray() is
@@ -348,12 +333,11 @@ class BrokerProvider(AsyncProviderBase):
                 except Exception:
                     logger.warning("audio frame conversion error", exc_info=True)
                     continue
-                for cb in callbacks:
-                    try:
-                        cb(pcm.tobytes(), int(frame.sample_rate), channels)
-                    except Exception:
-                        # A raising sink is a bug in the wired module, not the wire.
-                        logger.warning("audio sink callback error", exc_info=True)
+                try:
+                    callback(pcm.tobytes(), int(frame.sample_rate), channels)
+                except Exception:
+                    # A raising sink is a bug in the wired module, not the wire.
+                    logger.warning("audio sink callback error", exc_info=True)
         except Exception as e:
             logger.info("operator audio track ended (%s)", type(e).__name__)
 

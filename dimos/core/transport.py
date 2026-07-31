@@ -580,14 +580,14 @@ class WebRTCAudioTransport(Transport[AudioEvent]):
                 )
             )
 
-        unsubscribe = provider.subscribe_audio_frames(_on_frame)
+        provider.set_audio_frame_callback(_on_frame)
         try:
             if not provider.is_connected:
                 provider.start()
         except BaseException:
-            unsubscribe()
+            provider.set_audio_frame_callback(None)
             raise
-        return unsubscribe
+        return lambda: provider.set_audio_frame_callback(None)
 
 
 class CloudflareAudioTransport(WebRTCAudioTransport):

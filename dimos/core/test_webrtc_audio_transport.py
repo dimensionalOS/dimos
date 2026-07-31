@@ -12,28 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import numpy as np
 
 from dimos.core.transport import WebRTCAudioTransport
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider
-from dimos.stream.audio.base import AudioEvent
 
 
 def test_webrtc_audio_transport_delivers_pcm_metadata() -> None:
     provider = MagicMock(spec=AudioProvider)
     provider.is_connected = True
-    unsubscribe = MagicMock()
-    provider.subscribe_audio_frames.return_value = unsubscribe
     config = MagicMock()
     config.provider.return_value = provider
     transport = WebRTCAudioTransport(config=config)
     received = []
 
-    returned_unsubscribe = transport.subscribe(received.append)
-    audio_callback = provider.subscribe_audio_frames.call_args.args[0]
+    unsubscribe = transport.subscribe(received.append)
+    audio_callback = provider.set_audio_frame_callback.call_args.args[0]
     audio_callback(np.array([1, -2, 3], dtype=np.int16).tobytes(), 48000, 1)
 
     assert len(received) == 1
@@ -41,33 +37,5 @@ def test_webrtc_audio_transport_delivers_pcm_metadata() -> None:
     assert received[0].channels == 1
     np.testing.assert_array_equal(received[0].data, np.array([1, -2, 3], dtype=np.int16))
 
-    returned_unsubscribe()
-    unsubscribe.assert_called_once_with()
-
-
-def test_webrtc_audio_transport_keeps_other_subscribers_after_unsubscribe() -> None:
-    provider = MagicMock(spec=AudioProvider)
-    provider.is_connected = True
-    callbacks: list[Callable[[bytes, int, int], None]] = []
-
-    def subscribe(callback: Callable[[bytes, int, int], None]) -> Callable[[], None]:
-        callbacks.append(callback)
-        return lambda: callbacks.remove(callback)
-
-    provider.subscribe_audio_frames.side_effect = subscribe
-    config = MagicMock()
-    config.provider.return_value = provider
-    transport = WebRTCAudioTransport(config=config)
-    first: list[AudioEvent] = []
-    second: list[AudioEvent] = []
-
-    unsubscribe_first = transport.subscribe(first.append)
-    transport.subscribe(second.append)
-    for callback in list(callbacks):
-        callback(np.array([1], dtype=np.int16).tobytes(), 48000, 1)
-    unsubscribe_first()
-    for callback in list(callbacks):
-        callback(np.array([2], dtype=np.int16).tobytes(), 48000, 1)
-
-    assert [event.data.item() for event in first] == [1]
-    assert [event.data.item() for event in second] == [1, 2]
+    unsubscribe()
+    provider.set_audio_frame_callback.assert_called_with(None)

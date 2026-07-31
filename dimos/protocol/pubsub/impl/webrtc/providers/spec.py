@@ -73,9 +73,9 @@ class Provider(Protocol):
 class AudioProvider(Provider, Protocol):
     """Provider that receives decoded operator audio frames."""
 
-    def subscribe_audio_frames(
-        self, callback: Callable[[bytes, int, int], None]
-    ) -> Callable[[], None]: ...
+    def set_audio_frame_callback(
+        self, callback: Callable[[bytes, int, int], None] | None
+    ) -> None: ...
 
 
 _providers: dict[ProviderConfig, Provider] = {}
