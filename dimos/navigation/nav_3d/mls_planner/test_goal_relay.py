@@ -88,6 +88,19 @@ def test_drops_frames_without_the_mount_tf():
         module.stop()
 
 
+def test_base_frame_odometry_is_dropped_rather_than_over_projected():
+    tf = FakeTF()
+    tf.receive_transform(_mount())
+    module, captured = _relay(tf, lidar_height=0.45)
+    try:
+        odom = _odom()
+        odom.child_frame_id = "base_link"
+        module._on_odometry(odom)
+        assert captured == []
+    finally:
+        module.stop()
+
+
 def test_no_lidar_height_skips_the_ground_correction():
     tf = FakeTF()
     tf.receive_transform(_mount())

@@ -26,6 +26,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):
@@ -51,6 +54,7 @@ class GoalRelay(Module):
         super().__init__(**kwargs)
         self._base_pose: OdomBasePose | None = None
         self._base_height: float | None = None
+        self._warned_base_frame = False
 
     @rpc
     def start(self) -> None:
@@ -72,6 +76,17 @@ class GoalRelay(Module):
         self.start_pose.publish(start)
 
     def _resolve_base_height(self, sensor_frame: str, lidar_height: float) -> float | None:
+        # The base height comes from subtracting the mount leg, which
+        # base-frame odometry does not have.
+        if sensor_frame == self.config.base_frame:
+            if not self._warned_base_frame:
+                self._warned_base_frame = True
+                logger.warning(
+                    "Odometry is stamped at %s, so lidar_height cannot ground-project it. "
+                    "Dropping frames until odometry arrives stamped at a sensor.",
+                    sensor_frame,
+                )
+            return None
         if self._base_height is None:
             assert self._base_pose is not None
             leg = self._base_pose.sensor_to_base(sensor_frame)

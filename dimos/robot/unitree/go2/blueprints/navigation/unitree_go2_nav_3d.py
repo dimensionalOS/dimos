@@ -16,7 +16,6 @@
 """3d navigation on Go2 with ray tracing and MLS planning"""
 
 from datetime import datetime
-import math
 import os
 from pathlib import Path
 from typing import Any
@@ -40,10 +39,7 @@ from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
-    MID360_PITCH_DOWN,
-    Go2Mid360StaticTf,
-)
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
@@ -98,16 +94,13 @@ def _render_path(msg: Any) -> Any:
 
 
 def _static_robot_body(rr: Any) -> list[Any]:
-    """Go2-shaped box on pointlio's sensor frame, counter-rotated for the lidar pitch."""
+    """Go2-shaped box on the body frame."""
     return [
         rr.Boxes3D(
             half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, ROBOT_HEIGHT / 2],
             colors=[(0, 255, 127)],
         ),
-        rr.Transform3D(
-            parent_frame="tf#/mid360_link",
-            rotation=rr.RotationAxisAngle(axis=(0, 1, 0), degrees=-math.degrees(MID360_PITCH_DOWN)),
-        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
     ]
 
 
@@ -126,7 +119,7 @@ def _axis_triad(rr: Any) -> Any:
 
 
 def _static_body_axes(rr: Any) -> Any:
-    """XYZ triad on the leveled robot body (child of the counter-rotated box)."""
+    """XYZ triad on the robot body (child of the box)."""
     return _axis_triad(rr)
 
 
@@ -145,10 +138,8 @@ _nav_rerun_config = {
     },
     # Ring buffer replayed to a connecting viewer. Small so connect catches up fast.
     "memory_limit": "64MB",
-    # base_link tf comes from the go2 internal odometry, which is not the map
-    # frame. Anchor the robot box to pointlio's mid360_link frame instead and hide
-    # the camera frustum that rides base_link. The box lives on its own entity:
-    # a static transform on world/tf/mid360_link itself would override the live tf.
+    # The robot box hangs off base_link. It lives on its own entity: a static
+    # transform on world/tf/base_link would override the live tf.
     "static": {
         "world/robot_body": _static_robot_body,
         "world/robot_body/axes": _static_body_axes,
@@ -169,7 +160,11 @@ unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
     # "mcf" for stair traversal
     GO2Connection.blueprint(
-        lidar=False, camera=False, motion_mode="mcf", odom_frame_id="go2_odom"
+        lidar=False,
+        camera=False,
+        motion_mode="mcf",
+        odom_frame_id="go2_odom",
+        publish_tf=False,
     ).remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
@@ -205,9 +200,8 @@ unitree_go2_nav_3d = autoconnect(
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 
-# The nav blueprint leaves PointLio on its default lidar / odometry topics, so
-# remap the recorder's ports onto them. Streams are recorded under the port
-# names pointlio_lidar / pointlio_odometry regardless of the topic.
+# PointLio keeps its default topics here, so point the recorder's ports at them.
+# Streams are recorded under the port names regardless of the topic.
 if _RECORD:
     unitree_go2_nav_3d = autoconnect(
         unitree_go2_nav_3d,

@@ -21,7 +21,7 @@ lands in the tf stream and companion streams (camera, go2 lidar) can be anchored
 Mount geometry (measured on the physical rig)
 ---------------------------------------------
 - base_link -> front_camera: 32.7cm forward, ~4.3cm up (URDF front_camera mount).
-- front_camera -> mid360_link: lidar is 3.2cm back, 12cm up, pitched 44 deg down.
+- front_camera -> mid360_link: lidar is 3.2cm back, 12cm up, pitched 60 deg down.
 - front_camera -> camera_optical: the standard ROS optical rotation (x-right, y-down,
   z-forward).
 
@@ -40,7 +40,7 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
-MID360_PITCH_DOWN = math.radians(44.0)
+MID360_PITCH_DOWN = math.radians(60.0)
 
 # rpy that maps a sensor frame to its optical frame (z-forward, x-right, y-down)
 OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
@@ -53,9 +53,14 @@ FRAMES: list[FrameSpec] = [
 ]
 
 
+def mount_transforms() -> list[Transform]:
+    """The mount tree as published: rooted at mid360_link."""
+    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+    return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
+
+
 class Go2Mid360StaticTf(StaticTfPublisher):
     """Publishes the Go2/Mid-360 mount tree onto tf on a fixed interval."""
 
     def transforms(self) -> list[Transform]:
-        edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-        return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
+        return mount_transforms()

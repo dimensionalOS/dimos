@@ -23,10 +23,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2 import connection as go2_conn
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
+    unitree_go2_mid360_record,
+)
+from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
+    unitree_go2_nav_3d,
+)
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import mount_transforms
 
 
 @pytest.fixture
@@ -64,6 +72,50 @@ def test_odom_to_tf_unprefixed_by_default() -> None:
         "camera_link",
         "camera_optical",
     )
+
+
+def _connection(publish_tf: bool) -> GO2Connection:
+    conn = object.__new__(GO2Connection)
+    conn.config = ConnectionConfig(
+        g=GlobalConfig(robot_ip="127.0.0.1"), publish_tf=publish_tf, odom_frame_id="go2_odom"
+    )
+    conn.tf = MagicMock()
+    conn.odom = MagicMock()
+    return conn
+
+
+def test_publish_tf_off_keeps_odometry_on_its_port() -> None:
+    """Turning tf off hands the base_link edge to another publisher, not the odom port."""
+    conn = _connection(publish_tf=False)
+    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    assert conn.tf.publish.call_count == 0
+    assert conn.odom.publish.call_count == 1
+
+
+def test_publish_tf_on_by_default() -> None:
+    conn = _connection(publish_tf=True)
+    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    assert conn.tf.publish.call_count == 1
+    assert conn.odom.publish.call_count == 1
+
+
+def _go2_connection_publishes_tf(blueprint: Blueprint) -> bool | None:
+    for atom in blueprint.blueprints:
+        if atom.module is GO2Connection:
+            return bool(atom.kwargs.get("publish_tf", True))
+    return None
+
+
+def test_static_tree_and_connection_never_share_a_child_frame() -> None:
+    """One publisher per edge: rerun keys tf entities by child, so a frame written
+    by two sources flaps between them."""
+    odom = PoseStamped(ts=1.0, frame_id="go2_odom")
+    connection_children = {t.child_frame_id for t in GO2Connection._odom_to_tf(odom)}
+    static_children = {t.child_frame_id for t in mount_transforms()}
+    assert connection_children & static_children == {"base_link", "camera_optical"}
+
+    for blueprint in (unitree_go2_nav_3d, unitree_go2_mid360_record):
+        assert _go2_connection_publishes_tf(blueprint) is False
 
 
 def test_odom_to_tf_prefixed() -> None:

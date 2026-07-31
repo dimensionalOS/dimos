@@ -116,9 +116,19 @@ impl TBuffer {
     }
 
     fn add(&mut self, ts: f64, iso: Isometry3<f64>) {
+        // A stamp a whole window behind the newest is a clock reset, not jitter.
+        if self
+            .samples
+            .back()
+            .is_some_and(|s| ts < s.ts - self.window_secs)
+        {
+            self.samples.clear();
+        }
         let pos = self.samples.partition_point(|s| s.ts <= ts);
         self.samples.insert(pos, Sample { ts, iso });
-        self.prune(ts - self.window_secs);
+        // Anchored to the newest sample so a late message cannot widen the window.
+        let newest = self.samples.back().map_or(ts, |s| s.ts);
+        self.prune(newest - self.window_secs);
     }
 
     fn prune(&mut self, min_ts: f64) {
@@ -292,8 +302,8 @@ impl MultiTBuffer {
 struct Graph {
     buffer: RwLock<MultiTBuffer>,
     changed: Notify,
-    // warn_throttled! keys its throttle on the call site and there is one site
-    // for every lookup, so one missing frame pair would mute all the others.
+    // Keyed per pair: warn_throttled! throttles per call site, and one site
+    // serves every lookup, so a missing pair would mute all the others.
     warned: Mutex<HashMap<(String, String), AtomicU64>>,
 }
 
@@ -535,8 +545,7 @@ impl Route for TfRoute {
             for st in &msg.transforms {
                 let t = &st.transform.translation;
                 let q = &st.transform.rotation;
-                // Normalizing a zero-norm quaternion yields NaN, which would
-                // then resolve every lookup composing through this edge.
+                // Normalizing a zero-norm quaternion yields a NaN rotation.
                 let Some(rotation) =
                     UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
                 else {
@@ -974,6 +983,37 @@ mod tests {
         // The window is [5.0, 10.0]. The 1.0 and 2.0 samples are dropped.
         assert_eq!(buf.samples.len(), 1);
         assert!((buf.last().unwrap().ts - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_late_sample_does_not_spare_ones_the_window_has_aged_out() {
+        let mut buf = TBuffer::new(5.0);
+        buf.add(10.0, Isometry3::identity());
+        buf.add(11.0, Isometry3::identity());
+        // Late, but still inside the window.
+        buf.add(7.0, Isometry3::identity());
+        assert_eq!(buf.samples.len(), 3);
+
+        buf.add(20.0, Isometry3::identity());
+        assert_eq!(buf.samples.len(), 1);
+        assert!((buf.last().unwrap().ts - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_clock_reset_drops_the_pre_jump_samples() {
+        let mut buf = TBuffer::new(5.0);
+        for i in 0..20 {
+            buf.add(1000.0 + i as f64, Isometry3::identity());
+        }
+        for i in 0..20 {
+            buf.add(100.0 + i as f64, Isometry3::identity());
+        }
+        assert!(
+            buf.samples.len() <= 6,
+            "buffer grew to {}",
+            buf.samples.len()
+        );
+        assert!((buf.last().unwrap().ts - 119.0).abs() < 1e-9);
     }
 
     #[test]
