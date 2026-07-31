@@ -175,6 +175,7 @@ def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]
             ev.last_event == "start":   begin (auto-commit any prior pending)
             ev.last_event == "save":    commit (success=True)
             ev.last_event == "discard": drop (success=False)
+            ev.last_event == "undo":    mark the latest successful episode failed
             end of stream with pending: dropped (matches live spec)
 
     RANGES: emit one Episode per (start, end) tuple in `cfg.ranges`.
@@ -230,6 +231,14 @@ def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]
             _commit(ts, success=True, label=pending_label or label)
         elif last_event == "discard":
             _commit(ts, success=False, label=pending_label or label)
+        elif last_event == "undo":
+            # Undo is emitted only while idle, so no episode is pending. Keep
+            # the raw interval for inspection but exclude the latest save from
+            # replay and dataset builds by marking it unsuccessful.
+            for index in range(len(episodes) - 1, -1, -1):
+                if episodes[index].success:
+                    episodes[index] = episodes[index].model_copy(update={"success": False})
+                    break
         # "init" and unknown events are no-ops.
 
     # Anything still pending at end-of-stream is dropped (state-machine spec).

@@ -14,6 +14,8 @@
 
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 try:
     # Not a dependency, just the best way to get config path if available.
@@ -26,6 +28,16 @@ else:
     CONFIG_DIR = Path(GLib.get_user_config_dir())
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
+
+if sys.platform == "linux":
+    MACHINE_ID = Path("/etc/machine-id").read_text().strip()
+if os.sys.platform == "darwin":
+    parts = subprocess.run(
+        ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+        capture_output=True,
+        text=True,
+    ).stdout.split('"')
+    MACHINE_ID = parts[parts.index("IOPlatformUUID") + 2].lower()
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 

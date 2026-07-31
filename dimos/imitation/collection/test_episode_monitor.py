@@ -107,6 +107,35 @@ def test_discard_does_not_count_as_saved(
     assert last.episodes_discarded == 1
 
 
+def test_discard_while_idle_undoes_latest_save(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    _press(m, "B")
+    _press(m, "B")
+
+    _press(m, "Y")
+
+    last = _events(m)[-1]
+    assert last.last_event == "undo"
+    assert last.state == "idle"
+    assert last.episodes_saved == 0
+    assert last.episodes_discarded == 1
+
+
+def test_discard_while_idle_without_a_save_is_a_noop(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    _press(m, "Y")
+
+    last = _events(m)[-1]
+    assert last.last_event == "discard"
+    assert last.episodes_saved == 0
+    assert last.episodes_discarded == 0
+
+
 def test_start_while_recording_autocommits_previous(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
@@ -165,3 +194,21 @@ def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> No
     assert status.episodes_discarded == 0
     assert status.state == "idle"
     assert status.last_event == "init"
+
+
+def test_explicit_episode_rpcs_drive_same_state_machine(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    started = m.start_episode()
+    saved = m.save_episode()
+    m.start_episode()
+    discarded = m.discard_episode()
+
+    assert started.state == "recording"
+    assert saved.state == "idle"
+    assert saved.episodes_saved == 1
+    assert discarded.state == "idle"
+    assert discarded.episodes_discarded == 1
+    assert [e.last_event for e in _events(m)] == ["start", "save", "start", "discard"]

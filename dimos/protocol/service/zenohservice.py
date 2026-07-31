@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import socket
@@ -24,10 +25,13 @@ from typing import Any
 from pydantic import Field
 import zenoh
 
+from dimos.constants import CACHE_DIR
+from dimos.core.global_config import global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn")
+# temp: silence benign multi-homed duplicate-link "close (reason INVALID)" spam
+zenoh.init_log_from_env_or("warn,zenoh_transport::unicast::establishment=off")
 
 logger = setup_logger()
 
@@ -100,6 +104,8 @@ def endpoint_addresses(endpoint: str) -> set[str]:
 
 class ZenohConfig(BaseConfig):
     mode: str = "peer"
+    user: str = "dimos"
+    password: str = Field(default_factory=lambda: global_config.zenoh_password)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
     # Discover peers across the network. Off keeps discovery on loopback.
@@ -110,7 +116,8 @@ class ZenohConfig(BaseConfig):
     @property
     def session_key(self) -> str:
         return (
-            f"{self.mode}|{json.dumps(sorted(self.connect))}"
+            f"{self.mode}|{self.user}|{self.password}"
+            f"|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen))}|{self.scouting}"
         )
 
@@ -127,6 +134,15 @@ class ZenohSessionPool:
             if key not in self._sessions:
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
+                if config.password:
+                    zconfig.insert_json5("transport/auth/usrpwd/user", json.dumps(config.user))
+                    zconfig.insert_json5(
+                        "transport/auth/usrpwd/password", json.dumps(config.password)
+                    )
+                    zconfig.insert_json5(
+                        "transport/auth/usrpwd/dictionary_file",
+                        json.dumps(_password_dictionary_file(config.user, config.password)),
+                    )
                 if config.connect:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
@@ -206,3 +222,14 @@ class ZenohService(Service):
         if self._session is None:
             raise RuntimeError("Zenoh session not initialized. Call start() first.")
         return self._session
+
+
+# zenoh requires a file for auth
+def _password_dictionary_file(user: str, password: str) -> str:
+    directory = CACHE_DIR / "zenoh_auth"
+    directory.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(f"{user}:{password}".encode()).hexdigest()[:16]
+    path = directory / f"{digest}.txt"
+    path.write_text(f"{user}:{password}\n")
+    path.chmod(0o600)
+    return str(path)

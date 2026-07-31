@@ -159,6 +159,26 @@ def test_extract_discard_marks_failure() -> None:
     assert eps[0].success is False
 
 
+def test_extract_undo_marks_latest_saved_episode_failed() -> None:
+    store = _FakeStore(
+        {
+            "status": _status(
+                [
+                    (1.0, "start", "first"),
+                    (2.0, "save", None),
+                    (3.0, "start", "second"),
+                    (4.0, "save", None),
+                    (5.0, "undo", None),
+                ]
+            )
+        }
+    )
+
+    eps = extract_episodes(store, EpisodeExtractor(status_stream="status"))
+
+    assert [episode.success for episode in eps] == [True, False]
+
+
 def test_extract_auto_commit_on_restart() -> None:
     # start, then another start without save → first auto-commits (success=True)
     store = _FakeStore(
