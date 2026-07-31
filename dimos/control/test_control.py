@@ -902,7 +902,7 @@ class TestArbitration:
 
 
 class TestTickLoop:
-    def test_tick_loop_starts_and_stops(self, mock_adapter):
+    def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -923,15 +923,14 @@ class TestTickLoop:
         )
 
         tick_loop.start()
-        time.sleep(0.05)
-        assert tick_loop.tick_count > 0
+        wait_until(lambda: tick_loop.tick_count > 0, timeout=5.0, interval=0.01)
 
         tick_loop.stop()
         final_count = tick_loop.tick_count
         time.sleep(0.02)
         assert tick_loop.tick_count == final_count
 
-    def test_tick_loop_calls_compute(self, mock_adapter):
+    def test_tick_loop_calls_compute(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -966,14 +965,14 @@ class TestTickLoop:
         )
 
         tick_loop.start()
-        time.sleep(0.05)
+        wait_until(lambda: mock_task.compute.call_count > 0, timeout=5.0, interval=0.01)
         tick_loop.stop()
 
         assert mock_task.compute.call_count > 0
 
 
 class TestIntegration:
-    def test_full_trajectory_execution(self, mock_adapter):
+    def test_full_trajectory_execution(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -1017,10 +1016,15 @@ class TestIntegration:
         )
 
         tick_loop.start()
-        traj_task.execute(trajectory, trajectory_start_positions(trajectory))
-
-        time.sleep(0.6)
-        tick_loop.stop()
+        try:
+            traj_task.execute(trajectory, trajectory_start_positions(trajectory))
+            wait_until(
+                lambda: traj_task.get_state() == TrajectoryState.COMPLETED,
+                timeout=5.0,
+                interval=0.01,
+            )
+        finally:
+            tick_loop.stop()
 
         assert traj_task.get_state() == TrajectoryState.COMPLETED
         assert mock_adapter.write_joint_positions.call_count > 0
