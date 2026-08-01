@@ -476,19 +476,11 @@ class CloudflareTransport(WebRTCTransport[M]):
     _config_cls = BrokerConfig
 
 
-class WebRTCVideoTransport(Transport[Any]):
-    """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
+class _ProviderTransport(Transport[T]):
+    """Shared plumbing for media transports backed by a WebRTC provider.
 
-    ``broadcast()`` feeds each Image into the shared provider's sendonly media
-    track — the same provider/PeerConnection the DataChannel transports use
-    (identical config resolves to the same per-process singleton). Session
-    negotiation of the track is the provider's job; any provider exposing
-    ``set_video_frame()`` works. The remote side consumes RTP (e.g. the teleop
-    web client pulling the track), so there is nothing to ``subscribe()`` to
-    locally and subscribers get a no-op.
-
-    Subclasses bind a backend by setting ``_config_cls``; the base class can
-    also be used directly with an explicit ``config``.
+    Subclasses bind a backend by setting ``_config_cls``; a class can also be
+    used directly with an explicit ``config``.
     """
 
     _config_cls: type[ProviderConfig]
@@ -504,11 +496,24 @@ class WebRTCVideoTransport(Transport[Any]):
 
         return TransportSpec(cls, args, kwargs)
 
-    def start(self) -> None:
-        pass  # provider starts lazily on first broadcast
-
     def stop(self) -> None:
         pass  # shared provider is process-scoped (see WebRTCTransport.stop)
+
+
+class WebRTCVideoTransport(_ProviderTransport[Any]):
+    """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
+
+    ``broadcast()`` feeds each Image into the shared provider's sendonly media
+    track — the same provider/PeerConnection the DataChannel transports use
+    (identical config resolves to the same per-process singleton). Session
+    negotiation of the track is the provider's job; any provider exposing
+    ``set_video_frame()`` works. The remote side consumes RTP (e.g. the teleop
+    web client pulling the track), so there is nothing to ``subscribe()`` to
+    locally and subscribers get a no-op.
+    """
+
+    def start(self) -> None:
+        pass  # provider starts lazily on first broadcast
 
     def broadcast(self, _: Stream[Any] | None, msg: Any) -> None:
         provider = self._config.provider()
@@ -535,28 +540,13 @@ class CloudflareVideoTransport(WebRTCVideoTransport):
     _config_cls = BrokerConfig
 
 
-class WebRTCAudioTransport(Transport[AudioEvent]):
+class WebRTCAudioTransport(_ProviderTransport[AudioEvent]):
     """Remote operator audio received as decoded PCM audio events."""
-
-    _config_cls: type[ProviderConfig]
-
-    def __init__(self, *, config: ProviderConfig | None = None, **config_kwargs: Any) -> None:
-        self._config = config or self._config_cls(**config_kwargs)
-
-    @classmethod
-    def spec(cls, **kwargs: Any) -> TransportSpec:
-        """Defer construction until provider configuration is resolved."""
-        from dimos.core.coordination.blueprints import TransportSpec
-
-        return TransportSpec(cls, (), kwargs)
 
     def start(self) -> None:
         provider = self._config.provider()
         if not provider.is_connected:
             provider.start()
-
-    def stop(self) -> None:
-        pass  # provider lifecycle is process-scoped
 
     def broadcast(self, _: Stream[AudioEvent] | None, msg: AudioEvent) -> None:
         logger.warning("%s is subscribe-only; dropping local audio", type(self).__name__)
