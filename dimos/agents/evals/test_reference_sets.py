@@ -52,15 +52,15 @@ def test_a_dataset_is_a_directory_that_ships_a_question_set(tmp_path: Path) -> N
     reference table and a review but no question set yet is *work in progress*,
     not a dataset the sweep should try to run and fail on.
     """
-    for name in ("zulu", "alpha"):
+    for name in ("zulu_two", "alpha_one"):
         (tmp_path / name).mkdir()
         (tmp_path / name / QUESTIONS_NAME).write_text("")
-    (tmp_path / "mid-review").mkdir()
-    (tmp_path / "mid-review" / "refs.jsonl").write_text("")
+    (tmp_path / "mid_review").mkdir()
+    (tmp_path / "mid_review" / "refs.jsonl").write_text("")
 
-    assert dataset_names(tmp_path) == ["alpha", "zulu"]
+    assert dataset_names(tmp_path) == ["alpha_one", "zulu_two"]
     assert dataset_names(tmp_path / "nothing-here") == []
-    assert dataset_dir("alpha", tmp_path) == tmp_path / "alpha"
+    assert dataset_dir("alpha_one", tmp_path) == tmp_path / "alpha_one"
 
 
 def test_the_committed_tree_ships_at_least_one_dataset() -> None:
@@ -111,3 +111,16 @@ def test_every_committed_crop_belongs_to_a_question_of_its_own_dataset(dataset: 
     assert stray == [], (
         f"{dataset!r} ships crop file(s) that belong to no question in its questions.jsonl: {stray}"
     )
+
+
+def test_dataset_names_refuse_what_the_grouping_key_cannot_recover(tmp_path: Path) -> None:
+    """One-token and nested names defeat ``render.dataset_of`` silently -- refused at discovery."""
+    for name in ("kitchen", "go2_short_v2", "go2_fine"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "questions.jsonl").write_text("")
+    with pytest.raises(ValueError, match="exactly two hyphen tokens") as err:
+        dataset_names(tmp_path)
+    assert "kitchen" in str(err.value)
+    assert "go2_short_v2" in str(err.value)
+    assert "go2_fine" not in str(err.value)

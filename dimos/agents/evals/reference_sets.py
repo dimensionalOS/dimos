@@ -50,8 +50,27 @@ QUESTIONS_NAME = "questions.jsonl"
 
 
 def dataset_names(reference_dir: Path = REFERENCE_DIR) -> list[str]:
-    """Every dataset *reference_dir* ships a question set for, sorted by name."""
-    return sorted(path.parent.name for path in reference_dir.glob(f"*/{QUESTIONS_NAME}"))
+    """Every dataset *reference_dir* ships a question set for, sorted by name.
+
+    Names are validated against the renderer's grouping key: ``render.dataset_of``
+    recovers a dataset from a question id as its first two hyphen tokens, so a
+    dataset name must slug to exactly two (``go2_bigoffice`` -> ``go2-bigoffice``).
+    A one-token name would split every one of its question ids a token early, and
+    a nested name (``go2_short_v2``) would collide with its own prefix -- either
+    way the renderer's mixed-input guard fails silently. Refused here, at the
+    single place a new recording is added.
+    """
+    from dimos.agents.evals.questions import slugify
+
+    names = sorted(path.parent.name for path in reference_dir.glob(f"*/{QUESTIONS_NAME}"))
+    bad = [name for name in names if slugify(name).count("-") != 1]
+    if bad:
+        raise ValueError(
+            f"dataset names must slug to exactly two hyphen tokens so "
+            f"render.dataset_of can recover them from question ids; these do not: "
+            f"{', '.join(bad)} (rename the reference directory)"
+        )
+    return names
 
 
 def dataset_dir(dataset: str, reference_dir: Path = REFERENCE_DIR) -> Path:
