@@ -14,14 +14,17 @@
 
 """RelayBridgeModule: the robot side of the cockpit relay.
 
-Registers the robot (id + channel manifest) with a relay - spawned locally in
+Registers the robot (id + manifest) with a relay - spawned locally in
 --local-relay mode, or a remote one via relay_url - and forwards robot streams
-to it. Encoding is lazy: an input is subscribed for encoding, and frames are
-encoded, only while the relay reports at least one viewer subscribed to that
-channel, so a robot with no open cockpit does no encode work. Channels with
-resend_on_subscribe additionally keep one always-on raw subscription (decode
-only, never encode) so the newest message can be replayed the moment a channel
-gains its first viewer, even when the producer went quiet before that.
+to it. The advertised channels/panels/layout come from the manifest: authored
+by a cockpit(...) blueprint (dimos/web/cockpit.py), or built at start by
+default_manifest() from whatever inputs are available. Encoding is lazy: an
+input is subscribed for encoding, and frames are encoded, only while the relay
+reports at least one viewer subscribed to that channel, so a robot with no
+open cockpit does no encode work. Channels with resend_on_subscribe
+additionally keep one always-on raw subscription (decode only, never encode)
+so the newest message can be replayed the moment a channel gains its first
+viewer, even when the producer went quiet before that.
 
 Threading: input callbacks fire on the transport (LCM) thread, which gates on
 maxHz and encodes there (RerunBridge precedent, ~3 ms per JPEG), then hands
@@ -33,7 +36,7 @@ restarts (respawning the local child when it died).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, field
 import functools
 import json
@@ -55,9 +58,14 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+
+# No import cycle: cockpit.py only imports this module lazily inside
+# cockpit(), and its own module body is relay-free.
+from dimos.web.cockpit import ChannelRequest, Map2D, Panel, Row, Video, build_manifest_data
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import parse_manifest
 from dimos.web.relay_bridge.protocol import (
+    ChannelSpec,
     Delivery,
     RobotInfo,
     RobotManifest,
@@ -163,13 +171,22 @@ class RelayBridgeConfig(ModuleConfig):
     costmap_max_hz: float = Field(default=5.0, gt=0.0)
     """Full-grid zlib frames; the go2 mapper publishes at ~7.6 Hz."""
     available_channels: tuple[str, ...] | None = None
-    """Composition-provided channel allowlist; None derives from bound inputs."""
+    """Composition-provided channel allowlist for the no-manifest (auto)
+    mode; None derives from bound inputs. Ignored when `manifest` is set."""
+    manifest: dict[str, Any] | None = None
+    """Full manifest-v1 dict (see dimos.web.cockpit): defines the advertised
+    channels/panels/layout verbatim, with per-channel rates (maxHz) and jpeg
+    quality (params) overriding the flat rate/quality fields above. None:
+    default_manifest() builds one at start from the available inputs and
+    those fields."""
 
 
 def _encode_image(module: RelayBridgeModule, msg: Image) -> tuple[bytes, dict[str, Any] | None]:
     # TurboJPEG via the message's own encoder (handles BGR/RGB/gray inputs).
+    # Quality resolved at start from the manifest channel params (falling
+    # back to config.jpeg_quality).
     return (
-        msg.to_jpeg_bytes(quality=module.config.jpeg_quality),
+        msg.to_jpeg_bytes(quality=module._jpeg_quality),
         {"w": msg.width, "h": msg.height},
     )
 
@@ -233,12 +250,6 @@ class ChannelDef:
     max_hz: Callable[[RelayBridgeConfig], float]
     # Returning None skips the frame (an empty grid before mapping starts).
     encode: Callable[[RelayBridgeModule, Any], tuple[bytes, _FrameMeta] | None]
-    # Cockpit panel-component kind rendered for this channel (None: raw row
-    # only). One panel per channel until the T7 authoring API.
-    panel_kind: str | None = None
-    # Extra channel ids appended to the panel binding when advertised (the
-    # map2d panel's pose overlay); silently dropped when not advertised.
-    panel_extra_channels: tuple[str, ...] = ()
     # Keep an always-on raw-input cache (decode only, no encode) and replay
     # the newest message when the channel goes from zero viewers to some
     # viewer: a new session must not wait for the next publish (the producer
@@ -268,11 +279,11 @@ class _Session:
     retired: threading.Event = field(default_factory=threading.Event)
 
 
-# The v0 channel table; every entry needs a matching `In` on the module.
+# The stream -> encoder registry; every entry needs a matching `In` on the
+# module. What actually gets advertised (and which panels bind it) is the
+# manifest's business, not this table's.
 CHANNELS: tuple[ChannelDef, ...] = (
-    ChannelDef(
-        "color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image, "video"
-    ),
+    ChannelDef("color_image", "jpeg.v1", "latest", lambda c: c.image_max_hz, _encode_image),
     ChannelDef("odom", "pose.json.v1", "reliable", lambda c: c.odom_max_hz, _encode_odom),
     ChannelDef(
         "global_costmap",
@@ -280,40 +291,50 @@ CHANNELS: tuple[ChannelDef, ...] = (
         "latest",
         lambda c: c.costmap_max_hz,
         _encode_costmap,
-        "map2d",
-        panel_extra_channels=("odom",),
         resend_on_subscribe=True,
     ),
 )
 
 
-def build_manifest(config: RelayBridgeConfig, channels: tuple[ChannelDef, ...]) -> RobotManifest:
-    # Routed through the domain parser so an invalid channel table (duplicate
-    # ids, bad rates) fails module start instead of poisoning the relay.
-    live = {cd.ch for cd in channels}
-    manifest = parse_manifest(
-        {
-            "channels": [
-                {
-                    "ch": cd.ch,
-                    "encoding": cd.encoding,
-                    "delivery": cd.delivery,
-                    "maxHz": cd.max_hz(config),
-                }
-                for cd in channels
-            ],
-            "panels": [
-                {
-                    "id": cd.ch,
-                    "kind": cd.panel_kind,
-                    "channels": [cd.ch, *(c for c in cd.panel_extra_channels if c in live)],
-                }
-                for cd in channels
-                if cd.panel_kind is not None
-            ],
-        }
+def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> dict[str, Any]:
+    """Availability-driven default cockpit: video + map2d panels for the
+    channels in `available`, remaining channels advertised channel-only (raw
+    rows in the cockpit's channel list). Rates and jpeg quality come from
+    the config fields, so `-o relay-bridge-module.*` overrides keep working
+    in the no-manifest (auto) mode."""
+    present = frozenset(available)
+    panels: list[Panel] = []
+    if "color_image" in present:
+        panels.append(Video("color_image", max_hz=config.image_max_hz, quality=config.jpeg_quality))
+    if "global_costmap" in present:
+        panels.append(
+            Map2D(
+                costmap="global_costmap",
+                pose="odom" if "odom" in present else None,
+                costmap_hz=config.costmap_max_hz,
+                pose_hz=config.odom_max_hz,
+            )
+        )
+    layout: Panel | Row | None
+    if len(panels) == 2:
+        layout = Row(*panels, shares=[2, 1])
+    elif panels:
+        layout = panels[0]
+    else:
+        layout = None
+    registry = {cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS}
+    return build_manifest_data(
+        layout,
+        (),
+        registry=registry,
+        rx_streams=frozenset(registry),
+        tx_streams=frozenset(),
+        extra_channels=tuple(
+            ChannelRequest(cd.ch, "rx", cd.encoding, cd.max_hz(config))
+            for cd in CHANNELS
+            if cd.ch in present
+        ),
     )
-    return RobotManifest(channels=manifest.channels, panels=manifest.panels)
 
 
 def resolve_robot_info(config: RelayBridgeConfig) -> RobotInfo:
@@ -354,26 +375,58 @@ class RelayBridgeModule(Module):
         # reconnect replays too. Pins the full grid (MBs, one per channel);
         # encoding stays lazy.
         self._last_msg: dict[str, tuple[Any, float]] = {}
+        # Resolved at start from the manifest's jpeg channel params.
+        self._jpeg_quality: int = self.config.jpeg_quality
         self.encoded: dict[str, int] = {cd.ch: 0 for cd in CHANNELS}
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
         try:
             self._robot_info = resolve_robot_info(self.config)
-            allowed = (
-                None
-                if self.config.available_channels is None
-                else frozenset(self.config.available_channels)
-            )
-            self._channel_defs = tuple(
-                cd
-                for cd in CHANNELS
-                if (allowed is None or cd.ch in allowed)
-                and self.inputs[cd.ch].transport is not None
-            )
-            self._min_interval = {cd.ch: 1.0 / cd.max_hz(self.config) for cd in self._channel_defs}
+            manifest_data = self.config.manifest
+            if manifest_data is None:
+                allowed = (
+                    None
+                    if self.config.available_channels is None
+                    else frozenset(self.config.available_channels)
+                )
+                available = tuple(
+                    cd.ch
+                    for cd in CHANNELS
+                    if (allowed is None or cd.ch in allowed)
+                    and self.inputs[cd.ch].transport is not None
+                )
+                manifest_data = default_manifest(self.config, available)
+            # The domain parser is the authority: an invalid manifest fails
+            # module start instead of poisoning the relay.
+            manifest = parse_manifest(manifest_data)
+            by_ch = {cd.ch: cd for cd in CHANNELS}
+            rx_specs = [spec for spec in manifest.channels if spec.dir == "rx"]
+            for spec in rx_specs:
+                encoder = by_ch.get(spec.ch)
+                if (
+                    encoder is None
+                    or encoder.encoding != spec.encoding
+                    or encoder.delivery != spec.delivery
+                ):
+                    raise RuntimeError(
+                        f"manifest channel {spec.ch!r} ({spec.encoding}/{spec.delivery}) has no "
+                        f"matching encoder; this bridge supports: {sorted(by_ch)}"
+                    )
+            self._channel_defs = tuple(by_ch[spec.ch] for spec in rx_specs)
+            self._min_interval = {spec.ch: 1.0 / spec.maxHz for spec in rx_specs}
+            self._jpeg_quality = self._resolve_jpeg_quality(rx_specs)
+            # No runtime stream probing: an authored channel whose input got
+            # no transport stays advertised (its panel shows "waiting for
+            # data"); _reconcile just never subscribes it.
+            unwired = sorted(spec.ch for spec in rx_specs if self.inputs[spec.ch].transport is None)
+            if unwired:
+                logger.info(
+                    f"relay bridge: channels {unwired} advertised without a wired input; "
+                    "their panels will wait for data"
+                )
             for cd in self._channel_defs:
-                if cd.resend_on_subscribe:
+                if cd.resend_on_subscribe and self.inputs[cd.ch].transport is not None:
                     # Always-on raw cache: grids published before the first
                     # viewer, or while nobody watches, must still be
                     # replayable on the next 0->1 subscribe.
@@ -382,7 +435,7 @@ class RelayBridgeModule(Module):
                             self.inputs[cd.ch].subscribe(functools.partial(self._cache_input, cd))
                         )
                     )
-            self._manifest = build_manifest(self.config, self._channel_defs)
+            self._manifest = manifest.model_dump()
             self._url = self.config.relay_url or self.config.g.relay_url
             if self._url is None:
                 # Probe before the (expensive) build: a start that will lose
@@ -445,6 +498,26 @@ class RelayBridgeModule(Module):
         if cancel is not None:
             cancel.set()
         super()._close_module()
+
+    def _resolve_jpeg_quality(self, rx_specs: list[ChannelSpec]) -> int:
+        # A single int is honest while CHANNELS has exactly one jpeg entry;
+        # revisit if a second camera channel ever appears.
+        quality = self.config.jpeg_quality
+        for spec in rx_specs:
+            if spec.encoding != "jpeg.v1":
+                continue
+            candidate = spec.params.get("quality", quality)
+            if (
+                isinstance(candidate, bool)
+                or not isinstance(candidate, int)
+                or not 0 <= candidate <= 100
+            ):
+                raise RuntimeError(
+                    f"manifest channel {spec.ch!r} quality must be an int in 0..100, "
+                    f"got {candidate!r}"
+                )
+            quality = candidate
+        return quality
 
     def _spawn_relay(self, open_browser: bool) -> str:
         """Start a fresh local relay child (blocking; run via to_thread)."""
@@ -572,6 +645,10 @@ class RelayBridgeModule(Module):
             active = cd.ch in session.unsubs
             should = cd.ch in want
             if should and not active:
+                if self.inputs[cd.ch].transport is None:
+                    # Advertised but unwired (manifest-authored): nothing to
+                    # subscribe; the panel shows "waiting for data".
+                    continue
                 cached = self._last_msg.get(cd.ch)
                 if cached is not None:
                     # Replay precedes the subscribe: this offer runs

@@ -3,6 +3,7 @@
     {
       "name": "channels_only",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
@@ -19,38 +20,48 @@
         ]
       },
       "manifest": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
+            "dir": "rx",
             "encoding": "jpeg.v1",
             "delivery": "latest",
-            "maxHz": 15.5
+            "maxHz": 15.5,
+            "params": {}
           },
           {
             "ch": "odom",
+            "dir": "rx",
             "encoding": "pose.json.v1",
             "delivery": "reliable",
-            "maxHz": 20.5
+            "maxHz": 20.5,
+            "params": {}
           }
         ],
         "panels": [],
-        "layout": []
+        "layout": null,
+        "pages": []
       }
     },
     {
       "name": "empty",
       "data": {
+        "version": 1,
         "channels": []
       },
       "manifest": {
+        "version": 1,
         "channels": [],
         "panels": [],
-        "layout": []
+        "layout": null,
+        "pages": []
       }
     },
     {
       "name": "full",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
@@ -71,7 +82,8 @@
             "kind": "video",
             "channels": [
               "color_image"
-            ]
+            ],
+            "title": "Cameră față"
           },
           {
             "id": "pose",
@@ -84,60 +96,114 @@
             "id": "drive",
             "kind": "teleop",
             "channels": []
+          },
+          {
+            "id": "aux",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
           }
         ],
-        "layout": [
-          "camera",
-          "pose",
-          "drive"
+        "layout": {
+          "row": [
+            {
+              "col": [
+                "camera",
+                "pose"
+              ],
+              "shares": [
+                2.5,
+                1.5
+              ]
+            },
+            "drive"
+          ]
+        },
+        "pages": [
+          "aux"
         ]
       },
       "manifest": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
+            "dir": "rx",
             "encoding": "jpeg.v1",
             "delivery": "latest",
-            "maxHz": 15.5
+            "maxHz": 15.5,
+            "params": {}
           },
           {
             "ch": "odom",
+            "dir": "rx",
             "encoding": "pose.json.v1",
             "delivery": "reliable",
-            "maxHz": 20.5
+            "maxHz": 20.5,
+            "params": {}
           }
         ],
         "panels": [
           {
             "id": "camera",
             "kind": "video",
+            "title": "Cameră față",
             "channels": [
               "color_image"
-            ]
+            ],
+            "params": {}
           },
           {
             "id": "pose",
             "kind": "readout",
+            "title": "",
             "channels": [
               "odom"
-            ]
+            ],
+            "params": {}
           },
           {
             "id": "drive",
             "kind": "teleop",
-            "channels": []
+            "title": "",
+            "channels": [],
+            "params": {}
+          },
+          {
+            "id": "aux",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
           }
         ],
-        "layout": [
-          "camera",
-          "pose",
-          "drive"
+        "layout": {
+          "row": [
+            {
+              "col": [
+                "camera",
+                "pose"
+              ],
+              "shares": [
+                2.5,
+                1.5
+              ]
+            },
+            "drive"
+          ]
+        },
+        "pages": [
+          "aux"
         ]
       }
     },
     {
       "name": "extra_keys_ignored",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -157,29 +223,45 @@
             "future": true
           }
         ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "future": true
+        },
         "unknown_top_level": {
           "x": 1
         }
       },
       "manifest": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
+            "dir": "rx",
             "encoding": "pose.json.v1",
             "delivery": "reliable",
-            "maxHz": 20.5
+            "maxHz": 20.5,
+            "params": {}
           }
         ],
         "panels": [
           {
             "id": "pose",
             "kind": "readout",
+            "title": "",
             "channels": [
               "odom"
-            ]
+            ],
+            "params": {}
           }
         ],
-        "layout": []
+        "layout": {
+          "row": [
+            "pose"
+          ]
+        },
+        "pages": []
       }
     },
     {
@@ -191,13 +273,65 @@
       "error": "invalid_shape"
     },
     {
+      "name": "version_missing",
+      "data": {
+        "channels": []
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "version_string",
+      "data": {
+        "version": "1",
+        "channels": []
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "version_bool",
+      "data": {
+        "version": true,
+        "channels": []
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "version_two",
+      "data": {
+        "version": 2,
+        "channels": []
+      },
+      "error": "unsupported_version"
+    },
+    {
+      "name": "version_float",
+      "data": {
+        "version": 1.5,
+        "channels": []
+      },
+      "error": "unsupported_version"
+    },
+    {
+      "name": "version_before_channel_shape",
+      "data": {
+        "version": 2,
+        "channels": {
+          "alien": true
+        }
+      },
+      "error": "unsupported_version"
+    },
+    {
       "name": "missing_channels",
-      "data": {},
+      "data": {
+        "version": 1
+      },
       "error": "invalid_shape"
     },
     {
       "name": "channel_bad_shape",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom"
@@ -209,6 +343,7 @@
     {
       "name": "bad_delivery",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -223,6 +358,7 @@
     {
       "name": "max_hz_string",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -237,6 +373,7 @@
     {
       "name": "max_hz_bool",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -251,6 +388,7 @@
     {
       "name": "empty_channel_id",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "",
@@ -265,6 +403,7 @@
     {
       "name": "long_channel_id",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -279,6 +418,7 @@
     {
       "name": "duplicate_channel_id",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -299,6 +439,7 @@
     {
       "name": "empty_encoding",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -313,6 +454,7 @@
     {
       "name": "long_encoding",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -327,6 +469,7 @@
     {
       "name": "zero_max_hz",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -341,6 +484,7 @@
     {
       "name": "negative_max_hz",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -353,8 +497,124 @@
       "error": "invalid_max_hz"
     },
     {
+      "name": "dir_tx_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "dir": "tx"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "tx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "dir_invalid",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "dir": "both"
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "dir_null",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "dir": null
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "channel_params_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "quality": 75.5
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "quality": 75.5
+            }
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "channel_params_not_object",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": 1.5
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
       "name": "panels_not_list",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -370,6 +630,7 @@
     {
       "name": "null_panels",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -385,6 +646,7 @@
     {
       "name": "panel_bad_shape",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -404,6 +666,7 @@
     {
       "name": "panel_channels_not_strings",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -425,8 +688,109 @@
       "error": "invalid_shape"
     },
     {
+      "name": "panel_title_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ],
+            "title": "Poziție"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "Poziție",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "panel_title_not_string",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ],
+            "title": 1.5
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "panel_params_not_object",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ],
+            "params": []
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
       "name": "empty_panel_id",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -448,6 +812,7 @@
     {
       "name": "empty_panel_kind",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -469,6 +834,7 @@
     {
       "name": "duplicate_panel_id",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -495,6 +861,7 @@
     {
       "name": "panel_unknown_channel",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -518,6 +885,7 @@
     {
       "name": "video_panel_no_channel",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
@@ -539,6 +907,7 @@
     {
       "name": "video_panel_two_channels",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
@@ -569,6 +938,7 @@
     {
       "name": "video_panel_wrong_encoding",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -592,6 +962,7 @@
     {
       "name": "video_panel_wrong_delivery",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "color_image",
@@ -613,8 +984,34 @@
       "error": "invalid_video_panel"
     },
     {
+      "name": "video_panel_tx_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "cam",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
       "name": "map2d_panel_full",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -641,36 +1038,45 @@
         ]
       },
       "manifest": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
+            "dir": "rx",
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
-            "maxHz": 5.5
+            "maxHz": 5.5,
+            "params": {}
           },
           {
             "ch": "odom",
+            "dir": "rx",
             "encoding": "pose.json.v1",
             "delivery": "reliable",
-            "maxHz": 20.5
+            "maxHz": 20.5,
+            "params": {}
           }
         ],
         "panels": [
           {
             "id": "map",
             "kind": "map2d",
+            "title": "",
             "channels": [
               "global_costmap",
               "odom"
-            ]
+            ],
+            "params": {}
           }
         ],
-        "layout": []
+        "layout": null,
+        "pages": []
       }
     },
     {
       "name": "map2d_panel_no_pose",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -690,29 +1096,36 @@
         ]
       },
       "manifest": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
+            "dir": "rx",
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
-            "maxHz": 5.5
+            "maxHz": 5.5,
+            "params": {}
           }
         ],
         "panels": [
           {
             "id": "map",
             "kind": "map2d",
+            "title": "",
             "channels": [
               "global_costmap"
-            ]
+            ],
+            "params": {}
           }
         ],
-        "layout": []
+        "layout": null,
+        "pages": []
       }
     },
     {
       "name": "map2d_panel_no_channel",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -734,6 +1147,7 @@
     {
       "name": "map2d_panel_three_channels",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -771,6 +1185,7 @@
     {
       "name": "map2d_panel_wrong_encoding",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -794,6 +1209,7 @@
     {
       "name": "map2d_panel_wrong_delivery",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -817,6 +1233,7 @@
     {
       "name": "map2d_panel_bad_pose",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "global_costmap",
@@ -845,8 +1262,66 @@
       "error": "invalid_map2d_panel"
     },
     {
-      "name": "layout_not_list",
+      "name": "map2d_panel_tx_costmap",
       "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_tx_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "layout_single_panel",
+      "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -855,13 +1330,1128 @@
             "maxHz": 20.5
           }
         ],
-        "layout": "row"
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": "pose"
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": "pose",
+        "pages": []
+      }
+    },
+    {
+      "name": "layout_row_shares",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "camera",
+            "pose"
+          ],
+          "shares": [
+            2.5,
+            1.5
+          ]
+        }
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {}
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "title": "",
+            "channels": [
+              "color_image"
+            ],
+            "params": {}
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": {
+          "row": [
+            "camera",
+            "pose"
+          ],
+          "shares": [
+            2.5,
+            1.5
+          ]
+        },
+        "pages": []
+      }
+    },
+    {
+      "name": "layout_nested_tree",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          },
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "channels": []
+          }
+        ],
+        "layout": {
+          "col": [
+            {
+              "row": [
+                "camera",
+                "pose"
+              ],
+              "shares": [
+                1.5,
+                2.5
+              ]
+            },
+            "drive"
+          ]
+        }
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {}
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "title": "",
+            "channels": [
+              "color_image"
+            ],
+            "params": {}
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          },
+          {
+            "id": "drive",
+            "kind": "teleop",
+            "title": "",
+            "channels": [],
+            "params": {}
+          }
+        ],
+        "layout": {
+          "col": [
+            {
+              "row": [
+                "camera",
+                "pose"
+              ],
+              "shares": [
+                1.5,
+                2.5
+              ]
+            },
+            "drive"
+          ]
+        },
+        "pages": []
+      }
+    },
+    {
+      "name": "layout_null",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": null
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "layout_bad_node_type",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": 1.5
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_flat_list_rejected",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": [
+          "pose"
+        ]
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_row_and_col",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "camera"
+          ],
+          "col": [
+            "pose"
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_neither_row_nor_col",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "shares": [
+            1.5
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_children_not_array",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": "pose"
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_empty_children",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": []
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_nested_bad_node",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            {
+              "col": [
+                2.5
+              ]
+            }
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_shares_not_array",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": "big"
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_shares_not_numbers",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": [
+            "2"
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_shares_bool",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": [
+            true
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_shares_length_mismatch",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "camera",
+            "pose"
+          ],
+          "shares": [
+            1.5
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_share_zero",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": [
+            0
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_share_negative",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": [
+            -1.5
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_share_null",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "pose"
+          ],
+          "shares": [
+            null
+          ]
+        }
+      },
+      "error": "invalid_layout"
+    },
+    {
+      "name": "layout_unknown_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": "ghost"
+      },
+      "error": "unknown_layout_panel"
+    },
+    {
+      "name": "layout_deep_unknown_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            {
+              "col": [
+                "ghost"
+              ]
+            }
+          ]
+        }
+      },
+      "error": "unknown_layout_panel"
+    },
+    {
+      "name": "duplicate_layout_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ],
+        "layout": {
+          "row": [
+            "camera",
+            "camera"
+          ]
+        }
+      },
+      "error": "duplicate_layout_panel"
+    },
+    {
+      "name": "duplicate_panel_across_layout_and_pages",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ],
+        "layout": "camera",
+        "pages": [
+          "camera"
+        ]
+      },
+      "error": "duplicate_layout_panel"
+    },
+    {
+      "name": "duplicate_panel_within_pages",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ],
+        "pages": [
+          "camera",
+          "camera"
+        ]
+      },
+      "error": "duplicate_layout_panel"
+    },
+    {
+      "name": "pages_only",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "pages": [
+          "pose"
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": [
+          "pose"
+        ]
+      }
+    },
+    {
+      "name": "pages_and_layout",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": "camera",
+        "pages": [
+          "pose"
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {}
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "title": "",
+            "channels": [
+              "color_image"
+            ],
+            "params": {}
+          },
+          {
+            "id": "pose",
+            "kind": "readout",
+            "title": "",
+            "channels": [
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": "camera",
+        "pages": [
+          "pose"
+        ]
+      }
+    },
+    {
+      "name": "unknown_page_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "pages": [
+          "ghost"
+        ]
+      },
+      "error": "unknown_page_panel"
+    },
+    {
+      "name": "layout_error_before_pages",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "layout": "ghost",
+        "pages": [
+          "phantom"
+        ]
+      },
+      "error": "unknown_layout_panel"
+    },
+    {
+      "name": "pages_not_list",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "pages": {}
       },
       "error": "invalid_shape"
     },
     {
-      "name": "layout_not_strings",
+      "name": "pages_not_strings",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -870,15 +2460,25 @@
             "maxHz": 20.5
           }
         ],
-        "layout": [
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "pages": [
           1.5
         ]
       },
       "error": "invalid_shape"
     },
     {
-      "name": "layout_unknown_panel",
+      "name": "pages_null",
       "data": {
+        "version": 1,
         "channels": [
           {
             "ch": "odom",
@@ -887,11 +2487,18 @@
             "maxHz": 20.5
           }
         ],
-        "layout": [
-          "ghost"
-        ]
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
+        ],
+        "pages": null
       },
-      "error": "unknown_layout_panel"
+      "error": "invalid_shape"
     }
   ]
 }

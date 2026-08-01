@@ -26,7 +26,6 @@ from dimos.web.relay_bridge._wt_session import (
     make_quic_configuration,
 )
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
     DataFrame,
     FrameHeader,
     Manifest,
@@ -91,13 +90,24 @@ async def test_per_encoding_payload_caps():
     session._control_msg_received(
         Manifest(
             robotId="r1",
-            channels=[
-                ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.5),
-                ChannelSpec(ch="cam", encoding="jpeg.v1", delivery="latest", maxHz=15.5),
-                ChannelSpec(
-                    ch="global_costmap", encoding="costmap.zlib.v1", delivery="latest", maxHz=5.5
-                ),
-            ],
+            manifest={
+                "version": 1,
+                "channels": [
+                    {
+                        "ch": "odom",
+                        "encoding": "pose.json.v1",
+                        "delivery": "reliable",
+                        "maxHz": 20.5,
+                    },
+                    {"ch": "cam", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 15.5},
+                    {
+                        "ch": "global_costmap",
+                        "encoding": "costmap.zlib.v1",
+                        "delivery": "latest",
+                        "maxHz": 5.5,
+                    },
+                ],
+            },
         )
     )
     # The manifest still reaches the control consumer queue.
