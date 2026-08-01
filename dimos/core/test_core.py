@@ -25,7 +25,6 @@ from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
-from dimos.utils.data import get_data
 
 
 class Navigation(Module):
@@ -95,10 +94,6 @@ def test_classmethods() -> None:
 
 @pytest.mark.self_hosted
 def test_basic_deployment(dimos) -> None:
-    # Prefetch replay data so the LFS download doesn't eat the deadline below.
-    get_data("raw_odometry_rotate_walk")
-    get_data("office_lidar")
-
     robot = dimos.deploy(MockRobotClient)
 
     print("\n")

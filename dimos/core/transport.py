@@ -144,6 +144,11 @@ class LCMTransport(PubSubTransport[T]):
             self.lcm = LCM(**kwargs)
 
     def start(self) -> None:
+        # Load an expensive codec here, on the wiring thread. On the dispatch
+        # thread it would stall delivery of every topic on this LCM instance.
+        warmup = getattr(self.topic.lcm_type, "warmup", None)
+        if warmup is not None:
+            warmup()
         self.lcm.start()
         self._started = True
 

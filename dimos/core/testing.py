@@ -46,6 +46,10 @@ class MockRobotClient(Module):
     def start(self) -> None:
         super().start()
 
+        # Replay decoding imports open3d before the first publish, too early
+        # for the transport's own warmup to cover.
+        PointCloud2.warmup()
+
         self._thread = Thread(target=self.odomloop)  # type: ignore[assignment]
         self._thread.start()  # type: ignore[attr-defined]
         self.mov.subscribe(self.mov_callback)
