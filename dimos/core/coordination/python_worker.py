@@ -375,10 +375,10 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
-            # Always use the same transport backend as the host.
+            # Workers start with a fresh GlobalConfig, so adopt the host's.
             host_config = kwargs.get("g")
             if host_config is not None:
-                global_config.update(transport=host_config.transport)
+                global_config.update(**host_config.model_dump())
 
             state.instances[module_id] = module_class(**kwargs)
 
