@@ -26,7 +26,6 @@ from typing import Any, Literal
 import wave
 
 import numpy as np
-from pydantic import Field
 from reactivex.disposable import Disposable
 from unitree_webrtc_connect.constants import AUDIO_API, RTC_TOPIC
 
@@ -48,15 +47,15 @@ TARGET_SAMPLE_RATE = 44100
 
 class Go2AudioBridgeConfig(ModuleConfig):
     speaker: Literal["auto", "enabled", "disabled"] = "auto"
-    batch_ms: int = Field(default=100, ge=20, le=2000)
-    idle_timeout_sec: float = Field(default=1.0, gt=0)
-    queue_frames: int = Field(default=100, ge=1)
-    chunk_interval_sec: float = Field(default=0.05, ge=0)
-    megaphone_enter_delay_sec: float = Field(default=0.2, ge=0)
-    request_timeout_sec: float = Field(default=2.0, gt=0)
-    target_peak: int = Field(default=12000, ge=1, le=32767)
-    max_gain: float = Field(default=128.0, ge=1.0, le=256.0)
-    noise_gate_peak: int = Field(default=32, ge=0, le=32767)
+    batch_ms: int = 100
+    idle_timeout_sec: float = 1.0
+    queue_frames: int = 100
+    chunk_interval_sec: float = 0.05
+    megaphone_enter_delay_sec: float = 0.2
+    request_timeout_sec: float = 2.0
+    target_peak: int = 12000
+    max_gain: float = 128.0
+    noise_gate_peak: int = 32
 
 
 class Go2AudioBridgeModule(Module):
