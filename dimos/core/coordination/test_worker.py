@@ -81,18 +81,6 @@ class ThirdModule(Module):
         return self.multiplier
 
 
-class ConfigProbeModule(Module):
-    @rpc
-    def start(self) -> None:
-        pass
-
-    @rpc
-    def worker_build_native(self) -> bool:
-        from dimos.core.global_config import global_config as worker_config
-
-        return worker_config.build_native
-
-
 class HeavyModule(Module):
     dedicated_worker = True
 
@@ -140,17 +128,6 @@ def test_worker_manager_basic(create_worker_manager):
 
     result = module.get_counter()
     assert result == 2
-
-    module.stop()
-
-
-@pytest.mark.skipif_macos_bug
-def test_worker_adopts_host_global_config(create_worker_manager):
-    worker_manager = create_worker_manager(n_workers=1)
-    module = worker_manager.deploy(ConfigProbeModule, GlobalConfig(build_native=True), {})
-    module.start()
-
-    assert module.worker_build_native() is True
 
     module.stop()
 

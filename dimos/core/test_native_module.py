@@ -81,11 +81,6 @@ class StubFrameIdConfig(NativeModuleConfig):
     some_param: float = 1.5
 
 
-class StubBuildConfig(NativeModuleConfig):
-    executable: str = _ECHO
-    build_command: str | None = None
-
-
 class StubNativeModule(NativeModule):
     config: StubNativeConfig
     pointcloud: Out[PointCloud2]
@@ -94,7 +89,7 @@ class StubNativeModule(NativeModule):
 
 
 class StubBuildModule(NativeModule):
-    config: StubBuildConfig
+    pass
 
 
 class StubConsumer(Module):
@@ -220,29 +215,36 @@ def test_autoconnect(args_file: str) -> None:
     }
 
 
-def _run_build(tmp_path: Path, *, build_native: bool) -> Path:
-    """Build a module whose executable already exists. Returns the sentinel path."""
-    sentinel = tmp_path / "build_ran"
-    exe = tmp_path / "already_built"
-    exe.touch()
-    module = StubBuildModule(
-        executable=str(exe),
-        build_command=f"touch {sentinel}",
-        g=GlobalConfig(build_native=build_native),
-    )
-    try:
+@pytest.fixture
+def run_build(tmp_path: Path):
+    """Builds a module whose executable already exists. Returns the build sentinel path."""
+    modules: list[NativeModule] = []
+
+    def _run(*, build_native: bool) -> Path:
+        sentinel = tmp_path / "build_ran"
+        exe = tmp_path / "already_built"
+        exe.touch()
+        module = StubBuildModule(
+            executable=str(exe),
+            build_command=f"touch {sentinel}",
+            g=GlobalConfig(build_native=build_native),
+        )
+        modules.append(module)
         module.build()
-    finally:
+        return sentinel
+
+    yield _run
+
+    for module in modules:
         module.stop()
-    return sentinel
 
 
-def test_existing_executable_skips_build(tmp_path: Path) -> None:
-    assert not _run_build(tmp_path, build_native=False).exists()
+def test_existing_executable_skips_build(run_build) -> None:
+    assert not run_build(build_native=False).exists()
 
 
-def test_build_native_forces_build(tmp_path: Path) -> None:
-    assert _run_build(tmp_path, build_native=True).exists()
+def test_build_native_forces_build(run_build) -> None:
+    assert run_build(build_native=True).exists()
 
 
 def test_base_field_not_sent_without_opt_in() -> None:

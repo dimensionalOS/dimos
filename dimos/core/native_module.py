@@ -58,6 +58,7 @@ from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -248,7 +249,7 @@ class NativeModule(Module):
         env = {**os.environ, **self.config.extra_env}
 
         # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = self.config.g.transport
+        env["DIMOS_TRANSPORT"] = global_config.transport
 
         # set Rust logging to match Python level
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
