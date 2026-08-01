@@ -111,6 +111,24 @@ dimos --can-port can0 run keyboard-teleop-a1z
 On macOS, the adapter selects the userspace USB transport automatically; omit
 `--can-port`.
 
+## Teach, replay, and run learned policies
+
+The A1Z can record hand-guided demonstrations, replay them through the control
+coordinator, and execute LeRobot checkpoints. See the
+[A1Z learning workflow](/docs/capabilities/manipulation/learning.md) for the complete
+recording, dataset, training, and execution loop.
+
+```bash
+uv run --no-sync dimos a1z teach --task "pick up the object"
+uv run --no-sync dimos a1z replay /path/to/a1z_teach_<timestamp>.db
+uv run --no-sync dimos a1z run-policy /path/to/pretrained_model --duration 20
+```
+
+All three commands require the same physical safety precautions as keyboard
+teleoperation. Replay validates every recorded position and automatically
+slows motion to the configured velocity and acceleration limits; it never
+clips an unsafe demonstration.
+
 ## Troubleshooting
 
 - **The interface is UP, but the arm does not respond.** Some Linux `gs_usb`

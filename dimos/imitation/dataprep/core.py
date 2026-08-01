@@ -250,6 +250,7 @@ def extract_episodes(store: Store, cfg: EpisodeExtractor) -> list[Episode]:
             ev.last_event == "start":   begin (auto-commit any prior pending)
             ev.last_event == "save":    commit (success=True)
             ev.last_event == "discard": drop (success=False)
+            ev.last_event == "undo":    mark the latest successful episode failed
             end of stream with pending: dropped (matches live spec)
 
     RANGES: emit one Episode per (start, end) tuple in `cfg.ranges`.
@@ -312,6 +313,11 @@ def inspect_episodes(store: Store, cfg: EpisodeExtractor) -> EpisodeReport:
             _commit(ts, success=True, label=pending_label or label)
         elif last_event == "discard":
             _commit(ts, success=False, label=pending_label or label)
+        elif last_event == "undo":
+            for index in range(len(episodes) - 1, -1, -1):
+                if episodes[index].success:
+                    episodes[index] = episodes[index].model_copy(update={"success": False})
+                    break
         # "init" and unknown events are no-ops.
 
     incomplete = (

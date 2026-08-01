@@ -81,6 +81,8 @@ class CameraModule(Module, perception.Camera):
             stream.subscribe(self.color_image.publish),
         )
 
+        # Publish immediately so initial frames can resolve their camera pose.
+        self.publish_metadata()
         self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )
