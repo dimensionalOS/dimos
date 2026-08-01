@@ -44,6 +44,10 @@ ENTER_MEGAPHONE = AUDIO_API["ENTER_MEGAPHONE"]
 EXIT_MEGAPHONE = AUDIO_API["EXIT_MEGAPHONE"]
 UPLOAD_MEGAPHONE = AUDIO_API["UPLOAD_MEGAPHONE"]
 TARGET_SAMPLE_RATE = 44100
+INT16_MIN = np.iinfo(np.int16).min
+INT16_MAX = np.iinfo(np.int16).max
+# Base64-character block size the Unitree upload API takes per request.
+UPLOAD_CHUNK_CHARS = 4096
 
 
 class Go2AudioBridgeConfig(ModuleConfig):
@@ -200,7 +204,9 @@ class Go2AudioBridgeModule(Module):
 
     def _upload_wav(self, wav_data: bytes) -> None:
         encoded = base64.b64encode(wav_data).decode("ascii")
-        chunks = [encoded[i : i + 4096] for i in range(0, len(encoded), 4096)]
+        chunks = [
+            encoded[i : i + UPLOAD_CHUNK_CHARS] for i in range(0, len(encoded), UPLOAD_CHUNK_CHARS)
+        ]
         for index, chunk in enumerate(chunks, 1):
             if self._stop_event.is_set():
                 return
@@ -272,7 +278,7 @@ class Go2AudioBridgeModule(Module):
         gain = min(self.config.max_gain, self.config.target_peak / peak)
         if gain == 1.0:
             return pcm
-        amplified = np.clip(pcm.astype(np.float32) * gain, -32768, 32767)
+        amplified = np.clip(pcm.astype(np.float32) * gain, INT16_MIN, INT16_MAX)
         return amplified.astype(np.int16)
 
     @staticmethod
@@ -290,7 +296,7 @@ class Go2AudioBridgeModule(Module):
                 np.arange(pcm.size),
                 pcm,
             )
-        return np.asarray(np.clip(pcm, -32768, 32767), dtype=np.int16)
+        return np.asarray(np.clip(pcm, INT16_MIN, INT16_MAX), dtype=np.int16)
 
     @staticmethod
     def _wav_bytes(pcm: NDArray[np.int16]) -> bytes:
