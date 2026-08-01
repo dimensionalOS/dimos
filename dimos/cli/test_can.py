@@ -1,10 +1,16 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from subprocess import CompletedProcess
 
@@ -51,4 +57,4 @@ def test_setup_rejects_nonpositive_queue_length() -> None:
     result = CliRunner().invoke(app, ["setup", "can0", "--txqueuelen", "0"])
 
     assert result.exit_code == 2
-    assert "txqueuelen must be greater than zero" in result.output
+    assert "x>=1" in result.output

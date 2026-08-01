@@ -16,37 +16,34 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import attrs
 import pytest
 
 from dimos.hardware.damiao.arm_adapter import DamiaoArmAdapter
-from dimos.hardware.damiao.runtime import DamiaoGroupState, DamiaoRobotRuntime
-from dimos.hardware.damiao.specs import (
-    DamiaoArmSpec,
-    DamiaoBusSpec,
-    DamiaoJointGroupSpec,
-    DamiaoMotorSpec,
-    DamiaoRobotSpec,
+from dimos.hardware.damiao.config import (
+    DamiaoArmConfig,
+    DamiaoMotorConfig,
+    DamiaoRuntimeConfig,
 )
+from dimos.hardware.damiao.runtime import DamiaoArmRuntime, DamiaoGroupState
 from dimos.hardware.manipulators.spec import ControlMode
 
 
 class _FakeRuntime:
-    def __init__(self, *, fresh: bool = True, write_ok: bool = True) -> None:
-        self.fresh = fresh
+    def __init__(self, *, write_ok: bool = True) -> None:
         self.write_ok = write_ok
         self.connected = False
         self.enabled = False
         self.disconnect_calls = 0
-        self.batched_calls = 0
         self.writes: list[
-            tuple[str, list[float], list[float], list[float], list[float], list[float]]
+            tuple[list[float], list[float], list[float], list[float], list[float]]
         ] = []
-        self.loaded_gravity_models: list[tuple[str, str | None]] = []
-        self.states = {
-            "left": DamiaoGroupState(q=[0.1], dq=[0.2], tau=[0.3]),
-            "right": DamiaoGroupState(q=[-0.1], dq=[-0.2], tau=[-0.3]),
-            "arm": DamiaoGroupState(q=[0.4, -0.4], dq=[0.5, -0.5], tau=[0.6, -0.6]),
-        }
+        self.loaded_gravity_models: list[str] = []
+        self.state = DamiaoGroupState(
+            q=[0.4, -0.4],
+            dq=[0.5, -0.5],
+            tau=[0.6, -0.6],
+        )
 
     def connect(self) -> bool:
         self.connected = True
@@ -68,22 +65,13 @@ class _FakeRuntime:
     def is_enabled(self) -> bool:
         return self.enabled
 
-    def refresh_group_state(self, group_name: str, *, force: bool = False) -> DamiaoGroupState:
+    def refresh_state(self, *, force: bool = False) -> DamiaoGroupState:
         del force
-        return self.states[group_name]
+        return self.state
 
-    def has_group_states(self, group_names: tuple[str, ...]) -> bool:
-        return self.fresh and all(group_name in self.states for group_name in group_names)
-
-    def read_group_states(self, group_names: tuple[str, ...]) -> list[DamiaoGroupState]:
-        if not self.has_group_states(group_names):
-            raise RuntimeError("stale state")
-        return [self.states[group_name] for group_name in group_names]
-
-    def write_group_mit_commands(
+    def write_mit_commands(
         self,
         *,
-        group_name: str,
         q: list[float],
         dq: list[float],
         kp: list[float],
@@ -92,34 +80,22 @@ class _FakeRuntime:
     ) -> bool:
         if not self.write_ok:
             return False
-        self.writes.append((group_name, list(q), list(dq), list(kp), list(kd), list(tau)))
+        self.writes.append((list(q), list(dq), list(kp), list(kd), list(tau)))
         return True
 
-    def write_groups_mit_commands(
-        self,
-        commands: dict[str, tuple[list[float], list[float], list[float], list[float], list[float]]],
-    ) -> bool:
-        self.batched_calls += 1
-        if not self.write_ok:
-            return False
-        for group_name, values in commands.items():
-            q, dq, kp, kd, tau = values
-            self.writes.append((group_name, list(q), list(dq), list(kp), list(kd), list(tau)))
-        return True
-
-    def load_gravity_model(self, group_name: str, model_path: str | None = None) -> None:
-        self.loaded_gravity_models.append((group_name, model_path))
-        return None
+    def load_gravity_model(self, model_path: str) -> tuple[object, object]:
+        self.loaded_gravity_models.append(model_path)
+        return SimpleNamespace(nq=2, nv=2, names=["universe", "j1", "j2"]), object()
 
 
-def _arm_spec() -> DamiaoArmSpec:
-    return DamiaoArmSpec(
+def _arm_config(**changes: object) -> DamiaoArmConfig:
+    config = DamiaoArmConfig(
         name="test_damiao",
         vendor="Damiao",
         model="TestArm",
         motors=(
-            DamiaoMotorSpec("j1", "DM4310", 0x01, 0x11),
-            DamiaoMotorSpec("j2", "DM4310", 0x02, 0x12),
+            DamiaoMotorConfig("j1", "DM4310", 0x01, 0x11),
+            DamiaoMotorConfig("j2", "DM4310", 0x02, 0x12),
         ),
         position_lower=(-1.0, -2.0),
         position_upper=(1.0, 2.0),
@@ -128,97 +104,53 @@ def _arm_spec() -> DamiaoArmSpec:
         kd=(0.1, 0.2),
         gravity_torque_limits=(7.0, 8.0),
     )
+    return attrs.evolve(config, **changes)
 
 
-def _whole_body_spec() -> DamiaoRobotSpec:
-    return DamiaoRobotSpec(
-        name="test_body",
-        vendor="Damiao",
-        model="TestBody",
-        buses={
-            "left_can": DamiaoBusSpec(address="can1", fd=True),
-            "right_can": DamiaoBusSpec(address="can0", fd=True),
-        },
-        groups={
-            "left": DamiaoJointGroupSpec(
-                bus_name="left_can",
-                motors=(DamiaoMotorSpec("left_joint", "DM4310", 0x01, 0x11),),
-                position_lower=(-1.0,),
-                position_upper=(1.0,),
-                velocity_max=(3.0,),
-                kp=(5.0,),
-                kd=(0.1,),
-            ),
-            "right": DamiaoJointGroupSpec(
-                bus_name="right_can",
-                motors=(DamiaoMotorSpec("right_joint", "DM4310", 0x01, 0x11),),
-                position_lower=(-2.0,),
-                position_upper=(2.0,),
-                velocity_max=(4.0,),
-                kp=(6.0,),
-                kd=(0.2,),
-            ),
-        },
-    )
+def test_arm_config_normalizes_sequences_and_is_frozen() -> None:
+    config = _arm_config(position_lower=[-1, -2])
+
+    assert config.position_lower == (-1.0, -2.0)
+    assert config.joint_names == ("j1", "j2")
+    with pytest.raises(attrs.exceptions.FrozenInstanceError):
+        config.position_lower = (0.0, 0.0)
 
 
-def test_robot_spec_rejects_unknown_group_bus() -> None:
-    spec = DamiaoRobotSpec(
-        name="bad",
-        vendor="Damiao",
-        model="Bad",
-        buses={"can": DamiaoBusSpec()},
-        groups={
-            "arm": DamiaoJointGroupSpec(
-                bus_name="missing",
-                motors=(DamiaoMotorSpec("j1", "DM4310", 0x01, 0x11),),
-                position_lower=(-1.0,),
-                position_upper=(1.0,),
-                velocity_max=(1.0,),
-                kp=(1.0,),
-                kd=(0.1,),
+def test_arm_config_rejects_duplicate_motor_identity_at_construction() -> None:
+    with pytest.raises(ValueError, match="duplicate send IDs"):
+        _arm_config(
+            motors=(
+                DamiaoMotorConfig("j1", "DM4310", 0x01, 0x11),
+                DamiaoMotorConfig("j2", "DM4310", 0x01, 0x12),
             )
-        },
-    )
-
-    with pytest.raises(ValueError, match="unknown bus"):
-        spec.validate()
+        )
 
 
-def test_robot_spec_rejects_duplicate_send_ids_on_shared_bus() -> None:
-    spec = DamiaoRobotSpec(
-        name="bad_ids",
-        vendor="Damiao",
-        model="BadIds",
-        buses={"can": DamiaoBusSpec()},
-        groups={
-            "left": DamiaoJointGroupSpec(
-                bus_name="can",
-                motors=(DamiaoMotorSpec("left_joint", "DM4310", 0x01, 0x11),),
-                position_lower=(-1.0,),
-                position_upper=(1.0,),
-                velocity_max=(1.0,),
-                kp=(1.0,),
-                kd=(0.1,),
-            ),
-            "right": DamiaoJointGroupSpec(
-                bus_name="can",
-                motors=(DamiaoMotorSpec("right_joint", "DM4310", 0x01, 0x12),),
-                position_lower=(-1.0,),
-                position_upper=(1.0,),
-                velocity_max=(1.0,),
-                kp=(1.0,),
-                kd=(0.1,),
-            ),
-        },
-    )
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"kp": (1.0,)}, "kp length"),
+        ({"position_lower": (2.0, -2.0)}, "lower limits"),
+        ({"velocity_max": (0.0, 1.0)}, "velocity limits"),
+    ],
+)
+def test_arm_config_rejects_invalid_joint_vectors_at_construction(
+    changes: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _arm_config(**changes)
 
-    with pytest.raises(ValueError, match="duplicate send_id 1 on bus 'can'"):
-        spec.validate()
+
+def test_runtime_config_rejects_invalid_typed_overrides() -> None:
+    with pytest.raises(ValueError, match="kp_override"):
+        DamiaoRuntimeConfig(kp_override=[1.0, float("nan")])
 
 
 def test_arm_adapter_reports_limits_and_modes() -> None:
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec(), gravity_comp=False)
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+    )
 
     assert adapter.get_dof() == 2
     assert adapter.get_limits().position_lower == [-1.0, -2.0]
@@ -226,16 +158,39 @@ def test_arm_adapter_reports_limits_and_modes() -> None:
     assert adapter.set_control_mode(ControlMode.VELOCITY) is False
 
 
+def test_arm_adapter_resolves_runtime_gain_overrides() -> None:
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_comp=False,
+            kp_override=[9.0, 8.0],
+            kd_override=[0.9, 0.8],
+        ),
+    )
+
+    assert adapter._kp == [9.0, 8.0]
+    assert adapter._kd == [0.9, 0.8]
+
+
+def test_arm_adapter_rejects_override_with_wrong_dof() -> None:
+    with pytest.raises(ValueError, match="kp length"):
+        DamiaoArmAdapter(
+            arm_config=_arm_config(),
+            runtime_config=DamiaoRuntimeConfig(gravity_comp=False, kp_override=[1.0]),
+        )
+
+
 def test_arm_adapter_uses_fake_runtime_for_startup_hold(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec(), gravity_comp=False)
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+    )
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
     assert adapter.write_enable(True) is True
-
     assert runtime.writes[-1] == (
-        "arm",
         [0.4, -0.4],
         [0.0, 0.0],
         [5.0, 6.0],
@@ -244,23 +199,26 @@ def test_arm_adapter_uses_fake_runtime_for_startup_hold(mocker) -> None:
     )
 
 
-def test_arm_adapter_passes_gravity_model_override_to_runtime(mocker) -> None:
+def test_arm_adapter_passes_gravity_model_to_runtime(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(
-        arm_spec=_arm_spec(),
-        gravity_model_path="override.urdf",
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(gravity_model_path="override.urdf"),
     )
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
-
-    assert runtime.loaded_gravity_models == [("arm", "override.urdf")]
+    assert runtime.loaded_gravity_models == ["override.urdf"]
 
 
 def test_arm_adapter_rejects_nonfinite_positions_before_enable(mocker) -> None:
     runtime = _FakeRuntime()
-    runtime.states["arm"] = DamiaoGroupState(q=[float("nan"), 0.0], dq=[0.0, 0.0], tau=[0.0, 0.0])
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    runtime.state = DamiaoGroupState(
+        q=[float("nan"), 0.0],
+        dq=[0.0, 0.0],
+        tau=[0.0, 0.0],
+    )
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
@@ -271,7 +229,7 @@ def test_arm_adapter_rejects_nonfinite_positions_before_enable(mocker) -> None:
 
 def test_arm_adapter_gravity_compensation_rejects_missing_model_before_enable(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
@@ -282,7 +240,7 @@ def test_arm_adapter_gravity_compensation_rejects_missing_model_before_enable(mo
 
 def test_arm_adapter_error_recovery_runs_gravity_preflight(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
     preflight = mocker.patch.object(adapter, "_preflight_gravity")
     mocker.patch.object(adapter, "compute_gravity_torques", return_value=[0.0, 0.0])
@@ -295,7 +253,7 @@ def test_arm_adapter_error_recovery_runs_gravity_preflight(mocker) -> None:
 
 def test_arm_adapter_disables_without_zero_torque_on_gravity_state_failure(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
     mocker.patch.object(adapter, "_load_gravity_model")
     mocker.patch.object(adapter, "_preflight_gravity")
@@ -304,7 +262,7 @@ def test_arm_adapter_disables_without_zero_torque_on_gravity_state_failure(mocke
     assert adapter.connect() is True
     assert adapter.write_enable(True) is True
     writes_before_failure = list(runtime.writes)
-    runtime.refresh_group_state = mocker.Mock(side_effect=RuntimeError("state read failed"))
+    mocker.patch.object(runtime, "refresh_state", side_effect=RuntimeError("state read failed"))
 
     assert adapter.write_joint_positions([0.2, -0.2]) is False
     assert runtime.enabled is False
@@ -314,12 +272,16 @@ def test_arm_adapter_disables_without_zero_torque_on_gravity_state_failure(mocke
 
 def test_arm_adapter_rejects_incompatible_gravity_model_before_enable(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec(), gravity_model_path="arm.urdf")
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(gravity_model_path="arm.urdf"),
+    )
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
-    adapter._pin_model = SimpleNamespace(nq=2, nv=2, names=["universe", "j2", "j1"])
     mocker.patch.object(adapter, "compute_gravity_torques", return_value=[0.0, 0.0])
 
     assert adapter.connect() is True
+    adapter._pin_model = SimpleNamespace(nq=2, nv=2, names=["universe", "j2", "j1"])
+    adapter._pin_data = object()
     assert adapter.write_enable(True) is False
     assert runtime.enabled is False
     assert runtime.writes == []
@@ -327,7 +289,7 @@ def test_arm_adapter_rejects_incompatible_gravity_model_before_enable(mocker) ->
 
 def test_arm_adapter_rolls_back_when_hold_command_fails(mocker) -> None:
     runtime = _FakeRuntime(write_ok=False)
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
@@ -338,8 +300,11 @@ def test_arm_adapter_rolls_back_when_hold_command_fails(mocker) -> None:
 
 def test_arm_adapter_preserves_enabled_state_when_rollback_disable_fails(mocker) -> None:
     runtime = _FakeRuntime(write_ok=False)
-    runtime.disable = mocker.Mock(return_value=False)
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec(), gravity_comp=False)
+    mocker.patch.object(runtime, "disable", return_value=False)
+    adapter = DamiaoArmAdapter(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+    )
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
 
     assert adapter.connect() is True
@@ -349,46 +314,52 @@ def test_arm_adapter_preserves_enabled_state_when_rollback_disable_fails(mocker)
 
 def test_arm_adapter_preserves_enabled_state_when_safety_disable_fails(mocker) -> None:
     runtime = _FakeRuntime()
-    adapter = DamiaoArmAdapter.from_arm_spec(arm_spec=_arm_spec())
+    adapter = DamiaoArmAdapter(arm_config=_arm_config())
     mocker.patch.object(adapter, "_create_runtime", return_value=runtime)
     mocker.patch.object(adapter, "_preflight_gravity")
     mocker.patch.object(adapter, "compute_gravity_torques", return_value=[0.0, 0.0])
 
     assert adapter.connect() is True
     assert adapter.write_enable(True) is True
-    runtime.disable = mocker.Mock(return_value=False)
-    runtime.refresh_group_state = mocker.Mock(side_effect=RuntimeError("state read failed"))
+    mocker.patch.object(runtime, "disable", return_value=False)
+    mocker.patch.object(runtime, "refresh_state", side_effect=RuntimeError("state read failed"))
 
     assert adapter.write_joint_positions([0.2, -0.2]) is False
     assert adapter.read_enabled() is True
 
 
 def test_runtime_retries_mit_command_when_can_queue_is_temporarily_full(mocker) -> None:
-    runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
     robot = mocker.Mock()
-    group = mocker.Mock()
-    group.mit_control.side_effect = [
+    arm = mocker.Mock()
+    arm.mit_control.side_effect = [
         RuntimeError("transport IO error: No buffer space available (os error 105)"),
         None,
     ]
     runtime._robot = robot
-    runtime._groups = {"left": group}
+    runtime._arm = arm
     runtime._enabled = True
     sleep = mocker.patch("dimos.hardware.damiao.runtime.time.sleep")
 
     assert (
-        runtime.write_group_mit_commands(
-            group_name="left", q=[0.0], dq=[0.0], kp=[0.0], kd=[0.0], tau=[0.0]
+        runtime.write_mit_commands(
+            q=[0.0] * 2, dq=[0.0] * 2, kp=[0.0] * 2, kd=[0.0] * 2, tau=[0.0] * 2
         )
         is True
     )
-    assert group.mit_control.call_count == 2
+    assert arm.mit_control.call_count == 2
     robot.tick.assert_called_once_with(1_000)
     sleep.assert_called_once_with(0.001)
 
 
 def test_runtime_selects_mit_mode_before_enable(mocker) -> None:
-    runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
     robot = mocker.Mock()
     runtime._robot = robot
 
@@ -415,7 +386,10 @@ def test_runtime_preserves_enabled_state_when_partial_enable_rollback_fails() ->
         def disable(self) -> bool:
             return False
 
-    runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
     runtime._robot = _FailingRobot()
 
     assert runtime.enable() is False

@@ -1,10 +1,16 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Linux CAN interface management commands."""
 
@@ -43,11 +49,6 @@ def _run_ip(*args: str, privileged: bool = False) -> subprocess.CompletedProcess
         raise typer.Exit(1) from exc
 
 
-def _positive(value: int, name: str) -> None:
-    if value <= 0:
-        raise typer.BadParameter(f"{name} must be greater than zero")
-
-
 @app.command("status")
 def status(interface: str = typer.Argument(..., help="Linux CAN interface name")) -> None:
     """Show detailed CAN interface state and queue statistics."""
@@ -72,12 +73,20 @@ def up(interface: str = typer.Argument(..., help="Linux CAN interface name")) ->
 @app.command("setup")
 def setup(
     interface: str = typer.Argument(..., help="Linux CAN interface name"),
-    bitrate: int = typer.Option(1_000_000, help="Nominal CAN bitrate in bits per second"),
-    txqueuelen: int = typer.Option(1_000, help="Kernel transmit queue length"),
+    bitrate: int = typer.Option(
+        1_000_000,
+        min=1,
+        help="Nominal CAN bitrate in bits per second",
+    ),
+    txqueuelen: int = typer.Option(1_000, min=1, help="Kernel transmit queue length"),
 ) -> None:
     """Configure, bring up, and verify a classic CAN interface."""
-    _positive(bitrate, "bitrate")
-    _positive(txqueuelen, "txqueuelen")
+    setup_interface(interface, bitrate=bitrate, txqueuelen=txqueuelen)
+
+
+def setup_interface(interface: str, *, bitrate: int, txqueuelen: int = 1_000) -> None:
+    """Configure and verify one classic CAN interface."""
+
     _run_ip("link", "show", "dev", interface)
     _run_ip("link", "set", "dev", interface, "down", privileged=True)
     _run_ip(

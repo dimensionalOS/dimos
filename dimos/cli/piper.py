@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
-import subprocess
-
 import typer
+
+from dimos.cli.can import setup_interface
 
 app = typer.Typer(help="Piper robot commands")
 
@@ -24,7 +24,7 @@ app = typer.Typer(help="Piper robot commands")
 @app.command("can-activate")
 def can_activate(
     interface: str = typer.Argument(..., help="CAN interface to configure"),
-    bitrate: int = typer.Option(1_000_000, "--bitrate", help="CAN bitrate"),
+    bitrate: int = typer.Option(1_000_000, "--bitrate", min=1, help="CAN bitrate"),
 ) -> None:
     """Configure an existing Piper SocketCAN interface."""
     if not typer.confirm(
@@ -34,10 +34,4 @@ def can_activate(
         typer.echo("Aborted.")
         raise typer.Exit(1)
 
-    commands = [
-        ["sudo", "ip", "link", "set", interface, "down"],
-        ["sudo", "ip", "link", "set", interface, "type", "can", "bitrate", str(bitrate)],
-        ["sudo", "ip", "link", "set", interface, "up"],
-    ]
-    for command in commands:
-        subprocess.run(command, check=True)
+    setup_interface(interface, bitrate=bitrate)

@@ -7,11 +7,6 @@ the default world and native path planner.
 
 ## Quick Start
 
-For the required vendor/approved-bench direction verification before OpenYAM
-planning or teleoperation, see the
-[OpenYAM direction commissioning guide](./openyam_commissioning.md). The
-DimOS driver does not issue commissioning position steps.
-
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
 
 ```bash
@@ -317,6 +312,15 @@ CLI example:
 ```bash
 uv run dimos run xarm7-planner-coordinator \
   --visualization.backend=viser
+```
+
+Viser binds to `127.0.0.1` by default. To expose it on the network, opt in
+explicitly with the nested host override:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.host=0.0.0.0
 ```
 
 Blueprint example:

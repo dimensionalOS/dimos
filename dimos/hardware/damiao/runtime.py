@@ -14,31 +14,51 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-import importlib
+import errno
 from pathlib import Path
 import time
-from typing import Any, cast
+from typing import Any
 
+import can_motor_control
+from can_motor_control import damiao
 import numpy as np
+import pinocchio  # type: ignore[import-not-found]
 
-from dimos.hardware.damiao.specs import DamiaoJointGroupSpec, DamiaoRobotSpec
+from dimos.hardware.damiao.config import DamiaoArmConfig, DamiaoRuntimeConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_DEFAULT_TICK_DEADLINE_US = 1_000
-_DEFAULT_STATE_CACHE_TTL_S = 0.002
-_DEFAULT_ADDRESS = "can0"
+_ARM_NAME = "arm"
+_BUS_NAME = "can"
 _ENOBUFS_RETRY_DELAYS_S = (0.001, 0.002, 0.003)
 _MIN_RECOMMENDED_TX_QUEUE_LEN = 1_000
+_MOTOR_TYPES_BY_NAME = {
+    "DM3507": damiao.MotorType.DM3507,
+    "DM4310": damiao.MotorType.DM4310,
+    "DM4310_48V": damiao.MotorType.DM4310_48V,
+    "DM4340": damiao.MotorType.DM4340,
+    "DM4340_48V": damiao.MotorType.DM4340_48V,
+    "DM6006": damiao.MotorType.DM6006,
+    "DM8006": damiao.MotorType.DM8006,
+    "DM8009": damiao.MotorType.DM8009,
+    "DM10010L": damiao.MotorType.DM10010L,
+    "DM10010": damiao.MotorType.DM10010,
+    "DMH3510": damiao.MotorType.DMH3510,
+    "DMH6215": damiao.MotorType.DMH6215,
+    "DMG6220": damiao.MotorType.DMG6220,
+}
+_MOTOR_TYPES_BY_VALUE = {
+    int(motor_type): motor_type for motor_type in _MOTOR_TYPES_BY_NAME.values()
+}
 
 
 def _is_enobufs(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None:
-        if getattr(current, "errno", None) == 105:
+        if isinstance(current, OSError) and current.errno == errno.ENOBUFS:
             return True
         message = str(current).lower()
         if "no buffer space available" in message or "os error 105" in message:
@@ -58,104 +78,54 @@ def _retry_enobufs(operation: Callable[[], None]) -> None:
             time.sleep(delay_s)
 
 
-class DamiaoBindingUnavailableError(RuntimeError):
-    """Raised when the optional can_motor_control binding is unavailable."""
-
-
 @dataclass(frozen=True)
 class DamiaoGroupState:
-    """State vectors for one Damiao joint group."""
+    """State vectors for one Damiao arm."""
 
     q: list[float]
     dq: list[float]
     tau: list[float]
 
 
-def _load_can_motor_control(
-    *,
-    adapter_type: str,
-    error_type: type[RuntimeError] = DamiaoBindingUnavailableError,
-) -> tuple[Any, Any]:
-    """Lazily load the optional Rust-backed binding and Damiao codec module."""
-
-    try:
-        can_motor_control = importlib.import_module("can_motor_control")
-        damiao = importlib.import_module("can_motor_control.damiao")
-    except ImportError as exc:
-        raise error_type(
-            f"The selected '{adapter_type}' adapter requires the Rust-backed "
-            "can-motor-control Python binding in the active environment. On "
-            "supported Linux systems, install dimos[manipulation] before "
-            f"selecting adapter_type='{adapter_type}'."
-        ) from exc
-    return can_motor_control, damiao
-
-
-def _dynamic_attr(value: object, name: str) -> Any:
-    return getattr(value, name)
-
-
-class DamiaoRobotRuntime:
-    """Binding-backed runtime for one Damiao-based robot spec."""
+class DamiaoArmRuntime:
+    """Binding-backed runtime for one Damiao arm."""
 
     def __init__(
         self,
         *,
-        robot_spec: DamiaoRobotSpec,
+        arm_config: DamiaoArmConfig,
+        runtime_config: DamiaoRuntimeConfig,
         adapter_type: str = "damiao",
-        binding_error_type: type[RuntimeError] = DamiaoBindingUnavailableError,
-        use_mock_bus: bool = False,
-        config_path: str | Path | None = None,
-        tick_deadline_us: int = _DEFAULT_TICK_DEADLINE_US,
-        state_cache_ttl_s: float = _DEFAULT_STATE_CACHE_TTL_S,
     ) -> None:
-        robot_spec.validate()
-        self._robot_spec = robot_spec
+        self._arm_config = arm_config
+        self._runtime_config = runtime_config
         self._adapter_type = adapter_type
-        self._binding_error_type = binding_error_type
-        self._use_mock_bus = use_mock_bus
-        self._config_path = str(config_path) if config_path is not None else None
-        self._tick_deadline_us = tick_deadline_us
-        self._state_cache_ttl_s = state_cache_ttl_s
         self._robot: Any | None = None
-        self._groups: dict[str, Any] = {}
-        self._state_cache: dict[str, DamiaoGroupState] = {}
-        self._state_cache_time: dict[str, float] = {}
-        self._can_motor_control: Any | None = None
-        self._damiao: Any | None = None
+        self._arm: Any | None = None
+        self._state_cache: DamiaoGroupState | None = None
+        self._state_cache_time = 0.0
         self._connected = False
         self._enabled = False
 
     @property
-    def robot_spec(self) -> DamiaoRobotSpec:
-        return self._robot_spec
+    def arm_config(self) -> DamiaoArmConfig:
+        return self._arm_config
 
     def connect(self) -> bool:
-        """Connect the binding robot and cache group handles."""
+        """Connect the binding robot and cache its arm handle."""
 
         try:
-            self._can_motor_control, self._damiao = _load_can_motor_control(
-                adapter_type=self._adapter_type,
-                error_type=self._binding_error_type,
-            )
             robot = self._build_robot()
             robot.connect()
-            groups: dict[str, Any] = {}
-            for group_name, group_spec in self._robot_spec.groups.items():
-                group = robot[group_name]
-                if len(group) != group_spec.dof:
-                    raise RuntimeError(
-                        f"can_motor_control group {group_name!r} has {len(group)} joints, "
-                        f"expected {group_spec.dof}"
-                    )
-                groups[group_name] = group
+            arm = robot[_ARM_NAME]
+            if len(arm) != self._arm_config.dof:
+                raise RuntimeError(
+                    f"can_motor_control arm has {len(arm)} joints, expected {self._arm_config.dof}"
+                )
             self._robot = robot
-            self._groups = groups
+            self._arm = arm
             self._connected = True
-            for group_name in self._robot_spec.groups:
-                self.refresh_group_state(group_name, force=True)
-        except self._binding_error_type:
-            raise
+            self.refresh_state(force=True)
         except Exception:
             logger.exception("damiao runtime connect failed", adapter=self._adapter_type)
             self.disconnect()
@@ -163,38 +133,38 @@ class DamiaoRobotRuntime:
         return True
 
     def _build_robot(self) -> Any:
-        if self._can_motor_control is None or self._damiao is None:
-            raise RuntimeError("can_motor_control binding is not loaded")
-        if self._config_path is not None:
-            return self._can_motor_control.Robot.from_config(self._config_path)
-        builder = self._can_motor_control.Robot.builder()
-        codec = self._damiao.DamiaoCodec()
-        for bus_name, bus_spec in self._robot_spec.buses.items():
-            address = str(bus_spec.address or _DEFAULT_ADDRESS)
-            self._warn_if_small_tx_queue(address)
+        if self._runtime_config.config_path is not None:
+            return can_motor_control.Robot.from_config(str(self._runtime_config.config_path))
+
+        address = self._runtime_config.address
+        self._warn_if_small_tx_queue(address)
+        transport: can_motor_control.MockCanBus | can_motor_control.SocketCanBus
+        if self._runtime_config.use_mock_bus:
             transport = (
-                self._can_motor_control.MockCanBus.new_fd(address)
-                if self._use_mock_bus and bus_spec.fd
-                else self._can_motor_control.MockCanBus(address)
-                if self._use_mock_bus
-                else self._can_motor_control.SocketCanBus(address, fd=bus_spec.fd)
+                can_motor_control.MockCanBus.new_fd(address)
+                if self._arm_config.fd
+                else can_motor_control.MockCanBus(address)
             )
-            builder = builder.add_bus(bus_name, transport, codec)
-        for group_name, group_spec in self._robot_spec.groups.items():
-            binding_specs = [
-                self._can_motor_control.MotorSpec(
-                    motor.name,
-                    cast("int", self._resolve_motor_type(motor.type)),
-                    motor.send_id,
-                    motor.effective_recv_id,
-                )
-                for motor in group_spec.motors
-            ]
-            builder = builder.add_arm(group_name, bus=group_spec.bus_name, motors=binding_specs)
-        return builder.build()
+        else:
+            transport = can_motor_control.SocketCanBus(address, fd=self._arm_config.fd)
+        motors = [
+            can_motor_control.MotorSpec(
+                motor.name,
+                int(self._resolve_motor_type(motor.type)),
+                motor.send_id,
+                motor.effective_recv_id,
+            )
+            for motor in self._arm_config.motors
+        ]
+        return (
+            can_motor_control.Robot.builder()
+            .add_bus(_BUS_NAME, transport, damiao.DamiaoCodec())
+            .add_arm(_ARM_NAME, bus=_BUS_NAME, motors=motors)
+            .build()
+        )
 
     def _warn_if_small_tx_queue(self, address: str) -> None:
-        if self._use_mock_bus:
+        if self._runtime_config.use_mock_bus:
             return
         queue_path = Path("/sys/class/net") / address / "tx_queue_len"
         try:
@@ -210,27 +180,14 @@ class DamiaoRobotRuntime:
                 setup_command=f"dimos can setup {address}",
             )
 
-    def _resolve_motor_type(self, motor_type: object) -> object:
-        if self._damiao is None:
-            raise RuntimeError("Damiao binding module is not loaded")
-        if isinstance(motor_type, str):
-            try:
-                return getattr(self._damiao.MotorType, motor_type)
-            except AttributeError as exc:
-                raise ValueError(f"Unknown Damiao motor type {motor_type!r}") from exc
-        if not isinstance(motor_type, int):
-            return motor_type
-        for name in dir(self._damiao.MotorType):
-            if name.startswith("_"):
-                continue
-            candidate = getattr(self._damiao.MotorType, name)
-            try:
-                candidate_value = int(candidate)
-            except (TypeError, ValueError):
-                continue
-            if candidate_value == motor_type:
-                return candidate
-        raise ValueError(f"Unknown Damiao motor type value {motor_type!r}")
+    @staticmethod
+    def _resolve_motor_type(motor_type: str | int) -> damiao.MotorType:
+        try:
+            if isinstance(motor_type, str):
+                return _MOTOR_TYPES_BY_NAME[motor_type]
+            return _MOTOR_TYPES_BY_VALUE[motor_type]
+        except KeyError as exc:
+            raise ValueError(f"Unknown Damiao motor type {motor_type!r}") from exc
 
     def disconnect(self) -> None:
         """Disable and drop the underlying binding robot."""
@@ -245,9 +202,9 @@ class DamiaoRobotRuntime:
         self._enabled = False if disabled else True
         self._connected = False
         self._robot = None
-        self._groups = {}
-        self._state_cache = {}
-        self._state_cache_time = {}
+        self._arm = None
+        self._state_cache = None
+        self._state_cache_time = 0.0
 
     def is_connected(self) -> bool:
         return self._connected
@@ -257,13 +214,11 @@ class DamiaoRobotRuntime:
             return False
         try:
             self._robot.set_mode("mit")
-            self._robot.tick(self._tick_deadline_us)
+            self._robot.tick(self._runtime_config.tick_deadline_us)
             self._robot.enable()
-            self._robot.tick(self._tick_deadline_us)
+            self._robot.tick(self._runtime_config.tick_deadline_us)
         except Exception:
             logger.exception("damiao runtime enable failed", adapter=self._adapter_type)
-            # The binding may have enabled a subset of the robot before
-            # reporting an error.  Never leave that partial state live.
             try:
                 disabled = self._robot.disable()
             except Exception:
@@ -292,158 +247,67 @@ class DamiaoRobotRuntime:
     def is_enabled(self) -> bool:
         return self._enabled
 
-    def group_spec(self, group_name: str) -> DamiaoJointGroupSpec:
-        try:
-            return self._robot_spec.groups[group_name]
-        except KeyError as exc:
-            raise ValueError(f"unknown Damiao group {group_name!r}") from exc
-
-    def refresh_group_state(self, group_name: str, *, force: bool = False) -> DamiaoGroupState:
-        group_spec = self.group_spec(group_name)
-        group = self._groups.get(group_name)
-        if self._robot is None or group is None:
-            raise RuntimeError("DamiaoRobotRuntime is not connected")
+    def refresh_state(self, *, force: bool = False) -> DamiaoGroupState:
+        if self._robot is None or self._arm is None:
+            raise RuntimeError("DamiaoArmRuntime is not connected")
         now = time.monotonic()
-        cached = self._state_cache.get(group_name)
-        cached_at = self._state_cache_time.get(group_name, 0.0)
-        if not force and cached is not None and now - cached_at <= self._state_cache_ttl_s:
-            return cached
-        group.refresh()
-        self._robot.tick(self._tick_deadline_us)
+        if (
+            not force
+            and self._state_cache is not None
+            and now - self._state_cache_time <= self._runtime_config.state_cache_ttl_s
+        ):
+            return self._state_cache
+        self._arm.refresh()
+        self._robot.tick(self._runtime_config.tick_deadline_us)
         state = DamiaoGroupState(
-            q=group.positions().astype(np.float64).tolist(),
-            dq=group.velocities().astype(np.float64).tolist(),
-            tau=group.torques().astype(np.float64).tolist(),
+            q=self._arm.positions().astype(np.float64).tolist(),
+            dq=self._arm.velocities().astype(np.float64).tolist(),
+            tau=self._arm.torques().astype(np.float64).tolist(),
         )
-        if any(len(values) != group_spec.dof for values in (state.q, state.dq, state.tau)):
-            raise RuntimeError(
-                f"state length does not match configured DOF for group {group_name!r}"
-            )
+        if any(len(values) != self._arm_config.dof for values in (state.q, state.dq, state.tau)):
+            raise RuntimeError("state length does not match configured arm DOF")
         if any(
             not np.isfinite(values).all()
             for values in (np.asarray(state.q), np.asarray(state.dq), np.asarray(state.tau))
         ):
-            raise RuntimeError(f"state contains non-finite values for group {group_name!r}")
-        self._state_cache[group_name] = state
-        self._state_cache_time[group_name] = time.monotonic()
+            raise RuntimeError("state contains non-finite values")
+        self._state_cache = state
+        self._state_cache_time = time.monotonic()
         return state
 
-    def has_group_states(self, group_names: Sequence[str]) -> bool:
-        """Return true only when every requested group has a fresh complete state."""
-
-        try:
-            for group_name in group_names:
-                self.refresh_group_state(group_name, force=False)
-        except Exception:
-            return False
-        return True
-
-    def read_group_states(self, group_names: Sequence[str]) -> list[DamiaoGroupState]:
-        """Read state for groups in the requested order."""
-
-        return [self.refresh_group_state(group_name, force=False) for group_name in group_names]
-
-    def write_group_mit_commands(
+    def write_mit_commands(
         self,
         *,
-        group_name: str,
         q: Sequence[float],
         dq: Sequence[float],
         kp: Sequence[float],
         kd: Sequence[float],
         tau: Sequence[float],
     ) -> bool:
-        """Write one MIT command frame to a group."""
+        """Write one MIT command frame to the arm."""
 
-        group_spec = self.group_spec(group_name)
-        group = self._groups.get(group_name)
-        if self._robot is None or group is None or not self._enabled:
+        if self._robot is None or self._arm is None or not self._enabled:
             return False
-        if any(len(values) != group_spec.dof for values in (q, dq, kp, kd, tau)):
-            raise ValueError(
-                f"command length does not match configured DOF for group {group_name!r}"
-            )
+        if any(len(values) != self._arm_config.dof for values in (q, dq, kp, kd, tau)):
+            raise ValueError("command length does not match configured arm DOF")
         try:
 
             def send() -> None:
-                group.mit_control(np.column_stack([kp, kd, q, dq, tau]).astype(np.float64))
-                self._robot.tick(self._tick_deadline_us)
+                assert self._arm is not None
+                assert self._robot is not None
+                self._arm.mit_control(np.column_stack([kp, kd, q, dq, tau]).astype(np.float64))
+                self._robot.tick(self._runtime_config.tick_deadline_us)
 
             _retry_enobufs(send)
         except Exception:
-            logger.exception("damiao runtime MIT command failed", group_name=group_name)
+            logger.exception("damiao runtime MIT command failed")
             return False
-        self._state_cache.pop(group_name, None)
-        self._state_cache_time.pop(group_name, None)
+        self._state_cache = None
+        self._state_cache_time = 0.0
         return True
 
-    def write_groups_mit_commands(
-        self,
-        commands: Mapping[
-            str,
-            tuple[
-                Sequence[float], Sequence[float], Sequence[float], Sequence[float], Sequence[float]
-            ],
-        ],
-    ) -> bool:
-        """Stage MIT commands for multiple groups and tick once.
+    def load_gravity_model(self, model_path: str | Path) -> tuple[object, object]:
+        """Load a Pinocchio gravity model for the arm."""
 
-        The binding's group ``mit_control`` call stages commands; ``robot.tick``
-        sends them. Validate all groups and command lengths before staging so a
-        bad frame is rejected without sending a partial whole-body command.
-        """
-
-        if self._robot is None or not self._enabled:
-            return False
-        for group_name, values in commands.items():
-            group_spec = self.group_spec(group_name)
-            group = self._groups.get(group_name)
-            if group is None:
-                return False
-            q, dq, kp, kd, tau = values
-            if any(len(vector) != group_spec.dof for vector in (q, dq, kp, kd, tau)):
-                raise ValueError(
-                    f"command length does not match configured DOF for group {group_name!r}"
-                )
-        try:
-            for group_name, values in commands.items():
-                q, dq, kp, kd, tau = values
-                self._groups[group_name].mit_control(
-                    np.column_stack([kp, kd, q, dq, tau]).astype(np.float64)
-                )
-            self._robot.tick(self._tick_deadline_us)
-        except Exception:
-            logger.exception("damiao runtime batched MIT command failed")
-            return False
-        for group_name in commands:
-            self._state_cache.pop(group_name, None)
-            self._state_cache_time.pop(group_name, None)
-        return True
-
-    def load_gravity_model(
-        self,
-        group_name: str,
-        model_path: str | Path | None = None,
-    ) -> tuple[object, object] | None:
-        """Load a Pinocchio gravity model for a configured group, if present."""
-
-        resolved_model_path = (
-            model_path if model_path is not None else self.group_spec(group_name).gravity_model_path
-        )
-        if resolved_model_path is None:
-            return None
-        import pinocchio  # type: ignore[import-not-found]
-
-        build_model_from_urdf = _dynamic_attr(pinocchio, "buildModelFromUrdf")
-        model = build_model_from_urdf(str(resolved_model_path))
-        return model, _dynamic_attr(model, "createData")()
-
-
-__all__ = [
-    "_DEFAULT_ADDRESS",
-    "_DEFAULT_STATE_CACHE_TTL_S",
-    "_DEFAULT_TICK_DEADLINE_US",
-    "DamiaoBindingUnavailableError",
-    "DamiaoGroupState",
-    "DamiaoRobotRuntime",
-]
+        model = pinocchio.buildModelFromUrdf(str(model_path))
+        return model, model.createData()

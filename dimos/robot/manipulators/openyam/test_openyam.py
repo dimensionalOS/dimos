@@ -17,6 +17,7 @@ from typing import Any
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.hardware.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.openyam.blueprints.basic import (
@@ -75,8 +76,10 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
 
     assert hardware.adapter_type == "openyam_damiao"
     assert hardware.address == "can1"
-    assert hardware.adapter_kwargs["gravity_model_path"] == OPENYAM_GRAVITY_MODEL_PATH
-    assert hardware.adapter_kwargs["gravity_comp"] is True
+    runtime_config = hardware.adapter_kwargs["runtime_config"]
+    assert isinstance(runtime_config, DamiaoRuntimeConfig)
+    assert runtime_config.gravity_model_path == OPENYAM_GRAVITY_MODEL_PATH
+    assert runtime_config.gravity_comp is True
     assert len(hardware.joints) == OPENYAM_DOF
     assert hardware.gripper_joints == []
     assert "initial_positions" not in hardware.adapter_kwargs

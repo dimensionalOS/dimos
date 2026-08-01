@@ -20,6 +20,7 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.core.global_config import global_config
+from dimos.hardware.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -81,8 +82,10 @@ def openyam_hardware(
         # Physical encoder zeros are established by the driver; never pass
         # planning/home positions into a live motor adapter.
         adapter_kwargs={
-            "gravity_model_path": OPENYAM_GRAVITY_MODEL_PATH,
-            "gravity_comp": True,
+            "runtime_config": DamiaoRuntimeConfig(
+                gravity_model_path=OPENYAM_GRAVITY_MODEL_PATH,
+                gravity_comp=True,
+            ),
         },
         include_gripper=False,
     )

@@ -26,7 +26,7 @@ class ViserVisualizationConfig(BaseModel):
 
     backend: Literal["viser"] = "viser"
     host: str = Field(
-        default="0.0.0.0", validation_alias=AliasChoices("host", "visualization_host")
+        default="127.0.0.1", validation_alias=AliasChoices("host", "visualization_host")
     )
     port: int = Field(default=8095, validation_alias=AliasChoices("port", "visualization_port"))
     open_browser: bool = Field(

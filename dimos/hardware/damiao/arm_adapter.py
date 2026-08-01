@@ -14,19 +14,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pinocchio  # type: ignore[import-not-found]
 
-from dimos.hardware.damiao.runtime import (
-    _DEFAULT_ADDRESS,
-    _DEFAULT_STATE_CACHE_TTL_S,
-    _DEFAULT_TICK_DEADLINE_US,
-    DamiaoBindingUnavailableError,
-    DamiaoRobotRuntime,
-)
-from dimos.hardware.damiao.specs import DamiaoArmSpec, DamiaoRobotSpec
+from dimos.hardware.damiao.config import DamiaoArmConfig, DamiaoRuntimeConfig
+from dimos.hardware.damiao.runtime import DamiaoArmRuntime
 from dimos.hardware.manipulators.spec import ControlMode, JointLimits, ManipulatorInfo
 from dimos.utils.logging_config import setup_logger
 
@@ -35,114 +29,59 @@ logger = setup_logger()
 _CONTROL_MODE_INDEX = {mode: index for index, mode in enumerate(ControlMode)}
 
 
-def _dynamic_attr(value: object, name: str) -> Any:
-    return getattr(value, name)
-
-
 class DamiaoArmAdapter:
-    """ManipulatorAdapter facade over one Damiao joint group."""
+    """ManipulatorAdapter facade over one Damiao arm runtime."""
 
     _adapter_type: str = "damiao"
-    _binding_error_type: type[RuntimeError] = DamiaoBindingUnavailableError
-    _supported_control_modes: tuple[ControlMode, ...] = (
-        ControlMode.POSITION,
-        ControlMode.SERVO_POSITION,
-        ControlMode.TORQUE,
-    )
 
     def __init__(
         self,
         *,
-        robot_spec: DamiaoRobotSpec,
-        group_name: str,
+        arm_config: DamiaoArmConfig,
+        runtime_config: DamiaoRuntimeConfig | None = None,
         dof: int | None = None,
         hardware_id: str = "arm",
-        kp: list[float] | None = None,
-        kd: list[float] | None = None,
-        gravity_comp: bool = True,
-        gravity_model_path: str | Path | None = None,
-        gravity_torque_limits: list[float] | tuple[float, ...] | None = None,
-        supported_control_modes: tuple[ControlMode, ...] | None = None,
-        use_mock_bus: bool = False,
-        config_path: str | Path | None = None,
-        tick_deadline_us: int = _DEFAULT_TICK_DEADLINE_US,
-        state_cache_ttl_s: float = _DEFAULT_STATE_CACHE_TTL_S,
     ) -> None:
-        robot_spec.validate()
-        if group_name not in robot_spec.groups:
-            raise ValueError(f"unknown Damiao group {group_name!r}")
-        group_spec = robot_spec.groups[group_name]
-        if dof is not None and dof != group_spec.dof:
+        runtime_config = runtime_config or DamiaoRuntimeConfig()
+        if dof is not None and dof != arm_config.dof:
             raise ValueError(
-                f"{type(self).__name__} only supports {group_spec.dof} DOF (got {dof})"
+                f"{type(self).__name__} only supports {arm_config.dof} DOF (got {dof})"
             )
-        self._robot_spec = robot_spec
-        self._group_name = group_name
-        self._group_spec = group_spec
+        self._arm_config = arm_config
+        self._runtime_config = runtime_config
         self._hardware_id = hardware_id
-        self._dof = group_spec.dof
-        self._position_lower = list(group_spec.position_lower)
-        self._position_upper = list(group_spec.position_upper)
-        self._velocity_max = list(group_spec.velocity_max)
-        self._kp = list(kp) if kp is not None else list(group_spec.kp)
-        self._kd = list(kd) if kd is not None else list(group_spec.kd)
+        self._dof = arm_config.dof
+        self._position_lower = list(arm_config.position_lower)
+        self._position_upper = list(arm_config.position_upper)
+        self._velocity_max = list(arm_config.velocity_max)
+        self._kp = list(runtime_config.kp_override or arm_config.kp)
+        self._kd = list(runtime_config.kd_override or arm_config.kd)
         self._validate_length("kp", self._kp)
         self._validate_length("kd", self._kd)
-        self._gravity_comp = gravity_comp
-        resolved_gravity_model = (
-            gravity_model_path if gravity_model_path is not None else group_spec.gravity_model_path
+        self._gravity_comp = runtime_config.gravity_comp
+        self._gravity_model_path = (
+            str(runtime_config.gravity_model_path) if runtime_config.gravity_model_path else None
         )
-        self._gravity_model_path = str(resolved_gravity_model) if resolved_gravity_model else None
-        resolved_torque_limits = (
-            gravity_torque_limits
-            if gravity_torque_limits is not None
-            else group_spec.gravity_torque_limits
-        )
+        resolved_torque_limits = arm_config.gravity_torque_limits
         self._gravity_torque_limits = (
             list(resolved_torque_limits) if resolved_torque_limits else None
         )
         if self._gravity_torque_limits is not None:
             self._validate_length("gravity_torque_limits", self._gravity_torque_limits)
-        self._supported_control_modes = (
-            supported_control_modes or type(self)._supported_control_modes
-        )
+        self._supported_control_modes = arm_config.supported_control_modes
         self._control_mode = ControlMode.POSITION
         self._last_positions: list[float] | None = None
-        self._pin_model: object | None = None
-        self._pin_data: object | None = None
-        self._use_mock_bus = use_mock_bus
-        self._config_path = config_path
-        self._tick_deadline_us = tick_deadline_us
-        self._state_cache_ttl_s = state_cache_ttl_s
-        self._runtime: DamiaoRobotRuntime | None = None
+        self._pin_model: Any | None = None
+        self._pin_data: Any | None = None
+        self._runtime: DamiaoArmRuntime | None = None
         self._connected = False
         self._enabled = False
 
-    @classmethod
-    def from_arm_spec(
-        cls,
-        *,
-        arm_spec: DamiaoArmSpec,
-        address: str | Path | None = _DEFAULT_ADDRESS,
-        **kwargs: Any,
-    ) -> DamiaoArmAdapter:
-        """Build a one-group adapter from a compatibility arm spec."""
-
-        robot_spec = DamiaoRobotSpec.from_arm_spec(
-            arm_spec,
-            address=str(address) if address is not None else _DEFAULT_ADDRESS,
-        )
-        return cls(robot_spec=robot_spec, group_name=arm_spec.arm_name, **kwargs)
-
-    def _create_runtime(self) -> DamiaoRobotRuntime:
-        return DamiaoRobotRuntime(
-            robot_spec=self._robot_spec,
+    def _create_runtime(self) -> DamiaoArmRuntime:
+        return DamiaoArmRuntime(
+            arm_config=self._arm_config,
+            runtime_config=self._runtime_config,
             adapter_type=self._adapter_type,
-            binding_error_type=self._binding_error_type,
-            use_mock_bus=self._use_mock_bus,
-            config_path=self._config_path,
-            tick_deadline_us=self._tick_deadline_us,
-            state_cache_ttl_s=self._state_cache_ttl_s,
         )
 
     def _validate_length(self, name: str, values: list[float]) -> None:
@@ -165,8 +104,6 @@ class DamiaoArmAdapter:
             self._load_gravity_model()
             self._connected = True
             self.refresh_state(force=True)
-        except self._binding_error_type:
-            raise
         except Exception:
             logger.exception(
                 "damiao arm adapter connect failed",
@@ -197,8 +134,8 @@ class DamiaoArmAdapter:
 
     def get_info(self) -> ManipulatorInfo:
         return ManipulatorInfo(
-            vendor=self._robot_spec.vendor,
-            model=self._robot_spec.model,
+            vendor=self._arm_config.vendor,
+            model=self._arm_config.model,
             dof=self._dof,
             firmware_version=None,
             serial_number=None,
@@ -229,7 +166,7 @@ class DamiaoArmAdapter:
     def refresh_state(self, *, force: bool = False) -> tuple[list[float], list[float], list[float]]:
         if self._runtime is None:
             raise RuntimeError(f"{type(self).__name__} is not connected")
-        state = self._runtime.refresh_group_state(self._group_name, force=force)
+        state = self._runtime.refresh_state(force=force)
         self._last_positions = list(state.q)
         return list(state.q), list(state.dq), list(state.tau)
 
@@ -324,8 +261,7 @@ class DamiaoArmAdapter:
         if self._runtime is None or not self._enabled:
             return False
         self._validate_command_lengths(q=q, dq=dq, kp=kp, kd=kd, tau=tau)
-        ok = self._runtime.write_group_mit_commands(
-            group_name=self._group_name,
+        ok = self._runtime.write_mit_commands(
             q=q,
             dq=dq,
             kp=kp,
@@ -472,22 +408,19 @@ class DamiaoArmAdapter:
             )
 
         if self._pin_model is not None:
-            nq = getattr(self._pin_model, "nq", self._dof)
-            nv = getattr(self._pin_model, "nv", self._dof)
+            nq = self._pin_model.nq
+            nv = self._pin_model.nv
             if nq != self._dof or nv != self._dof:
                 raise ValueError(
                     f"gravity model dimensions ({nq}, {nv}) do not match adapter DOF {self._dof}"
                 )
-            names = getattr(self._pin_model, "names", None)
-            if names is None:
-                raise ValueError("gravity model does not expose joint order")
-            model_names = tuple(str(name) for name in names)
+            model_names = tuple(str(name) for name in self._pin_model.names)
             if model_names and model_names[0] == "universe":
                 model_names = model_names[1:]
-            if model_names != self._group_spec.joint_names:
+            if model_names != self._arm_config.joint_names:
                 raise ValueError(
                     f"gravity model joint order {model_names!r} does not match "
-                    f"configured order {self._group_spec.joint_names!r}"
+                    f"configured order {self._arm_config.joint_names!r}"
                 )
 
         tau = self.compute_gravity_torques(q) if self._gravity_comp else self._zero_vector()
@@ -529,18 +462,13 @@ class DamiaoArmAdapter:
     def _load_gravity_model(self) -> None:
         if not self._gravity_comp or self._gravity_model_path is None or self._runtime is None:
             return
-        loaded = self._runtime.load_gravity_model(self._group_name, self._gravity_model_path)
-        if loaded is not None:
-            self._pin_model, self._pin_data = loaded
+        self._pin_model, self._pin_data = self._runtime.load_gravity_model(self._gravity_model_path)
 
     def compute_gravity_torques(self, q: list[float]) -> list[float]:
         self._validate_length("q", q)
         if self._pin_model is None or self._pin_data is None:
             raise RuntimeError("gravity compensation model is not loaded")
-        import pinocchio  # type: ignore[import-not-found]
-
-        compute_generalized_gravity = _dynamic_attr(pinocchio, "computeGeneralizedGravity")
-        tau = compute_generalized_gravity(
+        tau = pinocchio.computeGeneralizedGravity(
             self._pin_model, self._pin_data, np.array(q, dtype=np.float64)
         )
         values = [float(tau[i]) for i in range(self._dof)]
@@ -552,6 +480,3 @@ class DamiaoArmAdapter:
             float(np.clip(value, -limit, limit))
             for value, limit in zip(values, self._gravity_torque_limits, strict=False)
         ]
-
-
-__all__ = ["DamiaoArmAdapter"]

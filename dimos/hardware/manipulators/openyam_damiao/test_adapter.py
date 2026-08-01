@@ -2,6 +2,15 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Focused OpenYAM adapter tests.
 
@@ -15,13 +24,14 @@ from unittest.mock import Mock
 
 import pytest
 
-pytest.importorskip("dimos.hardware.damiao")
+pytest.importorskip("can_motor_control")
 
+from dimos.hardware.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.damiao.runtime import DamiaoGroupState
 import dimos.hardware.manipulators.openyam_damiao.adapter as adapter_module
 from dimos.hardware.manipulators.openyam_damiao.adapter import (
-    ARM_MOTOR_SPECS,
-    GRIPPER_MOTOR_SPECS,
+    ARM_MOTOR_CONFIGS,
+    GRIPPER_MOTOR_CONFIGS,
     OPENING_METRES,
     OpenYamDamiaoAdapter,
     aperture_to_opening,
@@ -41,22 +51,32 @@ def test_gripper_aperture_conversion_is_linear() -> None:
 
 
 def test_openyam_motor_topology() -> None:
-    assert [motor.name for motor in ARM_MOTOR_SPECS] == [f"yam_joint{i}" for i in range(1, 7)]
-    assert [motor.send_id for motor in ARM_MOTOR_SPECS] == list(range(1, 7))
-    assert [motor.type for motor in ARM_MOTOR_SPECS] == ["DM4340"] * 3 + ["DM4310"] * 3
-    assert GRIPPER_MOTOR_SPECS[0].send_id == 7
-    assert GRIPPER_MOTOR_SPECS[0].type == "DM4310"
+    assert [motor.name for motor in ARM_MOTOR_CONFIGS] == [f"yam_joint{i}" for i in range(1, 7)]
+    assert [motor.send_id for motor in ARM_MOTOR_CONFIGS] == list(range(1, 7))
+    assert [motor.type for motor in ARM_MOTOR_CONFIGS] == ["DM4340"] * 3 + ["DM4310"] * 3
+    assert GRIPPER_MOTOR_CONFIGS[0].send_id == 7
+    assert GRIPPER_MOTOR_CONFIGS[0].type == "DM4310"
 
 
 def test_openyam_physical_gripper_is_disabled_without_calibrated_readback() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_model_path=GRAVITY_MODEL_PATH, use_mock_bus=True)
+    adapter = OpenYamDamiaoAdapter(
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_model_path=GRAVITY_MODEL_PATH,
+            use_mock_bus=True,
+        )
+    )
 
     assert adapter.read_gripper_position() is None
     assert not adapter.write_gripper_position(0.01)
 
 
 def test_openyam_limits_are_loaded_from_active_model() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_model_path=GRAVITY_MODEL_PATH, use_mock_bus=True)
+    adapter = OpenYamDamiaoAdapter(
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_model_path=GRAVITY_MODEL_PATH,
+            use_mock_bus=True,
+        )
+    )
 
     limits = adapter.get_limits()
     assert limits.position_lower == pytest.approx([-3.92699, 0.0, 0.0, -1.65806, -1.5708, -2.35619])
@@ -70,42 +90,45 @@ def test_openyam_limits_are_loaded_from_active_model() -> None:
 
 
 def test_openyam_allows_gravity_comp_to_be_disabled() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_comp=False, use_mock_bus=True)
+    adapter = OpenYamDamiaoAdapter(
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False, use_mock_bus=True)
+    )
 
     assert not adapter._gravity_comp
 
     with pytest.raises(ValueError, match="gravity compensation"):
-        OpenYamDamiaoAdapter(use_mock_bus=True)
+        OpenYamDamiaoAdapter(runtime_config=DamiaoRuntimeConfig(use_mock_bus=True))
 
 
 def test_openyam_activation_holds_exact_feedback_position() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_comp=False, use_mock_bus=True)
+    adapter = OpenYamDamiaoAdapter(
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False, use_mock_bus=True)
+    )
     runtime = Mock()
     feedback = [-1.2, 0.1, 0.2, -0.3, 0.4, -0.5]
-    runtime.refresh_group_state.return_value = DamiaoGroupState(
-        q=feedback, dq=[0.0] * 6, tau=[0.0] * 6
-    )
+    runtime.refresh_state.return_value = DamiaoGroupState(q=feedback, dq=[0.0] * 6, tau=[0.0] * 6)
     runtime.enable.return_value = True
-    runtime.write_group_mit_commands.return_value = True
+    runtime.write_mit_commands.return_value = True
     adapter._runtime = runtime
 
     assert adapter.activate()
 
-    runtime.write_group_mit_commands.assert_called_once_with(
-        group_name="arm",
+    runtime.write_mit_commands.assert_called_once_with(
         q=feedback,
         dq=[0.0] * 6,
         kp=[80.0, 80.0, 80.0, 10.0, 10.0, 10.0],
         kd=[5.0, 5.0, 5.0, 1.5, 1.5, 1.5],
         tau=[0.0] * 6,
     )
-    assert runtime.refresh_group_state.call_count >= 2
+    assert runtime.refresh_state.call_count >= 2
 
 
 def test_openyam_normal_enable_and_error_recovery() -> None:
     adapter = OpenYamDamiaoAdapter(
-        gravity_model_path=GRAVITY_MODEL_PATH,
-        use_mock_bus=True,
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_model_path=GRAVITY_MODEL_PATH,
+            use_mock_bus=True,
+        ),
     )
     runtime = Mock()
     runtime.enable.return_value = True
@@ -126,14 +149,14 @@ def test_openyam_normal_enable_and_error_recovery() -> None:
 
 def test_openyam_forwards_mit_commands() -> None:
     adapter = OpenYamDamiaoAdapter(
-        gravity_model_path=GRAVITY_MODEL_PATH,
-        use_mock_bus=True,
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_model_path=GRAVITY_MODEL_PATH,
+            use_mock_bus=True,
+        ),
     )
     runtime = Mock()
-    runtime.refresh_group_state.return_value = DamiaoGroupState(
-        q=[0.25] * 6, dq=[0.0] * 6, tau=[0.0] * 6
-    )
-    runtime.write_group_mit_commands.return_value = True
+    runtime.refresh_state.return_value = DamiaoGroupState(q=[0.25] * 6, dq=[0.0] * 6, tau=[0.0] * 6)
+    runtime.write_mit_commands.return_value = True
     adapter._runtime = runtime
     adapter._enabled = True
 
@@ -147,8 +170,7 @@ def test_openyam_forwards_mit_commands() -> None:
         tau=[5.0] * 6,
     )
 
-    runtime.write_group_mit_commands.assert_called_once_with(
-        group_name="arm",
+    runtime.write_mit_commands.assert_called_once_with(
         q=[1.0] * 6,
         dq=[2.0] * 6,
         kp=[3.0] * 6,
@@ -159,25 +181,25 @@ def test_openyam_forwards_mit_commands() -> None:
     assert not adapter.write_mit_commands(
         q=[1.0] * 6, dq=[2.0] * 6, kp=[3.0] * 6, kd=[4.0] * 6, tau=[5.0] * 6
     )
-    runtime.write_group_mit_commands.assert_called_once()
+    runtime.write_mit_commands.assert_called_once()
 
 
 def test_openyam_failed_read_revokes_write_permission() -> None:
-    adapter = OpenYamDamiaoAdapter(gravity_comp=False, use_mock_bus=True)
-    runtime = Mock()
-    runtime.refresh_group_state.return_value = DamiaoGroupState(
-        q=[0.25] * 6, dq=[0.0] * 6, tau=[0.0] * 6
+    adapter = OpenYamDamiaoAdapter(
+        runtime_config=DamiaoRuntimeConfig(gravity_comp=False, use_mock_bus=True)
     )
+    runtime = Mock()
+    runtime.refresh_state.return_value = DamiaoGroupState(q=[0.25] * 6, dq=[0.0] * 6, tau=[0.0] * 6)
     adapter._runtime = runtime
     adapter._enabled = True
 
     adapter.refresh_state(force=True)
-    runtime.refresh_group_state.side_effect = RuntimeError("feedback unavailable")
+    runtime.refresh_state.side_effect = RuntimeError("feedback unavailable")
     with pytest.raises(RuntimeError, match="feedback unavailable"):
         adapter.refresh_state(force=True)
 
     assert not adapter.write_joint_positions([0.25] * 6)
-    runtime.write_group_mit_commands.assert_not_called()
+    runtime.write_mit_commands.assert_not_called()
 
 
 def test_openyam_xacro_limits_reject_duplicate_joint_names(monkeypatch: pytest.MonkeyPatch) -> None:
