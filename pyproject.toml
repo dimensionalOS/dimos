@@ -21,8 +21,12 @@ build-backend = "setuptools.build_meta"
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["dimos*"]
+where = [
+    ".",
+    "packages/dimos-runtime-protocol/src",
+    "packages/dimos-gpd-grasp-demo/src",
+]
+include = ["dimos*", "dimos_runtime_protocol*", "dimos_gpd_grasp_demo*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
@@ -128,6 +132,8 @@ dependencies = [
     "opencv-contrib-python>=4.8,<5",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
+    # Open3D's installed wheel declares this, but registry lock metadata omits it.
+    "ipywidgets>=8.0.4",
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
@@ -155,6 +161,7 @@ dependencies = [
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
+    "shapely>=2.1.2",
 ]
 
 
@@ -166,6 +173,7 @@ dimos = "dimos.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.cli.doclinks:main"
 dtop = "dimos.cli.dtop:main"
+pi-baseline = "dimos.benchmark.spatial.pi_baseline.cli:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
@@ -217,6 +225,14 @@ learning = [
 ]
 
 agents = [
+    # Persistent trusted Python runtime used by CodePolicyModule.
+    "ipykernel>=7.2.0",
+    "jupyter-client>=8.8.0",
+    "nbformat>=5.10.4",
+    "pyzmq>=27.1.0",
+    # Loopback-only read-only browser view for `dimos code-policy-watch --web`.
+    "fastapi>=0.115.6",
+    "uvicorn>=0.34.0",
     "langchain>=1.2.3,<2",
     "langchain-core>=1.2.22,<2",
     "langchain-openai>=1,<2",
@@ -267,13 +283,15 @@ unitree-dds = [
 ]
 
 manipulation = [
-    # Planning (Drake)
+    # Planning
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
     "pin-pink>=4.2.0",
     "qpsolvers[proxqp]>=4.12.0",
+    "roboplan>=0.0.100",
 
     # Hardware SDKs
+    "can-motor-control>=0.0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "piper-sdk",
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
@@ -292,6 +310,25 @@ manipulation = [
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
     "roboplan>=0.5.1",
+]
+
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+]
+
+openarm = [
+    "dimos[openarm-mini-teleop]",
+]
+
+grasp = [
+    # Experimental learned grasp proposal backend. VGN's catkin-style package
+    # metadata omits most Python runtime dependencies, so list its import-time deps.
+    "vgn",
+    "catkin_pkg>=1.1.0",
+    "matplotlib>=3.7.1",
+    "torch",
+    "pytorch-ignite",
 ]
 
 cpu = [
@@ -365,7 +402,7 @@ scene = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,grasp,learning,manipulation,misc,openarm,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -449,7 +486,6 @@ lint = [
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
-
     "aiortc>=1.14.0",
     "ipython",
     "openai-whisper",
@@ -460,13 +496,12 @@ lint = [
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
-
     "pandas-stubs>=2.3.2.250926,<3",
     "types-pyaudio",
     "types-PyYAML>=6.0.12.20250915,<7",
     "types-reportlab>=4.5.0",
     "types-requests>=2.32.4.20260107,<3",
-
+    "types-shapely>=2.1.0.20260630",
     {include-group = "project-deps"},
 ]
 
@@ -506,6 +541,12 @@ override-dependencies = [
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
 ]
+
+[tool.uv.sources]
+vgn = { git = "https://github.com/ethz-asl/vgn.git", rev = "d7af0622433f52ae88ebe81533f12b46b33e951a" }
+
+[tool.uv.extra-build-dependencies]
+vgn = ["catkin_pkg>=1.1.0"]
 
 [tool.ruff]
 line-length = 100
@@ -653,7 +694,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or tool)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
@@ -675,10 +716,18 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
+    "packages/dimos-gpd-grasp-demo/pixi.lock",
+    "packages/dimos-gpd-grasp-demo/uv.lock",
+    "packages/dimos-robosuite-sidecar/uv.lock",
+    "packages/dimos-gpd-worker-demo/pixi.lock",
+    "packages/dimos-gpd-worker-demo/uv.lock",
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/benchmark/spatial/pi_baseline/viewer_assets/assets/*",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/navigation/cmu_nav/modules/*/main.cpp",
+    "dimos/navigation/cmu_nav/common/*.hpp",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
 ]

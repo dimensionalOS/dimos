@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dimos-libero-pro-sidecar"
+version = "0.1.0"
+description = "LIBERO-PRO runtime sidecar for DimOS benchmark plumbing"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "dimos",
+    "dimos-runtime-protocol",
+    "libero",
+]
+
+[tool.uv.sources]
+dimos = { path = "../..", editable = true }
+dimos-runtime-protocol = { path = "../dimos-runtime-protocol", editable = true }
+
+[project.optional-dependencies]
+assets = ["huggingface-hub"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dimos_libero_pro_sidecar"]

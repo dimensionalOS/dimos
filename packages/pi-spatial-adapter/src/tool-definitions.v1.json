@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "tools": [
+    {
+      "name": "sandbox_exec",
+      "label": "Sandbox execution",
+      "description": "Run an analysis command inside the case sandbox.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command to run in the case sandbox.",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    },
+    {
+      "name": "read_generated_image",
+      "label": "Read generated image",
+      "description": "Read a generated PNG from the case workspace.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative PNG path under /work.",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  ],
+  "submit_answer": {
+    "name": "submit_answer",
+    "label": "Submit answer",
+    "description": "Submit one answer for host-side scoring without correctness feedback.",
+    "variants": {
+      "boolean": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "type": "boolean",
+            "description": "Boolean answer."
+          }
+        },
+        "required": [
+          "answer"
+        ]
+      },
+      "integer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "type": "integer",
+            "description": "Nonnegative integer answer.",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "answer"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scene Registry — Kubernetes-style List/Watch Design</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #121a33;
+      --panel-2: #182343;
+      --text: #edf2ff;
+      --muted: #aab6d3;
+      --blue: #6ea8fe;
+      --cyan: #5eead4;
+      --green: #86efac;
+      --yellow: #fde68a;
+      --orange: #fdba74;
+      --red: #fca5a5;
+      --purple: #c4b5fd;
+      --line: #3a4770;
+      --shadow: 0 20px 55px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(94, 234, 212, 0.14), transparent 32rem),
+        radial-gradient(circle at top right, rgba(110, 168, 254, 0.18), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding: 40px;
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(32px, 5vw, 58px);
+      letter-spacing: -0.05em;
+      line-height: 0.95;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    p { margin: 0; color: var(--muted); }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+      color: #dbeafe;
+    }
+
+    .subtitle {
+      max-width: 860px;
+      font-size: 18px;
+      color: var(--muted);
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .badge {
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025)), var(--panel);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+      overflow: hidden;
+    }
+
+    .span-12 { grid-column: span 12; }
+    .span-7 { grid-column: span 7; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+
+    .analogy {
+      display: grid;
+      grid-template-columns: 1fr 56px 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .lane {
+      border-radius: 18px;
+      padding: 18px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .lane.k8s { border-color: rgba(110, 168, 254, 0.35); }
+    .lane.dimos { border-color: rgba(94, 234, 212, 0.35); }
+
+    .arrow-mid {
+      display: grid;
+      place-items: center;
+      color: var(--cyan);
+      font-size: 32px;
+      font-weight: 800;
+    }
+
+    .map-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.055);
+      border: 1px solid rgba(255,255,255,0.07);
+    }
+
+    .mini strong {
+      display: block;
+      color: var(--text);
+      margin-bottom: 3px;
+      font-size: 13px;
+    }
+
+    .mini span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.25fr 1fr 1fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .node {
+      position: relative;
+      padding: 16px;
+      min-height: 132px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.055);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .node::after {
+      content: "→";
+      position: absolute;
+      right: -20px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--line);
+      font-size: 24px;
+      font-weight: 800;
+      z-index: 2;
+    }
+
+    .node:last-child::after { display: none; }
+
+    .node .tag {
+      display: inline-flex;
+      margin-bottom: 10px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: rgba(255,255,255,0.09);
+    }
+
+    .tag.source { color: var(--blue); }
+    .tag.registry { color: var(--cyan); }
+    .tag.consumer { color: var(--green); }
+    .tag.projection { color: var(--yellow); }
+    .tag.planner { color: var(--orange); }
+
+    .node ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .codebox {
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      background: #070b16;
+      border: 1px solid rgba(255,255,255,0.08);
+      color: #c7d2fe;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 12px;
+    }
+
+    .pill {
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.055);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .decision {
+      border-left: 4px solid var(--cyan);
+      padding-left: 14px;
+    }
+
+    .warning {
+      border-left: 4px solid var(--yellow);
+      padding-left: 14px;
+    }
+
+    .demo {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .legend {
+      display: grid;
+      gap: 9px;
+      margin-top: 14px;
+    }
+
+    .legend-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    .dot.blue { background: var(--blue); }
+    .dot.cyan { background: var(--cyan); }
+    .dot.yellow { background: var(--yellow); }
+    .dot.orange { background: var(--orange); }
+    .dot.purple { background: var(--purple); }
+
+    @media (max-width: 980px) {
+      body { padding: 22px; }
+      .span-7, .span-5, .span-4, .span-6 { grid-column: span 12; }
+      .analogy, .two-col, .demo { grid-template-columns: 1fr; }
+      .arrow-mid { transform: rotate(90deg); }
+      .flow { grid-template-columns: 1fr; }
+      .node::after {
+        content: "↓";
+        right: 50%;
+        top: auto;
+        bottom: -25px;
+        transform: translateX(50%);
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Scene Registry</h1>
+    <p class="subtitle">
+      A Kubernetes-style <strong>List/Watch</strong> model for scene state: sources assert spatial entities,
+      consumers take a versioned snapshot, then follow ordered deltas. Planning correctness comes from an explicit
+      WorldMonitor sync barrier before motion planning.
+    </p>
+    <div class="badge-row">
+      <span class="badge">Primary analogy: Kubernetes List/Watch</span>
+      <span class="badge">Robotics analogy: MoveIt PlanningScene + Tesseract Environment</span>
+      <span class="badge">v1: inline payloads</span>
+      <span class="badge">No memory2 dependency</span>
+    </div>
+  </header>
+
+  <section class="grid">
+    <article class="card span-12">
+      <h2>1. Core analogy</h2>
+      <div class="analogy">
+        <div class="lane k8s">
+          <h3>Kubernetes</h3>
+          <p>Clients list resource objects, then watch ordered changes from a known <code>resourceVersion</code>.</p>
+          <div class="map-row">
+            <div class="mini"><strong>Object</strong><span>Pod, Node, ConfigMap</span></div>
+            <div class="mini"><strong>List</strong><span>Current snapshot</span></div>
+            <div class="mini"><strong>Watch</strong><span>ADDED / MODIFIED / DELETED</span></div>
+            <div class="mini"><strong>resourceVersion</strong><span>Cursor and cache version</span></div>
+          </div>
+        </div>
+        <div class="arrow-mid">≈</div>
+        <div class="lane dimos">
+          <h3>DimOS Scene Registry</h3>
+          <p>Modules read a versioned scene snapshot, then subscribe to ordered <code>SceneEntityDelta</code> events.</p>
+          <div class="map-row">
+            <div class="mini"><strong>SceneEntity</strong><span>Object, voxel map, region, sim geom</span></div>
+            <div class="mini"><strong>SceneSnapshot</strong><span>Current registry state</span></div>
+            <div class="mini"><strong>Delta stream</strong><span>add / update / remove</span></div>
+            <div class="mini"><strong>registry_version</strong><span>Cursor and sync point</span></div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="card span-12">
+      <h2>2. End-to-end flow</h2>
+      <div class="flow">
+        <div class="node">
+          <span class="tag source">Sources</span>
+          <h3>Scene sources assert state</h3>
+          <ul>
+            <li>MuJoCo pointcloud</li>
+            <li>Semantic object modules</li>
+            <li>Manipulation voxel map source</li>
+            <li>Manual/static declarations</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag registry">Registry</span>
+          <h3>Scene Registry materializes current state</h3>
+          <ul>
+            <li>Source-scoped identity</li>
+            <li>Inline typed payloads</li>
+            <li>Global registry version</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag consumer">List/Watch</span>
+          <h3>Consumers use snapshot + deltas</h3>
+          <ul>
+            <li><code>get_snapshot()</code></li>
+            <li><code>watch(from_version)</code></li>
+            <li>Local cache recovery by relist</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag projection">WorldMonitor</span>
+          <h3>Pre-plan sync barrier</h3>
+          <ul>
+            <li>Select relevant entities</li>
+            <li>Apply target-exclusion policy</li>
+            <li>Project payloads to WorldSpec</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag planner">Planner</span>
+          <h3>RoboPlan collision world</h3>
+          <ul>
+            <li>Primitive / mesh obstacles</li>
+            <li>OcTree projection for voxel maps</li>
+            <li>ManipulationModule planner avoids collisions</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="card span-7">
+      <h2>3. Proposed data model</h2>
+      <p>A <code>SceneEntity</code> is a broad spatial item, not necessarily a semantic object. Payload type tells consumers how to interpret it.</p>
+      <div class="codebox">SceneEntity {
+  id: string                  // source-scoped stable id
+  source_id: string
+  frame_id: string            // e.g. "world"
+  pose: Pose                  // identity for world-frame maps
+  payloads: ScenePayload[]    // inline in v1
+  updated_at: float
+}
+
+ScenePayload {
+  type: string                // PointCloud2, Box3D, Mesh, TSDF, ...
+  data: typed inline payload
+}
+
+SceneSnapshot {
+  version: int
+  entities: SceneEntity[]
+}
+
+SceneEntityDelta {
+  version: int
+  operation: add | update | remove
+  entity_id: string
+  entity?: SceneEntity
+}</div>
+    </article>
+
+    <article class="card span-5">
+      <h2>4. v1 simplifications</h2>
+      <div class="stack">
+        <div class="decision">
+          <h3>Inline payloads only</h3>
+          <p>No memory2 refs, stream refs, or external payload handles in v1.</p>
+        </div>
+        <div class="decision">
+          <h3>One aggregate voxel-map entity</h3>
+          <p>Do not explode voxels into per-cell SceneEntities.</p>
+        </div>
+        <div class="decision">
+          <h3>Voxel resolution via config</h3>
+          <p>For now, follow existing module practice: voxel size is configured on producing/consuming modules.</p>
+        </div>
+        <div class="warning">
+          <h3>Future improvement</h3>
+          <p>Add a typed voxel-map payload carrying resolution and occupancy metadata with the payload.</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="card span-12">
+      <h2>5. Flagship demo: xArm MuJoCo voxel-map manipulation planning</h2>
+      <div class="demo">
+        <div>
+          <div class="codebox">MujocoSimModule.pointcloud
+  → ManipulationVoxelMapSource
+  → SceneRegistry.apply_source_snapshot(
+      SceneEntity(
+        id="mapping/manipulation_voxel_map",
+        frame_id="world",
+        pose=identity,
+        payload=PointCloud2 occupied voxel centers
+      )
+    )
+  → WorldMonitor.sync_planning_scene()
+  → RoboPlanWorld builds OcTree using RoboPlan world config
+  → ManipulationModule plans arm path around occupied space</div>
+        </div>
+        <div>
+          <h3>What the demo proves</h3>
+          <div class="pill-list">
+            <span class="pill">Pointcloud noise is stabilized into voxel belief</span>
+            <span class="pill">Registry holds the same state used by planning and visualization</span>
+            <span class="pill">WorldMonitor is a projection layer, not source truth</span>
+            <span class="pill">RoboPlan receives OcTree collision geometry</span>
+            <span class="pill">Viser can layer voxel map + semantics + planned trajectory</span>
+          </div>
+          <div class="legend">
+            <div class="legend-row"><span class="dot blue"></span>Source data: MuJoCo pointcloud</div>
+            <div class="legend-row"><span class="dot cyan"></span>Registry state: SceneEntity snapshot</div>
+            <div class="legend-row"><span class="dot yellow"></span>Projection: voxel/pointcloud payload → OcTree</div>
+            <div class="legend-row"><span class="dot orange"></span>Planner: RoboPlan manipulation path</div>
+            <div class="legend-row"><span class="dot purple"></span>Visualizer: Viser scene mirror</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="card span-6">
+      <h2>6. Consumer responsibilities</h2>
+      <div class="two-col">
+        <div>
+          <h3>WorldMonitor</h3>
+          <p>Consumes registry snapshot at plan time and projects supported payloads into the active <code>WorldSpec</code>.</p>
+          <div class="pill-list">
+            <span class="pill">Box/Mesh → obstacle</span>
+            <span class="pill">Voxel map cloud → OcTree</span>
+            <span class="pill">Target exclusion policy</span>
+          </div>
+        </div>
+        <div>
+          <h3>Viser mirror</h3>
+          <p>Consumes snapshot/watch promptly for inspection; it is not the source of planning safety.</p>
+          <div class="pill-list">
+            <span class="pill">Voxel layer</span>
+            <span class="pill">Semantic overlay</span>
+            <span class="pill">Projected obstacle layer</span>
+            <span class="pill">Planned trajectory</span>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="card span-6">
+      <h2>7. Why this avoids the old sync bug</h2>
+      <p>The planner no longer relies on incidental perception-side caches. Before every relevant plan, WorldMonitor takes a coherent registry snapshot and applies planner-specific projections.</p>
+      <div class="codebox">Old failure shape:
+  grasp generator sees pointcloud context
+  planner world misses obstacles
+  trajectory collides
+
+New shape:
+  SceneRegistry snapshot at version N
+  WorldMonitor syncs version N into RoboPlanWorld
+  planner checks trajectory against projected obstacles</div>
+    </article>
+
+    <article class="card span-12">
+      <h2>8. Versioning model</h2>
+      <div class="two-col">
+        <div>
+          <h3>What the version means</h3>
+          <p>
+            <code>registry_version</code> is a global monotonic cursor for registry mutations. Every accepted source
+            snapshot or delta that changes current state advances the version. A snapshot is a coherent view of all
+            entities at one version.
+          </p>
+          <div class="codebox">v41: simulation/mujoco/table ADDED
+v42: mapping/manipulation_voxel_map UPDATED
+v43: perception/object_7 ADDED
+
+get_snapshot() -> SceneSnapshot(version=43, entities=[...])
+watch(from_version=43) -> events strictly after v43</div>
+        </div>
+        <div>
+          <h3>Why consumers care</h3>
+          <p>
+            Versions let consumers say exactly which scene they rendered, cached, or planned against. They are not
+            wall-clock freshness guarantees; they are consistency cursors.
+          </p>
+          <div class="pill-list">
+            <span class="pill">Planner reports planned_against_version</span>
+            <span class="pill">Visualizer knows whether it is caught up</span>
+            <span class="pill">Watch gaps recover by relisting</span>
+            <span class="pill">Debug logs can reproduce scene state</span>
+          </div>
+        </div>
+      </div>
+      <div class="codebox">List/Watch contract:
+  1. Consumer calls get_snapshot()
+  2. Consumer records snapshot.version
+  3. Consumer watches from that version
+  4. If watch is interrupted or too old, consumer relists
+
+Planning contract:
+  1. WorldMonitor calls get_snapshot()
+  2. WorldMonitor projects that exact version into WorldSpec
+  3. Planner produces a plan tagged with that version
+  4. Executor may reject/replan if registry changed past policy threshold</div>
+    </article>
+
+    <article class="card span-12">
+      <h2>9. Consumer workflows</h2>
+      <div class="flow">
+        <div class="node">
+          <span class="tag consumer">Viser startup</span>
+          <h3>Initial scene render</h3>
+          <ul>
+            <li>Call <code>get_snapshot()</code></li>
+            <li>Render every supported payload</li>
+            <li>Start <code>watch(snapshot.version)</code></li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag consumer">Viser live</span>
+          <h3>Prompt visual updates</h3>
+          <ul>
+            <li><code>add</code>: add layer/object</li>
+            <li><code>update</code>: replace payload render</li>
+            <li><code>remove</code>: delete render node</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag projection">Plan request</span>
+          <h3>Sync before planning</h3>
+          <ul>
+            <li>WorldMonitor snapshots registry</li>
+            <li>Projects supported payloads</li>
+            <li>Applies exclusion policy</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag planner">Planning</span>
+          <h3>Tagged result</h3>
+          <ul>
+            <li>Plan against synced WorldSpec</li>
+            <li>Return path + scene version</li>
+            <li>Expose projected obstacle summary</li>
+          </ul>
+        </div>
+        <div class="node">
+          <span class="tag source">Source update</span>
+          <h3>Source snapshot apply</h3>
+          <ul>
+            <li>Source asserts current entities</li>
+            <li>Registry diffs per source</li>
+            <li>Missing entities become removals</li>
+          </ul>
+        </div>
+      </div>
+      <div class="codebox">Example consumer behavior:
+
+Visualizer:
+  snapshot = registry.get_snapshot()
+  render(snapshot.entities)
+  for delta in registry.watch(snapshot.version):
+      apply_visual_delta(delta)
+
+WorldMonitor:
+  snapshot = registry.get_snapshot()
+  result = sync_planning_scene(snapshot, policy={exclude: current_target})
+  plan = manipulation_planner.plan(world_version=result.registry_version)
+
+Source adapter:
+  entities = build_entities_from_current_source_state()
+  registry.apply_source_snapshot(source_id, entities)</div>
+    </article>
+  </section>
+</main>
+</body>
+</html>

@@ -200,7 +200,7 @@ class OpenArmBus:
         channel: str,
         motors: list[DamiaoMotor],
         *,
-        fd: bool = False,
+        fd: bool = True,
         interface: str = "socketcan",
     ) -> None:
         if not motors:
@@ -292,12 +292,17 @@ class OpenArmBus:
             raise RuntimeError("bus not open — call .open() first")
         import can
 
+        # Damiao command frames are always 8-byte classical CAN payloads.  An
+        # FD-enabled SocketCAN interface can carry both classical and FD frames;
+        # opening the socket with fd=True is for accepting FD-format replies, not
+        # for widening Damiao command frames.  This matches dm_control_rs, whose
+        # Damiao codec emits classical frames even when the transport is FD-capable.
         msg = can.Message(
             arbitration_id=arbitration_id,
             data=data,
             is_extended_id=False,
-            is_fd=self._fd,
-            bitrate_switch=self._fd,
+            is_fd=False,
+            bitrate_switch=False,
         )
         # Retry on TX buffer full (ENOBUFS) — gs_usb's kernel-side TX queue
         # is small. python-can chains the OSError via `raise ... from`,

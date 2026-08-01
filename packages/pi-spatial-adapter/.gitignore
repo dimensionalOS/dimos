@@ -1,0 +1,6 @@
+# The repository-wide ignore rules treat package manifests as local tooling files.
+!package.json
+!package-lock.json
+dist/
+dist-test/
+node_modules/

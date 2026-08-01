@@ -1,0 +1,1 @@
+"""Fake benchmark runtime sidecar."""

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "source_package": "packages/pi-session-viewer",
+  "package_lock_sha256": "5d7efd6c12417caa530fabd696daf38a3873e22ee5d071db75b2377f01107a4e",
+  "ai_elements_source_tag": "ai-elements@1.9.0",
+  "files": {
+    "assets/highlighted-body-OFNGDK62-BDwgyG22.js": "430aba9c24c127fefd96ddd28d88ed7e77599b21ce5a21a0012301c4182a1101",
+    "assets/index-WNCpuYrW.js": "53b2bcac38d362acebfb5d8ec3dc4bbdf0166bff1cc29e28d79a012b6a17dede",
+    "assets/mermaid-GHXKKRXX-CCel5xI7.js": "3c01469616ed2c558bc37d8bff69d2d593e2c98bbf8d2845e9029e6f083889ec",
+    "assets/style-7XFzog4z.css": "fe32a00d63ece78a891da186b0f8a49120204cafed421840be8c82f1b642cff6",
+    "index.html": "08c2afd1ad3c62fbd4240144d0c0ad5381e281fc2e09644320f5ce88d657361b"
+  }
+}

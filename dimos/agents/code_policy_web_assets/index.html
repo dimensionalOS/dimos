@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DimOS Code Policy Observer</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">DimOS</p>
+      <h1>Code Policy Observer</h1>
+    </div>
+    <div class="status-cluster">
+      <span id="connection" class="badge pending">connecting</span>
+      <span id="generation" class="badge">generation —</span>
+    </div>
+  </header>
+
+  <section class="session-panel" aria-label="Observer session">
+    <dl>
+      <div><dt>Policy session</dt><dd id="policy-session">—</dd></div>
+      <div><dt>Jupyter client</dt><dd id="client-session">—</dd></div>
+      <div><dt>Recording</dt><dd id="recording">—</dd></div>
+    </dl>
+    <label class="follow"><input id="follow" type="checkbox" checked> Follow latest</label>
+  </section>
+
+  <main id="notebook" aria-live="polite" aria-label="Observed code cells">
+    <div id="empty" class="empty">
+      <div class="pulse"></div>
+      <p>Waiting for the agent’s first <code>python_exec</code> cell…</p>
+    </div>
+  </main>
+
+  <footer>
+    Read-only IOPub observation · no execution, stdin, interrupt, restart, or shutdown access
+  </footer>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

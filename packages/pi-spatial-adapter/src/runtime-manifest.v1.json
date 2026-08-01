@@ -1,0 +1,11 @@
+{
+  "record_type": "pi-adapter-runtime-manifest",
+  "schema_version": "1.1",
+  "files": [
+    "main.js",
+    "protocol.js",
+    "session.js",
+    "tools.js",
+    "tool-definitions.v1.json"
+  ]
+}

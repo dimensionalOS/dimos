@@ -597,6 +597,35 @@ wheels = [
 ]
 
 [[package]]
+name = "can-motor-control"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/f5/857df85f5d612be90ab852a74a604d865708aea6279d9277de13f2f56782/can_motor_control-0.0.4.tar.gz", hash = "sha256:615c16eab5e1fb010623765431e2fd24b743bfa9bea66e94b3f390db4b4f6ab1", size = 128133, upload-time = "2026-07-23T16:43:08.702Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/8e/dc4652bccc1b0e4b39c87c73cb189beddd5a3a91fb95d4c4431a17e7b339/can_motor_control-0.0.4-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:ad63ead5a82bd9d71c68ed74b21c8b0b068ed35504eb472f5a93b5acf2277b50", size = 527595, upload-time = "2026-07-23T16:43:07.302Z" },
+]
+
+[[package]]
+name = "catkin-pkg"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docutils" },
+    { name = "packaging" },
+    { name = "pyparsing" },
+    { name = "python-dateutil" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/7a/dcd7ba56dc82d88b3059a6770828388fc2e136ca4c5d79003f9febf33087/catkin_pkg-1.1.0.tar.gz", hash = "sha256:df1cb6879a3a772e770a100a6613ce8fc508b4855e5b2790106ddad4a8beb43c", size = 65547, upload-time = "2025-09-10T17:34:36.911Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/1b/50316bd6f95c50686b35799abebb6168d90ee18b7c03e3065f587f010f7c/catkin_pkg-1.1.0-py3-none-any.whl", hash = "sha256:7f5486b4f5681b5f043316ce10fc638c8d0ba8127146e797c85f4024e4356027", size = 76369, upload-time = "2025-09-10T17:34:35.639Z" },
+]
+
+[[package]]
 name = "cattrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1547,6 +1576,7 @@ dependencies = [
     { name = "filelock" },
     { name = "ipython", version = "8.38.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "ipywidgets" },
     { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "lz4" },
@@ -1570,6 +1600,7 @@ dependencies = [
     { name = "rerun-sdk" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "shapely" },
     { name = "sortedcontainers" },
     { name = "sqlite-vec" },
     { name = "structlog" },
@@ -1584,21 +1615,29 @@ dependencies = [
 
 [package.optional-dependencies]
 agents = [
+    { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "ipykernel" },
+    { name = "jupyter-client" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
+    { name = "nbformat" },
     { name = "ollama" },
     { name = "openai" },
+    { name = "pyzmq" },
     { name = "sounddevice" },
+    { name = "uvicorn" },
 ]
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "catkin-pkg" },
     { name = "chromadb" },
     { name = "coacd" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64'" },
@@ -1610,12 +1649,15 @@ all = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
+    { name = "ftservo-python-sdk" },
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "gtsam-extended" },
+    { name = "h5py" },
     { name = "hydra-core" },
     { name = "ipykernel" },
     { name = "jinja2" },
+    { name = "jupyter-client" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
@@ -1626,32 +1668,40 @@ all = [
     { name = "matplotlib" },
     { name = "moondream" },
     { name = "mujoco" },
+    { name = "nbformat" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "onnxruntime" },
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64'" },
     { name = "open-clip-torch" },
     { name = "openai" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
     { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "playground" },
     { name = "portal" },
+    { name = "pyarrow" },
     { name = "pycollada" },
     { name = "pygame" },
     { name = "pymavlink" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
+    { name = "pytorch-ignite" },
     { name = "pyyaml" },
+    { name = "pyzmq" },
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
+    { name = "rich" },
     { name = "roboplan" },
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "tensorboard" },
     { name = "timm" },
+    { name = "torch" },
     { name = "torchreid" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
@@ -1659,6 +1709,7 @@ all = [
     { name = "unitree-webrtc-connect" },
     { name = "usd-core" },
     { name = "uvicorn" },
+    { name = "vgn" },
     { name = "viser", extra = ["urdf"] },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
@@ -1678,7 +1729,9 @@ base = [
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
     { name = "hydra-core" },
+    { name = "ipykernel" },
     { name = "jinja2" },
+    { name = "jupyter-client" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
@@ -1686,10 +1739,12 @@ base = [
     { name = "langchain-openai" },
     { name = "lap" },
     { name = "moondream" },
+    { name = "nbformat" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "pyzmq" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1712,6 +1767,13 @@ dds = [
 drone = [
     { name = "pymavlink" },
 ]
+grasp = [
+    { name = "catkin-pkg" },
+    { name = "matplotlib" },
+    { name = "pytorch-ignite" },
+    { name = "torch" },
+    { name = "vgn" },
+]
 learning = [
     { name = "h5py" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1720,6 +1782,7 @@ learning = [
 ]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "matplotlib" },
@@ -1752,6 +1815,14 @@ misc = [
     { name = "torchreid" },
     { name = "xarm-python-sdk" },
 ]
+openarm = [
+    { name = "ftservo-python-sdk" },
+    { name = "rich" },
+]
+openarm-mini-teleop = [
+    { name = "ftservo-python-sdk" },
+    { name = "rich" },
+]
 perception = [
     { name = "chromadb" },
     { name = "einops" },
@@ -1783,7 +1854,9 @@ unitree = [
     { name = "ffmpeg-python" },
     { name = "gtsam-extended" },
     { name = "hydra-core" },
+    { name = "ipykernel" },
     { name = "jinja2" },
+    { name = "jupyter-client" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
@@ -1791,10 +1864,12 @@ unitree = [
     { name = "langchain-openai" },
     { name = "lap" },
     { name = "moondream" },
+    { name = "nbformat" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "pyzmq" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1816,7 +1891,9 @@ unitree-dds = [
     { name = "ffmpeg-python" },
     { name = "gtsam-extended" },
     { name = "hydra-core" },
+    { name = "ipykernel" },
     { name = "jinja2" },
+    { name = "jupyter-client" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
@@ -1825,10 +1902,12 @@ unitree-dds = [
     { name = "lap" },
     { name = "mcap" },
     { name = "moondream" },
+    { name = "nbformat" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "pyzmq" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1902,6 +1981,7 @@ lint = [
     { name = "types-pyyaml" },
     { name = "types-reportlab" },
     { name = "types-requests" },
+    { name = "types-shapely" },
     { name = "ultralytics" },
     { name = "watchdog" },
     { name = "xacro" },
@@ -2034,6 +2114,8 @@ requires-dist = [
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "attrs", specifier = ">=25.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.0.2" },
+    { name = "catkin-pkg", marker = "extra == 'grasp'", specifier = ">=1.1.0" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
     { name = "coacd", marker = "extra == 'scene'", specifier = ">=1.0.0" },
@@ -2041,9 +2123,10 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "grasp", "learning", "manipulation", "misc", "openarm", "perception", "scene", "sim", "unitree", "visualization", "web", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
+    { name = "dimos", extras = ["openarm-mini-teleop"], marker = "extra == 'openarm'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm", specifier = ">=0.1.3" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
@@ -2053,18 +2136,23 @@ requires-dist = [
     { name = "eclipse-zenoh", specifier = ">=1.9.0,<2.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
+    { name = "fastapi", marker = "extra == 'agents'", specifier = ">=0.115.6" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },
     { name = "faster-whisper", marker = "extra == 'agents'", specifier = ">=1.0.0" },
     { name = "ffmpeg-python", marker = "extra == 'web'" },
     { name = "filelock", specifier = ">=3.16,<4" },
+    { name = "ftservo-python-sdk", marker = "extra == 'openarm-mini-teleop'" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
+    { name = "ipykernel", marker = "extra == 'agents'", specifier = ">=7.2.0" },
     { name = "ipykernel", marker = "extra == 'misc'" },
     { name = "ipython" },
+    { name = "ipywidgets", specifier = ">=8.0.4" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.6" },
+    { name = "jupyter-client", marker = "extra == 'agents'", specifier = ">=8.8.0" },
     { name = "langchain", marker = "extra == 'agents'", specifier = ">=1.2.3,<2" },
     { name = "langchain-core", marker = "extra == 'agents'", specifier = ">=1.2.22,<2" },
     { name = "langchain-huggingface", marker = "extra == 'agents'", specifier = ">=1,<2" },
@@ -2075,10 +2163,12 @@ requires-dist = [
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
+    { name = "matplotlib", marker = "extra == 'grasp'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
+    { name = "nbformat", marker = "extra == 'agents'", specifier = ">=5.10.4" },
     { name = "numba", specifier = ">=0.60.0" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "ollama", marker = "extra == 'agents'", specifier = ">=0.6.0" },
@@ -2111,15 +2201,20 @@ requires-dist = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
+    { name = "pytorch-ignite", marker = "extra == 'grasp'" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
+    { name = "pyzmq", marker = "extra == 'agents'", specifier = ">=27.1.0" },
     { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'manipulation'", specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
+    { name = "rich", marker = "extra == 'openarm-mini-teleop'" },
+    { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.0.100" },
     { name = "roboplan", marker = "extra == 'manipulation'", specifier = ">=0.5.1" },
     { name = "scipy", specifier = ">=1.15.1" },
+    { name = "shapely", specifier = ">=2.1.2" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
     { name = "soundfile", marker = "extra == 'web'" },
@@ -2132,6 +2227,7 @@ requires-dist = [
     { name = "textual-serve", specifier = ">=1.1.1,<2" },
     { name = "timm", marker = "extra == 'misc'", specifier = ">=1.0.15" },
     { name = "toolz", specifier = ">=1.1.0" },
+    { name = "torch", marker = "extra == 'grasp'" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'apriltag'", specifier = ">=4.0.0" },
@@ -2143,7 +2239,9 @@ requires-dist = [
     { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
+    { name = "uvicorn", marker = "extra == 'agents'", specifier = ">=0.34.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
+    { name = "vgn", marker = "extra == 'grasp'", git = "https://github.com/ethz-asl/vgn.git?rev=d7af0622433f52ae88ebe81533f12b46b33e951a" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'manipulation'", specifier = ">=1.0.29" },
     { name = "websocket-client", specifier = ">=1.8" },
     { name = "xacro", marker = "extra == 'manipulation'" },
@@ -2152,7 +2250,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'manipulation'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "openarm-mini-teleop", "openarm", "grasp", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2192,6 +2290,7 @@ lint = [
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915,<7" },
     { name = "types-reportlab", specifier = ">=4.5.0" },
     { name = "types-requests", specifier = ">=2.32.4.20260107,<3" },
+    { name = "types-shapely", specifier = ">=2.1.0.20260630" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
@@ -2387,6 +2486,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/d8/8abe80d62c5dce1075578031bcfde07e735bcf0afe2886dd48b470162ab4/docstring_to_markdown-0.17.tar.gz", hash = "sha256:df72a112294c7492487c9da2451cae0faeee06e86008245c188c5761c9590ca3", size = 32260, upload-time = "2025-05-02T15:09:07.932Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/7b/af3d0da15bed3a8665419bb3a630585756920f4ad67abfdfef26240ebcc0/docstring_to_markdown-0.17-py3-none-any.whl", hash = "sha256:fd7d5094aa83943bf5f9e1a13701866b7c452eac19765380dead666e36d3711c", size = 23479, upload-time = "2025-05-02T15:09:06.676Z" },
+]
+
+[[package]]
+name = "docutils"
+version = "0.23"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/a4/5180d9afc57e8fca05601dd652bdff19604c218814037fe90ffc7625a50a/docutils-0.23.tar.gz", hash = "sha256:746f5060322511280a1e50eb76846ed6bf2342984b2ac04dc42caa1a8d78799e", size = 2303823, upload-time = "2026-05-27T17:41:06.934Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/32/91/30151a39f7570f448ed84529390628a651d7f27c87d73c9b887f8189695e/docutils-0.23-py3-none-any.whl", hash = "sha256:25d013af9bf23bc1c7b2b093dff4208166c53a94786c9e447808335ef1185fea", size = 634701, upload-time = "2026-05-27T17:40:58.442Z" },
 ]
 
 [[package]]
@@ -2992,6 +3100,18 @@ wheels = [
 ]
 
 [[package]]
+name = "ftservo-python-sdk"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyserial" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/da/d3f07d88136d338d075df06eaee4e4ada90da03f37dbdea63d339b3341d0/ftservo_python_sdk-2.0.0.tar.gz", hash = "sha256:4ffad15e4d31ecd386fe941abcb8bb23b9f50f2825e5681786c5170c34dc9a5f", size = 13354, upload-time = "2025-04-17T12:31:07.401Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/a5/a7dad40ae9ae48180c7c595b4af62df63fcf0ce83c097bf4307f4ebfaa16/ftservo_python_sdk-2.0.0-py3-none-any.whl", hash = "sha256:c8303df01b2c772f3e1dffbb3b789e2d39545f6fb187ec45032c7737356be2a4", size = 12172, upload-time = "2025-04-17T12:31:05.78Z" },
+]
+
+[[package]]
 name = "future"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3539,6 +3659,23 @@ wheels = [
 ]
 
 [[package]]
+name = "ipywidgets"
+version = "8.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "comm" },
+    { name = "ipython", version = "8.38.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "ipython", version = "9.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "jupyterlab-widgets" },
+    { name = "traitlets" },
+    { name = "widgetsnbextension" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/ae/c5ce1edc1afe042eadb445e95b0671b03cee61895264357956e61c0d2ac0/ipywidgets-8.1.8.tar.gz", hash = "sha256:61f969306b95f85fba6b6986b7fe45d73124d1d9e3023a8068710d47a22ea668", size = 116739, upload-time = "2025-11-01T21:18:12.393Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl", hash = "sha256:ecaca67aed704a338f88f67b1181b58f821ab5dc89c1f0f5ef99db43c1c2921e", size = 139808, upload-time = "2025-11-01T21:18:10.956Z" },
+]
+
+[[package]]
 name = "isort"
 version = "7.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3875,6 +4012,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/02/49/9d1284d0dc65e2c757b74c6687b6d319b02f822ad039e5c512df9194d9dd/jupyter_core-5.9.1.tar.gz", hash = "sha256:4d09aaff303b9566c3ce657f580bd089ff5c91f5f89cf7d8846c3cdf465b5508", size = 89814, upload-time = "2025-10-16T19:19:18.444Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/e7/80988e32bf6f73919a113473a604f5a8f09094de312b9d52b79c2df7612b/jupyter_core-5.9.1-py3-none-any.whl", hash = "sha256:ebf87fdc6073d142e114c72c9e29a9d7ca03fad818c5d300ce2adc1fb0743407", size = 29032, upload-time = "2025-10-16T19:19:16.783Z" },
+]
+
+[[package]]
+name = "jupyterlab-widgets"
+version = "3.0.16"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/2d/ef58fed122b268c69c0aa099da20bc67657cdfb2e222688d5731bd5b971d/jupyterlab_widgets-3.0.16.tar.gz", hash = "sha256:423da05071d55cf27a9e602216d35a3a65a3e41cdf9c5d3b643b814ce38c19e0", size = 897423, upload-time = "2025-11-01T21:11:29.724Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl", hash = "sha256:45fa36d9c6422cf2559198e4db481aa243c7a32d9926b500781c830c80f7ecf8", size = 914926, upload-time = "2025-11-01T21:11:28.008Z" },
 ]
 
 [[package]]
@@ -7170,6 +7316,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyserial"
+version = "3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/7d/ae3f0a63f41e4d2f6cb66a5b57197850f919f59e558159a4dd3a818f5082/pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb", size = 159125, upload-time = "2020-11-23T03:59:15.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/bc/587a445451b253b285629263eb51c2d8e9bcea4fc97826266d186f96f558/pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0", size = 90585, upload-time = "2020-11-23T03:59:13.41Z" },
+]
+
+[[package]]
 name = "pysocks"
 version = "1.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7465,6 +7620,19 @@ wheels = [
 [package.optional-dependencies]
 global = [
     { name = "platformdirs" },
+]
+
+[[package]]
+name = "pytorch-ignite"
+version = "0.5.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/9c/b0123b099d5be1f738fc77c0978e5e0317d0e0131259049aba480e7daa54/pytorch_ignite-0.5.5.tar.gz", hash = "sha256:2c14de75c939a3cc06d2e7de00b1e0a261917ef9bd874dac2e69d789dfa9cc64", size = 7543860, upload-time = "2026-07-22T15:12:49.468Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/a3/bce5615b7bfc0cfc98bc4ea699c4a9b23812375d0991385c6e5f74b37c5f/pytorch_ignite-0.5.5-py3-none-any.whl", hash = "sha256:9a397b0899968612efd00ac75bad64f20a9a91a8244f37bdcb8888af61455cf9", size = 371761, upload-time = "2026-07-22T15:12:46.25Z" },
 ]
 
 [[package]]
@@ -9025,6 +9193,19 @@ wheels = [
 ]
 
 [[package]]
+name = "types-shapely"
+version = "2.1.0.20260724"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/51/22/02404cc5fbd547168892beef096c64b8d48edc38655a0928c422ac2ca104/types_shapely-2.1.0.20260724.tar.gz", hash = "sha256:841b088343b4ee2deb30332b3051f19f70df4555a306a12206779666c73d86b2", size = 27418, upload-time = "2026-07-24T04:59:37.139Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/4e/13ff982eadccff6e75b2db6b59f9e76f250d400850b8e7142d775fd425be/types_shapely-2.1.0.20260724-py3-none-any.whl", hash = "sha256:459cab05b22861baa34618cd53730eedbffb3bd1e558c077a962340980e4f719", size = 38515, upload-time = "2026-07-24T04:59:36.246Z" },
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -9308,6 +9489,11 @@ wheels = [
 ]
 
 [[package]]
+name = "vgn"
+version = "0.1.0"
+source = { git = "https://github.com/ethz-asl/vgn.git?rev=d7af0622433f52ae88ebe81533f12b46b33e951a#d7af0622433f52ae88ebe81533f12b46b33e951a" }
+
+[[package]]
 name = "vhacdx"
 version = "0.0.10"
 source = { registry = "https://pypi.org/simple" }
@@ -9589,6 +9775,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/06/28/55bc3e107a56fdcf7d5022cb32b8c21d98a9cc2df5cd9f3b93e10419099e/whatthepatch-1.0.7.tar.gz", hash = "sha256:9eefb4ebea5200408e02d413d2b4bc28daea6b78bb4b4d53431af7245f7d7edf", size = 34612, upload-time = "2024-11-16T17:21:22.153Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/93/af1d6ccb69ab6b5a00e03fa0cefa563f9862412667776ea15dd4eece3a90/whatthepatch-1.0.7-py3-none-any.whl", hash = "sha256:1b6f655fd31091c001c209529dfaabbabdbad438f5de14e3951266ea0fc6e7ed", size = 11964, upload-time = "2024-11-16T17:21:20.761Z" },
+]
+
+[[package]]
+name = "widgetsnbextension"
+version = "4.0.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/f4/c67440c7fb409a71b7404b7aefcd7569a9c0d6bd071299bf4198ae7a5d95/widgetsnbextension-4.0.15.tar.gz", hash = "sha256:de8610639996f1567952d763a5a41af8af37f2575a41f9852a38f947eb82a3b9", size = 1097402, upload-time = "2025-11-01T21:15:55.178Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/0e/fa3b193432cfc60c93b42f3be03365f5f909d2b3ea410295cf36df739e31/widgetsnbextension-4.0.15-py3-none-any.whl", hash = "sha256:8156704e4346a571d9ce73b84bee86a29906c9abfd7223b7228a28899ccf3366", size = 2196503, upload-time = "2025-11-01T21:15:53.565Z" },
 ]
 
 [[package]]

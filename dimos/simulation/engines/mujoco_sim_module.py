@@ -267,6 +267,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    initial_joint_positions: list[float] | None = None
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -537,6 +538,9 @@ class MujocoSimModule(
         else:
             self._imu_base_qpos_slice = None
         self._root_spawn_clearance_z = self._compute_root_spawn_clearance_z()
+
+        if self.config.initial_joint_positions is not None:
+            self._engine.reset_joint_positions(self.config.initial_joint_positions)
 
         # Wire SHM bridge hooks.
         self._sim_hooks = _WholeBodySimHooks(
@@ -893,6 +897,8 @@ class MujocoSimModule(
             last_timestamp = frame.timestamp
             ts = time.time()
 
+            self._publish_tf(ts, frame)
+
             if self.config.enable_color:
                 color_img = Image(
                     data=frame.rgb,
@@ -910,8 +916,6 @@ class MujocoSimModule(
                     ts=ts,
                 )
                 self.depth_image.publish(depth_img)
-
-            self._publish_tf(ts, frame)
 
             published_count += 1
             if published_count == 1:

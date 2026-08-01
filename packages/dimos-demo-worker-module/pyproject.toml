@@ -1,0 +1,10 @@
+[project]
+name = "dimos-demo-worker-module"
+version = "0.1.0"
+description = "Separately packaged DimOS module demo for Python venv placement."
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

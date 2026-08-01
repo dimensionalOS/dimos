@@ -1,0 +1,61 @@
+{
+  "model": {
+    "provider": "openai",
+    "model_id": "gpt-5.6-luna",
+    "thinking_level": "medium"
+  },
+  "node_adapter_command": [
+    "/usr/bin/node",
+    "/home/cc/.opencode-kanban-worktrees/dimos/cc-frontier-skill-benchmark/packages/pi-spatial-adapter/dist/main.js"
+  ],
+  "auth_mode": "openai-api-key",
+  "openai_api_key_env_path": "/home/cc/.opencode-kanban-worktrees/dimos/cc-frontier-skill-benchmark/.env",
+  "runner_image": "localhost/dimos-spatial-runner-final@sha256:bfa322f7a4b2bdb10e9cbb28cfa9a54432fcb4d938faaf2da30a634fc5a7bf60",
+  "rootless_podman_required": true,
+  "resource_limits": {
+    "cpu_cores": 2.0,
+    "memory_mb": 4096,
+    "agent_environment_mb": 512,
+    "pids": 256,
+    "timeout_seconds": 1800
+  },
+  "output_root": "/home/cc/spatial-real-pilot/benchmark-runs/spatial-10-case-demo-20260728/public",
+  "audit_network_policy": {
+    "network_access": "general-outbound",
+    "audit": "heuristic",
+    "audit_limitations": "cannot-prove-no-online-use"
+  },
+  "prompt_modes": [
+    "visualization-forbidden",
+    "visualization-encouraged"
+  ],
+  "corpus_root": "/home/cc/spatial-real-pilot",
+  "oracle_root": "/home/cc/spatial-real-pilot/oracle",
+  "private_root": "/home/cc/spatial-real-pilot/benchmark-runs/spatial-10-case-demo-20260728/private",
+  "ledger_path": "/home/cc/spatial-real-pilot/benchmark-runs/spatial-10-case-demo-20260728/private/score-ledger.jsonl",
+  "selection": {
+    "scene_id": "scene_c1fde4fff93bc5fc46b91cabd9b0a3e656d11eba0ed2dd72d8084e3eae02d620",
+    "trajectory_id": "trajectory_5b522c31f48374dbaa322e466d5b0e27b84f919371cd88e2137305bdf652702a",
+    "question_id": "question_0f7b5ea9e99704d16b728ce5c48ece978a3f6d9be86e962cdf84b44c97470749",
+    "variant": "clean",
+    "instance_id": "instance_3441b34fc780c3d3d88fe601feb867490bbe1aa73c809aaf89ded230c7448b38"
+  },
+  "budgets": {
+    "max_turns": 100,
+    "max_tool_calls": 100,
+    "timeout_ms": 900000
+  },
+  "scorer_revision": "spatial-10-case-demo-20260728",
+  "fixed_smoke_identity": {
+    "scene_id": "scene_c1fde4fff93bc5fc46b91cabd9b0a3e656d11eba0ed2dd72d8084e3eae02d620",
+    "trajectory_id": "trajectory_5b522c31f48374dbaa322e466d5b0e27b84f919371cd88e2137305bdf652702a",
+    "question_id": "question_0f7b5ea9e99704d16b728ce5c48ece978a3f6d9be86e962cdf84b44c97470749",
+    "variant": "clean",
+    "instance_id": "instance_3441b34fc780c3d3d88fe601feb867490bbe1aa73c809aaf89ded230c7448b38"
+  },
+  "implementation_digests": {
+    "adapter": "adapter@sha256:3e4ca8735e6fdfa912ff749bc7cecddda3458f1f04cadeb72b465a8733f35a4a",
+    "scorer": "scorer@sha256:81c0d1133086061e38ecf7b897f8332cede424e85b8faa8871b26b9ac11c75d4",
+    "protocol": "protocol@sha256:28e829f1ea0fd0fcde0dbedb2c49deb344b8a71952903a7b4210809bebee8503"
+  }
+}

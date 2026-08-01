@@ -47,7 +47,7 @@ UNREGISTERED_ADAPTER_DIRS: set[str] = set()
 # Every name each registry must declare. Removing a name from a manifest is a
 # conscious change: update this set in the same PR.
 EXPECTED_NAMES = {
-    "manipulators": {"a750", "mock", "openarm", "piper", "sim_mujoco", "xarm"},
+    "manipulators": {"a750", "mock", "openarm", "openarm_rs", "piper", "sim_mujoco", "xarm"},
     "drive_trains": {
         "flowbase",
         "mock_twist_base",
@@ -55,7 +55,13 @@ EXPECTED_NAMES = {
         "transport_ros",
         "unitree_go2",
     },
-    "whole_body": {"sim_mujoco_g1", "transport_lcm", "transport_ros"},
+    "whole_body": {
+        "benchmark_runtime",
+        "openarm_dual",
+        "sim_mujoco_g1",
+        "transport_lcm",
+        "transport_ros",
+    },
 }
 
 FAMILIES = [

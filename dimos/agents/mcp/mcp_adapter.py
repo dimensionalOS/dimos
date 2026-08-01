@@ -116,7 +116,7 @@ class McpAdapter:
                 )
                 if resp.status_code == 200:
                     return True
-            except requests.ConnectionError:
+            except (requests.ConnectionError, requests.ReadTimeout):
                 pass
             time.sleep(interval)
         return False

@@ -891,6 +891,230 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
 """
         return cast("dict[str, Any]", self.exec(code))
 
+    def get_scene_oracle_snapshot(
+        self,
+        entity_ids: tuple[str, ...],
+        *,
+        snapshot_schema_version: str,
+        navigation_bounds: tuple[float, float, float, float],
+        navigation_resolution_m: float,
+        embodiment_clearance_m: float,
+        ground_tolerance_m: float,
+    ) -> dict[str, Any]:
+        """Capture selected live entities in one synchronous browser execution.
+
+        Semantic interpretation remains in the private DimOS benchmark
+        provider. The browser returns stable IDs, current state IDs, transforms,
+        world-space bounds, and conservative spawn-connected free space derived
+        from every live Rapier collider without title-based entity selection.
+        """
+
+        min_x, min_z, max_x, max_z = navigation_bounds
+        navigation_request = {
+            "min_x": min_x,
+            "min_z": min_z,
+            "max_x": max_x,
+            "max_z": max_z,
+            "cell_size_m": navigation_resolution_m,
+            "clearance_m": embodiment_clearance_m,
+            "ground_tolerance_m": ground_tolerance_m,
+        }
+        code = f"""
+const requestedIds = {json.dumps(entity_ids)};
+const requestedSnapshotSchemaVersion = {json.dumps(snapshot_schema_version)};
+const supportedSnapshotSchemaVersion = "1.0";
+if (requestedSnapshotSchemaVersion !== supportedSnapshotSchemaVersion) {{
+  throw new Error(
+    `Unsupported scene snapshot schema ${{requestedSnapshotSchemaVersion}}; `
+    + `supported: ${{supportedSnapshotSchemaVersion}}`
+  );
+}}
+const navigationRequest = {json.dumps(navigation_request)};
+const selected = [];
+const missingIds = [];
+for (const entityId of requestedIds) {{
+  const asset = assets.find((candidate) => candidate.id === entityId);
+  const object = assetsGroup.getObjectByName(`asset:${{entityId}}`);
+  if (!asset || !object) {{
+    missingIds.push(entityId);
+    continue;
+  }}
+  object.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(object);
+  if (bounds.isEmpty()) {{
+    throw new Error(`Empty world bounds for DimSim asset ${{entityId}}`);
+  }}
+  const position = new THREE.Vector3();
+  object.getWorldPosition(position);
+  selected.push({{
+    entity_id: entityId,
+    display_title: String(asset.title || ""),
+    current_state_id: String(asset.currentStateId || asset.currentState || ""),
+    state_ids: (asset.states || []).map((state) => String(state.id)).sort(),
+    position: {{x: position.x, z: position.z}},
+    yaw_rad: object.rotation.y,
+    bounds: {{
+      min_x: bounds.min.x,
+      max_x: bounds.max.x,
+      min_z: bounds.min.z,
+      max_z: bounds.max.z,
+    }},
+  }});
+}}
+selected.sort((first, second) => first.entity_id.localeCompare(second.entity_id));
+const agentPosition = agent.getPosition();
+const cellSize = navigationRequest.cell_size_m;
+const width = Math.round((navigationRequest.max_x - navigationRequest.min_x) / cellSize);
+const height = Math.round((navigationRequest.max_z - navigationRequest.min_z) / cellSize);
+if (width <= 0 || height <= 0
+    || Math.abs(navigationRequest.min_x + width * cellSize - navigationRequest.max_x) > 1e-6
+    || Math.abs(navigationRequest.min_z + height * cellSize - navigationRequest.max_z) > 1e-6) {{
+  throw new Error("Navigation bounds must contain a positive whole number of cells");
+}}
+
+rapierWorld.updateSceneQueries();
+const agentBodyHandle = agent.body.handle;
+let collisionSourceCount = 0;
+rapierWorld.colliders.forEach((collider) => {{
+  const parent = collider.parent();
+  if (!collider.isSensor() && (!parent || parent.handle !== agentBodyHandle)) {{
+    collisionSourceCount++;
+  }}
+}});
+if (collisionSourceCount === 0) {{
+  throw new Error("DimSim collision world exposes no non-agent collision sources");
+}}
+
+const rayOriginY = agentPosition[1] + 1.0;
+const down = {{x: 0, y: -1, z: 0}};
+const identityRotation = {{x: 0, y: 0, z: 0, w: 1}};
+const spawnRay = new RAPIER.Ray(
+  {{x: agentPosition[0], y: rayOriginY, z: agentPosition[2]}},
+  down,
+);
+const spawnGroundHit = rapierWorld.castRay(
+  spawnRay, 3.0, true, undefined, undefined, undefined, agent.body,
+  (collider) => !collider.isSensor(),
+);
+if (!spawnGroundHit) {{
+  throw new Error("Canonical spawn has no collision-world ground support");
+}}
+const spawnGroundY = rayOriginY - spawnGroundHit.timeOfImpact;
+
+// A cell is retained only when a square prism enclosing the full circular
+// footprint at every point in that cell is collision-free. The half-cell
+// diagonal makes the conversion from sampled centers to cell polygons
+// conservative instead of allowing obstacles to fall between samples.
+const horizontalHalfExtent = (
+  agent.radius + navigationRequest.clearance_m + cellSize * Math.SQRT2 / 2
+);
+const verticalHalfExtent = agent.halfHeight + agent.radius;
+const queryShape = new RAPIER.Cuboid(
+  horizontalHalfExtent,
+  verticalHalfExtent,
+  horizontalHalfExtent,
+);
+const free = new Uint8Array(width * height);
+for (let row = 0; row < height; row++) {{
+  const z = navigationRequest.min_z + (row + 0.5) * cellSize;
+  for (let col = 0; col < width; col++) {{
+    const x = navigationRequest.min_x + (col + 0.5) * cellSize;
+    const supportRay = new RAPIER.Ray({{x, y: rayOriginY, z}}, down);
+    const support = rapierWorld.castRay(
+      supportRay, 3.0, true, undefined, undefined, undefined, agent.body,
+      (collider) => !collider.isSensor(),
+    );
+    if (!support) continue;
+    const groundY = rayOriginY - support.timeOfImpact;
+    if (Math.abs(groundY - spawnGroundY) > navigationRequest.ground_tolerance_m) continue;
+
+    let blocked = false;
+    rapierWorld.intersectionsWithShape(
+      {{x, y: agentPosition[1], z}},
+      identityRotation,
+      queryShape,
+      (collider) => {{
+        if (!collider.isSensor()) blocked = true;
+        return !blocked;
+      }},
+      undefined,
+      undefined,
+      undefined,
+      agent.body,
+    );
+    if (!blocked) free[row * width + col] = 1;
+  }}
+}}
+
+const spawnCol = Math.floor((agentPosition[0] - navigationRequest.min_x) / cellSize);
+const spawnRow = Math.floor((agentPosition[2] - navigationRequest.min_z) / cellSize);
+if (spawnCol < 0 || spawnCol >= width || spawnRow < 0 || spawnRow >= height
+    || !free[spawnRow * width + spawnCol]) {{
+  throw new Error("Canonical spawn is not in collision-free navigation geometry");
+}}
+const reachable = new Uint8Array(width * height);
+const queue = new Int32Array(width * height);
+let queueStart = 0;
+let queueEnd = 0;
+const spawnIndex = spawnRow * width + spawnCol;
+reachable[spawnIndex] = 1;
+queue[queueEnd++] = spawnIndex;
+while (queueStart < queueEnd) {{
+  const index = queue[queueStart++];
+  const row = Math.floor(index / width);
+  const col = index - row * width;
+  const neighbors = [
+    [row - 1, col],
+    [row + 1, col],
+    [row, col - 1],
+    [row, col + 1],
+  ];
+  for (const [nextRow, nextCol] of neighbors) {{
+    if (nextRow < 0 || nextRow >= height || nextCol < 0 || nextCol >= width) continue;
+    const next = nextRow * width + nextCol;
+    if (free[next] && !reachable[next]) {{
+      reachable[next] = 1;
+      queue[queueEnd++] = next;
+    }}
+  }}
+}}
+const reachableRuns = [];
+for (let row = 0; row < height; row++) {{
+  let start = -1;
+  for (let col = 0; col <= width; col++) {{
+    const occupied = col < width && reachable[row * width + col];
+    if (occupied && start < 0) start = col;
+    if (!occupied && start >= 0) {{
+      reachableRuns.push({{row, start_col: start, end_col: col - 1}});
+      start = -1;
+    }}
+  }}
+}}
+if (reachableRuns.length === 0) {{
+  throw new Error("Collision-world navigation has no spawn-connected free cells");
+}}
+return {{
+  snapshot_schema_version: supportedSnapshotSchemaVersion,
+  asset_count: assets.length,
+  missing_entity_ids: missingIds.sort(),
+  agent_position: {{x: agentPosition[0], z: agentPosition[2]}},
+  agent_radius_m: agent.radius,
+  agent_half_height_m: agent.halfHeight,
+  navigation_grid: {{
+    min_x: navigationRequest.min_x,
+    min_z: navigationRequest.min_z,
+    cell_size_m: cellSize,
+    width,
+    height,
+    clearance_radius_m: agent.radius + navigationRequest.clearance_m,
+    collision_source_count: collisionSourceCount,
+    reachable_runs: reachableRuns,
+  }},
+  entities: selected,
+}};
+"""
+        return cast("dict[str, Any]", self.exec(code))
+
     def set_agent_position(
         self,
         x: float,

@@ -1,0 +1,25 @@
+{
+  "name": "@dimos/pi-spatial-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "clean": "rm -rf dist dist-test",
+    "build": "npm run clean && tsc -p tsconfig.build.json && cp src/tool-definitions.v1.json dist/tool-definitions.v1.json && cp src/runtime-manifest.v1.json dist/runtime-manifest.v1.json",
+    "manual": "pi --provider openai-codex --model gpt-5.6-luna --thinking medium --no-builtin-tools --no-extensions --extension ./src/manual-code-policy-extension.ts --no-skills --no-prompt-templates --no-context-files --tools python_exec --no-session --system-prompt \"You control a robot in a simulated environment. Complete the user's task through python_exec. Its persistent Python session preloads app for deployed DimOS RPCs and memory for observations. Inspect available interfaces when needed, use closed-loop behavior, stop the robot when the task is complete, and report what you observed.\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "npm run clean && tsc -p tsconfig.build.json && cp src/tool-definitions.v1.json dist/tool-definitions.v1.json && cp src/runtime-manifest.v1.json dist/runtime-manifest.v1.json && tsc -p tsconfig.test.json && cp src/tool-definitions.v1.json dist-test/src/tool-definitions.v1.json && cp src/runtime-manifest.v1.json dist-test/src/runtime-manifest.v1.json && node --test dist-test/test/*.test.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
+    "typebox": "^1.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}

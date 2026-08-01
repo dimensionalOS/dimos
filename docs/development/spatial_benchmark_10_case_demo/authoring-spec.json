@@ -1,0 +1,112 @@
+{
+  "experiment_id": "spatial-10-case-demo-20260728",
+  "pi_config": "pi-config.json",
+  "cases": [
+    {
+      "case_id": "demo-01-direct-room-connection",
+      "selection": {
+        "scene_id": "scene_c1fde4fff93bc5fc46b91cabd9b0a3e656d11eba0ed2dd72d8084e3eae02d620",
+        "trajectory_id": "trajectory_5b522c31f48374dbaa322e466d5b0e27b84f919371cd88e2137305bdf652702a",
+        "question_id": "question_0f7b5ea9e99704d16b728ce5c48ece978a3f6d9be86e962cdf84b44c97470749",
+        "variant": "clean",
+        "instance_id": "instance_3441b34fc780c3d3d88fe601feb867490bbe1aa73c809aaf89ded230c7448b38"
+      }
+    },
+    {
+      "case_id": "demo-02-direct-room-connection",
+      "selection": {
+        "scene_id": "scene_32b79baf69bcc28b09eff0d5f7feb948049d7881e0cbf92148ae9f2f06d8f4ae",
+        "trajectory_id": "trajectory_04d898455519e4cb13a8e5f76b734ce39db3dccf468029886bcba587d26e3738",
+        "question_id": "question_0c4a6ed0938f77d9a3ab5bda85f0c52ed09638976fe1ae6a8bb38eb6191febd2",
+        "variant": "clean",
+        "instance_id": "instance_71227cdc91484ad7ff1a16024262432f039aa41fae737e4690e96ef202755b99"
+      }
+    },
+    {
+      "case_id": "demo-03-in-place-rotation",
+      "selection": {
+        "scene_id": "scene_cd2debbf3a14d93709f6fa1f30e764f79d1e0f605c805a95c736cc0c8ae8149e",
+        "trajectory_id": "trajectory_7e7a5c3cb880d64ee129ec4815e0fe79f598b58f24070d61cedc071b2c395d9b",
+        "question_id": "question_05ab95f8f2a71300ea516b3748abab890a3a75ff343694637ad3519ed36f7e12",
+        "variant": "clean",
+        "instance_id": "instance_33204af6e8052bd09461e73b1efce28135df095e42a8c5aa359dbef5bda78c65"
+      }
+    },
+    {
+      "case_id": "demo-04-pose-occupancy",
+      "selection": {
+        "scene_id": "scene_f7a8fde45fb6966d4644a79a4d14cc7d042a048e0cc58e2ab89d96ecf0d8b56d",
+        "trajectory_id": "trajectory_b6ef73931af7b003b3f7a15f43d9816017caba968f353dc6c94c3885746021c9",
+        "question_id": "question_0a8f3b2d37eaab819111881bed9fcf4d2dcb26e50458fdc2dbec3e490dd63ae2",
+        "variant": "clean",
+        "instance_id": "instance_3b88a83bf098b4c84ccbe823a6dabd63bd25bc48efadd9699602fcfa25e0755d"
+      }
+    },
+    {
+      "case_id": "demo-05-straight-translation",
+      "selection": {
+        "scene_id": "scene_e92fb81666ba4f988b237dcc9acedb1ecea3663c2f1cec4424ef5af37db417c4",
+        "trajectory_id": "trajectory_7890f9d831640d15ce4d32bffe46aa9944ae79956945cd25c7eaa4430efae991",
+        "question_id": "question_0bc395988057c8fdf9fea0b5b5e8cc0acca4d260d7aae62fb25fab7bc0b870cd",
+        "variant": "clean",
+        "instance_id": "instance_36cef59b5df0e46ed04b355b3083d6ee12825958fcc31f9c0823ee0c6d13d70b"
+      }
+    },
+    {
+      "case_id": "demo-06-eligible-room-count",
+      "selection": {
+        "scene_id": "scene_87cc2b360f281f0240f6a9845039c42ce99f1a6b3dc1e975af9eb10f05df7166",
+        "trajectory_id": "trajectory_48cbf24486a127f8779181a40f3226467540fbe37603f5606240a0cd8c46d73a",
+        "question_id": "question_35cbe3b99fab0a5d342050cbd07e9c824e2a1f05d0be6492094ef8dfc3fa4e24",
+        "variant": "clean",
+        "instance_id": "instance_d193ad4db31b91369a9c5ddc00c2c24384cfe539c51c716606cbff25f6a50a54"
+      }
+    },
+    {
+      "case_id": "demo-07-direct-neighbor-count",
+      "selection": {
+        "scene_id": "scene_8119491554a55057196ddcfae8d6dae2a35a49c8b7f975da9e3ef3700b369ff0",
+        "trajectory_id": "trajectory_bfd8dc353dd448d9ade394d74d62eaba765fa44339fa19874a909b1f64b2efb4",
+        "question_id": "question_0c734586155c92514e68cef8b3b1fb8949d126a2a73fcde30e02f9d24ed556ba",
+        "variant": "clean",
+        "instance_id": "instance_f3e20a4971170c7943b631dd0db6cd1b6d0a97234238c8a1b811c3ed61adb0d0"
+      }
+    },
+    {
+      "case_id": "demo-08-direct-neighbor-count",
+      "selection": {
+        "scene_id": "scene_dde81f07488e76194eb191e0b3e732ae302c31be74a212a6990710df922026fd",
+        "trajectory_id": "trajectory_d02ecae77c0498749c04f9c1dcfaeafbeffb8c4282720678799474b929b1b7db",
+        "question_id": "question_4a628556257bfe2a83b4087d8cf34c74601d44c7ab07cd4a462300a6239a679d",
+        "variant": "clean",
+        "instance_id": "instance_e119c2fa811acf76250f0d1af9cd902aa7f7ac3f03b00800c4ce57415348b2ce"
+      }
+    },
+    {
+      "case_id": "demo-09-eligible-room-count",
+      "selection": {
+        "scene_id": "scene_ac672fc53a0a973f5203f54700d1a7813a6f17d747ec5376e655b48658e0349b",
+        "trajectory_id": "trajectory_1f03d2a7d1b8413bff136dd5e2d548c9ae480084c83d2d16b64a1d9cbe9bc3cd",
+        "question_id": "question_1af652e837df9a1de5504b7b8a69b9ce1cbb9f50d9ac20fb953ab698f9cb2b05",
+        "variant": "clean",
+        "instance_id": "instance_2af175ed30e52a7573e3dd7ca5a635e40cd779353f2c56005909c8caeeafd1da"
+      }
+    },
+    {
+      "case_id": "demo-10-same-room",
+      "selection": {
+        "scene_id": "scene_bec9bfcdae7a4baf47192924268e3323276510d9e87d511ee4b0fafddd8ce80c",
+        "trajectory_id": "trajectory_f72c5305cc85cf782b8ce8b8a8ba56e80a81c050dd780a6b4a3e2b975901a74d",
+        "question_id": "question_14f4d1bbe6def238349f64469184787bc82857ca218f42ed11cb3dc1f32f1abd",
+        "variant": "clean",
+        "instance_id": "instance_c5fa3ddc5c214f1d96e2934764315df47c7641e1d8aff24dce145acf34c01436"
+      }
+    }
+  ],
+  "conditions": [
+    {
+      "name": "visualization-forbidden",
+      "prompt_mode": "visualization-forbidden"
+    }
+  ]
+}

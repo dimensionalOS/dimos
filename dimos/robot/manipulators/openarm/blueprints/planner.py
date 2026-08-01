@@ -22,6 +22,8 @@ from dimos.robot.manipulators.openarm.blueprints.basic import (
     left_hw,
     mock_left,
     mock_right,
+    openarm_rs_hw,
+    openarm_task,
     right_hw,
 )
 from dimos.robot.manipulators.openarm.config import openarm_model_config
@@ -49,5 +51,15 @@ openarm_planner_coordinator = autoconnect(
     coordinator(
         hardware=[left_hw, right_hw],
         tasks=[trajectory_task(left_hw, right_hw)],
+    ),
+)
+
+openarm_rs_planner_coordinator = autoconnect(
+    planner(
+        robots=[openarm_model_config("right", name="arm")],
+    ),
+    coordinator(
+        hardware=[openarm_rs_hw],
+        tasks=[openarm_task(openarm_rs_hw)],
     ),
 )

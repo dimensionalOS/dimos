@@ -1,0 +1,5 @@
+# Benchmark tasks are compiled and frozen before evaluation
+
+Benchmark tasks will be generated offline from DimSim's private oracle, validated for objective executable meaning, and materialized in a versioned release before any scored run. Public task language will be stored separately from private semantic queries, expected answers, reset state, and scoring predicates. A task defines stable semantic intent; an episode separately binds that task to a scene reset, start state, runtime capability profile, and limits. The runner will load frozen episodes and will not generate or repair questions during evaluation. This preserves reproducibility, prevents oracle leakage, and lets future start-state or scene variation expand episode coverage without changing task identity.
+
+The current change is limited to benchmark generation: reading DimSim oracle data, generating public task language and private executable contracts or expected answers, validating them, and writing the frozen corpus. DimSim execution, Pi-baseline integration, agent-facing submission tools, and scoring are deferred to a separate evaluation-layer change.

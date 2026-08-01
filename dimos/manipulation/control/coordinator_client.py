@@ -24,12 +24,10 @@ Interfaces with a running ControlCoordinator via RPC to:
 Usage:
     # Terminal 1: Start the coordinator
     dimos run coordinator-mock          # Single arm
-    dimos run coordinator-dual-mock     # Dual arm
 
     # Terminal 2: Run this client
     python -m dimos.manipulation.control.coordinator_client
-    python -m dimos.manipulation.control.coordinator_client --task traj_left
-    python -m dimos.manipulation.control.coordinator_client --task traj_right
+    python -m dimos.manipulation.control.coordinator_client --task traj_arm
 
 How it works:
     1. Connects to ControlCoordinator via LCM RPC

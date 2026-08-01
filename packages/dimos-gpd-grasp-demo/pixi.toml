@@ -1,0 +1,14 @@
+[workspace]
+name = "dimos-gpd-grasp-demo"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+cmake = ">=3.20"
+compilers = "*"
+eigen = "*"
+opencv = "*"
+pcl = "*"
+pkg-config = "*"
+python = ">=3.11,<3.13"
+uv = "*"

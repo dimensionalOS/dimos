@@ -61,12 +61,14 @@ data/*
 /logs
 /recordings
 results/
+artifacts/
 /assets/output/
 /assets/rgbd_data/
 /assets/saved_maps/
 /assets/model-cache/
 /assets/agent/memory.txt
 /assets/teleop_certs/
+/libero/
 /misc/fresh-ubuntu-tests/cache
 
 # Default output of `dimos apriltag`

@@ -1,0 +1,178 @@
+{
+  "schemaVersion": "1.0",
+  "summary": {
+    "id": "019f-pi-review",
+    "status": "complete",
+    "startedAt": "2026-07-23T18:42:11Z",
+    "model": "gpt-5.2",
+    "provider": "openai",
+    "entryCount": 5,
+    "branchCount": 1,
+    "totalUsage": {
+      "input": 18422,
+      "output": 3104,
+      "cacheRead": 9200,
+      "reasoning": 1830,
+      "totalTokens": 32556,
+      "cost": {
+        "total": 0.184
+      }
+    }
+  },
+  "rootIds": [
+    "user-1"
+  ],
+  "headIds": [
+    "assistant-2",
+    "alternate-1"
+  ],
+  "defaultHeadId": "assistant-2",
+  "entries": [
+    {
+      "id": "user-1",
+      "parentId": null,
+      "depth": 0,
+      "type": "message",
+      "role": "user",
+      "timestamp": "2026-07-23T18:42:12Z",
+      "timestampMs": 1753296132000,
+      "title": "User",
+      "preview": "Inspect the scene and identify a safe route to the blue mug.",
+      "parts": [
+        {
+          "type": "text",
+          "text": "Inspect the scene and identify a safe route to the **blue mug**."
+        }
+      ],
+      "raw": {
+        "type": "message",
+        "id": "user-1",
+        "parentId": null
+      }
+    },
+    {
+      "id": "assistant-1",
+      "parentId": "user-1",
+      "depth": 1,
+      "type": "message",
+      "role": "assistant",
+      "timestamp": "2026-07-23T18:42:19Z",
+      "timestampMs": 1753296139000,
+      "title": "Assistant",
+      "preview": "I\u2019ll inspect the spatial map before choosing a route.",
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "stopReason": "toolUse",
+      "usage": {
+        "input": 8410,
+        "output": 822,
+        "reasoning": 510,
+        "totalTokens": 9742
+      },
+      "parts": [
+        {
+          "type": "thinking",
+          "text": "The direct path is narrow. I should inspect obstacle clearance and prefer the wider eastern aisle.",
+          "redacted": false
+        },
+        {
+          "type": "text",
+          "text": "I\u2019ll inspect the spatial map before choosing a route."
+        },
+        {
+          "type": "tool_call",
+          "callId": "call-map-1",
+          "name": "query_spatial_map",
+          "arguments": {
+            "target": "blue mug",
+            "include_obstacles": true
+          }
+        }
+      ],
+      "raw": {
+        "type": "message",
+        "id": "assistant-1",
+        "parentId": "user-1"
+      }
+    },
+    {
+      "id": "tool-1",
+      "parentId": "assistant-1",
+      "depth": 2,
+      "type": "message",
+      "role": "tool",
+      "timestamp": "2026-07-23T18:42:20Z",
+      "timestampMs": 1753296140000,
+      "title": "Tool \u00b7 query_spatial_map",
+      "preview": "",
+      "parts": [
+        {
+          "type": "tool_result",
+          "callId": "call-map-1",
+          "name": "query_spatial_map",
+          "content": "Target: blue mug at (2.4, 1.1)\nClearance: east aisle 0.92 m\nDirect aisle: blocked",
+          "isError": false
+        }
+      ],
+      "raw": {
+        "type": "message",
+        "id": "tool-1",
+        "parentId": "assistant-1"
+      }
+    },
+    {
+      "id": "assistant-2",
+      "parentId": "tool-1",
+      "depth": 3,
+      "type": "message",
+      "role": "assistant",
+      "timestamp": "2026-07-23T18:42:27Z",
+      "timestampMs": 1753296147000,
+      "title": "Assistant",
+      "preview": "The east aisle is the safer route.",
+      "model": "gpt-5.2",
+      "provider": "openai",
+      "stopReason": "stop",
+      "usage": {
+        "input": 10012,
+        "output": 2282,
+        "cacheRead": 9200,
+        "reasoning": 1320,
+        "totalTokens": 22814
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "The **east aisle** is the safer route. It preserves 0.92 m of clearance and avoids the obstruction in the direct aisle.\n\n1. Move east 1.3 m.\n2. Turn north toward the workbench.\n3. Approach the mug at low speed."
+        }
+      ],
+      "raw": {
+        "type": "message",
+        "id": "assistant-2",
+        "parentId": "tool-1"
+      }
+    },
+    {
+      "id": "alternate-1",
+      "parentId": "assistant-1",
+      "depth": 2,
+      "type": "branch_summary",
+      "role": "state",
+      "timestamp": "2026-07-23T18:42:22Z",
+      "title": "branch summary",
+      "preview": "",
+      "parts": [
+        {
+          "type": "state",
+          "label": "branch summary",
+          "value": "Direct route considered; rejected because the aisle is blocked."
+        }
+      ],
+      "raw": {
+        "type": "branch_summary",
+        "id": "alternate-1",
+        "parentId": "assistant-1"
+      }
+    }
+  ]
+}

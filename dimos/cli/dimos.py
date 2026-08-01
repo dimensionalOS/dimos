@@ -59,6 +59,10 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.runtime_environment import (
+    MissingPreparedPythonProjectError,
+    PythonProjectRuntimeEnvironmentError,
+)
 from dimos.mapping.cli.map import main as _map_main
 from dimos.mapping.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.cli.rename import main as _map_rename_main
@@ -180,6 +184,9 @@ main.add_typer(go2tool_app, name="go2tool")
 main.add_typer(piper_app, name="piper")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
+
+runtime_app = typer.Typer(help="Runtime environment commands")
+main.add_typer(runtime_app, name="runtime")
 
 
 def arg_help(
@@ -441,7 +448,19 @@ def run(
     blueprint_config = blueprint.config()
     kwargs = load_config_args(blueprint_config, blueprint_args, config_path, cli_config_overrides)
 
-    coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    try:
+        coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    except MissingPreparedPythonProjectError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses unprepared Python project runtime "
+            f"'{exc.runtime_name}' at '{exc.project}'; missing executable "
+            f"'{exc.missing_executable}'. Prepare it with: "
+            f"dimos runtime prepare {blueprint_name} --runtime {exc.runtime_name}"
+        ) from exc
+    except PythonProjectRuntimeEnvironmentError as exc:
+        raise typer.BadParameter(
+            f"Blueprint '{blueprint_name}' uses an invalid Python project runtime: {exc}"
+        ) from exc
 
     if daemon:
         # Health check before daemonizing — catch early crashes
@@ -498,6 +517,43 @@ def run(
             coordinator.loop()
         finally:
             entry.remove()
+
+
+@runtime_app.command("prepare")
+def runtime_prepare(
+    ctx: typer.Context,
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to prepare"),
+    runtime_name: str | None = typer.Option(None, "--runtime", help="Runtime name to prepare"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+) -> None:
+    """Prepare active Python project runtime environments for a blueprint."""
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.runtime_prepare import RuntimePrepareError, prepare_blueprint_runtimes
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
+
+    cli_config_overrides: dict[str, Any] = ctx.obj
+    global_config.update(**cli_config_overrides)
+
+    blueprint_name = "-".join(robot_types)
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
+
+    if disable:
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    blueprint_config = blueprint.config()
+    load_config_args(blueprint_config, blueprint_args, config_path)
+
+    try:
+        prepare_blueprint_runtimes(blueprint, runtime_name, output=typer.echo)
+    except RuntimePrepareError as exc:
+        raise typer.BadParameter(f"Blueprint '{blueprint_name}': {exc}") from exc
 
 
 @main.command()
@@ -711,6 +767,101 @@ def agent_send_cmd(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(text)
+
+
+@main.command("code-policy-watch")
+def code_policy_watch_cmd(
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        help="Parent directory in which to reserve a new private recording.",
+    ),
+    startup_timeout: float = typer.Option(
+        10.0,
+        "--startup-timeout",
+        min=0.1,
+        help="Seconds allowed for kernel preparation and verified IOPub readiness.",
+    ),
+    poll_interval: float = typer.Option(
+        0.25,
+        "--poll-interval",
+        min=0.05,
+        help="Seconds between code-policy lifecycle checks.",
+    ),
+    module: str | None = typer.Option(
+        None,
+        "--module",
+        help="Explicit CodePolicyModule identity when discovery is ambiguous.",
+    ),
+    run_id: str | None = typer.Option(
+        None,
+        "--run",
+        help="Require the current running DimOS instance to have this run ID.",
+    ),
+    web: bool = typer.Option(
+        False,
+        "--web",
+        help="Render observed cells in a local read-only browser page.",
+    ),
+    web_port: int = typer.Option(
+        8766,
+        "--web-port",
+        min=0,
+        max=65535,
+        help="Loopback web port; use 0 to select an available port.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the browser automatically after verified observer readiness.",
+    ),
+) -> None:
+    """Observe a running code-policy kernel through read-only Jupyter IOPub."""
+    # Imported only for this agents-extra command; the base CLI stays usable without
+    # Jupyter dependencies.
+    from dimos.agents.code_policy_observer import (
+        select_code_policy_module,
+        watch_code_policy,
+    )
+    from dimos.porcelain.dimos import Dimos
+
+    entry = get_most_recent(alive_only=True)
+    if entry is None:
+        typer.echo("Error: no running DimOS instance", err=True)
+        raise typer.Exit(1)
+    if run_id is not None and entry.run_id != run_id:
+        typer.echo(
+            f"Error: current run is {entry.run_id!r}, not requested {run_id!r}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    app = None
+    try:
+        app = Dimos.connect(timeout=startup_timeout)
+        selected = select_code_policy_module(dir(app), module)
+        host = getattr(app, selected)
+        watch_kwargs: dict[str, Any] = {}
+        if web:
+            from dimos.agents.code_policy_observer_web import WebObserverView
+
+            watch_kwargs["view"] = WebObserverView(
+                port=web_port,
+                open_browser=open_browser,
+            )
+        watch_code_policy(
+            host,
+            output_parent=output,
+            startup_timeout_s=startup_timeout,
+            poll_interval_s=poll_interval,
+            **watch_kwargs,
+        )
+    except (LookupError, RuntimeError, TimeoutError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        if app is not None:
+            app.stop()
 
 
 @main.command()

@@ -1,0 +1,19 @@
+{
+  "backend": "robosuite",
+  "episode_id": "robosuite-panda-lift",
+  "task_id": "Lift",
+  "runtime_host": "127.0.0.1",
+  "runtime_port": 8766,
+  "robot_id": "panda",
+  "dof": 8,
+  "control_step_hz": 100,
+  "ticks": 30,
+  "target_position": 0.05,
+  "seed": 7,
+  "artifact_dir": "artifacts/benchmark/robosuite-panda-lift",
+  "env_name": "Lift",
+  "robot_model": "Panda",
+  "controller": "JOINT_POSITION",
+  "horizon": 200,
+  "camera_name": "agentview"
+}

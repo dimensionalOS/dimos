@@ -60,7 +60,8 @@ class LazyAdapterRegistry(Generic[AdapterT]):
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy factory import path; conflicting duplicates raise."""
-        if ":" not in factory_path:
+        module_name, separator, attr = factory_path.partition(":")
+        if not separator or not module_name or not attr:
             raise ValueError(f"Invalid adapter factory path: {factory_path!r}")
         key = name.lower()
         existing = self._factory_paths.get(key)
@@ -101,7 +102,13 @@ class LazyAdapterRegistry(Generic[AdapterT]):
                 f"Cannot create {self.kind} {name!r}: "
                 f"importing {module_name!r} (from {factory_path!r}) failed: {exc}"
             ) from exc
-        factory = cast("Callable[..., AdapterT]", getattr(module, attr))
+        try:
+            factory = cast("Callable[..., AdapterT]", getattr(module, attr))
+        except AttributeError as exc:
+            raise ImportError(
+                f"Cannot create {self.kind} {name!r}: missing factory {attr!r} "
+                f"in module {module_name!r}"
+            ) from exc
         if not callable(factory):
             raise TypeError(f"Adapter factory {factory_path!r} is not callable")
         self._factories[key] = factory

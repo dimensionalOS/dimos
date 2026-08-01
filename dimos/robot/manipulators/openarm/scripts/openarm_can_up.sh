@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Bring up CAN interfaces for OpenArm. Default is classical CAN @ 1 Mbit,
-# which is what most gs_usb (OpenMoko / Geschwister Schneider) USB-CAN
-# adapters support. Use MODE=fd if you have a CAN-FD-capable adapter.
+# Bring up CAN interfaces for OpenArm. Default is CAN-FD @ 1M/5M.
+# Use MODE=classical if you need classical CAN @ 1 Mbit.
 # Run with sudo or as root.
 #
 # Usage:
-#   sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh                 # classical 1M, can0 and can1
+#   sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh                 # CAN-FD 1M/5M, can0 and can1
 #   sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh can0            # single interface
-#   sudo MODE=fd ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh can0    # CAN-FD 1M/5M
+#   sudo MODE=classical ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh can0
 set -euo pipefail
 
 BITRATE=1000000
 DBITRATE=5000000
-MODE="${MODE:-classical}"   # classical | fd
+MODE="${MODE:-fd}"   # classical | fd
 IFACES_ARG="${*:-can0 can1}"
 # shellcheck disable=SC2206
 IFACES=(${IFACES_ARG[@]})

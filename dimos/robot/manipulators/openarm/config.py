@@ -44,7 +44,20 @@ RIGHT_CAN = "can0"
 # Leave true for normal operation; it is idempotent and ensures motors are in
 # the expected CTRL_MODE=MIT mode at connect time.
 AUTO_SET_MIT_MODE = True
-OPENARM_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE}
+OPENARM_ADAPTER_KWARGS = {"auto_set_mit_mode": AUTO_SET_MIT_MODE, "fd": True}
+OPENARM_DUAL_DEFAULT_KP = (70.0, 70.0, 70.0, 60.0, 10.0, 10.0, 10.0)
+OPENARM_DUAL_DEFAULT_KD = (2.75, 2.5, 2.0, 2.0, 0.7, 0.6, 0.5)
+OPENARM_DUAL_GAIN_ADAPTER_KWARGS = {
+    **OPENARM_ADAPTER_KWARGS,
+    "kp": list(OPENARM_DUAL_DEFAULT_KP),
+    "kd": list(OPENARM_DUAL_DEFAULT_KD),
+}
+OPENARM_RS_ADAPTER_KWARGS = {"gravity_model_path": OPENARM_RIGHT_MODEL}
+
+OPENARM_DUAL_WHOLE_BODY_JOINTS = [
+    *[f"openarm/openarm_left_joint{i}" for i in range(1, 8)],
+    *[f"openarm/openarm_right_joint{i}" for i in range(1, 8)],
+]
 
 
 def validate_side(side: str) -> None:
@@ -116,6 +129,16 @@ def openarm_single_hardware(
         name="arm",
         adapter_type=adapter_type,
         address=address,
+    )
+
+
+def openarm_rs_hardware() -> HardwareComponent:
+    return openarm_hardware(
+        "right",
+        name="arm",
+        adapter_type="openarm_rs",
+        address=RIGHT_CAN,
+        adapter_kwargs=OPENARM_RS_ADAPTER_KWARGS,
     )
 
 

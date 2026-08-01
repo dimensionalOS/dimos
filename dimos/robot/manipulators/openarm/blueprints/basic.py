@@ -16,14 +16,18 @@
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import trajectory_task
 from dimos.robot.manipulators.openarm.config import (
     LEFT_CAN,
     OPENARM_ADAPTER_KWARGS,
+    OPENARM_DUAL_WHOLE_BODY_JOINTS,
     RIGHT_CAN,
     openarm_hardware,
+    openarm_rs_hardware,
 )
 
 
@@ -51,6 +55,7 @@ right_hw = openarm_hardware(
     adapter_type="openarm",
     adapter_kwargs=OPENARM_ADAPTER_KWARGS,
 )
+openarm_rs_hw = openarm_rs_hardware()
 
 coordinator_openarm_left = ControlCoordinator.blueprint(
     hardware=[left_hw],
@@ -65,4 +70,36 @@ coordinator_openarm_right = ControlCoordinator.blueprint(
 coordinator_openarm_bimanual = ControlCoordinator.blueprint(
     hardware=[left_hw, right_hw],
     tasks=[trajectory_task(left_hw, right_hw)],
+)
+
+coordinator_openarm_rs = ControlCoordinator.blueprint(
+    hardware=[openarm_rs_hw],
+    tasks=[openarm_task(openarm_rs_hw)],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+openarm_dual_whole_body = ControlCoordinator.blueprint(
+    hardware=[
+        HardwareComponent(
+            hardware_id="openarm",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=OPENARM_DUAL_WHOLE_BODY_JOINTS,
+            adapter_type="openarm_dual",
+            adapter_kwargs={
+                "left_address": LEFT_CAN,
+                "right_address": RIGHT_CAN,
+                "gravity_comp": True,
+            },
+        )
+    ],
+    tasks=[
+        TaskConfig(
+            name="traj_openarm",
+            type="trajectory",
+            joint_names=OPENARM_DUAL_WHOLE_BODY_JOINTS,
+        )
+    ],
 )

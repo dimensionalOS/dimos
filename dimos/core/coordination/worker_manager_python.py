@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import config_key
 from dimos.core.coordination.python_worker import PythonWorker
+from dimos.core.coordination.worker_launcher import WorkerLauncher
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
@@ -45,10 +46,19 @@ def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) 
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
-    def __init__(self, g: GlobalConfig) -> None:
+    def __init__(
+        self,
+        g: GlobalConfig,
+        worker_launcher: WorkerLauncher | None = None,
+        worker_factory: Callable[[], PythonWorker] | None = None,
+    ) -> None:
+        if worker_launcher is not None and worker_factory is not None:
+            raise ValueError("Pass either worker_launcher or worker_factory, not both")
         self._cfg = g
         self._n_workers = g.n_workers
         self._workers: list[PythonWorker] = []
+        self._worker_launcher = worker_launcher
+        self._worker_factory = worker_factory
         self._closed = False
         self._started = False
         self._stats_monitor: StatsMonitor | None = None
@@ -58,7 +68,7 @@ class WorkerManagerPython:
             return
         self._started = True
         for _ in range(self._n_workers):
-            worker = PythonWorker()
+            worker = self._create_worker()
             worker.start_process()
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
@@ -76,7 +86,7 @@ class WorkerManagerPython:
         if not self._started:
             raise RuntimeError("WorkerManager not started; call start() first")
         for _ in range(n):
-            worker = PythonWorker()
+            worker = self._create_worker()
             worker.start_process()
             self._workers.append(worker)
         self._n_workers += n
@@ -116,7 +126,7 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
-        worker = PythonWorker()
+        worker = self._create_worker()
         worker.start_process()
         self._workers.append(worker)
         self._n_workers += 1
@@ -148,7 +158,9 @@ class WorkerManagerPython:
             self._n_workers = max(0, self._n_workers - 1)
 
     def deploy_parallel(
-        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self,
+        specs: Iterable[ModuleSpec],
+        blueprint_args: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> list[ModuleProxyProtocol]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
@@ -173,12 +185,11 @@ class WorkerManagerPython:
             module_class, _, kwargs = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            instance_key = kwargs.get("instance_name") or module_class.name
-            args = blueprint_args.get(config_key(instance_key), {})
-            # instance_name is assigned by the blueprint; a user-supplied value
-            # would desync the module's RPC topic from the coordinator's proxy.
-            args = {k: v for k, v in args.items() if k != "instance_name"}
-            kwargs.update(_merge_config_kwargs(kwargs, args))
+            if blueprint_args is not None:
+                instance_key = kwargs.get("instance_name") or module_class.name
+                args = blueprint_args.get(config_key(instance_key), {})
+                safe_args = {key: value for key, value in args.items() if key != "instance_name"}
+                kwargs.update(_merge_config_kwargs(kwargs, safe_args))
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
@@ -253,6 +264,11 @@ class WorkerManagerPython:
             self.add_workers(1)
             return self._workers[-1]
         return min(candidates, key=lambda w: w.module_count)
+
+    def _create_worker(self) -> PythonWorker:
+        if self._worker_factory is not None:
+            return self._worker_factory()
+        return PythonWorker(launcher=self._worker_launcher)
 
     def _ensure_capacity_for_dedicated(self, specs: Iterable[ModuleSpec]) -> None:
         """Grow the pool so non-dedicated workers >= dedicated workers.
