@@ -146,6 +146,17 @@ def test_runtime_config_rejects_invalid_typed_overrides() -> None:
         DamiaoRuntimeConfig(kp_override=[1.0, float("nan")])
 
 
+def test_runtime_builds_robot_with_binding_motor_types() -> None:
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(use_mock_bus=True),
+    )
+
+    robot = runtime._build_robot()
+
+    assert len(robot["arm"]) == 2
+
+
 def test_arm_adapter_reports_limits_and_modes() -> None:
     adapter = DamiaoArmAdapter(
         arm_config=_arm_config(),

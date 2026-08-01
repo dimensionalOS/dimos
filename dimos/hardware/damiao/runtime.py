@@ -150,7 +150,7 @@ class DamiaoArmRuntime:
         motors = [
             can_motor_control.MotorSpec(
                 motor.name,
-                int(self._resolve_motor_type(motor.type)),
+                self._resolve_motor_type(motor.type),
                 motor.send_id,
                 motor.effective_recv_id,
             )
