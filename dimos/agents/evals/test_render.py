@@ -198,6 +198,17 @@ def test_two_recordings_shards_are_refused_rather_than_pooled(tmp_path: Path) ->
     assert not (tmp_path / "pooled.png").exists()
 
 
+def test_one_row_refuses_two_prompt_texts(tmp_path: Path) -> None:
+    """Same (model, prompt_id) under two prompt hashes is two configurations, not runs."""
+    from dataclasses import replace
+
+    before = make_case("q1", model_id="gpt-5.6-luna", prompt_id="shipping")
+    after = make_case("q1", model_id="gpt-5.6-luna", prompt_id="shipping", run_id=RUN_ID + "-later")
+    after = ScoredCase(answer=replace(after.answer, prompt_sha256="f" * 64), result=after.result)
+    with pytest.raises(ValueError, match="one figure row is one prompt text"):
+        render_figure([before, after], tmp_path / "mixed_prompt.png")
+
+
 def test_main_refuses_a_shard_directory_holding_two_recordings(tmp_path: Path) -> None:
     """The gate is reachable the way an operator actually reaches it.
 

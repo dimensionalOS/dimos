@@ -137,6 +137,40 @@ def assert_single_dataset(cases: Sequence[ScoredCase]) -> None:
         )
 
 
+def assert_single_prompt_text(cases: Sequence[ScoredCase]) -> None:
+    """Refuse a row that would silently pool two versions of one prompt.
+
+    Rows are keyed by ``(model_id, prompt_id)``; ``prompt_id`` names an arm,
+    but only ``prompt_sha256`` proves which prompt *text* ran -- ``scorer``
+    hashes it for exactly that. Two sweeps taken across an edit to the shipping
+    system prompt share the id and differ in the hash; pooled, they render as a
+    repeated measurement of one configuration, hiding precisely the change this
+    eval exists to surface.
+
+    Raises ``ValueError`` naming each offending row and its hashes, because the
+    fix is the operator's: render the runs separately, or archive the pre-edit
+    shards.
+    """
+    versions: dict[tuple[str, str], set[str]] = {}
+    for case in cases:
+        key = (case.answer.model_id, case.answer.prompt_id)
+        versions.setdefault(key, set()).add(case.answer.prompt_sha256)
+    mixed = {key: shas for key, shas in versions.items() if len(shas) > 1}
+    if mixed:
+        rows = "; ".join(
+            f"{model_id}/{prompt_id} spans {len(shas)} prompt texts "
+            f"({', '.join(sorted(sha[:12] for sha in shas))})"
+            for (model_id, prompt_id), shas in sorted(mixed.items())
+        )
+        raise ValueError(
+            f"one figure row is one prompt text: {rows}. The same prompt_id was "
+            "recorded with different prompt_sha256 values, i.e. the prompt changed "
+            "between runs. Render the runs separately (or move the older shards "
+            "aside) -- pooling them would average across the very change the sweep "
+            "is meant to show."
+        )
+
+
 def group_by_configuration(
     cases: Sequence[ScoredCase],
 ) -> OrderedDict[tuple[str, str], list[ScoredCase]]:
@@ -191,7 +225,8 @@ def render_figure(
 ) -> Path:
     """Draw the error-distribution figure and save it as a PNG.
 
-    Raises ``ValueError`` if *cases* mix two recordings (:func:`assert_single_dataset`),
+    Raises ``ValueError`` if *cases* mix two recordings (:func:`assert_single_dataset`)
+    or two prompt texts under one prompt id (:func:`assert_single_prompt_text`),
     or if the saved file exceeds :data:`MAX_PNG_BYTES`; the oversized file is
     removed rather than left behind for someone to commit.
     """
@@ -199,6 +234,7 @@ def render_figure(
     # the gate belongs here rather than in `main` so a programmatic caller cannot
     # route around it.
     assert_single_dataset(cases)
+    assert_single_prompt_text(cases)
 
     import matplotlib
 
