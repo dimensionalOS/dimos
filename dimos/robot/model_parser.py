@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -68,7 +69,7 @@ def parse_model(
     xacro_args: dict[str, str] | None = None,
 ) -> ModelDescription:
     """Parse a robot description file (.urdf, .xacro, .xml/MJCF)."""
-    path = Path(path)
+    path = Path(os.fspath(path))
     if not path.exists():
         raise FileNotFoundError(f"Robot model file not found: {path}")
 

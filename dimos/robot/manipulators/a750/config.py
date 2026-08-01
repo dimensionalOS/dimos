@@ -23,12 +23,13 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.processing import rendered_robot_description
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     base_pose,
     coordinator_joint_mapping,
     joint_names,
 )
-from dimos.utils.data import LfsPath
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "link1"),
@@ -53,12 +54,21 @@ A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 ]
 
 A750_HOME_JOINTS = [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0]
-A750_MODEL_PATH = LfsPath("a750_description") / "urdf/a750_rev1.urdf"
-A750_FK_MODEL = LfsPath("a750_description/urdf/a750_rev1_no_gripper.urdf")
+A750_DESCRIPTION_REPO = "https://github.com/adob/a750_description"
+A750_DESCRIPTION_REF = "3e4b7fe6ea0550e1f13d3dbd62f8d800ef348b14"
+_A750_REPO = RobotDescriptionSource(
+    url=A750_DESCRIPTION_REPO,
+    ref=A750_DESCRIPTION_REF,
+)
+A750_MODEL_PATH = _A750_REPO / "urdf" / "a750_rev1.urdf"
 A750_PACKAGE_PATHS: dict[str, Path] = {
-    "a750_description": LfsPath("a750_description"),
-    "a750_gazebo": LfsPath("a750_description"),
+    "a750_description": _A750_REPO / ".",
 }
+A750_FK_MODEL = rendered_robot_description(
+    A750_MODEL_PATH,
+    A750_PACKAGE_PATHS,
+    removed_joint_names=frozenset({"finger", "finger_mimic"}),
+)
 
 
 def make_a750_hardware(
