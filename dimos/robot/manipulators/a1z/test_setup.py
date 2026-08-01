@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 from typer.testing import CliRunner
@@ -20,6 +22,41 @@ from typer.testing import CliRunner
 from dimos.robot.manipulators.a1z import cli as a1z_cli
 
 runner = CliRunner()
+
+
+def test_a1z_help_lists_learning_commands_without_importing_lerobot() -> None:
+    result = runner.invoke(a1z_cli.app, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "teach" in result.output
+    assert "replay" in result.output
+    assert "run-policy" in result.output
+
+
+def test_teach_refuses_to_overwrite_recording(tmp_path: Path) -> None:
+    recording = tmp_path / "existing.db"
+    recording.touch()
+
+    result = runner.invoke(a1z_cli.app, ["teach", str(recording)])
+
+    assert result.exit_code == 2
+    assert "refusing to overwrite existing recording" in result.output
+
+
+def test_run_policy_reports_missing_optional_runtime(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def import_without_lerobot(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "dimos.experimental.robot_policy.lerobot":
+            raise ImportError("install the lerobot extra")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_lerobot)
+
+    result = runner.invoke(a1z_cli.app, ["run-policy", "checkpoint"])
+
+    assert result.exit_code == 1
+    assert "install the lerobot extra" in result.output
 
 
 def test_setup_sdk_only_does_not_check_hardware(monkeypatch) -> None:

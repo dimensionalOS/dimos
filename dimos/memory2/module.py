@@ -20,6 +20,7 @@ import inspect
 import os
 from pathlib import Path
 import sqlite3
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -324,10 +325,19 @@ class Recorder(MemoryModule):
     tf: In[TFMessage]
 
     _pose_setters: dict[str, Any] = {}
+    _closing: threading.Event
+    _poseless_counts: dict[str, int]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._closing = threading.Event()
+        self._poseless_counts = {}
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._closing.clear()
+        self._poseless_counts.clear()
 
         if self.config.g.replay:
             logger.info(
@@ -393,21 +403,36 @@ class Recorder(MemoryModule):
         """
 
         async def on_msg(stamped: tuple[float, Any]) -> None:
+            if self._closing.is_set():
+                return
             recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             pose = await self._resolve_pose(name, msg, ts)
             if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+                count = self._poseless_counts.get(name, 0) + 1
+                self._poseless_counts[name] = count
+                if count == 1 or count % 100 == 0:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose "
+                        "(%d poseless message(s); repeats logged every 100th)",
+                        name,
+                        ts,
+                        getattr(msg, "ts", None),
+                        count,
+                    )
+            if self._closing.is_set():
+                return
             stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
         # Stamp arrival time before the coalescing dispatch queue.
         stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
         self.process_observable(stamped, on_msg)
+
+    @rpc
+    def stop(self) -> None:
+        # Drop callbacks already queued on the module loop before SQLite closes.
+        self._closing.set()
+        super().stop()
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
