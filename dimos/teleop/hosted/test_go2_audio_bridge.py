@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 import wave
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from dimos.core.module import Module
@@ -213,7 +214,7 @@ def test_worker_batches_audio_and_flushes_remaining_frames(
     bridge._frames.put_nowait(frame)
     bridge._frames.put_nowait(frame)
     bridge._frames.put_nowait(None)
-    batches: list[list[np.ndarray[Any, np.dtype[np.int16]]]] = []
+    batches: list[list[NDArray[np.int16]]] = []
     flush = mocker.patch.object(
         bridge, "_flush", side_effect=lambda frames: batches.append(list(frames))
     )
@@ -247,7 +248,7 @@ def test_worker_treats_continuous_silent_frames_as_idle(
         side_effect=[0.0, 0.5, 1.1],
     )
 
-    def flush(frames: list[np.ndarray[Any, np.dtype[np.int16]]]) -> None:
+    def flush(frames: list[NDArray[np.int16]]) -> None:
         if frames and np.max(np.abs(frames[0])) > bridge.config.noise_gate_peak:
             bridge._megaphone_active = True
 
