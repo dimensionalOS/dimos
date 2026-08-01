@@ -79,10 +79,10 @@ class Go2AudioBridgeModule(Module):
         self._stop_event.clear()
         if self.config.speaker == "disabled":
             self._speaker_available = False
-        elif self.config.speaker == "enabled":
+            return
+        if self.config.speaker == "enabled":
             self._speaker_available = True
-        if self.config.speaker != "disabled":
-            self.register_disposable(Disposable(self.operator_audio.subscribe(self._on_audio)))
+        self.register_disposable(Disposable(self.operator_audio.subscribe(self._on_audio)))
         self._worker = threading.Thread(target=self._run, daemon=True, name="go2-audio-bridge")
         self._worker.start()
 

@@ -190,7 +190,7 @@ def test_disabled_speaker_does_not_subscribe_to_operator_audio(
 
     assert bridge._speaker_available is False
     operator_audio.subscribe.assert_not_called()
-    worker.return_value.start.assert_called_once_with()
+    worker.return_value.start.assert_not_called()
 
 
 def test_full_audio_queue_drops_oldest_frame(bridge: AudioBridgeTestModule) -> None:
