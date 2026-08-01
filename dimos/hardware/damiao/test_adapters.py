@@ -22,6 +22,7 @@ import pytest
 from dimos.hardware.damiao.arm_adapter import DamiaoArmAdapter
 from dimos.hardware.damiao.config import (
     DamiaoArmConfig,
+    DamiaoGripperConfig,
     DamiaoMotorConfig,
     DamiaoRuntimeConfig,
 )
@@ -126,6 +127,26 @@ def test_arm_config_rejects_duplicate_motor_identity_at_construction() -> None:
         )
 
 
+def test_arm_config_rejects_gripper_can_id_collision() -> None:
+    with pytest.raises(ValueError, match="gripper duplicates send ID"):
+        _arm_config(
+            gripper=DamiaoGripperConfig(
+                motor=DamiaoMotorConfig("gripper", "DM4310", 0x02, 0x18),
+                opening_direction="decreasing_position",
+            )
+        )
+
+
+@pytest.mark.parametrize("current", [0.0, 1.1, float("nan")])
+def test_gripper_config_rejects_invalid_default_current(current: float) -> None:
+    with pytest.raises(ValueError, match="default_current"):
+        DamiaoGripperConfig(
+            motor=DamiaoMotorConfig("gripper", "DM4310", 0x08, 0x18),
+            opening_direction="decreasing_position",
+            default_current=current,
+        )
+
+
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
@@ -155,6 +176,25 @@ def test_runtime_builds_robot_with_binding_motor_types() -> None:
     robot = runtime._build_robot()
 
     assert len(robot["arm"]) == 2
+
+
+def test_runtime_builds_separate_normalized_gripper_group() -> None:
+    gripper = DamiaoGripperConfig(
+        motor=DamiaoMotorConfig("gripper", "DM4310", 0x08, 0x18),
+        opening_direction="decreasing_position",
+        default_current=0.15,
+    )
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(gripper=gripper),
+        runtime_config=DamiaoRuntimeConfig(use_mock_bus=True),
+    )
+
+    robot = runtime._build_robot()
+
+    assert robot.group_names() == ["arm", "gripper"]
+    assert len(robot["arm"]) == 2
+    assert robot["gripper"].motor.send_id == 0x08
+    assert robot["gripper"].motor.recv_id == 0x18
 
 
 def test_arm_adapter_reports_limits_and_modes() -> None:
@@ -381,6 +421,54 @@ def test_runtime_selects_mit_mode_before_enable(mocker) -> None:
         mocker.call.enable(),
         mocker.call.tick(1_000),
     ]
+
+
+def test_runtime_enable_requires_normalized_gripper_readback_and_rolls_back(mocker) -> None:
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
+    robot = mocker.Mock()
+    gripper = SimpleNamespace()
+    runtime._robot = robot
+    runtime._gripper = gripper
+
+    assert runtime.enable() is False
+    robot.disable.assert_called_once_with()
+    assert runtime.is_enabled() is False
+
+
+def test_runtime_reads_and_writes_normalized_gripper_opening(mocker) -> None:
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
+    robot = mocker.Mock()
+    gripper = mocker.Mock()
+    gripper.opening = 0.4
+    runtime._robot = robot
+    runtime._gripper = gripper
+    runtime._enabled = True
+
+    assert runtime.read_gripper_opening() == 0.4
+    assert runtime.write_gripper_opening(0.75) is True
+    gripper.refresh.assert_called_once_with()
+    gripper.set_opening.assert_called_once_with(0.75)
+    assert robot.tick.call_args_list == [mocker.call(1_000), mocker.call(1_000)]
+
+
+@pytest.mark.parametrize("opening", [-0.01, 1.01, float("nan"), float("inf")])
+def test_runtime_rejects_invalid_normalized_gripper_commands(mocker, opening: float) -> None:
+    runtime = DamiaoArmRuntime(
+        arm_config=_arm_config(),
+        runtime_config=DamiaoRuntimeConfig(),
+    )
+    runtime._robot = mocker.Mock()
+    runtime._gripper = mocker.Mock()
+    runtime._enabled = True
+
+    assert runtime.write_gripper_opening(opening) is False
+    runtime._gripper.set_opening.assert_not_called()
 
 
 def test_runtime_preserves_enabled_state_when_partial_enable_rollback_fails() -> None:

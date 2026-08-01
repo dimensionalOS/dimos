@@ -24,6 +24,7 @@ import attrs
 from dimos.hardware.damiao.arm_adapter import DamiaoArmAdapter
 from dimos.hardware.damiao.config import (
     DamiaoArmConfig,
+    DamiaoGripperConfig,
     DamiaoMotorConfig,
     DamiaoRuntimeConfig,
 )
@@ -33,7 +34,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-OPENING_METRES = 0.096
 _OPENYAM_MODEL_PATH = Path(LfsPath("yam_description")) / "urdf/yam_gripper.urdf.xacro"
 _OPENYAM_PACKAGE_PATHS = {"yam_description": Path(LfsPath("yam_description"))}
 
@@ -45,21 +45,12 @@ ARM_MOTOR_CONFIGS = tuple(
     )
     for index in range(1, 7)
 )
-GRIPPER_MOTOR_CONFIGS = (DamiaoMotorConfig("yam_gripper", "DM4310", 7),)
-
-
-def aperture_to_opening(aperture: float) -> float:
-    """Convert a metre aperture to the driver's normalized opening."""
-    if not 0.0 <= aperture <= OPENING_METRES:
-        raise ValueError(f"gripper aperture must be in [0, {OPENING_METRES}] m")
-    return aperture / OPENING_METRES
-
-
-def opening_to_aperture(opening: float) -> float:
-    """Convert a calibrated normalized opening to a metre aperture."""
-    if not 0.0 <= opening <= 1.0:
-        raise ValueError("gripper opening must be in [0, 1]")
-    return opening * OPENING_METRES
+GRIPPER_MOTOR_CONFIG = DamiaoMotorConfig("yam_gripper", "DM4310", 0x08, 0x18)
+OPENYAM_GRIPPER_CONFIG = DamiaoGripperConfig(
+    motor=GRIPPER_MOTOR_CONFIG,
+    opening_direction="decreasing_position",
+    default_current=0.15,
+)
 
 
 def _active_arm_limits() -> tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...]]:
@@ -107,11 +98,12 @@ def make_openyam_damiao_arm_config() -> DamiaoArmConfig:
         velocity_max=velocity,
         kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0),
         kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5),
+        gripper=OPENYAM_GRIPPER_CONFIG,
     )
 
 
 class OpenYamDamiaoAdapter(DamiaoArmAdapter):
-    """Six-DOF OpenYAM arm; physical gripper IO is fail-closed."""
+    """Six-DOF OpenYAM arm with calibrated normalized gripper IO."""
 
     def __init__(
         self,
@@ -163,13 +155,16 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
         return super().write_mit_commands(q=q, dq=dq, kp=kp, kd=kd, tau=tau)
 
     def read_gripper_position(self) -> float | None:
-        """Gripper feedback is disabled until the binding provides calibration."""
-        return None
+        """Read normalized gripper opening, where zero is closed and one is open."""
+        if self._runtime is None:
+            return None
+        return self._runtime.read_gripper_opening()
 
     def write_gripper_position(self, position: float) -> bool:
-        """Reject physical gripper commands without calibrated feedback."""
-        del position
-        return False
+        """Command normalized gripper opening, where zero is closed and one is open."""
+        if self._runtime is None:
+            return False
+        return self._runtime.write_gripper_opening(position)
 
 
 OpenYAMDamiaoAdapter = OpenYamDamiaoAdapter

@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import errno
+import math
 from pathlib import Path
 import time
 from typing import Any
@@ -33,6 +34,7 @@ logger = setup_logger()
 
 _ARM_NAME = "arm"
 _BUS_NAME = "can"
+_GRIPPER_NAME = "gripper"
 _ENOBUFS_RETRY_DELAYS_S = (0.001, 0.002, 0.003)
 _MIN_RECOMMENDED_TX_QUEUE_LEN = 1_000
 _MOTOR_TYPES_BY_NAME = {
@@ -102,6 +104,7 @@ class DamiaoArmRuntime:
         self._adapter_type = adapter_type
         self._robot: Any | None = None
         self._arm: Any | None = None
+        self._gripper: Any | None = None
         self._state_cache: DamiaoGroupState | None = None
         self._state_cache_time = 0.0
         self._connected = False
@@ -124,6 +127,7 @@ class DamiaoArmRuntime:
                 )
             self._robot = robot
             self._arm = arm
+            self._gripper = robot[_GRIPPER_NAME] if self._arm_config.gripper is not None else None
             self._connected = True
             self.refresh_state(force=True)
         except Exception:
@@ -156,12 +160,27 @@ class DamiaoArmRuntime:
             )
             for motor in self._arm_config.motors
         ]
-        return (
+        builder = (
             can_motor_control.Robot.builder()
             .add_bus(_BUS_NAME, transport, damiao.DamiaoCodec())
             .add_arm(_ARM_NAME, bus=_BUS_NAME, motors=motors)
-            .build()
         )
+        if self._arm_config.gripper is not None:
+            gripper = self._arm_config.gripper
+            motor = gripper.motor
+            builder = builder.add_gripper(
+                _GRIPPER_NAME,
+                bus=_BUS_NAME,
+                motor=can_motor_control.MotorSpec(
+                    motor.name,
+                    self._resolve_motor_type(motor.type),
+                    motor.send_id,
+                    motor.effective_recv_id,
+                ),
+                opening_direction=gripper.opening_direction,
+                default_current=gripper.default_current,
+            )
+        return builder.build()
 
     def _warn_if_small_tx_queue(self, address: str) -> None:
         if self._runtime_config.use_mock_bus:
@@ -203,6 +222,7 @@ class DamiaoArmRuntime:
         self._connected = False
         self._robot = None
         self._arm = None
+        self._gripper = None
         self._state_cache = None
         self._state_cache_time = 0.0
 
@@ -217,18 +237,22 @@ class DamiaoArmRuntime:
             self._robot.tick(self._runtime_config.tick_deadline_us)
             self._robot.enable()
             self._robot.tick(self._runtime_config.tick_deadline_us)
+            if self._gripper is not None:
+                self._validated_gripper_opening()
         except Exception:
             logger.exception("damiao runtime enable failed", adapter=self._adapter_type)
             try:
                 disabled = self._robot.disable()
             except Exception:
                 logger.warning("damiao runtime rollback disable failed", exc_info=True)
-                disabled = False
-            if disabled is not True:
                 logger.error("damiao runtime partial enable could not disable hardware")
                 self._enabled = True
-            else:
-                self._enabled = False
+                return False
+            if disabled is False:
+                logger.error("damiao runtime partial enable could not disable hardware")
+                self._enabled = True
+                return False
+            self._enabled = False
             return False
         self._enabled = True
         return True
@@ -246,6 +270,59 @@ class DamiaoArmRuntime:
 
     def is_enabled(self) -> bool:
         return self._enabled
+
+    def _validated_gripper_opening(self) -> float:
+        if self._gripper is None:
+            raise RuntimeError("DamiaoArmRuntime has no configured gripper")
+        try:
+            opening = float(self._gripper.opening)
+        except AttributeError as exc:
+            raise RuntimeError(
+                "can_motor_control Gripper.opening is required for calibrated readback"
+            ) from exc
+        if not math.isfinite(opening) or not 0.0 <= opening <= 1.0:
+            raise RuntimeError(
+                f"gripper opening feedback must be finite and in [0, 1], got {opening}"
+            )
+        return opening
+
+    def read_gripper_opening(self) -> float | None:
+        """Read the calibrated normalized gripper opening."""
+
+        if self._robot is None or self._gripper is None or not self._enabled:
+            return None
+        try:
+            self._gripper.refresh()
+            self._robot.tick(self._runtime_config.tick_deadline_us)
+            return self._validated_gripper_opening()
+        except Exception:
+            logger.exception("damiao runtime gripper read failed", adapter=self._adapter_type)
+            return None
+
+    def write_gripper_opening(self, opening: float) -> bool:
+        """Command a calibrated normalized gripper opening."""
+
+        if (
+            self._robot is None
+            or self._gripper is None
+            or not self._enabled
+            or not math.isfinite(opening)
+            or not 0.0 <= opening <= 1.0
+        ):
+            return False
+        try:
+
+            def send() -> None:
+                assert self._gripper is not None
+                assert self._robot is not None
+                self._gripper.set_opening(opening)
+                self._robot.tick(self._runtime_config.tick_deadline_us)
+
+            _retry_enobufs(send)
+        except Exception:
+            logger.exception("damiao runtime gripper command failed", adapter=self._adapter_type)
+            return False
+        return True
 
     def refresh_state(self, *, force: bool = False) -> DamiaoGroupState:
         if self._robot is None or self._arm is None:

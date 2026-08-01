@@ -31,11 +31,10 @@ from dimos.hardware.damiao.runtime import DamiaoGroupState
 import dimos.hardware.manipulators.openyam_damiao.adapter as adapter_module
 from dimos.hardware.manipulators.openyam_damiao.adapter import (
     ARM_MOTOR_CONFIGS,
-    GRIPPER_MOTOR_CONFIGS,
-    OPENING_METRES,
+    GRIPPER_MOTOR_CONFIG,
+    OPENYAM_GRIPPER_CONFIG,
     OpenYamDamiaoAdapter,
-    aperture_to_opening,
-    opening_to_aperture,
+    make_openyam_damiao_arm_config,
 )
 from dimos.robot.model_parser import JointDescription, ModelDescription
 from dimos.utils.data import LfsPath
@@ -43,31 +42,34 @@ from dimos.utils.data import LfsPath
 GRAVITY_MODEL_PATH = Path(LfsPath("yam_description")) / "urdf/yam_gripper_gravity.urdf"
 
 
-def test_gripper_aperture_conversion_is_linear() -> None:
-    assert aperture_to_opening(0.0) == 0.0
-    assert aperture_to_opening(OPENING_METRES / 2) == pytest.approx(0.5)
-    assert aperture_to_opening(OPENING_METRES) == 1.0
-    assert opening_to_aperture(0.5) == pytest.approx(OPENING_METRES / 2)
-
-
 def test_openyam_motor_topology() -> None:
     assert [motor.name for motor in ARM_MOTOR_CONFIGS] == [f"yam_joint{i}" for i in range(1, 7)]
     assert [motor.send_id for motor in ARM_MOTOR_CONFIGS] == list(range(1, 7))
     assert [motor.type for motor in ARM_MOTOR_CONFIGS] == ["DM4340"] * 3 + ["DM4310"] * 3
-    assert GRIPPER_MOTOR_CONFIGS[0].send_id == 7
-    assert GRIPPER_MOTOR_CONFIGS[0].type == "DM4310"
+    assert GRIPPER_MOTOR_CONFIG.send_id == 0x08
+    assert GRIPPER_MOTOR_CONFIG.effective_recv_id == 0x18
+    assert GRIPPER_MOTOR_CONFIG.type == "DM4310"
+    assert OPENYAM_GRIPPER_CONFIG.opening_direction == "decreasing_position"
+    assert OPENYAM_GRIPPER_CONFIG.default_current == 0.15
+    assert make_openyam_damiao_arm_config().gripper is OPENYAM_GRIPPER_CONFIG
 
 
-def test_openyam_physical_gripper_is_disabled_without_calibrated_readback() -> None:
+def test_openyam_gripper_delegates_normalized_io() -> None:
     adapter = OpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(
             gravity_model_path=GRAVITY_MODEL_PATH,
             use_mock_bus=True,
         )
     )
+    runtime = Mock()
+    runtime.read_gripper_opening.return_value = 0.4
+    runtime.write_gripper_opening.return_value = True
+    adapter._runtime = runtime
 
-    assert adapter.read_gripper_position() is None
-    assert not adapter.write_gripper_position(0.01)
+    assert adapter.read_gripper_position() == 0.4
+    assert adapter.write_gripper_position(0.75)
+    runtime.read_gripper_opening.assert_called_once_with()
+    runtime.write_gripper_opening.assert_called_once_with(0.75)
 
 
 def test_openyam_limits_are_loaded_from_active_model() -> None:
@@ -236,9 +238,3 @@ def test_openyam_xacro_limits_reject_bad_values(
 
     with pytest.raises(ValueError):
         adapter_module._active_arm_limits()
-
-
-@pytest.mark.parametrize("value", [-1e-6, OPENING_METRES + 1e-6])
-def test_gripper_aperture_rejects_out_of_range(value: float) -> None:
-    with pytest.raises(ValueError):
-        aperture_to_opening(value)

@@ -61,6 +61,8 @@ def make_openyam_hardware(
         address=address,
         auto_enable=auto_enable,
         gripper_joints=[f"{hw_id}/gripper"] if include_gripper else [],
+        gripper_open_position=1.0 if include_gripper else None,
+        gripper_closed_position=0.0 if include_gripper else None,
         adapter_kwargs=kwargs,
     )
 
@@ -87,7 +89,6 @@ def openyam_hardware(
                 gravity_comp=True,
             ),
         },
-        include_gripper=False,
     )
 
 

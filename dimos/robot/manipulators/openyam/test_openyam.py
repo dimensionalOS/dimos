@@ -66,6 +66,8 @@ def test_openyam_mock_hardware_has_gripper() -> None:
     assert hardware.adapter_type == "mock"
     assert hardware.joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert hardware.gripper_joints == ["arm/gripper"]
+    assert hardware.gripper_open_position == 1.0
+    assert hardware.gripper_closed_position == 0.0
 
 
 def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: Any) -> None:
@@ -81,7 +83,9 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
     assert runtime_config.gravity_model_path == OPENYAM_GRAVITY_MODEL_PATH
     assert runtime_config.gravity_comp is True
     assert len(hardware.joints) == OPENYAM_DOF
-    assert hardware.gripper_joints == []
+    assert hardware.gripper_joints == ["arm/gripper"]
+    assert hardware.gripper_open_position == 1.0
+    assert hardware.gripper_closed_position == 0.0
     assert "initial_positions" not in hardware.adapter_kwargs
 
     direct = make_openyam_hardware(
@@ -136,6 +140,7 @@ def test_openyam_keyboard_planner_blueprint_combines_teleop_and_trajectory() -> 
     tasks = _coordinator_kwargs(blueprint)["tasks"]
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
+    gripper = next(task for task in tasks if task.name == "servo_gripper")
 
     assert trajectory.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert trajectory.priority == 20
@@ -143,6 +148,9 @@ def test_openyam_keyboard_planner_blueprint_combines_teleop_and_trajectory() -> 
     assert eef_twist.params["ee_joint_id"] == OPENYAM_DOF
     assert eef_twist.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
     assert eef_twist.priority == 10
+    assert gripper.type == "servo"
+    assert gripper.joint_names == ["arm/gripper"]
+    assert gripper.params == {"timeout": 0.0, "default_positions": [0.0]}
     assert _module_kwargs(blueprint, KeyboardTeleopModule) == {}
 
 
@@ -156,11 +164,13 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
 
 def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
     blueprint = keyboard_teleop_openyam
-    task = next(
-        task for task in _coordinator_kwargs(blueprint)["tasks"] if task.type == "eef_twist"
-    )
+    tasks = _coordinator_kwargs(blueprint)["tasks"]
+    task = next(task for task in tasks if task.type == "eef_twist")
+    gripper = next(task for task in tasks if task.name == "servo_gripper")
 
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert task.params["ee_joint_id"] == OPENYAM_DOF
     assert task.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
+    assert gripper.joint_names == ["arm/gripper"]
+    assert gripper.params["default_positions"] == [0.0]
     assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}

@@ -125,14 +125,13 @@ class ConnectedHardware:
         # Append gripper joint(s) via adapter gripper method
         if self._gripper_joints:
             gripper_pos = self._adapter.read_gripper_position()
-            for gj in self._gripper_joints:
-                result[gj] = JointState(
-                    position=self._physical_to_normalized(gripper_pos)
-                    if gripper_pos is not None
-                    else 0.0,
-                    velocity=0.0,
-                    effort=0.0,
-                )
+            if gripper_pos is not None:
+                for gj in self._gripper_joints:
+                    result[gj] = JointState(
+                        position=self._physical_to_normalized(gripper_pos),
+                        velocity=0.0,
+                        effort=0.0,
+                    )
 
         return result
 
@@ -213,12 +212,9 @@ class ConnectedHardware:
                 # Initialize gripper joint(s) from adapter
                 if self._gripper_joints:
                     gripper_pos = self._adapter.read_gripper_position()
-                    for gj in self._gripper_joints:
-                        self._last_commanded[gj] = (
-                            self._physical_to_normalized(gripper_pos)
-                            if gripper_pos is not None
-                            else 0.0
-                        )
+                    if gripper_pos is not None:
+                        for gj in self._gripper_joints:
+                            self._last_commanded[gj] = self._physical_to_normalized(gripper_pos)
 
                 self._initialized = True
                 return

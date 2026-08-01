@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import math
 from pathlib import Path
+from typing import Literal
 
 import attrs
 
@@ -63,6 +64,11 @@ def _finite_non_negative(
         raise ValueError(f"{attribute.name} must be finite and non-negative")
 
 
+def _opening_current(_instance: object, attribute: attrs.Attribute[float], value: float) -> None:
+    if not math.isfinite(value) or not 0.0 < value <= 1.0:
+        raise ValueError(f"{attribute.name} must be finite and in (0, 1]")
+
+
 @attrs.frozen(slots=False)
 class DamiaoMotorConfig:
     """Physical identity for one Damiao motor in command-vector order."""
@@ -80,6 +86,23 @@ class DamiaoMotorConfig:
         """Return the explicit receive CAN ID, or Damiao's default response ID."""
 
         return self.recv_id if self.recv_id is not None else (self.send_id | 0x10)
+
+
+@attrs.frozen(slots=False)
+class DamiaoGripperConfig:
+    """Physical definition for one normalized Damiao gripper group."""
+
+    motor: DamiaoMotorConfig = attrs.field(
+        validator=attrs.validators.instance_of(DamiaoMotorConfig)
+    )
+    opening_direction: Literal["increasing_position", "decreasing_position"] = attrs.field(
+        validator=attrs.validators.in_(("increasing_position", "decreasing_position"))
+    )
+    default_current: float = attrs.field(
+        default=0.15,
+        converter=float,
+        validator=_opening_current,
+    )
 
 
 @attrs.frozen(slots=False)
@@ -104,6 +127,10 @@ class DamiaoArmConfig:
     gravity_torque_limits: tuple[float, ...] | None = attrs.field(
         default=None,
         converter=_to_optional_floats,
+    )
+    gripper: DamiaoGripperConfig | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.instance_of(DamiaoGripperConfig)),
     )
     fd: bool = attrs.field(default=False, validator=attrs.validators.instance_of(bool))
     supported_control_modes: tuple[ControlMode, ...] = attrs.field(
@@ -188,6 +215,26 @@ class DamiaoArmConfig:
     ) -> None:
         if len(set(modes)) != len(modes):
             raise ValueError("supported control modes must be unique")
+
+    @gripper.validator
+    def _validate_gripper_identity(
+        self,
+        _attribute: attrs.Attribute[DamiaoGripperConfig | None],
+        gripper: DamiaoGripperConfig | None,
+    ) -> None:
+        if gripper is None:
+            return
+        motor = gripper.motor
+        if motor.name in self.joint_names:
+            raise ValueError(
+                f"Damiao arm {self.name!r} gripper duplicates motor name {motor.name!r}"
+            )
+        if motor.send_id in {arm_motor.send_id for arm_motor in self.motors}:
+            raise ValueError(f"Damiao arm {self.name!r} gripper duplicates send ID {motor.send_id}")
+        if motor.effective_recv_id in {arm_motor.effective_recv_id for arm_motor in self.motors}:
+            raise ValueError(
+                f"Damiao arm {self.name!r} gripper duplicates receive ID {motor.effective_recv_id}"
+            )
 
 
 @attrs.frozen(slots=False)
