@@ -51,6 +51,27 @@ TaskFactory = Callable[..., "ControlTask"]
 _EMPTY_BINDINGS = TaskBindings()
 
 
+def _normalize_task_name(name: str) -> str:
+    """Normalize task type names consistently for registration and lookup."""
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("Task type must be non-empty")
+    return key
+
+
+def _validate_task_factory_path(factory_path: str) -> None:
+    """Validate a lazy factory path of the form ``module:function``."""
+    module_name, separator, attr = factory_path.partition(":")
+    if (
+        not factory_path.strip()
+        or separator != ":"
+        or factory_path.count(":") != 1
+        or not module_name
+        or not attr
+    ):
+        raise ValueError(f"Invalid task factory path: {factory_path!r}")
+
+
 class ControlTaskRegistry:
     """Registry for control-task factories with lazy imports."""
 
@@ -91,9 +112,8 @@ class ControlTaskRegistry:
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy task factory import path."""
-        if ":" not in factory_path:
-            raise ValueError(f"Invalid task factory path: {factory_path!r}")
-        key = name.lower()
+        key = _normalize_task_name(name)
+        _validate_task_factory_path(factory_path)
         existing = self._factory_paths.get(key)
         if existing is not None and existing != factory_path:
             raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
@@ -154,7 +174,7 @@ class ControlTaskRegistry:
                 adapter resolve it from their typed params; pass ``None``
                 only if no task in this registry needs hardware.
         """
-        key = name.lower()
+        key = _normalize_task_name(name)
         factory = self._resolve_factory(key)
         task = factory(cfg=cfg, hardware=hardware or {})
         self._validate_bound_handlers(key, task)
