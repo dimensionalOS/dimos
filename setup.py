@@ -62,7 +62,18 @@ TEST_MODULE_PATTERNS = ("test_*.py", "conftest.py")
 # dimos can run it without a checkout. Copied into build_lib below; editable
 # installs skip the copy and locate.find_web_dir() resolves the checkout.
 # MANIFEST.in grafts web/ so sdist->wheel builds can reproduce this.
-RELAY_DIST_SOURCES = ("deno.json", "deno.lock", "relay", "shared")
+# cockpit/deno.json + package.json must ship even without the dist: the
+# workspace root lists ./cockpit as a member and Deno refuses to run the
+# relay when a member's config file is missing.
+RELAY_DIST_SOURCES = (
+    "deno.json",
+    "deno.lock",
+    "relay",
+    "shared",
+    "cockpit/deno.json",
+    "cockpit/package.json",
+    "cockpit/dist",
+)
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 
 
@@ -85,14 +96,34 @@ class build_py(_build_py):
         src = Path(__file__).parent / "web"
         if not (src / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
+        if not (src / "cockpit" / "dist" / "index.html").is_file():
+            # Release wheels must carry the Cockpit (the release workflow
+            # builds it first). A plain `pip install .` from a checkout
+            # without a built dist still works: the relay serves the debug
+            # page instead.
+            if os.environ.get("CIBUILDWHEEL") == "1":
+                raise RuntimeError(
+                    f"cockpit dist missing at {src / 'cockpit' / 'dist'}; run "
+                    "`deno task build` in web/cockpit before building release wheels"
+                )
+            self.warn("cockpit dist missing; this wheel will serve the debug page only")
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
-            for path in sorted((src / name).rglob("*")) if (src / name).is_dir() else [src / name]:
-                if path.is_dir() or path.name.endswith("_test.ts"):
+            entry = src / name
+            if not entry.exists():  # only cockpit/dist may be absent (warned above)
+                continue
+            for path in sorted(entry.rglob("*")) if entry.is_dir() else [entry]:
+                # Filter on the path below src: matching path.parts would also
+                # hit checkout ancestors (e.g. a build under /work/testdata/).
+                rel = path.relative_to(src)
+                if path.is_dir() or path.name.endswith("_test.ts") or "testdata" in rel.parts:
                     continue
-                target = dst / path.relative_to(src)
+                target = dst / rel
                 self.mkpath(str(target.parent))
                 self.copy_file(str(path), str(target))
+        # An over-eager exclusion filter would otherwise ship a broken wheel silently.
+        if not (dst / "relay" / "main.ts").is_file():
+            raise RuntimeError(f"relay copy did not produce {dst / 'relay' / 'main.ts'}")
 
 
 extra_compile_args = [

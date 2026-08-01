@@ -19,7 +19,7 @@ from typing import Any, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.abc import DisposableBase, ObserverBase
+from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
@@ -313,7 +313,9 @@ def spy(name: str):  # type: ignore[no-untyped-def]
 
 
 def quality_barrier(
-    quality_func: Callable[[T], float], target_frequency: float
+    quality_func: Callable[[T], float],
+    target_frequency: float,
+    scheduler: SchedulerBase | None = None,
 ) -> Callable[[Observable[T]], Observable[T]]:
     """
     RxPY pipe operator that selects the highest quality item within each time window.
@@ -321,6 +323,7 @@ def quality_barrier(
     Args:
         quality_func: Function to compute quality score for each item
         target_frequency: Output frequency in Hz (e.g., 1.0 for 1 item per second)
+        scheduler: Scheduler for the window timer (lets tests use virtual time)
 
     Returns:
         A pipe operator that can be used with .pipe()
@@ -330,7 +333,7 @@ def quality_barrier(
     def _quality_barrier(source: Observable[T]) -> Observable[T]:
         return source.pipe(
             # Create non-overlapping time-based windows
-            ops.window_with_time(window_duration, window_duration),
+            ops.window_with_time(window_duration, window_duration, scheduler),
             # For each window, find the highest quality item
             ops.flat_map(
                 lambda window: window.pipe(  # type: ignore[attr-defined]

@@ -61,6 +61,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
@@ -131,6 +132,16 @@ _G1_NAV_ROTATION_DIAMETER = 0.8
 _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
+class _G1GrootCoordinator(ControlCoordinator):
+    g1_joints: Out[JointState]
+
+
+# Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
+# also fixes its Rerun entity path (`world/` + topic).
+_G1_JOINTS_TOPIC = "/g1/joints"
+_G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
+
+
 def _mujoco_lidar_kwargs(camera_name: str, camera_names: tuple[str, ...]) -> dict[str, Any]:
     return {
         "camera_name": camera_name,
@@ -143,7 +154,7 @@ if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
 
 if global_config.simulation == "mujoco":
-    from dimos.mapping.voxels import VoxelGridMapper
+    from dimos.mapping.voxels.module import VoxelGridMapper
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
     from dimos.simulation.engines.robot_sim_binding import (
         RobotSimSpec,
@@ -294,7 +305,7 @@ if global_config.simulation == "mujoco":
     )
     _remappings = [
         (VoxelGridMapper, "lidar", "pointcloud"),
-        (ControlCoordinator, "twist_command", "cmd_vel"),
+        (_G1GrootCoordinator, "twist_command", "cmd_vel"),
     ]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -352,7 +363,7 @@ else:
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [(ControlCoordinator, "twist_command", "cmd_vel")]
+    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -443,13 +454,13 @@ _rerun_config: dict[str, Any] = {
         "world/camera_info": None,
         "world/depth_image": None,
         "world/depth_camera_info": None,
-        "world/coordinator_joint_state": g1_urdf_joint_state(root_path=_G1_ROOT),
+        _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path=_G1_ROOT),
         "world/global_costmap": g1_costmap,
         "world/navigation_costmap": g1_costmap,
         "world/path": _g1_nav_path,
     },
     "max_hz": {
-        "world/coordinator_joint_state": 20.0,
+        _G1_JOINTS_ENTITY: 20.0,
         # Raw state streams arrive at ~440 Hz; useful only as debug plots.
         "world/g1/imu": 10.0,
         "world/g1/motor_states": 10.0,
@@ -477,7 +488,9 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-_coordinator = ControlCoordinator.blueprint(
+_coordinator = _G1GrootCoordinator.blueprint(
+    instance_name="ControlCoordinator",
+    publish_robot_joint_states=True,
     tick_rate=_tick_rate,
     hardware=[
         HardwareComponent(
@@ -510,6 +523,7 @@ _coordinator = ControlCoordinator.blueprint(
 ).transports(
     {
         ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
+        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already

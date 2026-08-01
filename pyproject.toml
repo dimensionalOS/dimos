@@ -101,14 +101,16 @@ classifiers = [
 dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.3",
-    "eclipse-zenoh>=1.0.0,<2.0",
+    "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
+    "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
+    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
@@ -132,6 +134,7 @@ dependencies = [
     "textual-serve>=1.1.1,<2",
     "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
+    "ipython",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
     "numba>=0.60.0", # First version supporting Python 3.12
@@ -156,13 +159,13 @@ dependencies = [
 
 
 [project.scripts]
-lcmspy = "dimos.utils.cli.spy.run_spy:lcm_main"
-agentspy = "dimos.utils.cli.agentspy.agentspy:main"
-humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos = "dimos.robot.cli.dimos:cli_main"
+lcmspy = "dimos.cli.spy.run_spy:lcm_main"
+agentspy = "dimos.cli.agentspy.agentspy:main"
+humancli = "dimos.cli.human.humanclianim:main"
+dimos = "dimos.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
-doclinks = "dimos.utils.docs.doclinks:main"
-dtop = "dimos.utils.cli.dtop:main"
+doclinks = "dimos.cli.doclinks:main"
+dtop = "dimos.cli.dtop:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
@@ -288,7 +291,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan",
+    "roboplan>=0.5.1",
 ]
 
 cpu = [
@@ -410,7 +413,7 @@ tests = [
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.2.0",
+    "md-babel-py>=1.4.0",
     "py-spy",
     # Builds the pyo3 Rust extension modules into the venv.
     "maturin>=1.7",
@@ -435,6 +438,12 @@ tests = [
     {include-group = "project-deps"},
 ]
 
+# Drives the cockpit browser e2e (-m web_browser). Kept out of `tests`: only
+# the CI `web` job needs the platform-specific Playwright package.
+browser-tests = [
+    "playwright>=1.55",
+]
+
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
     # Lint / format / type-check
@@ -447,7 +456,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan",
+    "roboplan>=0.5.1",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -479,7 +488,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
@@ -534,9 +543,10 @@ ignore = [
 "dimos/models/Detic/*" = ["ALL"]
 # Naming needs to match the actual libraries.
 "stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
-# Wire-protocol mirror: model field names are the wire names (camelCase,
-# pinned to protocol.ts by the golden fixtures).
+# Wire-protocol/manifest mirrors: model field names are the wire names
+# (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
+"dimos/web/relay_bridge/manifest.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).
 "dimos/types/ros_polyfill.py" = ["F401"]
 
@@ -643,7 +653,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
