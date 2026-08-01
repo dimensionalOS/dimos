@@ -14,19 +14,19 @@
 
 """Python NativeModule wrapper for the FAST-LIO2 + Livox Mid-360 binary.
 
-Binds Livox SDK2 into FAST-LIO-NON-ROS for real-time LiDAR SLAM; outputs
-sensor/body-frame point clouds (register via the odometry pose) and odometry
-with covariance.
+Binds Livox SDK2 into FAST-LIO-NON-ROS for real-time LiDAR SLAM. Outputs
+sensor-frame point clouds and odometry with covariance. Consumers register
+the cloud via the odometry pose.
 
-FAST-LIO tuning lives directly on ``FastLio2Config`` and is passed to the C++
-binary as plain CLI args (no YAML).
+FAST-LIO tuning lives on FastLio2Config and is sent to the C++ binary as
+stdin JSON.
 """
 
 from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -56,15 +56,13 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_ODOM
 from dimos.spec import perception
 
-# Human-readable enums; the C++ binary maps these strings to FAST-LIO's int codes.
-LidarType = Literal["livox", "velodyne", "ouster"]
-TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
-
 
 class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build -L .#fastlio2_native"
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
     # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
     # DIMOS_FASTLIO_HOST_IP.
@@ -87,15 +85,13 @@ class FastLio2Config(NativeModuleConfig):
 
     debug: bool = False
 
-    # FAST-LIO tuning, passed to the binary as plain CLI args (read in main.cpp).
+    # FAST-LIO tuning (read in main.cpp).
     # common
     time_sync_en: bool = False
     time_offset_lidar_to_imu: float = 0.0
     # preprocess
-    lidar_type: LidarType = "livox"
     scan_line: int = 4
-    scan_rate: int = 10  # velodyne only
-    timestamp_unit: TimestampUnit = "microsecond"  # velodyne/ouster time field unit
+    scan_rate: int = 10
     blind: float = 0.5  # spherical min range (m)
     # mapping
     # acc_cov down-weights the IMU accel prediction. 0.01 is high trust (fine for
@@ -113,7 +109,7 @@ class FastLio2Config(NativeModuleConfig):
     extrinsic_r: list[float] = Field(
         default_factory=lambda: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     )
-    # publish behaviour (passed to the binary as CLI args, not the YAML)
+    # publish behavior
     scan_publish_en: bool = True  # false closes the lidar output
     dense_publish_en: bool = True  # false voxel-downsamples the published cloud
 

@@ -19,7 +19,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.zed.compat import ZEDCamera
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 
 camera_choice = "zed"
 

@@ -16,8 +16,8 @@
 """Perception and memory modules used by higher-level G1 blueprints."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.perception.object_tracker import ObjectTracking
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.perception.experimental.object_tracker import ObjectTracking
+from dimos.perception.experimental.spatial_perception import SpatialMemory
 
 _perception_and_memory = autoconnect(
     SpatialMemory.blueprint(),

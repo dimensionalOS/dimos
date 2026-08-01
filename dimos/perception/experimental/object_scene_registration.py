@@ -31,14 +31,14 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
-from dimos.perception.detection.objectDB import ObjectDB
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection3d.object import (
+from dimos.perception.experimental.object import (
     Object,
     Object as DetObject,
     aggregate_pointclouds,
     to_detection3d_array,
 )
+from dimos.perception.experimental.objectDB import ObjectDB
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
