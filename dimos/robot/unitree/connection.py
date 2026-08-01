@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import concurrent.futures
 from dataclasses import dataclass
 import functools
 import json
@@ -280,7 +281,7 @@ class UnitreeWebRTCConnection(Resource):
         )
         try:
             return future.result(timeout=timeout)
-        except TimeoutError:
+        except concurrent.futures.TimeoutError:
             future.cancel()
             raise
 

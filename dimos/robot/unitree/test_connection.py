@@ -19,6 +19,7 @@ aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
 import asyncio
+import concurrent.futures
 import json
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
@@ -88,7 +89,7 @@ def test_publish_request_cancels_timed_out_coroutine(built_connection: Any) -> N
 
     driver.datachannel.pub_sub.publish_request_new.side_effect = never_returns
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(concurrent.futures.TimeoutError):
         conn.publish_request("topic", {}, timeout=0.01)
 
     assert asyncio.run_coroutine_threadsafe(cancelled.wait(), conn.loop).result(timeout=1.0) is True
