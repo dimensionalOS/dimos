@@ -139,8 +139,7 @@ class Go2AudioBridgeModule(Module):
             if pcm.size == 0:
                 continue
             now = time.monotonic()
-            peak = int(np.max(np.abs(pcm.astype(np.int32))))
-            if peak > self.config.noise_gate_peak:
+            if self._peak(pcm) > self.config.noise_gate_peak:
                 last_audible_at = now
             pending.append(pcm)
             pending_samples += pcm.size
@@ -264,11 +263,15 @@ class Go2AudioBridgeModule(Module):
                 return value
         return None
 
+    @staticmethod
+    def _peak(pcm: NDArray[np.int16]) -> int:
+        return int(np.max(np.abs(pcm.astype(np.int32))))
+
     def _normalize_level(self, pcm: NDArray[np.int16]) -> NDArray[np.int16]:
         """Gate near-silence and raise each segment toward a bounded peak."""
         if pcm.size == 0:
             return pcm
-        peak = int(np.max(np.abs(pcm.astype(np.int32))))
+        peak = self._peak(pcm)
         if peak <= self.config.noise_gate_peak:
             return np.empty(0, dtype=np.int16)
         gain = min(self.config.max_gain, self.config.target_peak / peak)
