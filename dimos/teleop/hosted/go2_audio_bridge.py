@@ -168,8 +168,8 @@ class Go2AudioBridgeModule(Module):
             return self._speaker_available
         try:
             self._request(GET_AUDIO_LIST)
-        except Exception:
-            logger.info("Go2 audio hub unavailable; speaker audio disabled")
+        except Exception as exc:
+            logger.info("Go2 audio hub unavailable; speaker audio disabled", error=str(exc))
             self._speaker_available = False
         else:
             logger.info("Go2 audio hub detected; operator audio enabled")
@@ -197,7 +197,7 @@ class Go2AudioBridgeModule(Module):
             wav_data = self._wav_bytes(pcm)
             self._upload_wav(wav_data)
         except Exception:
-            logger.warning("Go2 megaphone upload failed", exc_info=True)
+            logger.warning("Go2 speaker audio send failed", exc_info=True)
             self._exit_megaphone()
             if self.config.speaker == "auto":
                 self._speaker_available = False
