@@ -1274,7 +1274,10 @@ def main(argv: list[str]) -> int:
         # are presentation, and the table must be identical without them.
         from dimos.agents.evals.crops import write_crops
 
-        crops = write_crops(args.dataset, members, references, out_dir / "crops")
+        # The same gates the measurement ran with -- a crop rendered under
+        # different projection or sweep tolerance would show frames the table
+        # was not built from.
+        crops = write_crops(args.dataset, members, references, out_dir / "crops", params)
         print(f"crops:     {crops.written} -> {out_dir / 'crops'}")
         # Printed, never swallowed: every note is a reference whose review images
         # are weaker than the picker intends, which a reviewer has to know before

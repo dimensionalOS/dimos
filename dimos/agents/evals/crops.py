@@ -688,6 +688,7 @@ def write_crops(
     members: dict[str, list[Measurement]],
     references: list[Reference],
     out_dir: Path,
+    params: GateParams,
 ) -> CropReport:
     """Write the two review images per reference, and report what they cost.
 
@@ -739,7 +740,6 @@ def write_crops(
     from dimos.memory2.cli.dataset import open_dataset
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    params = GateParams()
     camera = load_camera()
     projector = Projector(camera, load_base_to_optical(), params.front_z_m)
     by_label = {reference.raw_label: reference for reference in references}
