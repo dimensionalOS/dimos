@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import importlib
 from pathlib import Path
@@ -31,6 +31,31 @@ logger = setup_logger()
 _DEFAULT_TICK_DEADLINE_US = 1_000
 _DEFAULT_STATE_CACHE_TTL_S = 0.002
 _DEFAULT_ADDRESS = "can0"
+_ENOBUFS_RETRY_DELAYS_S = (0.001, 0.002, 0.003)
+_MIN_RECOMMENDED_TX_QUEUE_LEN = 1_000
+
+
+def _is_enobufs(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if getattr(current, "errno", None) == 105:
+            return True
+        message = str(current).lower()
+        if "no buffer space available" in message or "os error 105" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _retry_enobufs(operation: Callable[[], None]) -> None:
+    for delay_s in (*_ENOBUFS_RETRY_DELAYS_S, None):
+        try:
+            operation()
+            return
+        except Exception as exc:
+            if delay_s is None or not _is_enobufs(exc):
+                raise
+            time.sleep(delay_s)
 
 
 class DamiaoBindingUnavailableError(RuntimeError):
@@ -146,6 +171,7 @@ class DamiaoRobotRuntime:
         codec = self._damiao.DamiaoCodec()
         for bus_name, bus_spec in self._robot_spec.buses.items():
             address = str(bus_spec.address or _DEFAULT_ADDRESS)
+            self._warn_if_small_tx_queue(address)
             transport = (
                 self._can_motor_control.MockCanBus.new_fd(address)
                 if self._use_mock_bus and bus_spec.fd
@@ -166,6 +192,23 @@ class DamiaoRobotRuntime:
             ]
             builder = builder.add_arm(group_name, bus=group_spec.bus_name, motors=binding_specs)
         return builder.build()
+
+    def _warn_if_small_tx_queue(self, address: str) -> None:
+        if self._use_mock_bus:
+            return
+        queue_path = Path("/sys/class/net") / address / "tx_queue_len"
+        try:
+            queue_len = int(queue_path.read_text().strip())
+        except (OSError, ValueError):
+            return
+        if queue_len < _MIN_RECOMMENDED_TX_QUEUE_LEN:
+            logger.warning(
+                "CAN transmit queue is too small for reliable motor activation",
+                interface=address,
+                txqueuelen=queue_len,
+                recommended=_MIN_RECOMMENDED_TX_QUEUE_LEN,
+                setup_command=f"dimos can setup {address}",
+            )
 
     def _resolve_motor_type(self, motor_type: object) -> object:
         if self._damiao is None:
@@ -321,8 +364,12 @@ class DamiaoRobotRuntime:
                 f"command length does not match configured DOF for group {group_name!r}"
             )
         try:
-            group.mit_control(np.column_stack([kp, kd, q, dq, tau]).astype(np.float64))
-            self._robot.tick(self._tick_deadline_us)
+
+            def send() -> None:
+                group.mit_control(np.column_stack([kp, kd, q, dq, tau]).astype(np.float64))
+                self._robot.tick(self._tick_deadline_us)
+
+            _retry_enobufs(send)
         except Exception:
             logger.exception("damiao runtime MIT command failed", group_name=group_name)
             return False

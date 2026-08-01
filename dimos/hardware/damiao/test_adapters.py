@@ -363,6 +363,29 @@ def test_arm_adapter_preserves_enabled_state_when_safety_disable_fails(mocker) -
     assert adapter.read_enabled() is True
 
 
+def test_runtime_retries_mit_command_when_can_queue_is_temporarily_full(mocker) -> None:
+    runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
+    robot = mocker.Mock()
+    group = mocker.Mock()
+    group.mit_control.side_effect = [
+        RuntimeError("transport IO error: No buffer space available (os error 105)"),
+        None,
+    ]
+    runtime._robot = robot
+    runtime._groups = {"left": group}
+    runtime._enabled = True
+    sleep = mocker.patch("dimos.hardware.damiao.runtime.time.sleep")
+
+    assert (
+        runtime.write_group_mit_commands(
+            group_name="left", q=[0.0], dq=[0.0], kp=[0.0], kd=[0.0], tau=[0.0]
+        )
+        is True
+    )
+    assert group.mit_control.call_count == 2
+    robot.tick.assert_called_once_with(1_000)
+    sleep.assert_called_once_with(0.001)
+
 
 def test_runtime_selects_mit_mode_before_enable(mocker) -> None:
     runtime = DamiaoRobotRuntime(robot_spec=_whole_body_spec())
