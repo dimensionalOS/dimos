@@ -26,6 +26,7 @@ from typing import Any, Literal
 import wave
 
 import numpy as np
+from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 from unitree_webrtc_connect.constants import AUDIO_API, RTC_TOPIC
 
@@ -113,7 +114,7 @@ class Go2AudioBridgeModule(Module):
                 pass
 
     def _run(self) -> None:
-        pending: list[np.ndarray[Any, np.dtype[np.int16]]] = []
+        pending: list[NDArray[np.int16]] = []
         pending_samples = 0
         last_audible_at: float | None = None
         target_samples = max(1, TARGET_SAMPLE_RATE * self.config.batch_ms // 1000)
@@ -172,7 +173,7 @@ class Go2AudioBridgeModule(Module):
             self._speaker_available = True
         return self._speaker_available
 
-    def _flush(self, frames: list[np.ndarray[Any, np.dtype[np.int16]]]) -> None:
+    def _flush(self, frames: list[NDArray[np.int16]]) -> None:
         if not frames or not self._ensure_speaker():
             return
         pcm = np.concatenate(frames).astype(np.int16, copy=False)
@@ -258,9 +259,7 @@ class Go2AudioBridgeModule(Module):
                 return value
         return None
 
-    def _normalize_level(
-        self, pcm: np.ndarray[Any, np.dtype[np.int16]]
-    ) -> np.ndarray[Any, np.dtype[np.int16]]:
+    def _normalize_level(self, pcm: NDArray[np.int16]) -> NDArray[np.int16]:
         """Gate near-silence and raise each segment toward a bounded peak."""
         if pcm.size == 0:
             return pcm
@@ -274,7 +273,7 @@ class Go2AudioBridgeModule(Module):
         return amplified.astype(np.int16)
 
     @staticmethod
-    def _to_mono_target_rate(frame: AudioEvent) -> np.ndarray[Any, np.dtype[np.int16]]:
+    def _to_mono_target_rate(frame: AudioEvent) -> NDArray[np.int16]:
         if frame.sample_rate <= 0 or frame.channels <= 0:
             return np.empty(0, dtype=np.int16)
         pcm = frame.to_int16().data.reshape(-1)
@@ -291,7 +290,7 @@ class Go2AudioBridgeModule(Module):
         return np.asarray(np.clip(pcm, -32768, 32767), dtype=np.int16)
 
     @staticmethod
-    def _wav_bytes(pcm: np.ndarray[Any, np.dtype[np.int16]]) -> bytes:
+    def _wav_bytes(pcm: NDArray[np.int16]) -> bytes:
         output = BytesIO()
         with wave.open(output, "wb") as wav:
             wav.setnchannels(1)
