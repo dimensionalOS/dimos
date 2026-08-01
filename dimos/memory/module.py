@@ -328,10 +328,16 @@ class Recorder(MemoryModule):
     _pose_setters: dict[str, Any] = {}
     _recording_subscriptions: list[DisposableBase]
     _recording_pipeline: RecordingPipeline | None = None
+    _poseless_counts: dict[str, int]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._poseless_counts = {}
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._poseless_counts.clear()
 
         if self.config.g.replay:
             logger.info(
@@ -429,12 +435,17 @@ class Recorder(MemoryModule):
             else:
                 pose = self._resolve_tf_pose(msg, ts)
             if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+                count = self._poseless_counts.get(name, 0) + 1
+                self._poseless_counts[name] = count
+                if count == 1 or count % 100 == 0:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose "
+                        "(%d poseless message(s); repeats logged every 100th)",
+                        name,
+                        ts,
+                        getattr(msg, "ts", None),
+                        count,
+                    )
             if hasattr(msg, "ts"):
                 msg.ts = ts
             observation = Observation(
