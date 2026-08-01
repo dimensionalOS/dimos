@@ -29,13 +29,15 @@ def test_webrtc_audio_transport_delivers_pcm_metadata() -> None:
     received = []
 
     unsubscribe = transport.subscribe(received.append)
-    audio_callback = provider.set_audio_frame_callback.call_args.args[0]
-    audio_callback(np.array([1, -2, 3], dtype=np.int16).tobytes(), 48000, 1)
+    try:
+        audio_callback = provider.set_audio_frame_callback.call_args.args[0]
+        audio_callback(np.array([1, -2, 3], dtype=np.int16).tobytes(), 48000, 1)
 
-    assert len(received) == 1
-    assert received[0].sample_rate == 48000
-    assert received[0].channels == 1
-    np.testing.assert_array_equal(received[0].data, np.array([1, -2, 3], dtype=np.int16))
+        assert len(received) == 1
+        assert received[0].sample_rate == 48000
+        assert received[0].channels == 1
+        np.testing.assert_array_equal(received[0].data, np.array([1, -2, 3], dtype=np.int16))
+    finally:
+        unsubscribe()
 
-    unsubscribe()
     provider.set_audio_frame_callback.assert_called_with(None)
