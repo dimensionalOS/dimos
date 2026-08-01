@@ -51,7 +51,6 @@ def bridge() -> Iterator[AudioBridgeTestModule]:
         queue_frames=10,
         chunk_interval_sec=0.0,
         megaphone_enter_delay_sec=0.0,
-        request_timeout_sec=2.0,
         target_peak=12000,
         max_gain=128.0,
         noise_gate_peak=32,
@@ -172,7 +171,7 @@ def test_start_and_stop_manage_audio_subscription_and_worker(
     operator_audio.subscribe.assert_called_once_with(bridge._on_audio)
     register.assert_called_once()
     worker.return_value.start.assert_called_once_with()
-    worker.return_value.join.assert_called_once_with(timeout=4.5)
+    worker.return_value.join.assert_called_once_with(timeout=2.0)
     exit_megaphone.assert_called_once_with()
     stop.assert_called_once_with()
 
@@ -278,8 +277,7 @@ def test_stop_does_not_race_cleanup_with_live_worker(bridge: AudioBridgeTestModu
 def test_failed_upload_disables_auto_speaker(bridge: AudioBridgeTestModule) -> None:
     bridge._speaker_available = True
 
-    def respond(_topic: str, request: dict[str, Any], *, timeout: float) -> dict[str, Any]:
-        assert timeout == bridge.config.request_timeout_sec
+    def respond(_topic: str, request: dict[str, Any]) -> dict[str, Any]:
         if request["api_id"] == UPLOAD_MEGAPHONE:
             raise RuntimeError("upload failed")
         return {"code": 0}

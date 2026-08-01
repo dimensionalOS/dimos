@@ -52,7 +52,6 @@ class Go2AudioBridgeConfig(ModuleConfig):
     queue_frames: int = 100
     chunk_interval_sec: float = 0.05
     megaphone_enter_delay_sec: float = 0.2
-    request_timeout_sec: float = 2.0
     target_peak: int = 12000
     max_gain: float = 128.0
     noise_gate_peak: int = 32
@@ -94,10 +93,7 @@ class Go2AudioBridgeModule(Module):
         except queue.Full:
             pass
         if self._worker is not None:
-            join_timeout = (
-                self.config.request_timeout_sec * 2 + self.config.megaphone_enter_delay_sec + 0.5
-            )
-            self._worker.join(timeout=join_timeout)
+            self._worker.join(timeout=2.0)
             if self._worker.is_alive():
                 logger.error("Go2 audio bridge worker did not stop")
             else:
@@ -235,7 +231,6 @@ class Go2AudioBridgeModule(Module):
         response = self.go2.publish_request(
             RTC_TOPIC["AUDIO_HUB_REQ"],
             {"api_id": api_id, "parameter": json.dumps(parameter or {})},
-            timeout=self.config.request_timeout_sec,
         )
         if not response:
             raise RuntimeError(f"Go2 audio request {api_id} returned no response")
