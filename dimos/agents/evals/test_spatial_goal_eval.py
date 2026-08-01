@@ -224,6 +224,20 @@ def resolve_model_ids(raw: str | None) -> tuple[str, ...]:
     return model_ids
 
 
+def needs_openai_key(model_ids: tuple[str, ...]) -> bool:
+    """Whether any arm routes to OpenAI and therefore needs ``OPENAI_API_KEY``.
+
+    Mirrors ``mcp_client._init_model``'s split: a bare id (no provider prefix)
+    goes to the OpenAI Responses client and an ``openai:`` prefix to chat
+    completions -- both need the key -- while any other provider prefix
+    (``ollama:``, ``huggingface:``) resolves through LangChain with its own
+    credentials story. The sweep's skip condition follows the same split, or a
+    machine sweeping only local models would be skipped for a key it would
+    never send.
+    """
+    return any(":" not in model_id or model_id.startswith("openai:") for model_id in model_ids)
+
+
 #: The arms this run sweeps. Resolved at import so ``--collect-only`` shows the
 #: real case list, the same as :data:`DATASETS`.
 MODEL_IDS = resolve_model_ids(os.environ.get(MODEL_IDS_ENV))
@@ -377,7 +391,10 @@ def shard_root(tmp_path: Path) -> Path:
 
 
 @pytest.mark.self_hosted
-@pytest.mark.skipif_no_openai
+@pytest.mark.skipif(
+    needs_openai_key(MODEL_IDS) and not os.environ.get("OPENAI_API_KEY"),
+    reason="an arm routes to OpenAI and OPENAI_API_KEY is not set",
+)
 # Every question x (a real LLM turn + a coordinator build that loads CLIP in the
 # memory worker) outlasts the default per-test timeout.
 @pytest.mark.timeout(2400)
@@ -678,3 +695,12 @@ def test_a_set_but_empty_model_arm_list_fails_rather_than_falling_back() -> None
     for raw in ("", "   ", " , , "):
         with pytest.raises(ValueError, match=MODEL_IDS_ENV):
             resolve_model_ids(raw)
+
+
+def test_openai_key_is_needed_exactly_for_openai_routed_arms() -> None:
+    """The skip follows ``_init_model``'s routing, not the mere presence of a sweep."""
+    assert needs_openai_key(DEFAULT_MODEL_IDS)
+    assert needs_openai_key(("gpt-5.6-luna",))  # bare id -> Responses client
+    assert needs_openai_key(("openai:gpt-5.6-sol",))  # explicit prefix -> chat completions
+    assert not needs_openai_key(("ollama:qwen3:8b",))
+    assert not needs_openai_key(("ollama:qwen3:8b", "huggingface:org/model"))
