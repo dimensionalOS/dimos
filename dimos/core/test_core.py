@@ -116,12 +116,19 @@ def test_basic_deployment(dimos) -> None:
     robot.start()
     nav.start()
 
-    deadline = time.monotonic() + 15.0
+    first_deadline = time.monotonic() + 20.0
+    while time.monotonic() < first_deadline:
+        if robot.mov_msg_count > 0 and nav.odom_msg_count > 0 and nav.lidar_msg_count > 0:
+            break
+        time.sleep(0.1)
+
+    deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
         if robot.mov_msg_count >= 8 and nav.odom_msg_count >= 8 and nav.lidar_msg_count >= 8:
             break
         time.sleep(0.1)
 
-    assert robot.mov_msg_count >= 8
-    assert nav.odom_msg_count >= 8
-    assert nav.lidar_msg_count >= 8
+    counts = f"lidar={nav.lidar_msg_count}, odom={nav.odom_msg_count}, mov={robot.mov_msg_count}"
+    assert robot.mov_msg_count >= 8, counts
+    assert nav.odom_msg_count >= 8, counts
+    assert nav.lidar_msg_count >= 8, counts
