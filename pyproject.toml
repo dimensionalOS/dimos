@@ -293,6 +293,7 @@ manipulation = [
     "pycollada",
 
     # Visualization (Optional)
+    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
     "xacro",

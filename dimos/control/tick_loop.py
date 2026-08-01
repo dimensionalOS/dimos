@@ -409,7 +409,11 @@ class TickLoop:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in self._hardware:
                     try:
-                        self._hardware[hw_id].write_command(positions, mode)
+                        accepted = self._hardware[hw_id].write_command(positions, mode)
+                        if not accepted:
+                            logger.error(
+                                f"Hardware {hw_id} rejected {mode.name} command from control task"
+                            )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
 

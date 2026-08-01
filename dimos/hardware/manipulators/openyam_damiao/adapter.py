@@ -20,6 +20,9 @@ from dimos.hardware.damiao import (
 )
 from dimos.robot.model_parser import parse_model
 from dimos.utils.data import LfsPath
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 OPENING_METRES = 0.096
 _BUS_NAME = "openyam_can"
@@ -118,10 +121,8 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
         gravity_comp: bool = True,
         **kwargs: Any,
     ) -> None:
-        if not gravity_comp:
-            raise ValueError("OpenYAM requires gravity compensation")
-        if gravity_model_path is None or not Path(gravity_model_path).is_file():
-            raise ValueError("OpenYAM requires a valid gravity model path")
+        if gravity_comp and (gravity_model_path is None or not Path(gravity_model_path).is_file()):
+            raise ValueError("OpenYAM gravity compensation requires a valid model path")
         lower, upper, velocity = _active_arm_limits()
         arm = _group_spec(
             bus_name=_BUS_NAME,
@@ -129,8 +130,8 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
             lower=lower,
             upper=upper,
             velocity=velocity,
-            kp=(0.0,) * 6,
-            kd=(0.0,) * 6,
+            kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0),
+            kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5),
             gravity_model_path=gravity_model_path,
         )
         robot_spec = DamiaoRobotSpec(
@@ -146,9 +147,18 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
             robot_spec=robot_spec,
             group_name=_ARM_GROUP,
             gravity_model_path=gravity_model_path,
-            gravity_comp=True,
+            gravity_comp=gravity_comp,
             **kwargs,
         )
+
+        self._write_armed_by_read = False
+
+    def refresh_state(self, *, force: bool = False) -> tuple[list[float], list[float], list[float]]:
+        """Read feedback and arm exactly one subsequent motor write."""
+        self._write_armed_by_read = False
+        state = super().refresh_state(force=force)
+        self._write_armed_by_read = True
+        return state
 
     def write_mit_commands(
         self,
@@ -159,16 +169,13 @@ class OpenYamDamiaoAdapter(DamiaoArmAdapter):
         kd: list[float],
         tau: list[float],
     ) -> bool:
-        """Temporarily send zero-torque MIT frames for compliant position readback."""
+        """Forward a command only after a successful feedback read."""
         self._validate_command_lengths(q=q, dq=dq, kp=kp, kd=kd, tau=tau)
-        zeros = self._zero_vector()
-        return super().write_mit_commands(
-            q=zeros,
-            dq=zeros,
-            kp=zeros,
-            kd=zeros,
-            tau=zeros,
-        )
+        if not self._write_armed_by_read:
+            logger.error("OpenYAM rejected motor write without fresh position feedback")
+            return False
+        self._write_armed_by_read = False
+        return super().write_mit_commands(q=q, dq=dq, kp=kp, kd=kd, tau=tau)
 
     def read_gripper_position(self) -> float | None:
         """Gripper feedback is disabled until the binding provides calibration."""

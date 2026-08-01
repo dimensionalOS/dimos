@@ -977,6 +977,29 @@ class TestTickLoop:
 
         assert mock_task.compute.call_count > 0
 
+    def test_rejected_hardware_write_is_reported(self, monkeypatch):
+        hardware = {"arm": MagicMock()}
+        hardware["arm"].write_command.return_value = False
+        log_error = MagicMock()
+        monkeypatch.setattr("dimos.control.tick_loop.logger.error", log_error)
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={},
+            task_lock=threading.Lock(),
+            joint_to_hardware={"arm/joint1": "arm"},
+        )
+
+        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+
+        hardware["arm"].write_command.assert_called_once_with(
+            {"arm/joint1": 0.25}, ControlMode.SERVO_POSITION
+        )
+        log_error.assert_called_once_with(
+            "Hardware arm rejected SERVO_POSITION command from control task"
+        )
+
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter, wait_until):

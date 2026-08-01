@@ -25,6 +25,7 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
+    keyboard_teleop_openyam_planner,
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
@@ -34,6 +35,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -47,12 +49,12 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     config = make_openyam_model_config(name="arm")
 
-    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert config.joint_names == [f"joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert config.joint_name_mapping == {
-        f"arm/joint{i}": f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)
+        f"arm/joint{i}": f"joint{i}" for i in range(1, OPENYAM_DOF + 1)
     }
-    assert config.base_link == "yam_base_link"
-    assert config.end_effector_link == "yam_hand_tcp"
+    assert config.base_link == "base"
+    assert config.end_effector_link == "gripper_tip"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
     assert config.gripper_hardware_id == "arm"
 
@@ -74,6 +76,7 @@ def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: A
     assert hardware.adapter_type == "openyam_damiao"
     assert hardware.address == "can1"
     assert hardware.adapter_kwargs["gravity_model_path"] == OPENYAM_GRAVITY_MODEL_PATH
+    assert hardware.adapter_kwargs["gravity_comp"] is True
     assert len(hardware.joints) == OPENYAM_DOF
     assert hardware.gripper_joints == []
     assert "initial_positions" not in hardware.adapter_kwargs
@@ -113,12 +116,31 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
     config = ManipulationModuleConfig(**kwargs).robots[0]
 
     assert config.name == "arm"
-    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.end_effector_link == "yam_hand_tcp"
+    assert config.joint_names == [f"joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert config.end_effector_link == "gripper_tip"
     assert config.gripper_hardware_id == "arm"
-    task = _coordinator_kwargs(blueprint)["tasks"][0]
-    assert task.type == "trajectory"
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    tasks = _coordinator_kwargs(blueprint)["tasks"]
+    assert len(tasks) == 1
+    trajectory = tasks[0]
+    assert trajectory.type == "trajectory"
+    assert trajectory.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert trajectory.priority == 10
+    assert all(atom.module is not KeyboardTeleopModule for atom in blueprint.blueprints)
+
+
+def test_openyam_keyboard_planner_blueprint_combines_teleop_and_trajectory() -> None:
+    blueprint = keyboard_teleop_openyam_planner
+    tasks = _coordinator_kwargs(blueprint)["tasks"]
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+    eef_twist = next(task for task in tasks if task.type == "eef_twist")
+
+    assert trajectory.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert trajectory.priority == 20
+    assert eef_twist.joint_names == trajectory.joint_names
+    assert eef_twist.params["ee_joint_id"] == OPENYAM_DOF
+    assert eef_twist.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
+    assert eef_twist.priority == 10
+    assert _module_kwargs(blueprint, KeyboardTeleopModule) == {}
 
 
 def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
@@ -137,4 +159,5 @@ def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
 
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert task.params["ee_joint_id"] == OPENYAM_DOF
+    assert task.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
     assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}

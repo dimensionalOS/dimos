@@ -31,7 +31,7 @@ from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
 OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper.urdf.xacro"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_GRAVITY_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper_gravity.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
@@ -82,6 +82,7 @@ def openyam_hardware(
         # planning/home positions into a live motor adapter.
         adapter_kwargs={
             "gravity_model_path": OPENYAM_GRAVITY_MODEL_PATH,
+            "gravity_comp": True,
         },
         include_gripper=False,
     )
@@ -94,19 +95,19 @@ def make_openyam_model_config(
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     """Build a planning config for the gripper-equipped OpenYAM."""
-    local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
+    local_joint_names = joint_names(OPENYAM_DOF)
     return RobotModelConfig(
         name=name,
         model_path=OPENYAM_MODEL_PATH,
         base_pose=base_pose(),
         joint_names=local_joint_names,
-        base_link="yam_base_link",
+        base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
                 joint_names=tuple(local_joint_names),
-                base_link="yam_base_link",
-                tip_link="yam_hand_tcp",
+                base_link="base",
+                tip_link="gripper_tip",
             )
         ],
         package_paths=OPENYAM_PACKAGE_PATHS,
@@ -116,7 +117,7 @@ def make_openyam_model_config(
             name,
             OPENYAM_DOF,
             joint_prefix=joint_prefix,
-            urdf_joint_prefix="yam_",
+            urdf_joint_prefix="",
         ),
         gripper_hardware_id=name,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
