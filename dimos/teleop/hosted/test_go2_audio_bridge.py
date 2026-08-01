@@ -105,9 +105,7 @@ def test_auto_mode_disables_speaker_when_audio_hub_probe_fails(
 
 
 def test_nonzero_firmware_status_disables_auto_speaker(bridge: AudioBridgeTestModule) -> None:
-    bridge.go2.publish_request.return_value = {
-        "data": {"header": {"status": {"code": 3102}}}
-    }
+    bridge.go2.publish_request.return_value = {"data": {"header": {"status": {"code": 3102}}}}
 
     assert bridge._ensure_speaker() is False
 
@@ -131,9 +129,7 @@ def test_near_silence_is_removed_by_noise_gate(bridge: AudioBridgeTestModule) ->
 def test_supported_speaker_uploads_wav_through_megaphone(
     bridge: AudioBridgeTestModule,
 ) -> None:
-    bridge.go2.publish_request.return_value = {
-        "data": {"header": {"status": {"code": 0}}}
-    }
+    bridge.go2.publish_request.return_value = {"data": {"header": {"status": {"code": 0}}}}
     pcm = np.arange(5000, dtype=np.int16)
 
     bridge._flush([pcm])
