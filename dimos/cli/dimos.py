@@ -637,6 +637,25 @@ def show_config() -> None:
         typer.echo(f"{field_name}: {value}")
 
 
+@main.command(
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        # so `dimos bake --help` reaches the real command's options
+        "help_option_names": [],
+    }
+)
+def bake(ctx: typer.Context) -> None:
+    """Compose rust native modules into a single host binary."""
+    # Lazily imported like the other heavy subcommands: bake pulls in the whole
+    # module registry, which nothing else in the CLI needs.
+    from dimos.cli.bake.cli import bake as bake_cmd
+
+    app = typer.Typer(add_completion=False)
+    app.command()(bake_cmd)
+    typer.main.get_command(app)(args=list(ctx.args), prog_name="dimos bake", standalone_mode=True)
+
+
 @main.command(name="list")
 def list_blueprints() -> None:
     """List all available blueprints."""

@@ -31,6 +31,7 @@ from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -330,3 +331,22 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
     )
     assert calls[0][0] == "info"
     assert calls[0][1] == "not json at all"
+
+
+def test_spawn_env_dials_robot_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A configured robot IP reaches the native child as a zenoh dial endpoint."""
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    monkeypatch.setattr(global_config, "robot_ip", "10.0.0.42")
+    monkeypatch.setattr(global_config, "robot_ips", None)
+    env = native_module_mod._spawn_env({})
+    assert env["DIMOS_ZENOH_CONNECT"] == "tcp/10.0.0.42:7447"
+    assert env["DIMOS_TRANSPORT"] == "zenoh"
+
+
+def test_spawn_env_without_robot_ip_leaves_var_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    monkeypatch.setattr(global_config, "robot_ip", None)
+    monkeypatch.setattr(global_config, "robot_ips", None)
+    monkeypatch.delenv("DIMOS_ZENOH_CONNECT", raising=False)
+    env = native_module_mod._spawn_env({})
+    assert "DIMOS_ZENOH_CONNECT" not in env

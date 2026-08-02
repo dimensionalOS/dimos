@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -34,9 +34,13 @@ use crate::transport::{Dispatch, Transport};
 pub trait NativeConfig {}
 
 /// Trait required by `Module::Config`s to ensure that configurations are
-/// validated correctly.
-pub trait ModuleConfig: DeserializeOwned + Serialize + Debug + Validate + NativeConfig {}
-impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig> ModuleConfig for T {}
+/// validated correctly. `Send` because a config is parsed on the host's main
+/// thread and handed to the module's own thread.
+pub trait ModuleConfig:
+    DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send
+{
+}
+impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> ModuleConfig for T {}
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
@@ -52,7 +56,7 @@ impl Validate for NoConfig {
     }
 }
 
-fn init_tracing() {
+pub(crate) fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .json()
@@ -135,7 +139,7 @@ impl<T> Output<T> {
 
 /// Extract `(topics, config)` from an already-parsed config object. `run`
 /// parses the line once and also reads `qos` from it, so this takes the value.
-fn parse_config_value<C: DeserializeOwned + Serialize>(
+pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     json: &serde_json::Value,
 ) -> io::Result<(HashMap<String, String>, C)> {
     let mut topics = HashMap::new();
@@ -245,7 +249,7 @@ fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
     messages.join("; ")
 }
 
-fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
+pub(crate) fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
     config.validate().map_err(|errs| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -374,7 +378,7 @@ pub(crate) fn spawn_publish_tasks<T: Transport>(
     tasks
 }
 
-fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
+pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     match res {
         Ok(()) => error!(task = name, "task exited unexpectedly"),
         Err(e) => {
@@ -395,38 +399,24 @@ where
     }
 }
 
-async fn run_fallible<M, T>(transport: T) -> io::Result<()>
+/// Build, wire and run one module over an already-open transport until it
+/// finishes or `shutdown` flips. Shared by the one-module-per-process `run`
+/// and by the baked host, which drives several of these on one transport.
+pub(crate) async fn run_module_core<M, T>(
+    transport: Arc<T>,
+    topics: HashMap<String, String>,
+    config: M::Config,
+    mut shutdown: watch::Receiver<bool>,
+) -> io::Result<()>
 where
     M: Module,
     T: Transport,
 {
-    init_tracing();
-
-    let mut line = String::new();
-    BufReader::new(tokio::io::stdin())
-        .read_line(&mut line)
-        .await?;
-    let json: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let (topics, config) = parse_config_value::<M::Config>(&json)?;
-    validate_config(&config)?;
-    transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
-
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "unknown".to_string());
-    for (port, topic) in &topics {
-        info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
-    }
-    info!(exe = %exe, config = ?config, "config loaded");
-
     let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
 
-    subscribe_routes(&transport, builder.routes).await?;
+    subscribe_routes(transport.as_ref(), builder.routes).await?;
     // Kept alive until teardown so the subscriptions stay live.
-    let transport = Arc::new(transport);
     let mut pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
     module.setup().await;
@@ -434,7 +424,7 @@ where
     // record whatever resolves first, then teardown unconditionally
     let failure = tokio::select! {
         _ = module.handle() => None,
-        _ = tokio::signal::ctrl_c() => None,
+        _ = shutdown.changed() => None,
         Some(res) = pub_tasks.join_next() => Some(("publish", res)),
     };
 
@@ -446,6 +436,56 @@ where
     }
 
     Ok(())
+}
+
+/// Log the resolved wiring of a module, tagged with whatever the operator sees
+/// in `ps`: the executable for a lone module, the module id inside a host.
+pub(crate) fn log_wiring<C: Debug>(exe: &str, topics: &HashMap<String, String>, config: &C) {
+    for (port, topic) in topics {
+        info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
+    }
+    info!(exe = %exe, config = ?config, "config loaded");
+}
+
+pub(crate) fn exe_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Read the single config line the coordinator writes to stdin.
+pub(crate) async fn read_stdin_config() -> io::Result<serde_json::Value> {
+    let mut line = String::new();
+    BufReader::new(tokio::io::stdin())
+        .read_line(&mut line)
+        .await?;
+    serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+async fn run_fallible<M, T>(transport: T) -> io::Result<()>
+where
+    M: Module,
+    T: Transport,
+{
+    init_tracing();
+
+    let json = read_stdin_config().await?;
+    let (topics, config) = parse_config_value::<M::Config>(&json)?;
+    validate_config(&config)?;
+    transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
+
+    log_wiring(&exe_name(), &topics, &config);
+
+    // ctrl_c is the only shutdown source for a lone module.
+    let (tx, rx) = watch::channel(false);
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = tx.send(true);
+        }
+    });
+
+    run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
 }
 
 #[cfg(test)]
