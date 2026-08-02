@@ -160,10 +160,8 @@ def create_planner(
     if config.backend == "roboplan":
         from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
-        if world_backend != "roboplan" or world is None:
+        if world_backend != "roboplan" or not isinstance(world, RoboPlanWorld):
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
-        if not isinstance(world, RoboPlanWorld):
-            raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
         world.configure_planner(config)
         return world
 
