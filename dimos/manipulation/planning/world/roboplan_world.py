@@ -43,14 +43,6 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-if not hasattr(roboplan_core, "PathShortcuttingOptions") or not hasattr(
-    roboplan_core, "PathShortcutter"
-):
-    raise ImportError(
-        "RoboPlanWorld requires roboplan>=0.5.1 with native path shortcutting support. "
-        "Sync the manipulation extra before selecting the roboplan backend."
-    )
-
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
@@ -1199,7 +1191,11 @@ class RoboPlanWorld:
             raise ValueError("RoboPlan RRT returned no path")
         return result
 
-    def _shortcut_native_path(self, group: RoboPlanGroup, path: Any) -> Any:
+    def _shortcut_native_path(
+        self,
+        group: RoboPlanGroup,
+        path: roboplan_core.JointPath,
+    ) -> roboplan_core.JointPath:
         config = self._planner_config.path_shortcutting
         if not config.enabled:
             return path
@@ -1223,16 +1219,14 @@ class RoboPlanWorld:
     def _validate_shortcut_path(
         self,
         group: RoboPlanGroup,
-        original: Any,
-        shortened: Any,
+        original: roboplan_core.JointPath,
+        shortened: roboplan_core.JointPath,
     ) -> None:
         """Validate structural guarantees before accepting a shortened path."""
         original_path = self._path_from_native(group, original)
         shortened_path = self._path_from_native(group, shortened)
         if not shortened_path:
             raise ValueError("RoboPlan path shortcutter returned an empty path")
-        if not original_path:
-            raise ValueError("RoboPlan RRT returned an empty path")
         if not np.allclose(
             shortened_path[0].position,
             original_path[0].position,

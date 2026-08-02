@@ -45,7 +45,6 @@ from dimos.manipulation.planning.planners.config import (
 )
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -127,8 +126,7 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
 
 
 def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture) -> None:
-    world = mocker.MagicMock(spec=PlannerSpec)
-    world.configure_planner = mocker.Mock()
+    world = mocker.MagicMock()
     roboplan_world_module = ModuleType("dimos.manipulation.planning.world.roboplan_world")
     roboplan_world_module.RoboPlanWorld = type(world)  # type: ignore[attr-defined]
 

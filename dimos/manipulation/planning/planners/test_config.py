@@ -53,4 +53,4 @@ def test_roboplan_path_shortcutting_config_rejects_invalid_limits(
     shortcutting_config: dict[str, float],
 ) -> None:
     with pytest.raises(ValidationError):
-        RoboPlanPathShortcuttingConfig(**shortcutting_config)  # type: ignore[arg-type]
+        RoboPlanPathShortcuttingConfig.model_validate(shortcutting_config)
