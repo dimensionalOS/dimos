@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM hardware and planning model configuration helpers."""
+"""OpenYAM hardware and planning model configuration."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
-from dimos.hardware.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -31,64 +32,36 @@ from dimos.robot.manipulators._modeling import (
 from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
+OPENYAM_HARDWARE_ID = "openyam"
+OPENYAM_ARM_JOINTS = [f"arm/joint{index}" for index in range(1, OPENYAM_DOF + 1)]
+OPENYAM_GRIPPER_JOINT = "arm/gripper"
+OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
 OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_GRAVITY_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper_gravity.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def make_openyam_hardware(
-    hw_id: str = "arm",
-    *,
-    adapter_type: str = "mock",
-    address: str | None = None,
-    auto_enable: bool = True,
-    home_joints: list[float] | None = None,
-    adapter_kwargs: dict[str, object] | None = None,
-    include_gripper: bool = True,
-) -> HardwareComponent:
-    """Create OpenYAM hardware with six arm joints and one gripper channel."""
-    kwargs: dict[str, object] = {}
-    if adapter_type == "mock" and home_joints is not None:
-        kwargs["initial_positions"] = home_joints
-    if adapter_kwargs:
-        kwargs.update(adapter_kwargs)
+def openyam_hardware() -> HardwareComponent:
+    """Select the physical or in-memory whole-body adapter for OpenYAM."""
+    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
+    adapter_kwargs: dict[str, object] = {}
+    if not global_config.simulation:
+        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
+            bus_addresses={"can": global_config.can_port or "can0"},
+            gravity_comp=True,
+        )
     return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints(hw_id, OPENYAM_DOF),
+        hardware_id=OPENYAM_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=list(OPENYAM_JOINTS),
         adapter_type=adapter_type,
-        address=address,
-        auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/gripper"] if include_gripper else [],
-        gripper_open_position=1.0 if include_gripper else None,
-        gripper_closed_position=0.0 if include_gripper else None,
-        adapter_kwargs=kwargs,
-    )
-
-
-def openyam_hardware(
-    hw_id: str = "arm",
-    *,
-    home_joints: list[float] | None = None,
-) -> HardwareComponent:
-    """Select mock hardware in simulation and the OpenYAM Damiao adapter on hardware."""
-    if global_config.simulation:
-        return make_openyam_hardware(hw_id, home_joints=home_joints)
-    if not Path(OPENYAM_GRAVITY_MODEL_PATH).is_file():
-        raise ValueError(f"OpenYAM gravity model is missing: {OPENYAM_GRAVITY_MODEL_PATH}")
-    return make_openyam_hardware(
-        hw_id,
-        adapter_type="openyam_damiao",
-        address=global_config.can_port or "can0",
-        # Physical encoder zeros are established by the driver; never pass
-        # planning/home positions into a live motor adapter.
-        adapter_kwargs={
-            "runtime_config": DamiaoRuntimeConfig(
-                gravity_model_path=OPENYAM_GRAVITY_MODEL_PATH,
-                gravity_comp=True,
-            ),
-        },
+        auto_enable=True,
+        adapter_kwargs=adapter_kwargs,
+        wb_config=WholeBodyConfig(
+            kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),
+            kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0),
+        ),
     )
 
 
@@ -98,7 +71,7 @@ def make_openyam_model_config(
     joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    """Build a planning config for the gripper-equipped OpenYAM."""
+    """Build the six-arm-joint planning model for OpenYAM."""
     local_joint_names = joint_names(OPENYAM_DOF)
     return RobotModelConfig(
         name=name,
@@ -123,6 +96,5 @@ def make_openyam_model_config(
             joint_prefix=joint_prefix,
             urdf_joint_prefix="",
         ),
-        gripper_hardware_id=name,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

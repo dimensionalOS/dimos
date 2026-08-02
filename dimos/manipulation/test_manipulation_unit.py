@@ -77,21 +77,6 @@ def _control_coordinator(
     return coordinator
 
 
-def test_gripper_endpoint_skills_delegate_to_coordinator(
-    module_factory, mocker: MockerFixture
-) -> None:
-    module = module_factory()
-    coordinator = module._control_coordinator
-    coordinator.open_gripper.return_value = True
-    coordinator.close_gripper.return_value = True
-    mocker.patch.object(module, "_get_gripper_hardware_id", return_value="arm")
-
-    assert module.open_gripper().success is True
-    assert module.close_gripper().success is True
-    coordinator.open_gripper.assert_called_once_with("arm")
-    coordinator.close_gripper.assert_called_once_with("arm")
-
-
 @pytest.fixture
 def robot_config():
     """Create a robot config for testing."""

@@ -16,27 +16,40 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
+from dimos.robot.manipulators.common.blueprints import coordinator, planner
+from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_ARM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
 )
 
-_openyam_planner_hw = openyam_hardware("arm")
+
+def _trajectory_task() -> TaskConfig:
+    return TaskConfig(
+        name=DEFAULT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(OPENYAM_ARM_JOINTS),
+        priority=10,
+        params={"start_position_tolerance": 0.05},
+    )
+
+
+_openyam_planner_hw = openyam_hardware()
 
 openyam_planner_coordinator = autoconnect(
     planner(robots=[make_openyam_model_config(name="arm")]),
     coordinator(
         hardware=[_openyam_planner_hw],
-        tasks=[trajectory_task(_openyam_planner_hw)],
+        tasks=[_trajectory_task()],
     ),
 )
 
-_openyam_hw = openyam_hardware("arm")
+_openyam_hw = openyam_hardware()
 
 coordinator_openyam = ControlCoordinator.blueprint(
     hardware=[_openyam_hw],
-    tasks=[trajectory_task(_openyam_hw)],
+    tasks=[_trajectory_task()],
 )

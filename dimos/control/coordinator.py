@@ -889,37 +889,6 @@ class ControlCoordinator(Module):
             return hw.adapter.write_gripper_position(position)
 
     @rpc
-    def open_gripper(self, hardware_id: str) -> bool:
-        """Open a gripper to its configured adapter-native endpoint."""
-
-        return self._set_gripper_endpoint(hardware_id, open_position=True)
-
-    @rpc
-    def close_gripper(self, hardware_id: str) -> bool:
-        """Close a gripper to its configured adapter-native endpoint."""
-
-        return self._set_gripper_endpoint(hardware_id, open_position=False)
-
-    def _set_gripper_endpoint(self, hardware_id: str, *, open_position: bool) -> bool:
-        with self._hardware_lock:
-            hw = self._hardware.get(hardware_id)
-            if hw is None:
-                logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
-                return False
-            if isinstance(hw, ConnectedTwistBase):
-                logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
-                return False
-            configured = (
-                hw.component.gripper_open_position
-                if open_position
-                else hw.component.gripper_closed_position
-            )
-            fallback = 0.85 if open_position else 0.0
-            return hw.adapter.write_gripper_position(
-                configured if configured is not None else fallback
-            )
-
-    @rpc
     def get_gripper_position(self, hardware_id: str) -> float | None:
         """Get gripper position from a specific hardware device.
 

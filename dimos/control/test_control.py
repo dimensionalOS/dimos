@@ -208,22 +208,6 @@ class TestConnectedHardware:
             ((0.07,), {}),
         ]
 
-    def test_missing_gripper_feedback_is_not_fabricated_or_commanded(self, mock_adapter):
-        mock_adapter.read_gripper_position.return_value = None
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            gripper_joints=["arm/gripper"],
-            gripper_open_position=1.0,
-            gripper_closed_position=0.0,
-        )
-        hardware = ConnectedHardware(mock_adapter, component)
-
-        assert "arm/gripper" not in hardware.read_state()
-        assert hardware.write_command({"arm/joint1": 0.1}, ControlMode.POSITION)
-        mock_adapter.write_gripper_position.assert_not_called()
-
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names
         assert names == [
@@ -277,41 +261,6 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
-    @pytest.mark.parametrize(
-        ("open_endpoint", "closed_endpoint", "expected"),
-        [
-            (1.0, 0.0, [1.0, 0.0]),
-            (0.07, 0.0, [0.07, 0.0]),
-            (0.85, 0.0, [0.85, 0.0]),
-            (None, None, [0.85, 0.0]),
-        ],
-    )
-    def test_gripper_open_close_use_configured_endpoints(
-        self,
-        make_coordinator,
-        mock_adapter,
-        open_endpoint: float | None,
-        closed_endpoint: float | None,
-        expected: list[float],
-    ) -> None:
-        component = HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            gripper_joints=["arm/gripper"],
-            gripper_open_position=open_endpoint,
-            gripper_closed_position=closed_endpoint,
-        )
-        coordinator = make_coordinator()
-        coordinator._hardware = {"arm": ConnectedHardware(mock_adapter, component)}
-        mock_adapter.write_gripper_position.return_value = True
-
-        assert coordinator.open_gripper("arm") is True
-        assert coordinator.close_gripper("arm") is True
-        assert [
-            call.args[0] for call in mock_adapter.write_gripper_position.call_args_list
-        ] == expected
-
     def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
         coordinator = make_coordinator()
         matching_task = RecordingTask("eef")

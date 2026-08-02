@@ -14,11 +14,11 @@
 
 from typing import Any
 
+from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.hardware.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.manipulators.mock.adapter import MockAdapter
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
@@ -29,10 +29,13 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam_planner,
 )
 from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_ARM_JOINTS,
     OPENYAM_DOF,
     OPENYAM_GRAVITY_MODEL_PATH,
+    OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_JOINTS,
     OPENYAM_PACKAGE_PATHS,
-    make_openyam_hardware,
     make_openyam_model_config,
     openyam_hardware,
 )
@@ -47,7 +50,7 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     return _module_kwargs(blueprint, ControlCoordinator)
 
 
-def test_openyam_model_config_has_expected_links_and_mapping() -> None:
+def test_openyam_model_config_maps_only_six_arm_joints() -> None:
     config = make_openyam_model_config(name="arm")
 
     assert config.joint_names == [f"joint{i}" for i in range(1, OPENYAM_DOF + 1)]
@@ -57,120 +60,87 @@ def test_openyam_model_config_has_expected_links_and_mapping() -> None:
     assert config.base_link == "base"
     assert config.end_effector_link == "gripper_tip"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
-    assert config.gripper_hardware_id == "arm"
+    assert config.gripper_hardware_id is None
 
 
-def test_openyam_mock_hardware_has_gripper() -> None:
-    hardware = make_openyam_hardware("arm")
-
-    assert hardware.adapter_type == "mock"
-    assert hardware.joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert hardware.gripper_joints == ["arm/gripper"]
-    assert hardware.gripper_open_position == 1.0
-    assert hardware.gripper_closed_position == 0.0
-
-
-def test_openyam_physical_hardware_uses_registered_damiao_adapter(monkeypatch: Any) -> None:
+def test_openyam_physical_hardware_is_one_whole_body(monkeypatch: Any) -> None:
     monkeypatch.setattr(global_config, "simulation", "")
     monkeypatch.setattr(global_config, "can_port", "can1")
 
-    hardware = openyam_hardware("arm")
+    hardware = openyam_hardware()
 
+    assert hardware.hardware_id == OPENYAM_HARDWARE_ID
+    assert hardware.hardware_type is HardwareType.WHOLE_BODY
     assert hardware.adapter_type == "openyam_damiao"
-    assert hardware.address == "can1"
-    runtime_config = hardware.adapter_kwargs["runtime_config"]
-    assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.gravity_model_path == OPENYAM_GRAVITY_MODEL_PATH
-    assert runtime_config.gravity_comp is True
-    assert len(hardware.joints) == OPENYAM_DOF
-    assert hardware.gripper_joints == ["arm/gripper"]
-    assert hardware.gripper_open_position == 1.0
-    assert hardware.gripper_closed_position == 0.0
-    assert "initial_positions" not in hardware.adapter_kwargs
-
-    direct = make_openyam_hardware(
-        "arm",
-        adapter_type="openyam_damiao",
-        home_joints=[0.1] * OPENYAM_DOF,
-    )
-    assert "initial_positions" not in direct.adapter_kwargs
+    assert hardware.joints == OPENYAM_JOINTS
+    assert hardware.gripper_joints == []
+    assert hardware.wb_config is not None
+    assert hardware.wb_config.kp == (80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0)
+    assert hardware.wb_config.kd == (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0)
+    runtime = hardware.adapter_kwargs["runtime_config"]
+    assert isinstance(runtime, DamiaoRuntimeConfig)
+    assert runtime.bus_addresses == {"can": "can1"}
+    assert runtime.gravity_comp is True
 
 
-def test_openyam_simulation_hardware_remains_mock(monkeypatch: Any) -> None:
+def test_openyam_simulation_uses_generic_whole_body_mock(monkeypatch: Any) -> None:
     monkeypatch.setattr(global_config, "simulation", "mujoco")
 
-    hardware = openyam_hardware("arm")
+    hardware = openyam_hardware()
 
-    assert hardware.adapter_type == "mock"
-    assert hardware.address is None
-
-
-def test_openyam_mock_adapter_set_get_behavior() -> None:
-    positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    adapter = MockAdapter(dof=OPENYAM_DOF, initial_positions=positions)
-
-    assert adapter.read_joint_positions() == positions
-    updated_positions = [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6]
-    assert adapter.write_joint_positions(updated_positions)
-    assert adapter.read_joint_positions() == updated_positions
-    assert adapter.write_gripper_position(0.25)
-    assert adapter.read_gripper_position() == 0.25
+    assert hardware.adapter_type == "mock_whole_body"
+    assert hardware.adapter_kwargs == {}
+    assert hardware.joints == OPENYAM_JOINTS
 
 
-def test_openyam_planner_blueprint_preserves_model_config() -> None:
+def test_openyam_planner_blueprint_keeps_gripper_out_of_trajectory() -> None:
     blueprint = openyam_planner_coordinator
     kwargs = _module_kwargs(blueprint, ManipulationModule)
     config = ManipulationModuleConfig(**kwargs).robots[0]
+    hardware = _coordinator_kwargs(blueprint)["hardware"][0]
+    trajectory = _coordinator_kwargs(blueprint)["tasks"][0]
 
     assert config.name == "arm"
     assert config.joint_names == [f"joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.end_effector_link == "gripper_tip"
-    assert config.gripper_hardware_id == "arm"
-    tasks = _coordinator_kwargs(blueprint)["tasks"]
-    assert len(tasks) == 1
-    trajectory = tasks[0]
+    assert hardware.joints == OPENYAM_JOINTS
     assert trajectory.type == "trajectory"
-    assert trajectory.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert trajectory.priority == 10
+    assert trajectory.joint_names == OPENYAM_ARM_JOINTS
+    assert OPENYAM_GRIPPER_JOINT not in trajectory.joint_names
     assert all(atom.module is not KeyboardTeleopModule for atom in blueprint.blueprints)
 
 
-def test_openyam_keyboard_planner_blueprint_combines_teleop_and_trajectory() -> None:
-    blueprint = keyboard_teleop_openyam_planner
-    tasks = _coordinator_kwargs(blueprint)["tasks"]
+def test_openyam_keyboard_planner_has_independent_idle_gripper_task() -> None:
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner)["tasks"]
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
     gripper = next(task for task in tasks if task.name == "servo_gripper")
 
-    assert trajectory.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert trajectory.joint_names == OPENYAM_ARM_JOINTS
     assert trajectory.priority == 20
-    assert eef_twist.joint_names == trajectory.joint_names
-    assert eef_twist.params["ee_joint_id"] == OPENYAM_DOF
-    assert eef_twist.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
-    assert eef_twist.priority == 10
-    assert gripper.type == "servo"
-    assert gripper.joint_names == ["arm/gripper"]
-    assert gripper.params == {"timeout": 0.0, "default_positions": [0.0]}
-    assert _module_kwargs(blueprint, KeyboardTeleopModule) == {}
+    assert eef_twist.joint_names == OPENYAM_ARM_JOINTS
+    assert eef_twist.params == {
+        "model_path": OPENYAM_GRAVITY_MODEL_PATH,
+        "ee_joint_id": OPENYAM_DOF,
+    }
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.params == {"timeout": 0.0}
 
 
-def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
-    blueprint = coordinator_openyam
-    kwargs = _coordinator_kwargs(blueprint)
-    assert len(kwargs["hardware"]) == 1
-    assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF
-    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
+def test_openyam_coordinator_registers_all_joints_but_arm_task_claims_six() -> None:
+    kwargs = _coordinator_kwargs(coordinator_openyam)
+
+    assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
+    assert kwargs["tasks"][0].joint_names == OPENYAM_ARM_JOINTS
 
 
-def test_openyam_teleop_blueprint_constructs_with_eef_twist() -> None:
-    blueprint = keyboard_teleop_openyam
-    tasks = _coordinator_kwargs(blueprint)["tasks"]
-    task = next(task for task in tasks if task.type == "eef_twist")
+def test_openyam_teleop_uses_separate_arm_and_gripper_tasks() -> None:
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    eef_twist = next(task for task in tasks if task.type == "eef_twist")
     gripper = next(task for task in tasks if task.name == "servo_gripper")
 
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert task.params["ee_joint_id"] == OPENYAM_DOF
-    assert task.params["model_path"] == OPENYAM_GRAVITY_MODEL_PATH
-    assert gripper.joint_names == ["arm/gripper"]
-    assert gripper.params["default_positions"] == [0.0]
-    assert _module_kwargs(blueprint, ManipulationModule)["visualization"] == {"backend": "viser"}
+    assert eef_twist.joint_names == OPENYAM_ARM_JOINTS
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert "default_positions" not in gripper.params
+    assert _module_kwargs(keyboard_teleop_openyam, ManipulationModule)["visualization"] == {
+        "backend": "viser"
+    }
