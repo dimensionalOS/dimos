@@ -60,6 +60,9 @@ class PGOConfig(NativeModuleConfig):
     loop_submap_half_range: int = 5
     submap_resolution: float = 0.1
     min_loop_detect_duration: float = 2.0
+    # Seconds of keyframe time between loop searches, whatever their outcome: in a small space every
+    # keyframe finds a candidate and a rejected ICP per keyframe can outrun the scan rate. 0 disables.
+    loop_search_min_interval: float = 1.0
     # Feature-poverty gate: skip loop search when the scan's descriptor vertical-structure std is below this
     # 0 disables
     min_descriptor_std: float = 0.0
@@ -150,8 +153,9 @@ class PGOConfig(NativeModuleConfig):
     per_keyframe_roll_pitch_prior: bool = False
     anchor_roll_pitch_var: float = 1e-12
 
-    # usually que is 1 lidar frame, only goes up after a big gtsam compute spike (backpressure) 100 is overkill but whatever
-    max_scan_queue: int = 100
+    # usually que is 1 lidar frame, only goes up after a big gtsam compute spike (backpressure); past
+    # this the oldest scans are dropped, so a stall can't leave the module seconds stale
+    max_scan_queue: int = 5
 
 
 class GscPGO(NativeModule):

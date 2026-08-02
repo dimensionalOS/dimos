@@ -156,7 +156,7 @@ pub(crate) const LOOP_GNC_INLIER_THRESHOLD: f64 = 0.5;
 /// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
 #[derive(Debug, Clone)]
 pub struct LoopCandidateDiag {
-    /// Outcome: "accepted", or the rejecting gate — one of "throttle_min_duration", "no_structure",
+    /// Outcome: "accepted", or the rejecting gate — one of "throttle_min_duration", "throttle_search_interval", "throttle_backlog", "no_structure",
     /// "low_occupancy", "no_candidate", "lowe_reject", "distance_reject",
     /// "degeneracy_reject", "icp_reject", "yank_reject".
     pub outcome: &'static str,
@@ -247,6 +247,9 @@ pub struct Config {
     pub loop_submap_half_range: i32,
     pub submap_resolution: f64,
     pub min_loop_detect_duration: f64,
+    /// Keyframe-time seconds between loop searches, whatever their outcome
+    /// (a rejected ICP costs as much as an accepted one). 0 disables.
+    pub loop_search_min_interval: f64,
     /// Sanity gate: skip ICP if candidate keyframe is farther than this from
     /// the current keyframe in global pose. 0 disables the check.
     pub loop_candidate_max_distance_m: f64,
@@ -343,6 +346,7 @@ impl Default for Config {
             loop_submap_half_range: 5,
             submap_resolution: 0.1,
             min_loop_detect_duration: 2.0,
+            loop_search_min_interval: 1.0,
             loop_candidate_max_distance_m: 0.0,
             min_descriptor_std: 0.0,
             loop_min_occupancy: 80,
@@ -413,6 +417,8 @@ pub struct GscPgo {
     location_closure: bool,
     timing: TimingStats,
     loop_diagnostics: Vec<LoopCandidateDiag>,
+    /// Keyframe time of the last loop search that got past the throttles.
+    last_loop_search_time: Option<f64>,
     /// Background batch-GNC worker (spawned only when `loop_gnc_final` is on).
     /// The live path dispatches a re-solve here after each closure instead of
     /// blocking on it inline; `None` disables the async path (offline harness
@@ -494,6 +500,7 @@ impl GscPgo {
             location_closure: false,
             timing: TimingStats::default(),
             loop_diagnostics: Vec::new(),
+            last_loop_search_time: None,
         }
     }
 
@@ -975,6 +982,21 @@ impl GscPgo {
 
     /// Candidate search (scan context with position fallback) + all the
     /// gates, ICP verification, and LoopPair construction.
+    /// Record that this keyframe's loop search was skipped because newer scans
+    /// are already queued behind it: a search (an ICP on a large cloud can take
+    /// seconds) must never be what makes the module fall behind.
+    pub fn skip_loop_search_behind(&mut self) {
+        if let Some(key_pose) = self.key_poses.last() {
+            let mut diag = LoopCandidateDiag::new(
+                self.key_poses.len() - 1,
+                key_pose.time,
+                key_pose.translation_global,
+            );
+            diag.outcome = "throttle_backlog";
+            self.loop_diagnostics.push(diag);
+        }
+    }
+
     pub fn search_for_loop_pairs(&mut self) {
         if self.key_poses.len() < 10 {
             return;
@@ -997,6 +1019,18 @@ impl GscPgo {
                     return;
                 }
             }
+        }
+
+        if self.config.loop_search_min_interval > 0.0 {
+            let current_time = self.key_poses[cur_idx].time;
+            if let Some(last_search) = self.last_loop_search_time {
+                if current_time - last_search < self.config.loop_search_min_interval {
+                    diag.outcome = "throttle_search_interval";
+                    self.loop_diagnostics.push(diag);
+                    return;
+                }
+            }
+            self.last_loop_search_time = Some(current_time);
         }
 
         // Feature-poverty gate: a scan with no spatially-spread structure

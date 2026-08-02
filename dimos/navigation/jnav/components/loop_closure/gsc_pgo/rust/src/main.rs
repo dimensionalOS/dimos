@@ -83,6 +83,7 @@ pub struct Config {
     pub loop_submap_half_range: i32,
     pub submap_resolution: f64,
     pub min_loop_detect_duration: f64,
+    pub loop_search_min_interval: f64,
     pub min_descriptor_std: f64,
     pub loop_min_occupancy: i32,
     pub loop_min_degeneracy: f64,
@@ -156,6 +157,7 @@ impl Config {
             loop_submap_half_range: self.loop_submap_half_range,
             submap_resolution: self.submap_resolution,
             min_loop_detect_duration: self.min_loop_detect_duration,
+            loop_search_min_interval: self.loop_search_min_interval,
             loop_candidate_max_distance_m: self.loop_candidate_max_distance_m,
             min_descriptor_std: self.min_descriptor_std,
             loop_min_occupancy: self.loop_min_occupancy,
@@ -608,7 +610,13 @@ impl Worker {
 
             // Keyframe added. Snapshot global poses BEFORE search + smooth so
             // we can publish the delta iSAM2 applies if a loop actually fires.
-            pgo.search_for_loop_pairs();
+            // Never search for loops while scans are waiting: skip it rather than fall behind.
+            let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
+            if behind {
+                pgo.skip_loop_search_behind();
+            } else {
+                pgo.search_for_loop_pairs();
+            }
             let had_loop = pgo.has_loop();
             let pre_poses: Vec<(Mat3, Vec3)> = if had_loop {
                 pgo.key_poses()
