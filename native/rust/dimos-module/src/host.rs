@@ -68,9 +68,10 @@ impl std::fmt::Debug for Prepared {
 /// the monomorphized entry point that parses its config and runs it.
 pub struct ModuleEntry {
     pub name: &'static str,
-    /// Tokio worker threads. 1 (the default) means a `current_thread` runtime;
-    /// more means a `multi_thread` runtime, which a module needs when it spawns
-    /// tasks that block (`block_in_place`) alongside its dispatch loop.
+    /// Worker threads in the module's own runtime. More than one is needed by a
+    /// module that spawns tasks calling `block_in_place` alongside its dispatch
+    /// loop. Always a multi-thread runtime: zenoh refuses to run on a
+    /// current_thread scheduler.
     pub threads: usize,
     /// `setpriority` niceness for the module's threads. `None` leaves it alone.
     pub nice: Option<i32>,
@@ -322,21 +323,24 @@ fn apply_nice(module: &str, nice: i32) {
     warn!(module, nice, "niceness is not supported on this platform");
 }
 
+/// The module's own runtime. Multi-thread even for a single worker: zenoh
+/// panics on a current_thread scheduler, and every module shares its session.
 fn build_runtime(entry: &ModuleEntry) -> io::Result<tokio::runtime::Runtime> {
-    let mut builder = if entry.threads > 1 {
-        let mut b = tokio::runtime::Builder::new_multi_thread();
-        b.worker_threads(entry.threads);
-        b
-    } else {
-        tokio::runtime::Builder::new_current_thread()
-    };
-    builder
+    let name = entry.name;
+    let nice = entry.nice;
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(entry.threads.max(1))
         .thread_name(thread_name(entry.name))
+        .on_thread_start(move || {
+            if let Some(nice) = nice {
+                apply_nice(name, nice);
+            }
+        })
         .enable_all()
         .build()
 }
 
-/// What a module thread reports back when it stops.
+/// What a module reports back when it stops.
 enum Outcome {
     Finished(io::Result<()>),
     Panicked,
@@ -347,9 +351,11 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         return Err(invalid("host bakes no modules"));
     }
 
-    // A current_thread runtime on the main thread: it owns the transport, the
-    // ctrl_c watch, and (for LCM) the shared receive loop. Modules get their own.
-    let main_rt = tokio::runtime::Builder::new_current_thread()
+    // One worker for the host itself: it owns the transport, the ctrl_c watch
+    // and (for LCM) the shared receive loop. Each module gets its own runtime.
+    let main_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("dm-host")
         .enable_all()
         .build()?;
 
@@ -371,7 +377,7 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
     supervise(spec, prepared, transport, &main_rt)
 }
 
-/// Run every prepared module on its own thread and take the host down as soon
+/// Run every prepared module on its own runtime and take the host down as soon
 /// as one of them stops, whichever way it stops.
 fn supervise(
     spec: &HostSpec,
@@ -382,34 +388,21 @@ fn supervise(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(&'static str, Outcome)>();
 
-    let mut threads = Vec::with_capacity(prepared.len());
+    let mut runtimes = Vec::with_capacity(prepared.len());
     for (entry, one) in spec.modules.iter().zip(prepared) {
-        let transport = Arc::clone(&transport);
-        let shutdown = shutdown_rx.clone();
+        let runtime = build_runtime(entry)?;
+        let joined = runtime.spawn((one.run)(Arc::clone(&transport), shutdown_rx.clone()));
         let done = done_tx.clone();
         let name = entry.name;
-        let nice = entry.nice;
-        let runtime = build_runtime(entry)?;
-        let run = one.run;
-        threads.push(
-            std::thread::Builder::new()
-                .name(thread_name(name))
-                .spawn(move || {
-                    if let Some(nice) = nice {
-                        apply_nice(name, nice);
-                    }
-                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        runtime.block_on(run(transport, shutdown))
-                    }));
-                    let _ = done.send((
-                        name,
-                        match outcome {
-                            Ok(res) => Outcome::Finished(res),
-                            Err(_) => Outcome::Panicked,
-                        },
-                    ));
-                })?,
-        );
+        main_rt.spawn(async move {
+            let outcome = match joined.await {
+                Ok(res) => Outcome::Finished(res),
+                Err(e) if e.is_panic() => Outcome::Panicked,
+                Err(_) => Outcome::Finished(Ok(())),
+            };
+            let _ = done.send((name, outcome));
+        });
+        runtimes.push(runtime);
         info!(
             host = spec.name,
             module = name,
@@ -457,8 +450,7 @@ fn supervise(
         }
     };
 
-    // Bounded: a wedged module must not keep the host alive, the process exit
-    // will take its thread with it.
+    // Bounded: a wedged module must not keep the host alive.
     main_rt.block_on(async {
         let drain = async { while done_rx.recv().await.is_some() {} };
         if tokio::time::timeout(SHUTDOWN_GRACE, drain).await.is_err() {
@@ -469,6 +461,10 @@ fn supervise(
             );
         }
     });
+    // Dropping a Runtime waits for its tasks; a wedged module would hang here.
+    for runtime in runtimes {
+        runtime.shutdown_background();
+    }
 
     match first {
         Some((name, _)) if failure => Err(io::Error::other(format!("module `{name}` stopped"))),
@@ -707,7 +703,8 @@ mod tests {
                 .collect::<Map<String, Value>>(),
         });
         let prepared = prepare_all(spec, &stdin)?;
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()?;
         let transport = Arc::new(SharedTransport::new(LoopbackTransport::default()));
