@@ -80,6 +80,14 @@ interface RobotEntry {
   peer: RobotPeer;
   /** Manifest delivery per channel; frame-header delivery is the fallback. */
   delivery: Map<string, Delivery>;
+  /** Viewer holding the exclusive teleop lease, or null. Dies with the
+   * entry: a re-registered robot starts lease-free. */
+  teleop: ViewerPeer | null;
+  /** Lease generation, bumped on every fresh grant and stamped into
+   * robot-bound teleop messages so the bridge can permanently void a
+   * released lease's in-flight datagrams. Dies with the entry (safe: the
+   * bridge resets its floor with the session). */
+  teleopGen: number;
   /** Snapshot counter, monotonic for this robot session's registration. */
   n: number;
   /** Last snapshot content, for change detection and periodic resend. */
@@ -97,6 +105,8 @@ export class Registry {
   #viewers = new Set<ViewerPeer>();
   #framesDropped = 0;
   #framesFromUnregistered = 0;
+  #teleopForwarded = 0;
+  #teleopDropped = 0;
 
   addViewer(viewer: ViewerPeer): void {
     this.#viewers.add(viewer);
@@ -105,7 +115,10 @@ export class Registry {
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
     disposePolicies(viewer);
-    if (viewer.watched !== null) this.#syncSubs(viewer.watched);
+    if (viewer.watched !== null) {
+      this.#releaseTeleop(viewer.watched, viewer);
+      this.#syncSubs(viewer.watched);
+    }
   }
 
   /**
@@ -126,6 +139,8 @@ export class Registry {
     this.#robots.set(info.id, {
       peer,
       delivery,
+      teleop: null,
+      teleopGen: 0,
       n: 0,
       lastChs: [],
       channelsIn: new Map(),
@@ -198,6 +213,7 @@ export class Registry {
         if (previous !== null && previous !== msg.robotId) {
           viewer.subs.clear();
           disposePolicies(viewer);
+          this.#releaseTeleop(previous, viewer);
         }
         viewer.watched = msg.robotId;
         if (previous !== null && previous !== msg.robotId) this.#syncSubs(previous);
@@ -244,8 +260,76 @@ export class Registry {
         this.#syncSubs(viewer.watched);
         break;
       }
+      case "teleop_start": {
+        if (viewer.watched === null) {
+          reply({ t: "error", code: "no_watch", message: "watch a robot before teleop_start" });
+          break;
+        }
+        const entry = this.#robots.get(viewer.watched);
+        if (entry === undefined) {
+          reply({ t: "error", code: "unknown_robot", message: `no robot ${viewer.watched}` });
+          break;
+        }
+        if (entry.teleop !== null && entry.teleop !== viewer) {
+          reply({
+            t: "error",
+            code: "teleop_held",
+            message: `robot ${viewer.watched} teleop is held by another viewer`,
+          });
+          break;
+        }
+        if (entry.teleop === null) {
+          entry.teleop = viewer;
+          entry.teleopGen++;
+          console.log(
+            `[relay] robot ${viewer.watched} teleop lease -> viewer ${viewer.id} ` +
+              `(gen ${entry.teleopGen})`,
+          );
+        }
+        // Resent on an idempotent re-arm to heal datagram loss, like the
+        // re-acked teleop_started; the bridge ignores duplicates.
+        entry.peer.sendMsg({ t: "teleop_start", gen: entry.teleopGen });
+        reply({ t: "teleop_started" });
+        break;
+      }
+      case "teleop_stop": {
+        // Idempotent release; no ack (disarm is local to the cockpit and the
+        // bridge watchdog covers a lost robot-ward teleop_stop).
+        if (viewer.watched !== null) this.#releaseTeleop(viewer.watched, viewer);
+        break;
+      }
+      case "twist":
+      case "stop": {
+        // Lease-gated, silent on drop: gating runs at twist rate on lossy
+        // datagrams, and the arm handshake (teleop_start) is where a viewer
+        // learns it lacks the lease.
+        const entry = viewer.watched === null ? undefined : this.#robots.get(viewer.watched);
+        if (entry === undefined || entry.teleop !== viewer) {
+          this.#teleopDropped++;
+          break;
+        }
+        // The spread puts the relay's stamp last: a viewer-supplied gen is
+        // overridden, the relay is the only generation authority.
+        entry.peer.sendMsg({ ...msg, gen: entry.teleopGen });
+        this.#teleopForwarded++;
+        break;
+      }
     }
     return true;
+  }
+
+  /** Release `viewer`'s teleop lease on `robotId`, if held: the bridge gets
+   * a gen-stamped teleop_stop that permanently voids this lease's datagrams
+   * (its deadman watchdog covers a lost stop) and the next teleop_start
+   * wins the lease. */
+  #releaseTeleop(robotId: string, viewer: ViewerPeer): void {
+    const entry = this.#robots.get(robotId);
+    if (entry === undefined || entry.teleop !== viewer) return;
+    entry.teleop = null;
+    // At release time teleopGen still names the released lease (it bumps
+    // only on grant).
+    entry.peer.sendMsg({ t: "teleop_stop", gen: entry.teleopGen });
+    console.log(`[relay] robot ${robotId} teleop lease released (viewer ${viewer.id})`);
   }
 
   /**
@@ -342,9 +426,12 @@ export class Registry {
       viewers: this.#viewers.size,
       framesDropped: this.#framesDropped,
       framesFromUnregistered: this.#framesFromUnregistered,
+      teleopForwarded: this.#teleopForwarded,
+      teleopDropped: this.#teleopDropped,
       perRobot: Object.fromEntries(
         [...this.#robots].map(([id, e]) => [id, {
           subs: e.lastChs,
+          teleop: e.teleop?.id ?? null,
           channels: Object.fromEntries(
             [...e.channelsIn].map(([ch, s]) => [ch, {
               delivery: s.delivery,

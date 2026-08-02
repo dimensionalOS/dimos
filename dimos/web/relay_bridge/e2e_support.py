@@ -24,6 +24,8 @@ from dimos.web.relay_bridge.protocol import (
     Msg,
     Sub,
     Subs,
+    TeleopStart,
+    TeleopStarted,
     Watch,
 )
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
@@ -66,6 +68,21 @@ async def attach_viewer(
             raise TimeoutError(f"no manifest for {robot_id} within {timeout} s")
     for ch in chs:
         viewer.send_control(Sub(ch=ch))
+
+
+async def arm_teleop(viewer: RelayClient, timeout: float = 10.0) -> None:
+    """Acquire the robot's teleop lease (retrying: the Python viewer's control
+    plane is datagrams, so the teleop_started ack can be lost)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        viewer.send_control(TeleopStart())
+        msg = await next_control(viewer, 0.5)
+        while msg is not None and not isinstance(msg, TeleopStarted):
+            msg = await next_control(viewer, 0.5)
+        if isinstance(msg, TeleopStarted):
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"teleop lease not granted within {timeout} s")
 
 
 async def wait_subs(

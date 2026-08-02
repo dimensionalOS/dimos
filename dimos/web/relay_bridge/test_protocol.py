@@ -35,6 +35,7 @@ from dimos.web.relay_bridge.protocol import (
     ProtocolError,
     RobotInfo,
     Robots,
+    TeleopStop,
     decode_data_frame,
     decode_datagram,
     encode_control_frame,
@@ -64,10 +65,10 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v3: the manifest travels as one opaque record nested in hello/manifest
-    # messages (v2 carried flat channels/panels fields); a v2 peer must fail
-    # the handshake.
-    assert PROTOCOL_VERSION == 3
+    # v4: the twist datagram gains vy, the teleop lease messages enter the
+    # control plane, and robot-bound teleop messages carry the relay-stamped
+    # lease generation; a v3 peer must fail the handshake.
+    assert PROTOCOL_VERSION == 4
 
 
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])
@@ -241,6 +242,9 @@ def test_msg_from_dict_validates_types():
         msg_from_dict({"t": "bogus"})  # unknown type
     with pytest.raises(ProtocolError):
         msg_from_dict({"t": "ping", "n": True, "ts": 2.5})  # bool is not a number
+    with pytest.raises(ProtocolError):
+        # v3-era twist without vy: an old peer must fail loudly, not default.
+        msg_from_dict({"t": "twist", "vx": 0.5, "wz": -0.25, "seq": 12, "ts": 2.5})
     # Mirrored-validator parity: protocol.ts must also reject prototype-chain
     # keys instead of resolving them through Object.prototype (protocol_test.ts
     # asserts the same three).
@@ -293,6 +297,11 @@ def test_msg_from_dict_validates_nested_session_shapes():
         {"t": "watch"},
         {"t": "subs", "chs": ["a", 5], "n": 1},
         {"t": "subs", "chs": ["a"]},
+        # Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": None},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": "1"},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": True},
+        {"t": "teleop_stop", "gen": None},
     ]
     for data in bad:
         with pytest.raises(ProtocolError):
@@ -314,6 +323,8 @@ def test_encode_omits_absent_optional_fields():
     # A viewer hello must stay byte-identical to its T1 wire form: no
     # "robot":null / "manifest":null keys (JSON.stringify omits undefined).
     assert encode_datagram(Hello(v=1, role="viewer")) == b'{"t":"hello","v":1,"role":"viewer"}'
+    # Same for teleop gen: viewer-authored messages carry no "gen":null key.
+    assert encode_datagram(TeleopStop()) == b'{"t":"teleop_stop"}'
 
 
 def test_nested_roundtrip_returns_models():
