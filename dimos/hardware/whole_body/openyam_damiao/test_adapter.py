@@ -12,25 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import runpy
+
 import can_motor_control
 from pytest_mock import MockerFixture
 
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.openyam_damiao import adapter as adapter_module
 from dimos.hardware.whole_body.openyam_damiao.adapter import OpenYamDamiaoAdapter
+
+
+def test_import_does_not_resolve_gravity_model_lfs(mocker: MockerFixture) -> None:
+    get_data = mocker.patch("dimos.utils.data.get_data")
+
+    runpy.run_path(adapter_module.__file__)
+
+    get_data.assert_not_called()
 
 
 def test_openyam_builds_upstream_arm_and_gripper(mocker: MockerFixture) -> None:
     mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
     adapter = OpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(
-            bus_addresses={"can": "test_can"},
+            bus_addresses={"openyam": "test_can"},
             gravity_comp=False,
         )
     )
 
     robot = adapter._build_robot()
 
-    assert robot.bus_names() == ["can"]
+    assert robot.bus_names() == ["openyam"]
     assert robot.group_names() == ["arm", "gripper"]
     assert isinstance(robot["arm"], can_motor_control.Arm)
     assert len(robot["arm"]) == 6

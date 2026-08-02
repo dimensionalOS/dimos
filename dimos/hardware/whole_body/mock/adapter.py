@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
@@ -26,16 +24,11 @@ class MockWholeBodyAdapter:
 
     def __init__(
         self,
-        address: str | Path | None = None,
         *,
         dof: int,
         initial_positions: list[float] | None = None,
-        hardware_id: str = "whole_body",
-        domain_id: int = 0,
+        **_: object,
     ) -> None:
-        del address
-        del hardware_id
-        del domain_id
         positions = initial_positions or [0.0] * dof
         if len(positions) != dof:
             raise ValueError(f"expected {dof} initial positions, got {len(positions)}")

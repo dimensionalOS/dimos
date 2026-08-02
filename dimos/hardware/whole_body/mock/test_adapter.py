@@ -17,7 +17,13 @@ from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
 def test_mock_whole_body_applies_ordered_commands() -> None:
-    adapter = MockWholeBodyAdapter(dof=2, initial_positions=[0.1, 0.2])
+    adapter = MockWholeBodyAdapter(
+        dof=2,
+        initial_positions=[0.1, 0.2],
+        address=None,
+        hardware_id="test_robot",
+        domain_id=0,
+    )
     assert adapter.connect()
 
     assert adapter.write_motor_commands(

@@ -48,7 +48,7 @@ def openyam_hardware() -> HardwareComponent:
     adapter_kwargs: dict[str, object] = {}
     if not global_config.simulation:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses={"can": global_config.can_port or "can0"},
+            bus_addresses={"openyam": global_config.can_port or "can0"},
             gravity_comp=True,
         )
     return HardwareComponent(

@@ -28,13 +28,18 @@ from dimos.utils.data import LfsPath
 class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
     """One OpenYAM arm and calibrated gripper on a shared CAN bus."""
 
+    bus_name = "openyam"
     arm_joints = {
         "arm": tuple(f"arm/joint{index}" for index in range(1, 7)),
     }
     gripper_joints = {"gripper": "arm/gripper"}
-    bus_defaults = {"can": "can0"}
-    gravity_model_path = Path(LfsPath("yam_description")) / "urdf/yam_gripper_gravity.urdf"
+    bus_defaults = {bus_name: "can0"}
     gravity_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
+
+    @property
+    def gravity_model_path(self) -> Path:
+        """Return the lazy gravity-compensation URDF path."""
+        return LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
 
     def _build_robot(self) -> can_motor_control.Robot:
         arm_motors = [
@@ -55,14 +60,14 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
         return (
             can_motor_control.Robot.builder()
             .add_bus(
-                "can",
-                can_motor_control.SocketCanBus(self.bus_address("can")),
+                self.bus_name,
+                can_motor_control.SocketCanBus(self.bus_address(self.bus_name)),
                 damiao.DamiaoCodec(),
             )
-            .add_arm("arm", bus="can", motors=arm_motors)
+            .add_arm("arm", bus=self.bus_name, motors=arm_motors)
             .add_gripper(
                 "gripper",
-                bus="can",
+                bus=self.bus_name,
                 motor=gripper_motor,
                 opening_direction="decreasing_position",
                 default_current=0.15,

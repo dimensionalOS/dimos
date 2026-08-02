@@ -278,3 +278,10 @@ def test_runtime_config_rejects_unknown_bus_override(dual_robot: FakeRobot) -> N
             dual_robot,
             runtime_config=DamiaoRuntimeConfig(bus_addresses={"missing": "can9"}),
         )
+
+
+def test_scalar_address_directs_multi_bus_users_to_named_overrides(
+    dual_robot: FakeRobot,
+) -> None:
+    with pytest.raises(ValueError, match="runtime_config.bus_addresses"):
+        DualAdapter(dual_robot, address="can0")

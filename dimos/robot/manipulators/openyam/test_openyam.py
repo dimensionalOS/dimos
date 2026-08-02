@@ -79,7 +79,7 @@ def test_openyam_physical_hardware_is_one_whole_body(monkeypatch: Any) -> None:
     assert hardware.wb_config.kd == (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0)
     runtime = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime, DamiaoRuntimeConfig)
-    assert runtime.bus_addresses == {"can": "can1"}
+    assert runtime.bus_addresses == {"openyam": "can1"}
     assert runtime.gravity_comp is True
 
 

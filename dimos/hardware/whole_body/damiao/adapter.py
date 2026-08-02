@@ -40,7 +40,6 @@ class DamiaoWholeBodyAdapter(ABC):
     arm_joints: dict[str, tuple[str, ...]] = {}
     gripper_joints: dict[str, str] = {}
     bus_defaults: dict[str, str] = {}
-    gravity_model_path: Path | None = None
     gravity_joint_names: tuple[str, ...] = ()
 
     def __init__(
@@ -52,6 +51,13 @@ class DamiaoWholeBodyAdapter(ABC):
         hardware_id: str = "whole_body",
         domain_id: int = 0,
     ) -> None:
+        """Initialize runtime settings for a subclass-declared Damiao topology.
+
+        ``address`` is accepted for the coordinator's common adapter factory
+        convention, but one scalar cannot represent a multi-bus whole body.
+        Configure physical CAN interfaces by logical bus name through
+        ``runtime_config.bus_addresses`` instead.
+        """
         del domain_id
         if address is not None:
             raise ValueError("configure Damiao CAN buses through runtime_config.bus_addresses")
@@ -93,6 +99,11 @@ class DamiaoWholeBodyAdapter(ABC):
             return self._runtime_config.bus_addresses.get(name, self.bus_defaults[name])
         except KeyError as exc:
             raise ValueError(f"subclass did not declare CAN bus {name!r}") from exc
+
+    @property
+    def gravity_model_path(self) -> Path | None:
+        """Return the subclass's gravity URDF without resolving it at import time."""
+        return None
 
     @abstractmethod
     def _build_robot(self) -> can_motor_control.Robot:
@@ -316,9 +327,10 @@ class DamiaoWholeBodyAdapter(ABC):
     def _load_gravity_model(self) -> None:
         if not self._runtime_config.gravity_comp:
             return
-        if self.gravity_model_path is None or not self.gravity_model_path.is_file():
+        model_path = self.gravity_model_path
+        if model_path is None or not model_path.is_file():
             raise ValueError("gravity compensation requires an existing URDF")
-        self._pin_model = pinocchio.buildModelFromUrdf(str(self.gravity_model_path))
+        self._pin_model = pinocchio.buildModelFromUrdf(str(model_path))
         self._pin_data = self._pin_model.createData()
 
     def _preflight_gravity(self) -> None:
