@@ -363,6 +363,26 @@ fn per_keyframe_rp_prior_keeps_keyframes_level() {
 /// points (pcl behavior), not the voxel center; floor-binning handles
 /// negative coordinates.
 #[test]
+fn keyframe_voxel_size_downsamples_the_stored_cloud_only_when_set() {
+    // 1000 points packed in a 10 cm cube: one 0.5 m voxel
+    let dense: Vec<[f32; 3]> = (0..1000)
+        .map(|i| [(i % 10) as f32 * 0.01, (i / 10 % 10) as f32 * 0.01, (i / 100) as f32 * 0.01])
+        .collect();
+    let stored = |keyframe_voxel_size: f64| {
+        let mut pgo = GscPgo::new(Config { keyframe_voxel_size, ..test_config() });
+        let cloud_with_pose = CloudWithPose {
+            cloud: Some(std::sync::Arc::new(dense.clone())),
+            pose: make_pose(mat3::identity(), [0.0, 0.0, 0.0], 0.0),
+            frame_id: "odom".to_string(),
+        };
+        assert!(pgo.add_key_pose(&cloud_with_pose));
+        pgo.key_poses()[0].body_cloud.as_ref().unwrap().len()
+    };
+    assert_eq!(stored(0.0), 1000);
+    assert_eq!(stored(0.5), 1);
+}
+
+#[test]
 fn voxel_downsample_emits_per_voxel_centroids() {
     let cloud = vec![
         // Voxel (0,0,0) for leaf 1.0: centroid (0.2, 0.3, 0.4).

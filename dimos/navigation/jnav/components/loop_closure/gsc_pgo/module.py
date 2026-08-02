@@ -59,6 +59,8 @@ class PGOConfig(NativeModuleConfig):
     loop_score_thresh: float = 0.15
     loop_submap_half_range: int = 5
     submap_resolution: float = 0.1
+    # Voxel size (m) each incoming cloud is downsampled to before a keyframe stores it; 0 keeps clouds as they arrive
+    keyframe_voxel_size: float = 0.0
     min_loop_detect_duration: float = 2.0
     # Seconds of keyframe time between loop searches, whatever their outcome: in a small space every
     # keyframe finds a candidate and a rejected ICP per keyframe can outrun the scan rate. 0 disables.

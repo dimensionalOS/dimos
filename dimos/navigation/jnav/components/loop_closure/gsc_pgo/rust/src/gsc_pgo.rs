@@ -246,6 +246,9 @@ pub struct Config {
     pub loop_score_thresh: f64,
     pub loop_submap_half_range: i32,
     pub submap_resolution: f64,
+    /// Voxel size each incoming cloud is downsampled to before a keyframe
+    /// stores it. 0 keeps clouds as they arrive.
+    pub keyframe_voxel_size: f64,
     pub min_loop_detect_duration: f64,
     /// Keyframe-time seconds between loop searches, whatever their outcome
     /// (a rejected ICP costs as much as an accepted one). 0 disables.
@@ -345,6 +348,7 @@ impl Default for Config {
             loop_score_thresh: 0.15,
             loop_submap_half_range: 5,
             submap_resolution: 0.1,
+            keyframe_voxel_size: 0.0,
             min_loop_detect_duration: 2.0,
             loop_search_min_interval: 1.0,
             loop_candidate_max_distance_m: 0.0,
@@ -635,11 +639,13 @@ impl GscPgo {
         if !self.is_key_pose(&cloud_with_pose.pose) {
             return false;
         }
-        self.insert_pose_node(
-            &cloud_with_pose.pose,
-            cloud_with_pose.cloud.clone(),
-            &cloud_with_pose.frame_id,
-        );
+        let cloud = match &cloud_with_pose.cloud {
+            Some(cloud) if self.config.keyframe_voxel_size > 0.0 => {
+                Some(Arc::new(voxel_downsample(cloud, self.config.keyframe_voxel_size)))
+            }
+            cloud => cloud.clone(),
+        };
+        self.insert_pose_node(&cloud_with_pose.pose, cloud, &cloud_with_pose.frame_id);
         true
     }
 
