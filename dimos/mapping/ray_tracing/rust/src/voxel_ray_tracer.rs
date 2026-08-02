@@ -460,8 +460,16 @@ pub fn emit_points(
         }
         out.push((x, y, z));
     }
+    // A voxel hit THIS frame is real for the emitted cloud unless the map
+    // already carries it (healthy AND supported). Skipping merely-healthy
+    // hits made thin obstacles vanish after their first frame: hit -> healthy
+    // -> live-skipped, but a chair leg / box edge never reaches support_min
+    // neighbors, so the main loop filtered it forever — the more consistently
+    // the lidar saw it, the more invisible it was (field: three collisions).
     for &key in live.iter() {
-        if matches!(map.voxels.get(&key), Some(c) if c.health > 0) {
+        let carried = matches!(map.voxels.get(&key), Some(c) if c.health > 0)
+            && (support_min <= 0 || has_support(&map.voxels, key, support_min));
+        if carried {
             continue;
         }
         let (x, y, z) = center(key);
@@ -1410,5 +1418,45 @@ mod tests {
             !gated.contains(&isolated),
             "isolated voxel must be gated out"
         );
+    }
+}
+
+#[cfg(test)]
+mod thin_obstacle_tests {
+    use super::*;
+    use ahash::AHashSet;
+
+    #[test]
+    fn repeatedly_seen_thin_cluster_keeps_emitting() {
+        // A thin line of voxels (a box edge / chair leg) hit every frame must
+        // stay in the emitted cloud even though it never reaches support_min
+        // healthy neighbors. Regression: it vanished after frame 1 (hit ->
+        // healthy -> live-skipped -> support-filtered).
+        let cfg = Config {
+            voxel_size: 0.08,
+            max_range: 30.0,
+            ray_subsample: 1,
+            shadow_depth: 0.1,
+            grace_depth: 0.2,
+            min_health: -1,
+            max_health: 5,
+            graze_cos: 0.7,
+            support_min: 4,
+            emit_every: 1,
+            global_emit_every: 50,
+            region_percentile: 95.0,
+        };
+        let mut map = VoxelMap::default();
+        let pts: Vec<(f32, f32, f32)> =
+            (0..8).map(|i| (2.0, i as f32 * 0.04 - 0.15, 0.3)).collect();
+        let origin = (0.0, 0.0, 0.5);
+        for frame in 0..5 {
+            let live: AHashSet<VoxelKey> = update_map(&mut map, origin, &pts, &cfg);
+            let out = emit_points(&map, cfg.voxel_size, None, 4, &live);
+            assert!(
+                !out.is_empty(),
+                "frame {frame}: repeatedly-hit cluster vanished from the emitted cloud"
+            );
+        }
     }
 }

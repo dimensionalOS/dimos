@@ -61,11 +61,63 @@ pub struct ZenohTransport {
     publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
+/// Comma-separated locator list (`DIMOS_ZENOH_CONNECT`) as a JSON5 array for
+/// `connect/endpoints`. `None` when no non-empty locator remains.
+fn connect_endpoints_json5(endpoints: &str) -> Option<String> {
+    let list: Vec<String> = endpoints
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|e| format!("\"{e}\""))
+        .collect();
+    if list.is_empty() {
+        None
+    } else {
+        Some(format!("[{}]", list.join(",")))
+    }
+}
+
 impl ZenohTransport {
     pub async fn new() -> io::Result<Self> {
-        let session = ::zenoh::open(::zenoh::Config::default())
-            .await
-            .map_err(to_io)?;
+        let mut config = ::zenoh::Config::default();
+        // Robots reachable over TCP often never answer a multicast scout
+        // (APs filter it); the launcher passes explicit endpoints to dial,
+        // mirroring the python session's connect config.
+        if let Some(json5) = std::env::var("DIMOS_ZENOH_CONNECT")
+            .ok()
+            .as_deref()
+            .and_then(connect_endpoints_json5)
+        {
+            config
+                .insert_json5("connect/endpoints", &json5)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        // Fixed listen endpoints so remote peers can dial this module the
+        // same way they dial the go2web bridge — no discovery involved.
+        if let Some(json5) = std::env::var("DIMOS_ZENOH_LISTEN")
+            .ok()
+            .as_deref()
+            .and_then(connect_endpoints_json5)
+        {
+            config
+                .insert_json5("listen/endpoints", &json5)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        // Multicast scouting is a liability on robot deployments: the scout
+        // flood tripped a zenoh Hello EINVAL on the laptop (link-local
+        // locator) and discovery never converged. Explicit endpoints only.
+        if matches!(
+            std::env::var("DIMOS_ZENOH_SCOUTING").as_deref(),
+            Ok("off" | "false" | "0")
+        ) {
+            config
+                .insert_json5("scouting/multicast/enabled", "false")
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            config
+                .insert_json5("scouting/gossip/enabled", "false")
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        let session = ::zenoh::open(config).await.map_err(to_io)?;
         Ok(Self {
             session,
             qos: OnceLock::new(),
@@ -172,6 +224,29 @@ mod tests {
         .expect("payload not delivered within timeout");
 
         assert_eq!(received, payload);
+    }
+
+    #[test]
+    fn connect_endpoints_json5_empty_yields_none() {
+        // No usable locator means the default config stays untouched.
+        assert_eq!(connect_endpoints_json5(""), None);
+        assert_eq!(connect_endpoints_json5("  , ,  "), None);
+    }
+
+    #[test]
+    fn connect_endpoints_json5_lists_all_locators() {
+        assert_eq!(
+            connect_endpoints_json5("tcp/a:7447, tcp/b:7447"),
+            Some(r#"["tcp/a:7447","tcp/b:7447"]"#.to_string())
+        );
+    }
+
+    #[test]
+    fn connect_endpoints_json5_filters_blank_segments() {
+        assert_eq!(
+            connect_endpoints_json5(" ,tcp/go2:7447,, "),
+            Some(r#"["tcp/go2:7447"]"#.to_string())
+        );
     }
 
     #[test]

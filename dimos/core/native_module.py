@@ -174,6 +174,29 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
+def _spawn_env(extra_env: dict[str, str]) -> dict[str, str]:
+    """Environment for the native subprocess."""
+    env = {**os.environ, **extra_env}
+
+    # set transport so native modules know which one to spawn
+    env["DIMOS_TRANSPORT"] = global_config.transport
+
+    # Native zenoh sessions scout on their own; on multicast-filtering
+    # LANs they never find the robot. Hand them the same explicit dial
+    # endpoints the python sessions use.
+    from dimos.protocol.service.zenohservice import _default_connect_endpoints
+
+    endpoints = _default_connect_endpoints()
+    if endpoints:
+        env["DIMOS_ZENOH_CONNECT"] = ",".join(endpoints)
+
+    # set Rust logging to match Python level
+    env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+        os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+    )
+    return env
+
+
 class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
@@ -250,15 +273,7 @@ class NativeModule(Module):
                 blob["qos"] = qos
             stdin_blob = json.dumps(blob).encode() + b"\n"
 
-        env = {**os.environ, **self.config.extra_env}
-
-        # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = global_config.transport
-
-        # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env = _spawn_env(self.config.extra_env)
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
