@@ -5,8 +5,9 @@
 //
 // The transport (protocol.ts) checks only field shapes; this module owns the
 // domain rules: bounded unique ids, positive rates, panel/layout references
-// that resolve, and kind-specific panel rules (video). Panels and layout are
-// minimal until T7 (the layout is a flat panel-id order, not a tree).
+// that resolve, and kind-specific panel rules (video, map2d). Panels and
+// layout are minimal until T7 (the layout is a flat panel-id order, not a
+// tree).
 
 export type Delivery = "latest" | "reliable";
 
@@ -157,6 +158,30 @@ export function parseManifest(value: unknown): Manifest {
         throw new ManifestError(
           "invalid_video_panel",
           `video panel ${panel.id} needs a jpeg.v1 latest channel`,
+        );
+      }
+    }
+    if (panel.kind === "map2d") {
+      // channels[0] is the costmap; channels[1] (optional) the pose overlay.
+      if (panel.channels.length !== 1 && panel.channels.length !== 2) {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} must bind one or two channels`,
+        );
+      }
+      const costmap = chIds.get(panel.channels[0])!;
+      if (costmap.encoding !== "costmap.zlib.v1" || costmap.delivery !== "latest") {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} needs a costmap.zlib.v1 latest channel first`,
+        );
+      }
+      if (
+        panel.channels.length === 2 && chIds.get(panel.channels[1])!.encoding !== "pose.json.v1"
+      ) {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} pose channel must be pose.json.v1`,
         );
       }
     }
