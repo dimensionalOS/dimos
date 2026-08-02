@@ -128,6 +128,7 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
 
 def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture) -> None:
     world = mocker.MagicMock(spec=PlannerSpec)
+    world.configure_planner = mocker.Mock()
     roboplan_world_module = ModuleType("dimos.manipulation.planning.world.roboplan_world")
     roboplan_world_module.RoboPlanWorld = type(world)  # type: ignore[attr-defined]
 
@@ -137,14 +138,16 @@ def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixt
             "dimos.manipulation.planning.world.roboplan_world": roboplan_world_module,
         },
     )
+    config = RoboPlanPlannerConfig()
     assert (
         create_planner(
-            config=RoboPlanPlannerConfig(),
+            config=config,
             world=world,
             world_backend="roboplan",
         )
         is world
     )
+    world.configure_planner.assert_called_once_with(config)
 
 
 def test_create_planner_rejects_roboplan_without_roboplan_world(mocker: MockerFixture) -> None:

@@ -43,10 +43,21 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+if not hasattr(roboplan_core, "PathShortcuttingOptions") or not hasattr(
+    roboplan_core, "PathShortcutter"
+):
+    raise ImportError(
+        "RoboPlanWorld requires roboplan>=0.5.1 with native path shortcutting support. "
+        "Sync the manipulation extra before selecting the roboplan backend."
+    )
+
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -118,6 +129,13 @@ class RoboPlanWorld:
         self._usable = True
         self._live_context = RoboPlanContext()
         self._lock = RLock()
+        self._planner_config = RoboPlanPlannerConfig()
+
+    def configure_planner(self, config: RoboPlanPlannerConfig) -> None:
+        """Configure native planning before finalizing the RoboPlan scene."""
+        if self._finalized:
+            raise RuntimeError("Cannot configure RoboPlan planner after world finalization")
+        self._planner_config = config.model_copy(deep=True)
 
     # Robot Management
 
@@ -1138,6 +1156,7 @@ class RoboPlanWorld:
                     timeout,
                     max_iterations,
                 )
+                result = self._shortcut_native_path(group, result)
             path = self._path_from_native(group, result)
         except ValueError as exc:
             return PlanningResult(
@@ -1179,6 +1198,55 @@ class RoboPlanWorld:
         if result is None:
             raise ValueError("RoboPlan RRT returned no path")
         return result
+
+    def _shortcut_native_path(self, group: RoboPlanGroup, path: Any) -> Any:
+        config = self._planner_config.path_shortcutting
+        if not config.enabled:
+            return path
+
+        try:
+            options = roboplan_core.PathShortcuttingOptions()
+            options.group_name = group.name
+            options.max_step_size = config.max_step_size
+            options.max_iters = config.max_iters
+            options.seed = config.seed
+            options.max_convergence_iters = config.max_convergence_iters
+            options.redundant_removal_iters = config.redundant_removal_iters
+            shortcutter = roboplan_core.PathShortcutter(self._require_scene(), options)
+            shortened = shortcutter.shortcut(path)
+            self._validate_shortcut_path(group, path, shortened)
+        except Exception as exc:
+            logger.warning("RoboPlan path shortcutting failed; using raw path: %s", exc)
+            return path
+        return shortened
+
+    def _validate_shortcut_path(
+        self,
+        group: RoboPlanGroup,
+        original: Any,
+        shortened: Any,
+    ) -> None:
+        """Validate structural guarantees before accepting a shortened path."""
+        original_path = self._path_from_native(group, original)
+        shortened_path = self._path_from_native(group, shortened)
+        if not shortened_path:
+            raise ValueError("RoboPlan path shortcutter returned an empty path")
+        if not original_path:
+            raise ValueError("RoboPlan RRT returned an empty path")
+        if not np.allclose(
+            shortened_path[0].position,
+            original_path[0].position,
+            atol=1e-9,
+            rtol=0.0,
+        ):
+            raise ValueError("RoboPlan path shortcutter changed the start configuration")
+        if not np.allclose(
+            shortened_path[-1].position,
+            original_path[-1].position,
+            atol=1e-9,
+            rtol=0.0,
+        ):
+            raise ValueError("RoboPlan path shortcutter changed the goal configuration")
 
     def _path_from_native(self, group: RoboPlanGroup, result: Any) -> list[JointState]:
         result_names = tuple(getattr(result, "joint_names", ()) or group.native_names)

@@ -58,10 +58,24 @@ class RoboPlanCartesianPathConfig(BaseConfig):
 CartesianPathConfig = RoboPlanCartesianPathConfig
 
 
+class RoboPlanPathShortcuttingConfig(BaseConfig):
+    """Configuration for RoboPlan's native joint-path shortcutter."""
+
+    enabled: bool = True
+    max_step_size: float = Field(default=0.05, gt=0.0)
+    max_iters: int = Field(default=100, ge=0)
+    seed: int = 0
+    max_convergence_iters: int = Field(default=20, ge=0)
+    redundant_removal_iters: int = Field(default=20, ge=0)
+
+
 class RoboPlanPlannerConfig(BaseConfig):
     """Configuration for scene-backed RoboPlan planning."""
 
     backend: Literal["roboplan"] = "roboplan"
+    path_shortcutting: RoboPlanPathShortcuttingConfig = Field(
+        default_factory=RoboPlanPathShortcuttingConfig
+    )
 
 
 ManipulationPlannerConfig = Annotated[

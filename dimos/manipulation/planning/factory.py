@@ -162,6 +162,10 @@ def create_planner(
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
         if not isinstance(world, PlannerSpec):
             raise ValueError("RoboPlan-native planner requires a RoboPlan world planner object")
+        configure_planner = getattr(world, "configure_planner", None)
+        if not callable(configure_planner):
+            raise ValueError("RoboPlan-native planner requires a configurable RoboPlan world")
+        configure_planner(config)
         return world
 
     raise TypeError(f"Unsupported planner config: {type(config).__name__}")

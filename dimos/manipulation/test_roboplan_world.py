@@ -35,7 +35,11 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPathShortcuttingConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -351,8 +355,31 @@ class FakeRRT:
         )
 
 
+class FakePathShortcuttingOptions:
+    def __init__(self) -> None:
+        self.group_name = ""
+        self.max_step_size = 0.05
+        self.max_iters = 100
+        self.seed = 0
+        self.max_convergence_iters = 20
+        self.redundant_removal_iters = 20
+
+
+class FakePathShortcutter:
+    instances: ClassVar[list[FakePathShortcutter]] = []
+
+    def __init__(self, scene: FakeScene, options: FakePathShortcuttingOptions) -> None:
+        self.scene = scene
+        self.options = options
+        type(self).instances.append(self)
+
+    def shortcut(self, path: FakeJointPath) -> FakeJointPath:
+        return path
+
+
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeCartesianPathPlanner.instances.clear()
+    FakePathShortcutter.instances.clear()
     roboplan_pkg = ModuleType("roboplan")
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
@@ -361,6 +388,8 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core.JointPath = FakeJointPath  # type: ignore[attr-defined]
     core.JointTrajectory = FakeJointTrajectory  # type: ignore[attr-defined]
     core.CartesianPath = FakeCartesianPath  # type: ignore[attr-defined]
+    core.PathShortcuttingOptions = FakePathShortcuttingOptions  # type: ignore[attr-defined]
+    core.PathShortcutter = FakePathShortcutter  # type: ignore[attr-defined]
     core.Box = FakeBox  # type: ignore[attr-defined]
     core.Sphere = FakeSphere  # type: ignore[attr-defined]
     core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
@@ -453,10 +482,16 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
 
 
-def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[Any, str]:
+def _make_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    planner_config: RoboPlanPlannerConfig | None = None,
+) -> tuple[Any, str]:
     module = _import_roboplan_world(fake_roboplan)
 
     world = module.RoboPlanWorld()
+    if planner_config is not None:
+        world.configure_planner(planner_config)
     robot_id = world.add_robot(robot_config)
     world.finalize()
     world.sync_from_joint_state(
@@ -1295,6 +1330,141 @@ def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotMo
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
+def test_native_planner_shortcuts_path_with_configured_options(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    shortcutting = RoboPlanPathShortcuttingConfig(
+        max_step_size=0.02,
+        max_iters=40,
+        seed=7,
+        max_convergence_iters=8,
+        redundant_removal_iters=5,
+    )
+    world, robot_id = _make_world(
+        fake_roboplan,
+        robot_config,
+        RoboPlanPlannerConfig(path_shortcutting=shortcutting),
+    )
+
+    def endpoints_only(shortcutter: FakePathShortcutter, path: FakeJointPath) -> FakeJointPath:
+        return FakeJointPath(path.joint_names, [path.positions[0], path.positions[-1]])
+
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=endpoints_only,
+    )
+
+    result = world.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.4, 0.2]]
+    options = FakePathShortcutter.instances[-1].options
+    assert options.group_name == "arm"
+    assert options.max_step_size == 0.02
+    assert options.max_iters == 40
+    assert options.seed == 7
+    assert options.max_convergence_iters == 8
+    assert options.redundant_removal_iters == 5
+
+
+def test_native_planner_can_disable_path_shortcutting(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, robot_id = _make_world(
+        fake_roboplan,
+        robot_config,
+        RoboPlanPlannerConfig(path_shortcutting=RoboPlanPathShortcuttingConfig(enabled=False)),
+    )
+
+    result = world.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert FakePathShortcutter.instances == []
+
+
+def test_native_planner_uses_raw_path_when_shortcutting_fails(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=RuntimeError("shortcut failed"),
+    )
+
+    result = world.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_native_planner_uses_raw_path_when_shortcutting_changes_endpoint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+
+    def changed_goal(shortcutter: FakePathShortcutter, path: FakeJointPath) -> FakeJointPath:
+        return FakeJointPath(
+            path.joint_names,
+            [path.positions[0], np.asarray(path.positions[-1]) + 0.1],
+        )
+
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=changed_goal,
+    )
+
+    result = world.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_roboplan_planner_configuration_is_fixed_at_finalization(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    with pytest.raises(RuntimeError, match="after world finalization"):
+        world.configure_planner(RoboPlanPlannerConfig())
+
+
 def test_native_planning_blocks_obstacle_replacement(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
@@ -1339,6 +1509,59 @@ def test_native_planning_blocks_obstacle_replacement(
     update_thread.start()
     assert not update_finished.wait(0.05)
     allow_planning.set()
+    planning_thread.join(1.0)
+    update_thread.join(1.0)
+    assert update_finished.is_set()
+
+
+def test_native_path_shortcutting_blocks_obstacle_replacement(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    obstacle = Obstacle(
+        name="box",
+        obstacle_type=ObstacleType.BOX,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        dimensions=(0.1, 0.2, 0.3),
+    )
+    world.add_obstacle(obstacle)
+    shortcutting_started = threading.Event()
+    allow_shortcutting = threading.Event()
+    update_finished = threading.Event()
+    original_shortcut = FakePathShortcutter.shortcut
+
+    def blocking_shortcut(
+        shortcutter: FakePathShortcutter,
+        path: FakeJointPath,
+    ) -> FakeJointPath:
+        shortcutting_started.set()
+        assert allow_shortcutting.wait(1.0)
+        return original_shortcut(shortcutter, path)
+
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=blocking_shortcut,
+    )
+    start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
+    goal = JointState(name=["joint1", "joint2"], position=[0.2, 0.1])
+    planning_thread = threading.Thread(
+        target=lambda: world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+    )
+    planning_thread.start()
+    assert shortcutting_started.wait(1.0)
+    update_thread = threading.Thread(
+        target=lambda: (
+            world.update_obstacle(replace(obstacle, dimensions=(1.0, 1.0, 1.0))),
+            update_finished.set(),
+        )
+    )
+    update_thread.start()
+    assert not update_finished.wait(0.05)
+    allow_shortcutting.set()
     planning_thread.join(1.0)
     update_thread.join(1.0)
     assert update_finished.is_set()

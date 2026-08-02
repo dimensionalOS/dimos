@@ -115,6 +115,20 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+RoboPlan shortens native joint-space RRT paths by default. Configure or disable
+the backend's best-effort shortcutting pass with nested planner options:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  --planner.path-shortcutting.enabled true \
+  --planner.path-shortcutting.max-iters 100 \
+  --planner.path-shortcutting.max-step-size 0.05
+```
+
+The remaining options mirror RoboPlan's native path shortcutter:
+`seed`, `max_convergence_iters`, and `redundant_removal_iters`. If shortcutting
+fails, planning returns the valid raw RRT path and logs a warning.
+
 RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
