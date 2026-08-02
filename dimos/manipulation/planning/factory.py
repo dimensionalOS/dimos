@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, get_args
 
 from dimos.manipulation.planning.kinematics.config import (
     DrakeOptimizationKinematicsConfig,
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         KinematicsSpec,
         WorldSpec,
     )
+    from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 
 
 @dataclass(frozen=True)
@@ -158,12 +159,11 @@ def create_planner(
 
         return RRTConnectPlanner(**kwargs)
     if config.backend == "roboplan":
-        from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-
-        if world_backend != "roboplan" or not isinstance(world, RoboPlanWorld):
+        if world_backend != "roboplan" or world is None:
             raise ValueError(_ROBOPLAN_PLANNER_REQUIRES_ROBOPLAN_WORLD)
-        world.configure_planner(config)
-        return world
+        roboplan_world = cast("RoboPlanWorld", world)
+        roboplan_world.configure_planner(config)
+        return roboplan_world
 
     raise TypeError(f"Unsupported planner config: {type(config).__name__}")
 

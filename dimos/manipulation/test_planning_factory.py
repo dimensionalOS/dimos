@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from pathlib import Path
 import sys
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -127,15 +126,6 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
 
 def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture) -> None:
     world = mocker.MagicMock()
-    roboplan_world_module = ModuleType("dimos.manipulation.planning.world.roboplan_world")
-    roboplan_world_module.RoboPlanWorld = type(world)  # type: ignore[attr-defined]
-
-    mocker.patch.dict(
-        sys.modules,
-        {
-            "dimos.manipulation.planning.world.roboplan_world": roboplan_world_module,
-        },
-    )
     config = RoboPlanPlannerConfig()
     assert (
         create_planner(
@@ -148,7 +138,17 @@ def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixt
     world.configure_planner.assert_called_once_with(config)
 
 
-def test_create_planner_rejects_roboplan_without_roboplan_world(mocker: MockerFixture) -> None:
+def test_create_planner_rejects_roboplan_without_importing_optional_backend(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(
+        sys.modules,
+        "dimos.manipulation.planning.world.roboplan_world",
+        raising=False,
+    )
+    monkeypatch.setitem(sys.modules, "roboplan", None)
+
     with pytest.raises(
         ValueError, match='planner.backend="roboplan" requires world_backend="roboplan"'
     ):
