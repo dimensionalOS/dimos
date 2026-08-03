@@ -52,17 +52,17 @@ Pink IK is the default solver. Tune it with nested module config overrides:
 
 ```bash
 dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.kinematics.backend=pink \
-  -o manipulationmodule.kinematics.max_iterations=100 \
-  -o manipulationmodule.kinematics.dt=0.02
+  --kinematics.backend=pink \
+  --kinematics.max-iterations=100 \
+  --kinematics.dt=0.02
 ```
 
-For blueprints that instantiate `PickAndPlaceModule`, use the corresponding
-module prefix:
+The same nested shorthand applies to blueprints that instantiate
+`PickAndPlaceModule`:
 
 ```bash
 dimos run xarm-perception-sim \
-  -o pickandplacemodule.kinematics.backend=pink
+  --kinematics.backend=pink
 ```
 
 Then use the IPython client:
@@ -96,8 +96,8 @@ Select the legacy Drake world and generic RRT planner explicitly when needed:
 
 ```bash
 dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.world_backend=drake \
-  -o manipulationmodule.planner.backend=rrt_connect
+  --world-backend=drake \
+  --planner.backend=rrt_connect
 ```
 
 Valid combinations:
@@ -190,7 +190,7 @@ CLI example:
 
 ```bash
 uv run dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.visualization.backend=viser
+  --visualization.backend=viser
 ```
 
 Blueprint example:

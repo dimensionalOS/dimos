@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import functools
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
     TypeVar,
     cast,
 )
+
+import numpy as np
 
 from dimos.core.stream import In, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
@@ -38,13 +41,14 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTop
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
-from dimos.protocol.pubsub.impl.webrtc.providers.spec import ProviderConfig
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
 from dimos.protocol.pubsub.impl.webrtc.webrtcpubsub import WebRTCPubSub
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     PickleZenoh,
     Topic as ZenohTopic,
     Zenoh,
 )
+from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -458,7 +462,7 @@ class CloudflareTransport(WebRTCTransport[M]):
     """WebRTC via the hosted teleop broker + Cloudflare Realtime SFU.
 
     Config kwargs flow into :class:`BrokerConfig`; unset fields fall back to
-    the blueprint config flow (``-o transports.broker.<field>=...`` or the
+    the blueprint config flow (``--transports.broker.<field>=...`` or the
     ``TRANSPORTS__BROKER__<FIELD>=...`` env form).
 
     Blueprint usage::
@@ -472,19 +476,11 @@ class CloudflareTransport(WebRTCTransport[M]):
     _config_cls = BrokerConfig
 
 
-class WebRTCVideoTransport(Transport[Any]):
-    """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
+class _ProviderTransport(Transport[T]):
+    """Shared plumbing for media transports backed by a WebRTC provider.
 
-    ``broadcast()`` feeds each Image into the shared provider's sendonly media
-    track — the same provider/PeerConnection the DataChannel transports use
-    (identical config resolves to the same per-process singleton). Session
-    negotiation of the track is the provider's job; any provider exposing
-    ``set_video_frame()`` works. The remote side consumes RTP (e.g. the teleop
-    web client pulling the track), so there is nothing to ``subscribe()`` to
-    locally and subscribers get a no-op.
-
-    Subclasses bind a backend by setting ``_config_cls``; the base class can
-    also be used directly with an explicit ``config``.
+    Subclasses bind a backend by setting ``_config_cls``; a class can also be
+    used directly with an explicit ``config``.
     """
 
     _config_cls: type[ProviderConfig]
@@ -500,11 +496,24 @@ class WebRTCVideoTransport(Transport[Any]):
 
         return TransportSpec(cls, args, kwargs)
 
-    def start(self) -> None:
-        pass  # provider starts lazily on first broadcast
-
     def stop(self) -> None:
         pass  # shared provider is process-scoped (see WebRTCTransport.stop)
+
+
+class WebRTCVideoTransport(_ProviderTransport[Any]):
+    """Robot camera → remote viewer as a WebRTC video track (provider-agnostic).
+
+    ``broadcast()`` feeds each Image into the shared provider's sendonly media
+    track — the same provider/PeerConnection the DataChannel transports use
+    (identical config resolves to the same per-process singleton). Session
+    negotiation of the track is the provider's job; any provider exposing
+    ``set_video_frame()`` works. The remote side consumes RTP (e.g. the teleop
+    web client pulling the track), so there is nothing to ``subscribe()`` to
+    locally and subscribers get a no-op.
+    """
+
+    def start(self) -> None:
+        pass  # provider starts lazily on first broadcast
 
     def broadcast(self, _: Stream[Any] | None, msg: Any) -> None:
         provider = self._config.provider()
@@ -527,6 +536,52 @@ class WebRTCVideoTransport(Transport[Any]):
 
 class CloudflareVideoTransport(WebRTCVideoTransport):
     """Camera → teleop web client via the hosted broker (see WebRTCVideoTransport)."""
+
+    _config_cls = BrokerConfig
+
+
+class WebRTCAudioTransport(_ProviderTransport[AudioEvent]):
+    """Remote operator audio received as decoded PCM audio events."""
+
+    def start(self) -> None:
+        provider = self._config.provider()
+        if not provider.is_connected:
+            provider.start()
+
+    def broadcast(self, _: Stream[AudioEvent] | None, msg: AudioEvent) -> None:
+        logger.warning("%s is subscribe-only; dropping local audio", type(self).__name__)
+
+    def subscribe(
+        self,
+        callback: Callable[[AudioEvent], None],
+        selfstream: Stream[AudioEvent] | None = None,
+    ) -> Callable[[], None]:
+        provider = self._config.provider()
+        if not isinstance(provider, AudioProvider):
+            raise NotImplementedError(f"{type(provider).__name__} does not support audio tracks")
+
+        def _on_frame(pcm: bytes, sample_rate: int, channels: int) -> None:
+            callback(
+                AudioEvent(
+                    data=np.frombuffer(pcm, dtype=np.int16).copy(),
+                    sample_rate=sample_rate,
+                    timestamp=time.time(),
+                    channels=channels,
+                )
+            )
+
+        provider.set_audio_frame_callback(_on_frame)
+        try:
+            if not provider.is_connected:
+                provider.start()
+        except BaseException:
+            provider.set_audio_frame_callback(None)
+            raise
+        return lambda: provider.set_audio_frame_callback(None)
+
+
+class CloudflareAudioTransport(WebRTCAudioTransport):
+    """Operator microphone audio received through the hosted broker."""
 
     _config_cls = BrokerConfig
 
