@@ -69,7 +69,7 @@ _RECORDING_DIR = _default_recording_dir()
 
 unitree_go2_mid360_record = autoconnect(
     MovementManager.blueprint(),
-    GO2Connection.blueprint().remappings(
+    GO2Connection.blueprint(publish_tf=False).remappings(
         [
             (GO2Connection, "lidar", "go2_lidar"),
             (GO2Connection, "odom", "go2_odom"),
