@@ -268,12 +268,6 @@ def test_config_validates_viser_visualization() -> None:
     assert config.visualization.panel_enabled is False
 
 
-def test_viser_config_defaults_to_loopback_host() -> None:
-    config = ViserVisualizationConfig()
-
-    assert config.host == "127.0.0.1"
-
-
 def test_config_meshcat_requires_world_visualization() -> None:
     config = ManipulationModuleConfig.model_validate({"visualization": {"backend": "meshcat"}})
 

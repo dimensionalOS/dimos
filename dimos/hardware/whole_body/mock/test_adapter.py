@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
-def test_mock_whole_body_applies_ordered_commands() -> None:
+def test_write_motor_commands_connected_adapter_applies_ordered_commands() -> None:
     adapter = MockWholeBodyAdapter(
         dof=2,
         initial_positions=[0.1, 0.2],
@@ -40,9 +42,57 @@ def test_mock_whole_body_applies_ordered_commands() -> None:
     assert adapter.read_imu() == IMUState()
 
 
-def test_mock_whole_body_rejects_wrong_command_count() -> None:
+def test_write_motor_commands_wrong_command_count_rejects_without_state_change() -> None:
     adapter = MockWholeBodyAdapter(dof=2)
     assert adapter.connect()
 
     assert not adapter.write_motor_commands([MotorCommand(q=0.3)])
     assert adapter.read_motor_states() == [MotorState(), MotorState()]
+
+
+def test_init_mismatched_initial_positions_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="expected 2 initial positions, got 1"):
+        MockWholeBodyAdapter(dof=2, initial_positions=[0.1])
+
+
+def test_write_motor_commands_disconnected_adapter_rejects_command() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+
+    assert not adapter.write_motor_commands([MotorCommand(q=0.3)])
+    assert adapter.read_motor_states() == [MotorState()]
+
+
+def test_disconnect_connected_adapter_clears_connection_and_state_availability() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+    assert adapter.connect()
+
+    adapter.disconnect()
+
+    assert not adapter.is_connected()
+    assert not adapter.has_motor_states()
+
+
+def test_activate_disconnected_adapter_returns_false() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+
+    assert not adapter.activate()
+
+
+def test_deactivate_disconnected_adapter_returns_false() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+
+    assert not adapter.deactivate()
+
+
+def test_activate_connected_adapter_returns_true() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+    assert adapter.connect()
+
+    assert adapter.activate()
+
+
+def test_deactivate_connected_adapter_returns_true() -> None:
+    adapter = MockWholeBodyAdapter(dof=1)
+    assert adapter.connect()
+
+    assert adapter.deactivate()

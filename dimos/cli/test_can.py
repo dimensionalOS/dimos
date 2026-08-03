@@ -12,49 +12,202 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from subprocess import CompletedProcess
+import subprocess
 
+import pytest
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.cli.can import app
 
 
-def test_setup_configures_and_verifies_can_interface(mocker) -> None:
+def test_setup_valid_options_configures_and_verifies_can_interface(
+    mocker: MockerFixture,
+) -> None:
     mocker.patch("dimos.cli.can.os.geteuid", return_value=1000)
     run = mocker.patch(
         "dimos.cli.can.subprocess.run",
-        return_value=CompletedProcess([], 0, stdout="4: follower_l: UP qlen 1000\n", stderr=""),
+        return_value=subprocess.CompletedProcess(
+            [],
+            0,
+            stdout="4: follower_l: UP qlen 1000\n",
+            stderr="",
+        ),
     )
 
     result = CliRunner().invoke(app, ["setup", "follower_l"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     assert "Running: sudo -- ip link set dev follower_l down" in result.stdout
     assert "bitrate=1000000, txqueuelen=1000" in result.stdout
-    assert [call.args[0] for call in run.call_args_list] == [
-        ["ip", "link", "show", "dev", "follower_l"],
-        ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "down"],
-        [
-            "sudo",
-            "--",
-            "ip",
-            "link",
-            "set",
-            "dev",
-            "follower_l",
-            "type",
-            "can",
-            "bitrate",
-            "1000000",
-        ],
-        ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "txqueuelen", "1000"],
-        ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "up"],
-        ["ip", "-details", "-statistics", "link", "show", "dev", "follower_l"],
+    assert run.call_args_list == [
+        mocker.call(
+            ["ip", "link", "show", "dev", "follower_l"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
+        mocker.call(
+            ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "down"],
+            check=True,
+            capture_output=False,
+            text=True,
+        ),
+        mocker.call(
+            [
+                "sudo",
+                "--",
+                "ip",
+                "link",
+                "set",
+                "dev",
+                "follower_l",
+                "type",
+                "can",
+                "bitrate",
+                "1000000",
+            ],
+            check=True,
+            capture_output=False,
+            text=True,
+        ),
+        mocker.call(
+            [
+                "sudo",
+                "--",
+                "ip",
+                "link",
+                "set",
+                "dev",
+                "follower_l",
+                "txqueuelen",
+                "1000",
+            ],
+            check=True,
+            capture_output=False,
+            text=True,
+        ),
+        mocker.call(
+            ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "up"],
+            check=True,
+            capture_output=False,
+            text=True,
+        ),
+        mocker.call(
+            ["ip", "-details", "-statistics", "link", "show", "dev", "follower_l"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
     ]
 
 
-def test_setup_rejects_nonpositive_queue_length() -> None:
+def test_setup_nonpositive_queue_length_returns_usage_error() -> None:
     result = CliRunner().invoke(app, ["setup", "can0", "--txqueuelen", "0"])
 
     assert result.exit_code == 2
     assert "x>=1" in result.output
+
+
+def test_setup_nonpositive_bitrate_returns_usage_error() -> None:
+    result = CliRunner().invoke(app, ["setup", "can0", "--bitrate", "0"])
+
+    assert result.exit_code == 2
+    assert "x>=1" in result.output
+
+
+def test_status_existing_interface_prints_detailed_state(mocker: MockerFixture) -> None:
+    run = mocker.patch(
+        "dimos.cli.can.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, stdout="can0: UP\n", stderr=""),
+    )
+
+    result = CliRunner().invoke(app, ["status", "can0"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "can0: UP\n"
+    run.assert_called_once_with(
+        ["ip", "-details", "-statistics", "link", "show", "dev", "can0"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_down_nonroot_user_runs_privileged_command_with_sudo(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch("dimos.cli.can.os.geteuid", return_value=1000)
+    run = mocker.patch(
+        "dimos.cli.can.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0),
+    )
+
+    result = CliRunner().invoke(app, ["down", "can1"])
+
+    assert result.exit_code == 0, result.output
+    assert "CAN interface can1 is down" in result.stdout
+    run.assert_called_once_with(
+        ["sudo", "--", "ip", "link", "set", "dev", "can1", "down"],
+        check=True,
+        capture_output=False,
+        text=True,
+    )
+
+
+def test_up_root_user_runs_ip_without_sudo(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.os.geteuid", return_value=0)
+    run = mocker.patch(
+        "dimos.cli.can.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0),
+    )
+
+    result = CliRunner().invoke(app, ["up", "can2"])
+
+    assert result.exit_code == 0, result.output
+    assert "CAN interface can2 is up" in result.stdout
+    run.assert_called_once_with(
+        ["ip", "link", "set", "dev", "can2", "up"],
+        check=True,
+        capture_output=False,
+        text=True,
+    )
+
+
+def test_status_missing_ip_command_returns_usage_error(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.subprocess.run", side_effect=FileNotFoundError)
+
+    result = CliRunner().invoke(app, ["status", "can0"])
+
+    assert result.exit_code == 2
+    assert "the 'ip' command is not installed" in result.output
+
+
+@pytest.mark.parametrize(
+    ("stderr", "stdout", "expected_detail"),
+    [
+        ("permission denied\n", "ignored\n", "permission denied"),
+        ("", "device not found\n", "device not found"),
+        ("", "", "exit code 7"),
+    ],
+)
+def test_status_failed_ip_command_reports_available_detail(
+    mocker: MockerFixture,
+    stderr: str,
+    stdout: str,
+    expected_detail: str,
+) -> None:
+    mocker.patch(
+        "dimos.cli.can.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            7,
+            ["ip"],
+            output=stdout,
+            stderr=stderr,
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["status", "can0"])
+
+    assert result.exit_code == 1
+    assert f"CAN interface command failed: {expected_detail}" in result.output

@@ -998,11 +998,10 @@ class TestTickLoop:
 
         assert mock_task.compute.call_count > 0
 
-    def test_rejected_hardware_write_is_reported(self, monkeypatch):
+    def test_write_all_hardware_rejected_command_logs_error(self, mocker):
         hardware = {"arm": MagicMock()}
         hardware["arm"].write_command.return_value = False
-        log_error = MagicMock()
-        monkeypatch.setattr("dimos.control.tick_loop.logger.error", log_error)
+        log_error = mocker.patch("dimos.control.tick_loop.logger.error")
         tick_loop = TickLoop(
             tick_rate=100.0,
             hardware=hardware,
