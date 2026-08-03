@@ -18,15 +18,22 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import time
 
 from pydantic import Field
+from reactivex.disposable import Disposable
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 MODULE_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = MODULE_DIR.parents[2]
@@ -92,18 +99,34 @@ class CuvslamConfig(NativeModuleConfig):
     # restarting its world frame rather than motion.
     max_speed_mps: float = 10.0
 
+    map_frame: str = "map"
+    odom_frame: str = "odom"
+    base_frame: str = "base_link"
+    # Visual odometry has no global correction, so its map->odom is identity.
+    # Turn this off whenever something that does localize -- PGO, a relocalizer --
+    # is in the graph, because two publishers of one tf edge fight each other.
+    publish_map_to_odom: bool = True
+
 
 class CuvslamOdometry(NativeModule):
     """Stereo visual odometry on the GPU.
 
-    ``odometry`` is one continuous ``world`` -> ``cuvslam_rig`` path: cuVSLAM
-    restarts its world frame after a tracking loss and the module rebases each
-    restart onto the last published pose, so the stream never jumps. A restart
-    costs the motion that happened across it, and is reported only on the log.
+    ``odometry`` is one continuous ``odom`` -> ``base_link`` path: cuVSLAM restarts
+    its world frame after a tracking loss and the module rebases each restart onto
+    the last published pose, so the stream never jumps. A restart costs the motion
+    that happened across it, and is reported only on the log.
 
     ``landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
-    the same ``world`` frame. They are a live view, not an accumulated map --
-    there is no loop closure here, so they drift with the odometry.
+    the ``odom`` frame. They are a live view, not an accumulated map -- there is no
+    loop closure here, so they drift with the odometry.
+
+    ``tf`` carries the same pose as ``odom`` -> ``base_link``, plus an identity
+    ``map`` -> ``odom`` so the tree is complete when nothing else localizes.
+
+    The pose is the *left camera's*. Publishing it as ``base_frame`` assumes the
+    camera is the body origin; on a real robot either set ``base_frame`` to the
+    camera's own frame and let the static tree carry it to the body, or feed the
+    mount extrinsic in.
     """
 
     config: CuvslamConfig
@@ -114,3 +137,42 @@ class CuvslamOdometry(NativeModule):
 
     odometry: Out[Odometry]
     landmarks: Out[PointCloud2]
+    tf: Out[TFMessage]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odometry, self.odometry))
+        )
+
+    def _on_odometry(self, message: Odometry) -> None:
+        stamp = message.ts or time.time()
+        transforms = [
+            Transform(
+                frame_id=self.config.odom_frame,
+                child_frame_id=self.config.base_frame,
+                translation=Vector3(
+                    message.pose.position.x, message.pose.position.y, message.pose.position.z
+                ),
+                rotation=Quaternion(
+                    message.pose.orientation.x,
+                    message.pose.orientation.y,
+                    message.pose.orientation.z,
+                    message.pose.orientation.w,
+                ),
+                ts=stamp,
+            )
+        ]
+        if self.config.publish_map_to_odom:
+            transforms.insert(
+                0,
+                Transform(
+                    frame_id=self.config.map_frame,
+                    child_frame_id=self.config.odom_frame,
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ts=stamp,
+                ),
+            )
+        self.tf.publish(TFMessage(*transforms))

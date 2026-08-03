@@ -105,6 +105,12 @@ struct CuvslamConfig {
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
     /// A step implying more than this is cuVSLAM changing world frames, not motion.
     double max_speed_mps;
+    std::string odom_frame;
+    std::string base_frame;
+    /// Unused here. The module's python half publishes map->odom from these, and
+    /// config for one module lives in one struct, so they cross the boundary too.
+    std::string map_frame;
+    bool publish_map_to_odom;
 };
 
 class CuvslamOdometry : public Module {
@@ -116,6 +122,8 @@ public:
         publish_landmarks_ = cfg.publish_landmarks;
         async_sba_ = cfg.async_sba;
         max_speed_mps_ = cfg.max_speed_mps;
+        odom_frame_ = cfg.odom_frame;
+        base_frame_ = cfg.base_frame;
         if (!(baseline_m_ > 0.0)) {
             throw std::runtime_error(
                 "baseline_m must be a positive number of metres (D455 factory value is 0.09486)");
@@ -287,10 +295,10 @@ private:
         nav_msgs::Odometry msg{};
         msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
         msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
-        msg.header.frame_id = "world";
-        // One frame for the whole run: a robot only ever sees a single odom path.
+        // One edge for the whole run: a robot only ever sees a single odom path.
         // Resets are debugging output, on the log, not a break in this stream.
-        msg.child_frame_id = "cuvslam_rig";
+        msg.header.frame_id = odom_frame_;
+        msg.child_frame_id = base_frame_;
         msg.pose.pose.position.x = world_from_rig_.translation[0];
         msg.pose.pose.position.y = world_from_rig_.translation[1];
         msg.pose.pose.position.z = world_from_rig_.translation[2];
@@ -312,7 +320,7 @@ private:
         sensor_msgs::PointCloud2 msg{};
         msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
         msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
-        msg.header.frame_id = "world";
+        msg.header.frame_id = odom_frame_;
         msg.height = 1;
         msg.width = static_cast<std::int32_t>(pts.size());
         msg.is_bigendian = 0;
@@ -351,6 +359,8 @@ private:
     bool publish_landmarks_{true};
     bool async_sba_{true};
     double max_speed_mps_{10.0};
+    std::string odom_frame_{"odom"};
+    std::string base_frame_{"base_link"};
 
     // intrinsics
     bool have_info_{false};
