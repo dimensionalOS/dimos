@@ -102,10 +102,21 @@ class CuvslamConfig(NativeModuleConfig):
     map_frame: str = "map"
     odom_frame: str = "odom"
     base_frame: str = "base_link"
-    # Visual odometry has no global correction, so its map->odom is identity.
-    # Turn this off whenever something that does localize -- PGO, a relocalizer --
-    # is in the graph, because two publishers of one tf edge fight each other.
+    # Only used when Slam is off: pure visual odometry has no global correction,
+    # so its map->odom can only be identity. Turn it off whenever something else
+    # in the graph owns that edge -- two publishers of one tf edge fight.
     publish_map_to_odom: bool = True
+
+    # cuvslam::Slam on top of the odometry: pose graph, loop closure, and the
+    # same-run relocalization that pulls a revisit back onto itself. Without it
+    # map->odom carries nothing and the landmark map smears with the drift.
+    enable_slam: bool = True
+    slam_sync_mode: bool = True
+    slam_max_map_size: int = 300
+    slam_throttling_ms: int = 0
+    # A loop closure in a building moves the robot by a room at most; a bigger
+    # map->odom is the pose graph diverging and is dropped rather than published.
+    max_correction_m: float = 5.0
 
 
 class CuvslamOdometry(NativeModule):
@@ -117,11 +128,15 @@ class CuvslamOdometry(NativeModule):
     that happened across it, and is reported only on the log.
 
     ``landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
-    the ``odom`` frame. They are a live view, not an accumulated map -- there is no
-    loop closure here, so they drift with the odometry.
+    the ``odom`` frame. They are a live view rather than an accumulated map, so
+    they carry the odometry's drift; put them through ``map`` -> ``odom`` to get
+    the corrected positions.
 
-    ``tf`` carries the same pose as ``odom`` -> ``base_link``, plus an identity
-    ``map`` -> ``odom`` so the tree is complete when nothing else localizes.
+    ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
+    at a loop closure, which is the point: that is where a revisit gets pulled back
+    onto itself. ``tf`` carries ``odom`` -> ``base_link`` from the odometry and
+    ``map`` -> ``odom`` from the correction, so the jump lands on the edge that is
+    allowed to jump. With ``enable_slam`` off, ``map`` -> ``odom`` is identity.
 
     The pose is the *left camera's*. Publishing it as ``base_frame`` assumes the
     camera is the body origin; on a real robot either set ``base_frame`` to the
@@ -137,6 +152,8 @@ class CuvslamOdometry(NativeModule):
 
     odometry: Out[Odometry]
     landmarks: Out[PointCloud2]
+    corrected_odometry: Out[Odometry]
+    map_tf: Out[Odometry]
     tf: Out[TFMessage]
 
     @rpc
@@ -145,26 +162,38 @@ class CuvslamOdometry(NativeModule):
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odometry, self.odometry))
         )
+        self.register_disposable(
+            Disposable(self.map_tf.transport.subscribe(self._on_map_tf, self.map_tf))
+        )
+
+    def _on_map_tf(self, message: Odometry) -> None:
+        """Slam's correction. Replaces the identity map->odom once Slam is running."""
+        self.tf.publish(
+            TFMessage(self._transform(message, self.config.map_frame, self.config.odom_frame))
+        )
+
+    @staticmethod
+    def _transform(message: Odometry, frame_id: str, child_frame_id: str) -> Transform:
+        return Transform(
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            translation=Vector3(
+                message.pose.position.x, message.pose.position.y, message.pose.position.z
+            ),
+            rotation=Quaternion(
+                message.pose.orientation.x,
+                message.pose.orientation.y,
+                message.pose.orientation.z,
+                message.pose.orientation.w,
+            ),
+            ts=message.ts or time.time(),
+        )
 
     def _on_odometry(self, message: Odometry) -> None:
-        stamp = message.ts or time.time()
-        transforms = [
-            Transform(
-                frame_id=self.config.odom_frame,
-                child_frame_id=self.config.base_frame,
-                translation=Vector3(
-                    message.pose.position.x, message.pose.position.y, message.pose.position.z
-                ),
-                rotation=Quaternion(
-                    message.pose.orientation.x,
-                    message.pose.orientation.y,
-                    message.pose.orientation.z,
-                    message.pose.orientation.w,
-                ),
-                ts=stamp,
-            )
-        ]
-        if self.config.publish_map_to_odom:
+        transforms = [self._transform(message, self.config.odom_frame, self.config.base_frame)]
+        # With Slam running, map->odom is its correction and arrives on _on_map_tf.
+        # Only one publisher may own that edge.
+        if not self.config.enable_slam and self.config.publish_map_to_odom:
             transforms.insert(
                 0,
                 Transform(
@@ -172,7 +201,7 @@ class CuvslamOdometry(NativeModule):
                     child_frame_id=self.config.odom_frame,
                     translation=Vector3(0.0, 0.0, 0.0),
                     rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    ts=stamp,
+                    ts=message.ts or time.time(),
                 ),
             )
         self.tf.publish(TFMessage(*transforms))

@@ -28,6 +28,7 @@ as nodes on the path and evaluates the whole trajectory with a single rigid fit.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -58,6 +59,8 @@ _TOPICS = {
     "camera_info": "/cuvslam_demo_info#sensor_msgs.CameraInfo",
     "odometry": "/cuvslam_demo_odom#nav_msgs.Odometry",
     "landmarks": "/cuvslam_demo_landmarks#sensor_msgs.PointCloud2",
+    "corrected_odometry": "/cuvslam_demo_corrected#nav_msgs.Odometry",
+    "map_tf": "/cuvslam_demo_maptf#nav_msgs.Odometry",
 }
 
 _PROCESS_STARTUP_SEC = 3.0
@@ -73,6 +76,8 @@ _LANDMARK_STRIDE = 10
 _LANDMARK_VOXEL_M = 0.05
 
 _MAP_MARGIN_M = 2.0
+# Below this the Slam track is a prefix, not a trajectory, and must not be scored.
+_SLAM_MIN_COVERAGE = 0.8
 
 
 def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -85,6 +90,49 @@ def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         correction[2, 2] = -1
     rotation = u @ correction @ vt
     return rotation, mu_dst - rotation @ mu_src
+
+
+def quaternion_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def correct_landmarks(
+    landmark_frames: list[tuple[float, np.ndarray]], corrections: list[Odometry]
+) -> np.ndarray:
+    """Carry each landmark cloud from the odom frame into the map frame.
+
+    Slam's map->odom is what turns a drifting live view into a map, so each cloud
+    is corrected with the transform in force when it was published.
+    """
+    if not corrections:
+        return np.vstack([p for _t, p in landmark_frames if len(p)])
+    stamps = np.array([c.ts for c in corrections])
+    clouds = []
+    for stamp, points in landmark_frames:
+        if not len(points):
+            continue
+        correction = corrections[max(0, int(np.searchsorted(stamps, stamp)) - 1)]
+        rotation = quaternion_matrix(
+            correction.pose.orientation.x,
+            correction.pose.orientation.y,
+            correction.pose.orientation.z,
+            correction.pose.orientation.w,
+        )
+        offset = np.array(
+            [
+                correction.pose.position.x,
+                correction.pose.position.y,
+                correction.pose.position.z,
+            ]
+        )
+        clouds.append((rotation @ points.T).T + offset)
+    return np.vstack(clouds) if clouds else np.zeros((0, 3), dtype=np.float32)
 
 
 def _interpolate_reference(times: np.ndarray, reference: np.ndarray) -> np.ndarray:
@@ -134,28 +182,13 @@ def evaluate(
     }
 
 
-def aligned_map(
-    landmark_frames: list[tuple[float, np.ndarray]],
-    rotation: np.ndarray,
-    translation: np.ndarray,
-) -> np.ndarray:
-    """Landmarks carried into the reference frame by the single trajectory fit.
-
-    The module publishes landmarks in its own continuous world frame, so one
-    transform serves the whole run.
-    """
-    points = [p for _stamp, p in landmark_frames if len(p)]
-    if not points:
-        return np.zeros((0, 3), dtype=np.float32)
-    return (rotation @ np.vstack(points).T).T + translation
-
-
 def render(
     out_dir: Path,
     aligned: np.ndarray,
+    aligned_times: np.ndarray,
     landmarks: np.ndarray,
     reference: np.ndarray,
-    resets: np.ndarray,
+    reset_stamps: np.ndarray,
     metrics: dict,
 ) -> Path:
     import matplotlib
@@ -190,7 +223,7 @@ def render(
         label="Point-LIO reference",
         zorder=2,
     )
-    axis.set_title("Map: cuVSLAM landmarks, one rigid fit to the reference")
+    axis.set_title("Map: cuVSLAM landmarks through map->odom, one rigid fit to the reference")
     axis.set_aspect("equal")
     axis.grid(alpha=0.3)
     axis.legend(fontsize=8)
@@ -205,8 +238,16 @@ def render(
         zorder=1,
     )
     axis.plot(
-        aligned[:, 0], aligned[:, 1], color="#ff4136", lw=1.3, label="cuVSLAM odometry", zorder=3
+        aligned[:, 0],
+        aligned[:, 1],
+        color="#ff4136",
+        lw=1.3,
+        label="cuVSLAM SLAM" if metrics.get("slam_usable") else "cuVSLAM odometry",
+        zorder=3,
     )
+    # The resets are the odometry's; index them onto whichever track is drawn.
+    resets = np.searchsorted(aligned_times, reset_stamps)
+    resets = resets[(resets > 0) & (resets < len(aligned_times))]
     if len(resets):
         axis.scatter(
             aligned[resets, 0],
@@ -215,13 +256,21 @@ def render(
             facecolors="none",
             edgecolors="#111111",
             lw=0.8,
-            label=f"world-frame resets ({len(resets)})",
+            label=f"VO world-frame resets ({len(resets)})",
             zorder=4,
         )
+    usable = metrics.get("slam_usable")
+    shown = metrics["slam"] if usable else metrics["raw_vo"]
+    coverage = metrics.get("slam_pose_coverage", 0.0)
     axis.set_title(
-        f"Trajectory, one continuous path\n"
-        f"ATE {metrics['ate_rmse_m']} m · path ratio {metrics['path_ratio']} · "
-        f"{metrics['resets']} resets"
+        f"{'SLAM-corrected' if usable else 'raw VO'} trajectory, one continuous path\n"
+        f"ATE {shown['ate_rmse_m']} m · path ratio {shown['path_ratio']} · "
+        f"{metrics['raw_vo']['resets']} VO world-frame resets\n"
+        + (
+            f"pose graph diverged, {coverage:.0%} of frames corrected before it was rejected"
+            if not usable
+            else f"{metrics['loop_closures']} loop closures"
+        )
     )
     axis.set_aspect("equal")
     axis.grid(alpha=0.3)
@@ -270,9 +319,16 @@ def _stereo_pairs(db: str) -> tuple[CameraInfo, list[tuple[Image, Image]]]:
     return info, pairs
 
 
-def run_replay(
-    db: str, config: CuvslamConfig, limit: int | None
-) -> tuple[list[Odometry], list[tuple[float, np.ndarray]], str]:
+@dataclass
+class Replayed:
+    odometry: list[Odometry]
+    corrected: list[Odometry]
+    map_tf: list[Odometry]
+    landmark_frames: list[tuple[float, np.ndarray]]
+    stderr: str
+
+
+def run_replay(db: str, config: CuvslamConfig, limit: int | None) -> Replayed:
     """Feed the recording's stereo stream to the native process over LCM."""
     executable = Path(config.cwd or ".") / config.executable
     if not executable.exists():
@@ -286,8 +342,10 @@ def run_replay(
     lcm_instance = lcmlib.LCM()
     odometry = LcmCollector(topic=_TOPICS["odometry"], msg_type=Odometry)
     landmarks = LcmCollector(topic=_TOPICS["landmarks"], msg_type=PointCloud2)
-    odometry.start(lcm_instance)
-    landmarks.start(lcm_instance)
+    corrected = LcmCollector(topic=_TOPICS["corrected_odometry"], msg_type=Odometry)
+    map_tf = LcmCollector(topic=_TOPICS["map_tf"], msg_type=Odometry)
+    for collector in (odometry, landmarks, corrected, map_tf):
+        collector.start(lcm_instance)
 
     stop_event = threading.Event()
     handler = threading.Thread(target=lcm_handle_loop, args=(lcm_instance, stop_event), daemon=True)
@@ -331,15 +389,15 @@ def run_replay(
         runner.stop()
         stop_event.set()
         handler.join(timeout=5.0)
-        odometry.stop(lcm_instance)
-        landmarks.stop(lcm_instance)
+        for collector in (odometry, landmarks, corrected, map_tf):
+            collector.stop(lcm_instance)
 
     frames = [
         (message.ts, message.points_f32())
         for index, message in enumerate(landmarks.messages)
         if index % _LANDMARK_STRIDE == 0
     ]
-    return odometry.messages, frames, runner.stderr
+    return Replayed(odometry.messages, corrected.messages, map_tf.messages, frames, runner.stderr)
 
 
 def _downsample(points: np.ndarray, voxel_m: float) -> np.ndarray:
@@ -357,6 +415,11 @@ def main() -> int:
     parser.add_argument("--baseline-m", type=float, default=D455_FACTORY_BASELINE_M)
     parser.add_argument("--limit", type=int, default=None, help="stop after N stereo pairs")
     parser.add_argument("--no-landmarks", action="store_true", help="trajectory only, no map")
+    parser.add_argument("--no-slam", action="store_true", help="odometry only, no pose graph")
+    parser.add_argument("--slam-async", action="store_true", help="run Slam on its own thread")
+    parser.add_argument(
+        "--slam-max-map-size", type=int, default=None, help="poses in the graph, 0 = unlimited"
+    )
     parser.add_argument(
         "--max-speed-mps",
         type=float,
@@ -368,41 +431,84 @@ def main() -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    overrides = {} if args.max_speed_mps is None else {"max_speed_mps": args.max_speed_mps}
+    overrides: dict[str, float | int] = {}
+    if args.max_speed_mps is not None:
+        overrides["max_speed_mps"] = args.max_speed_mps
+    if args.slam_max_map_size is not None:
+        overrides["slam_max_map_size"] = args.slam_max_map_size
     config = CuvslamConfig(
-        baseline_m=args.baseline_m, publish_landmarks=not args.no_landmarks, **overrides
+        baseline_m=args.baseline_m,
+        publish_landmarks=not args.no_landmarks,
+        enable_slam=not args.no_slam,
+        slam_sync_mode=not args.slam_async,
+        **overrides,
     )
-    messages, landmark_frames, stderr = run_replay(args.db, config, args.limit)
-    if not messages:
-        print(f"no poses produced\n{stderr}", file=sys.stderr)
+    run = run_replay(args.db, config, args.limit)
+    if not run.odometry:
+        print(f"no poses produced\n{run.stderr}", file=sys.stderr)
         return 1
-
-    times = np.array([m.ts for m in messages])
-    positions = np.array([[m.x, m.y, m.z] for m in messages])
 
     reference = reference_from_db(args.db)
     origin = reference[0, 0]
     reference[:, 0] -= origin
-    times -= origin
-    landmark_frames = [(stamp - origin, points) for stamp, points in landmark_frames]
-    resets = np.searchsorted(times, np.array(reset_times(stderr)) - origin)
+
+    def track(messages: list[Odometry]) -> tuple[np.ndarray, np.ndarray]:
+        return (
+            np.array([m.ts for m in messages]) - origin,
+            np.array([[m.x, m.y, m.z] for m in messages]),
+        )
+
+    times, positions = track(run.odometry)
+    reset_stamps = np.array(reset_times(run.stderr)) - origin
+    resets = np.searchsorted(times, reset_stamps)
     resets = resets[(resets > 0) & (resets < len(times))]
 
-    rotation, translation = umeyama(positions, _interpolate_reference(times, reference))
-    landmarks = _downsample(aligned_map(landmark_frames, rotation, translation), _LANDMARK_VOXEL_M)
+    # The map is the landmarks put through Slam's map->odom, so what is plotted is
+    # the corrected map rather than the drifting live view.
+    landmark_frames = [(stamp, points) for stamp, points in run.landmark_frames]
+    corrected_points = correct_landmarks(landmark_frames, run.map_tf)
+    # Slam only counts as the trajectory if it survived the run. On a recording it
+    # diverges on, the corrections are rejected and what is left is a short prefix
+    # whose ATE looks wonderful because it covers 15 s of a 223 s walk.
+    slam_covers = len(run.corrected) >= _SLAM_MIN_COVERAGE * len(run.odometry)
+    map_times, map_positions = track(run.corrected) if slam_covers else (times, positions)
+    rotation, translation = umeyama(map_positions, _interpolate_reference(map_times, reference))
+    landmarks = _downsample(
+        (rotation @ corrected_points.T).T + translation
+        if len(corrected_points)
+        else corrected_points,
+        _LANDMARK_VOXEL_M,
+    )
 
+    (out_dir / "module.log").write_text(run.stderr)
     np.save(out_dir / "trajectory.npy", np.column_stack([times, positions]))
     np.save(out_dir / "landmarks.npy", landmarks)
+    if run.corrected:
+        np.save(out_dir / "corrected.npy", np.column_stack([map_times, map_positions]))
 
-    metrics = evaluate(times, positions, resets, reference)
-    metrics["db"] = args.db
-    metrics["baseline_m"] = args.baseline_m
-    metrics["landmarks"] = len(landmarks)
+    metrics = {
+        "raw_vo": evaluate(times, positions, resets, reference),
+        "slam": evaluate(*track(run.corrected), np.array([]), reference) if run.corrected else None,
+        "slam_pose_coverage": round(len(run.corrected) / max(len(run.odometry), 1), 3),
+        "slam_usable": slam_covers,
+        "loop_closures": run.stderr.count("cuvslam loop closure"),
+        "map_corrections": len(run.map_tf),
+        "max_map_to_odom_m": round(
+            max(
+                (float(np.linalg.norm([m.x, m.y, m.z])) for m in run.map_tf),
+                default=0.0,
+            ),
+            3,
+        ),
+        "db": args.db,
+        "baseline_m": args.baseline_m,
+        "landmarks": len(landmarks),
+    }
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
-    aligned = (rotation @ positions.T).T + translation
-    plot = render(out_dir, aligned, landmarks, reference, resets, metrics)
-    print(json.dumps({k: v for k, v in metrics.items() if k != "segments"}, indent=2))
+    aligned = (rotation @ map_positions.T).T + translation
+    plot = render(out_dir, aligned, map_times, landmarks, reference, reset_stamps, metrics)
+    print(json.dumps(metrics, indent=2))
     print(f"map      -> {out_dir / 'landmarks.npy'}")
     print(f"topdown  -> {plot}")
     return 0

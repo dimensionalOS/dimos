@@ -111,6 +111,20 @@ struct CuvslamConfig {
     /// config for one module lives in one struct, so they cross the boundary too.
     std::string map_frame;
     bool publish_map_to_odom;
+    /// cuvslam::Slam: pose graph + loop closure on top of the odometry. Without it
+    /// there is nothing to pull a revisit back together and the map smears.
+    bool enable_slam;
+    /// Slam must finish each frame before Track() returns: GetPose() has no
+    /// timestamp, so a pose from a thread running behind cannot be matched to the
+    /// odometry pose it should be differenced against. Async measured 77 m ATE
+    /// against 0.25 m for the odometry it is supposed to be correcting.
+    bool slam_sync_mode;
+    /// Poses kept in the graph. 300 is NVIDIA's real-time figure, 0 is unlimited.
+    int slam_max_map_size;
+    /// Floor on the interval between loop closures, milliseconds.
+    int slam_throttling_ms;
+    /// Largest map->odom the pose graph is allowed to ask for, metres.
+    double max_correction_m;
 };
 
 class CuvslamOdometry : public Module {
@@ -124,6 +138,12 @@ public:
         max_speed_mps_ = cfg.max_speed_mps;
         odom_frame_ = cfg.odom_frame;
         base_frame_ = cfg.base_frame;
+        map_frame_ = cfg.map_frame;
+        enable_slam_ = cfg.enable_slam;
+        slam_sync_mode_ = cfg.slam_sync_mode;
+        slam_max_map_size_ = cfg.slam_max_map_size;
+        slam_throttling_ms_ = cfg.slam_throttling_ms;
+        max_correction_m_ = cfg.max_correction_m;
         if (!(baseline_m_ > 0.0)) {
             throw std::runtime_error(
                 "baseline_m must be a positive number of metres (D455 factory value is 0.09486)");
@@ -136,13 +156,18 @@ public:
 
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         landmarks_ = builder.output<sensor_msgs::PointCloud2>("landmarks");
+        corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
+        map_tf_ = builder.output<nav_msgs::Odometry>("map_tf");
     }
 
     void teardown() override {
         logging::info("cuvslam shutting down",
                       {logging::Field("frames", static_cast<std::int64_t>(frames_)),
                        logging::Field("tracked", static_cast<std::int64_t>(tracked_)),
-                       logging::Field("segments", static_cast<std::int64_t>(segment_id_))});
+                       logging::Field("resets", static_cast<std::int64_t>(segment_id_)),
+                       logging::Field("loop_closures", static_cast<std::int64_t>(loop_closures_)),
+                       logging::Field("rejected_corrections",
+                                      static_cast<std::int64_t>(rejected_corrections_))});
     }
 
 private:
@@ -193,10 +218,20 @@ private:
         cuvslam::Odometry::Config cfg = cuvslam::Odometry::GetDefaultConfig();
         cfg.odometry_mode = cuvslam::Odometry::OdometryMode::Multicamera;
         cfg.rectified_stereo_camera = rectified_;
-        cfg.enable_landmarks_export = publish_landmarks_;
+        cfg.enable_landmarks_export = publish_landmarks_ || enable_slam_;
+        // Slam reads the tracker's State, which GetState() only fills when the
+        // export flags are on; without them it throws instead of returning empty.
+        cfg.enable_observations_export = enable_slam_;
         cfg.async_sba = async_sba_;
 
         tracker_.emplace(rig, cfg);
+        if (enable_slam_) {
+            cuvslam::Slam::Config slam_cfg = cuvslam::Slam::GetDefaultConfig();
+            slam_cfg.sync_mode = slam_sync_mode_;
+            slam_cfg.max_map_size = static_cast<std::uint32_t>(slam_max_map_size_);
+            slam_cfg.throttling_time_ms = static_cast<std::uint32_t>(slam_throttling_ms_);
+            slam_.emplace(rig, tracker_->GetPrimaryCameras(), slam_cfg);
+        }
         logging::info("cuvslam tracker created",
                       {logging::Field("width", static_cast<std::int64_t>(width_)),
                        logging::Field("height", static_cast<std::int64_t>(height_)),
@@ -289,23 +324,89 @@ private:
         if (publish_landmarks_) {
             publish_landmarks(est.timestamp_ns);
         }
+        if (slam_) {
+            run_slam(est.timestamp_ns);
+        }
     }
 
-    void publish(std::int64_t timestamp_ns) {
-        nav_msgs::Odometry msg{};
+    /// Pose graph on top of the odometry. Its pose jumps at a loop closure, which
+    /// is exactly why the jump belongs on map->odom and not on the odometry.
+    void run_slam(std::int64_t timestamp_ns) {
+        cuvslam::Odometry::State state;
+        tracker_->GetState(state);
+        slam_->Track(state);
+
+        // Slam's pose is identity until it has a keyframe; publishing that would
+        // read as a correction the size of however far the robot has driven.
+        slam_started_ = slam_started_ || state.keyframe;
+        if (!slam_started_) {
+            return;
+        }
+        // GetPose() carries no timestamp, so it can only be differenced against the
+        // odometry pose of the frame just tracked. That holds in sync mode, where
+        // Slam finishes the frame before Track() returns. See slam_sync_mode.
+        const Transform map_from_rig = to_transform(slam_->GetPose());
+
+        // map->odom is a correction, not a teleport. A loop closure in a building
+        // moves the robot by a room at most; anything larger is the pose graph
+        // diverging, and letting it through would throw the robot across the map.
+        const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
+        double correction_m = 0.0;
+        for (int axis = 0; axis < 3; ++axis) {
+            correction_m += map_from_odom_raw.translation[axis] * map_from_odom_raw.translation[axis];
+        }
+        correction_m = std::sqrt(correction_m);
+        if (correction_m > max_correction_m_) {
+            ++rejected_corrections_;
+            if (rejected_corrections_ == 1) {
+                logging::warn("cuvslam slam correction rejected, pose graph is diverging",
+                              {logging::Field("correction_m", correction_m),
+                               logging::Field("limit_m", max_correction_m_)});
+            }
+            return;
+        }
+
+        nav_msgs::Odometry corrected{};
+        fill_pose(corrected, map_from_rig, timestamp_ns, map_frame_, base_frame_);
+        corrected_odometry_.publish(corrected);
+
+        nav_msgs::Odometry correction{};
+        fill_pose(correction, map_from_odom_raw, timestamp_ns, map_frame_, odom_frame_);
+        map_tf_.publish(correction);
+
+        cuvslam::Slam::Metrics metrics{};
+        slam_->GetSlamMetrics(metrics);
+        if (metrics.lc_status && timestamp_ns != last_closure_ns_) {
+            ++loop_closures_;
+            last_closure_ns_ = timestamp_ns;
+            logging::info("cuvslam loop closure",
+                          {logging::Field("count", static_cast<std::int64_t>(loop_closures_)),
+                           logging::Field("timestamp_ns", timestamp_ns),
+                           logging::Field("tracked_landmarks",
+                                          static_cast<std::int64_t>(metrics.lc_tracked_landmarks_count))});
+        }
+    }
+
+    static void fill_pose(nav_msgs::Odometry& msg, const Transform& pose, std::int64_t timestamp_ns,
+                          const std::string& frame, const std::string& child) {
         msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
         msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
-        // One edge for the whole run: a robot only ever sees a single odom path.
-        // Resets are debugging output, on the log, not a break in this stream.
-        msg.header.frame_id = odom_frame_;
-        msg.child_frame_id = base_frame_;
-        msg.pose.pose.position.x = world_from_rig_.translation[0];
-        msg.pose.pose.position.y = world_from_rig_.translation[1];
-        msg.pose.pose.position.z = world_from_rig_.translation[2];
-        msg.pose.pose.orientation.x = world_from_rig_.rotation[0];
-        msg.pose.pose.orientation.y = world_from_rig_.rotation[1];
-        msg.pose.pose.orientation.z = world_from_rig_.rotation[2];
-        msg.pose.pose.orientation.w = world_from_rig_.rotation[3];
+        msg.header.frame_id = frame;
+        msg.child_frame_id = child;
+        msg.pose.pose.position.x = pose.translation[0];
+        msg.pose.pose.position.y = pose.translation[1];
+        msg.pose.pose.position.z = pose.translation[2];
+        msg.pose.pose.orientation.x = pose.rotation[0];
+        msg.pose.pose.orientation.y = pose.rotation[1];
+        msg.pose.pose.orientation.z = pose.rotation[2];
+        msg.pose.pose.orientation.w = pose.rotation[3];
+    }
+
+    /// One edge for the whole run: a robot only ever sees a single odom path.
+    /// Resets are debugging output, on the log, not a break in this stream.
+    void publish(std::int64_t timestamp_ns) {
+        nav_msgs::Odometry msg{};
+        fill_pose(msg, world_from_rig_, timestamp_ns, odom_frame_, base_frame_);
         odometry_.publish(msg);
     }
 
@@ -361,6 +462,19 @@ private:
     double max_speed_mps_{10.0};
     std::string odom_frame_{"odom"};
     std::string base_frame_{"base_link"};
+    std::string map_frame_{"map"};
+
+    // slam
+    std::optional<cuvslam::Slam> slam_;
+    bool enable_slam_{true};
+    bool slam_sync_mode_{false};
+    int slam_max_map_size_{300};
+    int slam_throttling_ms_{0};
+    double max_correction_m_{5.0};
+    std::uint64_t rejected_corrections_{0};
+    bool slam_started_{false};
+    std::uint64_t loop_closures_{0};
+    std::int64_t last_closure_ns_{-1};
 
     // intrinsics
     bool have_info_{false};
@@ -386,6 +500,8 @@ private:
 
     Output<nav_msgs::Odometry> odometry_;
     Output<sensor_msgs::PointCloud2> landmarks_;
+    Output<nav_msgs::Odometry> corrected_odometry_;
+    Output<nav_msgs::Odometry> map_tf_;
 };
 
 int main() {
