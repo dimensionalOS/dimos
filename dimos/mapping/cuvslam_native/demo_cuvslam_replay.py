@@ -19,10 +19,10 @@
 
 Writes trajectory.npy, landmarks.npy, metrics.json and topdown.png.
 
-cuVSLAM restarts its world frame on a tracking loss, so the module tags each pose
-with a segment id and this demo evaluates per segment. Differencing poses across
-a segment boundary reads a frame change as motion and inflates the path by orders
-of magnitude.
+cuVSLAM restarts its world frame on a tracking loss. The module rebases each restart
+so the published odometry is ONE continuous path in ONE frame, which is all a robot
+ever sees. The resets are debugging output on the module log; this demo marks them
+as nodes on the path and evaluates the whole trajectory with a single rigid fit.
 """
 
 from __future__ import annotations
@@ -72,12 +72,7 @@ _PAIR_SKEW_S = 0.001
 _LANDMARK_STRIDE = 10
 _LANDMARK_VOXEL_M = 0.05
 
-# A handheld indoor rig cannot move at this speed; a step implying it is a
-# coordinate-frame change, not motion.
-_IMPOSSIBLE_SPEED_MPS = 15.0
-_MIN_SEGMENT_POSES = 30
 _MAP_MARGIN_M = 2.0
-_MOVING_SEGMENT_MIN_PATH_M = 2.0
 
 
 def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -92,116 +87,75 @@ def umeyama(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rotation, mu_dst - rotation @ mu_src
 
 
-def segment_bounds(
-    times: np.ndarray, segment_ids: np.ndarray, positions: np.ndarray
-) -> list[tuple[int, int]]:
-    """Split on the module's segment id, and defensively on impossible speed."""
-    breaks = set(np.where(np.diff(segment_ids) != 0)[0] + 1)
-    steps = np.linalg.norm(np.diff(positions, axis=0), axis=1)
-    deltas = np.maximum(np.diff(times), 1e-6)
-    breaks |= set(np.where(steps / deltas > _IMPOSSIBLE_SPEED_MPS)[0] + 1)
-    edges = [0, *sorted(breaks), len(positions)]
-    return [
-        (edges[i], edges[i + 1])
-        for i in range(len(edges) - 1)
-        if edges[i + 1] - edges[i] >= _MIN_SEGMENT_POSES
-    ]
-
-
 def _interpolate_reference(times: np.ndarray, reference: np.ndarray) -> np.ndarray:
     return np.stack([np.interp(times, reference[:, 0], reference[:, i]) for i in (1, 2, 3)], axis=1)
 
 
-def evaluate(
-    times: np.ndarray, positions: np.ndarray, segment_ids: np.ndarray, reference: np.ndarray
-) -> dict:
-    segments = []
-    for start, end in segment_bounds(times, segment_ids, positions):
-        estimate = positions[start:end]
-        truth = _interpolate_reference(times[start:end], reference)
-        rotation, translation = umeyama(estimate, truth)
-        error = np.linalg.norm((rotation @ estimate.T).T + translation - truth, axis=1)
-        steps = np.linalg.norm(np.diff(estimate, axis=0), axis=1)
-        estimate_length = float(steps.sum())
-        truth_length = float(np.linalg.norm(np.diff(truth, axis=0), axis=1).sum())
-        segments.append(
-            {
-                "poses": int(end - start),
-                "duration_s": round(float(times[end - 1] - times[start]), 2),
-                "est_path_m": round(estimate_length, 2),
-                "gt_path_m": round(truth_length, 2),
-                "path_ratio": (
-                    round(estimate_length / truth_length, 3) if truth_length > 0.05 else None
-                ),
-                "ate_rmse_m": round(float(np.sqrt((error**2).mean())), 3),
-                "max_step_m": round(float(steps.max()), 3) if len(steps) else 0.0,
-                "steps_above_1m": int((steps > 1.0).sum()),
-            }
-        )
+def reset_times(stderr: str) -> list[float]:
+    """Reset stamps from the module's log.
 
+    The odometry stream itself carries no reset marker on purpose -- a robot sees
+    one path in one frame. These are nodes on that path for debugging: the pose
+    either side is in the same frame, only the motion across a node is unmeasured.
+    """
+    stamps = []
+    for line in stderr.splitlines():
+        if "world frame restarted" not in line:
+            continue
+        try:
+            stamps.append(json.loads(line)["timestamp_ns"] / 1e9)
+        except (ValueError, KeyError):
+            continue
+    return stamps
+
+
+def evaluate(
+    times: np.ndarray, positions: np.ndarray, resets: np.ndarray, reference: np.ndarray
+) -> dict:
+    truth = _interpolate_reference(times, reference)
+    rotation, translation = umeyama(positions, truth)
+    error = np.linalg.norm((rotation @ positions.T).T + translation - truth, axis=1)
+    steps = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+    estimate_length = float(steps.sum())
+    truth_length = float(np.linalg.norm(np.diff(truth, axis=0), axis=1).sum())
     reference_length = float(np.linalg.norm(np.diff(reference[:, 1:4], axis=0), axis=1).sum())
-    weights = np.array([s["poses"] for s in segments], dtype=float)
-    ates = np.array([s["ate_rmse_m"] for s in segments])
-    moving = [s for s in segments if s["gt_path_m"] >= _MOVING_SEGMENT_MIN_PATH_M]
     return {
-        "poses_total": len(positions),
-        "poses_in_segments": int(weights.sum()) if segments else 0,
-        "n_segments": len(segments),
-        "weighted_ate_rmse_m": (
-            round(float((ates * weights).sum() / weights.sum()), 3) if segments else None
-        ),
-        "max_in_seg_step_m": round(max((s["max_step_m"] for s in segments), default=0.0), 3),
-        "in_seg_steps_above_1m": sum(s["steps_above_1m"] for s in segments),
-        "path_weighted_ratio": (
-            round(
-                sum(s["est_path_m"] for s in moving) / sum(s["gt_path_m"] for s in moving),
-                3,
-            )
-            if moving
-            else None
-        ),
+        "poses": len(positions),
+        "duration_s": round(float(times[-1] - times[0]), 2),
+        "ate_rmse_m": round(float(np.sqrt((error**2).mean())), 3),
+        "ate_max_m": round(float(error.max()), 3),
+        "est_path_m": round(estimate_length, 2),
+        "gt_path_m": round(truth_length, 2),
+        "path_ratio": round(estimate_length / truth_length, 3) if truth_length > 0.05 else None,
+        "max_step_m": round(float(steps.max()), 3),
+        "steps_above_1m": int((steps > 1.0).sum()),
+        "resets": len(resets),
         "reference_path_m": round(reference_length, 2),
-        "segments": segments,
     }
 
 
-def segment_alignments(
-    times: np.ndarray, positions: np.ndarray, segment_ids: np.ndarray, reference: np.ndarray
-) -> list[tuple[int, int, np.ndarray, np.ndarray]]:
-    """Per-segment rigid transform from cuVSLAM's frame into the reference frame."""
-    alignments = []
-    for start, end in segment_bounds(times, segment_ids, positions):
-        truth = _interpolate_reference(times[start:end], reference)
-        rotation, translation = umeyama(positions[start:end], truth)
-        alignments.append((start, end, rotation, translation))
-    return alignments
-
-
 def aligned_map(
-    times: np.ndarray,
     landmark_frames: list[tuple[float, np.ndarray]],
-    alignments: list[tuple[int, int, np.ndarray, np.ndarray]],
+    rotation: np.ndarray,
+    translation: np.ndarray,
 ) -> np.ndarray:
-    """Landmarks from every segment, each carried into the reference frame.
+    """Landmarks carried into the reference frame by the single trajectory fit.
 
-    A landmark is expressed in whichever world frame cuVSLAM held at the time, so
-    stacking the raw clouds across a tracking loss overlays unrelated frames.
+    The module publishes landmarks in its own continuous world frame, so one
+    transform serves the whole run.
     """
-    clouds = []
-    for start, end, rotation, translation in alignments:
-        span = (times[start], times[end - 1])
-        points = [p for stamp, p in landmark_frames if span[0] <= stamp <= span[1] and len(p)]
-        if points:
-            clouds.append((rotation @ np.vstack(points).T).T + translation)
-    return np.vstack(clouds) if clouds else np.zeros((0, 3), dtype=np.float32)
+    points = [p for _stamp, p in landmark_frames if len(p)]
+    if not points:
+        return np.zeros((0, 3), dtype=np.float32)
+    return (rotation @ np.vstack(points).T).T + translation
 
 
 def render(
     out_dir: Path,
-    positions: np.ndarray,
+    aligned: np.ndarray,
     landmarks: np.ndarray,
     reference: np.ndarray,
-    alignments: list[tuple[int, int, np.ndarray, np.ndarray]],
+    resets: np.ndarray,
     metrics: dict,
 ) -> Path:
     import matplotlib
@@ -236,7 +190,7 @@ def render(
         label="Point-LIO reference",
         zorder=2,
     )
-    axis.set_title("Map: cuVSLAM landmarks, each segment aligned to the reference")
+    axis.set_title("Map: cuVSLAM landmarks, one rigid fit to the reference")
     axis.set_aspect("equal")
     axis.grid(alpha=0.3)
     axis.legend(fontsize=8)
@@ -250,25 +204,28 @@ def render(
         label="Point-LIO reference",
         zorder=1,
     )
-    colors = plt.get_cmap("autumn")(np.linspace(0, 0.75, 12))
-    for index, (start, end, rotation, translation) in enumerate(alignments):
-        aligned = (rotation @ positions[start:end].T).T + translation
-        axis.plot(
-            aligned[:, 0],
-            aligned[:, 1],
-            color=colors[index % 12],
-            lw=1.4,
-            label=f"segment {index + 1} ({end - start})",
-            zorder=3,
+    axis.plot(
+        aligned[:, 0], aligned[:, 1], color="#ff4136", lw=1.3, label="cuVSLAM odometry", zorder=3
+    )
+    if len(resets):
+        axis.scatter(
+            aligned[resets, 0],
+            aligned[resets, 1],
+            s=26,
+            facecolors="none",
+            edgecolors="#111111",
+            lw=0.8,
+            label=f"world-frame resets ({len(resets)})",
+            zorder=4,
         )
     axis.set_title(
-        f"Trajectory, {metrics['n_segments']} segments\n"
-        f"weighted ATE {metrics['weighted_ate_rmse_m']} m · "
-        f"path ratio {metrics['path_weighted_ratio']}"
+        f"Trajectory, one continuous path\n"
+        f"ATE {metrics['ate_rmse_m']} m · path ratio {metrics['path_ratio']} · "
+        f"{metrics['resets']} resets"
     )
     axis.set_aspect("equal")
     axis.grid(alpha=0.3)
-    axis.legend(fontsize=7)
+    axis.legend(fontsize=8)
 
     figure.suptitle("cuVSLAM native module — replay of a memory2 recording", fontweight="bold")
     figure.tight_layout()
@@ -422,32 +379,29 @@ def main() -> int:
 
     times = np.array([m.ts for m in messages])
     positions = np.array([[m.x, m.y, m.z] for m in messages])
-    segment_ids = np.array(
-        [
-            int(m.child_frame_id.rsplit("_", 1)[-1]) if "_" in m.child_frame_id else 0
-            for m in messages
-        ]
-    )
 
     reference = reference_from_db(args.db)
     origin = reference[0, 0]
     reference[:, 0] -= origin
     times -= origin
     landmark_frames = [(stamp - origin, points) for stamp, points in landmark_frames]
+    resets = np.searchsorted(times, np.array(reset_times(stderr)) - origin)
+    resets = resets[(resets > 0) & (resets < len(times))]
 
-    alignments = segment_alignments(times, positions, segment_ids, reference)
-    landmarks = _downsample(aligned_map(times, landmark_frames, alignments), _LANDMARK_VOXEL_M)
+    rotation, translation = umeyama(positions, _interpolate_reference(times, reference))
+    landmarks = _downsample(aligned_map(landmark_frames, rotation, translation), _LANDMARK_VOXEL_M)
 
-    np.save(out_dir / "trajectory.npy", np.column_stack([times, positions, segment_ids]))
+    np.save(out_dir / "trajectory.npy", np.column_stack([times, positions]))
     np.save(out_dir / "landmarks.npy", landmarks)
 
-    metrics = evaluate(times, positions, segment_ids, reference)
+    metrics = evaluate(times, positions, resets, reference)
     metrics["db"] = args.db
     metrics["baseline_m"] = args.baseline_m
     metrics["landmarks"] = len(landmarks)
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
-    plot = render(out_dir, positions, landmarks, reference, alignments, metrics)
+    aligned = (rotation @ positions.T).T + translation
+    plot = render(out_dir, aligned, landmarks, reference, resets, metrics)
     print(json.dumps({k: v for k, v in metrics.items() if k != "segments"}, indent=2))
     print(f"map      -> {out_dir / 'landmarks.npy'}")
     print(f"topdown  -> {plot}")

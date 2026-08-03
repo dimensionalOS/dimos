@@ -7,10 +7,9 @@
 // out: odometry, landmarks (cuVSLAM's tracked 3D points)
 //
 // cuVSLAM restarts its world frame after a tracking loss. The module rebases each
-// restart onto the last published pose so the odometry stream never jumps; the
-// segment id rides along in child_frame_id because the motion *during* the loss is
-// unmeasured, so a consumer should widen covariance there and an evaluator should
-// not treat the seam as a measurement.
+// restart onto the last published pose, so consumers see ONE continuous odometry
+// path in ONE frame and never a jump. Resets are logged as debugging output; the
+// motion across one is unmeasured, which is drift the stream cannot account for.
 // baseline_m is config, not derived: these recordings have right P[3] == 0.
 
 #include <array>
@@ -265,7 +264,8 @@ private:
                 ++segment_id_;
                 pending_rebase_ = true;
                 logging::warn("cuvslam world frame restarted",
-                              {logging::Field("segment", static_cast<std::int64_t>(segment_id_)),
+                              {logging::Field("reset", static_cast<std::int64_t>(segment_id_)),
+                               logging::Field("timestamp_ns", est.timestamp_ns),
                                logging::Field("implied_speed_mps", std::sqrt(moved) / dt)});
             }
         }
@@ -288,9 +288,9 @@ private:
         msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
         msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
         msg.header.frame_id = "world";
-        // The pose stream is continuous; the segment id says which side of a
-        // tracking loss it came from, so a consumer can widen covariance there.
-        msg.child_frame_id = "cuvslam_rig/segment_" + std::to_string(segment_id_);
+        // One frame for the whole run: a robot only ever sees a single odom path.
+        // Resets are debugging output, on the log, not a break in this stream.
+        msg.child_frame_id = "cuvslam_rig";
         msg.pose.pose.position.x = world_from_rig_.translation[0];
         msg.pose.pose.position.y = world_from_rig_.translation[1];
         msg.pose.pose.position.z = world_from_rig_.translation[2];
