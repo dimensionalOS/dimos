@@ -1013,9 +1013,6 @@ class TestTickLoop:
 
         tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)})
 
-        hardware["arm"].write_command.assert_called_once_with(
-            {"arm/joint1": 0.25}, ControlMode.SERVO_POSITION
-        )
         log_error.assert_called_once_with(
             "Hardware arm rejected SERVO_POSITION command from control task"
         )

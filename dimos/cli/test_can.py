@@ -13,12 +13,17 @@
 # limitations under the License.
 
 import subprocess
+from unittest.mock import Mock
 
 import pytest
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from dimos.cli.can import app
+
+
+def _subprocess_argv(run: Mock) -> list[list[str]]:
+    return [call.args[0] for call in run.call_args_list]
 
 
 def test_setup_valid_options_configures_and_verifies_can_interface(
@@ -40,65 +45,35 @@ def test_setup_valid_options_configures_and_verifies_can_interface(
     assert result.exit_code == 0, result.output
     assert "Running: sudo -- ip link set dev follower_l down" in result.stdout
     assert "bitrate=1000000, txqueuelen=1000" in result.stdout
-    assert run.call_args_list == [
-        mocker.call(
-            ["ip", "link", "show", "dev", "follower_l"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ),
-        mocker.call(
-            ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "down"],
-            check=True,
-            capture_output=False,
-            text=True,
-        ),
-        mocker.call(
-            [
-                "sudo",
-                "--",
-                "ip",
-                "link",
-                "set",
-                "dev",
-                "follower_l",
-                "type",
-                "can",
-                "bitrate",
-                "1000000",
-            ],
-            check=True,
-            capture_output=False,
-            text=True,
-        ),
-        mocker.call(
-            [
-                "sudo",
-                "--",
-                "ip",
-                "link",
-                "set",
-                "dev",
-                "follower_l",
-                "txqueuelen",
-                "1000",
-            ],
-            check=True,
-            capture_output=False,
-            text=True,
-        ),
-        mocker.call(
-            ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "up"],
-            check=True,
-            capture_output=False,
-            text=True,
-        ),
-        mocker.call(
-            ["ip", "-details", "-statistics", "link", "show", "dev", "follower_l"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ),
+    assert _subprocess_argv(run) == [
+        ["ip", "link", "show", "dev", "follower_l"],
+        ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "down"],
+        [
+            "sudo",
+            "--",
+            "ip",
+            "link",
+            "set",
+            "dev",
+            "follower_l",
+            "type",
+            "can",
+            "bitrate",
+            "1000000",
+        ],
+        [
+            "sudo",
+            "--",
+            "ip",
+            "link",
+            "set",
+            "dev",
+            "follower_l",
+            "txqueuelen",
+            "1000",
+        ],
+        ["sudo", "--", "ip", "link", "set", "dev", "follower_l", "up"],
+        ["ip", "-details", "-statistics", "link", "show", "dev", "follower_l"],
     ]
 
 

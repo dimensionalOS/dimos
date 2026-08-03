@@ -43,13 +43,12 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
 
     def _build_robot(self) -> can_motor_control.Robot:
         arm_motors = [
-            can_motor_control.MotorSpec(
-                f"yam_joint{index}",
-                damiao.MotorType.DM4340 if index <= 3 else damiao.MotorType.DM4310,
-                index,
-                index | 0x10,
-            )
-            for index in range(1, 7)
+            can_motor_control.MotorSpec("yam_joint1", damiao.MotorType.DM4340, 0x01, 0x11),
+            can_motor_control.MotorSpec("yam_joint2", damiao.MotorType.DM4340, 0x02, 0x12),
+            can_motor_control.MotorSpec("yam_joint3", damiao.MotorType.DM4340, 0x03, 0x13),
+            can_motor_control.MotorSpec("yam_joint4", damiao.MotorType.DM4310, 0x04, 0x14),
+            can_motor_control.MotorSpec("yam_joint5", damiao.MotorType.DM4310, 0x05, 0x15),
+            can_motor_control.MotorSpec("yam_joint6", damiao.MotorType.DM4310, 0x06, 0x16),
         ]
         gripper_motor = can_motor_control.MotorSpec(
             "yam_gripper",

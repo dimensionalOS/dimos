@@ -19,13 +19,7 @@ from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
 def test_write_motor_commands_connected_adapter_applies_ordered_commands() -> None:
-    adapter = MockWholeBodyAdapter(
-        dof=2,
-        initial_positions=[0.1, 0.2],
-        address=None,
-        hardware_id="test_robot",
-        domain_id=0,
-    )
+    adapter = MockWholeBodyAdapter(dof=2, initial_positions=[0.1, 0.2])
     assert adapter.connect()
 
     assert adapter.write_motor_commands(
@@ -62,37 +56,18 @@ def test_write_motor_commands_disconnected_adapter_rejects_command() -> None:
     assert adapter.read_motor_states() == [MotorState()]
 
 
-def test_disconnect_connected_adapter_clears_connection_and_state_availability() -> None:
+def test_connection_lifecycle_controls_availability_and_activation() -> None:
     adapter = MockWholeBodyAdapter(dof=1)
+    assert not adapter.activate()
+    assert not adapter.deactivate()
+
     assert adapter.connect()
+    assert adapter.is_connected()
+    assert adapter.has_motor_states()
+    assert adapter.activate()
+    assert adapter.deactivate()
 
     adapter.disconnect()
 
     assert not adapter.is_connected()
     assert not adapter.has_motor_states()
-
-
-def test_activate_disconnected_adapter_returns_false() -> None:
-    adapter = MockWholeBodyAdapter(dof=1)
-
-    assert not adapter.activate()
-
-
-def test_deactivate_disconnected_adapter_returns_false() -> None:
-    adapter = MockWholeBodyAdapter(dof=1)
-
-    assert not adapter.deactivate()
-
-
-def test_activate_connected_adapter_returns_true() -> None:
-    adapter = MockWholeBodyAdapter(dof=1)
-    assert adapter.connect()
-
-    assert adapter.activate()
-
-
-def test_deactivate_connected_adapter_returns_true() -> None:
-    adapter = MockWholeBodyAdapter(dof=1)
-    assert adapter.connect()
-
-    assert adapter.deactivate()
