@@ -18,6 +18,7 @@ Every test launches the real native_echo.py subprocess via ModuleCoordinator.bui
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+import contextlib
 from io import BytesIO
 import json
 from pathlib import Path
@@ -33,11 +34,13 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
+from dimos.core.stream import IO, In, Out
+from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 
 _ECHO = str(Path(__file__).parent / "demos" / "native_echo.py")
 
@@ -85,6 +88,12 @@ class StubNativeModule(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
+
+
+class StubIoModule(NativeModule):
+    config: StubNativeConfig
+    cmd_vel: In[Twist]
+    tf: IO[TFMessage]
 
 
 class StubConsumer(Module):
@@ -158,6 +167,54 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def test_io_port_topic_reaches_the_native_process() -> None:
+    """An IO port is both a subscriber and a publisher, so it needs its topic."""
+    module = StubIoModule(executable=_ECHO)
+    transports = [LCMTransport("/cmd_vel", Twist), LCMTransport("/tf", TFMessage)]
+    try:
+        module.set_transport("cmd_vel", transports[0])
+        module.set_transport("tf", transports[1])
+
+        assert module._collect_topics() == {
+            "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
+            "tf": "/tf#tf2_msgs.TFMessage",
+        }
+    finally:
+        module.stop()
+        for transport in transports:
+            with contextlib.suppress(Exception):
+                transport.stop()
+
+
+def test_tf_topic_comes_from_the_declared_port_only() -> None:
+    """No tf port declared means no tf topic, rather than a silently injected one."""
+    module = StubNativeModule(executable=_ECHO)
+    transport = LCMTransport("/cmd_vel", Twist)
+    try:
+        module.set_transport("cmd_vel", transport)
+
+        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs.Twist"}
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
+def test_io_port_publisher_qos_reaches_the_native_process() -> None:
+    module = StubIoModule(executable=_ECHO)
+    transport = ZenohTransport(ZenohTopic("/tf", TFMessage, qos=QOS_NEVER_DROP))
+    try:
+        module.set_transport("tf", transport)
+
+        assert module._collect_output_qos() == {
+            transport.channel: {"reliability": "reliable", "congestion_control": "block"},
+        }
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
 
 
 def test_autoconnect(args_file: str) -> None:
