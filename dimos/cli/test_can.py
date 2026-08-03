@@ -15,15 +15,29 @@
 import subprocess
 from unittest.mock import Mock
 
+from click.testing import Result
 import pytest
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
-from dimos.cli.can import app
+from dimos.cli.dimos import main
 
 
 def _subprocess_argv(run: Mock) -> list[list[str]]:
     return [call.args[0] for call in run.call_args_list]
+
+
+def _invoke_can(args: list[str]) -> Result:
+    return CliRunner().invoke(main, ["hardware", "can", *args])
+
+
+def test_can_commands_are_nested_under_hardware_scope() -> None:
+    result = CliRunner().invoke(main, ["hardware", "--help"])
+    legacy = CliRunner().invoke(main, ["can", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "can" in result.output
+    assert legacy.exit_code == 2
 
 
 def test_setup_valid_options_configures_and_verifies_can_interface(
@@ -40,7 +54,7 @@ def test_setup_valid_options_configures_and_verifies_can_interface(
         ),
     )
 
-    result = CliRunner().invoke(app, ["setup", "follower_l"])
+    result = _invoke_can(["setup", "follower_l"])
 
     assert result.exit_code == 0, result.output
     assert "Running: sudo -- ip link set dev follower_l down" in result.stdout
@@ -78,14 +92,14 @@ def test_setup_valid_options_configures_and_verifies_can_interface(
 
 
 def test_setup_nonpositive_queue_length_returns_usage_error() -> None:
-    result = CliRunner().invoke(app, ["setup", "can0", "--txqueuelen", "0"])
+    result = _invoke_can(["setup", "can0", "--txqueuelen", "0"])
 
     assert result.exit_code == 2
     assert "x>=1" in result.output
 
 
 def test_setup_nonpositive_bitrate_returns_usage_error() -> None:
-    result = CliRunner().invoke(app, ["setup", "can0", "--bitrate", "0"])
+    result = _invoke_can(["setup", "can0", "--bitrate", "0"])
 
     assert result.exit_code == 2
     assert "x>=1" in result.output
@@ -97,7 +111,7 @@ def test_status_existing_interface_prints_detailed_state(mocker: MockerFixture) 
         return_value=subprocess.CompletedProcess([], 0, stdout="can0: UP\n", stderr=""),
     )
 
-    result = CliRunner().invoke(app, ["status", "can0"])
+    result = _invoke_can(["status", "can0"])
 
     assert result.exit_code == 0, result.output
     assert result.stdout == "can0: UP\n"
@@ -118,7 +132,7 @@ def test_down_nonroot_user_runs_privileged_command_with_sudo(
         return_value=subprocess.CompletedProcess([], 0),
     )
 
-    result = CliRunner().invoke(app, ["down", "can1"])
+    result = _invoke_can(["down", "can1"])
 
     assert result.exit_code == 0, result.output
     assert "CAN interface can1 is down" in result.stdout
@@ -137,7 +151,7 @@ def test_up_root_user_runs_ip_without_sudo(mocker: MockerFixture) -> None:
         return_value=subprocess.CompletedProcess([], 0),
     )
 
-    result = CliRunner().invoke(app, ["up", "can2"])
+    result = _invoke_can(["up", "can2"])
 
     assert result.exit_code == 0, result.output
     assert "CAN interface can2 is up" in result.stdout
@@ -152,7 +166,7 @@ def test_up_root_user_runs_ip_without_sudo(mocker: MockerFixture) -> None:
 def test_status_missing_ip_command_returns_usage_error(mocker: MockerFixture) -> None:
     mocker.patch("dimos.cli.can.subprocess.run", side_effect=FileNotFoundError)
 
-    result = CliRunner().invoke(app, ["status", "can0"])
+    result = _invoke_can(["status", "can0"])
 
     assert result.exit_code == 2
     assert "the 'ip' command is not installed" in result.output
@@ -182,7 +196,7 @@ def test_status_failed_ip_command_reports_available_detail(
         ),
     )
 
-    result = CliRunner().invoke(app, ["status", "can0"])
+    result = _invoke_can(["status", "can0"])
 
     assert result.exit_code == 1
     assert f"CAN interface command failed: {expected_detail}" in result.output
