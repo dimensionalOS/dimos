@@ -96,9 +96,14 @@ class CuvslamConfig(NativeModuleConfig):
 class CuvslamOdometry(NativeModule):
     """Stereo visual odometry on the GPU.
 
-    cuVSLAM restarts its world frame after a tracking loss, so the segment id
-    rides along in ``child_frame_id`` as ``cuvslam_rig/segment_<n>``. Poses from
-    different segments must never be differenced.
+    ``odometry`` is one continuous ``world`` -> ``cuvslam_rig`` path: cuVSLAM
+    restarts its world frame after a tracking loss and the module rebases each
+    restart onto the last published pose, so the stream never jumps. A restart
+    costs the motion that happened across it, and is reported only on the log.
+
+    ``landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
+    the same ``world`` frame. They are a live view, not an accumulated map --
+    there is no loop closure here, so they drift with the odometry.
     """
 
     config: CuvslamConfig
