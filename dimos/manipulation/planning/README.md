@@ -119,9 +119,9 @@ module.execute()  # Sends to coordinator
 | `PinkIK` | Pinocchio/Pink | Local differential IK with task QP composition |
 
 `PinkIK` is selectable with `kinematics={"backend": "pink"}` or the CLI override
-`-o manipulationmodule.kinematics.backend=pink`. Pink tuning fields are nested
+`--kinematics.backend=pink`. Pink tuning fields are nested
 under the same config, for example
-`-o manipulationmodule.kinematics.max_iterations=100`. It is installed with the
+`--kinematics.max-iterations=100`. It is installed with the
 `manipulation` optional dependencies, which include the PyPI package `pin-pink`
 (import name `pink`) and a `qpsolvers` backend (`proxqp`). Pink is
 local/differential rather than global IK, so it can converge to local minima;

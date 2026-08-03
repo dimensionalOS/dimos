@@ -494,7 +494,7 @@ class TestPlanningInitialization:
         )
 
     def test_nested_kinematics_config_parses_cli_override_shape(self) -> None:
-        """Pydantic parses the nested CLI config shape used by -o overrides."""
+        """Pydantic parses the nested shape used by dynamic CLI overrides."""
         config = ManipulationModuleConfig(
             kinematics={
                 "backend": "pink",

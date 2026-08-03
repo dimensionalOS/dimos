@@ -222,7 +222,7 @@ class PythonWorker:
         if self._conn is None:
             raise RuntimeError("Worker process not started")
 
-        kwargs = kwargs or {}
+        kwargs = dict(kwargs or {})
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
