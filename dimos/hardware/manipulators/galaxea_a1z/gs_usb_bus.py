@@ -35,8 +35,8 @@ Device quirks handled here:
   USB continuously - libusb releases the GIL while blocked - and recv()
   becomes a queue pop that always meets the SDK's budget.
 
-Requires ``gs-usb``, ``pyusb``, and system libusb. Run ``dimos a1z setup``
-before connecting.
+Requires ``gs-usb``, ``pyusb``, and system libusb. Run
+``dimos hardware a1z doctor`` before connecting.
 Lives in galaxea_a1z/ because it is the only user today; promote to a shared
 location when a second CAN arm needs it.
 """

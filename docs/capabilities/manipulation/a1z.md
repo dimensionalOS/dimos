@@ -3,68 +3,85 @@ title: "Galaxea A1Z"
 ---
 
 The A1Z integration uses the vendor's 250 Hz position-control loop, the G1Z
-gravity model, and the G1Z gripper.
+gravity model, and the G1Z gripper. The SDK is not published on PyPI, so install
+the pinned Git revision until the vendor publishes a compatible release.
 
-Install DimOS before setting up the A1Z. Then run one setup command as your
-normal user:
+## Install from a source checkout
 
-```bash
-dimos a1z setup
-```
-
-From a DimOS source checkout with its development environment installed, run:
+The repository setup script shows its complete plan and asks for confirmation
+before it changes the checkout environment or installs system packages:
 
 ```bash
-uv run --no-sync dimos a1z setup
+bin/setup-a1z
 ```
 
-The command displays every dependency installation command before it asks for
-confirmation. Pass `--yes` to skip the prompt. Setup installs the
-`manipulation` dependencies, the pinned gripper-capable A1Z SDK, and the Python
-packages required by the host platform. In a source checkout, it uses a locked,
-inexact sync so that it preserves other installed extras.
+The script runs a locked, inexact sync so it preserves other extras in the
+checkout. It installs `can-utils` on Ubuntu and `libusb` through Homebrew on
+macOS when needed. On other Linux distributions, it prints the missing system
+package instead of selecting a package manager for you.
+
+## Install into an existing environment
+
+Install these requirements with the package manager that owns the environment:
+
+```bash
+python -m pip install 'dimos[manipulation]'
+python -m pip install 'a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224'
+```
+
+On macOS, also install the userspace USB dependencies:
+
+```bash
+python -m pip install 'gs-usb==0.3.1' 'pyusb==1.3.1'
+brew install libusb
+```
+
+On Linux, install the package that provides `cansend`. Ubuntu calls this package
+`can-utils`:
+
+```bash
+sudo apt-get install can-utils
+```
+
+Check the installation without changing the host:
+
+```bash
+dimos hardware a1z doctor --software-only
+```
 
 ## Linux setup
 
-On Ubuntu, setup installs `can-utils` when `cansend` is missing. On other Linux
-distributions, setup installs and verifies the Python dependencies, then tells
-you to install the package that provides `cansend`. Rerun setup after installing
-it.
+Connect and power the arm, then configure its CAN interface:
 
-After dependency checks pass, setup uses `sudo` to:
+```bash
+dimos hardware a1z configure-can
+```
+
+The command asks for confirmation, then uses `sudo` to:
 
 1. Load the Linux `gs_usb` kernel driver.
 2. Bind the HHS USB-CANFD adapter.
 3. Create the stable `a1zcan` SocketCAN interface at 1 Mbit/s.
 4. Send a safe probe and verify that the adapter transmitted it.
 
-Do not start the arm unless setup prints `A1Z CAN setup passed`. To install and
-verify only the Python dependencies, run:
+Do not start the arm unless configuration reports a successful transmission.
+Run the full read-only diagnostic afterward:
 
 ```bash
-dimos a1z setup --sdk-only
+dimos hardware a1z doctor
 ```
 
-After rebooting or reconnecting the HHS adapter, configure and test SocketCAN
-again:
-
-```bash
-dimos a1z can-setup
-```
+After rebooting or reconnecting the HHS adapter, run `configure-can` again.
 
 ## macOS setup
 
 macOS uses the HHS adapter directly through libusb because it does not provide
-SocketCAN. Setup installs `pyusb` and `gs-usb`. When libusb is missing and
-Homebrew is available, setup also runs `brew install libusb`. If Homebrew is
-unavailable, install libusb yourself and rerun setup.
-
-The setup command verifies the gripper-capable SDK, finds the attached HHS
+SocketCAN. The doctor verifies the gripper-capable SDK, finds the attached HHS
 USB-CANFD adapter, opens it in listen-only mode, and closes it without
-transmitting or enabling the arm. To verify only the Python SDK, run:
+transmitting or enabling the arm:
 
 ```bash
-dimos a1z setup --sdk-only
+dimos hardware a1z doctor
 ```
 
 ## Run
@@ -102,9 +119,10 @@ On macOS, the adapter selects the userspace USB transport automatically; omit
   and build the driver for the exact running kernel. Do not install a desktop
   kernel or copy a kernel module from another machine.
 - **The bus behaves strangely after a crash.** Replug the HHS adapter and rerun
-  `dimos a1z can-setup` on Linux or `dimos a1z setup` on macOS.
+  `dimos hardware a1z configure-can` on Linux or
+  `dimos hardware a1z doctor` on macOS.
 - **macOS cannot find or open the adapter.** Check that libusb is installed,
-  reconnect the adapter, and rerun `dimos a1z setup`.
+  reconnect the adapter, and rerun `dimos hardware a1z doctor`.
 - **The gripper remains stiff after shutdown.** The adapter retries the disable
   command, but a degraded bus can still lose it. Support the arm and turn off
   the PSU.

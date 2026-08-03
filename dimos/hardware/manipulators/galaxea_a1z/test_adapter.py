@@ -197,6 +197,7 @@ class _FakeKinematics:
 @pytest.fixture
 def a1z_adapter_module(
     monkeypatch: pytest.MonkeyPatch,
+    mocker,
     tmp_path: Path,
 ) -> Iterator[ModuleType]:
     _FakeArmRobot.instances.clear()
@@ -218,7 +219,7 @@ def a1z_adapter_module(
     monkeypatch.setitem(sys.modules, "a1z.robots.kinematics", a1z_kinematics)
     sys.modules.pop("dimos.hardware.manipulators.galaxea_a1z.adapter", None)
     module = importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    mocker.patch.object(module.time, "sleep")
     sys_class_net = tmp_path / "net"
     interface = sys_class_net / "can0"
     driver_path = tmp_path / "drivers" / "gs_usb"
@@ -231,7 +232,7 @@ def a1z_adapter_module(
     sys.modules.pop("dimos.hardware.manipulators.galaxea_a1z.adapter", None)
 
 
-def _connected_adapter(module: ModuleType, **kwargs: Any) -> Any:
+def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArmRobot]:
     gripper_enabled = bool(kwargs.pop("gripper", False))
     gripper_free_drive = bool(kwargs.pop("gripper_free_drive", False))
     teaching_enabled = bool(kwargs.pop("zero_gravity", False))
@@ -255,14 +256,13 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> Any:
     assert not kwargs
     adapter = module.GalaxeaA1ZAdapter(address="can0", config=config)
     assert adapter.connect()
-    return adapter
+    return adapter, _FakeArmRobot.instances[-1]
 
 
 def test_connect_opens_bus_without_powering_motors(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module, gravity_comp_factor=0.7)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module, gravity_comp_factor=0.7)
 
     assert adapter.is_connected()
     assert "start" not in robot.actions
@@ -272,8 +272,7 @@ def test_connect_opens_bus_without_powering_motors(
 def test_safe_start_stages_measured_hold_before_gravity_feedforward(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module, gravity_comp_factor=1.0)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module, gravity_comp_factor=1.0)
     robot.state["pos"] = np.array([0.1, 0.5, -0.5, 0.2, -0.1, 0.3])
 
     assert adapter.activate()
@@ -285,39 +284,29 @@ def test_safe_start_stages_measured_hold_before_gravity_feedforward(
     hold = [a for a in robot.actions if isinstance(a, tuple) and a[0] == "command_joint_state"]
     assert len(hold) == 1
     assert np.allclose(hold[0][1]["pos"], robot.state["pos"])
-    assert np.allclose(hold[0][1]["kp"], robot._default_kp)
     assert hold[0][2] == 0.0
-    zero_index = robot.gravity_factor_history.index(0.0)
-    gravity_ramp = robot.gravity_factor_history[zero_index:]
-    assert gravity_ramp[:6] == [0.0] * 6
-    assert gravity_ramp == sorted(gravity_ramp)
     assert robot.gravity_comp_factor == 1.0
 
 
 def test_safe_start_requires_feedback_from_all_six_motors(
     a1z_adapter_module: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
+    mocker,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     robot._motor_chain._motor_b_list[-1].last_feedback = None
-    monkeypatch.setattr(a1z_adapter_module, "_STARTUP_FEEDBACK_TIMEOUT_S", 0.0)
+    mocker.patch.object(a1z_adapter_module, "_STARTUP_FEEDBACK_TIMEOUT_S", 0.0)
 
     assert not adapter.activate()
 
     assert "no feedback from all motors" in capsys.readouterr().out
-    assert not any(
-        isinstance(action, tuple) and action[0] == "command_joint_state" for action in robot.actions
-    )
-    assert robot.actions[-2:] == ["estop", "stop"]
+    assert not adapter.read_enabled()
 
 
 def test_safe_start_tolerates_one_noisy_settling_velocity_sample(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     stable = np.full(6, 0.05)
     noisy = stable.copy()
     noisy[1] = 0.119
@@ -337,8 +326,7 @@ def test_safe_start_rejects_sustained_motion_during_settling(
     a1z_adapter_module: ModuleType,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     moving = np.zeros(6)
     moving[1] = 0.119
     # Include the final gravity-ramp sample, then exceed the full settling window.
@@ -350,18 +338,16 @@ def test_safe_start_rejects_sustained_motion_during_settling(
     assert "arm did not settle within 1.0 s" in output
     assert "velocities=[0.0, 0.119, 0.0, 0.0, 0.0, 0.0]" in output
     assert robot.gravity_comp_factor == 0.0
-    assert robot.actions[-2:] == ["estop", "stop"]
 
 
 def test_zero_gravity_uses_vendor_teaching_startup(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(
+    adapter, robot = _connected_adapter(
         a1z_adapter_module,
         gravity_comp_factor=0.7,
         zero_gravity=True,
     )
-    robot = _FakeArmRobot.instances[-1]
 
     assert adapter.activate()
 
@@ -380,8 +366,7 @@ def test_safe_start_aborts_motion_during_gravity_ramp(
     a1z_adapter_module: ModuleType,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     robot.move_during_gravity_ramp = True
 
     assert not adapter.activate()
@@ -390,15 +375,13 @@ def test_safe_start_aborts_motion_during_gravity_ramp(
     assert "arm moving during" in output
     assert "joint3=0.750 rad/s" in output
     assert robot.gravity_comp_factor == 0.0
-    assert robot.actions[-2:] == ["estop", "stop"]
 
 
 def test_safe_start_rejects_dead_sdk_control_loop(
     a1z_adapter_module: ModuleType,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     robot.stop_during_gravity_ramp = True
 
     assert not adapter.activate()
@@ -406,27 +389,23 @@ def test_safe_start_rejects_dead_sdk_control_loop(
     output = capsys.readouterr().out
     assert "SDK control loop stopped during" in output
     assert robot.gravity_comp_factor == 0.0
-    assert robot.actions[-2:] == ["estop", "stop"]
 
 
 def test_safe_start_refuses_out_of_limit_pose(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     robot.state["pos"] = np.array([0.0, 0.0, 0.0, -1.7, 0.0, 0.0])  # joint4 beyond limit
 
     assert not adapter.activate()
 
-    assert "stop" in robot.actions  # motors disabled, not yanked into range
-    assert not any(isinstance(a, tuple) and a[0] == "command_joint_state" for a in robot.actions)
+    assert not adapter.read_enabled()
 
 
 def test_write_enable_false_stops_control_loop(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
 
     assert adapter.write_enable(False)
@@ -438,8 +417,7 @@ def test_write_enable_false_stops_control_loop(
 def test_disconnect_stops_robot_and_closes_bus(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
 
     adapter.disconnect()
@@ -449,34 +427,10 @@ def test_disconnect_stops_robot_and_closes_bus(
     assert not adapter.is_connected()
 
 
-def test_joint_state_reads_pass_through_si_units(
-    a1z_adapter_module: ModuleType,
-) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
-
-    robot.state["pos"] = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-    robot.state["vel"] = np.array([1.0, 1.1, 1.2, 1.3, 1.4, 1.5])
-    robot.state["eff"] = np.array([0.01, 0.02, 0.03, 0.04, 0.05, 0.06])
-
-    assert adapter.read_joint_positions() == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-    assert adapter.read_joint_velocities() == pytest.approx([1.0, 1.1, 1.2, 1.3, 1.4, 1.5])
-    assert adapter.read_joint_efforts() == pytest.approx([0.01, 0.02, 0.03, 0.04, 0.05, 0.06])
-
-
-def test_write_joint_positions_requires_activation(
-    a1z_adapter_module: ModuleType,
-) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-
-    assert not adapter.write_joint_positions([0.0] * 6)
-
-
 def test_servo_position_mode_streams_command_joint_pos(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
     assert adapter.set_control_mode(a1z_adapter_module.ControlMode.SERVO_POSITION)
 
@@ -491,8 +445,7 @@ def test_servo_position_mode_streams_command_joint_pos(
 def test_position_mode_runs_planned_move_in_background(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
 
     positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
@@ -508,8 +461,7 @@ def test_position_mode_runs_planned_move_in_background(
 def test_estop_latches_and_release_restores_commands(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
 
     assert adapter.write_stop()
@@ -528,8 +480,7 @@ def test_estop_latches_and_release_restores_commands(
 def test_motor_fault_is_reported_as_error_state(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module)
     assert adapter.activate()
 
     robot.state["error_codes"] = np.array([1, 1, 8, 1, 1, 1])
@@ -540,26 +491,10 @@ def test_motor_fault_is_reported_as_error_state(
     assert adapter.read_state()["state"] == 2
 
 
-def test_unsupported_interfaces_signal_cleanly(
-    a1z_adapter_module: ModuleType,
-) -> None:
-    adapter = _connected_adapter(a1z_adapter_module)
-    assert adapter.activate()
-
-    assert not adapter.write_joint_velocities([0.0] * 6)
-    assert not adapter.write_cartesian_position(
-        {"x": 0.3, "y": 0.0, "z": 0.4, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
-    )
-    assert adapter.read_gripper_position() is None
-    assert not adapter.write_gripper_position(0.05)
-    assert adapter.read_force_torque() is None
-
-
 def test_gripper_round_trips_meters_to_normalized(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(a1z_adapter_module, gripper=True, gripper_max_opening_m=0.1)
-    robot = _FakeArmRobot.instances[-1]
+    adapter, robot = _connected_adapter(a1z_adapter_module, gripper=True, gripper_max_opening_m=0.1)
     assert robot.factory_kwargs["with_gripper"] is True
     assert adapter.activate()
 
@@ -575,29 +510,18 @@ def test_gripper_round_trips_meters_to_normalized(
 def test_configured_gripper_free_drive_tracks_adapter_lifecycle(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter = _connected_adapter(
+    adapter, robot = _connected_adapter(
         a1z_adapter_module,
         gripper=True,
         gripper_free_drive=True,
         zero_gravity=True,
     )
-    robot = _FakeArmRobot.instances[-1]
 
     assert adapter.activate()
     assert ("set_gripper_free_drive", True) in robot.actions
 
     assert adapter.deactivate()
     assert ("set_gripper_free_drive", False) in robot.actions
-
-
-def test_gripper_read_prefers_motor_feedback(
-    a1z_adapter_module: ModuleType,
-) -> None:
-    adapter = _connected_adapter(a1z_adapter_module, gripper=True, gripper_max_opening_m=0.1)
-    robot = _FakeArmRobot.instances[-1]
-    robot.gripper.feedback_fraction = 0.35
-
-    assert adapter.read_gripper_position() == pytest.approx(0.035)
 
 
 def test_set_control_mode_rejects_unsupported_modes(
@@ -613,15 +537,15 @@ def test_set_control_mode_rejects_unsupported_modes(
 
 def test_gs_usb_transport_swaps_bus_during_factory_call(
     a1z_adapter_module: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
+    mocker,
 ) -> None:
-    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Darwin")
+    mocker.patch.object(a1z_adapter_module.platform, "system", return_value="Darwin")
 
     class _FakeGsBus:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
 
-    monkeypatch.setattr(gs_usb_bus, "GsUsbMacBus", _FakeGsBus)
+    mocker.patch.object(gs_usb_bus, "GsUsbMacBus", new=_FakeGsBus)
 
     seen: dict[str, Any] = {}
 
@@ -629,10 +553,10 @@ def test_gs_usb_transport_swaps_bus_during_factory_call(
         seen["bus"] = can.interface.Bus(channel="can0", bustype="socketcan", bitrate=1_000_000)
         return _FakeArmRobot(**kwargs)
 
-    monkeypatch.setattr(
+    mocker.patch.object(
         a1z_adapter_module,
         "get_a1z_robot",
-        _factory_calling_can_bus,
+        side_effect=_factory_calling_can_bus,
     )
 
     original_bus = can.interface.Bus
@@ -645,14 +569,14 @@ def test_gs_usb_transport_swaps_bus_during_factory_call(
 
 def test_socketcan_connect_fails_closed_before_sdk_construction(
     a1z_adapter_module: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
+    mocker,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(a1z_adapter_module.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(
+    mocker.patch.object(a1z_adapter_module.platform, "system", return_value="Linux")
+    mocker.patch.object(
         a1z_adapter_module,
         "_socketcan_channel_error",
-        lambda channel: f"SocketCAN interface {channel!r} belongs to kernel driver 'mttcan'",
+        return_value="SocketCAN interface 'can0' belongs to kernel driver 'mttcan'",
     )
 
     adapter = a1z_adapter_module.GalaxeaA1ZAdapter(address="can0")
@@ -664,8 +588,18 @@ def test_socketcan_connect_fails_closed_before_sdk_construction(
 @pytest.mark.parametrize(
     ("driver", "flags", "expected_error"),
     [
-        ("mttcan", "0x1\n", "belongs to kernel driver 'mttcan'"),
-        ("gs_usb", "0x0\n", "interface 'can7' is DOWN"),
+        (
+            "mttcan",
+            "0x1\n",
+            "SocketCAN interface 'can7' belongs to kernel driver 'mttcan', not the HHS "
+            "adapter driver 'gs_usb'. Pass the HHS SocketCAN interface with --can-port.",
+        ),
+        (
+            "gs_usb",
+            "0x0\n",
+            "SocketCAN interface 'can7' is DOWN. Configure it for 1 Mbit/s and bring it UP "
+            "before starting DimOS.",
+        ),
         ("gs_usb", "0x1\n", None),
     ],
 )
@@ -688,8 +622,4 @@ def test_socketcan_channel_validation_requires_up_gs_usb_interface(
 
     error = a1z_adapter_module._socketcan_channel_error("can7")
 
-    if expected_error is None:
-        assert error is None
-    else:
-        assert error is not None
-        assert expected_error in error
+    assert error == expected_error

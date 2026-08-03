@@ -175,7 +175,7 @@ class GalaxeaA1ZAdapter:
         except TypeError as e:
             print(
                 "ERROR: installed a1z SDK does not support the gripper - "
-                "run `dimos a1z setup --sdk-only`: "
+                "run `dimos hardware a1z doctor --software-only`: "
                 f"{e}"
             )
             return False

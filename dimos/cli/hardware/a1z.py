@@ -12,20 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Host setup and diagnostics for the Galaxea A1Z."""
+"""Diagnostics and host configuration for the Galaxea A1Z."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import ctypes.util
 import importlib
-from importlib import metadata
 import inspect
 from pathlib import Path
 import platform
-import shlex
 import shutil
 import subprocess
-import sys
 import time
 from typing import Any
 
@@ -43,113 +41,15 @@ _CAN_PROBE_POLL_SECONDS = 0.05
 _SYS_USB_DEVICES = Path("/sys/bus/usb/devices")
 _SYS_CLASS_NET = Path("/sys/class/net")
 _GS_USB_NEW_ID = Path("/sys/bus/usb/drivers/gs_usb/new_id")
-_A1Z_GUIDE = "docs/capabilities/manipulation/a1z.md"
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_A1Z_SDK_REQUIREMENT = (
-    "a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@"
-    "e931ecd0e25ad35df251097ba42921b3d2fa7224"
+_A1Z_GUIDE = (
+    "https://github.com/dimensionalOS/dimos/blob/main/docs/capabilities/manipulation/a1z.md"
 )
-_MACOS_PYTHON_REQUIREMENTS = ("gs-usb==0.3.1", "pyusb==1.3.1")
-
-_InstallCommand = tuple[list[str], Path | None]
+_Check = tuple[str, Callable[[], str]]
 
 
 def _abort(message: str) -> None:
     typer.echo(f"ERROR: {message}", err=True)
     raise typer.Exit(1)
-
-
-def _is_source_checkout() -> bool:
-    return (_REPOSITORY_ROOT / "pyproject.toml").is_file() and (
-        _REPOSITORY_ROOT / "uv.lock"
-    ).is_file()
-
-
-def _python_dependency_commands(system: str) -> list[_InstallCommand]:
-    requirements = [_A1Z_SDK_REQUIREMENT]
-    if system == "Darwin":
-        requirements.extend(_MACOS_PYTHON_REQUIREMENTS)
-
-    uv = shutil.which("uv")
-    if _is_source_checkout():
-        if uv is None:
-            raise RuntimeError(
-                "a DimOS source checkout requires `uv`. Install uv from "
-                "https://docs.astral.sh/uv/, then rerun `dimos a1z setup`."
-            )
-        return [
-            (
-                [
-                    uv,
-                    "sync",
-                    "--locked",
-                    "--extra",
-                    "manipulation",
-                    "--inexact",
-                ],
-                _REPOSITORY_ROOT,
-            ),
-            (
-                [uv, "pip", "install", "--python", sys.executable, *requirements],
-                _REPOSITORY_ROOT,
-            ),
-        ]
-
-    try:
-        dimos_version = metadata.version("dimos")
-    except metadata.PackageNotFoundError as exc:
-        raise RuntimeError(
-            "could not identify the installed DimOS version. Install DimOS, then rerun "
-            "`dimos a1z setup`."
-        ) from exc
-    requirements.insert(0, f"dimos[manipulation]=={dimos_version}")
-    if uv is not None:
-        command = [uv, "pip", "install", "--python", sys.executable, *requirements]
-    else:
-        command = [sys.executable, "-m", "pip", "install", *requirements]
-    return [(command, None)]
-
-
-def _install_python_dependencies(system: str) -> None:
-    for command, cwd in _python_dependency_commands(system):
-        subprocess.run(command, cwd=cwd, check=True, text=True)
-
-
-def _system_dependency_plan(system: str) -> tuple[list[str] | None, str | None]:
-    if system == "Linux":
-        if shutil.which("cansend") is not None:
-            return None, None
-        try:
-            distribution = platform.freedesktop_os_release().get("ID", "")
-        except OSError:
-            distribution = ""
-        if distribution == "ubuntu":
-            return ["sudo", "apt-get", "install", "-y", "can-utils"], None
-        return None, (
-            "Linux CAN prerequisite missing: `cansend`. Install the package that provides "
-            "`cansend` (`can-utils` on Ubuntu), then rerun `dimos a1z setup`."
-        )
-
-    if ctypes.util.find_library("usb-1.0") is not None:
-        return None, None
-    brew = shutil.which("brew")
-    if brew is not None:
-        return [brew, "install", "libusb"], None
-    return None, (
-        "macOS CAN prerequisite missing: libusb. Install Homebrew and `brew install libusb`, "
-        "then rerun `dimos a1z setup`."
-    )
-
-
-def _show_setup_plan(
-    python_commands: list[_InstallCommand],
-    system_command: list[str] | None,
-) -> None:
-    typer.echo("A1Z setup will run:")
-    for command, _ in python_commands:
-        typer.echo(f"  {shlex.join(command)}")
-    if system_command is not None:
-        typer.echo(f"  {shlex.join(system_command)}")
 
 
 def _verify_sdk() -> str:
@@ -161,15 +61,60 @@ def _verify_sdk() -> str:
         parameters = inspect.signature(get_a1z_robot).parameters
     except Exception as exc:
         raise RuntimeError(
-            "the A1Z SDK is unavailable after installation. Rerun `dimos a1z setup`. "
-            f"Original error: {exc}"
+            f"A1Z SDK unavailable: {exc}. Install the pinned SDK listed in {_A1Z_GUIDE}."
         ) from exc
     if "with_gripper" not in parameters:
         raise RuntimeError(
-            "the installed A1Z SDK lacks get_a1z_robot(with_gripper=...). "
-            "Rerun `dimos a1z setup` to install the pinned gripper-capable SDK."
+            "installed A1Z SDK lacks get_a1z_robot(with_gripper=...). Install the pinned "
+            f"gripper-capable SDK listed in {_A1Z_GUIDE}."
         )
     return str(a1z.__file__)
+
+
+def _verify_adapter_import() -> str:
+    try:
+        adapter = importlib.import_module("dimos.hardware.manipulators.galaxea_a1z.adapter")
+    except Exception as exc:
+        raise RuntimeError(
+            f"A1Z adapter unavailable: {exc}. Install DimOS manipulation dependencies as "
+            f"described in {_A1Z_GUIDE}."
+        ) from exc
+    return str(adapter.__file__)
+
+
+def _verify_linux_dependencies() -> str:
+    cansend = shutil.which("cansend")
+    if cansend is None:
+        raise RuntimeError(
+            "`cansend` is missing. Install your distribution's can-utils package "
+            "(`sudo apt-get install can-utils` on Ubuntu)."
+        )
+    return cansend
+
+
+def _macos_usb_modules() -> tuple[Any, Any, Any]:
+    try:
+        usb_backend = importlib.import_module("usb.backend.libusb1")
+        usb_core = importlib.import_module("usb.core")
+        importlib.import_module("gs_usb.gs_usb")
+        gs_usb_module = importlib.import_module(
+            "dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus"
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"macOS USB-CAN dependencies unavailable: {exc}. Install pyusb and gs-usb as "
+            f"described in {_A1Z_GUIDE}."
+        ) from exc
+    return usb_backend, usb_core, gs_usb_module
+
+
+def _verify_macos_dependencies() -> str:
+    if ctypes.util.find_library("usb-1.0") is None:
+        raise RuntimeError("libusb is missing. Install it with `brew install libusb`.")
+    usb_backend, _, _ = _macos_usb_modules()
+    if usb_backend.get_backend() is None:
+        raise RuntimeError("PyUSB could not load libusb. Install it with `brew install libusb`.")
+    return "pyusb, gs-usb, and libusb"
 
 
 def _find_hhs_usb_device() -> Path | None:
@@ -286,23 +231,40 @@ def _configure_linux_can(interface: str, bitrate: int) -> None:
     _verify_can_transmit(interface, usb_device)
 
 
-def _verify_macos_can() -> None:
-    try:
-        usb_backend = importlib.import_module("usb.backend.libusb1")
-        usb_core = importlib.import_module("usb.core")
-        gs_usb_module = importlib.import_module(
-            "dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus"
-        )
-    except Exception as exc:
+def _verify_linux_can(interface: str) -> str:
+    usb_device = _find_hhs_usb_device()
+    if usb_device is None:
         raise RuntimeError(
-            "macOS A1Z support requires pyusb, gs-usb, and system libusb. "
-            "Rerun `dimos a1z setup`. "
-            f"Original error: {exc}"
-        ) from exc
+            f"HHS USB-CANFD adapter {_USB_VENDOR_ID}:{_USB_PRODUCT_ID} was not found."
+        )
+    detected_interface = _find_can_interface(usb_device)
+    if detected_interface != interface:
+        detected = detected_interface or "no SocketCAN interface"
+        raise RuntimeError(
+            f"expected interface {interface!r}, found {detected!r}. Run "
+            "`dimos hardware a1z configure-can`."
+        )
 
+    interface_path = _SYS_CLASS_NET / interface
+    try:
+        flags = int((interface_path / "flags").read_text(), 16)
+        driver = (interface_path / "device" / "driver").resolve(strict=True).name
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect SocketCAN interface {interface!r}: {exc}") from exc
+    if driver != "gs_usb":
+        raise RuntimeError(f"interface {interface!r} uses driver {driver!r}, not 'gs_usb'.")
+    if not flags & 0x1:
+        raise RuntimeError(
+            f"interface {interface!r} is DOWN. Run `dimos hardware a1z configure-can`."
+        )
+    return f"{interface} is UP on gs_usb"
+
+
+def _verify_macos_can() -> str:
+    usb_backend, usb_core, gs_usb_module = _macos_usb_modules()
     backend = usb_backend.get_backend()
     if backend is None:
-        raise RuntimeError("PyUSB could not load libusb. Install libusb with Homebrew, then retry.")
+        raise RuntimeError("PyUSB could not load libusb. Install it with `brew install libusb`.")
     device = usb_core.find(
         idVendor=int(_USB_VENDOR_ID, 16),
         idProduct=int(_USB_PRODUCT_ID, 16),
@@ -310,17 +272,74 @@ def _verify_macos_can() -> None:
     )
     if device is None:
         raise RuntimeError(
-            f"HHS USB-CANFD adapter {_USB_VENDOR_ID}:{_USB_PRODUCT_ID} was not found"
+            f"HHS USB-CANFD adapter {_USB_VENDOR_ID}:{_USB_PRODUCT_ID} was not found."
         )
     bus = gs_usb_module.GsUsbMacBus(listen_only=True)
     try:
-        typer.echo("A1Z macOS USB-CAN check passed in listen-only mode.")
+        return "HHS adapter opened in listen-only mode"
     finally:
         bus.shutdown()
 
 
-@app.command("can-setup")
-def can_setup(
+def _doctor_checks(system: str, software_only: bool, interface: str) -> list[_Check]:
+    checks: list[_Check] = [
+        ("A1Z SDK", _verify_sdk),
+        ("DimOS A1Z adapter", _verify_adapter_import),
+    ]
+    if system == "Linux":
+        checks.append(("can-utils", _verify_linux_dependencies))
+        if not software_only:
+            checks.append(("Linux USB-CAN", lambda: _verify_linux_can(interface)))
+    elif system == "Darwin":
+        checks.append(("macOS USB-CAN dependencies", _verify_macos_dependencies))
+        if not software_only:
+            checks.append(("macOS USB-CAN", _verify_macos_can))
+    return checks
+
+
+def _run_doctor_checks(checks: list[_Check]) -> int:
+    failures = 0
+    for name, check in checks:
+        try:
+            detail = check()
+        except (OSError, RuntimeError, ValueError) as exc:
+            failures += 1
+            typer.echo(f"FAIL  {name}: {exc}", err=True)
+        else:
+            typer.echo(f"PASS  {name}: {detail}")
+    return failures
+
+
+@app.command()
+def doctor(
+    software_only: bool = typer.Option(
+        False,
+        "--software-only",
+        help="Check dependencies without requiring attached hardware",
+    ),
+    interface: str = typer.Option(
+        _DEFAULT_CAN_INTERFACE,
+        "--interface",
+        help="Expected Linux SocketCAN interface",
+    ),
+) -> None:
+    """Check A1Z dependencies and hardware without changing the host."""
+    system = platform.system()
+    if system not in {"Linux", "Darwin"}:
+        _abort("A1Z diagnostics support Linux and macOS only")
+
+    failures = _run_doctor_checks(_doctor_checks(system, software_only, interface))
+    if failures:
+        typer.echo(
+            f"A1Z doctor found {failures} problem(s). See {_A1Z_GUIDE}.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    typer.echo("A1Z doctor passed.")
+
+
+@app.command("configure-can")
+def configure_can(
     interface: str = typer.Option(
         _DEFAULT_CAN_INTERFACE,
         "--interface",
@@ -340,7 +359,7 @@ def can_setup(
 ) -> None:
     """Configure and transmission-test the Linux HHS USB-CANFD adapter."""
     if platform.system() != "Linux":
-        _abort("`dimos a1z can-setup` is Linux-only; macOS uses userspace USB-CAN")
+        _abort("`dimos hardware a1z configure-can` is Linux-only; macOS uses userspace USB-CAN")
     if not yes and not typer.confirm(
         "This will request sudo to configure the A1Z CAN interface. Continue?",
         default=False,
@@ -351,60 +370,4 @@ def can_setup(
         _configure_linux_can(interface, bitrate)
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         _abort(str(exc))
-    typer.echo(f"A1Z CAN setup passed: {interface!r} transmitted at {bitrate} bit/s.")
-
-
-@app.command("setup")
-def setup(
-    sdk_only: bool = typer.Option(
-        False,
-        "--sdk-only",
-        help="Install and verify Python dependencies without checking hardware",
-    ),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Run setup without the confirmation prompt",
-    ),
-) -> None:
-    """Install A1Z dependencies, then configure and test the CAN adapter."""
-    system = platform.system()
-    if system not in {"Linux", "Darwin"}:
-        _abort("A1Z host setup supports Linux and macOS only")
-
-    try:
-        python_commands = _python_dependency_commands(system)
-        system_command, system_error = (None, None) if sdk_only else _system_dependency_plan(system)
-    except RuntimeError as exc:
-        _abort(str(exc))
-    _show_setup_plan(python_commands, system_command)
-    if not yes and not typer.confirm("Continue with A1Z setup?", default=False):
-        typer.echo("Aborted.")
-        raise typer.Exit(1)
-
-    try:
-        _install_python_dependencies(system)
-        sdk_path = _verify_sdk()
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        _abort(str(exc))
-    typer.echo(f"A1Z vendor SDK check passed: {sdk_path}")
-    if sdk_only:
-        return
-    typer.echo("A1Z Python dependencies installed and verified.")
-
-    if system_error is not None:
-        _abort(system_error)
-    try:
-        if system_command is not None:
-            subprocess.run(system_command, check=True, text=True)
-        if system == "Linux":
-            _configure_linux_can(_DEFAULT_CAN_INTERFACE, _DEFAULT_CAN_BITRATE)
-            typer.echo(
-                f"A1Z CAN setup passed: {_DEFAULT_CAN_INTERFACE!r} transmitted at "
-                f"{_DEFAULT_CAN_BITRATE} bit/s."
-            )
-        else:
-            _verify_macos_can()
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        _abort(str(exc))
+    typer.echo(f"A1Z CAN configuration passed: {interface!r} transmitted at {bitrate} bit/s.")

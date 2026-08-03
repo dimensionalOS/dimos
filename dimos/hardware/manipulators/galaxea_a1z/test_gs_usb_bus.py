@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import queue
 import sys
 import threading
 import time
 from types import ModuleType
 from typing import Any
-from unittest.mock import Mock
 
 import can
 import pytest
@@ -57,10 +56,18 @@ class _FakeGsUsbFrame:
         return b"packed-frame"
 
 
+class _FakeUsbEndpoint:
+    def __init__(self) -> None:
+        self.writes: list[tuple[int, bytes]] = []
+
+    def write(self, endpoint: int, data: bytes) -> None:
+        self.writes.append((endpoint, data))
+
+
 class _FakeGsUsb:
     def __init__(self) -> None:
         self.device_flags = 0
-        self.gs_usb = Mock()
+        self.gs_usb = _FakeUsbEndpoint()
         self.frames: queue.Queue[tuple[int, bytes, int]] = queue.Queue()
         self.frames_read = threading.Event()
         self.stopped = False
@@ -82,47 +89,65 @@ class _FakeGsUsb:
         self.stopped = True
 
 
-@pytest.fixture
-def mac_bus(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[tuple[gs_usb_bus.GsUsbMacBus, _FakeGsUsb]]:
+_MacBus = tuple[gs_usb_bus.GsUsbMacBus, _FakeGsUsb]
+
+
+def _install_fake_gs_usb_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     package = ModuleType("gs_usb")
     package.__path__ = []  # type: ignore[attr-defined]
     gs_module = ModuleType("gs_usb.gs_usb")
     gs_module.GS_CAN_MODE_HW_TIMESTAMP = 1  # type: ignore[attr-defined]
-    gs_module.GsUsb = Mock  # type: ignore[attr-defined]
+    gs_module.GsUsb = _FakeGsUsb  # type: ignore[attr-defined]
     frame_module = ModuleType("gs_usb.gs_usb_frame")
     frame_module.GsUsbFrame = _FakeGsUsbFrame  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "gs_usb", package)
     monkeypatch.setitem(sys.modules, "gs_usb.gs_usb", gs_module)
     monkeypatch.setitem(sys.modules, "gs_usb.gs_usb_frame", frame_module)
 
-    fake_gs = _FakeGsUsb()
-    monkeypatch.setattr(
-        gs_usb_bus,
-        "_initialize_ready_usb_device",
-        Mock(return_value=(fake_gs, 0x01)),
-    )
-    bus = gs_usb_bus.GsUsbMacBus()
-    try:
-        yield bus, fake_gs
-    finally:
+
+@pytest.fixture
+def mac_bus_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> Iterator[Callable[[], _MacBus]]:
+    _install_fake_gs_usb_modules(monkeypatch)
+    buses: list[gs_usb_bus.GsUsbMacBus] = []
+
+    def create() -> _MacBus:
+        fake_gs = _FakeGsUsb()
+        mocker.patch.object(
+            gs_usb_bus,
+            "_initialize_ready_usb_device",
+            return_value=(fake_gs, 0x01),
+        )
+        bus = gs_usb_bus.GsUsbMacBus()
+        buses.append(bus)
+        return bus, fake_gs
+
+    yield create
+    for bus in buses:
         bus.shutdown()
+
+
+@pytest.fixture
+def mac_bus(mac_bus_factory: Callable[[], _MacBus]) -> _MacBus:
+    return mac_bus_factory()
 
 
 def test_usb_discovery_retries_device_that_is_found_but_not_ready(
     monkeypatch: pytest.MonkeyPatch,
+    mocker,
 ) -> None:
     device = _ReenumeratingDevice()
     core = ModuleType("usb.core")
     core.USBError = _UsbError  # type: ignore[attr-defined]
-    core.find = lambda **_kwargs: device  # type: ignore[attr-defined]
+    core.find = mocker.Mock(return_value=device)  # type: ignore[attr-defined]
     usb = ModuleType("usb")
     usb.__path__ = []  # type: ignore[attr-defined]
     usb.core = core  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "usb", usb)
     monkeypatch.setitem(sys.modules, "usb.core", core)
-    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    mocker.patch.object(time, "sleep")
     initialization_calls = 0
 
     def _initialize(_device: Any, _configuration: Any) -> str:
@@ -145,10 +170,9 @@ def test_usb_discovery_retries_device_that_is_found_but_not_ready(
 
 
 def test_context_manager_scopes_vendor_bus_override(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker,
 ) -> None:
-    replacement = Mock(return_value=object())
-    monkeypatch.setattr(gs_usb_bus, "GsUsbMacBus", replacement)
+    replacement = mocker.patch.object(gs_usb_bus, "GsUsbMacBus", return_value=object())
     original_bus = can.interface.Bus
 
     with gs_usb_bus.gs_usb_can_bus():
@@ -170,7 +194,7 @@ def test_send_writes_packed_frame_to_discovered_endpoint(
 
     bus.send(can.Message(arbitration_id=0x123, data=[1, 2, 3]))
 
-    fake_gs.gs_usb.write.assert_called_once_with(0x01, b"packed-frame")
+    assert fake_gs.gs_usb.writes == [(0x01, b"packed-frame")]
     assert _FakeGsUsbFrame.last_packed is not None
     assert _FakeGsUsbFrame.last_packed.can_id == 0x123
     assert _FakeGsUsbFrame.last_packed.data == b"\x01\x02\x03"
@@ -192,38 +216,20 @@ def test_reader_filters_echo_and_returns_bus_frame(
 
 
 def test_queue_overflow_keeps_freshest_frame(
+    mac_bus_factory: Callable[[], _MacBus],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(gs_usb_bus, "_RX_QUEUE_MAX_FRAMES", 1)
-    package = ModuleType("gs_usb")
-    package.__path__ = []  # type: ignore[attr-defined]
-    gs_module = ModuleType("gs_usb.gs_usb")
-    gs_module.GS_CAN_MODE_HW_TIMESTAMP = 1  # type: ignore[attr-defined]
-    gs_module.GsUsb = Mock  # type: ignore[attr-defined]
-    frame_module = ModuleType("gs_usb.gs_usb_frame")
-    frame_module.GsUsbFrame = _FakeGsUsbFrame  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "gs_usb", package)
-    monkeypatch.setitem(sys.modules, "gs_usb.gs_usb", gs_module)
-    monkeypatch.setitem(sys.modules, "gs_usb.gs_usb_frame", frame_module)
-    fake_gs = _FakeGsUsb()
-    monkeypatch.setattr(
-        gs_usb_bus,
-        "_initialize_ready_usb_device",
-        Mock(return_value=(fake_gs, 0x01)),
-    )
-    bus = gs_usb_bus.GsUsbMacBus()
-    try:
-        fake_gs.frames.put((0x101, b"\x01", gs_usb_bus._GS_USB_NONE_ECHO_ID))
-        fake_gs.frames.put((0x102, b"\x02", gs_usb_bus._GS_USB_NONE_ECHO_ID))
-        assert fake_gs.frames_read.wait(timeout=1.0)
+    bus, fake_gs = mac_bus_factory()
+    fake_gs.frames.put((0x101, b"\x01", gs_usb_bus._GS_USB_NONE_ECHO_ID))
+    fake_gs.frames.put((0x102, b"\x02", gs_usb_bus._GS_USB_NONE_ECHO_ID))
+    assert fake_gs.frames_read.wait(timeout=1.0)
 
-        message = bus.recv(timeout=1.0)
+    message = bus.recv(timeout=1.0)
 
-        assert message is not None
-        assert message.arbitration_id == 0x102
-        assert bus._rx_dropped == 1
-    finally:
-        bus.shutdown()
+    assert message is not None
+    assert message.arbitration_id == 0x102
+    assert bus._rx_dropped == 1
 
 
 def test_shutdown_stops_reader_and_usb_device(
