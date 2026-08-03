@@ -91,6 +91,9 @@
           ];
 
           cmakeFlags = [
+            # Without this cmake defaults to no optimisation at all, which showed
+            # up as the per-frame speckle mask taking 20x longer than the tracker.
+            "-DCMAKE_BUILD_TYPE=Release"
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"

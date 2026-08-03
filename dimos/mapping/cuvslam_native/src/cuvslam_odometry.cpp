@@ -12,6 +12,7 @@
 // motion across one is unmeasured, which is drift the stream cannot account for.
 // baseline_m is config, not derived: these recordings have right P[3] == 0.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -91,6 +92,72 @@ Transform invert(const Transform& t) {
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
+/// 3x3 median, then "how far above its own neighbourhood is this pixel", then a
+/// dilation to cover each spot's halo. The Mid-360 paints bright dots on the IR
+/// frame that move with the lidar's spin rather than with the world; measured at
+/// a cuVSLAM world-frame restart there are ~46k such pixels against ~1.8k on an
+/// average frame, so they are what breaks tracking on a lidar+camera rig.
+void speckle_mask(const std::uint8_t* pixels, std::int32_t width, std::int32_t height,
+                  std::int32_t pitch, int threshold, int grow, std::vector<std::uint8_t>& spike,
+                  std::vector<std::uint8_t>& mask) {
+    spike.assign(static_cast<std::size_t>(width) * height, 0);
+    mask.assign(static_cast<std::size_t>(width) * height, 0);
+    auto sort2 = [](std::uint8_t& a, std::uint8_t& b) {
+        const std::uint8_t low = std::min(a, b);
+        b = std::max(a, b);
+        a = low;
+    };
+    for (std::int32_t y = 1; y < height - 1; ++y) {
+        const std::uint8_t* above = pixels + (y - 1) * pitch;
+        const std::uint8_t* row = pixels + y * pitch;
+        const std::uint8_t* below = pixels + (y + 1) * pitch;
+        for (std::int32_t x = 1; x < width - 1; ++x) {
+            // 19-op median network; nth_element per pixel was the whole cost.
+            std::uint8_t p0 = above[x - 1], p1 = above[x], p2 = above[x + 1];
+            std::uint8_t p3 = row[x - 1], p4 = row[x], p5 = row[x + 1];
+            std::uint8_t p6 = below[x - 1], p7 = below[x], p8 = below[x + 1];
+            sort2(p1, p2); sort2(p4, p5); sort2(p7, p8);
+            sort2(p0, p1); sort2(p3, p4); sort2(p6, p7);
+            sort2(p1, p2); sort2(p4, p5); sort2(p7, p8);
+            sort2(p0, p3); sort2(p5, p8); sort2(p4, p7);
+            sort2(p3, p6); sort2(p1, p4); sort2(p2, p5);
+            sort2(p4, p7); sort2(p4, p2); sort2(p6, p4);
+            sort2(p4, p2);
+            if (static_cast<int>(row[x]) - static_cast<int>(p4) > threshold) {
+                spike[static_cast<std::size_t>(y) * width + x] = 255;
+            }
+        }
+    }
+    // Separable max filter: cheaper than a square structuring element and the
+    // result is the same for a box.
+    std::vector<std::uint8_t>& rows = mask;
+    for (std::int32_t y = 0; y < height; ++y) {
+        for (std::int32_t x = 0; x < width; ++x) {
+            std::uint8_t best = 0;
+            for (std::int32_t dx = -grow; dx <= grow && best == 0; ++dx) {
+                const std::int32_t sx = x + dx;
+                if (sx >= 0 && sx < width) {
+                    best = spike[static_cast<std::size_t>(y) * width + sx];
+                }
+            }
+            rows[static_cast<std::size_t>(y) * width + x] = best;
+        }
+    }
+    spike = rows;
+    for (std::int32_t y = 0; y < height; ++y) {
+        for (std::int32_t x = 0; x < width; ++x) {
+            std::uint8_t best = 0;
+            for (std::int32_t dy = -grow; dy <= grow && best == 0; ++dy) {
+                const std::int32_t sy = y + dy;
+                if (sy >= 0 && sy < height) {
+                    best = spike[static_cast<std::size_t>(sy) * width + x];
+                }
+            }
+            mask[static_cast<std::size_t>(y) * width + x] = best;
+        }
+    }
+}
+
 Transform to_transform(const cuvslam::Pose& pose) {
     return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
                      {pose.translation[0], pose.translation[1], pose.translation[2]}};
@@ -125,6 +192,12 @@ struct CuvslamConfig {
     int slam_throttling_ms;
     /// Largest map->odom the pose graph is allowed to ask for, metres.
     double max_correction_m;
+    /// Mask the lidar's dots out of the IR frames before tracking on them.
+    bool mask_speckle;
+    /// How far above its local median a pixel must sit to count as a lidar dot.
+    int speckle_threshold;
+    /// Dilation radius, to cover each dot's halo.
+    int speckle_grow;
 };
 
 class CuvslamOdometry : public Module {
@@ -144,6 +217,9 @@ public:
         slam_max_map_size_ = cfg.slam_max_map_size;
         slam_throttling_ms_ = cfg.slam_throttling_ms;
         max_correction_m_ = cfg.max_correction_m;
+        mask_speckle_ = cfg.mask_speckle;
+        speckle_threshold_ = cfg.speckle_threshold;
+        speckle_grow_ = cfg.speckle_grow;
         if (!(baseline_m_ > 0.0)) {
             throw std::runtime_error(
                 "baseline_m must be a positive number of metres (D455 factory value is 0.09486)");
@@ -274,7 +350,21 @@ private:
         r.pitch = right_.step;
         r.camera_index = 1;
 
-        const cuvslam::PoseEstimate est = tracker_->Track({l, r});
+        std::vector<cuvslam::Image> masks;
+        if (mask_speckle_) {
+            speckle_mask(left_.data.data(), left_.width, left_.height, left_.step,
+                         speckle_threshold_, speckle_grow_, spike_buffer_, mask_left_);
+            speckle_mask(right_.data.data(), right_.width, right_.height, right_.step,
+                         speckle_threshold_, speckle_grow_, spike_buffer_, mask_right_);
+            cuvslam::Image ml = l;
+            ml.pixels = mask_left_.data();
+            ml.pitch = left_.width;
+            cuvslam::Image mr = r;
+            mr.pixels = mask_right_.data();
+            mr.pitch = right_.width;
+            masks = {ml, mr};
+        }
+        const cuvslam::PoseEstimate est = tracker_->Track({l, r}, masks);
         ++frames_;
         last_ts_ns_ = t_left;
         have_left_ = have_right_ = false;
@@ -472,6 +562,10 @@ private:
     int slam_throttling_ms_{0};
     double max_correction_m_{5.0};
     std::uint64_t rejected_corrections_{0};
+    bool mask_speckle_{true};
+    int speckle_threshold_{6};
+    int speckle_grow_{2};
+    std::vector<std::uint8_t> spike_buffer_, mask_left_, mask_right_;
     bool slam_started_{false};
     std::uint64_t loop_closures_{0};
     std::int64_t last_closure_ns_{-1};

@@ -118,6 +118,17 @@ class CuvslamConfig(NativeModuleConfig):
     # map->odom is the pose graph diverging and is dropped rather than published.
     max_correction_m: float = 5.0
 
+    # Off because masking the Mid-360's dots measurably *hurts*: over three full
+    # airbnb runs each way it left ATE unchanged inside the run-to-run spread and
+    # raised world-frame restarts. A controlled probe (none / mask / inverted
+    # mask) confirmed the masks do reach the tracker, so this is a real result,
+    # not a no-op: the dots are apparently usable texture on blank indoor walls,
+    # and their count at a restart is a proxy for "pointed at a featureless
+    # surface" rather than the cause.
+    mask_speckle: bool = False
+    speckle_threshold: int = 6
+    speckle_grow: int = 2
+
 
 class CuvslamOdometry(NativeModule):
     """Stereo visual odometry on the GPU.

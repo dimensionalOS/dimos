@@ -416,6 +416,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="stop after N stereo pairs")
     parser.add_argument("--no-landmarks", action="store_true", help="trajectory only, no map")
     parser.add_argument("--no-slam", action="store_true", help="odometry only, no pose graph")
+    parser.add_argument("--no-mask", action="store_true", help="do not mask the lidar speckle")
     parser.add_argument("--slam-async", action="store_true", help="run Slam on its own thread")
     parser.add_argument(
         "--slam-max-map-size", type=int, default=None, help="poses in the graph, 0 = unlimited"
@@ -440,6 +441,7 @@ def main() -> int:
         baseline_m=args.baseline_m,
         publish_landmarks=not args.no_landmarks,
         enable_slam=not args.no_slam,
+        mask_speckle=not args.no_mask,
         slam_sync_mode=not args.slam_async,
         **overrides,
     )
