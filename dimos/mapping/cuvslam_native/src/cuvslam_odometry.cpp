@@ -6,10 +6,14 @@
 // in:  image_left/image_right (mono8, rectified), camera_info
 // out: odometry, landmarks (cuVSLAM's tracked 3D points)
 //
-// cuVSLAM restarts its world frame after a tracking loss, so poses must never be
-// differenced across a segment change; segment_id rides along in child_frame_id.
+// cuVSLAM restarts its world frame after a tracking loss. The module rebases each
+// restart onto the last published pose so the odometry stream never jumps; the
+// segment id rides along in child_frame_id because the motion *during* the loss is
+// unmeasured, so a consumer should widen covariance there and an evaluator should
+// not treat the seam as a measurement.
 // baseline_m is config, not derived: these recordings have right P[3] == 0.
 
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +48,55 @@ std::int64_t stamp_to_ns(const std_msgs::Header& header) {
 /// cuVSLAM's Track() contract asks for stereo stamps within 1 ms.
 constexpr std::int64_t kMaxPairSkewNs = 1000000LL;  // 1 ms
 
+/// Rigid transform, rotation as xyzw to match cuvslam::Pose.
+struct Transform {
+    std::array<double, 4> rotation{0.0, 0.0, 0.0, 1.0};
+    std::array<double, 3> translation{0.0, 0.0, 0.0};
+};
+
+std::array<double, 4> quat_multiply(const std::array<double, 4>& a,
+                                    const std::array<double, 4>& b) {
+    return {a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+            a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+            a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+            a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]};
+}
+
+std::array<double, 3> cross(const std::array<double, 3>& a, const std::array<double, 3>& b) {
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+
+/// v + 2u x (u x v + wv), the usual quaternion sandwich without building a matrix.
+std::array<double, 3> quat_rotate(const std::array<double, 4>& q,
+                                  const std::array<double, 3>& v) {
+    const std::array<double, 3> u{q[0], q[1], q[2]};
+    std::array<double, 3> inner = cross(u, v);
+    for (int i = 0; i < 3; ++i) {
+        inner[i] += q[3] * v[i];
+    }
+    const std::array<double, 3> outer = cross(u, inner);
+    return {v[0] + 2.0 * outer[0], v[1] + 2.0 * outer[1], v[2] + 2.0 * outer[2]};
+}
+
+Transform compose(const Transform& a, const Transform& b) {
+    const std::array<double, 3> rotated = quat_rotate(a.rotation, b.translation);
+    return Transform{quat_multiply(a.rotation, b.rotation),
+                     {a.translation[0] + rotated[0], a.translation[1] + rotated[1],
+                      a.translation[2] + rotated[2]}};
+}
+
+Transform invert(const Transform& t) {
+    const std::array<double, 4> conjugate{-t.rotation[0], -t.rotation[1], -t.rotation[2],
+                                          t.rotation[3]};
+    const std::array<double, 3> rotated = quat_rotate(conjugate, t.translation);
+    return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
+}
+
+Transform to_transform(const cuvslam::Pose& pose) {
+    return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
+                     {pose.translation[0], pose.translation[1], pose.translation[2]}};
+}
+
 }  // namespace
 
 struct CuvslamConfig {
@@ -51,6 +104,8 @@ struct CuvslamConfig {
     bool rectified;      ///< D455 IR pair is rectified on-device (D=0, R=I)
     bool publish_landmarks;
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
+    /// A step implying more than this is cuVSLAM changing world frames, not motion.
+    double max_speed_mps;
 };
 
 class CuvslamOdometry : public Module {
@@ -61,6 +116,7 @@ public:
         rectified_ = cfg.rectified;
         publish_landmarks_ = cfg.publish_landmarks;
         async_sba_ = cfg.async_sba;
+        max_speed_mps_ = cfg.max_speed_mps;
         if (!(baseline_m_ > 0.0)) {
             throw std::runtime_error(
                 "baseline_m must be a positive number of metres (D455 factory value is 0.09486)");
@@ -182,41 +238,72 @@ private:
         have_left_ = have_right_ = false;
 
         if (!est.world_from_rig.has_value()) {
-            // Next valid pose may be in a new world frame.
             if (was_tracking_) {
                 ++segment_id_;
                 was_tracking_ = false;
+                pending_rebase_ = true;
                 logging::warn("cuvslam tracking lost",
                               {logging::Field("segment", static_cast<std::int64_t>(segment_id_))});
             }
             return;
         }
+        const Transform tracker_from_rig = to_transform(est.world_from_rig->pose);
+        // cuVSLAM restarts its world frame after a loss, and measurement shows it
+        // does so *without* ever returning an empty pose, so the restart has to be
+        // caught here: a step no robot could have travelled is a frame change.
+        // Odometry is allowed to drift but not to jump, so rebase onto the last
+        // pose published and let the segment id say the motion is unmeasured.
+        const Transform candidate = compose(world_from_tracker_, tracker_from_rig);
+        if (last_pose_ns_) {
+            const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
+            double moved = 0.0;
+            for (int axis = 0; axis < 3; ++axis) {
+                const double d = candidate.translation[axis] - world_from_rig_.translation[axis];
+                moved += d * d;
+            }
+            if (dt > 0.0 && std::sqrt(moved) / dt > max_speed_mps_) {
+                ++segment_id_;
+                pending_rebase_ = true;
+                logging::warn("cuvslam world frame restarted",
+                              {logging::Field("segment", static_cast<std::int64_t>(segment_id_)),
+                               logging::Field("implied_speed_mps", std::sqrt(moved) / dt)});
+            }
+        }
+        if (pending_rebase_) {
+            world_from_tracker_ = compose(world_from_rig_, invert(tracker_from_rig));
+            pending_rebase_ = false;
+        }
+        world_from_rig_ = compose(world_from_tracker_, tracker_from_rig);
+        last_pose_ns_ = est.timestamp_ns;
         was_tracking_ = true;
         ++tracked_;
-        publish(est);
+        publish(est.timestamp_ns);
         if (publish_landmarks_) {
             publish_landmarks(est.timestamp_ns);
         }
     }
 
-    void publish(const cuvslam::PoseEstimate& est) {
-        const cuvslam::Pose& p = est.world_from_rig->pose;
+    void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
-        msg.header.stamp.sec = static_cast<std::int32_t>(est.timestamp_ns / kNsPerSec);
-        msg.header.stamp.nsec = static_cast<std::int32_t>(est.timestamp_ns % kNsPerSec);
+        msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
+        msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
         msg.header.frame_id = "world";
+        // The pose stream is continuous; the segment id says which side of a
+        // tracking loss it came from, so a consumer can widen covariance there.
         msg.child_frame_id = "cuvslam_rig/segment_" + std::to_string(segment_id_);
-        msg.pose.pose.position.x = p.translation[0];
-        msg.pose.pose.position.y = p.translation[1];
-        msg.pose.pose.position.z = p.translation[2];
-        msg.pose.pose.orientation.x = p.rotation[0];
-        msg.pose.pose.orientation.y = p.rotation[1];
-        msg.pose.pose.orientation.z = p.rotation[2];
-        msg.pose.pose.orientation.w = p.rotation[3];
+        msg.pose.pose.position.x = world_from_rig_.translation[0];
+        msg.pose.pose.position.y = world_from_rig_.translation[1];
+        msg.pose.pose.position.z = world_from_rig_.translation[2];
+        msg.pose.pose.orientation.x = world_from_rig_.rotation[0];
+        msg.pose.pose.orientation.y = world_from_rig_.rotation[1];
+        msg.pose.pose.orientation.z = world_from_rig_.rotation[2];
+        msg.pose.pose.orientation.w = world_from_rig_.rotation[3];
         odometry_.publish(msg);
     }
 
     /// cuVSLAM's landmarks are the map: 3D points it is currently tracking.
+    /// GetLastLandmarks() returns them in the *camera* frame, so they have to be
+    /// carried into the world frame or every frame's points pile up on the origin.
     void publish_landmarks(std::int64_t timestamp_ns) {
         const std::vector<cuvslam::Landmark> pts = tracker_->GetLastLandmarks();
         if (pts.empty()) {
@@ -246,9 +333,13 @@ private:
         msg.data.resize(static_cast<std::size_t>(msg.row_step));
         auto* out = reinterpret_cast<float*>(msg.data.data());
         for (std::size_t i = 0; i < pts.size(); ++i) {
-            out[3 * i + 0] = pts[i].coords[0];
-            out[3 * i + 1] = pts[i].coords[1];
-            out[3 * i + 2] = pts[i].coords[2];
+            const std::array<double, 3> local{pts[i].coords[0], pts[i].coords[1],
+                                              pts[i].coords[2]};
+            const std::array<double, 3> world = quat_rotate(world_from_rig_.rotation, local);
+            for (int axis = 0; axis < 3; ++axis) {
+                out[3 * i + axis] =
+                    static_cast<float>(world[axis] + world_from_rig_.translation[axis]);
+            }
         }
         msg.data_length = static_cast<std::int32_t>(msg.data.size());
         landmarks_.publish(msg);
@@ -259,6 +350,7 @@ private:
     bool rectified_{true};
     bool publish_landmarks_{true};
     bool async_sba_{true};
+    double max_speed_mps_{10.0};
 
     // intrinsics
     bool have_info_{false};
@@ -273,6 +365,10 @@ private:
 
     // tracking state
     std::optional<cuvslam::Odometry> tracker_;
+    Transform world_from_tracker_;  ///< accumulated offset across tracking losses
+    Transform world_from_rig_;      ///< last published pose, in the continuous frame
+    std::optional<std::int64_t> last_pose_ns_;
+    bool pending_rebase_{false};
     bool was_tracking_{false};
     std::uint64_t segment_id_{0};
     std::uint64_t frames_{0};

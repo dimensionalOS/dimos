@@ -400,12 +400,21 @@ def main() -> int:
     parser.add_argument("--baseline-m", type=float, default=D455_FACTORY_BASELINE_M)
     parser.add_argument("--limit", type=int, default=None, help="stop after N stereo pairs")
     parser.add_argument("--no-landmarks", action="store_true", help="trajectory only, no map")
+    parser.add_argument(
+        "--max-speed-mps",
+        type=float,
+        default=None,
+        help="override the module's frame-restart threshold",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    config = CuvslamConfig(baseline_m=args.baseline_m, publish_landmarks=not args.no_landmarks)
+    overrides = {} if args.max_speed_mps is None else {"max_speed_mps": args.max_speed_mps}
+    config = CuvslamConfig(
+        baseline_m=args.baseline_m, publish_landmarks=not args.no_landmarks, **overrides
+    )
     messages, landmark_frames, stderr = run_replay(args.db, config, args.limit)
     if not messages:
         print(f"no poses produced\n{stderr}", file=sys.stderr)

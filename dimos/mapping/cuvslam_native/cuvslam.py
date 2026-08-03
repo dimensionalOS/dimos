@@ -88,6 +88,9 @@ class CuvslamConfig(NativeModuleConfig):
     # cuVSLAM's own default. Measured better than synchronous SBA on the airbnb
     # replay (windowed ATE 0.73 m vs 0.94 m), so there is no reason to override it.
     async_sba: bool = True
+    # No indoor robot travels this fast, so a step implying it is cuVSLAM
+    # restarting its world frame rather than motion.
+    max_speed_mps: float = 10.0
 
 
 class CuvslamOdometry(NativeModule):
