@@ -44,7 +44,7 @@ _SYS_USB_DEVICES = Path("/sys/bus/usb/devices")
 _SYS_CLASS_NET = Path("/sys/class/net")
 _GS_USB_NEW_ID = Path("/sys/bus/usb/drivers/gs_usb/new_id")
 _A1Z_GUIDE = "docs/capabilities/manipulation/a1z.md"
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _A1Z_SDK_REQUIREMENT = (
     "a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@"
     "e931ecd0e25ad35df251097ba42921b3d2fa7224"

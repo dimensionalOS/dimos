@@ -18,7 +18,7 @@ from unittest.mock import Mock
 
 from typer.testing import CliRunner
 
-from dimos.robot.manipulators.a1z import cli as a1z_cli
+from dimos.cli import a1z as a1z_cli
 
 runner = CliRunner()
 
