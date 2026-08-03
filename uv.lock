@@ -1863,10 +1863,6 @@ webrtc = [
 ]
 
 [package.dev-dependencies]
-a1z-macos = [
-    { name = "gs-usb", marker = "sys_platform == 'darwin'" },
-    { name = "pyusb", marker = "sys_platform == 'darwin'" },
-]
 autofix = [
     { name = "ruff" },
 ]
@@ -2163,10 +2159,6 @@ requires-dist = [
 provides-extras = ["misc", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
-a1z-macos = [
-    { name = "gs-usb", marker = "sys_platform == 'darwin'", specifier = "==0.3.1" },
-    { name = "pyusb", marker = "sys_platform == 'darwin'", specifier = "==1.3.1" },
-]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
 browser-tests = [{ name = "playwright", specifier = ">=1.55" }]
 lint = [
@@ -3182,18 +3174,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/25/7a/71437c7f3596e5246155c515852795a85a1a8d228190212432b13b97a95d/grpcio-1.81.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:8ea1936c26b99999b27479853039a7f34713f56c49375ad52b38535ec93a796c", size = 7849660, upload-time = "2026-06-11T12:45:40.627Z" },
     { url = "https://files.pythonhosted.org/packages/65/40/7debc0da45d2efebafb82da75644be347497fe4ee250514b8cd3b86ae8bf/grpcio-1.81.1-cp312-cp312-win32.whl", hash = "sha256:a185a04039df6cae8648bc8ab6d6fde7bf94f7188ecf7828e76ac52eef1e41d6", size = 4185819, upload-time = "2026-06-11T12:45:43.027Z" },
     { url = "https://files.pythonhosted.org/packages/2e/b9/8fe3ba5ed462067774ebc1f9c7f26aa7ebcc280ddd476be107153de1339e/grpcio-1.81.1-cp312-cp312-win_amd64.whl", hash = "sha256:3ad74f8bb1a18963914c5452d289422830b39459e8776ebbcd207be1fbfb1d94", size = 4930461, upload-time = "2026-06-11T12:45:45.775Z" },
-]
-
-[[package]]
-name = "gs-usb"
-version = "0.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyusb", marker = "sys_platform == 'darwin'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/37/d8/bb03645332d0de656b913cf4ac151aabc5c2c6e3c0c1fa30814fd4c45126/gs_usb-0.3.1.tar.gz", hash = "sha256:a8a76285fda29b45a5a633cfe232a08058f642441b3d030877dc28ef6e0b7807", size = 6605, upload-time = "2026-02-25T11:01:02.502Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/08/13b4e21ff15df9b7017e7e6265282df78098e50275bb99efc26b5d14ce29/gs_usb-0.3.1-py2.py3-none-any.whl", hash = "sha256:1c35d4404427db3f7955a687a1235b5829f94c61ece56eb0cf3f3b23e2d44883", size = 7333, upload-time = "2026-02-25T11:01:01.439Z" },
 ]
 
 [[package]]
@@ -7600,15 +7580,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
-]
-
-[[package]]
-name = "pyusb"
-version = "1.3.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/00/6b/ce3727395e52b7b76dfcf0c665e37d223b680b9becc60710d4bc08b7b7cb/pyusb-1.3.1.tar.gz", hash = "sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e", size = 77281, upload-time = "2025-01-08T23:45:01.866Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/b8/27e6312e86408a44fe16bd28ee12dd98608b39f7e7e57884a24e8f29b573/pyusb-1.3.1-py3-none-any.whl", hash = "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430", size = 58465, upload-time = "2025-01-08T23:45:00.029Z" },
 ]
 
 [[package]]

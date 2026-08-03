@@ -35,8 +35,8 @@ Device quirks handled here:
   USB continuously - libusb releases the GIL while blocked - and recv()
   becomes a queue pop that always meets the SDK's budget.
 
-Requires the optional ``a1z-macos`` dependency group plus system libusb; run
-``uv sync --group a1z-macos`` and ``dimos a1z setup`` before connecting.
+Requires ``gs-usb``, ``pyusb``, and system libusb. Run ``dimos a1z setup``
+before connecting.
 Lives in galaxea_a1z/ because it is the only user today; promote to a shared
 location when a second CAN arm needs it.
 """

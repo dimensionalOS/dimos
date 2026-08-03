@@ -373,13 +373,6 @@ all = [
 # For autofix.yml
 autofix = ["ruff==0.14.3"]
 
-# Optional userspace transport for A1Z development on macOS. The unpublished
-# vendor SDK is installed manually; see docs/capabilities/manipulation/a1z.md.
-a1z-macos = [
-    "gs-usb==0.3.1; sys_platform == 'darwin'",
-    "pyusb==1.3.1; sys_platform == 'darwin'",
-]
-
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",
