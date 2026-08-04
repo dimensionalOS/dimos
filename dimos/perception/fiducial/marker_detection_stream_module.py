@@ -41,6 +41,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
+from dimos.stream.video.h264 import H264InputMixin
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -156,15 +157,9 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     def start(self) -> None:
         Module.start(self)
 
-        data_inputs = {name: port for name, port in self.inputs.items() if port is not self.tf}
-        if len(data_inputs) != 1 or len(self.outputs) != 1:
-            raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
-                f"found {len(data_inputs)} In and {len(self.outputs)} Out"
-            )
-
         store = self.register_disposable(NullStore())
         store.start()
+
         stream: Stream[Image] = store.stream("color_image", Image)
 
         if self.config.camera_info is not None:
@@ -181,3 +176,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+
+class VideoMarkerDetectionModule(H264InputMixin, MarkerDetectionStreamModule):
+    """The recognizer fed by compressed video — the mixin decodes."""

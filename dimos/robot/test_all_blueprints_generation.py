@@ -281,7 +281,14 @@ def _find_blueprints_in_file(
 
         # Detect Module subclasses by checking base classes against the known set
         elif isinstance(node, ast.ClassDef) and module_classes:
-            if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
+            # A *Mixin subclasses Module so it can type its host's attributes,
+            # but it is not deployable on its own — it has no graph of its own
+            # to run in. Same spirit as the leading-underscore skip.
+            if (
+                node.name.startswith("_")
+                or node.name.endswith("Mixin")
+                or node.name in _EXCLUDED_MODULE_NAMES
+            ):
                 continue
             if any(b in module_classes for b in _get_base_class_names(node)):
                 module_vars.append(node.name)
