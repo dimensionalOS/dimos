@@ -50,7 +50,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
-from dimos.cli.hardware import app as hardware_app
+from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers

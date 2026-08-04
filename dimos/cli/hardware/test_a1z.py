@@ -17,14 +17,14 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-from dimos.cli import hardware
+from dimos.cli import hardware_cli
 from dimos.cli.hardware import a1z as a1z_cli
 
 runner = CliRunner()
 
 
 def test_hardware_namespace_exposes_a1z_diagnostics_and_configuration() -> None:
-    result = runner.invoke(hardware.app, ["a1z", "--help"])
+    result = runner.invoke(hardware_cli.app, ["a1z", "--help"])
 
     assert result.exit_code == 0, result.output
     assert "doctor" in result.output
