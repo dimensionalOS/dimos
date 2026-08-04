@@ -89,6 +89,7 @@ struct EvalConfig {
     loop_robust_huber_k: f64,
     loop_gnc_final: bool,
     loop_gnc_var_scale: f64,
+    loop_gnc_inlier_probability: f64,
 
     use_location_constraints: bool,
 
@@ -142,6 +143,7 @@ impl Default for EvalConfig {
             loop_robust_huber_k: 1.345,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
+            loop_gnc_inlier_probability: 0.99,
             use_location_constraints: false,
             anchor_roll_pitch_var: 1e-12,
             per_keyframe_roll_pitch_prior: false,
@@ -157,47 +159,48 @@ impl Default for EvalConfig {
 
 impl EvalConfig {
     fn to_pgo(&self) -> PgoConfig {
-        let mut pgo = PgoConfig::default();
-        pgo.keyframe_min_rotation_degrees = self.keyframe_min_rotation_degrees;
-        pgo.keyframe_min_distance_meters = self.keyframe_min_distance_meters;
-        pgo.loop_search_radius = self.loop_search_radius;
-        pgo.loop_time_thresh = self.loop_time_thresh;
-        pgo.loop_score_thresh = self.loop_score_thresh;
-        pgo.loop_submap_half_range = self.loop_submap_half_range;
-        pgo.submap_resolution = self.submap_resolution;
-        pgo.min_loop_detect_duration = self.min_loop_detect_duration;
-        pgo.loop_candidate_max_distance_m = self.loop_candidate_max_distance_m;
-        pgo.min_descriptor_std = self.min_descriptor_std;
-        pgo.loop_min_occupancy = self.loop_min_occupancy;
-        pgo.loop_min_degeneracy = self.loop_min_degeneracy;
-        pgo.loop_max_lowe_ratio = self.loop_max_lowe_ratio;
-        pgo.loop_max_yank_rotation_deg = self.loop_max_yank_rotation_deg;
-        pgo.loop_yank_gate_max_distance_m = self.loop_yank_gate_max_distance_m;
-        pgo.loop_min_id_gap = self.loop_min_id_gap;
-        pgo.loop_instant_accept_distance_m = self.loop_instant_accept_distance_m;
-        pgo.loop_buffer_agreement_trans_m = self.loop_buffer_agreement_trans_m;
-        pgo.loop_buffer_agreement_rot_deg = self.loop_buffer_agreement_rot_deg;
-        pgo.loop_buffer_min_agree = self.loop_buffer_min_agree;
-        pgo.loop_robust_kernel = self.loop_robust_kernel;
-        pgo.loop_robust_huber_k = self.loop_robust_huber_k;
-        pgo.loop_gnc_final = self.loop_gnc_final;
-        pgo.loop_gnc_var_scale = self.loop_gnc_var_scale;
-        pgo.use_location_constraints = self.use_location_constraints;
-        pgo.odom_rot_roll_pitch_var = self.odom_rot_roll_pitch_var;
-        pgo.odom_rot_yaw_var = self.odom_rot_yaw_var;
-        pgo.odom_trans_xy_var = self.odom_trans_xy_var;
-        pgo.odom_trans_z_var = self.odom_trans_z_var;
-        pgo.anchor_roll_pitch_var = self.anchor_roll_pitch_var;
-        pgo.per_keyframe_roll_pitch_prior = self.per_keyframe_roll_pitch_prior;
-        pgo.per_keyframe_roll_pitch_var = self.per_keyframe_roll_pitch_var;
-        pgo.use_scan_context = self.use_scan_context;
-        pgo.scan_context_num_rings = self.scan_context_num_rings;
-        pgo.scan_context_num_sectors = self.scan_context_num_sectors;
-        pgo.scan_context_max_range_m = self.scan_context_max_range_m;
-        pgo.scan_context_top_k = self.scan_context_top_k;
-        pgo.scan_context_match_threshold = self.scan_context_match_threshold;
-        pgo.scan_context_lidar_height_m = self.scan_context_lidar_height_m;
-        pgo
+        PgoConfig {
+            keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
+            keyframe_min_distance_meters: self.keyframe_min_distance_meters,
+            loop_search_radius: self.loop_search_radius,
+            loop_time_thresh: self.loop_time_thresh,
+            loop_score_thresh: self.loop_score_thresh,
+            loop_submap_half_range: self.loop_submap_half_range,
+            submap_resolution: self.submap_resolution,
+            min_loop_detect_duration: self.min_loop_detect_duration,
+            loop_candidate_max_distance_m: self.loop_candidate_max_distance_m,
+            min_descriptor_std: self.min_descriptor_std,
+            loop_min_occupancy: self.loop_min_occupancy,
+            loop_min_degeneracy: self.loop_min_degeneracy,
+            loop_max_lowe_ratio: self.loop_max_lowe_ratio,
+            loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
+            loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
+            loop_min_id_gap: self.loop_min_id_gap,
+            loop_instant_accept_distance_m: self.loop_instant_accept_distance_m,
+            loop_buffer_agreement_trans_m: self.loop_buffer_agreement_trans_m,
+            loop_buffer_agreement_rot_deg: self.loop_buffer_agreement_rot_deg,
+            loop_buffer_min_agree: self.loop_buffer_min_agree,
+            loop_robust_kernel: self.loop_robust_kernel,
+            loop_robust_huber_k: self.loop_robust_huber_k,
+            loop_gnc_final: self.loop_gnc_final,
+            loop_gnc_var_scale: self.loop_gnc_var_scale,
+            loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
+            use_location_constraints: self.use_location_constraints,
+            odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
+            odom_rot_yaw_var: self.odom_rot_yaw_var,
+            odom_trans_xy_var: self.odom_trans_xy_var,
+            odom_trans_z_var: self.odom_trans_z_var,
+            anchor_roll_pitch_var: self.anchor_roll_pitch_var,
+            per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
+            per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
+            use_scan_context: self.use_scan_context,
+            scan_context_num_rings: self.scan_context_num_rings,
+            scan_context_num_sectors: self.scan_context_num_sectors,
+            scan_context_max_range_m: self.scan_context_max_range_m,
+            scan_context_top_k: self.scan_context_top_k,
+            scan_context_match_threshold: self.scan_context_match_threshold,
+            scan_context_lidar_height_m: self.scan_context_lidar_height_m,
+        }
     }
 }
 

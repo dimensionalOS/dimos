@@ -111,11 +111,15 @@ void gtsam_shim_indices_free(uint64_t* indices);
 // are non-NULL, writes a caller-owned array of length graph.size() with each
 // factor's final GNC weight (~1 inlier, ~0 rejected); free with
 // gtsam_shim_doubles_free. known_inlier_indices may be NULL when n_known is 0.
+// `inlier_probability` sets the chi-squared inlier cost threshold: with that
+// probability an inlier's residual falls under the threshold, so a lower value
+// is a stricter test that rejects more loops. Must be in (0, 1); anything else
+// leaves GNC's own default (0.99) in place.
 gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
                                            const gtsam_shim_values* values,
                                            const uint64_t* known_inlier_indices,
-                                           size_t n_known, double** out_weights,
-                                           size_t* out_n_weights);
+                                           size_t n_known, double inlier_probability,
+                                           double** out_weights, size_t* out_n_weights);
 void gtsam_shim_doubles_free(double* values);
 
 #ifdef __cplusplus

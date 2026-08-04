@@ -131,8 +131,12 @@ class PGOConfig(NativeModuleConfig):
     # rejects the mutually conflicting closures that Huber only down-weights, so a loop that
     # under-closes incrementally actually snaps shut. loop_gnc_var_scale loosens each loop's
     # score-derived variance so GNC keeps the true consensus set instead of over-rejecting.
+    # loop_gnc_inlier_probability is the chi-squared inlier cost threshold: lowering it tightens
+    # the test so GNC rejects more loops, and it is independent of a loop's variance (unlike
+    # loop_gnc_var_scale, which also weakens the surviving edges' pull).
     loop_gnc_final: bool = True
     loop_gnc_var_scale: float = 10.0
+    loop_gnc_inlier_probability: float = 0.99
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False

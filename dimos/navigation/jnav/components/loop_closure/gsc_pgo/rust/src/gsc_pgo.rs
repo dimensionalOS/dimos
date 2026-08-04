@@ -326,6 +326,10 @@ pub struct Config {
     /// score gives a variance (~1e-3) tight enough that GNC over-rejects; scaling
     /// it up loosens each loop so GNC keeps the true consensus set.
     pub loop_gnc_var_scale: f64,
+    /// Probability that a true inlier's residual falls under GNC's chi-squared
+    /// cost threshold. Lowering it tightens the test so GNC rejects more loops;
+    /// outside (0, 1) it keeps GNC's own 0.99 default.
+    pub loop_gnc_inlier_probability: f64,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
     /// by GscPgo itself).
     pub use_location_constraints: bool,
@@ -377,6 +381,7 @@ impl Default for Config {
             loop_robust_huber_k: 1.345,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
+            loop_gnc_inlier_probability: 0.99,
             use_location_constraints: false,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -1612,6 +1617,7 @@ impl GscPgo {
             loops: self.committed_loops.clone(),
             backbone_noise: BackboneNoise::from_config(&self.config),
             loop_gnc_var_scale: self.config.loop_gnc_var_scale,
+            loop_gnc_inlier_probability: self.config.loop_gnc_inlier_probability,
             sequence: self.gnc_sequence_dispatched,
         }
     }

@@ -122,6 +122,7 @@ pub struct Config {
     // Final batch GNC (TLS) re-solve over the committed closures.
     pub loop_gnc_final: bool,
     pub loop_gnc_var_scale: f64,
+    pub loop_gnc_inlier_probability: f64,
 
     // Location constraints
     pub use_location_constraints: bool,
@@ -170,6 +171,7 @@ impl Config {
             loop_robust_huber_k: self.loop_robust_huber_k,
             loop_gnc_final: self.loop_gnc_final,
             loop_gnc_var_scale: self.loop_gnc_var_scale,
+            loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
             use_location_constraints: self.use_location_constraints,
             odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
             odom_rot_yaw_var: self.odom_rot_yaw_var,
