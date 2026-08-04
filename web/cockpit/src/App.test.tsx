@@ -44,7 +44,12 @@ describe("App session states", () => {
     root = createRoot(container);
     status = new StatusStore();
     channels = new ChannelStore();
-    session = { status, channels, stop: () => {} };
+    session = {
+      status,
+      channels,
+      teleop: { control: () => {}, datagram: () => {}, onMsg: () => () => {}, status },
+      stop: () => {},
+    };
     act(() => root.render(<App session={session} />));
   });
 

@@ -40,6 +40,7 @@ from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, field
 import functools
 import json
+import math
 import socket
 import threading
 import time
@@ -53,15 +54,26 @@ from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 # No import cycle: cockpit.py only imports this module lazily inside
 # cockpit(), and its own module body is relay-free.
-from dimos.web.cockpit import ChannelRequest, Map2D, Panel, Row, Video, build_manifest_data
+from dimos.web.cockpit import (
+    ChannelRequest,
+    Col,
+    Map2D,
+    Panel,
+    Row,
+    Teleop,
+    Video,
+    build_manifest_data,
+)
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import parse_manifest
 from dimos.web.relay_bridge.protocol import (
@@ -69,7 +81,11 @@ from dimos.web.relay_bridge.protocol import (
     Delivery,
     RobotInfo,
     RobotManifest,
+    Stop as WireStop,
     Subs,
+    TeleopStart as WireTeleopStart,
+    TeleopStop as WireTeleopStop,
+    Twist as WireTwist,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_cockpit_dist
 from dimos.web.relay_bridge.wt_client import (
@@ -96,6 +112,28 @@ _CHILD_POLL_S = 1.0
 # Bounded wait for the build worker thread after cancelling it (the child
 # dies within the SIGTERM-to-SIGKILL grace; this adds a margin on top).
 _BUILD_CANCEL_WAIT_S = 8.0
+
+# Deadman poll granularity; small against the default 300 ms watchdog window
+# so the zero lands close to the deadline.
+_TELEOP_POLL_S = 0.05
+
+
+@dataclass(frozen=True)
+class _TeleopParams:
+    """Teleop tx channel params resolved at start (manifest, with defaults)."""
+
+    max_linear: float
+    max_angular: float
+    boost: float
+    watchdog_s: float
+
+
+# Manifest param keys and their defaults (matching the Teleop panel's).
+_TELEOP_PARAM_DEFAULTS = {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0}
+
+
+def _clamp(value: float, bound: float) -> float:
+    return max(-bound, min(bound, value))
 
 
 def _probe_local_port(port: int) -> None:
@@ -295,19 +333,26 @@ CHANNELS: tuple[ChannelDef, ...] = (
     ),
 )
 
+# The tx (viewer->robot) counterpart of CHANNELS: stream -> (encoding,
+# delivery). Every entry needs a matching `Out` on the module and a handler
+# in _supervise; it is also the delivery source for tx channels in authored
+# manifests (dimos/web/cockpit.py).
+TX_CHANNELS: tuple[tuple[str, str, Delivery], ...] = (("tele_cmd_vel", "twist.json.v1", "latest"),)
+
 
 def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> dict[str, Any]:
-    """Availability-driven default cockpit: video + map2d panels for the
-    channels in `available`, remaining channels advertised channel-only (raw
-    rows in the cockpit's channel list). Rates and jpeg quality come from
-    the config fields, so `-o relay-bridge-module.*` overrides keep working
-    in the no-manifest (auto) mode."""
+    """Availability-driven default cockpit: video/map2d/teleop panels for the
+    channels in `available`, remaining rx channels advertised channel-only
+    (raw rows in the cockpit's channel list). Rates and jpeg quality come
+    from the config fields, so `-o relay-bridge-module.*` overrides keep
+    working in the no-manifest (auto) mode."""
     present = frozenset(available)
-    panels: list[Panel] = []
+    main: Panel | None = None
     if "color_image" in present:
-        panels.append(Video("color_image", max_hz=config.image_max_hz, quality=config.jpeg_quality))
+        main = Video("color_image", max_hz=config.image_max_hz, quality=config.jpeg_quality)
+    side_panels: list[Panel] = []
     if "global_costmap" in present:
-        panels.append(
+        side_panels.append(
             Map2D(
                 costmap="global_costmap",
                 pose="odom" if "odom" in present else None,
@@ -315,20 +360,29 @@ def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> d
                 pose_hz=config.odom_max_hz,
             )
         )
-    layout: Panel | Row | None
-    if len(panels) == 2:
-        layout = Row(*panels, shares=[2, 1])
-    elif panels:
-        layout = panels[0]
+    if "tele_cmd_vel" in present:
+        side_panels.append(Teleop())
+    side: Panel | Col | None
+    if len(side_panels) > 1:
+        side = Col(*side_panels, shares=[3, 1])
+    elif side_panels:
+        side = side_panels[0]
     else:
-        layout = None
+        side = None
+    layout: Panel | Row | Col | None
+    if main is not None and side is not None:
+        layout = Row(main, side, shares=[2, 1])
+    else:
+        layout = main if main is not None else side
     registry = {cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS}
+    tx_registry = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
     return build_manifest_data(
         layout,
         (),
         registry=registry,
         rx_streams=frozenset(registry),
-        tx_streams=frozenset(),
+        tx_streams=frozenset(tx_registry),
+        tx_registry=tx_registry,
         extra_channels=tuple(
             ChannelRequest(cd.ch, "rx", cd.encoding, cd.max_hz(config))
             for cd in CHANNELS
@@ -355,6 +409,9 @@ class RelayBridgeModule(Module):
     color_image: In[Image]
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]
+    # tx: cockpit teleop twists, autoconnected by name+type to
+    # MovementManager.tele_cmd_vel (publish is a no-op while unwired).
+    tele_cmd_vel: Out[Twist]
     # NEVER add handle_color_image/handle_odom methods here: _auto_bind_handlers
     # subscribes any handle_<input> eagerly at start(), defeating lazy encode.
 
@@ -377,6 +434,19 @@ class RelayBridgeModule(Module):
         self._last_msg: dict[str, tuple[Any, float]] = {}
         # Resolved at start from the manifest's jpeg channel params.
         self._jpeg_quality: int = self.config.jpeg_quality
+        # Teleop state, all touched on the module loop only. None params =
+        # the manifest advertises no teleop channel; every teleop message is
+        # then ignored. `driving` implements the release-edge rule: publish
+        # a zero only after a nonzero (MovementManager cancels the nav goal
+        # on EVERY teleop message, so idle zeros must never repeat).
+        self._teleop_params: _TeleopParams | None = None
+        self._teleop_driving = False
+        # Lease-generation floor (relay-stamped, monotonic in a session):
+        # anything below it is voided permanently, so a released holder's
+        # delayed datagrams cannot restart motion after a stop.
+        self._teleop_gen: int | float = -math.inf
+        self._teleop_last_seq = -math.inf
+        self._teleop_last_rx = 0.0
         self.encoded: dict[str, int] = {cd.ch: 0 for cd in CHANNELS}
 
     async def main(self) -> AsyncIterator[None]:
@@ -395,6 +465,12 @@ class RelayBridgeModule(Module):
                     for cd in CHANNELS
                     if (allowed is None or cd.ch in allowed)
                     and self.inputs[cd.ch].transport is not None
+                )
+                # tx side: an Out gets a transport whether or not anything
+                # consumes it, so availability comes from the composition
+                # (with_relay_bridge scans the blueprint's consumers).
+                available += tuple(
+                    ch for ch, _, _ in TX_CHANNELS if allowed is not None and ch in allowed
                 )
                 manifest_data = default_manifest(self.config, available)
             # The domain parser is the authority: an invalid manifest fails
@@ -416,6 +492,17 @@ class RelayBridgeModule(Module):
             self._channel_defs = tuple(by_ch[spec.ch] for spec in rx_specs)
             self._min_interval = {spec.ch: 1.0 / spec.maxHz for spec in rx_specs}
             self._jpeg_quality = self._resolve_jpeg_quality(rx_specs)
+            by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
+            for spec in manifest.channels:
+                if spec.dir != "tx":
+                    continue
+                if by_tx.get(spec.ch) != (spec.encoding, spec.delivery):
+                    raise RuntimeError(
+                        f"manifest tx channel {spec.ch!r} ({spec.encoding}/{spec.delivery}) has "
+                        f"no matching handler; this bridge supports: {sorted(by_tx)}"
+                    )
+                if spec.ch == "tele_cmd_vel":
+                    self._teleop_params = self._resolve_teleop_params(spec)
             # No runtime stream probing: an authored channel whose input got
             # no transport stays advertised (its panel shows "waiting for
             # data"); _reconcile just never subscribes it.
@@ -563,12 +650,16 @@ class RelayBridgeModule(Module):
         client.send_frame(ch, payload, delivery="reliable", meta=meta, ts=ts)
 
     async def _supervise(self, session: _Session) -> None:
-        """Consume subs snapshots; on session loss, reconnect (and respawn a
-        dead local relay child) until the module stops."""
+        """Consume relay control messages (subs snapshots, teleop); on session
+        loss, reconnect (and respawn a dead local relay child) until the
+        module stops."""
         watchdog: asyncio.Task[None] | None = None
+        deadman: asyncio.Task[None] | None = None
         try:
             if self._relay is not None:
                 watchdog = asyncio.create_task(self._watch_child())
+            if self._teleop_params is not None:
+                deadman = asyncio.create_task(self._teleop_watchdog())
             while True:
                 crashed = False
                 try:
@@ -576,6 +667,14 @@ class RelayBridgeModule(Module):
                         if isinstance(msg, Subs) and msg.n > session.last_n:
                             session.last_n = msg.n
                             self._reconcile(session, set(msg.chs))
+                        elif isinstance(msg, WireTwist):
+                            self._on_wire_twist(msg)
+                        elif isinstance(msg, WireStop):
+                            self._on_wire_stop(msg)
+                        elif isinstance(msg, WireTeleopStart):
+                            self._on_wire_teleop_start(msg)
+                        elif isinstance(msg, WireTeleopStop):
+                            self._on_wire_teleop_stop(msg)
                     # The iterator only ends when the session closed.
                 except Exception:
                     # An unguarded error here would silently end supervision while
@@ -594,6 +693,7 @@ class RelayBridgeModule(Module):
                 session = reconnected
                 self._session = session
         finally:
+            await _cancel_task(deadman, "teleop watchdog")
             await _cancel_task(watchdog, "watchdog")
             await self._disconnect(session)
 
@@ -612,6 +712,132 @@ class RelayBridgeModule(Module):
             ):
                 logger.warning("local relay child died; closing the session to reconnect")
                 await session.client.close()
+
+    def _resolve_teleop_params(self, spec: ChannelSpec) -> _TeleopParams:
+        values: dict[str, float] = {}
+        for key, default in _TELEOP_PARAM_DEFAULTS.items():
+            candidate = spec.params.get(key, default)
+            if (
+                isinstance(candidate, bool)
+                or not isinstance(candidate, (int, float))
+                or not math.isfinite(candidate)
+                or candidate <= 0
+            ):
+                raise RuntimeError(
+                    f"manifest channel {spec.ch!r} {key} must be a positive number, "
+                    f"got {candidate!r}"
+                )
+            values[key] = float(candidate)
+        return _TeleopParams(
+            max_linear=values["maxLinear"],
+            max_angular=values["maxAngular"],
+            boost=values["boost"],
+            watchdog_s=values["watchdogMs"] / 1000.0,
+        )
+
+    def _on_wire_twist(self, msg: WireTwist) -> None:
+        params = self._teleop_params
+        if params is None:
+            return
+        # Non-finite components cannot reach here: the wire decoders reject
+        # NaN/Infinity (allow_inf_nan=False).
+        gen = msg.gen
+        if gen is None or gen < self._teleop_gen:
+            return  # unstamped, or in flight from a lease already voided
+        if gen == self._teleop_gen and msg.seq <= self._teleop_last_seq:
+            # Within a generation the high-water mark is permanent: a paused
+            # holder resumes with rising seq, while a delayed pre-stop twist
+            # stays dead even after watchdog silence. A new lease (gen above
+            # the floor) rebaselines instead.
+            return
+        self._teleop_gen = gen
+        self._teleop_last_seq = float(msg.seq)
+        self._teleop_last_rx = time.monotonic()
+        bound_linear = params.max_linear * params.boost
+        vx = _clamp(float(msg.vx), bound_linear)
+        vy = _clamp(float(msg.vy), bound_linear)
+        wz = _clamp(float(msg.wz), params.max_angular * params.boost)
+        if vx == 0.0 and vy == 0.0 and wz == 0.0:
+            self._teleop_zero("release")
+            return
+        self._teleop_driving = True
+        self.tele_cmd_vel.publish(Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)))
+
+    def _on_wire_stop(self, msg: WireStop) -> None:
+        """E-stop: unconditional zero, even from idle - it must also cancel
+        an autonomous nav goal (MovementManager cancels on any teleop msg)."""
+        if self._teleop_params is None:
+            return
+        gen = msg.gen
+        if gen is None or gen < self._teleop_gen:
+            # A voided lease's in-flight e-stop must not blip the current
+            # holder (the relay gate already blocks post-release sends).
+            return
+        self._teleop_zero("stop message (e-stop)", force=True)
+        if gen > self._teleop_gen:
+            self._teleop_gen = gen
+            self._teleop_last_seq = float(msg.seq)
+        else:
+            # max(): a stale reordered e-stop must not lower the high-water
+            # mark and let an already-superseded twist re-apply.
+            self._teleop_last_seq = max(self._teleop_last_seq, float(msg.seq))
+        self._teleop_last_rx = time.monotonic()
+
+    def _on_wire_teleop_start(self, msg: WireTeleopStart) -> None:
+        """A relay-granted lease: adopt its generation, voiding the previous
+        one. Heals a lost teleop_stop (zeroing if it arrived mid-drive)."""
+        if self._teleop_params is None:
+            return
+        gen = msg.gen
+        if gen is None or gen <= self._teleop_gen:
+            return  # a duplicated start must not reset the high-water mid-lease
+        self._teleop_zero("new teleop lease")
+        self._teleop_gen = gen
+        self._teleop_last_seq = -math.inf
+        self._teleop_last_rx = 0.0
+
+    def _on_wire_teleop_stop(self, msg: WireTeleopStop) -> None:
+        """The lease ended (holder released, disconnected, or watched away)."""
+        if self._teleop_params is None:
+            return
+        gen = msg.gen
+        if gen is None or gen < self._teleop_gen:
+            return  # a stale lease-end must not blip or reset the current holder
+        self._teleop_zero("teleop lease ended")
+        # The relay bumps by exactly 1 per grant, so this floor equals the
+        # next lease's generation; the ended lease and everything below it
+        # are voided permanently.
+        self._teleop_gen = gen + 1
+        self._teleop_last_seq = -math.inf
+        self._teleop_last_rx = 0.0
+
+    def _teleop_zero(self, reason: str, *, force: bool = False) -> None:
+        """Publish one zero twist; edge-gated unless `force` (e-stop)."""
+        if not force and not self._teleop_driving:
+            return
+        self._teleop_driving = False
+        logger.warning(f"relay bridge teleop: zero twist ({reason})")
+        self.tele_cmd_vel.publish(Twist.zero())
+
+    def _teleop_reset(self) -> None:
+        # Session teardown only: datagrams are QUIC-session-scoped and the
+        # relay's lease generation dies with the robot registration, so
+        # nothing stale can leak into the next session.
+        self._teleop_gen = -math.inf
+        self._teleop_last_seq = -math.inf
+        self._teleop_last_rx = 0.0
+
+    async def _teleop_watchdog(self) -> None:
+        """Deadman: the cockpit repeats commands at publish_hz, so silence
+        while driving means the chain broke (viewer gone, relay killed,
+        datagrams lost) - zero within ~watchdog_s regardless of which hop
+        failed."""
+        assert self._teleop_params is not None
+        watchdog_s = self._teleop_params.watchdog_s
+        while True:
+            await asyncio.sleep(_TELEOP_POLL_S)
+            if self._teleop_driving and time.monotonic() - self._teleop_last_rx > watchdog_s:
+                self._teleop_zero("watchdog: twist silence")
 
     async def _reconnect(self) -> _Session | None:
         while True:
@@ -730,6 +956,12 @@ class RelayBridgeModule(Module):
         target.retired.set()
         if self._session is target:
             self._session = None
+        # A driving teleop stream cannot outlive its session (this also
+        # covers module stop, KeyboardTeleop.stop() parity). Idempotent:
+        # the edge gate makes the second call of a double-disconnect a no-op.
+        if self._teleop_params is not None:
+            self._teleop_zero("relay session ended")
+            self._teleop_reset()
         for ch, unsubscribe in tuple(target.unsubs.items()):
             try:
                 unsubscribe()
@@ -751,23 +983,34 @@ def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
         return blueprint
 
     producer_keys: set[tuple[str, type]] = set()
+    consumer_keys: set[tuple[str, type]] = set()
     for atom in blueprint.active_blueprints:
         for stream in atom.streams:
-            if stream.direction != "out":
-                continue
             effective_name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-            if isinstance(effective_name, str):
-                producer_keys.add((effective_name, stream.type))
+            if not isinstance(effective_name, str):
+                continue
+            keys = producer_keys if stream.direction == "out" else consumer_keys
+            keys.add((effective_name, stream.type))
 
     bridge_atom = RelayBridgeModule.blueprint().blueprints[0]
     bridge_input_types = {
         stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "in"
+    }
+    # Every declared Out gets a transport whether or not a counterparty
+    # exists, so tx availability is derived from the blueprint's consumers
+    # (mirroring the producer scan above), not from bound transports.
+    bridge_output_types = {
+        stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "out"
     }
     available_channels = tuple(
         channel.ch
         for channel in CHANNELS
         if (channel_type := bridge_input_types.get(channel.ch)) is not None
         and (channel.ch, channel_type) in producer_keys
+    ) + tuple(
+        ch
+        for ch, _, _ in TX_CHANNELS
+        if (tx_type := bridge_output_types.get(ch)) is not None and (ch, tx_type) in consumer_keys
     )
     return autoconnect(
         blueprint,

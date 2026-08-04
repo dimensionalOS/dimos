@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   type ChannelSpec,
   ControlFrameReader,
+  decodeDatagram,
   encodeControlFrame,
   encodeDataFrame,
   type Msg,
@@ -180,6 +181,8 @@ const ROBOT_B: RobotInfo = { id: "b", name: "B", model: "go2" };
 
 class FakeRelayEnd {
   readonly sent: Msg[] = [];
+  /** Decoded datagrams the viewer sent (the teleop twist path). */
+  readonly sentDatagrams: Msg[] = [];
   /** Awaited per decoded viewer message: lets a test react at the exact
    * moment a message is observed while holding the session's control writer
    * (e.g. to land a data frame mid-sub-loop). */
@@ -217,6 +220,14 @@ class FakeRelayEnd {
           this.#uni = c;
         },
       }),
+      datagrams: {
+        writable: new WritableStream<Uint8Array>({
+          write: (chunk) => {
+            const msg = decodeDatagram(chunk);
+            if (msg !== null) this.sentDatagrams.push(msg);
+          },
+        }),
+      },
     };
   }
 
@@ -633,5 +644,42 @@ describe("Session over a fake WebTransport", () => {
     await until(() => relay.watches("b") === 1, "watch B");
     relay.pushManifest("b", manifest([spec({ ch: "status" })]));
     await until(() => adopted(handle)[0]?.ch === "status", "manifest B");
+  });
+
+  it("teleop control rides the control stream and twists ride datagrams", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle);
+    handle.teleop.control({ t: "teleop_start" });
+    await until(() => relay.sent.some((m) => m.t === "teleop_start"), "teleop_start");
+    const twist: Msg = { t: "twist", vx: 0.5, vy: 0.25, wz: -0.25, seq: 1, ts: 1.5 };
+    handle.teleop.datagram(twist);
+    await until(() => relay.sentDatagrams.length === 1, "twist datagram");
+    expect(relay.sentDatagrams[0]).toEqual(twist);
+    expect(relay.sent.some((m) => m.t === "twist")).toBe(false); // not on the stream
+  });
+
+  it("routes teleop_started and teleop_held to the facade, not lastError", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle);
+    const received: Msg[] = [];
+    const unsubscribe = handle.teleop.onMsg((msg) => received.push(msg));
+    relay.push({ t: "teleop_started" });
+    await until(() => received.length === 1, "teleop_started routed");
+    relay.push({ t: "error", code: "teleop_held", message: "held by viewer 1" });
+    await until(() => received.length === 2, "teleop_held routed");
+    expect(received.map((m) => m.t)).toEqual(["teleop_started", "error"]);
+    expect(handle.status.get().lastError).toBeNull();
+    unsubscribe();
+    relay.push({ t: "teleop_started" });
+    await settle();
+    expect(received).toHaveLength(2);
+  });
+
+  it("other error codes still land in lastError", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle);
+    relay.push({ t: "error", code: "unknown_channel", message: "no channel x" });
+    await until(() => handle.status.get().lastError !== null, "lastError");
+    expect(handle.status.get().lastError).toContain("unknown_channel");
   });
 });

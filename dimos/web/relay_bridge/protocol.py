@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     TypeAdapter,
@@ -63,12 +64,17 @@ from dimos.web.relay_bridge.manifest import (
 
 logger = setup_logger()
 
-# v3: the manifest travels as one opaque record nested in hello/manifest
-# messages (v2 carried flat channels/panels fields, which a v2 peer would
-# silently misread in both directions). v2: a reliable channel packs all its
-# frames onto one persistent stream. Bump on any change an old peer would
-# silently misparse.
-PROTOCOL_VERSION = 3
+# v4: the twist datagram gains vy (strafe) and the teleop lease messages
+# (teleop_start/teleop_started/teleop_stop) enter the control plane;
+# robot-bound twist/stop/teleop_start/teleop_stop carry the relay-stamped
+# lease generation `gen` (amended into v4 pre-release: an older v4 peer
+# without gen gets dead teleop, never unsafe motion). v3: the
+# manifest travels as one opaque record nested in hello/manifest messages
+# (v2 carried flat channels/panels fields, which a v2 peer would silently
+# misread in both directions). v2: a reliable channel packs all its frames
+# onto one persistent stream. Bump on any change an old peer would silently
+# misparse.
+PROTOCOL_VERSION = 4
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536
@@ -208,20 +214,59 @@ class Subs(_WireModel):
     n: int | float
 
 
-# Teleop datagrams (carried from T6 on; declared so the wire format is pinned
-# by fixtures from day one).
+# Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+# commands repeat and the bridge deadman covers silence). The lease messages
+# ride the viewer's control stream so they are ordered after watch:
+# teleop_start requests the per-robot exclusive lease (relay acks with
+# teleop_started, or replies error code "teleop_held"), teleop_stop releases
+# it. Robot-bound teleop messages are datagrams stamped with `gen`, the
+# relay-issued lease generation: teleop_start announces a granted lease,
+# teleop_stop means "the lease ended" (holder gone), twist/stop are the
+# forwarded holder commands. The bridge permanently rejects generations
+# below its floor, so a released holder's delayed datagrams cannot move the
+# robot after a stop. Viewer-authored messages never carry gen.
+
+
+def _gen_reject_wire_null(value: Any, info: ValidationInfo) -> Any:
+    if value is None and info.context is _WIRE_CTX:
+        raise ValueError("explicit null (absent optional fields are omitted)")
+    return value
+
+
+# The relay-stamped lease generation: optional (viewer-authored messages omit
+# it), never null on the wire (mirrors genAbsentOrNumber in protocol.ts).
+_WireGen = Annotated[int | float | None, BeforeValidator(_gen_reject_wire_null)]
+
+
 class Twist(_WireModel):
     t: Literal["twist"] = "twist"
     vx: int | float
+    vy: int | float
     wz: int | float
     seq: int | float
     ts: int | float
+    gen: _WireGen = None
 
 
 class Stop(_WireModel):
     t: Literal["stop"] = "stop"
     seq: int | float
     ts: int | float
+    gen: _WireGen = None
+
+
+class TeleopStart(_WireModel):
+    t: Literal["teleop_start"] = "teleop_start"
+    gen: _WireGen = None
+
+
+class TeleopStarted(_WireModel):
+    t: Literal["teleop_started"] = "teleop_started"
+
+
+class TeleopStop(_WireModel):
+    t: Literal["teleop_stop"] = "teleop_stop"
+    gen: _WireGen = None
 
 
 Msg = (
@@ -238,6 +283,9 @@ Msg = (
     | Subs
     | Twist
     | Stop
+    | TeleopStart
+    | TeleopStarted
+    | TeleopStop
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8

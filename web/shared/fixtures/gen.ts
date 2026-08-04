@@ -99,11 +99,21 @@ const controlMsgs: Record<string, Msg> = {
   unsub: { t: "unsub", ch: "color_image" },
   subs_snapshot: { t: "subs", chs: ["color_image", "odom"], n: 3 },
   subs_empty: { t: "subs", chs: [], n: 4 },
+  // Bare lease messages are the viewer-leg shapes (control stream); the
+  // gen-stamped robot-bound forms are pinned in teleopMsgs below.
+  teleop_start: { t: "teleop_start" },
+  teleop_started: { t: "teleop_started" },
+  teleop_stop: { t: "teleop_stop" },
 };
 
 const teleopMsgs: Record<string, Msg> = {
-  twist: { t: "twist", vx: 0.5, wz: -0.25, seq: 12, ts: 1752576000.5 },
+  twist: { t: "twist", vx: 0.5, vy: 0.25, wz: -0.25, seq: 12, ts: 1752576000.5 },
   stop: { t: "stop", seq: 13, ts: 1752576000.5 },
+  // Robot-bound forms: the relay stamps the lease generation.
+  twist_gen: { t: "twist", vx: 0.5, vy: 0.25, wz: -0.25, seq: 12, ts: 1752576000.5, gen: 3 },
+  stop_gen: { t: "stop", seq: 13, ts: 1752576000.5, gen: 3 },
+  teleop_start_gen: { t: "teleop_start", gen: 3 },
+  teleop_stop_gen: { t: "teleop_stop", gen: 3 },
 };
 
 const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> = {
@@ -148,6 +158,14 @@ const chCostmap = {
   delivery: "latest",
   maxHz: 5.5,
 };
+const chTwist = {
+  ch: "tele_cmd_vel",
+  dir: "tx",
+  encoding: "twist.json.v1",
+  delivery: "latest",
+  maxHz: 15.5,
+  params: { maxLinear: 0.85, maxAngular: 1.5, boost: 2.5, watchdogMs: 300.5 },
+};
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
 const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
 const longId = "x".repeat(65);
@@ -160,7 +178,7 @@ const manifestCases: Record<string, unknown> = {
     panels: [
       { ...pCamera, title: "Cameră față" },
       pPose,
-      { id: "drive", kind: "teleop", channels: [] },
+      { id: "drive", kind: "joystick", channels: [] },
       { id: "aux", kind: "readout", channels: ["odom"] },
     ],
     layout: { row: [{ col: ["camera", "pose"], shares: [2.5, 1.5] }, "drive"] },
@@ -307,6 +325,36 @@ const manifestCases: Record<string, unknown> = {
     channels: [chCostmap, { ...chOdom, dir: "tx" }],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
   },
+  teleop_panel_valid: {
+    version: 1,
+    channels: [chTwist],
+    panels: [{ id: "drive", kind: "teleop", channels: ["tele_cmd_vel"] }],
+  },
+  teleop_panel_no_channel: {
+    version: 1,
+    channels: [chTwist],
+    panels: [{ id: "drive", kind: "teleop", channels: [] }],
+  },
+  teleop_panel_two_channels: {
+    version: 1,
+    channels: [chTwist, chOdom],
+    panels: [{ id: "drive", kind: "teleop", channels: ["tele_cmd_vel", "odom"] }],
+  },
+  teleop_panel_rx_channel: {
+    version: 1,
+    channels: [{ ...chTwist, dir: "rx" }],
+    panels: [{ id: "drive", kind: "teleop", channels: ["tele_cmd_vel"] }],
+  },
+  teleop_panel_wrong_encoding: {
+    version: 1,
+    channels: [{ ...chOdom, dir: "tx" }],
+    panels: [{ id: "drive", kind: "teleop", channels: ["odom"] }],
+  },
+  teleop_panel_wrong_delivery: {
+    version: 1,
+    channels: [{ ...chTwist, delivery: "reliable" }],
+    panels: [{ id: "drive", kind: "teleop", channels: ["tele_cmd_vel"] }],
+  },
   layout_single_panel: { version: 1, channels: [chOdom], panels: [pPose], layout: "pose" },
   layout_row_shares: {
     version: 1,
@@ -319,7 +367,7 @@ const manifestCases: Record<string, unknown> = {
   layout_nested_tree: {
     version: 1,
     channels: [chImage, chOdom],
-    panels: [pCamera, pPose, { id: "drive", kind: "teleop", channels: [] }],
+    panels: [pCamera, pPose, { id: "drive", kind: "joystick", channels: [] }],
     layout: { col: [{ row: ["camera", "pose"], shares: [1.5, 2.5] }, "drive"] },
   },
   layout_null: { version: 1, channels: [chOdom], panels: [pPose], layout: null },
