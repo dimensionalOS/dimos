@@ -282,6 +282,9 @@ pub struct IcpParams {
     pub mse_threshold_absolute: f64,
     /// Relative MSE-change convergence threshold.
     pub euclidean_fitness_epsilon: f64,
+    /// Fitness counts only correspondences within this distance (inlier
+    /// mean squared error); 0 counts every source point.
+    pub fitness_max_distance: f64,
 }
 
 impl Default for IcpParams {
@@ -293,6 +296,7 @@ impl Default for IcpParams {
             rotation_threshold: 0.99999,
             mse_threshold_absolute: 1e-12,
             euclidean_fitness_epsilon: 1e-6,
+            fitness_max_distance: 0.0,
         }
     }
 }
@@ -486,14 +490,24 @@ pub fn icp_point_to_point(
         }
         result.translation[i] = f64::from(final_m[i][3]);
     }
-    result.fitness = fitness_score(source, &tree, &final_m);
+    result.fitness = fitness_score(source, &tree, &final_m, params.fitness_max_distance);
     result
 }
 
 /// Fitness score: transform the ORIGINAL source by the f32 final transform
 /// (se3 order), take each point's squared NN distance in the target (f32),
 /// sum in f64, return the mean.
-fn fitness_score(source: &[[f32; 3]], target_tree: &KdTree, final_m: &Mat4f) -> f64 {
+fn fitness_score(
+    source: &[[f32; 3]],
+    target_tree: &KdTree,
+    final_m: &Mat4f,
+    max_distance: f64,
+) -> f64 {
+    let max_squared = if max_distance > 0.0 {
+        (max_distance * max_distance) as f32
+    } else {
+        f32::INFINITY
+    };
     use rayon::prelude::*;
     let transformed = se3_transform_cloud(source, final_m);
     // Parallel NN, in-order collect: the f64 sum below runs serially in
@@ -506,6 +520,9 @@ fn fitness_score(source: &[[f32; 3]], target_tree: &KdTree, final_m: &Mat4f) -> 
     let mut count = 0usize;
     for hit in &nn {
         if let Some((_, d)) = *hit {
+            if d > max_squared {
+                continue;
+            }
             sum += d as f64;
             count += 1;
         }

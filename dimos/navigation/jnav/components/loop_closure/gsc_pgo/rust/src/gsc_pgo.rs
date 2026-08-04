@@ -323,6 +323,23 @@ pub struct Config {
     /// is trusted in full: no robust kernel, and pinned as an inlier in GNC.
     /// Farther closures keep both defenses. 0 = off.
     pub strong_accept_range: f64,
+    /// Loop-verification ICP: iteration cap and correspondence gate (m).
+    pub loop_icp_max_iterations: u64,
+    pub loop_icp_max_correspondence_m: f64,
+    /// Score ICP fitness over correspondences within the gate only (inlier
+    /// mean squared error) instead of over every source point.
+    pub loop_icp_inlier_fitness: bool,
+    /// Reject a candidate whose source or target submap has fewer points. 0 = off.
+    pub loop_icp_min_points: u64,
+    /// Seed loop ICP at the current pose instead of at the matched keyframe
+    /// rotated by the Scan Context yaw.
+    pub loop_icp_seed_at_current_pose: bool,
+    /// Loop factor noise: rotation variance (0 = the ICP fitness, as for
+    /// translation) and a floor on the translation variance (the ICP fitness).
+    pub loop_rotation_variance: f64,
+    pub loop_translation_variance_floor: f64,
+    /// iSAM2 update passes after an update that adds a closure.
+    pub loop_refinement_passes: u64,
     /// After the incremental run, re-solve the whole graph once with a batch GNC
     /// (graduated non-convexity, TLS loss) optimizer that jointly classifies the
     /// committed loop closures inlier/outlier against the global residual — the
@@ -388,6 +405,14 @@ impl Default for Config {
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
             strong_accept_range: 0.0,
+            loop_icp_max_iterations: 50,
+            loop_icp_max_correspondence_m: 10.0,
+            loop_icp_inlier_fitness: false,
+            loop_icp_min_points: 0,
+            loop_icp_seed_at_current_pose: false,
+            loop_rotation_variance: 0.0,
+            loop_translation_variance_floor: 0.0,
+            loop_refinement_passes: 5,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
             loop_gnc_inlier_probability: 0.95,
@@ -1237,6 +1262,11 @@ impl GscPgo {
             }
         }
 
+        if self.config.loop_icp_seed_at_current_pose {
+            init_rotation = mat3::identity();
+            init_translation = [0.0f64; 3];
+        }
+
         let t0 = std::time::Instant::now();
         let target_cloud = self.get_sub_map(
             loop_idx as i32,
@@ -1244,6 +1274,12 @@ impl GscPgo {
             self.config.submap_resolution,
         );
         let source_cloud = self.get_sub_map(cur_idx as i32, 0, self.config.submap_resolution);
+        let min_points = self.config.loop_icp_min_points as usize;
+        if min_points > 0 && (source_cloud.len() < min_points || target_cloud.len() < min_points) {
+            diag.outcome = "icp_reject";
+            self.loop_diagnostics.push(diag);
+            return;
+        }
         self.timing.submap_s += t0.elapsed().as_secs_f64();
 
         let t0 = std::time::Instant::now();
@@ -1252,7 +1288,16 @@ impl GscPgo {
             &target_cloud,
             &init_rotation,
             &init_translation,
-            &IcpParams::default(),
+            &IcpParams {
+                max_iterations: self.config.loop_icp_max_iterations as usize,
+                max_correspondence_distance: self.config.loop_icp_max_correspondence_m,
+                fitness_max_distance: if self.config.loop_icp_inlier_fitness {
+                    self.config.loop_icp_max_correspondence_m
+                } else {
+                    0.0
+                },
+                ..IcpParams::default()
+            },
         );
         self.timing.icp_s += t0.elapsed().as_secs_f64();
         diag.icp_converged = icp.converged;
@@ -1332,7 +1377,20 @@ impl GscPgo {
         }
 
         // Original isotropic noise = ICP fitness on all 6 DOF.
-        let noise = NoiseModel::diagonal_variances(&[score; 6]);
+        let rotation_variance = if self.config.loop_rotation_variance > 0.0 {
+            self.config.loop_rotation_variance
+        } else {
+            score
+        };
+        let translation_variance = score.max(self.config.loop_translation_variance_floor);
+        let noise = NoiseModel::diagonal_variances(&[
+            rotation_variance,
+            rotation_variance,
+            rotation_variance,
+            translation_variance,
+            translation_variance,
+            translation_variance,
+        ]);
         let pair = LoopPair {
             source_id: cur_idx,
             target_id: loop_idx,
@@ -1604,7 +1662,11 @@ impl GscPgo {
         };
         // Refinement passes are best-effort: the estimate is still usable if a
         // forced relinearization throws, so log and stop refining.
-        let refinement_passes = if has_closure { 5 } else { 1 };
+        let refinement_passes = if has_closure {
+            self.config.loop_refinement_passes.max(1)
+        } else {
+            1
+        };
         for _ in 0..refinement_passes {
             if let Err(gtsam_error) = self.isam2.update_empty() {
                 eprintln!(
