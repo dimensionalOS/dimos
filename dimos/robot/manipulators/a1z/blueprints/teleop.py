@@ -16,17 +16,17 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import (
-    make_a1z_hardware,
+    a1z_hardware,
     make_a1z_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import eef_twist_task
+from dimos.robot.manipulators.common.blueprints import eef_twist_task, trajectory_task
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_a1z_keyboard_hw = make_a1z_hardware("arm")
+_a1z_keyboard_hw = a1z_hardware("arm")
 _a1z_model = make_a1z_model_config()
 
 keyboard_teleop_a1z = autoconnect(
@@ -37,7 +37,15 @@ keyboard_teleop_a1z = autoconnect(
             eef_twist_task(
                 _a1z_keyboard_hw,
                 robot_model=_a1z_model,
-            )
+            ),
+            TaskConfig(
+                name="servo_gripper",
+                type="servo",
+                joint_names=["arm/gripper"],
+                priority=20,
+                params={"timeout": 0.0, "default_positions": [0.0]},
+            ),
+            trajectory_task(_a1z_keyboard_hw, priority=20),
         ],
     ),
     ManipulationModule.blueprint(

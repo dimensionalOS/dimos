@@ -50,6 +50,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
@@ -173,6 +174,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
+main.add_typer(hardware_app, name="hardware")
 main.add_typer(piper_app, name="piper")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")

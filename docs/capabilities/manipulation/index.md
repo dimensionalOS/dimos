@@ -19,6 +19,7 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
@@ -325,6 +326,7 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
+| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
@@ -340,6 +342,7 @@ planner is locked for its whole native call.
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
 | Piper | 6 | Y | Y | — |
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
