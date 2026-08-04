@@ -94,12 +94,12 @@ _MacBus = tuple[gs_usb_bus.GsUsbMacBus, _FakeGsUsb]
 
 def _install_fake_gs_usb_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     package = ModuleType("gs_usb")
-    package.__path__ = []  # type: ignore[attr-defined]
+    package.__path__ = []
     gs_module = ModuleType("gs_usb.gs_usb")
-    gs_module.GS_CAN_MODE_HW_TIMESTAMP = 1  # type: ignore[attr-defined]
-    gs_module.GsUsb = _FakeGsUsb  # type: ignore[attr-defined]
+    gs_module.GS_CAN_MODE_HW_TIMESTAMP = 1
+    gs_module.GsUsb = _FakeGsUsb
     frame_module = ModuleType("gs_usb.gs_usb_frame")
-    frame_module.GsUsbFrame = _FakeGsUsbFrame  # type: ignore[attr-defined]
+    frame_module.GsUsbFrame = _FakeGsUsbFrame
     monkeypatch.setitem(sys.modules, "gs_usb", package)
     monkeypatch.setitem(sys.modules, "gs_usb.gs_usb", gs_module)
     monkeypatch.setitem(sys.modules, "gs_usb.gs_usb_frame", frame_module)
@@ -140,11 +140,11 @@ def test_usb_discovery_retries_device_that_is_found_but_not_ready(
 ) -> None:
     device = _ReenumeratingDevice()
     core = ModuleType("usb.core")
-    core.USBError = _UsbError  # type: ignore[attr-defined]
-    core.find = mocker.Mock(return_value=device)  # type: ignore[attr-defined]
+    core.USBError = _UsbError
+    core.find = mocker.Mock(return_value=device)
     usb = ModuleType("usb")
-    usb.__path__ = []  # type: ignore[attr-defined]
-    usb.core = core  # type: ignore[attr-defined]
+    usb.__path__ = []
+    usb.core = core
     monkeypatch.setitem(sys.modules, "usb", usb)
     monkeypatch.setitem(sys.modules, "usb.core", core)
     mocker.patch.object(time, "sleep")

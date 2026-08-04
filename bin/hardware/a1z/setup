@@ -16,12 +16,12 @@
 # Install A1Z dependencies into a DimOS source checkout.
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 A1Z_SDK="a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224"
 ASSUME_YES=false
 
 usage() {
-    echo "usage: bin/setup-a1z [--yes]"
+    echo "usage: bin/hardware/a1z/setup [--yes]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -f "$REPO_ROOT/pyproject.toml" && -f "$REPO_ROOT/uv.lock" ]] || {
-    echo "bin/setup-a1z must run from a DimOS source checkout." >&2
+    echo "bin/hardware/a1z/setup must run from a DimOS source checkout." >&2
     exit 1
 }
 command -v uv >/dev/null 2>&1 || {

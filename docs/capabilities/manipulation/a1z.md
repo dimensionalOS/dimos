@@ -12,7 +12,7 @@ The repository setup script shows its complete plan and asks for confirmation
 before it changes the checkout environment or installs system packages:
 
 ```bash
-bin/setup-a1z
+bin/hardware/a1z/setup
 ```
 
 The script runs a locked, inexact sync so it preserves other extras in the

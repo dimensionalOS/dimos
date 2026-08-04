@@ -33,9 +33,6 @@ _a1z_keyboard_hw = a1z_hardware("arm")
 keyboard_teleop_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ControlCoordinator.blueprint(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
         hardware=[_a1z_keyboard_hw],
         tasks=[
             eef_twist_task(

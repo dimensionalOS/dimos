@@ -208,9 +208,9 @@ def a1z_adapter_module(
     a1z_arm_robot = ModuleType("a1z.robots.arm_robot")
     a1z_get_robot = ModuleType("a1z.robots.get_robot")
     a1z_kinematics = ModuleType("a1z.robots.kinematics")
-    a1z_arm_robot.ArmRobot = _FakeArmRobot  # type: ignore[attr-defined]
-    a1z_get_robot.get_a1z_robot = _FakeArmRobot  # type: ignore[attr-defined]
-    a1z_kinematics.Kinematics = _FakeKinematics  # type: ignore[attr-defined]
+    a1z_arm_robot.ArmRobot = _FakeArmRobot
+    a1z_get_robot.get_a1z_robot = _FakeArmRobot
+    a1z_kinematics.Kinematics = _FakeKinematics
 
     monkeypatch.setitem(sys.modules, "a1z", a1z_pkg)
     monkeypatch.setitem(sys.modules, "a1z.robots", a1z_robots)
