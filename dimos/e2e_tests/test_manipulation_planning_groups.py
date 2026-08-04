@@ -42,7 +42,9 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
+# The e2e harness always passes --simulation (DimosCliCall.simulator), so the
+# blueprint's hardware selection resolves to the in-memory whole-body adapter.
+BLUEPRINT = "openarm-planner-coordinator"
 
 
 def _wait_for_groups(
