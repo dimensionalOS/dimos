@@ -16,36 +16,9 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import attrs
-
-_A1Z_DOF = 6
-_A1Z_DEFAULT_KP = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
-_A1Z_DEFAULT_KD = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
-
-
-def _joint_gains(
-    value: tuple[float, ...] | list[float],
-    *,
-    name: str,
-    maximum: float,
-) -> tuple[float, ...]:
-    gains = tuple(float(gain) for gain in value)
-    if len(gains) != _A1Z_DOF:
-        raise ValueError(f"{name} must contain {_A1Z_DOF} values")
-    if any(not math.isfinite(gain) or not 0.0 <= gain <= maximum for gain in gains):
-        raise ValueError(f"{name} gains must be finite and within [0, {maximum}]")
-    return gains
-
-
-def _kp_gains(value: tuple[float, ...] | list[float]) -> tuple[float, ...]:
-    return _joint_gains(value, name="default_kp", maximum=200.0)
-
-
-def _kd_gains(value: tuple[float, ...] | list[float]) -> tuple[float, ...]:
-    return _joint_gains(value, name="default_kd", maximum=5.0)
 
 
 def _validate_optional_path(
@@ -98,14 +71,8 @@ class A1ZConfig:
             attrs.validators.le(1.0),
         ),
     )
-    default_kp: tuple[float, ...] = attrs.field(
-        default=_A1Z_DEFAULT_KP,
-        converter=_kp_gains,
-    )
-    default_kd: tuple[float, ...] = attrs.field(
-        default=_A1Z_DEFAULT_KD,
-        converter=_kd_gains,
-    )
+    default_kp: tuple[float, ...] = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
+    default_kd: tuple[float, ...] = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
     urdf_path: str | Path | None = attrs.field(
         default=None,
         validator=_validate_optional_path,
