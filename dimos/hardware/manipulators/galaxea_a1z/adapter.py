@@ -492,7 +492,12 @@ class GalaxeaA1ZAdapter:
     def write_gripper_position(self, position: float) -> bool:
         """Command gripper opening (meters). False if no gripper attached."""
         gripper = self._config.gripper
-        if not self._connected or gripper is None or not self._robot.is_running:
+        if (
+            not self._connected
+            or gripper is None
+            or not self._robot.is_running
+            or self._robot.is_estopped
+        ):
             return False
         fraction = max(0.0, min(1.0, position / gripper.max_opening_m))
         try:
