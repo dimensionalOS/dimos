@@ -150,7 +150,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        return self._state in ("tracking", "settling", "stopping")
+        return self._state in ("tracking", "settling", "stopping") or self._pending_path is not None
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         if self._pending_path is not None:
