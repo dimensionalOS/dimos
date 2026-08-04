@@ -240,7 +240,7 @@ def build(
         """Per marker: the mean tag position, plus the medoid glimpse — the detection whose
         pose is most central — which orients the tag square and places the camera frustum."""
         odom_rows = odom_samples(gt_odom)
-        if not len(odom_rows):
+        if not len(odom_rows) or tag_stream not in streams:
             return []
         detections = filter_glimpses(
             read_raw_tag_stream(store, tag_stream), exclude_tags=(), **LANDMARK_GATES
