@@ -326,6 +326,10 @@ pub struct Config {
     /// score gives a variance (~1e-3) tight enough that GNC over-rejects; scaling
     /// it up loosens each loop so GNC keeps the true consensus set.
     pub loop_gnc_var_scale: f64,
+    /// Probability that a true inlier's residual falls under GNC's chi-squared
+    /// cost threshold. Lowering it tightens the test so GNC rejects more loops;
+    /// outside (0, 1) it keeps GNC's own 0.99 default.
+    pub loop_gnc_inlier_probability: f64,
     /// Ingest LocationConstraint events (consumed by the module wiring, not
     /// by GscPgo itself).
     pub use_location_constraints: bool,
@@ -377,6 +381,7 @@ impl Default for Config {
             loop_robust_huber_k: 1.345,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
+            loop_gnc_inlier_probability: 0.95,
             use_location_constraints: false,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,
@@ -393,6 +398,61 @@ impl Default for Config {
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
         }
+    }
+}
+
+impl Config {
+    /// Overwrite every false-closure gate with a preset for `level`, a single
+    /// dial from 0 (accept nearly any match) to 4 (every gate plus a tight
+    /// GNC). Level 2 reproduces this struct's own defaults, and a level
+    /// outside the range leaves the individually-set fields untouched.
+    ///
+    /// The gates it does not touch are the ones that are not accept/reject
+    /// tradeoffs: keyframing, the search radius, the odometry variances, and
+    /// the Huber kernel (numerical conditioning, not a filter).
+    pub fn apply_conservativeness(&mut self, level: i32) {
+        if !(0..=4).contains(&level) {
+            return;
+        }
+        let (score_thresh, scan_context_threshold, occupancy, degeneracy) = match level {
+            0 => (0.30, 0.70, 0, 0.0),
+            1 => (0.20, 0.50, 40, 0.02),
+            2 => (0.15, 0.40, 80, 0.05),
+            3 => (0.13, 0.30, 100, 0.07),
+            _ => (0.10, 0.15, 120, 0.10),
+        };
+        let (lowe_ratio, yank_deg, yank_distance, id_gap) = match level {
+            0..=2 => (0.0, 0.0, 0.0, 0),
+            3 => (0.97, 30.0, 8.0, 10),
+            _ => (0.85, 15.0, 5.0, 30),
+        };
+        let (instant_accept, min_agree, candidate_max) = match level {
+            0..=2 => (0.0, 2, 0.0),
+            3 => (10.0, 2, 200.0),
+            _ => (3.0, 3, 50.0),
+        };
+        let (gnc_final, gnc_var_scale, gnc_inlier_probability) = match level {
+            0 => (false, 100.0, 0.999),
+            1 => (true, 20.0, 0.999),
+            2 => (true, 10.0, 0.99),
+            3 => (true, 10.0, 0.95),
+            _ => (true, 5.0, 0.90),
+        };
+
+        self.loop_score_thresh = score_thresh;
+        self.scan_context_match_threshold = scan_context_threshold;
+        self.loop_min_occupancy = occupancy;
+        self.loop_min_degeneracy = degeneracy;
+        self.loop_max_lowe_ratio = lowe_ratio;
+        self.loop_max_yank_rotation_deg = yank_deg;
+        self.loop_yank_gate_max_distance_m = yank_distance;
+        self.loop_min_id_gap = id_gap;
+        self.loop_instant_accept_distance_m = instant_accept;
+        self.loop_buffer_min_agree = min_agree;
+        self.loop_candidate_max_distance_m = candidate_max;
+        self.loop_gnc_final = gnc_final;
+        self.loop_gnc_var_scale = gnc_var_scale;
+        self.loop_gnc_inlier_probability = gnc_inlier_probability;
     }
 }
 
@@ -1612,6 +1672,7 @@ impl GscPgo {
             loops: self.committed_loops.clone(),
             backbone_noise: BackboneNoise::from_config(&self.config),
             loop_gnc_var_scale: self.config.loop_gnc_var_scale,
+            loop_gnc_inlier_probability: self.config.loop_gnc_inlier_probability,
             sequence: self.gnc_sequence_dispatched,
         }
     }

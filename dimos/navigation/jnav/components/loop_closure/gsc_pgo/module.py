@@ -49,6 +49,14 @@ class PGOConfig(NativeModuleConfig):
     # TODO: when rust gets tf.get, remove this (don't need to require things in base_link)
     body_frame: str = "base_link"
 
+    # One dial over every false-closure gate below, instead of setting them individually:
+    #   0  accept almost any match (no occupancy/degeneracy/GNC gating)
+    #   2  the same values these fields already default to
+    #   4  every gate on, plus a tight GNC
+    # Redundant with the individual loop_* gates on purpose. Setting it overwrites all of
+    # them, so use one or the other. -1 (default) leaves the individual fields alone.
+    loop_conservativeness: int = -1
+
     # Keyframe detection
     keyframe_min_rotation_degrees: float = 10.0
     keyframe_min_distance_meters: float = 0.5
@@ -131,8 +139,12 @@ class PGOConfig(NativeModuleConfig):
     # rejects the mutually conflicting closures that Huber only down-weights, so a loop that
     # under-closes incrementally actually snaps shut. loop_gnc_var_scale loosens each loop's
     # score-derived variance so GNC keeps the true consensus set instead of over-rejecting.
+    # loop_gnc_inlier_probability is the chi-squared inlier cost threshold: lowering it tightens
+    # the test so GNC rejects more loops, and it is independent of a loop's variance (unlike
+    # loop_gnc_var_scale, which also weakens the surviving edges' pull).
     loop_gnc_final: bool = True
     loop_gnc_var_scale: float = 10.0
+    loop_gnc_inlier_probability: float = 0.95
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False

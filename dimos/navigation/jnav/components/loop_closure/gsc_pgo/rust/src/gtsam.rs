@@ -93,6 +93,7 @@ mod ffi {
             values: *const c_void,
             known_inlier_indices: *const u64,
             n_known: usize,
+            inlier_probability: f64,
             out_weights: *mut *mut f64,
             out_n_weights: *mut usize,
         ) -> *mut c_void;
@@ -280,10 +281,14 @@ impl FactorGraph {
     /// backbone) as never-rejected and letting GNC classify the rest. Returns
     /// the optimized `Values` plus each factor's final GNC weight (~1 inlier,
     /// ~0 rejected), indexed by factor position in this graph.
+    ///
+    /// `inlier_probability` sets the chi-squared inlier cost threshold, so a
+    /// lower value rejects more loops; outside (0, 1) it keeps GNC's own 0.99.
     pub fn gnc_optimize(
         &self,
         values: &Values,
         known_inliers: &[u64],
+        inlier_probability: f64,
     ) -> Result<(Values, Vec<f64>), GtsamError> {
         let mut out_weights: *mut f64 = std::ptr::null_mut();
         let mut out_len: usize = 0;
@@ -293,6 +298,7 @@ impl FactorGraph {
                 values.handle,
                 known_inliers.as_ptr(),
                 known_inliers.len(),
+                inlier_probability,
                 &mut out_weights,
                 &mut out_len,
             )
