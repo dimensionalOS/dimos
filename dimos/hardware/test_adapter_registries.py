@@ -55,7 +55,6 @@ EXPECTED_NAMES = {
         "a750",
         "galaxea_a1z",
         "mock",
-        "openarm",
         "piper",
         "sim_mujoco",
         "xarm",
