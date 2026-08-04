@@ -57,7 +57,7 @@ keyboard_teleop_piper = autoconnect(
         joint_state_frame_id="coordinator",
         hardware=[_piper_keyboard_hw],
         tasks=[
-            eef_twist_task(_piper_keyboard_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6),
+            eef_twist_task(_piper_keyboard_hw, robot_model=_piper_model),
             TaskConfig(
                 name="servo_gripper",
                 type="servo",
@@ -81,7 +81,7 @@ _piper_mock_cartesian_hw = make_piper_hardware(
 
 coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
     hardware=[_piper_mock_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+    tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, robot_model=_piper_model)],
 )
 
 _piper_teleop_hw = piper_hardware("arm", gripper_open_position=0.07, gripper_closed_position=0.0)
@@ -128,5 +128,5 @@ _piper_cartesian_hw = make_piper_hardware(
 
 coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cartesian_hw],
-    tasks=[cartesian_ik_task(_piper_cartesian_hw, model_path=PIPER_FK_MODEL, ee_joint_id=6)],
+    tasks=[cartesian_ik_task(_piper_cartesian_hw, robot_model=_piper_model)],
 )

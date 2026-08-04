@@ -1561,6 +1561,7 @@ dependencies = [
     { name = "opencv-contrib-python" },
     { name = "packaging" },
     { name = "pin" },
+    { name = "pin-pink" },
     { name = "plotext" },
     { name = "plum-dispatch" },
     { name = "protobuf" },
@@ -1569,6 +1570,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyturbojpeg" },
+    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reactivex" },
     { name = "rerun-sdk" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1636,7 +1638,6 @@ all = [
     { name = "open-clip-torch" },
     { name = "openai" },
     { name = "pillow" },
-    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "playground" },
     { name = "portal" },
@@ -1646,7 +1647,6 @@ all = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
     { name = "pyyaml" },
-    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "roboplan" },
@@ -1726,12 +1726,10 @@ manipulation = [
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "matplotlib" },
-    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "pycollada" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
-    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "roboplan" },
     { name = "trimesh" },
     { name = "viser", extra = ["urdf"] },
@@ -2098,7 +2096,7 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'learning'" },
     { name = "pillow", marker = "extra == 'perception'" },
     { name = "pin", specifier = ">=3.3.0" },
-    { name = "pin-pink", marker = "extra == 'manipulation'", specifier = ">=4.2.0" },
+    { name = "pin-pink", specifier = ">=4.3.0" },
     { name = "piper-sdk", marker = "extra == 'manipulation'" },
     { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5" },
     { name = "plotext", specifier = "==5.3.2" },
@@ -2117,7 +2115,7 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
-    { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'manipulation'", specifier = ">=4.12.0" },
+    { name = "qpsolvers", extras = ["proxqp"], specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0" },
@@ -6246,7 +6244,7 @@ wheels = [
 
 [[package]]
 name = "pin-pink"
-version = "4.2.0"
+version = "4.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loop-rate-limiters" },
@@ -6254,10 +6252,11 @@ dependencies = [
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pin" },
     { name = "qpsolvers" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1a/aa/52c817dea0240f41c6b2b0e0872561a63942c1cc5f26fe367f7da60fe183/pin_pink-4.2.0.tar.gz", hash = "sha256:21ffbb4624377d74036c4c4d1d9ba252a0c912cd7a2469117e768f36179c17e1", size = 284729, upload-time = "2026-04-20T09:47:38.34Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/5b/0bfab6a426c051215753995c65f0e2859e038e49e75510b64ce60a9712c1/pin_pink-4.3.0.tar.gz", hash = "sha256:65964e4a2e125d9f5f927f37ee8b85dcf57e125b4845fe6be034fa64c6ed3379", size = 52854, upload-time = "2026-07-15T18:58:20.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/de/9c1f8e4fe703ac917fa0bb161a928704b31c5fafce90a055dcabd5674ae4/pin_pink-4.2.0-py3-none-any.whl", hash = "sha256:8c405607eb94c92540a7b28147b5d638ba1e5dbfda8ef307e3e51572e3dd4477", size = 64871, upload-time = "2026-04-20T09:47:34.899Z" },
+    { url = "https://files.pythonhosted.org/packages/01/dc/863a1cbc36fcb269ebdaa0e42c4e31f1c9d28f6aa0bdbacbd923cf6b16cc/pin_pink-4.3.0-py3-none-any.whl", hash = "sha256:6a38c07e0f01a754f827166242acb2b9f0b03e726712a078d2e243fdbdbf6f6a", size = 64305, upload-time = "2026-07-15T18:58:19.173Z" },
 ]
 
 [[package]]

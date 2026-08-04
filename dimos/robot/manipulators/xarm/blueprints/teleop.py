@@ -43,6 +43,9 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+_xarm6_control_model = make_xarm6_model_config(add_gripper=False)
+_xarm7_control_model = make_xarm7_model_config(add_gripper=False)
+_xarm_eef_params = {**XARM_GRIPPER_PARAMS, "timeout": 0.0}
 
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -54,15 +57,14 @@ keyboard_teleop_xarm6 = autoconnect(
         tasks=[
             eef_twist_task(
                 _xarm6_hw,
-                model_path=XARM6_FK_MODEL,
-                ee_joint_id=6,
-                params=XARM_GRIPPER_PARAMS,
+                robot_model=_xarm6_control_model,
+                params=_xarm_eef_params,
             )
         ],
     ),
     ManipulationModule.blueprint(
         robots=[make_xarm6_model_config(add_gripper=True)],
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
 )
 
@@ -76,15 +78,14 @@ keyboard_teleop_xarm7 = autoconnect(
         tasks=[
             eef_twist_task(
                 _xarm7_hw,
-                model_path=XARM7_FK_MODEL,
-                ee_joint_id=7,
-                params=XARM_GRIPPER_PARAMS,
+                robot_model=_xarm7_control_model,
+                params=_xarm_eef_params,
             )
         ],
     ),
     ManipulationModule.blueprint(
         robots=[make_xarm7_model_config(add_gripper=True)],
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
 )
 
@@ -172,10 +173,9 @@ coordinator_teleop_xarm7 = autoconnect(
             ),
             eef_twist_task(
                 _xarm7_teleop_hw,
-                model_path=XARM7_FK_MODEL,
-                ee_joint_id=7,
+                robot_model=_xarm7_control_model,
                 priority=10,
-                params=XARM_GRIPPER_PARAMS,
+                params=_xarm_eef_params,
             ),
         ],
     ),
@@ -197,10 +197,9 @@ coordinator_teleop_xarm6 = autoconnect(
             ),
             eef_twist_task(
                 _xarm6_teleop_hw,
-                model_path=XARM6_FK_MODEL,
-                ee_joint_id=6,
+                robot_model=_xarm6_control_model,
                 priority=10,
-                params=XARM_GRIPPER_PARAMS,
+                params=_xarm_eef_params,
             ),
         ],
     ),

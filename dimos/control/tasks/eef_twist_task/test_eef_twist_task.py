@@ -21,7 +21,15 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
+    ControlIKResult,
+    IKControlRuntimeError,
+    PinkControlIKConfig,
+)
 from dimos.control.tasks.eef_twist_task.eef_twist_task import EEFTwistTask, EEFTwistTaskConfig
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
 
@@ -40,29 +48,53 @@ class FakeIK:
         self.nq = 3
         self.fk_calls: list[np.ndarray] = []
         self.solve_calls: list[FakePose] = []
+        self.dt_calls: list[float] = []
         self.solution = np.array([0.01, 0.02, 0.03], dtype=np.float64)
-        self.converged = True
-        self.final_error = 0.0
+        self.raise_runtime = False
 
     def forward_kinematics(self, q_current: NDArray[np.float64]) -> FakePose:
         self.fk_calls.append(q_current.copy())
         return FakePose(q_current.copy(), np.eye(3, dtype=np.float64))
 
-    def solve(
-        self, pose: FakePose, q_current: NDArray[np.float64]
-    ) -> tuple[NDArray[np.float64], bool, float]:
+    def solve(self, pose: FakePose, q_current: NDArray[np.float64], dt: float) -> ControlIKResult:
+        if self.raise_runtime:
+            raise IKControlRuntimeError("synthetic solver failure")
         self.solve_calls.append(pose.copy())
-        return self.solution.copy(), self.converged, self.final_error
+        self.dt_calls.append(dt)
+        return ControlIKResult(self.solution.copy(), self.solution - q_current)
 
 
 @pytest.fixture
 def fake_ik(mocker) -> FakeIK:
     ik = FakeIK()
     mocker.patch(
-        "dimos.control.tasks.eef_twist_task.eef_twist_task.PinocchioIK.from_model_path",
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
         return_value=ik,
     )
     return ik
+
+
+def _fake_robot_model() -> RobotModelConfig:
+    local_joints = ["joint1", "joint2", "joint3"]
+    return RobotModelConfig(
+        name="fake",
+        model_path="fake.urdf",
+        base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        joint_names=local_joints,
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(local_joints),
+                base_link="base",
+                tip_link="tool",
+            )
+        ],
+        joint_name_mapping={
+            f"arm/joint{index}": joint_name
+            for index, joint_name in enumerate(local_joints, start=1)
+        },
+        home_joints=[0.0, 0.0, 0.0],
+    )
 
 
 @pytest.fixture
@@ -71,10 +103,11 @@ def task(fake_ik: FakeIK) -> EEFTwistTask:
         "eef",
         EEFTwistTaskConfig(
             joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
-            model_path="fake.urdf",
-            ee_joint_id=3,
+            control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
             timeout=0.3,
             max_joint_delta_deg=15.0,
+            min_dt=0.02,
+            max_dt=0.03,
         ),
     )
 
@@ -111,25 +144,38 @@ def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_positio
     assert fake_ik.solve_calls[0].translation[0] > 0.0
 
 
-def test_jog_integrates_from_commanded_anchor_not_live_state(
+def test_twist_task_rejects_cartesian_commands_without_activation(task: EEFTwistTask) -> None:
+    assert not task.on_cartesian_command(object(), t_now=1.0)
+    assert not task.is_active()
+
+
+def test_ik_runtime_error_is_a_bounded_hold(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    fake_ik.raise_runtime = True
+    hold = task.compute(_state(1.01))
+    assert hold is not None
+    assert hold.mode == ControlMode.SERVO_POSITION
+    assert hold.positions == [0.0, 0.0, 0.0]
+
+
+def test_integration_uses_current_fk_and_coordinator_dt(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
     assert task.on_ee_twist_command(_twist(1.0), t_now=1.0)
 
     first = task.compute(_state(1.01, dt=0.01))
+    fake_ik.solution = np.array([0.51, 0.0, 0.0], dtype=np.float64)
     second = task.compute(_state(1.04, positions=[0.5, 0.0, 0.0], dt=0.01))
 
     assert first is not None
     assert second is not None
+    assert fake_ik.dt_calls == [0.02, 0.02]
     assert fake_ik.solve_calls[1].translation[0] > fake_ik.solve_calls[0].translation[0]
 
 
-def test_non_converged_ik_solution_is_accepted_when_joint_delta_is_safe(
+def test_control_ik_result_positions_are_used_when_shape_is_valid(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
-    fake_ik.converged = False
-    fake_ik.final_error = 1.0
-
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
     output = task.compute(_state(1.01))
 
@@ -143,16 +189,19 @@ def test_non_finite_ik_solution_is_rejected(task: EEFTwistTask, fake_ik: FakeIK)
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
     output = task.compute(_state(1.01))
 
-    assert output is None
+    assert output is not None
+    assert output.mode == ControlMode.SERVO_POSITION
+    assert output.positions == [0.0, 0.0, 0.0]
 
 
-def test_non_finite_twist_is_rejected(task: EEFTwistTask) -> None:
+def test_non_finite_twist_is_rejected_without_activating_task(task: EEFTwistTask) -> None:
     accepted = task.on_ee_twist_command(
         TwistStamped(frame_id="eef", linear=[np.nan, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
         t_now=1.0,
     )
 
     assert accepted is False
+    assert not task.is_active()
 
 
 def test_missing_joint_state_skips_fk_and_ik(task: EEFTwistTask, fake_ik: FakeIK) -> None:
@@ -165,64 +214,33 @@ def test_missing_joint_state_skips_fk_and_ik(task: EEFTwistTask, fake_ik: FakeIK
     assert fake_ik.solve_calls == []
 
 
-def test_joint_delta_rejection_returns_none(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+def test_joint_delta_rejection_returns_a_hold(task: EEFTwistTask, fake_ik: FakeIK) -> None:
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
     fake_ik.solution = np.array([10.0, 0.0, 0.0], dtype=np.float64)
 
     rejected = task.compute(_state(1.01))
 
-    assert rejected is None
+    assert rejected is not None
+    assert rejected.mode == ControlMode.SERVO_POSITION
+    assert rejected.positions == [0.0, 0.0, 0.0]
 
 
-def test_active_from_spawn_holds_current_pose_when_idle(
-    task: EEFTwistTask, fake_ik: FakeIK
-) -> None:
-    assert task.is_active()
-    held = task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
-    assert held is not None
-    assert held.mode == ControlMode.SERVO_POSITION
-    assert held.positions == [0.1, 0.2, 0.3]
-    assert fake_ik.solve_calls == []
-
-
-def test_zero_twist_holds_the_commanded_anchor_not_live_state(
+def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
     assert task.compute(_state(1.01)) is not None
 
-    assert task.on_ee_twist_command(_twist(0.0), t_now=1.5)
-    assert task.is_active()
-    held = task.compute(_state(1.51, positions=[0.4, 0.0, 0.0]))
-    assert held is not None
-    assert held.positions == fake_ik.solution.tolist()
+    assert task.compute(_state(1.5)) is None
+    assert not task.is_active()
 
-    prev_calls = len(fake_ik.solve_calls)
+    fake_ik.solution = np.array([1.01, 0.0, 0.0], dtype=np.float64)
     assert task.on_ee_twist_command(_twist(), t_now=2.0)
     assert task.compute(_state(2.01, positions=[1.0, 0.0, 0.0])) is not None
-    assert len(fake_ik.solve_calls) > prev_calls
+    assert fake_ik.solve_calls[-1].translation[0] > 1.0
 
-
-def test_stale_jog_times_out_and_holds(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.compute(_state(1.01)) is not None
-    jog_calls = len(fake_ik.solve_calls)
-
-    held = task.compute(_state(1.5))
-    assert held is not None
-    assert len(fake_ik.solve_calls) == jog_calls
-    assert held.positions == fake_ik.solution.tolist()
-
-
-def test_preempt_reseeds_anchor_from_live_pose(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.compute(_state(1.01)) is not None
-
-    task.on_preempted("teleop_xarm", frozenset(["arm/joint1"]))
-
-    held = task.compute(_state(2.0, positions=[0.7, 0.8, 0.9]))
-    assert held is not None
-    assert held.positions == [0.7, 0.8, 0.9]
+    assert task.on_ee_twist_command(_twist(0.0), t_now=2.02)
+    assert not task.is_active()
 
 
 @pytest.fixture
@@ -231,9 +249,8 @@ def gripper_task(fake_ik: FakeIK) -> EEFTwistTask:
         "eef",
         EEFTwistTaskConfig(
             joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
-            model_path="fake.urdf",
-            ee_joint_id=3,
-            timeout=0.3,
+            control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
+            timeout=0.0,
             max_joint_delta_deg=15.0,
             gripper_joint="arm/gripper",
             gripper_open_pos=0.85,
@@ -242,62 +259,34 @@ def gripper_task(fake_ik: FakeIK) -> EEFTwistTask:
     )
 
 
-def test_claim_includes_gripper_joint(gripper_task: EEFTwistTask) -> None:
-    assert "arm/gripper" in gripper_task.claim().joints
+def test_gripper_task_claims_and_outputs_gripper(gripper_task: EEFTwistTask) -> None:
+    gripper_task.start()
 
-
-def test_gripper_defaults_open_and_appends_to_output(gripper_task: EEFTwistTask) -> None:
     output = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
 
+    assert "arm/gripper" in gripper_task.claim().joints
     assert output is not None
     assert output.joint_names[-1] == "arm/gripper"
     assert output.positions[-1] == 0.85
 
 
-def test_gripper_command_toggles_target(gripper_task: EEFTwistTask) -> None:
+def test_gripper_command_updates_target(gripper_task: EEFTwistTask) -> None:
     assert gripper_task.on_gripper_command(Bool(data=True), 0.0)
-    closed = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
-    assert closed is not None
-    assert closed.positions[-1] == 0.0
 
-    assert gripper_task.on_gripper_command(Bool(data=False), 0.0)
-    opened = gripper_task.compute(_state(0.6, positions=[0.1, 0.2, 0.3]))
-    assert opened is not None
-    assert opened.positions[-1] == 0.85
+    output = gripper_task.compute(_state(0.5, positions=[0.1, 0.2, 0.3]))
+
+    assert output is not None
+    assert output.positions[-1] == 0.0
 
 
-def test_gripper_command_rejected_without_gripper_joint(task: EEFTwistTask) -> None:
-    assert task.on_gripper_command(Bool(data=True), 0.0) is False
-
-
-def test_estop_makes_task_inert(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    assert task.on_ee_twist_command(_twist(), t_now=1.0)
-    assert task.is_active()
-
-    task.set_estop(True)
-    assert not task.is_active()
-
-    task.set_estop(False)
-    held = task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
-    assert held is not None
-    assert held.positions == [0.1, 0.2, 0.3]
-
-
-def test_twist_in_transit_during_estop_is_rejected(task: EEFTwistTask, fake_ik: FakeIK) -> None:
-    task.set_estop(True)
-    assert task.on_ee_twist_command(_twist(), t_now=1.0) is False
-
-    task.set_estop(False)
-    # Nothing was stored, so clearing holds the live pose (no replayed jog).
-    held = task.compute(_state(2.0, positions=[0.5, 0.6, 0.7]))
-    assert held is not None
-    assert held.positions == [0.5, 0.6, 0.7]
-
-
-def test_gripper_command_in_transit_during_estop_is_rejected(gripper_task: EEFTwistTask) -> None:
+def test_commands_during_estop_are_rejected(gripper_task: EEFTwistTask) -> None:
+    gripper_task.start()
     gripper_task.set_estop(True)
-    assert gripper_task.on_gripper_command(Bool(data=True), 0.0) is False
-    # Held target (default open) is untouched by the rejected close.
+
+    assert not gripper_task.is_active()
+    assert not gripper_task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert not gripper_task.on_gripper_command(Bool(data=True), 1.0)
+
     gripper_task.set_estop(False)
     output = gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
     assert output is not None

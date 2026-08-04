@@ -19,6 +19,7 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
@@ -150,6 +151,32 @@ RoboPlan plans all target groups simultaneously. The Viser panel constructs a
 two-waypoint absolute path for interactive planning. There is no skill, MCP
 tool, or CLI motion command yet.
 
+### Cartesian control IK
+
+Cartesian and keyboard EEF-twist tasks use the direct URDF/Xacro model from
+`RobotModelConfig`. The configuration supplies package paths, Xacro arguments,
+the named end-effector frame, and coordinator-to-model joint mapping. Invalid
+models, frames, or mappings fail at startup.
+
+Each control tick starts from measured joints, applies model position and
+velocity limits, and holds the measured position when a solve cannot produce a
+safe command. This local control path is separate from manipulation planning and
+does not use `WorldSpec` or provide world-obstacle avoidance.
+
+For a custom robot, pass the typed model configuration to the helper:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task
+
+task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+```
+
+Validate Cartesian and twist behavior in simulation or replay before hardware
+use.
+
 Install the manipulation dependencies:
 
 ```bash
@@ -270,7 +297,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   TwistStamped           EEFTwistTask             RRT planner
-  spatial EEF twist      (Pinocchio FK/IK)        JacobianIK
+  spatial EEF twist      (control IK)             JacobianIK
                                │                   DrakeWorld
                           JointState ────────────→ (visualization)
 ```
@@ -299,6 +326,7 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
+| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
@@ -314,6 +342,7 @@ planner is locked for its whole native call.
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
 | Piper | 6 | Y | Y | — |
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
