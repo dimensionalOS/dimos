@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<robot name="openarm_v10_bimanual">
-  <disable_collisions link1="openarm_left_link5" link2="openarm_left_link7" reason="Never in contact"/>
-  <disable_collisions link1="openarm_right_link5" link2="openarm_right_link7" reason="Never in contact"/>
-</robot>
