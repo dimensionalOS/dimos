@@ -18,7 +18,7 @@ Human Input ──→ Agent ──→ Skill Calls ──→ Robot
 - `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
-The agent uses LangGraph with a configurable LLM. The default is `gpt-4o` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
+The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
 
 ## Skills
 
@@ -39,7 +39,7 @@ class MySkillContainer(Module):
 **Rules:**
 - Parameters must be JSON-serializable primitives (`str`, `int`, `float`, `bool`, `list`, `dict`).
 - Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficient context.
-- The function must return a string or image which will be used by the agent to decide what to do next.
+- The function should return a `str`, or any object implementing `agent_encode()` (such as an `Image` or a `SkillResult`, `dimos/agents/skill_result.py`); other return values are converted with `str()`. The result is what the agent uses to decide what to do next.
 
 ### Built-in Skills
 
@@ -50,15 +50,15 @@ class MySkillContainer(Module):
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
 | `observe()` | `GO2Connection` | Capture and return current camera frame |
 | `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
-| `tag_location(name)` | `NavigationSkillContainer` | Tag current position for later recall |
+| `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
-| `follow_person(query)` | `PersonFollowSkill` | Visual servoing to follow a described person |
-| `stop_following()` | `PersonFollowSkill` | Stop person following |
+| `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |
+| `stop_following()` | `PersonFollowSkillContainer` | Stop person following |
 | `speak(text)` | `SpeakSkill` | Text-to-speech through robot speakers |
 | `where_am_i()` | `GoogleMapsSkillContainer` | Current street/area from GPS |
 | `get_gps_position_for_queries(queries)` | `GoogleMapsSkillContainer` | Look up GPS coordinates |
-| `set_gps_travel_points(points)` | `GPSNavSkill` | Navigate via GPS waypoints |
-| `map_query(query)` | `OsmSkill` | Search OpenStreetMap with VLM |
+| `set_gps_travel_points(points)` | `GpsNavSkillContainer` | Navigate via GPS waypoints |
+| `map_query(query_sentence)` | `OsmSkill` | Search OpenStreetMap with VLM |
 
 ## MCP
 
@@ -81,12 +81,12 @@ dimos mcp status                                    # Server status
 |--------|-------------|
 | `humancli` | Standalone terminal — type messages, see responses |
 | `dimos agent-send "text"` | One-shot CLI command via LCM |
-| `WebInput` | Web interface at localhost:7779 with optional Whisper STT |
+| `WebInput` | Web interface at localhost:5555 with Whisper STT |
 
 ## Models
 
 | Config | Model | Notes |
 |--------|-------|-------|
-| Default | `gpt-4o` | Best quality, requires `OPENAI_API_KEY` |
+| Default | `gpt-5.6-luna` | Requires `OPENAI_API_KEY` |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
 | Custom | Any LangChain-compatible | Set via `McpClient.blueprint(model="...")` |

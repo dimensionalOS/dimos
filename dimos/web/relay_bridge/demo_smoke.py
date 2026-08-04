@@ -33,7 +33,6 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-import cv2
 import numpy as np
 
 from dimos.web.relay_bridge.protocol import (
@@ -62,6 +61,8 @@ MANIFEST = RobotManifest(
 
 def make_jpeg(seq: int) -> bytes:
     """Synthetic camera frame: moving gradient + seq/timestamp overlay."""
+    import cv2
+
     ramp = np.linspace(0, 255, WIDTH, dtype=np.uint8)
     gray = np.roll(np.tile(ramp, (HEIGHT, 1)), (seq * 7) % WIDTH, axis=1)
     image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)

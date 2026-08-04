@@ -19,10 +19,18 @@ const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 // frame rather than routing a mangled channel name).
 const headerDecoder = new TextDecoder("utf-8", { fatal: true });
 
-/** Transport surface a policy writes to: one uni stream per sendFrame call. */
+/** Transport surface a policy writes to. */
 export interface ViewerSink {
+  /** One uni stream per call (latest channels; reset semantics need it). */
   sendFrame(bytes: Uint8Array): Promise<void>;
+  /** One persistent uni stream (reliable channels pack frames onto it). */
+  openStream(): Promise<FrameWriter>;
   kick(reason: string): void;
+}
+
+export interface FrameWriter {
+  write(bytes: Uint8Array): Promise<void>;
+  abort(reason?: unknown): Promise<void>;
 }
 
 export interface ChannelPolicy {
@@ -31,6 +39,9 @@ export interface ChannelPolicy {
   dropped: number;
   queued(): number;
   offer(bytes: Uint8Array): void;
+  /** Discard queued frames and release any persistent stream; later offers
+   * and in-flight drain completions become no-ops. Idempotent. */
+  dispose(): void;
 }
 
 /**
@@ -44,6 +55,7 @@ export class LatestChannel implements ChannelPolicy {
   dropped = 0;
   #pending: Uint8Array | null = null;
   #writing = false;
+  #disposed = false;
 
   constructor(readonly sink: ViewerSink) {}
 
@@ -52,13 +64,19 @@ export class LatestChannel implements ChannelPolicy {
   }
 
   offer(bytes: Uint8Array): void {
+    if (this.#disposed) return;
     if (this.#pending) this.dropped++;
     this.#pending = bytes;
     this.#drain();
   }
 
+  dispose(): void {
+    this.#disposed = true;
+    this.#pending = null;
+  }
+
   #drain(): void {
-    if (this.#writing) return;
+    if (this.#writing || this.#disposed) return;
     this.#writing = true;
     (async () => {
       while (this.#pending) {
@@ -68,9 +86,18 @@ export class LatestChannel implements ChannelPolicy {
         this.sent++;
       }
     })()
-      .catch(() => this.sink.kick("write failed"))
+      .catch(() => {
+        if (this.#disposed) return; // failure caused by disposal, not the viewer
+        this.sink.kick("write failed");
+        this.dispose();
+      })
       .finally(() => {
+        // Clearing #writing and rechecking must be one synchronous step: a
+        // frame offered between the loop observing an empty queue and this
+        // callback saw #writing still true and started no drain, so only
+        // this recheck can pick it up.
         this.#writing = false;
+        if (this.#pending) this.#drain();
       });
   }
 }
@@ -78,6 +105,12 @@ export class LatestChannel implements ChannelPolicy {
 /**
  * Reliable: bounded per-viewer FIFO, no drops, delivery order preserved. On
  * overflow the viewer is kicked (better a visible reconnect than silent loss).
+ *
+ * All frames ride ONE persistent uni stream (opened on first use): QUIC
+ * streams deliver in order, and stream-per-frame exhausts Firefox's ~100
+ * uni-stream credit, which is only replenished when streams complete - and
+ * Deno's lazy FIN (README bug 2) keeps delivered streams incomplete for
+ * seconds (README bug 11).
  */
 export class ReliableChannel implements ChannelPolicy {
   readonly delivery: Delivery = "reliable";
@@ -86,6 +119,8 @@ export class ReliableChannel implements ChannelPolicy {
   #fifo: Uint8Array[] = [];
   #bytes = 0;
   #writing = false;
+  #writer: FrameWriter | null = null;
+  #disposed = false;
 
   constructor(readonly sink: ViewerSink) {}
 
@@ -94,6 +129,7 @@ export class ReliableChannel implements ChannelPolicy {
   }
 
   offer(bytes: Uint8Array): void {
+    if (this.#disposed) return;
     this.#fifo.push(bytes);
     this.#bytes += bytes.byteLength;
     if (this.#fifo.length > RELIABLE_MAX_QUEUE || this.#bytes > RELIABLE_MAX_BYTES) {
@@ -103,19 +139,46 @@ export class ReliableChannel implements ChannelPolicy {
     this.#drain();
   }
 
+  dispose(): void {
+    this.#disposed = true;
+    this.#fifo.length = 0;
+    this.#bytes = 0;
+    // Abort, not close: close would still deliver the queued stale frames and
+    // (with Deno's lazy FIN, README bug 2) hold the stream's credit for
+    // seconds; both receivers treat a reset as end-of-stream, dropping a
+    // partial frame.
+    this.#writer?.abort().catch(() => {});
+    this.#writer = null;
+  }
+
   #drain(): void {
-    if (this.#writing) return;
+    if (this.#writing || this.#disposed) return;
     this.#writing = true;
     (async () => {
+      const writer = this.#writer ??= await this.sink.openStream();
+      if (this.#disposed) {
+        // dispose() ran while the stream was opening and saw no writer to
+        // abort; release the stream here.
+        writer.abort().catch(() => {});
+        this.#writer = null;
+        return;
+      }
       for (let bytes = this.#fifo.shift(); bytes; bytes = this.#fifo.shift()) {
         this.#bytes -= bytes.byteLength;
-        await this.sink.sendFrame(bytes);
+        await writer.write(bytes);
         this.sent++;
       }
     })()
-      .catch(() => this.sink.kick("write failed"))
+      .catch(() => {
+        if (this.#disposed) return; // failure caused by disposal, not the viewer
+        this.sink.kick("write failed");
+        this.dispose();
+      })
       .finally(() => {
+        // Same lost-wakeup guard as LatestChannel: recheck in the step that
+        // clears #writing.
         this.#writing = false;
+        if (this.#fifo.length > 0) this.#drain();
       });
   }
 }

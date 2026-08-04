@@ -1,0 +1,54 @@
+.bar {
+  align-items: center;
+  background: #1c2128;
+  border-bottom: 1px solid #30363d;
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.pill {
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 0.1rem 0.6rem;
+}
+
+.pill[data-phase="connecting"] {
+  background: #3d3017;
+  color: #d4a72c;
+}
+
+.pill[data-phase="connected"] {
+  background: #12301c;
+  color: #3fb950;
+}
+
+.pill[data-phase="reconnecting"] {
+  background: #3d2317;
+  color: #db6d28;
+}
+
+.pill[data-phase="failed"] {
+  background: #3c1618;
+  color: #f85149;
+}
+
+.detail {
+  color: #8b949e;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.robot {
+  color: #8b949e;
+  margin-left: auto;
+}
+
+.error {
+  color: #f85149;
+  font-size: 12px;
+}
