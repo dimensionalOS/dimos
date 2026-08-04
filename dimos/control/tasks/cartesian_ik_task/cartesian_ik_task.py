@@ -93,8 +93,9 @@ class CartesianIKTask(BaseControlTask):
     """Cartesian control task with Pink differential IK.
 
     Accepts streaming cartesian poses via on_cartesian_command() and computes IK
-    internally to output joint commands. Pink re-anchors each solve to the
-    current joint state from CoordinatorState.
+    internally to output joint commands. By default, Pink re-anchors each solve
+    to the current joint state from CoordinatorState. Specializations can retain
+    a validated command as the next solve seed.
 
     Unlike CartesianServoTask (which bypasses joint arbitration), this task
     outputs JointCommandOutput and participates in joint-level arbitration.
@@ -186,7 +187,7 @@ class CartesianIKTask(BaseControlTask):
             state: Current coordinator state (contains measured joint positions)
 
         Returns:
-            JointCommandOutput with positions or a measured-state hold after an
+            JointCommandOutput with positions or a solve-state hold after an
             expected runtime failure; None if inactive or timed out.
         """
         with self._lock:
@@ -205,13 +206,17 @@ class CartesianIKTask(BaseControlTask):
                     self._on_timeout()
                     return None
 
-        q_current = self._get_current_joints(state)
-        if q_current is None:
+        q_measured = self._get_current_joints(state)
+        if q_measured is None:
             logger.debug(f"CartesianIKTask {self._name}: missing joint state for IK warm-start")
             return None
-        if not np.all(np.isfinite(q_current)):
+        if not np.all(np.isfinite(q_measured)):
             logger.error("CartesianIKTask %s: measured joint state is non-finite", self._name)
             return None
+        q_current = self._select_solve_joints(state, q_measured)
+        if q_current.shape != q_measured.shape or not np.all(np.isfinite(q_current)):
+            logger.error("CartesianIKTask %s: solve joint state is invalid", self._name)
+            return self._hold(q_measured)
         raw_dt = state.dt
         if not np.isfinite(raw_dt) or raw_dt <= 0.0:
             return self._hold(q_current)
@@ -245,6 +250,7 @@ class CartesianIKTask(BaseControlTask):
             )
             return self._hold(q_current)
 
+        self._on_solution_accepted(state, q_solution)
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             positions=q_solution.flatten().tolist(),
@@ -252,7 +258,7 @@ class CartesianIKTask(BaseControlTask):
         )
 
     def _hold(self, q_current: NDArray[np.float64]) -> JointCommandOutput:
-        """Keep the measured configuration under the task's servo contract."""
+        """Keep the selected solve configuration under the task's servo contract."""
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             positions=q_current.tolist(),
@@ -269,13 +275,28 @@ class CartesianIKTask(BaseControlTask):
             positions.append(pos)
         return np.array(positions, dtype=np.float64)
 
+    def _select_solve_joints(
+        self,
+        state: CoordinatorState,
+        q_measured: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Select the joint state used to warm-start this tick's IK solve."""
+        return q_measured
+
+    def _on_solution_accepted(
+        self,
+        state: CoordinatorState,
+        q_solution: NDArray[np.float64],
+    ) -> None:
+        """Handle a finite, shape-valid, joint-delta-checked IK solution."""
+
     def _prepare_target(
         self,
         state: CoordinatorState,
         q_current: NDArray[np.float64],
         dt: float,
     ) -> pinocchio.SE3 | None:
-        """Prepare one normalized target for the measured-state solve."""
+        """Prepare one normalized target for the selected solve configuration."""
         with self._lock:
             pose = self._target_pose
         if pose is None:

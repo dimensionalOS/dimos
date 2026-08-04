@@ -49,6 +49,7 @@ class _FakePinkIK:
         self.fk_calls: list[NDArray[np.float64]] = []
         self.solve_calls: list[tuple[pinocchio.SE3, NDArray[np.float64], float]] = []
         self.solution = np.array([0.01, 0.02], dtype=np.float64)
+        self.increment: NDArray[np.float64] | None = None
         self.raise_runtime = False
 
     def forward_kinematics(self, q: NDArray[np.float64]) -> pinocchio.SE3:
@@ -67,7 +68,8 @@ class _FakePinkIK:
         if self.raise_runtime:
             raise IKControlRuntimeError("synthetic Pink failure")
         self.solve_calls.append((target.copy(), measured.copy(), dt))
-        return ControlIKResult(self.solution.copy(), self.solution - measured)
+        solution = self.solution if self.increment is None else measured + self.increment
+        return ControlIKResult(solution.copy(), solution - measured)
 
 
 def _robot(path: Path) -> RobotModelConfig:
@@ -184,6 +186,25 @@ def test_delta_is_composed_with_one_measured_engagement_baseline(
     assert (first_dt, second_dt) == (0.03, 0.02)
 
 
+def test_teleop_ik_iterates_from_last_command_when_feedback_lags(
+    task: TeleopIKTask, fake_ik: _FakePinkIK
+) -> None:
+    fake_ik.increment = np.array([0.01, 0.0], dtype=np.float64)
+    assert task.on_cartesian_command(_delta(), t_now=1.0)
+
+    first = task.compute(_state(1.01))
+    second = task.compute(_state(1.02))
+
+    assert first is not None
+    assert second is not None
+    assert first.positions == pytest.approx([0.01, 0.0])
+    assert second.positions == pytest.approx([0.02, 0.0])
+    np.testing.assert_allclose(
+        [solve[1] for solve in fake_ik.solve_calls],
+        np.array([[0.0, 0.0], [0.01, 0.0]]),
+    )
+
+
 def test_missing_joint_state_defers_baseline_and_output(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
@@ -230,16 +251,34 @@ def test_release_timeout_stop_and_clear_force_fresh_baselines(
     assert task.on_teleop_buttons(pressed, 2.0)
     assert task.on_cartesian_command(_delta(), 2.0)
     assert task.compute(_state(2.01, (0.1, 0.2))) is not None
+    np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.1, 0.2])
     assert task.compute(_state(3.0, (0.1, 0.2))) is None
 
     assert task.on_cartesian_command(_delta(), 4.0)
     assert task.compute(_state(4.01, (0.2, 0.3))) is not None
+    np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.2, 0.3])
     task.stop()
     task.start()
     assert task.on_cartesian_command(_delta(), 5.0)
     assert task.compute(_state(5.01, (0.3, 0.4))) is not None
+    np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.3, 0.4])
     task.clear()
     assert len(fake_ik.fk_calls) == 4
+
+
+def test_preemption_discards_teleop_commanded_solve_seed(
+    task: TeleopIKTask, fake_ik: _FakePinkIK
+) -> None:
+    fake_ik.increment = np.array([0.01, 0.0], dtype=np.float64)
+    assert task.on_cartesian_command(_delta(), t_now=1.0)
+    assert task.compute(_state(1.01)) is not None
+
+    task.on_preempted("higher_priority", frozenset(["arm/joint1"]))
+    output = task.compute(_state(1.02, (0.5, 0.5)))
+
+    assert output is not None
+    assert output.positions == pytest.approx([0.51, 0.5])
+    np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.5, 0.5])
 
 
 def test_estop_rejects_commands_and_never_replays_them(
@@ -317,6 +356,7 @@ def test_factory_applies_balanced_teleop_control_policy(
     assert task._config.control_ik.position_cost == 1.0
     assert task._config.control_ik.orientation_cost == 1.0
     assert task._config.control_ik.posture_cost == 0.0
+    assert task._config.control_ik.joint_centering_cost == 1e-3
     assert task._config.control_ik.damping_cost == 1e-3
     assert task._config.max_joint_delta_deg == 5.0
 

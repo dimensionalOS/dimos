@@ -58,13 +58,13 @@ def a1z_hardware(
     dynamics_urdf_path: Path | None = None,
     adapter_config: A1ZConfig | None = None,
 ) -> HardwareComponent:
-    """Configure mock or real A1Z hardware from the resolved global settings."""
+    """Configure mock A1Z hardware unless an explicit CAN port selects the real adapter."""
     adapter_type = "mock"
     address = None
     adapter_kwargs: dict[str, object] = {}
-    if not global_config.simulation:
+    if not global_config.simulation and global_config.can_port:
         adapter_type = "galaxea_a1z"
-        address = global_config.can_port or "a1zcan"
+        address = global_config.can_port
         resolved_config = adapter_config or A1ZConfig(
             gripper=A1ZGripperConfig() if has_gripper else None,
         )

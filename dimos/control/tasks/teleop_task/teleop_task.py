@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Engagement-relative teleop control through measured-state Pink IK."""
+"""Engagement-relative teleop control through command-integrating Pink IK."""
 
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ class TeleopControlIKConfig(PinkControlIKConfig):
     position_cost: FiniteFloat = Field(1.0, ge=0.0)
     orientation_cost: FiniteFloat = Field(1.0, ge=0.0)
     posture_cost: FiniteFloat = Field(0.0, ge=0.0)
+    joint_centering_cost: FiniteFloat = Field(1e-3, ge=0.0)
     damping_cost: FiniteFloat = Field(1e-3, ge=0.0)
 
 
@@ -74,6 +75,7 @@ class TeleopIKTask(CartesianIKTask):
             raise ValueError(f"TeleopIKTask '{name}' requires hand='left' or 'right'")
         super().__init__(name, config)
         self._initial_ee_pose: pinocchio.SE3 | None = None
+        self._last_commanded_joints: NDArray[np.float64] | None = None
         self._prev_primary = False
         self._estopped = False
         self._gripper_target = config.gripper_open_pos
@@ -106,7 +108,27 @@ class TeleopIKTask(CartesianIKTask):
                 self._active = False
                 self._target_pose = None
                 self._initial_ee_pose = None
+                self._last_commanded_joints = None
                 self._prev_primary = False
+
+    def _select_solve_joints(
+        self,
+        state: CoordinatorState,
+        q_measured: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        with self._lock:
+            if self._last_commanded_joints is None:
+                return q_measured
+            return self._last_commanded_joints.copy()
+
+    def _on_solution_accepted(
+        self,
+        state: CoordinatorState,
+        q_solution: NDArray[np.float64],
+    ) -> None:
+        with self._lock:
+            if not self._estopped and self._active and self._target_pose is not None:
+                self._last_commanded_joints = q_solution.copy()
 
     def _prepare_target(
         self,
@@ -171,10 +193,12 @@ class TeleopIKTask(CartesianIKTask):
                 return False
             if primary and not self._prev_primary:
                 self._initial_ee_pose = None
+                self._last_commanded_joints = None
             elif not primary and self._prev_primary:
                 self._active = False
                 self._target_pose = None
                 self._initial_ee_pose = None
+                self._last_commanded_joints = None
             self._prev_primary = primary
 
         if self._config.gripper_joint is not None:
@@ -213,7 +237,14 @@ class TeleopIKTask(CartesianIKTask):
     def _on_timeout(self) -> None:
         """Discard the baseline while the parent holds the task lock."""
         self._initial_ee_pose = None
+        self._last_commanded_joints = None
         self._prev_primary = False
+
+    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+        if joints & self._joint_names:
+            with self._lock:
+                self._last_commanded_joints = None
+        super().on_preempted(by_task, joints)
 
     def stop(self) -> None:
         """Stop output and discard engagement-relative state."""
@@ -222,6 +253,7 @@ class TeleopIKTask(CartesianIKTask):
             self._active = False
             self._target_pose = None
             self._initial_ee_pose = None
+            self._last_commanded_joints = None
             self._prev_primary = False
 
     def clear(self) -> None:
@@ -231,6 +263,7 @@ class TeleopIKTask(CartesianIKTask):
             self._active = False
             self._target_pose = None
             self._initial_ee_pose = None
+            self._last_commanded_joints = None
             self._prev_primary = False
 
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Measured-state end-effector twist control."""
+"""Command-integrating end-effector twist control."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import twist_to_numpy
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.msgs.std_msgs.Bool import Bool
 
@@ -44,7 +46,7 @@ logger = setup_logger()
 
 @dataclass
 class EEFTwistTaskConfig(CartesianIKTaskConfig):
-    """Configuration for measured-FK-relative EEF twist control."""
+    """Configuration for command-relative EEF twist control."""
 
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -52,7 +54,7 @@ class EEFTwistTaskConfig(CartesianIKTaskConfig):
 
 
 class EEFTwistTask(CartesianIKTask):
-    """Cartesian task specialization whose target is prepared from a twist."""
+    """Integrate twists from the last accepted command while the stream is active."""
 
     _config: EEFTwistTaskConfig
 
@@ -60,6 +62,7 @@ class EEFTwistTask(CartesianIKTask):
         super().__init__(name, config)
         self._twist_lock = threading.Lock()
         self._latest_twist: TwistStamped | None = None
+        self._last_commanded_joints: NDArray[np.float64] | None = None
         self._estopped = False
         self._gripper_target = config.gripper_open_pos
 
@@ -102,6 +105,7 @@ class EEFTwistTask(CartesianIKTask):
                 return False
             if np.allclose(values, 0.0):
                 self._latest_twist = None
+                self._last_commanded_joints = None
                 cleared = True
             else:
                 self._latest_twist = twist
@@ -133,6 +137,7 @@ class EEFTwistTask(CartesianIKTask):
             self._estopped = estopped
             if estopped:
                 self._latest_twist = None
+                self._last_commanded_joints = None
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         output = super().compute(state)
@@ -166,18 +171,46 @@ class EEFTwistTask(CartesianIKTask):
             return None
         return pose
 
+    def _select_solve_joints(
+        self,
+        state: CoordinatorState,
+        q_measured: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        with self._twist_lock:
+            if self._last_commanded_joints is None:
+                return q_measured
+            return self._last_commanded_joints.copy()
+
+    def _on_solution_accepted(
+        self,
+        state: CoordinatorState,
+        q_solution: NDArray[np.float64],
+    ) -> None:
+        with self._twist_lock:
+            if self._latest_twist is not None and not self._estopped:
+                self._last_commanded_joints = q_solution.copy()
+
+    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+        if joints & self._joint_names:
+            with self._twist_lock:
+                self._last_commanded_joints = None
+        super().on_preempted(by_task, joints)
+
     def stop(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
+            self._last_commanded_joints = None
         super().stop()
 
     def _on_timeout(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
+            self._last_commanded_joints = None
 
     def clear(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
+            self._last_commanded_joints = None
         super().clear()
 
 
