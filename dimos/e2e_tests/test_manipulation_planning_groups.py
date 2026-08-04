@@ -157,7 +157,8 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        [left] = _wait_for_groups(client, 1)
+        groups = _wait_for_groups(client, 2)
+        [left] = [group for group in groups if group.id.endswith("/left_manipulator")]
         left_id = left.id
 
         tasks = coordinator_client.list_tasks()
@@ -189,7 +190,12 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
         groups = _wait_for_groups(client, 2)
-        left_id, right_id = (group.id for group in groups)
+        group_ids = {
+            group.id.rsplit("/", 1)[-1]: group.id
+            for group in groups
+        }
+        left_id = group_ids["left_manipulator"]
+        right_id = group_ids["right_manipulator"]
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [JOINT_TRAJECTORY_TASK_NAME]

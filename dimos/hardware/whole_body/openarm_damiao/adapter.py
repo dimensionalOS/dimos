@@ -24,24 +24,16 @@ from can_motor_control import damiao
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.utils.data import LfsPath
 
-# Per-arm motor models, shoulder to wrist, from
-# openarm_description/config/arm/v10/joint_limits.yaml. Both arms use the same
-# CAN send ids 0x01..0x07 because each arm owns a dedicated bus.
-_ARM_MOTOR_TYPES = (
-    damiao.MotorType.DM8006,
-    damiao.MotorType.DM8006,
-    damiao.MotorType.DM4340,
-    damiao.MotorType.DM4340,
-    damiao.MotorType.DM4310,
-    damiao.MotorType.DM4310,
-    damiao.MotorType.DM4310,
-)
-
 
 def _arm_motors(side: str) -> list[can_motor_control.MotorSpec]:
     return [
-        can_motor_control.MotorSpec(f"openarm_{side}_joint{index}", motor_type, index, index | 0x10)
-        for index, motor_type in enumerate(_ARM_MOTOR_TYPES, start=1)
+        can_motor_control.MotorSpec(f"openarm_{side}_joint1", damiao.MotorType.DM8009, 0x01, 0x11),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint2", damiao.MotorType.DM8009, 0x02, 0x12),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint3", damiao.MotorType.DM4340, 0x03, 0x13),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint4", damiao.MotorType.DM4340, 0x04, 0x14),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint5", damiao.MotorType.DM4310, 0x05, 0x15),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint6", damiao.MotorType.DM4310, 0x06, 0x16),
+        can_motor_control.MotorSpec(f"openarm_{side}_joint7", damiao.MotorType.DM4310, 0x07, 0x17),
     ]
 
 
@@ -65,8 +57,8 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
         "left_gripper": "left_arm/gripper",
         "right_gripper": "right_arm/gripper",
     }
-    # Linux assigns can0/can1 in USB enumeration order; remap a swapped rig
-    # through DamiaoRuntimeConfig.bus_addresses instead of editing topology.
+    # can0/can1 follow USB enumeration order; remap through
+    # DamiaoRuntimeConfig.bus_addresses if the rig comes up swapped.
     bus_defaults = {"left": "can1", "right": "can0"}
     gravity_joint_names = (
         *(f"openarm_left_joint{index}" for index in range(1, 8)),

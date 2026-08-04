@@ -38,21 +38,16 @@ OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
 
-OPENARM_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
-    ("openarm_left_link5", "openarm_left_link7"),
-    ("openarm_right_link5", "openarm_right_link7"),
-]
-
 OPENARM_PKG = LfsPath("openarm_description")
 OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
 OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
-OPENARM_V10_FK_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_single.urdf"
-OPENARM_GRAVITY_MODEL_PATH = OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
+OPENARM_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
+OPENARM_BIMANUAL_SRDF = Path(__file__).parent / "openarm_v10_bimanual.srdf"
 OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 
-# MIT gains measured on v10 hardware (legacy adapter): with gravity
-# compensation active the PD terms only handle transient tracking, and high kd
-# excites gearbox buzz. Gripper slots bypass MIT control, so their gains are 0.
+# MIT gains measured on v10 hardware: with gravity compensation active the PD
+# terms only handle transient tracking, and high kd excites gearbox buzz.
+# Gripper slots bypass MIT control, so their gains are 0.
 _ARM_KP = (100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0)
 _ARM_KD = (1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8)
 
@@ -65,6 +60,11 @@ def validate_side(side: str) -> None:
 def openarm_arm_joints(side: str) -> list[str]:
     validate_side(side)
     return [f"{side}_arm/joint{i}" for i in range(1, OPENARM_DOF + 1)]
+
+
+def openarm_urdf_joints(side: str) -> list[str]:
+    validate_side(side)
+    return [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 
 
 def openarm_hardware() -> HardwareComponent:
@@ -87,13 +87,12 @@ def openarm_hardware() -> HardwareComponent:
     )
 
 
-def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig:
-    """Build one side's seven-joint planning model."""
+def openarm_control_model_config(side: str) -> RobotModelConfig:
+    """Build one arm's seven-joint model for its independent control-IK task."""
     validate_side(side)
-    resolved_name = name or f"{side}_arm"
-    local_joint_names = [f"openarm_{side}_joint{i}" for i in range(1, OPENARM_DOF + 1)]
+    local_joint_names = openarm_urdf_joints(side)
     return RobotModelConfig(
-        name=resolved_name,
+        name=f"{side}_arm",
         model_path=OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
         base_pose=base_pose(),
         joint_names=local_joint_names,
@@ -107,15 +106,53 @@ def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig
             )
         ],
         package_paths=OPENARM_PACKAGE_PATHS,
-        collision_exclusion_pairs=OPENARM_COLLISION_EXCLUSIONS,
+        auto_convert_meshes=True,
+        joint_name_mapping=dict(
+            zip(openarm_arm_joints(side), local_joint_names, strict=True)
+        ),
+        home_joints=[0.0] * OPENARM_DOF,
+    )
+
+
+def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModelConfig:
+    """Build the single fourteen-joint planning model with one group per arm.
+
+    SRDF generation does not compose collision exclusions across robots, so
+    both arms plan as one robot and the exclusions come from a hand-written
+    SRDF.
+    """
+    local_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
+    return RobotModelConfig(
+        name=name,
+        model_path=OPENARM_BIMANUAL_MODEL,
+        base_pose=base_pose(),
+        joint_names=local_joint_names,
+        base_link="openarm_body_link0",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_manipulator",
+                joint_names=tuple(openarm_urdf_joints("left")),
+                base_link="openarm_body_link0",
+                tip_link="openarm_left_link7",
+            ),
+            PlanningGroupDefinition(
+                name="right_manipulator",
+                joint_names=tuple(openarm_urdf_joints("right")),
+                base_link="openarm_body_link0",
+                tip_link="openarm_right_link7",
+            ),
+        ],
+        package_paths=OPENARM_PACKAGE_PATHS,
+        srdf_path=OPENARM_BIMANUAL_SRDF,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
         joint_name_mapping={
             coordinator_name: urdf_name
+            for side in OPENARM_SIDES
             for coordinator_name, urdf_name in zip(
-                openarm_arm_joints(side), local_joint_names, strict=True
+                openarm_arm_joints(side), openarm_urdf_joints(side), strict=True
             )
         },
-        home_joints=[0.0] * OPENARM_DOF,
+        home_joints=[0.0] * (2 * OPENARM_DOF),
     )

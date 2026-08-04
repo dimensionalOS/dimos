@@ -22,8 +22,8 @@ from dimos.robot.manipulators.common.blueprints import coordinator, planner
 from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
+    openarm_bimanual_model_config,
     openarm_hardware,
-    openarm_model_config,
 )
 
 
@@ -40,12 +40,7 @@ def _trajectory_task() -> TaskConfig:
 _openarm_planner_hw = openarm_hardware()
 
 openarm_planner_coordinator = autoconnect(
-    planner(
-        robots=[
-            openarm_model_config("left"),
-            openarm_model_config("right"),
-        ],
-    ),
+    planner(robots=[openarm_bimanual_model_config()]),
     coordinator(
         hardware=[_openarm_planner_hw],
         tasks=[_trajectory_task()],

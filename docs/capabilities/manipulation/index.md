@@ -37,8 +37,8 @@ an explicit target.
 OpenArm follows the same whole-body model with both arms and both grippers in
 one device: fourteen angular joints (`left_arm/joint1..7`,
 `right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
-`right_arm/gripper`). The keyboard jogs the left arm; the right arm holds its
-pose, and `[` / `]` drive both grippers together.
+`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
+its pose; keyboard gripper bindings are a follow-up.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 

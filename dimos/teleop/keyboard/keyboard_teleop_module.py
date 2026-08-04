@@ -62,6 +62,7 @@ DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
 # Normalized gripper command values.
 GRIPPER_OPEN_POSITION = 1.0
 GRIPPER_CLOSED_POSITION = 0.0
+# TODO: Improve gripper handling.
 GRIPPER_JOINT_NAME = "arm/gripper"
 
 TwistVector = tuple[float, float, float]
@@ -71,9 +72,6 @@ class KeyboardTeleopConfig(ModuleConfig):
     linear_speed: float = DEFAULT_LINEAR_SPEED
     angular_speed: float = DEFAULT_ANGULAR_SPEED
     gripper_open_position: float = GRIPPER_OPEN_POSITION
-    # All named joints receive the same opening; multi-gripper robots list
-    # every gripper joint here.
-    gripper_joint_names: list[str] = [GRIPPER_JOINT_NAME]
 
 
 def _motion_key_codes() -> frozenset[int]:
@@ -250,8 +248,7 @@ class KeyboardTeleopModule(Module):
         if self._gripper_position == position:
             return
         self._gripper_position = position
-        names = list(self.config.gripper_joint_names)
-        self.joint_command.publish(JointState(name=names, position=[position] * len(names)))
+        self.joint_command.publish(JointState(name=[GRIPPER_JOINT_NAME], position=[position]))
 
 
 def _twist_from_keys(
