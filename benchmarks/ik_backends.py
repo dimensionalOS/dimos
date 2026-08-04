@@ -16,25 +16,27 @@
 
 Issue: https://github.com/dimensionalOS/dimos/issues/3232
 
-For each robot, targets are sampled by drawing random collision-free joint
-configurations and mapping them through the world's forward kinematics, so every
-target is reachable by construction. Every backend runs against its own freshly
-built world (no shared mutable scene), receives identical targets and an
-equivalent seed, is timed with ``time.perf_counter``, and every successful
-solution is independently verified by pushing it back through the world's FK
-and comparing against the target with ``compute_pose_error``.
+Scenarios are one or more robots sharing a world (single arm or dual arm).
+Targets are sampled by drawing random joint configurations for every robot,
+keeping only scene-wide collision-free ones, and mapping them through the
+world's forward kinematics, so every target is reachable by construction.
+Every backend runs against its own freshly built world (no shared mutable
+scene), receives identical targets and an equivalent seed, is timed with
+``time.perf_counter``, and every successful solution is independently verified
+by pushing it back through the world's FK and comparing against the target
+with ``compute_pose_error``.
 
 Usage:
     uv run python benchmarks/ik_backends.py
-    uv run python benchmarks/ik_backends.py --robot xarm7 --solver pink --max-attempts 3
+    uv run python benchmarks/ik_backends.py --scenario dual_xarm6 --solver pink
     uv run python benchmarks/ik_backends.py --samples 200 --output /tmp/ik.json
 
-Extend by adding entries to ``ROBOT_CONFIG_FACTORIES`` / ``_solver_registry``.
+Extend by adding entries to ``SCENARIOS`` / ``_solver_registry``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
@@ -46,6 +48,8 @@ import numpy as np
 import typer
 
 from dimos.manipulation.planning.factory import create_kinematics, create_world
+from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
     RoboPlanKinematicsConfig,
@@ -62,13 +66,35 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.utils.transform_utils import pose_to_matrix
 
-ROBOT_CONFIG_FACTORIES: dict[str, Callable[[], RobotModelConfig]] = {
-    "xarm6": make_xarm6_model_config,
-    "xarm7": make_xarm7_model_config,
-}
-
 # Sampled targets whose FK pose is in collision are rejected; allow slack for rejection sampling.
 MAX_TARGET_TRIES_FACTOR = 20
+
+
+@dataclass(frozen=True)
+class ScenarioSpec:
+    """One benchmark scenario: one or more robots sharing a world."""
+
+    name: str
+    make_configs: Callable[[], list[RobotModelConfig]]
+
+
+def _single(make_config: Callable[[], RobotModelConfig]) -> Callable[[], list[RobotModelConfig]]:
+    return lambda: [make_config()]
+
+
+def _dual_xarm6_configs() -> list[RobotModelConfig]:
+    # Mirrors the dual_xarm6_planner blueprint: two xArm6 arms 1 m apart.
+    return [
+        make_xarm6_model_config(name="left_arm", y_offset=0.5),
+        make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+    ]
+
+
+SCENARIOS: dict[str, ScenarioSpec] = {
+    "xarm6": ScenarioSpec("xarm6", _single(make_xarm6_model_config)),
+    "xarm7": ScenarioSpec("xarm7", _single(make_xarm7_model_config)),
+    "dual_xarm6": ScenarioSpec("dual_xarm6", _dual_xarm6_configs),
+}
 
 
 @dataclass(frozen=True)
@@ -101,7 +127,7 @@ def _solver_registry(pink_max_iterations: int) -> dict[str, SolverSpec]:
 class SolveRecord:
     """One timed IK solve."""
 
-    robot: str
+    scenario: str
     backend: str
     target_index: int
     status: str
@@ -116,9 +142,9 @@ class SolveRecord:
 
 @dataclass
 class BackendRun:
-    """Records plus coarse resource usage for one backend on one robot."""
+    """Records plus coarse resource usage for one backend on one scenario."""
 
-    robot: str
+    scenario: str
     backend: str
     records: list[SolveRecord]
     peak_rss_delta_mb: float
@@ -136,9 +162,9 @@ class DistributionStats:
 
 @dataclass
 class RunSummary:
-    """Aggregate result for one (robot, backend) run."""
+    """Aggregate result for one (scenario, backend) run."""
 
-    robot: str
+    scenario: str
     backend: str
     samples: int
     success_rate: float
@@ -149,37 +175,79 @@ class RunSummary:
     peak_rss_delta_mb: float
 
 
+@dataclass
+class _Scene:
+    """A finalized world plus its resolved planning groups."""
+
+    world: WorldSpec
+    groups: list[PlanningGroup]
+    robot_ids: dict[str, WorldRobotID]  # keyed by robot (config) name
+
+
+def _build_scene(configs: Sequence[RobotModelConfig]) -> _Scene:
+    """Build a fresh finalized RoboPlan world for the given robot configs."""
+    world = create_world("roboplan")
+    robot_ids = {config.name: world.add_robot(config) for config in configs}
+    world.finalize()
+    registry = PlanningGroupRegistry(configs)
+    groups = [group for config in configs for group in registry.groups_for_robot(config.name)]
+    return _Scene(world=world, groups=groups, robot_ids=robot_ids)
+
+
+def _combined_seed(scene: _Scene) -> JointState:
+    """Current live state of every robot, expressed with global joint names."""
+    names: list[str] = []
+    positions: list[float] = []
+    for robot_name, robot_id in scene.robot_ids.items():
+        state = scene.world.get_joint_state(scene.world.get_live_context(), robot_id)
+        names.extend(f"{robot_name}/{name}" for name in state.name)
+        positions.extend(state.position)
+    return JointState(name=names, position=positions)
+
+
 def _sample_reachable_targets(
-    world: WorldSpec,
-    robot_id: WorldRobotID,
-    group_id: str,
+    scene: _Scene,
     count: int,
     rng: np.random.Generator,
-) -> list[PoseStamped]:
-    """Sample reachable, collision-free targets via FK of random valid configurations."""
-    lower, upper = world.get_joint_limits(robot_id)
-    reference = world.get_joint_state(world.get_live_context(), robot_id)
-    targets: list[PoseStamped] = []
+) -> list[dict[PlanningGroup, PoseStamped]]:
+    """Sample reachable, scene-wide collision-free multi-group targets via FK."""
+    limits = {
+        robot_id: scene.world.get_joint_limits(robot_id) for robot_id in scene.robot_ids.values()
+    }
+    references = {
+        robot_id: scene.world.get_joint_state(scene.world.get_live_context(), robot_id)
+        for robot_id in scene.robot_ids.values()
+    }
+    targets: list[dict[PlanningGroup, PoseStamped]] = []
     tries = 0
-    with world.scratch_context() as ctx:
+    with scene.world.scratch_context() as ctx:
         while len(targets) < count and tries < count * MAX_TARGET_TRIES_FACTOR:
             tries += 1
-            q = rng.uniform(lower, upper)
-            joint_state = JointState(
-                name=list(reference.name),
-                position=[float(v) for v in q],
-            )
-            if not world.check_config_collision_free(robot_id, joint_state):
+            for robot_id, reference in references.items():
+                lower, upper = limits[robot_id]
+                q = rng.uniform(lower, upper)
+                scene.world.set_joint_state(
+                    ctx,
+                    robot_id,
+                    JointState(
+                        name=list(reference.name),
+                        position=[float(v) for v in q],
+                    ),
+                )
+            # Scene-wide collision check: covers self-, inter-robot, and obstacle collisions.
+            if not scene.world.is_collision_free(ctx, next(iter(scene.robot_ids.values()))):
                 continue
-            world.set_joint_state(ctx, robot_id, joint_state)
-            pose = world.get_group_ee_pose(ctx, group_id)
             # OInK requires world-frame targets; rebuild with an explicit frame_id.
             targets.append(
-                PoseStamped(
-                    position=pose.position,
-                    orientation=pose.orientation,
-                    frame_id="world",
-                )
+                {
+                    group: PoseStamped(
+                        position=pose.position,
+                        orientation=pose.orientation,
+                        frame_id="world",
+                    )
+                    for group in scene.groups
+                    for pose in [scene.world.get_group_ee_pose(ctx, group.id)]
+                }
             )
     if len(targets) < count:
         raise RuntimeError(
@@ -188,44 +256,51 @@ def _sample_reachable_targets(
     return targets
 
 
-def _local_solution_joint_state(
-    reference: JointState,
-    solution: JointState,
-) -> JointState:
-    """Re-express a solution in the robot's local joint-name order.
-
-    Pink returns config (local) joint names, OInK returns global ``robot/joint``
-    names; positions are matched by local name so FK verification is backend-agnostic.
-    Joints absent from the solution keep their reference positions.
-    """
-    by_local_name: dict[str, float] = {}
-    for name, position in zip(solution.name, solution.position, strict=True):
-        by_local_name[name.rsplit("/", 1)[-1]] = position
-    return JointState(
-        name=list(reference.name),
-        position=[
-            by_local_name.get(name, ref)
-            for name, ref in zip(reference.name, reference.position, strict=True)
-        ],
-    )
-
-
 def _verify_solution(
-    world: WorldSpec,
-    robot_id: WorldRobotID,
-    group_id: str,
-    reference: JointState,
+    scene: _Scene,
     result: IKResult,
-    target: PoseStamped,
+    target: Mapping[PlanningGroup, PoseStamped],
 ) -> tuple[float, float] | None:
-    """Push a successful solution through the world's FK and score against the target."""
+    """Push a successful solution through the world's FK and score against the target.
+
+    Solutions use global ``robot/joint`` names (both backends); errors are the
+    worst across all pose-targeted groups.
+    """
     if not result.is_success() or result.joint_state is None:
         return None
-    solution = _local_solution_joint_state(reference, result.joint_state)
-    with world.scratch_context() as ctx:
-        world.set_joint_state(ctx, robot_id, solution)
-        actual = world.get_group_ee_pose(ctx, group_id)
-    return compute_pose_error(pose_to_matrix(actual), pose_to_matrix(target))
+    positions_by_robot: dict[str, dict[str, float]] = {
+        robot_name: {} for robot_name in scene.robot_ids
+    }
+    for name, position in zip(result.joint_state.name, result.joint_state.position, strict=True):
+        robot_name, _, local_name = name.rpartition("/")
+        if robot_name in positions_by_robot:
+            positions_by_robot[robot_name][local_name] = position
+    with scene.world.scratch_context() as ctx:
+        for robot_name, robot_id in scene.robot_ids.items():
+            reference = scene.world.get_joint_state(scene.world.get_live_context(), robot_id)
+            solved = positions_by_robot[robot_name]
+            scene.world.set_joint_state(
+                ctx,
+                robot_id,
+                JointState(
+                    name=list(reference.name),
+                    position=[
+                        solved.get(name, ref)
+                        for name, ref in zip(reference.name, reference.position, strict=True)
+                    ],
+                ),
+            )
+        errors = [
+            compute_pose_error(
+                pose_to_matrix(scene.world.get_group_ee_pose(ctx, group.id)),
+                pose_to_matrix(target_pose),
+            )
+            for group, target_pose in target.items()
+        ]
+    return (
+        max(error[0] for error in errors),
+        max(error[1] for error in errors),
+    )
 
 
 def _peak_rss_mb() -> float:
@@ -233,32 +308,22 @@ def _peak_rss_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
-def _build_world(config: RobotModelConfig) -> tuple[WorldSpec, WorldRobotID, str]:
-    """Build a fresh finalized RoboPlan world for one robot."""
-    world = create_world("roboplan")
-    robot_id = world.add_robot(config)
-    world.finalize()
-    return world, robot_id, f"{config.name}/manipulator"
-
-
 def _run_backend(
-    robot_name: str,
+    scenario: ScenarioSpec,
     solver: SolverSpec,
-    targets: Sequence[PoseStamped],
+    targets: Sequence[dict[PlanningGroup, PoseStamped]],
     warmup: int,
     max_attempts: int,
 ) -> BackendRun:
     """Run one backend against its own freshly built world."""
-    world, robot_id, group_id = _build_world(ROBOT_CONFIG_FACTORIES[robot_name]())
-    kinematics = solver.create(world)
-    reference = world.get_joint_state(world.get_live_context(), robot_id)
-    seed = reference
+    scene = _build_scene(scenario.make_configs())
+    kinematics = solver.create(scene.world)
+    seed = _combined_seed(scene)
 
-    def solve_once(target: PoseStamped) -> tuple[IKResult, float]:
+    def solve_once(target: Mapping[PlanningGroup, PoseStamped]) -> tuple[IKResult, float]:
         start = time.perf_counter()
-        result = kinematics.solve(
-            world,
-            robot_id,
+        result = kinematics.solve_pose_targets(
+            scene.world,
             target,
             seed=seed,
             check_collision=True,
@@ -273,10 +338,10 @@ def _run_backend(
     records: list[SolveRecord] = []
     for index, target in enumerate(targets[warmup:]):
         result, wall_time_ms = solve_once(target)
-        verified = _verify_solution(world, robot_id, group_id, reference, result, target)
+        verified = _verify_solution(scene, result, target)
         records.append(
             SolveRecord(
-                robot=robot_name,
+                scenario=scenario.name,
                 backend=solver.name,
                 target_index=index,
                 status=result.status.name,
@@ -290,7 +355,7 @@ def _run_backend(
             )
         )
     return BackendRun(
-        robot=robot_name,
+        scenario=scenario.name,
         backend=solver.name,
         records=records,
         peak_rss_delta_mb=_peak_rss_mb() - rss_before,
@@ -315,7 +380,7 @@ def _summarize(run: BackendRun) -> RunSummary:
     for r in run.records:
         status_counts[r.status] = status_counts.get(r.status, 0) + 1
     return RunSummary(
-        robot=run.robot,
+        scenario=run.scenario,
         backend=run.backend,
         samples=len(run.records),
         success_rate=len(successes) / len(run.records) if run.records else 0.0,
@@ -337,7 +402,7 @@ def _summarize(run: BackendRun) -> RunSummary:
 
 def _print_summary(summaries: Sequence[RunSummary]) -> None:
     header = (
-        f"{'robot':<8} {'backend':<14} {'n':>5} {'success':>8} "
+        f"{'scenario':<12} {'backend':<14} {'n':>5} {'success':>8} "
         f"{'p50 ms':>9} {'p95 ms':>9} {'mean ms':>9} "
         f"{'pos mm':>8} {'ori mrad':>9} {'rss ΔMB':>8}"
     )
@@ -347,7 +412,7 @@ def _print_summary(summaries: Sequence[RunSummary]) -> None:
         pos_mm = (s.verified_position_error_m.mean or 0.0) * 1000.0
         ori_mrad = (s.verified_orientation_error_rad.mean or 0.0) * 1000.0
         print(
-            f"{s.robot:<8} {s.backend:<14} {s.samples:>5} "
+            f"{s.scenario:<12} {s.backend:<14} {s.samples:>5} "
             f"{s.success_rate:>7.1%} "
             f"{s.latency_ms.p50 or 0.0:>9.2f} {s.latency_ms.p95 or 0.0:>9.2f} "
             f"{s.latency_ms.mean or 0.0:>9.2f} "
@@ -360,11 +425,11 @@ app = typer.Typer(help=__doc__, add_completion=False)
 
 @app.command()
 def main(
-    robots: list[str] = typer.Option(
-        list(ROBOT_CONFIG_FACTORIES), "--robot", "-r", help="Robots to benchmark (repeatable)."
+    scenarios: list[str] = typer.Option(
+        list(SCENARIOS), "--scenario", "-s", help="Scenarios to benchmark (repeatable)."
     ),
     solvers: list[str] = typer.Option(
-        [], "--solver", "-s", help="IK backends to run (repeatable, default: all)."
+        [], "--solver", help="IK backends to run (repeatable, default: all)."
     ),
     samples: int = typer.Option(200, help="Timed solves per backend."),
     warmup: int = typer.Option(10, help="Warmup solves discarded per backend."),
@@ -374,10 +439,10 @@ def main(
     output: Path | None = typer.Option(None, help="Optional JSON output path."),
 ) -> None:
     registry = _solver_registry(pink_max_iterations)
-    for robot in robots:
-        if robot not in ROBOT_CONFIG_FACTORIES:
+    for scenario in scenarios:
+        if scenario not in SCENARIOS:
             raise typer.BadParameter(
-                f"Unknown robot '{robot}'. Available: {sorted(ROBOT_CONFIG_FACTORIES)}"
+                f"Unknown scenario '{scenario}'. Available: {sorted(SCENARIOS)}"
             )
     selected = solvers or list(registry)
     for solver in selected:
@@ -385,21 +450,19 @@ def main(
             raise typer.BadParameter(f"Unknown solver '{solver}'. Available: {sorted(registry)}")
 
     runs: list[BackendRun] = []
-    for robot_name in robots:
+    for scenario_name in scenarios:
+        scenario_spec = SCENARIOS[scenario_name]
         print(
-            f"[setup] {robot_name}: sampling {samples + warmup} reachable targets ...", flush=True
+            f"[setup] {scenario_name}: sampling {samples + warmup} reachable targets ...",
+            flush=True,
         )
-        sample_world, sample_robot_id, sample_group_id = _build_world(
-            ROBOT_CONFIG_FACTORIES[robot_name]()
-        )
+        sample_scene = _build_scene(scenario_spec.make_configs())
         rng = np.random.default_rng(seed)
-        targets = _sample_reachable_targets(
-            sample_world, sample_robot_id, sample_group_id, samples + warmup, rng
-        )
+        targets = _sample_reachable_targets(sample_scene, samples + warmup, rng)
         for solver_name in selected:
-            print(f"[run] {robot_name} / {solver_name} ...", flush=True)
+            print(f"[run] {scenario_name} / {solver_name} ...", flush=True)
             runs.append(
-                _run_backend(robot_name, registry[solver_name], targets, warmup, max_attempts)
+                _run_backend(scenario_spec, registry[solver_name], targets, warmup, max_attempts)
             )
 
     summaries = [_summarize(run) for run in runs]
