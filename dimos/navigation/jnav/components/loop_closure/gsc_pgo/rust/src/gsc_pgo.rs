@@ -111,6 +111,8 @@ pub struct LoopPair {
     /// Diagnostic: ICP fitness (lidar) or 0 otherwise.
     pub score: f64,
     pub noise: NoiseModel,
+    /// Within `strong_accept_range`: no robust kernel, pinned as a GNC inlier.
+    pub strong: bool,
 }
 
 /// The relative-pose data of a committed loop, retained after the run so an
@@ -123,6 +125,8 @@ pub struct CommittedLoop {
     pub rotation_offset: Mat3,
     pub translation_offset: Vec3,
     pub score: f64,
+    /// See `LoopPair::strong`.
+    pub strong: bool,
     /// Final GNC weight from `finalize_gnc` (~1 inlier / kept, ~0 rejected).
     /// 1.0 until the batch GNC pass runs (or if `loop_gnc_final` is off).
     pub gnc_weight: f64,
@@ -315,6 +319,10 @@ pub struct Config {
     /// Robust (M-estimator) kernel wrapping all loop factors.
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
+    /// A closure whose candidate is within this distance (m) of the current pose
+    /// is trusted in full: no robust kernel, and pinned as an inlier in GNC.
+    /// Farther closures keep both defenses. 0 = off.
+    pub strong_accept_range: f64,
     /// After the incremental run, re-solve the whole graph once with a batch GNC
     /// (graduated non-convexity, TLS loss) optimizer that jointly classifies the
     /// committed loop closures inlier/outlier against the global residual — the
@@ -379,6 +387,7 @@ impl Default for Config {
             loop_buffer_min_agree: 2,
             loop_robust_kernel: true,
             loop_robust_huber_k: 1.345,
+            strong_accept_range: 0.0,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
             loop_gnc_inlier_probability: 0.95,
@@ -658,12 +667,13 @@ impl GscPgo {
                 };
                 let base = NoiseModel::diagonal_variances(&variances);
                 let robust;
-                let noise: &NoiseModel = if self.config.loop_robust_kernel && !is_tested {
-                    robust = NoiseModel::robust_huber(self.config.loop_robust_huber_k, &base);
-                    &robust
-                } else {
-                    &base
-                };
+                let noise: &NoiseModel =
+                    if self.config.loop_robust_kernel && !is_tested && !loop_edge.strong {
+                        robust = NoiseModel::robust_huber(self.config.loop_robust_huber_k, &base);
+                        &robust
+                    } else {
+                        &base
+                    };
                 graph
                     .add_between_pose3(
                         loop_edge.target_id as u64,
@@ -1330,6 +1340,8 @@ impl GscPgo {
             translation_offset,
             score,
             noise,
+            strong: self.config.strong_accept_range > 0.0
+                && diag.candidate_distance <= self.config.strong_accept_range,
         };
 
         // Short jumps carry almost no drift correction and are trusted on their
@@ -1388,6 +1400,7 @@ impl GscPgo {
             rotation_offset: pair.rotation_offset,
             translation_offset: pair.translation_offset,
             score: pair.score,
+            strong: pair.strong,
             gnc_weight: 1.0,
             isam2_factor_index: None,
             active_in_isam2: true,
@@ -1541,7 +1554,7 @@ impl GscPgo {
         // 添加回环因子 (add the loop factors)
         for (offset, pair) in cache_pairs.iter().enumerate() {
             let robust;
-            let noise: &NoiseModel = if self.config.loop_robust_kernel {
+            let noise: &NoiseModel = if self.config.loop_robust_kernel && !pair.strong {
                 robust = NoiseModel::robust_huber(self.config.loop_robust_huber_k, &pair.noise);
                 &robust
             } else {
@@ -1892,11 +1905,16 @@ impl GscPgo {
                     if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
                         continue;
                     }
-                    let variance =
-                        loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * self.config.loop_gnc_var_scale;
+                    let scale = if loop_edge.strong {
+                        1.0
+                    } else {
+                        self.config.loop_gnc_var_scale
+                    };
+                    let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * scale;
                     let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
                     let robust;
-                    let noise: &NoiseModel = if self.config.loop_robust_kernel {
+                    let noise: &NoiseModel = if self.config.loop_robust_kernel && !loop_edge.strong
+                    {
                         robust =
                             NoiseModel::robust_huber(self.config.loop_robust_huber_k, &gaussian);
                         &robust

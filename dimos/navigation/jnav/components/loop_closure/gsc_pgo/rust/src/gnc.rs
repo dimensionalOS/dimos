@@ -174,10 +174,18 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
     let mut graph = FactorGraph::new();
     let mut values = Values::new();
     build_odometry_backbone(&mut graph, &mut values, &job.keyframes, &job.backbone_noise);
-    let known_inlier_indices: Vec<u64> = (0..graph.len() as u64).collect();
+    let mut known_inlier_indices: Vec<u64> = (0..graph.len() as u64).collect();
     let backbone_factor_count = known_inlier_indices.len();
-    for loop_edge in &job.loops {
-        let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * job.loop_gnc_var_scale;
+    for (edge_idx, loop_edge) in job.loops.iter().enumerate() {
+        if loop_edge.strong {
+            known_inlier_indices.push((backbone_factor_count + edge_idx) as u64);
+        }
+        let scale = if loop_edge.strong {
+            1.0
+        } else {
+            job.loop_gnc_var_scale
+        };
+        let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * scale;
         let noise = NoiseModel::diagonal_variances(&[variance; 6]);
         graph
             .add_between_pose3(

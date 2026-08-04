@@ -133,6 +133,9 @@ class PGOConfig(NativeModuleConfig):
     # when a large loop applies a big one-shot correction; a no-op on already-tight graphs.
     loop_robust_kernel: bool = True
     loop_robust_huber_k: float = 1.345
+    # Closures whose candidate is within this many meters of the current pose skip the Huber
+    # kernel and are pinned as GNC inliers; farther ones keep both. 0 = off.
+    strong_accept_range: float = 0.0
 
     # After each loop closure, re-solve the whole graph once with a batch GNC (graduated
     # non-convexity, TLS loss) optimizer, pinning the odometry backbone as known inliers. GNC

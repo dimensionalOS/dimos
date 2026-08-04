@@ -118,6 +118,7 @@ pub struct Config {
     // Robust (Huber) kernel on loop factors
     pub loop_robust_kernel: bool,
     pub loop_robust_huber_k: f64,
+    pub strong_accept_range: f64,
 
     // Final batch GNC (TLS) re-solve over the committed closures.
     pub loop_gnc_final: bool,
@@ -176,6 +177,7 @@ impl Config {
             loop_buffer_min_agree: self.loop_buffer_min_agree,
             loop_robust_kernel: self.loop_robust_kernel,
             loop_robust_huber_k: self.loop_robust_huber_k,
+            strong_accept_range: self.strong_accept_range,
             loop_gnc_final: self.loop_gnc_final,
             loop_gnc_var_scale: self.loop_gnc_var_scale,
             loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
