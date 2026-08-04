@@ -25,10 +25,19 @@
               "delivery": "reliable",
               "maxHz": 20.5
             }
+          ],
+          "panels": [
+            {
+              "id": "color_image",
+              "kind": "video",
+              "channels": [
+                "color_image"
+              ]
+            }
           ]
         }
       },
-      "b64": "GwEAAHsidCI6ImhlbGxvIiwidiI6Miwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7ImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZW5jb2RpbmciOiJqcGVnLnYxIiwiZGVsaXZlcnkiOiJsYXRlc3QiLCJtYXhIeiI6MTUuNX0seyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dfX0="
+      "b64": "ZQEAAHsidCI6ImhlbGxvIiwidiI6Miwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7ImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZW5jb2RpbmciOiJqcGVnLnYxIiwiZGVsaXZlcnkiOiJsYXRlc3QiLCJtYXhIeiI6MTUuNX0seyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dLCJwYW5lbHMiOlt7ImlkIjoiY29sb3JfaW1hZ2UiLCJraW5kIjoidmlkZW8iLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdfV19fQ=="
     },
     {
       "name": "hello_viewer",
@@ -121,9 +130,18 @@
             "delivery": "reliable",
             "maxHz": 20.5
           }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
         ]
       },
-      "b64": "fAAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImdvMi1sYWIiLCJjaGFubmVscyI6W3siY2giOiJvZG9tIiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjV9XX0="
+      "b64": "ugAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImdvMi1sYWIiLCJjaGFubmVscyI6W3siY2giOiJvZG9tIiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjV9XSwicGFuZWxzIjpbeyJpZCI6InBvc2UiLCJraW5kIjoicmVhZG91dCIsImNoYW5uZWxzIjpbIm9kb20iXX1dfQ=="
     },
     {
       "name": "sub",

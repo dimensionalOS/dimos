@@ -25,10 +25,19 @@
               "delivery": "reliable",
               "maxHz": 20.5
             }
+          ],
+          "panels": [
+            {
+              "id": "color_image",
+              "kind": "video",
+              "channels": [
+                "color_image"
+              ]
+            }
           ]
         }
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoyLCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41fSx7ImNoIjoib2RvbSIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41fV19fQ=="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoyLCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41fSx7ImNoIjoib2RvbSIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41fV0sInBhbmVscyI6W3siaWQiOiJjb2xvcl9pbWFnZSIsImtpbmQiOiJ2aWRlbyIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl19XX19"
     },
     {
       "name": "hello_viewer",
@@ -121,9 +130,18 @@
             "delivery": "reliable",
             "maxHz": 20.5
           }
+        ],
+        "panels": [
+          {
+            "id": "pose",
+            "kind": "readout",
+            "channels": [
+              "odom"
+            ]
+          }
         ]
       },
-      "b64": "eyJ0IjoibWFuaWZlc3QiLCJyb2JvdElkIjoiZ28yLWxhYiIsImNoYW5uZWxzIjpbeyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dfQ=="
+      "b64": "eyJ0IjoibWFuaWZlc3QiLCJyb2JvdElkIjoiZ28yLWxhYiIsImNoYW5uZWxzIjpbeyJjaCI6Im9kb20iLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNX1dLCJwYW5lbHMiOlt7ImlkIjoicG9zZSIsImtpbmQiOiJyZWFkb3V0IiwiY2hhbm5lbHMiOlsib2RvbSJdfV19"
     },
     {
       "name": "sub",
