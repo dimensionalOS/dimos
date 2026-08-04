@@ -49,6 +49,14 @@ class PGOConfig(NativeModuleConfig):
     # TODO: when rust gets tf.get, remove this (don't need to require things in base_link)
     body_frame: str = "base_link"
 
+    # One dial over every false-closure gate below, instead of setting them individually:
+    #   0  accept almost any match (no occupancy/degeneracy/GNC gating)
+    #   2  the same values these fields already default to
+    #   4  every gate on, plus a tight GNC
+    # Redundant with the individual loop_* gates on purpose. Setting it overwrites all of
+    # them, so use one or the other. -1 (default) leaves the individual fields alone.
+    loop_conservativeness: int = -1
+
     # Keyframe detection
     keyframe_min_rotation_degrees: float = 10.0
     keyframe_min_distance_meters: float = 0.5

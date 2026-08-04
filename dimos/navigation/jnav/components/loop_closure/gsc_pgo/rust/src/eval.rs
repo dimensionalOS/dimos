@@ -103,6 +103,8 @@ struct EvalConfig {
     odom_trans_z_var: f64,
 
     max_scan_queue: i32,
+
+    loop_conservativeness: i32,
 }
 
 impl Default for EvalConfig {
@@ -153,13 +155,14 @@ impl Default for EvalConfig {
             odom_trans_xy_var: 1e-4,
             odom_trans_z_var: 1e-6,
             max_scan_queue: 100,
+            loop_conservativeness: -1,
         }
     }
 }
 
 impl EvalConfig {
     fn to_pgo(&self) -> PgoConfig {
-        PgoConfig {
+        let mut config = PgoConfig {
             keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
             keyframe_min_distance_meters: self.keyframe_min_distance_meters,
             loop_search_radius: self.loop_search_radius,
@@ -200,7 +203,9 @@ impl EvalConfig {
             scan_context_top_k: self.scan_context_top_k,
             scan_context_match_threshold: self.scan_context_match_threshold,
             scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        }
+        };
+        config.apply_conservativeness(self.loop_conservativeness);
+        config
     }
 }
 

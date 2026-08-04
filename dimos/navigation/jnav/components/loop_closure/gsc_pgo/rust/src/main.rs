@@ -142,11 +142,18 @@ pub struct Config {
 
     /// Bounded scan FIFO depth (<= 0 = unbounded).
     pub max_scan_queue: i32,
+
+    /// One dial over every false-closure gate, 0 (closure-happy) to 4 (all
+    /// gates plus a tight GNC). Redundant with the individual `loop_*` gates
+    /// on purpose: when set it overwrites all of them, so set one or the
+    /// other. -1 leaves the individual fields alone.
+    #[validate(range(min = -1, max = 4))]
+    pub loop_conservativeness: i32,
 }
 
 impl Config {
     fn pgo(&self) -> PgoConfig {
-        PgoConfig {
+        let mut config = PgoConfig {
             keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
             keyframe_min_distance_meters: self.keyframe_min_distance_meters,
             loop_search_radius: self.loop_search_radius,
@@ -187,7 +194,9 @@ impl Config {
             scan_context_top_k: self.scan_context_top_k,
             scan_context_match_threshold: self.scan_context_match_threshold,
             scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        }
+        };
+        config.apply_conservativeness(self.loop_conservativeness);
+        config
     }
 }
 
