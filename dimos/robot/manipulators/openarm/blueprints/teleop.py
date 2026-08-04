@@ -16,58 +16,93 @@
 
 from __future__ import annotations
 
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import (
-    eef_twist_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
-)
+from dimos.robot.manipulators.common.blueprints import coordinator, planner
+from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 from dimos.robot.manipulators.openarm.config import (
-    LEFT_CAN,
-    openarm_single_hardware,
-    openarm_single_model_config,
+    OPENARM_GRIPPER_JOINTS,
+    openarm_arm_joints,
+    openarm_hardware,
+    openarm_model_config,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_teleop_hw = openarm_single_hardware()
-_openarm_model = openarm_single_model_config()
+# The keyboard publishes twists to one task by name; the right arm's task
+# keeps holding its anchor pose.
+KEYBOARD_EEF_TASK_NAME = "eef_twist_left_arm"
 
-keyboard_teleop_openarm_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_teleop_hw],
+_openarm_keyboard_hw = openarm_hardware()
+_openarm_models = {
+    side: openarm_model_config(side) for side in ("left", "right")
+}
+
+
+def _eef_twist_task(side: str, *, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=f"eef_twist_{side}_arm",
+        type="eef_twist",
+        joint_names=openarm_arm_joints(side),
+        priority=priority,
+        params={"control_ik": {"robot_model": _openarm_models[side]}},
+    )
+
+
+def _trajectory_task(*, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=DEFAULT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=[*openarm_arm_joints("left"), *openarm_arm_joints("right")],
+        priority=priority,
+        params={"start_position_tolerance": 0.05},
+    )
+
+
+def _gripper_task() -> TaskConfig:
+    return TaskConfig(
+        name="servo_grippers",
+        type="servo",
+        joint_names=list(OPENARM_GRIPPER_JOINTS),
+        priority=20,
+        params={"timeout": 0.0},
+    )
+
+
+keyboard_teleop_openarm = autoconnect(
+    KeyboardTeleopModule.blueprint(
+        task_name=KEYBOARD_EEF_TASK_NAME,
+        gripper_joint_names=list(OPENARM_GRIPPER_JOINTS),
+    ),
+    ControlCoordinator.blueprint(
+        hardware=[_openarm_keyboard_hw],
         tasks=[
-            eef_twist_task(
-                _teleop_hw,
-                robot_model=_openarm_model,
-            )
+            _eef_twist_task("left"),
+            _eef_twist_task("right"),
+            _gripper_task(),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
+        robots=list(_openarm_models.values()),
+        visualization={"backend": "viser"},
     ),
 )
 
-_teleop_real_hw = openarm_single_hardware(adapter_type="openarm", address=LEFT_CAN)
+_openarm_keyboard_planner_hw = openarm_hardware()
 
-keyboard_teleop_openarm = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_teleop_real_hw],
-        tasks=[
-            eef_twist_task(
-                _teleop_real_hw,
-                robot_model=_openarm_model,
-            )
-        ],
+keyboard_teleop_openarm_planner = autoconnect(
+    KeyboardTeleopModule.blueprint(
+        task_name=KEYBOARD_EEF_TASK_NAME,
+        gripper_joint_names=list(OPENARM_GRIPPER_JOINTS),
     ),
-    ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
+    planner(robots=list(_openarm_models.values())),
+    coordinator(
+        hardware=[_openarm_keyboard_planner_hw],
+        tasks=[
+            _eef_twist_task("left", priority=10),
+            _eef_twist_task("right", priority=10),
+            _gripper_task(),
+            _trajectory_task(priority=20),
+        ],
     ),
 )
