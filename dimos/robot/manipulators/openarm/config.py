@@ -40,15 +40,16 @@ OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
 
 OPENARM_PKG = LfsPath("openarm_description")
-OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
-OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
-OPENARM_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
-OPENARM_BIMANUAL_SRDF = Path(__file__).parent / "openarm_v10_bimanual.srdf"
+OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_left.urdf"
+OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_right.urdf"
+OPENARM_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_bimanual.urdf"
+OPENARM_BIMANUAL_SRDF = Path(__file__).parent / "openarm_v20_bimanual.srdf"
 OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 
-# MIT gains measured on v10 hardware: with gravity compensation active the PD
-# terms only handle transient tracking, and high kd excites gearbox buzz.
-# Gripper slots bypass MIT control, so their gains are 0.
+# MIT gains measured on v1.0 hardware, carried over as the v2.0 starting
+# point: with gravity compensation active the PD terms only handle transient
+# tracking, and high kd excites gearbox buzz. Gripper slots bypass MIT
+# control, so their gains are 0.
 _ARM_KP = (100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0)
 _ARM_KD = (1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8)
 
@@ -139,13 +140,13 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
                 name="left_manipulator",
                 joint_names=tuple(openarm_urdf_joints("left")),
                 base_link="openarm_body_link0",
-                tip_link="openarm_left_link7",
+                tip_link="openarm_left_ee_base_link",
             ),
             PlanningGroupDefinition(
                 name="right_manipulator",
                 joint_names=tuple(openarm_urdf_joints("right")),
                 base_link="openarm_body_link0",
-                tip_link="openarm_right_link7",
+                tip_link="openarm_right_ee_base_link",
             ),
         ],
         srdf_path=OPENARM_BIMANUAL_SRDF,

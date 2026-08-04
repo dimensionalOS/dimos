@@ -30,7 +30,7 @@ Per arm, shoulder to wrist (send ids `0x01..0x07`, feedback `send | 0x10`):
 2x DM8009, 2x DM4340, 3x DM4310, plus a DM4310 gripper at `0x08`.
 
 Gravity compensation uses the bimanual URDF
-(`openarm_description/urdf/robot/openarm_v10_bimanual.urdf`, resolved lazily
+(`openarm_description/urdf/robot/openarm_v20_bimanual.urdf`, resolved lazily
 from LFS at connect time) and is preflighted against the declared joint order
 before the motors enable.
 
@@ -38,7 +38,7 @@ Planning also uses the bimanual URDF: one robot model with a
 `left_manipulator` and a `right_manipulator` planning group. Automatic SRDF
 generation does not compose collision exclusions across robots, so the
 exclusions come from a hand-written SRDF
-(`dimos/robot/manipulators/openarm/openarm_v10_bimanual.srdf`).
+(`dimos/robot/manipulators/openarm/openarm_v20_bimanual.srdf`).
 
 ## Bring-up
 

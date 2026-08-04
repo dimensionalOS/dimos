@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm v10 bimanual physical topology for the generic Damiao whole-body adapter."""
+"""OpenArm v2.0 bimanual physical topology for the generic Damiao whole-body adapter."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def _gripper_motor(side: str) -> can_motor_control.MotorSpec:
 
 
 class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
-    """Two OpenArm v10 arms with grippers, one CAN bus per arm."""
+    """Two OpenArm v2.0 arms with grippers, one CAN bus per arm."""
 
     arm_joints = {
         "left_arm": tuple(f"left_arm/joint{index}" for index in range(1, 8)),
@@ -68,7 +68,7 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     @property
     def gravity_model_path(self) -> Path:
         """Return the lazy bimanual gravity-compensation URDF path."""
-        return LfsPath("openarm_description") / "urdf/robot/openarm_v10_bimanual.urdf"
+        return LfsPath("openarm_description") / "urdf/robot/openarm_v20_bimanual.urdf"
 
     def _build_robot(self) -> can_motor_control.Robot:
         return (
