@@ -185,10 +185,7 @@ coordinator_teleop_xarm7 = autoconnect(
                 priority=10,
                 params=_xarm_eef_params,
             ),
-            trajectory_task(
-                _xarm7_teleop_hw,
-                name=_xarm7_teleop_model.coordinator_task_name,
-            ),
+            trajectory_task(_xarm7_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -216,10 +213,7 @@ coordinator_teleop_xarm6 = autoconnect(
                 priority=10,
                 params=_xarm_eef_params,
             ),
-            trajectory_task(
-                _xarm6_teleop_hw,
-                name=_xarm6_teleop_model.coordinator_task_name,
-            ),
+            trajectory_task(_xarm6_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(

@@ -225,7 +225,7 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     assert kwargs["damping"] == 1e-4
     assert kwargs["eps"] == 1e-6
     assert isinstance(kwargs["limits"], list)
-    assert len(kwargs["limits"]) == 2
+    assert len(kwargs["limits"]) == 1
 
 
 def test_pink_solver_dependency_failure_is_translated_to_runtime_error(

@@ -125,7 +125,7 @@ def _delta(
 def fake_ik(mocker: MockerFixture) -> _FakePinkIK:
     backend = _FakePinkIK()
     mocker.patch(
-        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.PinkControlIK",
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
         return_value=backend,
     )
     return backend
