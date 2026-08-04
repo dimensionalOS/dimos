@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -47,17 +48,10 @@ if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
     from dimos.memory2.type.observation import Observation
 
-# keyframe selection
-KEYFRAME_TRANSLATION_M = 0.5
-KEYFRAME_ROTATION_DEG = 10.0
-
 # tag revisit report
 VISIT_GAP_S = 30.0
 MIN_VISITS_FOR_LOOP = 2
 
-# factor graph
-LM_MAX_ITERATIONS = 200
-ODOM_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
 GRAVITY_ANCHOR_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6, 1e-8, 1e-8, 1e-8]))
 # Quality weighting: planar-PnP pose error grows ~quadratically with range, and reproj_px is a
 # direct misfit proxy. A glimpse's covariance is inflated by (dist/REF)^2 * (reproj/REF)^2 so
@@ -65,25 +59,71 @@ GRAVITY_ANCHOR_NOISE = noiseModel.Diagonal.Variances(np.array([1e-8, 1e-8, 1e-6,
 REF_DISTANCE_M = 0.4
 REF_REPROJ_PX = 1.0
 
-# ICP loop closures
-ICP_RADIUS_M = 4.0  # tag-corrected positions must be within this to be a revisit candidate
-ICP_MIN_DT_S = 25.0  # ...and at least this far apart in time (a real revisit, not adjacency)
-ICP_MAX_CORR_M = 0.6  # ICP correspondence distance
-ICP_VOXEL_M = 0.15
-ICP_FITNESS_MIN = 0.45
-ICP_RMSE_MAX_M = 0.25
-SUBMAP_HALF_S = 1.0  # accumulate scans within +/- this of a keyframe time into its submap
-ICP_HUBER_DELTA = 1.345
-ICP_NOISE = noiseModel.Robust.Create(
-    noiseModel.mEstimator.Huber.Create(ICP_HUBER_DELTA),
-    noiseModel.Diagonal.Variances(np.array([4e-4, 4e-4, 4e-4, 2.5e-3, 2.5e-3, 2.5e-3])),
-)
-
 # progress logging cadence
 ODOM_LOG_EVERY = 20000
 
 
-def select_keyframes(odom_rows: np.ndarray) -> tuple[list[int], list[Pose3], np.ndarray]:
+@dataclass(frozen=True)
+class Tuning:
+    """Every knob of the offline solve, defaults matching the tag-rig recordings it was built on.
+
+    Environments the defaults do not suit (narrow corridors, tag-free recordings, heavy LIO
+    drift) are handled by overriding these from post_process.py's CLI rather than by editing
+    the pipeline.
+    """
+
+    keyframe_translation_m: float = 0.5
+    keyframe_rotation_deg: float = 10.0
+    lm_max_iterations: int = 200
+    # Odometry between-factor variances (anisotropic): stiff roll/pitch and z, looser yaw and xy
+    # so the graph absorbs drift as heading error instead of stretching the trajectory.
+    odom_rot_roll_pitch_var: float = 1e-8
+    odom_rot_yaw_var: float = 1e-5
+    odom_trans_xy_var: float = 1e-4
+    odom_trans_z_var: float = 1e-6
+    icp_radius_m: float = 4.0
+    """Corrected positions must be within this to be a revisit candidate."""
+    icp_min_dt_s: float = 25.0
+    """...and at least this far apart in time (a real revisit, not adjacency)."""
+    icp_max_corr_m: float = 0.6
+    icp_voxel_m: float = 0.15
+    icp_fitness_min: float = 0.45
+    icp_rmse_max_m: float = 0.25
+    icp_huber_delta: float = 1.345
+    icp_rot_var: float = 4e-4
+    icp_trans_var: float = 2.5e-3
+    submap_half_s: float = 1.0
+    """Accumulate scans within +/- this of a keyframe time into its submap."""
+
+    def odom_noise(self) -> noiseModel.Diagonal:
+        return noiseModel.Diagonal.Variances(
+            np.array(
+                [
+                    self.odom_rot_roll_pitch_var,
+                    self.odom_rot_roll_pitch_var,
+                    self.odom_rot_yaw_var,
+                    self.odom_trans_xy_var,
+                    self.odom_trans_xy_var,
+                    self.odom_trans_z_var,
+                ]
+            )
+        )
+
+    def icp_noise(self) -> noiseModel.Robust:
+        return noiseModel.Robust.Create(
+            noiseModel.mEstimator.Huber.Create(self.icp_huber_delta),
+            noiseModel.Diagonal.Variances(
+                np.array([self.icp_rot_var] * 3 + [self.icp_trans_var] * 3)
+            ),
+        )
+
+
+DEFAULT_TUNING = Tuning()
+
+
+def select_keyframes(
+    odom_rows: np.ndarray, tuning: Tuning = DEFAULT_TUNING
+) -> tuple[list[int], list[Pose3], np.ndarray]:
     """Keyframe indices where the robot moved past the translation/rotation thresholds."""
     indices = [0]
     previous = pose3_from_xyzquat(odom_rows[0][1:])
@@ -93,7 +133,7 @@ def select_keyframes(odom_rows: np.ndarray) -> tuple[list[int], list[Pose3], np.
             np.asarray(current.translation()) - np.asarray(previous.translation())
         )
         turned = np.degrees(np.linalg.norm(Pose3.Logmap(previous.between(current))[:3]))
-        if moved > KEYFRAME_TRANSLATION_M or turned > KEYFRAME_ROTATION_DEG:
+        if moved > tuning.keyframe_translation_m or turned > tuning.keyframe_rotation_deg:
             indices.append(row_index)
             previous = current
     poses = [pose3_from_xyzquat(odom_rows[index][1:]) for index in indices]
@@ -164,10 +204,12 @@ def build_tag_graph(
     keyframe_poses: list[Pose3],
     best_factors: dict[tuple[int, int], dict[str, Any]],
     base_optical: Pose3,
+    tuning: Tuning = DEFAULT_TUNING,
 ) -> tuple[NonlinearFactorGraph, Values, set[int]]:
     """Stage-1 graph: sequential odom between-factors + AprilTag landmark factors."""
     graph = NonlinearFactorGraph()
     values = Values()
+    odom_noise = tuning.odom_noise()
     for index, pose in enumerate(keyframe_poses):
         values.insert(index, pose)
         if index == 0:
@@ -175,7 +217,7 @@ def build_tag_graph(
         else:
             graph.add(
                 BetweenFactorPose3(
-                    index - 1, index, keyframe_poses[index - 1].between(pose), ODOM_NOISE
+                    index - 1, index, keyframe_poses[index - 1].between(pose), odom_noise
                 )
             )
     seen_markers = set()
@@ -196,9 +238,9 @@ def build_tag_graph(
     return graph, values, seen_markers
 
 
-def solve(graph: NonlinearFactorGraph, values: Values) -> Values:
+def solve(graph: NonlinearFactorGraph, values: Values, tuning: Tuning = DEFAULT_TUNING) -> Values:
     params = LevenbergMarquardtParams()
-    params.setMaxIterations(LM_MAX_ITERATIONS)
+    params.setMaxIterations(tuning.lm_max_iterations)
     return LevenbergMarquardtOptimizer(graph, values, params).optimize()
 
 
@@ -209,6 +251,7 @@ def build_submaps(
     keyframe_poses: list[Pose3],
     keyframe_times: np.ndarray,
     world_points: Callable[[Observation[PointCloud2]], np.ndarray],
+    tuning: Tuning = DEFAULT_TUNING,
 ) -> dict[int, o3d.geometry.PointCloud]:
     """Body-frame, voxel-downsampled, normal-estimated lidar submap per involved keyframe."""
     chunks: dict[int, list[np.ndarray]] = {index: [] for index in keyframe_indices}
@@ -220,7 +263,7 @@ def build_submaps(
             print(f"  read {scan_count} scans, {time.time() - started:.0f}s", flush=True)
         scan_ts = float(observation.ts)
         keyframe = int(np.argmin(np.abs(keyframe_times - scan_ts)))
-        if keyframe not in chunks or abs(keyframe_times[keyframe] - scan_ts) > SUBMAP_HALF_S:
+        if keyframe not in chunks or abs(keyframe_times[keyframe] - scan_ts) > tuning.submap_half_s:
             continue
         pose = keyframe_poses[keyframe]
         world = world_points(observation)
@@ -233,7 +276,7 @@ def build_submaps(
         cloud.points = o3d.utility.Vector3dVector(
             np.concatenate(keyframe_chunks, 0).astype(np.float64)
         )
-        cloud = cloud.voxel_down_sample(ICP_VOXEL_M)
+        cloud = cloud.voxel_down_sample(tuning.icp_voxel_m)
         cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
         clouds[keyframe] = cloud
     return clouds
@@ -248,6 +291,7 @@ def add_icp_closures(
     keyframe_times: np.ndarray,
     world_points: Callable[[Observation[PointCloud2]], np.ndarray],
     closure_spacing: float,
+    tuning: Tuning = DEFAULT_TUNING,
 ) -> int:
     """Stage 2: register spatially-close / temporally-distant submaps, add loop factors."""
     num_keyframes = len(keyframe_poses)
@@ -255,8 +299,8 @@ def add_icp_closures(
     positions = np.array([np.asarray(pose.translation()) for pose in corrected_poses])
 
     candidate_set: set[tuple[int, int]] = set()
-    for first, second in cKDTree(positions).query_pairs(ICP_RADIUS_M):
-        if abs(keyframe_times[first] - keyframe_times[second]) >= ICP_MIN_DT_S:
+    for first, second in cKDTree(positions).query_pairs(tuning.icp_radius_m):
+        if abs(keyframe_times[first] - keyframe_times[second]) >= tuning.icp_min_dt_s:
             candidate_set.add((min(first, second), max(first, second)))
     candidate_pairs = sorted(
         candidate_set, key=lambda pair: np.linalg.norm(positions[pair[0]] - positions[pair[1]])
@@ -278,7 +322,7 @@ def add_icp_closures(
 
     print("ICP stage: reading lidar submaps...", flush=True)
     clouds = build_submaps(
-        store, lidar_stream, involved, keyframe_poses, keyframe_times, world_points
+        store, lidar_stream, involved, keyframe_poses, keyframe_times, world_points, tuning
     )
     print(
         f"ICP stage: built {len(clouds)} submaps, registering {len(candidate_pairs)} pairs...",
@@ -286,6 +330,7 @@ def add_icp_closures(
     )
 
     accepted = 0
+    icp_noise = tuning.icp_noise()
     started = time.time()
     for pair_index, (first, second) in enumerate(candidate_pairs):
         if pair_index and pair_index % 5000 == 0:
@@ -299,18 +344,18 @@ def add_icp_closures(
         result = o3d.pipelines.registration.registration_icp(
             clouds[second],
             clouds[first],
-            ICP_MAX_CORR_M,
+            tuning.icp_max_corr_m,
             initial_guess,
             o3d.pipelines.registration.TransformationEstimationPointToPlane(),
         )
-        if result.fitness >= ICP_FITNESS_MIN and result.inlier_rmse <= ICP_RMSE_MAX_M:
+        if result.fitness >= tuning.icp_fitness_min and result.inlier_rmse <= tuning.icp_rmse_max_m:
             transform = result.transformation
             graph.add(
                 BetweenFactorPose3(
                     first,
                     second,
                     Pose3(Rot3(transform[:3, :3]), Point3(transform[:3, 3])),
-                    ICP_NOISE,
+                    icp_noise,
                 )
             )
             accepted += 1

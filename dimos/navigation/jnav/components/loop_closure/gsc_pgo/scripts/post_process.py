@@ -36,6 +36,7 @@ Usage:
 """
 
 import argparse
+from dataclasses import fields
 from pathlib import Path
 import sys
 from typing import Any
@@ -58,6 +59,7 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy impo
     normalize_go2_legacy,
 )
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.offline_pgo import (
+    Tuning,
     add_icp_closures,
     best_factor_per_keyframe_marker,
     build_tag_graph,
@@ -141,7 +143,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lcm-voxel", type=float, default=0.05)
     parser.add_argument("--accum-voxel", type=float, default=0.05)
     parser.add_argument("--accum-max-range", type=float, default=20.0)
+    tuning_group = parser.add_argument_group(
+        "solve tuning", "keyframe / factor-noise / ICP knobs (see offline_pgo.Tuning)"
+    )
+    for field in fields(Tuning):
+        tuning_group.add_argument(
+            f"--{field.name.replace('_', '-')}",
+            type=type(field.default),
+            default=field.default,
+            help=f"default {field.default:g}",
+        )
     return parser.parse_args()
+
+
+def tuning_from_args(args: argparse.Namespace) -> Tuning:
+    return Tuning(**{field.name: getattr(args, field.name) for field in fields(Tuning)})
 
 
 def parse_base_optical(spec: str) -> Pose3 | None:
@@ -173,6 +189,7 @@ def resolve_base_optical(
 
 def main() -> None:
     args = parse_args()
+    tuning = tuning_from_args(args)
     db_path = resolve_db_path(args.db)
     if db_path.is_dir():
         sys.exit(f"--db must be a .db file, not a directory: {db_path}")
@@ -257,7 +274,7 @@ def main() -> None:
         odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
         if not len(odom_rows):
             sys.exit(f"odom stream {odom_stream!r} is empty in {db_path}")
-        _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows)
+        _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows, tuning)
         best_factors = best_factor_per_keyframe_marker(detections, keyframe_times)
         if raw_detections:
             report_revisits(raw_detections, best_factors)
@@ -272,9 +289,11 @@ def main() -> None:
 
         # stage 1: tag PGO
         print(f"building factor graph over {len(keyframe_poses)} keyframes...", flush=True)
-        graph, values, seen_markers = build_tag_graph(keyframe_poses, best_factors, base_optical)
+        graph, values, seen_markers = build_tag_graph(
+            keyframe_poses, best_factors, base_optical, tuning
+        )
         print("solving stage 1 (tag PGO)...", flush=True)
-        estimate = solve(graph, values)
+        estimate = solve(graph, values, tuning)
         raw_keyframe_poses = list(keyframe_poses)
 
         # stage 2: ICP loop closures
@@ -288,10 +307,11 @@ def main() -> None:
                 keyframe_times,
                 world_points,
                 args.closure_spacing,
+                tuning,
             )
             if accepted:
                 print("solving stage 2 (tag PGO + ICP closures)...", flush=True)
-                estimate = solve(graph, estimate)
+                estimate = solve(graph, estimate, tuning)
 
         # per-keyframe corrections
         corrections = [
