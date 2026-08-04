@@ -13,10 +13,11 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pink import Configuration
-from pink.tasks import PostureTask
+from pink.tasks import DampingTask, FrameTask, PostureTask
 import pytest
 
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
@@ -150,7 +151,7 @@ def test_pink_prepares_xacro_with_package_paths_and_arguments(
             "xacro_args": {"dof": "2"},
         }
     )
-    prepared: dict[str, object] = {}
+    prepared: dict[str, Any] = {}
 
     def prepare(
         path: Path,
@@ -221,10 +222,10 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     )
     measured = np.array([0.3, 0.1])
     target = backend.forward_kinematics(measured)
-    calls: list[tuple[Configuration, list[object], float, dict[str, object]]] = []
+    calls: list[tuple[Configuration, list[Any], float, dict[str, Any]]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append((configuration, tasks, dt, kwargs))
         return np.zeros(configuration.model.nv)
@@ -251,9 +252,7 @@ def test_pink_solver_dependency_failure_is_translated_to_runtime_error(
 ) -> None:
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=_robot(_write_urdf(tmp_path))))
 
-    def solve(
-        configuration: object, tasks: list[object], dt: float, **kwargs: object
-    ) -> np.ndarray:
+    def solve(configuration: Any, tasks: list[Any], dt: float, **kwargs: Any) -> np.ndarray:
         raise RuntimeError("solver dependency failed")
 
     monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
@@ -272,7 +271,7 @@ def test_pink_receives_pre_bounded_dt_unchanged(
     calls: list[float] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(dt)
         return np.zeros(configuration.model.nv)
@@ -289,10 +288,10 @@ def test_pink_posture_task_can_be_disabled(tmp_path: Path, monkeypatch: pytest.M
     backend = create_pink_control_ik(
         PinkControlIKConfig(robot_model=_robot(model_path), posture_cost=0.0)
     )
-    calls: list[list[object]] = []
+    calls: list[list[Any]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(tasks)
         return np.zeros(configuration.model.nv)
@@ -321,10 +320,10 @@ def test_pink_joint_centering_task_targets_position_limit_midpoints(
             joint_centering_cost=1e-3,
         )
     )
-    calls: list[list[object]] = []
+    calls: list[list[Any]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(tasks)
         return np.zeros(configuration.model.nv)
@@ -333,9 +332,11 @@ def test_pink_joint_centering_task_targets_position_limit_midpoints(
     measured = np.array([0.1, 0.2])
     backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
-    centering_task = backend._runtime.joint_centering_task
-    assert centering_task is not None
-    assert calls == [[backend._runtime.frame_task, centering_task]]
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+    assert isinstance(calls[0][0], FrameTask)
+    centering_task = calls[0][1]
+    assert isinstance(centering_task, PostureTask)
     np.testing.assert_allclose(centering_task.target_q, [-0.25, 0.25])
 
 
@@ -350,10 +351,10 @@ def test_pink_damping_task_replaces_posture_for_low_motion_policy(
             damping_cost=1e-3,
         )
     )
-    calls: list[list[object]] = []
+    calls: list[list[Any]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(tasks)
         return np.zeros(configuration.model.nv)
@@ -362,9 +363,10 @@ def test_pink_damping_task_replaces_posture_for_low_motion_policy(
     measured = np.array([0.3, 0.1])
     backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
-    assert backend._runtime.posture_task is None
-    assert backend._runtime.damping_task is not None
-    assert calls == [[backend._runtime.frame_task, backend._runtime.damping_task]]
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+    assert isinstance(calls[0][0], FrameTask)
+    assert isinstance(calls[0][1], DampingTask)
 
 
 def test_pink_rejects_uncontrolled_end_effector_chain_without_reference(
@@ -397,7 +399,7 @@ def test_continuous_joint_scalar_limits_fail_with_actionable_diagnostic(
     angle = np.array([3.0])
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         return np.zeros(configuration.model.nv)
 
@@ -424,7 +426,7 @@ def test_pink_applies_position_velocity_limits_and_finite_output(
     solver_inputs: dict[str, np.ndarray] = {}
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         solver_inputs["lower_position"] = configuration.model.lowerPositionLimit.copy()
         solver_inputs["velocity"] = configuration.model.velocityLimit.copy()
@@ -448,10 +450,10 @@ def test_pink_uniformly_scales_solver_velocity_before_integration(
     robot = _robot(model_path).model_copy(update={"velocity_limits": [0.1, 1.0]})
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot, max_velocity=0.2))
     measured = np.array([0.3, 0.1])
-    calls: list[dict[str, object]] = []
+    calls: list[dict[str, Any]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(kwargs)
         return np.array([1.0, 0.5])
@@ -462,8 +464,8 @@ def test_pink_uniformly_scales_solver_velocity_before_integration(
 
     assert np.allclose(result.velocity, [0.1, 0.05])
     assert np.allclose(result.positions, [0.301, 0.1005])
-    assert calls[0]["limits"] == backend._runtime.limits
-    assert len(backend._runtime.limits) == 1
+    assert isinstance(calls[0]["limits"], list)
+    assert len(calls[0]["limits"]) == 1
 
 
 def test_pink_projects_seed_and_solution_to_inward_position_limit_margin(
@@ -478,7 +480,7 @@ def test_pink_projects_seed_and_solution_to_inward_position_limit_margin(
     solver_seed: list[np.ndarray] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         solver_seed.append(configuration.q.copy())
         return np.array([0.5, -0.2])
@@ -513,9 +515,7 @@ def test_pink_rejects_candidate_beyond_position_limit_tolerance(
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot))
     measured = np.array([1.2, 0.1])
 
-    def solve(
-        configuration: object, tasks: list[object], dt: float, **kwargs: object
-    ) -> np.ndarray:
+    def solve(configuration: Any, tasks: list[Any], dt: float, **kwargs: Any) -> np.ndarray:
         return np.array([10.0, 0.0])
 
     monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)

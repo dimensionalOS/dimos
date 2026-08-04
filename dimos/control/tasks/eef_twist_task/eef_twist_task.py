@@ -29,8 +29,8 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,
     CartesianIKTaskParams,
-    append_optional_joint,
-    claim_optional_joint,
+    append_gripper_position,
+    claim_with_gripper,
 )
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import twist_to_numpy
@@ -65,7 +65,7 @@ class EEFTwistTask(CartesianIKTask):
         self._gripper_active = config.gripper_joint is not None
 
     def claim(self) -> ResourceClaim:
-        return claim_optional_joint(super().claim(), self._config.gripper_joint)
+        return claim_with_gripper(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
         with self._twist_lock:
@@ -143,7 +143,7 @@ class EEFTwistTask(CartesianIKTask):
         with self._twist_lock:
             gripper_target = self._gripper_target
             gripper_joint = self._config.gripper_joint if self._gripper_active else None
-        return append_optional_joint(
+        return append_gripper_position(
             output,
             gripper_joint,
             gripper_target,
@@ -170,19 +170,21 @@ class EEFTwistTask(CartesianIKTask):
         return pose
 
     def stop(self) -> None:
+        self._clear_inputs()
+        super().stop()
+
+    def _clear_inputs(self) -> None:
+        """Discard twist and gripper commands owned by this specialization."""
         with self._twist_lock:
             self._latest_twist = None
             self._gripper_active = False
-        super().stop()
 
     def _on_timeout(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
 
     def clear(self) -> None:
-        with self._twist_lock:
-            self._latest_twist = None
-            self._gripper_active = False
+        self._clear_inputs()
         super().clear()
 
 

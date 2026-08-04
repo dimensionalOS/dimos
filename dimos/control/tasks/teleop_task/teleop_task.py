@@ -30,8 +30,8 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,
     CartesianIKTaskParams,
-    append_optional_joint,
-    claim_optional_joint,
+    append_gripper_position,
+    claim_with_gripper,
 )
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import PinkControlIKConfig
 from dimos.utils.logging_config import setup_logger
@@ -92,7 +92,7 @@ class TeleopIKTask(CartesianIKTask):
 
     def claim(self) -> ResourceClaim:
         """Claim arm joints and the optional gripper joint."""
-        return claim_optional_joint(super().claim(), self._config.gripper_joint)
+        return claim_with_gripper(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
         """Run only when a non-E-STOPped pose target is active."""
@@ -166,7 +166,7 @@ class TeleopIKTask(CartesianIKTask):
                 return None
             gripper_target = self._gripper_target
             gripper_joint = self._config.gripper_joint if self._gripper_active else None
-        return append_optional_joint(output, gripper_joint, gripper_target)
+        return append_gripper_position(output, gripper_joint, gripper_target)
 
     def on_buttons(self, msg: Buttons) -> bool:
         """Use the configured primary button as press-and-hold engagement."""
@@ -245,11 +245,12 @@ class TeleopIKTask(CartesianIKTask):
     def stop(self) -> None:
         """Stop output and discard engagement-relative state."""
         super().stop()
+        self._reset_engagement_state()
+
+    def _reset_engagement_state(self) -> None:
+        """Discard state owned specifically by engagement-relative teleop."""
         with self._lock:
-            self._active = False
-            self._target_pose = None
             self._initial_ee_pose = None
-            self._last_commanded_joints = None
             self._engagement = _EngagementState.DISENGAGED
             self._primary_down = False
             self._gripper_active = False
@@ -257,14 +258,7 @@ class TeleopIKTask(CartesianIKTask):
     def clear(self) -> None:
         """Clear output and discard engagement-relative state."""
         super().clear()
-        with self._lock:
-            self._active = False
-            self._target_pose = None
-            self._initial_ee_pose = None
-            self._last_commanded_joints = None
-            self._engagement = _EngagementState.DISENGAGED
-            self._primary_down = False
-            self._gripper_active = False
+        self._reset_engagement_state()
 
 
 class TeleopIKTaskParams(CartesianIKTaskParams):

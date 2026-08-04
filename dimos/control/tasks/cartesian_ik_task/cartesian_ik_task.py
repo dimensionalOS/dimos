@@ -58,27 +58,27 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def claim_optional_joint(claim: ResourceClaim, joint_name: str | None) -> ResourceClaim:
-    """Extend a task claim with an optional joint without changing its control policy."""
-    if joint_name is None:
+def claim_with_gripper(claim: ResourceClaim, gripper_joint: str | None) -> ResourceClaim:
+    """Extend an arm task claim with its configured gripper joint."""
+    if gripper_joint is None:
         return claim
     return ResourceClaim(
-        joints=claim.joints | frozenset([joint_name]),
+        joints=claim.joints | frozenset([gripper_joint]),
         priority=claim.priority,
         mode=claim.mode,
     )
 
 
-def append_optional_joint(
+def append_gripper_position(
     output: JointCommandOutput | None,
-    joint_name: str | None,
+    gripper_joint: str | None,
     position: float,
 ) -> JointCommandOutput | None:
-    """Append an optional position-controlled joint to a Cartesian task output."""
-    if output is None or joint_name is None:
+    """Append a configured gripper position to an arm task output."""
+    if output is None or gripper_joint is None:
         return output
     return JointCommandOutput(
-        joint_names=[*output.joint_names, joint_name],
+        joint_names=[*output.joint_names, gripper_joint],
         positions=[*(output.positions or []), position],
         mode=output.mode,
     )
@@ -194,9 +194,10 @@ class CartesianIKTask(BaseControlTask):
         self._last_commanded_joints: NDArray[np.float64] | None = None
 
         logger.info(
-            f"CartesianIKTask {name} initialized with model: "
-            f"{config.control_ik.robot_model.model_path}, "
-            f"joints={config.joint_names}"
+            "Cartesian IK task initialized",
+            task=name,
+            model_path=str(config.control_ik.robot_model.model_path),
+            joints=config.joint_names,
         )
 
     def claim(self) -> ResourceClaim:
@@ -230,8 +231,9 @@ class CartesianIKTask(BaseControlTask):
                 time_since_update = state.t_now - self._last_update_time
                 if time_since_update > self._config.timeout:
                     logger.warning(
-                        f"CartesianIKTask {self._name} timed out "
-                        f"(no update for {time_since_update:.3f}s)"
+                        "Cartesian IK task timed out",
+                        task=self._name,
+                        seconds_since_update=time_since_update,
                     )
                     self._active = False
                     self._target_pose = None
@@ -241,10 +243,10 @@ class CartesianIKTask(BaseControlTask):
 
         q_measured = self._get_current_joints(state)
         if q_measured is None:
-            logger.debug(f"CartesianIKTask {self._name}: missing joint state for IK warm-start")
+            logger.debug("Missing joint state for IK warm-start", task=self._name)
             return None
         if not np.all(np.isfinite(q_measured)):
-            logger.error("CartesianIKTask %s: measured joint state is non-finite", self._name)
+            logger.error("Measured joint state is non-finite", task=self._name)
             return None
         q_current = self._solve_seed(q_measured)
         raw_dt = state.dt
@@ -254,7 +256,9 @@ class CartesianIKTask(BaseControlTask):
         try:
             target_pose = self._prepare_target(state, q_current, dt)
         except (FloatingPointError, RuntimeError, ValueError) as exc:
-            logger.warning("CartesianIKTask %s: target preparation failed: %s", self._name, exc)
+            logger.warning(
+                "Cartesian IK target preparation failed", task=self._name, error=str(exc)
+            )
             return self._hold(q_current)
         if target_pose is None:
             return self._hold(q_current)
@@ -263,20 +267,22 @@ class CartesianIKTask(BaseControlTask):
         try:
             result = self._ik.solve(target_pose, q_current, dt)
         except (FloatingPointError, RuntimeError, ValueError) as exc:
-            logger.warning("CartesianIKTask %s: IK solve failed: %s", self._name, exc)
+            logger.warning("Cartesian IK solve failed", task=self._name, error=str(exc))
             return self._hold(q_current)
         q_solution = np.asarray(result.positions, dtype=np.float64).reshape(-1)
         if not np.all(np.isfinite(q_solution)) or q_solution.shape != q_current.shape:
-            logger.warning("CartesianIKTask %s: rejecting invalid IK output", self._name)
+            logger.warning("Rejecting invalid Cartesian IK output", task=self._name)
             return self._hold(q_current)
 
         # Safety check: reject if any joint delta exceeds limit
         if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
             worst_idx, worst_deg = get_worst_joint_delta(q_solution, q_current)
             logger.warning(
-                f"CartesianIKTask {self._name}: rejecting motion - "
-                f"joint {self._joint_names_list[worst_idx]} delta "
-                f"{worst_deg:.1f}° exceeds limit {self._config.max_joint_delta_deg}°"
+                "Rejecting Cartesian IK motion exceeding joint delta limit",
+                task=self._name,
+                joint=self._joint_names_list[worst_idx],
+                joint_delta_deg=worst_deg,
+                max_joint_delta_deg=self._config.max_joint_delta_deg,
             )
             return self._hold(q_current)
 
@@ -316,19 +322,18 @@ class CartesianIKTask(BaseControlTask):
         if cached is None:
             return q_measured
         if cached.shape != q_measured.shape or not np.all(np.isfinite(cached)):
-            logger.error("CartesianIKTask %s: cached joint command is invalid", self._name)
+            logger.error("Cached Cartesian IK joint command is invalid", task=self._name)
             self._reset_command_state()
             return q_measured
         tracking_error_deg = np.rad2deg(np.abs(cached - q_measured))
         if np.any(tracking_error_deg > self._config.max_tracking_error_deg):
             worst_index = int(np.argmax(tracking_error_deg))
             logger.warning(
-                "CartesianIKTask %s: rebasing solve to measured state; %s tracks %.1f° "
-                "behind command (limit %.1f°)",
-                self._name,
-                self._joint_names_list[worst_index],
-                tracking_error_deg[worst_index],
-                self._config.max_tracking_error_deg,
+                "Rebasing Cartesian IK solve to measured state",
+                task=self._name,
+                joint=self._joint_names_list[worst_index],
+                tracking_error_deg=tracking_error_deg[worst_index],
+                max_tracking_error_deg=self._config.max_tracking_error_deg,
             )
             self._reset_command_state()
             return q_measured
@@ -385,7 +390,10 @@ class CartesianIKTask(BaseControlTask):
         if joints & self._joint_names:
             self._reset_command_state()
             logger.warning(
-                f"CartesianIKTask {self._name} preempted by {by_task} on joints {joints}"
+                "Cartesian IK task preempted",
+                task=self._name,
+                preempting_task=by_task,
+                joints=joints,
             )
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
@@ -412,7 +420,6 @@ class CartesianIKTask(BaseControlTask):
         with self._lock:
             self._last_commanded_joints = None
             self._active = True
-        logger.info(f"CartesianIKTask {self._name} started")
 
     def stop(self) -> None:
         """Deactivate the task (stop outputting commands)."""
@@ -420,7 +427,6 @@ class CartesianIKTask(BaseControlTask):
             self._active = False
             self._target_pose = None
             self._last_commanded_joints = None
-        logger.info(f"CartesianIKTask {self._name} stopped")
 
     def clear(self) -> None:
         """Clear current target and deactivate."""
@@ -428,7 +434,6 @@ class CartesianIKTask(BaseControlTask):
             self._target_pose = None
             self._active = False
             self._last_commanded_joints = None
-        logger.info(f"CartesianIKTask {self._name} cleared")
 
     def is_tracking(self) -> bool:
         """Check if actively receiving and outputting commands."""

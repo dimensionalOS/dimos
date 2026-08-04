@@ -87,7 +87,7 @@ def _resolve_control_ik(
     hardware: HardwareComponent,
     robot_model: RobotModelConfig,
     control_ik: PinkControlIKOverrides | None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     coordinator_joints = robot_model.get_coordinator_joint_names()
     if hardware.joints != coordinator_joints:
         raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
@@ -141,7 +141,7 @@ def eef_twist_task(
     params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
-    task_params: dict[str, object] = {
+    task_params: dict[str, Any] = {
         "control_ik": resolved_control_ik,
         "timeout": timeout,
         "max_joint_delta_deg": max_joint_delta_deg,
@@ -176,7 +176,7 @@ def teleop_ik_task(
     params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
-    task_params: dict[str, object] = {
+    task_params: dict[str, Any] = {
         "control_ik": resolved_control_ik,
         "hand": hand,
         "timeout": timeout,

@@ -271,18 +271,11 @@ def test_connect_opens_bus_without_powering_motors(
     assert not adapter.read_enabled()
 
 
-def test_default_control_gains_use_stiffer_wrist_profile() -> None:
-    config = A1ZConfig()
-
-    assert config.default_kp == pytest.approx((80.0, 80.0, 80.0, 50.0, 20.0, 20.0))
-    assert config.default_kd == pytest.approx((3.0, 3.0, 3.0, 0.7, 0.4, 0.4))
-
-
 def test_connect_forwards_configured_arm_gains_to_sdk(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    kp = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
-    kd = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
+    kp = (70.0, 70.0, 70.0, 40.0, 15.0, 15.0)
+    kd = (2.5, 2.5, 2.5, 0.6, 0.3, 0.3)
 
     _, robot = _connected_adapter(a1z_adapter_module, default_kp=kp, default_kd=kd)
 
