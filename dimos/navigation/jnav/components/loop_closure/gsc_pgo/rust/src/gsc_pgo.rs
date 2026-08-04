@@ -375,7 +375,7 @@ impl Default for Config {
             loop_refinement_passes: 5,
             loop_gnc_final: true,
             loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.99,
+            loop_gnc_inlier_probability: 0.95,
             use_location_constraints: false,
             odom_rot_roll_pitch_var: 1e-8,
             odom_rot_yaw_var: 1e-5,

@@ -150,7 +150,7 @@ class PGOConfig(NativeModuleConfig):
     # loop_gnc_var_scale, which also weakens the surviving edges' pull).
     loop_gnc_final: bool = True
     loop_gnc_var_scale: float = 10.0
-    loop_gnc_inlier_probability: float = 0.99
+    loop_gnc_inlier_probability: float = 0.95
 
     # enable things like April tags to be contraints in the pose graph
     use_location_constraints: bool = False
