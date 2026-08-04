@@ -317,6 +317,9 @@ def test_commands_during_estop_are_rejected(gripper_task: EEFTwistTask) -> None:
     assert not gripper_task.on_gripper_command(Bool(data=True), 1.0)
 
     gripper_task.set_estop(False)
-    output = gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
+    assert gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3])) is None
+
+    assert gripper_task.on_gripper_command(Bool(data=True), 2.1)
+    output = gripper_task.compute(_state(2.2, positions=[0.1, 0.2, 0.3]))
     assert output is not None
-    assert output.positions[-1] == 0.85
+    assert output.positions[-1] == 0.0

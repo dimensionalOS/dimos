@@ -123,6 +123,16 @@ def _delta(
     )
 
 
+def _buttons(primary: bool) -> Buttons:
+    buttons = Buttons()
+    buttons.right_primary = primary
+    return buttons
+
+
+def _engage(task: TeleopIKTask, t_now: float = 0.0) -> None:
+    assert task.on_teleop_buttons(_buttons(True), t_now)
+
+
 @pytest.fixture
 def fake_ik(mocker: MockerFixture) -> _FakePinkIK:
     backend = _FakePinkIK()
@@ -166,6 +176,7 @@ def gripper_task(tmp_path: Path, fake_ik: _FakePinkIK) -> TeleopIKTask:
 def test_delta_is_composed_with_one_measured_engagement_baseline(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
+    _engage(task)
     assert task.on_cartesian_command(_delta(), t_now=1.0)
 
     first = task.compute(_state(1.01, (1.0, 2.0), dt=1.0))
@@ -190,6 +201,7 @@ def test_teleop_ik_iterates_from_last_command_when_feedback_lags(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
     fake_ik.increment = np.array([0.01, 0.0], dtype=np.float64)
+    _engage(task)
     assert task.on_cartesian_command(_delta(), t_now=1.0)
 
     first = task.compute(_state(1.01))
@@ -208,6 +220,7 @@ def test_teleop_ik_iterates_from_last_command_when_feedback_lags(
 def test_missing_joint_state_defers_baseline_and_output(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
+    _engage(task)
     assert task.on_cartesian_command(_delta(), t_now=1.0)
 
     output = task.compute(_state(1.01, (0.0,)))
@@ -220,6 +233,7 @@ def test_missing_joint_state_defers_baseline_and_output(
 def test_solver_failure_and_excessive_delta_return_measured_hold(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
+    _engage(task)
     assert task.on_cartesian_command(_delta(), t_now=1.0)
     fake_ik.raise_runtime = True
     failed = task.compute(_state(1.01, (0.4, 0.5)))
@@ -254,11 +268,15 @@ def test_release_timeout_stop_and_clear_force_fresh_baselines(
     np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.1, 0.2])
     assert task.compute(_state(3.0, (0.1, 0.2))) is None
 
+    assert task.on_teleop_buttons(released, 3.1)
+    assert task.on_teleop_buttons(pressed, 3.2)
     assert task.on_cartesian_command(_delta(), 4.0)
     assert task.compute(_state(4.01, (0.2, 0.3))) is not None
     np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.2, 0.3])
     task.stop()
     task.start()
+    assert task.on_teleop_buttons(released, 4.1)
+    assert task.on_teleop_buttons(pressed, 4.2)
     assert task.on_cartesian_command(_delta(), 5.0)
     assert task.compute(_state(5.01, (0.3, 0.4))) is not None
     np.testing.assert_allclose(fake_ik.solve_calls[-1][1], [0.3, 0.4])
@@ -270,6 +288,7 @@ def test_preemption_discards_teleop_commanded_solve_seed(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
     fake_ik.increment = np.array([0.01, 0.0], dtype=np.float64)
+    _engage(task)
     assert task.on_cartesian_command(_delta(), t_now=1.0)
     assert task.compute(_state(1.01)) is not None
 
@@ -284,6 +303,7 @@ def test_preemption_discards_teleop_commanded_solve_seed(
 def test_estop_rejects_commands_and_never_replays_them(
     gripper_task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
+    _engage(gripper_task)
     assert gripper_task.on_cartesian_command(_delta(), 1.0)
     assert gripper_task.compute(_state(1.01)) is not None
 
@@ -294,6 +314,9 @@ def test_estop_rejects_commands_and_never_replays_them(
 
     gripper_task.set_estop(False)
     assert gripper_task.compute(_state(2.01)) is None
+    assert not gripper_task.on_cartesian_command(_delta(), 2.5)
+    assert gripper_task.on_teleop_buttons(_buttons(False), 2.6)
+    assert gripper_task.on_teleop_buttons(_buttons(True), 2.7)
     assert gripper_task.on_cartesian_command(_delta(), 3.0)
     assert gripper_task.compute(_state(3.01, (0.2, 0.3))) is not None
     assert len(fake_ik.fk_calls) == 2
@@ -302,6 +325,7 @@ def test_estop_rejects_commands_and_never_replays_them(
 def test_gripper_claim_interpolation_and_hold_output(
     gripper_task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:
+    _engage(gripper_task)
     assert gripper_task.on_gripper_trigger(0.25)
     assert gripper_task.on_cartesian_command(_delta(), 1.0)
     fake_ik.raise_runtime = True
@@ -312,6 +336,16 @@ def test_gripper_claim_interpolation_and_hold_output(
     assert output is not None
     assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/gripper"]
     assert output.positions == pytest.approx([0.4, 0.5, 0.6])
+
+
+def test_pose_is_rejected_before_engage_and_after_release(task: TeleopIKTask) -> None:
+    assert not task.on_cartesian_command(_delta(), 1.0)
+
+    _engage(task, 2.0)
+    assert task.on_cartesian_command(_delta(), 2.1)
+    assert task.on_teleop_buttons(_buttons(False), 2.2)
+
+    assert not task.on_cartesian_command(_delta(), 2.3)
 
 
 def test_factory_requires_pink_configuration_and_matching_model(tmp_path: Path) -> None:

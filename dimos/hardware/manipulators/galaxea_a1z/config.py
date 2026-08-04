@@ -22,8 +22,8 @@ from pathlib import Path
 import attrs
 
 _A1Z_DOF = 6
-_A1Z_DEFAULT_KP = (80.0, 80.0, 80.0, 50.0, 10.0, 10.0)
-_A1Z_DEFAULT_KD = (3.0, 3.0, 3.0, 0.7, 0.2, 0.2)
+_A1Z_DEFAULT_KP = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
+_A1Z_DEFAULT_KD = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
 
 
 def _joint_gains(
@@ -62,7 +62,7 @@ def _validate_optional_path(
 
 @attrs.frozen(slots=False)
 class A1ZGripperConfig:
-    """G1Z gripper configuration."""
+    """A1Z gripper configuration."""
 
     max_torque: float = attrs.field(
         default=0.5,
@@ -73,14 +73,6 @@ class A1ZGripperConfig:
         default=0.1,
         converter=float,
         validator=attrs.validators.gt(0.0),
-    )
-    max_velocity_rad_s: float = attrs.field(
-        default=10.0,
-        converter=float,
-        validator=attrs.validators.and_(
-            attrs.validators.gt(0.0),
-            attrs.validators.le(100.0),
-        ),
     )
 
 

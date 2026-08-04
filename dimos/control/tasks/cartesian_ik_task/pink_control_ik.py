@@ -473,6 +473,13 @@ class PinkControlIK:
         positions: NDArray[np.float64],
         source: str,
     ) -> NDArray[np.float64]:
+        """Clamp small boundary drift but reject materially out-of-limit states.
+
+        Pink requires a valid configuration before it can solve. Floating-point
+        and one-tick integration drift within ``seed_limit_tolerance`` is
+        projected back inside the configured margin; larger violations remain
+        visible as runtime failures so model or feedback problems are not hidden.
+        """
         runtime = self._runtime
         mapping = runtime.mapping
         bounded = positions.copy()

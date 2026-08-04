@@ -22,22 +22,20 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pinocchio
-from pydantic import FiniteFloat
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,
+    CartesianIKTaskParams,
+    append_optional_joint,
+    claim_optional_joint,
 )
-from dimos.control.tasks.cartesian_ik_task.pink_control_ik import PinkControlIKConfig
-from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import twist_to_numpy
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
     from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.msgs.std_msgs.Bool import Bool
 
@@ -62,19 +60,12 @@ class EEFTwistTask(CartesianIKTask):
         super().__init__(name, config)
         self._twist_lock = threading.Lock()
         self._latest_twist: TwistStamped | None = None
-        self._last_commanded_joints: NDArray[np.float64] | None = None
         self._estopped = False
         self._gripper_target = config.gripper_open_pos
+        self._gripper_active = config.gripper_joint is not None
 
     def claim(self) -> ResourceClaim:
-        claim = super().claim()
-        if self._config.gripper_joint is None:
-            return claim
-        return ResourceClaim(
-            joints=claim.joints | frozenset([self._config.gripper_joint]),
-            priority=claim.priority,
-            mode=claim.mode,
-        )
+        return claim_optional_joint(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
         with self._twist_lock:
@@ -105,15 +96,18 @@ class EEFTwistTask(CartesianIKTask):
                 return False
             if np.allclose(values, 0.0):
                 self._latest_twist = None
-                self._last_commanded_joints = None
                 cleared = True
             else:
                 self._latest_twist = twist
                 cleared = False
+        if cleared:
+            self._reset_command_state()
         if cleared and self._config.gripper_joint is None:
             super().clear()
             return True
         with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._last_update_time = t_now
             self._active = True
         return True
@@ -127,7 +121,10 @@ class EEFTwistTask(CartesianIKTask):
             self._gripper_target = (
                 self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
             )
+            self._gripper_active = True
         with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._last_update_time = t_now
             self._active = True
         return True
@@ -137,18 +134,19 @@ class EEFTwistTask(CartesianIKTask):
             self._estopped = estopped
             if estopped:
                 self._latest_twist = None
-                self._last_commanded_joints = None
+                self._gripper_active = False
+        if estopped:
+            super().clear()
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         output = super().compute(state)
-        if output is None or self._config.gripper_joint is None:
-            return output
         with self._twist_lock:
             gripper_target = self._gripper_target
-        return JointCommandOutput(
-            joint_names=[*output.joint_names, self._config.gripper_joint],
-            positions=[*(output.positions or []), gripper_target],
-            mode=output.mode,
+            gripper_joint = self._config.gripper_joint if self._gripper_active else None
+        return append_optional_joint(
+            output,
+            gripper_joint,
+            gripper_target,
         )
 
     def _prepare_target(
@@ -171,55 +169,25 @@ class EEFTwistTask(CartesianIKTask):
             return None
         return pose
 
-    def _select_solve_joints(
-        self,
-        state: CoordinatorState,
-        q_measured: NDArray[np.float64],
-    ) -> NDArray[np.float64]:
-        with self._twist_lock:
-            if self._last_commanded_joints is None:
-                return q_measured
-            return self._last_commanded_joints.copy()
-
-    def _on_solution_accepted(
-        self,
-        state: CoordinatorState,
-        q_solution: NDArray[np.float64],
-    ) -> None:
-        with self._twist_lock:
-            if self._latest_twist is not None and not self._estopped:
-                self._last_commanded_joints = q_solution.copy()
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        if joints & self._joint_names:
-            with self._twist_lock:
-                self._last_commanded_joints = None
-        super().on_preempted(by_task, joints)
-
     def stop(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
-            self._last_commanded_joints = None
+            self._gripper_active = False
         super().stop()
 
     def _on_timeout(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
-            self._last_commanded_joints = None
 
     def clear(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
-            self._last_commanded_joints = None
+            self._gripper_active = False
         super().clear()
 
 
-class EEFTwistTaskParams(BaseConfig):
+class EEFTwistTaskParams(CartesianIKTaskParams):
     timeout: float = 0.3
-    max_joint_delta_deg: float = 15.0
-    min_dt: FiniteFloat = 1e-4
-    max_dt: FiniteFloat = 0.05
-    control_ik: PinkControlIKConfig
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
@@ -234,6 +202,7 @@ def create_task(cfg: TaskConfig, hardware: object) -> EEFTwistTask:
             priority=cfg.priority,
             timeout=params.timeout,
             max_joint_delta_deg=params.max_joint_delta_deg,
+            max_tracking_error_deg=params.max_tracking_error_deg,
             min_dt=params.min_dt,
             max_dt=params.max_dt,
             control_ik=params.control_ik,

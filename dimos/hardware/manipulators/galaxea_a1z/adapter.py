@@ -185,7 +185,7 @@ class GalaxeaA1ZAdapter:
 
     def _create_robot(self) -> ArmRobot:
         gripper = self._config.gripper
-        robot = get_a1z_robot(
+        return get_a1z_robot(
             can_channel=self._can_channel,
             gravity_comp_factor=self._config.gravity_comp_factor,
             zero_gravity_mode=self._config.teaching is not None,
@@ -196,11 +196,6 @@ class GalaxeaA1ZAdapter:
             with_gripper=gripper is not None,
             gripper_max_torque=gripper.max_torque if gripper else 0.5,
         )
-        if gripper is not None:
-            # The pinned SDK exposes the velocity on Gripper but not through
-            # get_a1z_robot(). Keep the override here until the factory does.
-            robot.gripper._max_vel = gripper.max_velocity_rad_s
-        return robot
 
     def disconnect(self) -> None:
         """Stop the control loop, disable motors, and close the CAN bus.

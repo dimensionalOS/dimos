@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -31,6 +31,32 @@ from dimos.robot.manipulators.common.topics import (
     EEF_TWIST_TASK_NAME,
     trajectory_task_name,
 )
+
+
+class PinkControlIKOverrides(TypedDict, total=False):
+    """Pink tuning values that may be overridden by a manipulator blueprint."""
+
+    solver: str
+    max_velocity: float
+    lm_damping: float
+    task_gain: float
+    position_cost: float
+    orientation_cost: float
+    posture_cost: float
+    joint_centering_cost: float
+    damping_cost: float
+    position_limit_margin: float
+    seed_limit_tolerance: float
+    reference_q: list[float] | None
+    qpsolver_options: dict[str, float]
+
+
+class GripperTaskOverrides(TypedDict, total=False):
+    """Optional gripper fields shared by teleop and EEF-twist tasks."""
+
+    gripper_joint: str
+    gripper_open_pos: float
+    gripper_closed_pos: float
 
 
 def trajectory_task(
@@ -60,7 +86,7 @@ def trajectory_task(
 def _resolve_control_ik(
     hardware: HardwareComponent,
     robot_model: RobotModelConfig,
-    control_ik: Mapping[str, object] | None,
+    control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, object]:
     coordinator_joints = robot_model.get_coordinator_joint_names()
     if hardware.joints != coordinator_joints:
@@ -75,9 +101,12 @@ def cartesian_ik_task(
     *,
     name: str = CARTESIAN_IK_TASK_NAME,
     priority: int = 10,
+    timeout: float = 0.5,
+    max_joint_delta_deg: float = 15.0,
+    max_tracking_error_deg: float = 10.0,
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
-    control_ik: Mapping[str, object] | None = None,
+    control_ik: PinkControlIKOverrides | None = None,
     robot_model: RobotModelConfig,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
@@ -88,6 +117,9 @@ def cartesian_ik_task(
         priority=priority,
         params={
             "control_ik": resolved_control_ik,
+            "timeout": timeout,
+            "max_joint_delta_deg": max_joint_delta_deg,
+            "max_tracking_error_deg": max_tracking_error_deg,
             "min_dt": min_dt,
             "max_dt": max_dt,
         },
@@ -99,15 +131,21 @@ def eef_twist_task(
     *,
     name: str = EEF_TWIST_TASK_NAME,
     priority: int = 10,
+    timeout: float = 0.3,
+    max_joint_delta_deg: float = 15.0,
+    max_tracking_error_deg: float = 10.0,
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
-    control_ik: Mapping[str, object] | None = None,
+    control_ik: PinkControlIKOverrides | None = None,
     robot_model: RobotModelConfig,
-    params: Mapping[str, object] | None = None,
+    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, object] = {
         "control_ik": resolved_control_ik,
+        "timeout": timeout,
+        "max_joint_delta_deg": max_joint_delta_deg,
+        "max_tracking_error_deg": max_tracking_error_deg,
         "min_dt": min_dt,
         "max_dt": max_dt,
     }
@@ -129,13 +167,23 @@ def teleop_ik_task(
     name: str,
     robot_model: RobotModelConfig,
     priority: int = 10,
-    control_ik: Mapping[str, object] | None = None,
-    params: Mapping[str, object] | None = None,
+    timeout: float = 0.5,
+    max_joint_delta_deg: float = 5.0,
+    max_tracking_error_deg: float = 10.0,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: PinkControlIKOverrides | None = None,
+    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, object] = {
         "control_ik": resolved_control_ik,
         "hand": hand,
+        "timeout": timeout,
+        "max_joint_delta_deg": max_joint_delta_deg,
+        "max_tracking_error_deg": max_tracking_error_deg,
+        "min_dt": min_dt,
+        "max_dt": max_dt,
     }
     if params:
         task_params.update(params)

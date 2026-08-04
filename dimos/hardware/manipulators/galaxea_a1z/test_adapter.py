@@ -52,7 +52,6 @@ class _FakeMotor:
 class _FakeGripper:
     def __init__(self) -> None:
         self._motor = _FakeMotor()
-        self._max_vel = 10.0
         self.feedback_fraction = 0.0
 
     def get_feedback_norm(self) -> float:
@@ -241,7 +240,6 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArm
         A1ZGripperConfig(
             max_torque=kwargs.pop("gripper_max_torque", 0.5),
             max_opening_m=kwargs.pop("gripper_max_opening_m", 0.1),
-            max_velocity_rad_s=kwargs.pop("gripper_max_velocity_rad_s", 10.0),
         )
         if gripper_enabled
         else None
@@ -252,8 +250,8 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArm
     config = A1ZConfig(
         gravity_comp_factor=kwargs.pop("gravity_comp_factor", 1.0),
         urdf_path=kwargs.pop("urdf_path", None),
-        default_kp=kwargs.pop("default_kp", (80.0, 80.0, 80.0, 50.0, 10.0, 10.0)),
-        default_kd=kwargs.pop("default_kd", (3.0, 3.0, 3.0, 0.7, 0.2, 0.2)),
+        default_kp=kwargs.pop("default_kp", (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)),
+        default_kd=kwargs.pop("default_kd", (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)),
         gripper=gripper,
         teaching=teaching,
     )
@@ -273,11 +271,18 @@ def test_connect_opens_bus_without_powering_motors(
     assert not adapter.read_enabled()
 
 
+def test_default_control_gains_use_stiffer_wrist_profile() -> None:
+    config = A1ZConfig()
+
+    assert config.default_kp == pytest.approx((80.0, 80.0, 80.0, 50.0, 20.0, 20.0))
+    assert config.default_kd == pytest.approx((3.0, 3.0, 3.0, 0.7, 0.4, 0.4))
+
+
 def test_connect_forwards_configured_arm_gains_to_sdk(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    kp = (80.0, 80.0, 80.0, 50.0, 10.0, 10.0)
-    kd = (3.0, 3.0, 3.0, 0.7, 0.2, 0.2)
+    kp = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
+    kd = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
 
     _, robot = _connected_adapter(a1z_adapter_module, default_kp=kp, default_kd=kd)
 
@@ -523,18 +528,13 @@ def test_gripper_round_trips_meters_to_normalized(
     assert robot.gripper_fraction == pytest.approx(1.0)
 
 
-def test_connect_applies_configured_gripper_velocity(
+def test_connect_applies_configured_gripper_force(
     a1z_adapter_module: ModuleType,
 ) -> None:
-    adapter, robot = _connected_adapter(
-        a1z_adapter_module,
-        gripper=True,
-        gripper_max_velocity_rad_s=24.0,
-    )
+    adapter, robot = _connected_adapter(a1z_adapter_module, gripper=True)
 
     assert adapter.is_connected()
     assert robot.factory_kwargs["gripper_max_torque"] == pytest.approx(0.5)
-    assert robot.gripper._max_vel == pytest.approx(24.0)
 
 
 def test_configured_gripper_free_drive_tracks_adapter_lifecycle(

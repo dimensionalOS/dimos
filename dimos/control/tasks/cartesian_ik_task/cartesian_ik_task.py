@@ -58,6 +58,32 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def claim_optional_joint(claim: ResourceClaim, joint_name: str | None) -> ResourceClaim:
+    """Extend a task claim with an optional joint without changing its control policy."""
+    if joint_name is None:
+        return claim
+    return ResourceClaim(
+        joints=claim.joints | frozenset([joint_name]),
+        priority=claim.priority,
+        mode=claim.mode,
+    )
+
+
+def append_optional_joint(
+    output: JointCommandOutput | None,
+    joint_name: str | None,
+    position: float,
+) -> JointCommandOutput | None:
+    """Append an optional position-controlled joint to a Cartesian task output."""
+    if output is None or joint_name is None:
+        return output
+    return JointCommandOutput(
+        joint_names=[*output.joint_names, joint_name],
+        positions=[*(output.positions or []), position],
+        mode=output.mode,
+    )
+
+
 @dataclass
 class CartesianIKTaskConfig:
     """Configuration for cartesian IK task.
@@ -67,6 +93,7 @@ class CartesianIKTaskConfig:
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
+        max_tracking_error_deg: Maximum command-to-feedback error before rebasing
     """
 
     joint_names: list[str]
@@ -74,6 +101,7 @@ class CartesianIKTaskConfig:
     priority: int = 10
     timeout: float = 0.5
     max_joint_delta_deg: float = 15.0  # ~1500°/s at 100Hz
+    max_tracking_error_deg: float = 10.0
     min_dt: FiniteFloat = 1e-4
     max_dt: FiniteFloat = 0.05
 
@@ -93,9 +121,10 @@ class CartesianIKTask(BaseControlTask):
     """Cartesian control task with Pink differential IK.
 
     Accepts streaming cartesian poses via on_cartesian_command() and computes IK
-    internally to output joint commands. By default, Pink re-anchors each solve
-    to the current joint state from CoordinatorState. Specializations can retain
-    a validated command as the next solve seed.
+    internally to output joint commands. Each accepted differential IK result
+    seeds the next solve while measured hardware remains within the configured
+    tracking-error bound. Lagging or stalled hardware automatically rebases the
+    solve to measured state.
 
     Unlike CartesianServoTask (which bypasses joint arbitration), this task
     outputs JointCommandOutput and participates in joint-level arbitration.
@@ -133,6 +162,8 @@ class CartesianIKTask(BaseControlTask):
             raise ValueError("CartesianIKTask timeout must be finite and non-negative")
         if not np.isfinite(config.max_joint_delta_deg) or config.max_joint_delta_deg <= 0.0:
             raise ValueError("CartesianIKTask max_joint_delta_deg must be positive and finite")
+        if not np.isfinite(config.max_tracking_error_deg) or config.max_tracking_error_deg <= 0.0:
+            raise ValueError("CartesianIKTask max_tracking_error_deg must be positive and finite")
 
         self._name = name
         self._config = config
@@ -160,6 +191,7 @@ class CartesianIKTask(BaseControlTask):
         self._target_pose: Pose | PoseStamped | None = None
         self._last_update_time: float = 0.0
         self._active = False
+        self._last_commanded_joints: NDArray[np.float64] | None = None
 
         logger.info(
             f"CartesianIKTask {name} initialized with model: "
@@ -203,6 +235,7 @@ class CartesianIKTask(BaseControlTask):
                     )
                     self._active = False
                     self._target_pose = None
+                    self._last_commanded_joints = None
                     self._on_timeout()
                     return None
 
@@ -213,10 +246,7 @@ class CartesianIKTask(BaseControlTask):
         if not np.all(np.isfinite(q_measured)):
             logger.error("CartesianIKTask %s: measured joint state is non-finite", self._name)
             return None
-        q_current = self._select_solve_joints(state, q_measured)
-        if q_current.shape != q_measured.shape or not np.all(np.isfinite(q_current)):
-            logger.error("CartesianIKTask %s: solve joint state is invalid", self._name)
-            return self._hold(q_measured)
+        q_current = self._solve_seed(q_measured)
         raw_dt = state.dt
         if not np.isfinite(raw_dt) or raw_dt <= 0.0:
             return self._hold(q_current)
@@ -250,7 +280,9 @@ class CartesianIKTask(BaseControlTask):
             )
             return self._hold(q_current)
 
-        self._on_solution_accepted(state, q_solution)
+        with self._lock:
+            if self._active:
+                self._last_commanded_joints = q_solution.copy()
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             positions=q_solution.flatten().tolist(),
@@ -275,20 +307,37 @@ class CartesianIKTask(BaseControlTask):
             positions.append(pos)
         return np.array(positions, dtype=np.float64)
 
-    def _select_solve_joints(
-        self,
-        state: CoordinatorState,
-        q_measured: NDArray[np.float64],
-    ) -> NDArray[np.float64]:
-        """Select the joint state used to warm-start this tick's IK solve."""
-        return q_measured
+    def _solve_seed(self, q_measured: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Return a bounded command seed, rebasing to feedback when tracking diverges."""
+        with self._lock:
+            cached = (
+                None if self._last_commanded_joints is None else self._last_commanded_joints.copy()
+            )
+        if cached is None:
+            return q_measured
+        if cached.shape != q_measured.shape or not np.all(np.isfinite(cached)):
+            logger.error("CartesianIKTask %s: cached joint command is invalid", self._name)
+            self._reset_command_state()
+            return q_measured
+        tracking_error_deg = np.rad2deg(np.abs(cached - q_measured))
+        if np.any(tracking_error_deg > self._config.max_tracking_error_deg):
+            worst_index = int(np.argmax(tracking_error_deg))
+            logger.warning(
+                "CartesianIKTask %s: rebasing solve to measured state; %s tracks %.1f° "
+                "behind command (limit %.1f°)",
+                self._name,
+                self._joint_names_list[worst_index],
+                tracking_error_deg[worst_index],
+                self._config.max_tracking_error_deg,
+            )
+            self._reset_command_state()
+            return q_measured
+        return cached
 
-    def _on_solution_accepted(
-        self,
-        state: CoordinatorState,
-        q_solution: NDArray[np.float64],
-    ) -> None:
-        """Handle a finite, shape-valid, joint-delta-checked IK solution."""
+    def _reset_command_state(self) -> None:
+        """Discard the retained differential-IK command seed."""
+        with self._lock:
+            self._last_commanded_joints = None
 
     def _prepare_target(
         self,
@@ -334,6 +383,7 @@ class CartesianIKTask(BaseControlTask):
             joints: Joints that were preempted
         """
         if joints & self._joint_names:
+            self._reset_command_state()
             logger.warning(
                 f"CartesianIKTask {self._name} preempted by {by_task} on joints {joints}"
             )
@@ -349,6 +399,8 @@ class CartesianIKTask(BaseControlTask):
             True if accepted
         """
         with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._target_pose = pose  # Store raw, convert to SE3 in compute()
             self._last_update_time = t_now
             self._active = True
@@ -358,6 +410,7 @@ class CartesianIKTask(BaseControlTask):
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
         with self._lock:
+            self._last_commanded_joints = None
             self._active = True
         logger.info(f"CartesianIKTask {self._name} started")
 
@@ -366,6 +419,7 @@ class CartesianIKTask(BaseControlTask):
         with self._lock:
             self._active = False
             self._target_pose = None
+            self._last_commanded_joints = None
         logger.info(f"CartesianIKTask {self._name} stopped")
 
     def clear(self) -> None:
@@ -373,6 +427,7 @@ class CartesianIKTask(BaseControlTask):
         with self._lock:
             self._target_pose = None
             self._active = False
+            self._last_commanded_joints = None
         logger.info(f"CartesianIKTask {self._name} cleared")
 
     def is_tracking(self) -> bool:
@@ -411,6 +466,9 @@ class CartesianIKTask(BaseControlTask):
 
 class CartesianIKTaskParams(BaseConfig):
     control_ik: PinkControlIKConfig
+    timeout: float = 0.5
+    max_joint_delta_deg: float = 15.0
+    max_tracking_error_deg: float = 10.0
     min_dt: FiniteFloat = 1e-4
     max_dt: FiniteFloat = 0.05
 
@@ -422,6 +480,9 @@ def create_task(cfg: TaskConfig, hardware: object) -> CartesianIKTask:
         CartesianIKTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,
+            timeout=params.timeout,
+            max_joint_delta_deg=params.max_joint_delta_deg,
+            max_tracking_error_deg=params.max_tracking_error_deg,
             min_dt=params.min_dt,
             max_dt=params.max_dt,
             control_ik=params.control_ik,
