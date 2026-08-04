@@ -27,7 +27,7 @@ resource usage, across supported robot configurations.
 - **Accuracy**: every successful solution is independently re-verified by
   pushing it through the world's FK and scoring against the target with
   `compute_pose_error` — the same metric for every backend.
-- **Resource usage**: coarse peak-RSS delta (`resource.ru_maxrss`) across each
+- **Resource usage**: coarse current-RSS delta (`/proc/self/statm`) across each
   backend's measured window; model construction happens during warmup.
 
 ## Running

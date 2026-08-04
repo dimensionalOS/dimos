@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 import resource
 import statistics
@@ -147,7 +148,7 @@ class BackendRun:
     scenario: str
     backend: str
     records: list[SolveRecord]
-    peak_rss_delta_mb: float
+    rss_delta_mb: float
 
 
 @dataclass
@@ -172,7 +173,7 @@ class RunSummary:
     latency_ms: DistributionStats
     verified_position_error_m: DistributionStats
     verified_orientation_error_rad: DistributionStats
-    peak_rss_delta_mb: float
+    rss_delta_mb: float
 
 
 @dataclass
@@ -303,9 +304,19 @@ def _verify_solution(
     )
 
 
-def _peak_rss_mb() -> float:
-    """Peak RSS of this process in MB (Linux ru_maxrss is KiB)."""
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+def _current_rss_mb() -> float:
+    """Current resident set size of this process in MB.
+
+    Reads /proc/self/statm so the per-backend delta is a real before/after
+    difference; ru_maxrss is a process-lifetime high-water mark and would
+    report zero growth for every backend after the first one peaks.
+    """
+    try:
+        with open("/proc/self/statm") as fh:
+            resident_pages = int(fh.read().split()[1])
+        return resident_pages * os.sysconf("SC_PAGESIZE") / 1024.0**2
+    except OSError:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
 def _run_backend(
@@ -334,7 +345,7 @@ def _run_backend(
     for target in targets[:warmup]:
         solve_once(target)
 
-    rss_before = _peak_rss_mb()
+    rss_before = _current_rss_mb()
     records: list[SolveRecord] = []
     for index, target in enumerate(targets[warmup:]):
         result, wall_time_ms = solve_once(target)
@@ -358,7 +369,7 @@ def _run_backend(
         scenario=scenario.name,
         backend=solver.name,
         records=records,
-        peak_rss_delta_mb=_peak_rss_mb() - rss_before,
+        rss_delta_mb=_current_rss_mb() - rss_before,
     )
 
 
@@ -396,7 +407,7 @@ def _summarize(run: BackendRun) -> RunSummary:
                 if r.verified_orientation_error is not None
             ]
         ),
-        peak_rss_delta_mb=run.peak_rss_delta_mb,
+        rss_delta_mb=run.rss_delta_mb,
     )
 
 
@@ -416,7 +427,7 @@ def _print_summary(summaries: Sequence[RunSummary]) -> None:
             f"{s.success_rate:>7.1%} "
             f"{s.latency_ms.p50 or 0.0:>9.2f} {s.latency_ms.p95 or 0.0:>9.2f} "
             f"{s.latency_ms.mean or 0.0:>9.2f} "
-            f"{pos_mm:>8.3f} {ori_mrad:>9.3f} {s.peak_rss_delta_mb:>8.1f}"
+            f"{pos_mm:>8.3f} {ori_mrad:>9.3f} {s.rss_delta_mb:>8.1f}"
         )
 
 
