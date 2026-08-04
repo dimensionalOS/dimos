@@ -272,36 +272,29 @@ def test_autoconnect(args_file: str) -> None:
     }
 
 
-@pytest.fixture
-def run_build(tmp_path: Path):
+def run_build(tmp_path: Path, *, build_native: bool) -> Path:
     """Builds a module whose executable already exists. Returns the build sentinel path."""
-    modules: list[NativeModule] = []
-
-    def _run(*, build_native: bool) -> Path:
-        sentinel = tmp_path / "build_ran"
-        exe = tmp_path / "already_built"
-        exe.touch()
-        module = StubBuildModule(
-            executable=str(exe),
-            build_command=f"touch {sentinel}",
-            g=GlobalConfig(build_native=build_native),
-        )
-        modules.append(module)
+    sentinel = tmp_path / "build_ran"
+    exe = tmp_path / "already_built"
+    exe.touch()
+    module = StubBuildModule(
+        executable=str(exe),
+        build_command=f"touch {sentinel}",
+        g=GlobalConfig(build_native=build_native),
+    )
+    try:
         module.build()
-        return sentinel
-
-    yield _run
-
-    for module in modules:
+    finally:
         module.stop()
+    return sentinel
 
 
-def test_existing_executable_skips_build(run_build) -> None:
-    assert not run_build(build_native=False).exists()
+def test_existing_executable_skips_build(tmp_path: Path) -> None:
+    assert not run_build(tmp_path, build_native=False).exists()
 
 
-def test_build_native_forces_build(run_build) -> None:
-    assert run_build(build_native=True).exists()
+def test_build_native_forces_build(tmp_path: Path) -> None:
+    assert run_build(tmp_path, build_native=True).exists()
 
 
 def test_base_field_not_sent_without_opt_in() -> None:
