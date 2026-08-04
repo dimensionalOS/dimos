@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 import pinocchio
-from pydantic import Field, FiniteFloat, field_validator
+from pydantic import Field, FiniteFloat
 
 _PINK_INSTALL_ERROR = "Pink control tasks require the 'pink' dependency. Install it with `uv sync`."
 
@@ -57,13 +57,6 @@ class PinkControlIKConfig(BaseConfig):
     posture_cost: FiniteFloat = Field(1e-3, ge=0.0)
     reference_q: list[float] | None = None
     qpsolver_options: dict[str, FiniteFloat] = Field(default_factory=dict)
-
-    @field_validator("robot_model", mode="before")
-    @classmethod
-    def _accept_robot_model(cls, value: object) -> RobotModelConfig:
-        if not isinstance(value, RobotModelConfig):
-            raise TypeError("Pink robot_model must be a RobotModelConfig instance")
-        return value
 
 
 @dataclass(frozen=True)
