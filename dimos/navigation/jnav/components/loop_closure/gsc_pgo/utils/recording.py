@@ -24,7 +24,13 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.scripts import make_r
 
 
 def build_and_open_rrd(
-    db_path: Path, lidar_stream: str, odom_stream: str, tag_stream: str, world_frame: str
+    db_path: Path,
+    lidar_stream: str,
+    odom_stream: str,
+    tag_stream: str,
+    world_frame: str,
+    camera_stream: str = "color_image",
+    camera_info_stream: str = "",
 ) -> None:
     print("building comparison rrd...", flush=True)
     rrd_path = make_rrd.build(
@@ -33,6 +39,8 @@ def build_and_open_rrd(
         odom_stream=odom_stream,
         tag_stream=tag_stream,
         world_frame=world_frame,
+        camera_stream=camera_stream,
+        camera_info_stream=camera_info_stream,
     )
     rerun_bin = Path(sys.executable).parent / "rerun"
     if rerun_bin.exists():

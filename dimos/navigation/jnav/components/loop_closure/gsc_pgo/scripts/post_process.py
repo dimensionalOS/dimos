@@ -36,6 +36,7 @@ Usage:
 """
 
 import argparse
+from dataclasses import fields
 from pathlib import Path
 import sys
 from typing import Any
@@ -58,6 +59,7 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.go2_legacy impo
     normalize_go2_legacy,
 )
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.offline_pgo import (
+    Tuning,
     add_icp_closures,
     best_factor_per_keyframe_marker,
     build_tag_graph,
@@ -72,7 +74,7 @@ from dimos.navigation.jnav.components.loop_closure.gsc_pgo.utils.recording_scans
     default_odom_edge,
     resolve_streams,
 )
-from dimos.navigation.jnav.components.loop_closure.utils import read_camera_info
+from dimos.navigation.jnav.components.loop_closure.utils import resolve_camera_info
 from dimos.navigation.jnav.utils.apriltags import (
     ensure_raw_tag_stream,
     filter_glimpses,
@@ -98,8 +100,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera", default="color_image", help="image stream to detect tags on")
     parser.add_argument(
         "--camera-info-stream",
-        default="camera_info",
-        help="CameraInfo stream (K + distortion); auto-detects any '*camera_info*' stream if absent",
+        default="",
+        help="CameraInfo stream (K + distortion); when unset, tries '<camera>_camera_info' "
+        "then 'camera_info'",
     )
     parser.add_argument(
         "--tag-frame",
@@ -141,7 +144,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lcm-voxel", type=float, default=0.05)
     parser.add_argument("--accum-voxel", type=float, default=0.05)
     parser.add_argument("--accum-max-range", type=float, default=20.0)
+    tuning_group = parser.add_argument_group(
+        "solve tuning", "keyframe / factor-noise / ICP knobs (see offline_pgo.Tuning)"
+    )
+    for field in fields(Tuning):
+        tuning_group.add_argument(
+            f"--{field.name.replace('_', '-')}",
+            type=type(field.default),
+            default=field.default,
+            help=f"default {field.default:g}",
+        )
     return parser.parse_args()
+
+
+def tuning_from_args(args: argparse.Namespace) -> Tuning:
+    return Tuning(**{field.name: getattr(args, field.name) for field in fields(Tuning)})
 
 
 def parse_base_optical(spec: str) -> Pose3 | None:
@@ -173,6 +190,7 @@ def resolve_base_optical(
 
 def main() -> None:
     args = parse_args()
+    tuning = tuning_from_args(args)
     db_path = resolve_db_path(args.db)
     if db_path.is_dir():
         sys.exit(f"--db must be a .db file, not a directory: {db_path}")
@@ -188,10 +206,12 @@ def main() -> None:
         body_frame = odom_tf.split(":", 1)[1] if odom_tf else args.world_frame
         ignore_tags = {int(token) for token in args.ignore_tags.replace(",", " ").split()}
 
-        camera_info = read_camera_info(store, args.camera_info_stream)
+        camera_info, camera_info_tried = resolve_camera_info(
+            store, args.camera, args.camera_info_stream
+        )
         if camera_info is None:
             print(
-                f"WARNING: no {args.camera_info_stream!r} CameraInfo stream "
+                f"WARNING: no CameraInfo stream among {camera_info_tried} "
                 "-- AprilTag stage skipped; ICP + odom only. If this is a go2 "
                 "recording, add the static front-camera intrinsics first with "
                 "scripts/add_camera_info.py, then re-run.",
@@ -227,7 +247,8 @@ def main() -> None:
             translation = np.array(
                 [transform.translation.x, transform.translation.y, transform.translation.z], float
             )
-            return (points @ rotation.T + translation).astype(np.float32)
+            world: np.ndarray = points @ rotation.T + translation
+            return world.astype(np.float32)
 
         print(f"recording: {rec_dir}", flush=True)
         print(
@@ -257,7 +278,7 @@ def main() -> None:
         odom_rows = np.asarray(odom_row_list, dtype=np.float64).reshape(-1, 8)
         if not len(odom_rows):
             sys.exit(f"odom stream {odom_stream!r} is empty in {db_path}")
-        _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows)
+        _indices, keyframe_poses, keyframe_times = select_keyframes(odom_rows, tuning)
         best_factors = best_factor_per_keyframe_marker(detections, keyframe_times)
         if raw_detections:
             report_revisits(raw_detections, best_factors)
@@ -267,14 +288,22 @@ def main() -> None:
         base_optical = Pose3()
         if best_factors:
             base_optical = resolve_base_optical(
-                store_tf, body_frame, optical_frame, float(odom_rows[0][0]), args.base_optical
+                store_tf,
+                body_frame,
+                optical_frame,
+                # mid-run, not odom_rows[0]: tf typically starts a fraction of a second after
+                # odometry, and a past-only lookup before the first tf sample breaks the chain
+                float(np.median(odom_rows[:, 0])),
+                args.base_optical,
             )
 
         # stage 1: tag PGO
         print(f"building factor graph over {len(keyframe_poses)} keyframes...", flush=True)
-        graph, values, seen_markers = build_tag_graph(keyframe_poses, best_factors, base_optical)
+        graph, values, seen_markers = build_tag_graph(
+            keyframe_poses, best_factors, base_optical, tuning
+        )
         print("solving stage 1 (tag PGO)...", flush=True)
-        estimate = solve(graph, values)
+        estimate = solve(graph, values, tuning)
         raw_keyframe_poses = list(keyframe_poses)
 
         # stage 2: ICP loop closures
@@ -288,10 +317,11 @@ def main() -> None:
                 keyframe_times,
                 world_points,
                 args.closure_spacing,
+                tuning,
             )
             if accepted:
                 print("solving stage 2 (tag PGO + ICP closures)...", flush=True)
-                estimate = solve(graph, estimate)
+                estimate = solve(graph, estimate, tuning)
 
         # per-keyframe corrections
         corrections = [
@@ -378,7 +408,15 @@ def main() -> None:
                         flush=True,
                     )
             if args.rrd:
-                build_and_open_rrd(db_path, lidar_stream, odom_stream, args.tags, args.world_frame)
+                build_and_open_rrd(
+                    db_path,
+                    lidar_stream,
+                    odom_stream,
+                    args.tags,
+                    args.world_frame,
+                    camera_stream=args.camera,
+                    camera_info_stream=args.camera_info_stream,
+                )
 
 
 if __name__ == "__main__":

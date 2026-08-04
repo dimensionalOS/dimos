@@ -214,6 +214,20 @@ def read_camera_info(
     return info.get_K_matrix(), info.get_D_coeffs(), info.frame_id
 
 
+def resolve_camera_info(
+    store: Any, camera_stream: str, override: str = ""
+) -> tuple[tuple[np.ndarray, np.ndarray, str] | None, list[str]]:
+    """``(camera info, stream names tried)``. Without an override, rigs that name their
+    intrinsics after the image stream (``<camera>_camera_info``) resolve before the
+    generic ``camera_info``."""
+    tried = [override] if override else [f"{camera_stream}_camera_info", "camera_info"]
+    for stream_name in tried:
+        camera_info = read_camera_info(store, stream_name)
+        if camera_info is not None:
+            return camera_info, tried
+    return None, tried
+
+
 def load_tag_detections(
     db_path: Path,
     camera_stream: str | None,
