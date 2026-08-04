@@ -47,7 +47,7 @@ class Pose(LCMPose):  # type: ignore[misc]
         self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
 
     @dispatch  # type: ignore[no-redef]
-    def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
+    def __init__(self, x: float, y: float, z: float) -> None:
         """Initialize a pose with position and identity orientation."""
         self.position = Vector3(x, y, z)
         self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
@@ -55,13 +55,13 @@ class Pose(LCMPose):  # type: ignore[misc]
     @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        x: int | float,
-        y: int | float,
-        z: int | float,
-        qx: int | float,
-        qy: int | float,
-        qz: int | float,
-        qw: int | float,
+        x: float,
+        y: float,
+        z: float,
+        qx: float,
+        qy: float,
+        qz: float,
+        qw: float,
     ) -> None:
         """Initialize a pose with position and orientation."""
         self.position = Vector3(x, y, z)

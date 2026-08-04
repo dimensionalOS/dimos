@@ -53,7 +53,7 @@ from dimos.utils.logging_config import setup_logger
 # Channel/manifest domain types live in manifest.py; re-exported here (the
 # redundant aliases mark them as such for mypy) so protocol consumers keep a
 # single import surface, mirroring protocol.ts.
-from dimos.web.relay_bridge.manifest import ChannelSpec as ChannelSpec, Delivery as Delivery
+from dimos.web.relay_bridge.manifest import ChannelSpec, Delivery
 
 logger = setup_logger()
 

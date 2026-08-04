@@ -87,7 +87,7 @@ class TaskConfig:
 
     name: str
     type: str = "trajectory"
-    joint_names: list[str] = field(default_factory=lambda: [])
+    joint_names: list[str] = field(default_factory=list)
     priority: int = 10
     auto_start: bool = False
     params: dict[str, Any] = field(default_factory=dict)
@@ -104,8 +104,8 @@ class ControlCoordinatorConfig(ModuleConfig):
     publish_robot_joint_states: bool = False
     joint_state_frame_id: str = "coordinator"
     log_ticks: bool = False
-    hardware: list[HardwareComponent] = field(default_factory=lambda: [])
-    tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    hardware: list[HardwareComponent] = field(default_factory=list)
+    tasks: list[TaskConfig] = field(default_factory=list)
 
 
 class ControlCoordinator(Module):

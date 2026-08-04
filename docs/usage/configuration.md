@@ -12,12 +12,15 @@ from pydantic import ValidationError
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from rich import print
 
+
 class Config(BaseConfig):
     x: int = 3
     hello: str = "world"
 
+
 class MyClass(Configurable):
     config: Config
+
 
 myclass1 = MyClass()
 print(myclass1.config)
@@ -31,7 +34,6 @@ try:
     myclass3 = MyClass(something="else")
 except (TypeError, ValidationError) as e:
     print(f"Error: {e}")
-
 ```
 
 ```results
@@ -54,11 +56,13 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from rich import print
 
+
 class Config(ModuleConfig):
     frame_id: str = "world"
     publish_interval: float = 0
     voxel_size: float = 0.05
     device: str = "CUDA:0"
+
 
 class MyModule(Module):
     config: Config
@@ -67,11 +71,11 @@ class MyModule(Module):
         super().__init__(**kwargs)
         print(self.config)
 
+
 myModule = MyModule(frame_id="frame_id_override", device="CPU")
 
 # In production, use dimos.deploy() instead:
 # myModule = dimos.deploy(MyModule, frame_id="frame_id_override")
-
 ```
 
 ```results

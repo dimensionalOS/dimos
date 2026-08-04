@@ -23,7 +23,6 @@ from .accumulators import Accumulator, LatestAccumulator
 _CacheResult_co = TypeVar("_CacheResult_co", covariant=True)
 _CacheReturn = TypeVar("_CacheReturn")
 _P = ParamSpec("_P")
-_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 class CachedMethod(Protocol[_CacheResult_co]):
