@@ -16,34 +16,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 import pinocchio
 from pydantic import Field, FiniteFloat, field_validator
 
-pink: ModuleType | None = None
-_configuration_limit: Callable[[object], object] | None = None
-_velocity_limit: Callable[[object], object] | None = None
+_PINK_INSTALL_ERROR = "Pink control tasks require the 'pink' dependency. Install it with `uv sync`."
 
 try:
-    import pink as _pink_module
-    from pink.limits import (
-        ConfigurationLimit as _ConfigurationLimit,
-        VelocityLimit as _VelocityLimit,
-    )
+    from pink import Configuration, solve_ik
+    from pink.limits import ConfigurationLimit, VelocityLimit
+    from pink.tasks import FrameTask, PostureTask
 except ModuleNotFoundError as exc:
-    if exc.name != "pink":
-        raise
-else:
-    pink = cast("ModuleType", _pink_module)
-    _configuration_limit = cast("Callable[[object], object]", _ConfigurationLimit)
-    _velocity_limit = cast("Callable[[object], object]", _VelocityLimit)
+    raise ModuleNotFoundError(
+        f"{_PINK_INSTALL_ERROR} Missing module: {exc.name}",
+        name=exc.name,
+    ) from exc
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
@@ -51,22 +42,6 @@ from dimos.protocol.service.spec import BaseConfig
 
 # Pink's integration/QP boundary tolerance is small but larger than machine epsilon.
 _POSITION_LIMIT_EPSILON_RAD = 1e-5
-_PINK_INSTALL_ERROR = (
-    "Pink control tasks require the optional 'pink' dependency. "
-    "Install it with `uv sync --extra manipulation`."
-)
-
-
-def _require_pink() -> ModuleType:
-    if pink is None:
-        raise ModuleNotFoundError(_PINK_INSTALL_ERROR, name="pink") from None
-    return pink
-
-
-def _require_pink_limits() -> tuple[Callable[[object], object], Callable[[object], object]]:
-    if _configuration_limit is None or _velocity_limit is None:
-        raise ModuleNotFoundError(_PINK_INSTALL_ERROR, name="pink") from None
-    return _configuration_limit, _velocity_limit
 
 
 class PinkControlIKConfig(BaseConfig):
@@ -108,8 +83,6 @@ class PinkControlIK:
         self,
         config: PinkControlIKConfig,
     ) -> None:
-        pink_module = _require_pink()
-        _require_pink_limits()
         self._config = config
         robot = config.robot_model
         self._joint_names = robot.get_coordinator_joint_names()
@@ -151,12 +124,12 @@ class PinkControlIK:
             self._ee_frame_id = self._validate_frame(robot.end_effector_link)
             self._apply_limits(robot)
         self._reference_q = self._build_reference_q(use_config_reference=False)
-        self._configuration = pink_module.Configuration(  # type: ignore[attr-defined]
+        self._configuration = Configuration(
             self._model,
             self._data,
             self._reference_q.copy(),
         )
-        self._frame_task = pink_module.tasks.FrameTask(  # type: ignore[attr-defined]
+        self._frame_task = FrameTask(
             robot.end_effector_link,
             position_cost=config.position_cost,
             orientation_cost=config.orientation_cost,
@@ -164,9 +137,7 @@ class PinkControlIK:
             gain=config.task_gain,
         )
         self._posture_task = (
-            pink_module.tasks.PostureTask(cost=config.posture_cost)  # type: ignore[attr-defined]
-            if config.posture_cost > 0.0
-            else None
+            PostureTask(cost=config.posture_cost) if config.posture_cost > 0.0 else None
         )
         self._tasks: list[object] = [self._frame_task]
         if self._posture_task is not None:
@@ -189,7 +160,6 @@ class PinkControlIK:
         measured: NDArray[np.float64],
         dt: float,
     ) -> ControlIKResult:
-        pink_module = _require_pink()
         measured = np.asarray(measured, dtype=np.float64).reshape(-1)
         if measured.size != len(self._joint_names) or not np.all(np.isfinite(measured)):
             raise ValueError("measured joint state is invalid")
@@ -198,14 +168,12 @@ class PinkControlIK:
 
         configuration = self._configuration
         frame_task = self._frame_task
-        if configuration is None or frame_task is None:
-            raise IKControlRuntimeError("Pink control backend is unavailable")
         try:
             configuration.update(self._full_q(measured))
             frame_task.set_target(target)
             if self._posture_task is not None:
                 self._posture_task.set_target(configuration.q.copy())
-            velocity = pink_module.solve_ik(  # type: ignore[attr-defined]
+            velocity = solve_ik(
                 configuration,
                 self._tasks,
                 dt,
@@ -364,7 +332,6 @@ class PinkControlIK:
         return frame_id
 
     def _apply_limits(self, robot: RobotModelConfig) -> None:
-        configuration_limit, velocity_limit = _require_pink_limits()
         if robot.joint_limits_lower is not None or robot.joint_limits_upper is not None:
             if robot.joint_limits_lower is None or robot.joint_limits_upper is None:
                 raise ValueError("both configured joint limit bounds are required")
@@ -399,4 +366,9 @@ class PinkControlIK:
             self._model.velocityLimit[index] = min(
                 self._model.velocityLimit[index], self._config.max_velocity
             )
-        self._limits = [configuration_limit(self._model), velocity_limit(self._model)]
+        self._limits = [ConfigurationLimit(self._model), VelocityLimit(self._model)]
+
+
+def create_pink_control_ik(config: PinkControlIKConfig) -> PinkControlIK:
+    """Construct the default Cartesian control IK backend."""
+    return PinkControlIK(config)

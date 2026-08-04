@@ -68,7 +68,7 @@ class FakeIK:
 def fake_ik(mocker) -> FakeIK:
     ik = FakeIK()
     mocker.patch(
-        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.PinkControlIK",
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
         return_value=ik,
     )
     return ik

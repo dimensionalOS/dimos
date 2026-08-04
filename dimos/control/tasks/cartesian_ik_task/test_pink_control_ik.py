@@ -17,14 +17,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pytest.importorskip("pink")
-
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     IKControlRuntimeError,
     PinkControlIK,
     PinkControlIKConfig,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -86,7 +85,14 @@ def _robot(
         model_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joint_names,
-        end_effector_link=frame,
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(joint_names),
+                base_link="base",
+                tip_link=frame,
+            )
+        ],
         home_joints=[0.4] * joint_count,
         joint_limits_lower=[-2.0] * joint_count,
         joint_limits_upper=[2.0] * joint_count,
@@ -201,9 +207,7 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
         calls.append((configuration, tasks, dt, kwargs))
         return np.zeros(backend._model.nv)
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     result = backend.solve(target, measured, 0.01)
 
     assert np.array_equal(result.positions, measured)
@@ -231,9 +235,7 @@ def test_pink_solver_dependency_failure_is_translated_to_runtime_error(
     ) -> np.ndarray:
         raise RuntimeError("solver dependency failed")
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     measured = np.array([0.3, 0.1])
     with pytest.raises(IKControlRuntimeError, match="solver dependency failed"):
         backend.solve(backend.forward_kinematics(measured), measured, 0.01)
@@ -254,9 +256,7 @@ def test_pink_receives_pre_bounded_dt_unchanged(
         calls.append(dt)
         return np.zeros(backend._model.nv)
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     measured = np.array([0.3, 0.1])
     backend.solve(backend.forward_kinematics(measured), measured, 0.05)
 
@@ -274,9 +274,7 @@ def test_pink_posture_task_can_be_disabled(tmp_path: Path, monkeypatch: pytest.M
         calls.append(tasks)
         return np.zeros(backend._model.nv)
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     measured = np.array([0.3, 0.1])
     backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
@@ -347,9 +345,7 @@ def test_pink_clamps_tiny_position_limit_overshoot(
     ) -> np.ndarray:
         return np.array([0.00013784674535, -0.2])
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     result = backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
     assert np.array_equal(result.positions, np.array([1.22, 0.098]))
@@ -371,9 +367,7 @@ def test_pink_rejects_material_position_limit_violation(
     ) -> np.ndarray:
         return np.array([0.01, -0.2])
 
-    monkeypatch.setattr(
-        "dimos.control.tasks.cartesian_ik_task.pink_control_ik.pink.solve_ik", solve
-    )
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     with pytest.raises(IKControlRuntimeError, match="out-of-bounds"):
         backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 

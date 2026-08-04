@@ -40,6 +40,7 @@ from dimos.control.task import (
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     PinkControlIK,
     PinkControlIKConfig,
+    create_pink_control_ik,
 )
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     check_joint_delta,
@@ -144,7 +145,7 @@ class CartesianIKTask(BaseControlTask):
             )
 
         # Create IK solver from model
-        self._ik = PinkControlIK(config.control_ik)
+        self._ik: PinkControlIK = create_pink_control_ik(config.control_ik)
 
         # Validate DOF matches joint names
         if self._ik.nq != self._num_joints:
