@@ -285,6 +285,7 @@ pub(crate) struct GncJob {
     pub(crate) backbone_noise: BackboneNoise,
     pub(crate) rebuild_loop_noise: RebuildLoopNoise,
     pub(crate) loop_gnc_var_scale: f64,
+    pub(crate) loop_gnc_inlier_probability: f64,
     /// Monotonic dispatch counter, echoed in the result so the pipeline can
     /// tell whether a newer solve is still in flight (worker coalesces jobs).
     pub(crate) sequence: u64,
@@ -325,7 +326,11 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
             .expect("gtsam: gnc loop between factor");
     }
     let (estimate_values, factor_weights) = graph
-        .gnc_optimize(&values, &known_inlier_indices)
+        .gnc_optimize(
+            &values,
+            &known_inlier_indices,
+            job.loop_gnc_inlier_probability,
+        )
         .expect("gtsam: gnc optimize");
     let keyframe_globals = (0..job.keyframes.len())
         .map(|idx| {

@@ -313,8 +313,8 @@ double gtsam_shim_isam2_error(const gtsam_shim_isam2* isam2) {
 gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
                                            const gtsam_shim_values* values,
                                            const uint64_t* known_inlier_indices,
-                                           size_t n_known, double** out_weights,
-                                           size_t* out_n_weights) {
+                                           size_t n_known, double inlier_probability,
+                                           double** out_weights, size_t* out_n_weights) {
     if (out_weights != nullptr) {
         *out_weights = nullptr;
     }
@@ -336,6 +336,9 @@ gtsam_shim_values* gtsam_shim_gnc_optimize(const gtsam_shim_graph* graph,
             params.setKnownInliers(known);
         }
         gtsam::GncOptimizer<GncLMParams> optimizer(*unwrap(graph), *unwrap(values), params);
+        if (inlier_probability > 0.0 && inlier_probability < 1.0) {
+            optimizer.setInlierCostThresholdsAtProbability(inlier_probability);
+        }
         gtsam::Values result = optimizer.optimize();
         if (out_weights != nullptr && out_n_weights != nullptr) {
             const gtsam::Vector weights = optimizer.getWeights();
