@@ -47,7 +47,6 @@ from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
-from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
@@ -82,6 +81,9 @@ if TYPE_CHECKING:
 # as well as pubsubs={} to specify which protocols to listen to.
 
 logger = setup_logger()
+
+# Length of the axis triad drawn on each tf frame, in meters.
+TF_AXIS_LENGTH = 0.15
 
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
@@ -204,7 +206,6 @@ class Config(ModuleConfig):
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
-    tf_axis_length: float = 0.15
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
     memory_limit: str = "25%"
@@ -244,27 +245,12 @@ class RerunBridgeModule(Module):
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
         self._frame_attached: dict[str, str] = {}
-        # Built lazily: the buffer holds a lock, and the module is pickled to its
-        # worker process after __init__ (see Module.__getstate__).
-        self._tf_tree: MultiTBuffer | None = None
+        self._tf_parents: dict[str, str] = {}
         self._tf_paths: dict[str, str] = {}
 
     @property
     def host(self) -> str:
         return self.config.g.rerun_host or self.config.g.listen_host
-
-    @property
-    def tf_tree(self) -> MultiTBuffer:
-        """The bridge's tf tree, reconstructed from the TFMessages it sees.
-
-        Deliberately not the module-wide ``self.tf`` service: that one subscribes to
-        the tf topic itself, which would both duplicate traffic the bridge already
-        receives and race with it. Feeding this buffer straight from ``_on_message``
-        keeps the tree in step with the transforms being logged.
-        """
-        if self._tf_tree is None:
-            self._tf_tree = MultiTBuffer()
-        return self._tf_tree
 
     def _visual_override_for_entity_path(
         self, entity_path: str
@@ -312,10 +298,6 @@ class RerunBridgeModule(Module):
         self._override_cache[entity_path] = composed
         return composed
 
-    def _has_visual_override(self, entity_path: str) -> bool:
-        """Check whether the config declares any visual override for the entity path."""
-        return any(pattern_matches(pattern, entity_path) for pattern in self.config.visual_override)
-
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
@@ -332,17 +314,21 @@ class RerunBridgeModule(Module):
             topic_str = "/" + topic_str.removeprefix("dimos/")
         return f"{self.config.entity_prefix}{topic_str}"
 
-    def _throttled(self, entity_path: str) -> bool:
-        """Check whether an entity with a max_hz limit was logged too recently."""
-        interval = self._min_intervals.get(entity_path)
-        if interval is None:
-            return False
+    def _tf_chain(self, frame_id: str) -> list[str]:
+        """Frame ids from the tree root down to ``frame_id``, inclusive.
 
-        now = time.monotonic()
-        if now - self._last_log.get(entity_path, 0.0) < interval:
-            return True
-        self._last_log[entity_path] = now
-        return False
+        Stops on a cycle, so a malformed tree yields a truncated chain rather than
+        hanging the bridge.
+        """
+        chain = [frame_id]
+        seen = {frame_id}
+        parent = self._tf_parents.get(frame_id)
+        while parent is not None and parent not in seen:
+            chain.append(parent)
+            seen.add(parent)
+            parent = self._tf_parents.get(parent)
+        chain.reverse()
+        return chain
 
     def _tf_entity_path(self, frame_id: str) -> str:
         """Build the entity path mirroring the tf tree, ie ``world/tf/odom/base_link``.
@@ -352,7 +338,9 @@ class RerunBridgeModule(Module):
         a new ancestor the committed path is stale: it is cleared recursively and the frame
         (along with everything below it) re-anchors on its next transform.
         """
-        path = "/".join([self.config.entity_prefix, "tf", *self.tf_tree.get_chain(frame_id)])
+        import rerun as rr
+
+        path = "/".join([self.config.entity_prefix, "tf", *self._tf_chain(frame_id)])
         committed = self._tf_paths.get(frame_id)
         if committed == path:
             return path
@@ -366,15 +354,16 @@ class RerunBridgeModule(Module):
                     del self._tf_paths[frame]
 
         self._tf_paths[frame_id] = path
-        if self.config.tf_axis_length > 0:
-            # A Transform3D draws nothing on its own, so a tf-only recording would leave the
-            # 3D view empty. Axes are logged once per path rather than per transform to keep
-            # the volume down, and not `static=True` so a re-anchor's Clear removes them.
-            rr.log(path, rr.TransformAxes3D(axis_length=self.config.tf_axis_length))
+        # A Transform3D draws nothing on its own, so a tf-only recording would leave the
+        # 3D view empty. Axes are logged once per path rather than per transform to keep
+        # the volume down, and not `static=True` so a re-anchor's Clear removes them.
+        rr.log(path, rr.TransformAxes3D(axis_length=TF_AXIS_LENGTH))
         return path
 
     def _log_tf(self, msg: TFMessage) -> None:
         """Log each transform at the entity path matching its place in the tf tree."""
+        import rerun as rr
+
         for transform in msg.transforms:
             rr.log(self._tf_entity_path(transform.child_frame_id), transform.to_rerun())
 
@@ -384,18 +373,21 @@ class RerunBridgeModule(Module):
 
         entity_path: str = self._get_entity_path(topic)
 
+        # Record topology before throttling: a single TFMessage carries only a subset of
+        # the tree, and entity paths need the whole thing, so no edge may be dropped.
         if isinstance(msg, TFMessage):
-            # Feed the tree even when the tf topic is throttled or overridden: entity
-            # paths depend on knowing the full tree, so topology must not be lost.
-            self.tf_tree.receive_transform(*msg.transforms)
-            # An explicit visual_override for the tf topic still wins (it can also
-            # suppress tf entirely), otherwise log onto the reconstructed tree.
-            if not self._has_visual_override(entity_path):
-                if not self._throttled(entity_path):
-                    self._log_tf(msg)
-                return
+            for transform in msg.transforms:
+                self._tf_parents[transform.child_frame_id] = transform.frame_id
 
-        if self._throttled(entity_path):
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
+            now = time.monotonic()
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
+                return
+            self._last_log[entity_path] = now
+
+        if isinstance(msg, TFMessage):
+            self._log_tf(msg)
             return
 
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
@@ -425,7 +417,7 @@ class RerunBridgeModule(Module):
 
         logger.info("Rerun bridge starting")
 
-        self._tf_tree = MultiTBuffer()
+        self._tf_parents = {}
         self._tf_paths = {}
         self._last_log = {}
         self._frame_attached = {}
@@ -656,8 +648,8 @@ class RerunBridgeModule(Module):
     def stop(self) -> None:
         self._override_cache.clear()
         self._frame_attached.clear()
+        self._tf_parents.clear()
         self._tf_paths.clear()
-        self._tf_tree = None
         super().stop()
 
 

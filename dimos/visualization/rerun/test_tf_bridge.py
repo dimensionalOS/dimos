@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -48,7 +49,7 @@ def test_tfmessage_logs_tree_shaped_entity_paths() -> None:
     bridge = _bridge()
 
     try:
-        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
+        with patch("rerun.log") as mock_log:
             bridge._on_message(
                 TFMessage(
                     Transform(frame_id="odom", child_frame_id="base_link", ts=1.0),
@@ -80,7 +81,7 @@ def test_tfmessage_reanchors_when_parent_arrives_late() -> None:
     camera = Transform(frame_id="base_link", child_frame_id="camera", ts=1.0)
 
     try:
-        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
+        with patch("rerun.log") as mock_log:
             # camera first: base_link looks like a root
             bridge._on_message(TFMessage(camera), Topic("/tf"))
             assert _logged_paths(mock_log) == ["world/tf/base_link/camera"]
@@ -105,50 +106,41 @@ def test_tfmessage_reanchors_when_parent_arrives_late() -> None:
     ]
 
 
-def test_tfmessage_visual_override_still_wins() -> None:
-    """Configs can still suppress or reshape tf, and the tree keeps being fed."""
-    bridge = RerunBridgeModule(visual_override={"world/tf": None})
-    bridge._min_intervals = {}
+def test_tf_chain_stops_on_cycle() -> None:
+    """A malformed tree truncates the chain instead of hanging the bridge."""
+    bridge = _bridge()
+    bridge._tf_parents = {"a": "b", "b": "a"}
 
     try:
-        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
-            bridge._on_message(
-                TFMessage(Transform(frame_id="odom", child_frame_id="base_link", ts=1.0)),
-                Topic("/tf"),
-            )
-            calls = list(mock_log.call_args_list)
-
-        chain = bridge.tf_tree.get_chain("base_link")
+        assert bridge._tf_chain("b") == ["a", "b"]
     finally:
         bridge.stop()
-
-    assert calls == []
-    assert chain == ["odom", "base_link"]
 
 
 def test_tfmessage_throttling_keeps_feeding_the_tree() -> None:
     """A throttled tf topic still updates the tree, so paths stay correct."""
     bridge = _bridge()
-    bridge._min_intervals = {"world/tf": 3600.0}
 
     try:
-        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
-            bridge._on_message(
-                TFMessage(Transform(frame_id="odom", child_frame_id="base_link", ts=1.0)),
-                Topic("/tf"),
-            )
-            first = _logged_paths(mock_log)
+        bridge._on_message(
+            TFMessage(Transform(frame_id="odom", child_frame_id="base_link", ts=1.0)),
+            Topic("/tf"),
+        )
 
+        # rate limit the topic, having just logged, so the next message is dropped
+        bridge._min_intervals = {"world/tf": 3600.0}
+        bridge._last_log = {"world/tf": time.monotonic()}
+
+        with patch("rerun.log") as mock_log:
             bridge._on_message(
                 TFMessage(Transform(frame_id="base_link", child_frame_id="camera", ts=2.0)),
                 Topic("/tf"),
             )
-            second = _logged_paths(mock_log)
+            logged = mock_log.call_args_list
 
-        chain = bridge.tf_tree.get_chain("camera")
+        chain = bridge._tf_chain("camera")
     finally:
         bridge.stop()
 
-    assert first == ["world/tf/odom/base_link"]
-    assert second == first  # the second message was rate limited
+    assert logged == []
     assert chain == ["odom", "base_link", "camera"]

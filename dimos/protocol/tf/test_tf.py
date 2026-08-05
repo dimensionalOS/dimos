@@ -64,45 +64,6 @@ def test_tf_ros_example() -> None:
     tf.dispose()
 
 
-def test_tf_chain_reconstruction() -> None:
-    """Walking parents rebuilds the tree structure a single TFMessage doesn't carry."""
-    buffer = MultiTBuffer()
-
-    buffer.receive_transform(
-        Transform(frame_id="base_link", child_frame_id="camera", ts=1.0),
-        Transform(frame_id="odom", child_frame_id="base_link", ts=1.0),
-    )
-
-    assert buffer.get_parent("camera") == "base_link"
-    assert buffer.get_parent("odom") is None
-    assert buffer.get_chain("camera") == ["odom", "base_link", "camera"]
-    assert buffer.get_chain("odom") == ["odom"]
-    # an unknown frame is its own root
-    assert buffer.get_chain("nowhere") == ["nowhere"]
-
-
-def test_tf_get_parent_prefers_latest_edge() -> None:
-    """A frame republished under a new parent follows the most recent edge."""
-    buffer = MultiTBuffer()
-
-    buffer.receive_transform(Transform(frame_id="odom", child_frame_id="base_link", ts=1.0))
-    buffer.receive_transform(Transform(frame_id="map", child_frame_id="base_link", ts=2.0))
-
-    assert buffer.get_parent("base_link") == "map"
-
-
-def test_tf_chain_stops_on_cycle() -> None:
-    """A malformed tree truncates the chain instead of looping forever."""
-    buffer = MultiTBuffer()
-
-    buffer.receive_transform(
-        Transform(frame_id="a", child_frame_id="b", ts=1.0),
-        Transform(frame_id="b", child_frame_id="a", ts=1.0),
-    )
-
-    assert buffer.get_chain("b") == ["a", "b"]
-
-
 def test_tf_main() -> None:
     """Test TF broadcasting and querying between two TF instances.
     If you run rerun-bridge this will show up in the UI"""
