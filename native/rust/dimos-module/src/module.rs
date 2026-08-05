@@ -125,12 +125,39 @@ pub struct Output<T> {
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        let data = (self.encode)(msg);
-        self.sender
-            .send(data)
-            .await
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
+        publish_encoded(&self.sender, (self.encode)(msg)).await
     }
+}
+
+/// A port that publishes to and subscribes on the same topic.
+///
+/// The transports deliver a message back to its own sender, so an `Io` port
+/// sees the whole topic including its own publishes.
+pub struct Io<T> {
+    pub topic: String,
+    receiver: mpsc::Receiver<T>,
+    encode: fn(&T) -> Vec<u8>,
+    sender: mpsc::Sender<Vec<u8>>,
+}
+
+impl<T> Io<T> {
+    pub async fn recv(&mut self) -> Option<T> {
+        self.receiver.recv().await
+    }
+
+    pub async fn publish(&self, msg: &T) -> io::Result<()> {
+        publish_encoded(&self.sender, (self.encode)(msg)).await
+    }
+}
+
+pub(crate) async fn publish_encoded(
+    sender: &mpsc::Sender<Vec<u8>>,
+    data: Vec<u8>,
+) -> io::Result<()> {
+    sender
+        .send(data)
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
 }
 
 /// Extract `(topics, config)` from an already-parsed config object. `run`
@@ -275,25 +302,74 @@ pub trait Module: Sized + Send + 'static {
 
 pub struct Builder {
     topics: HashMap<String, String>,
+    // Every port the module asked for a topic, matched against topics after build.
+    requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
+    tf: Option<crate::tf::Tf>,
 }
 
 impl Builder {
     pub(crate) fn new(topics: HashMap<String, String>) -> Self {
         Self {
             topics,
+            requested: BTreeSet::new(),
             routes: HashMap::new(),
             outputs: Vec::new(),
+            tf: None,
         }
     }
 
-    fn topic_for(&self, port: &str) -> String {
+    fn topic_for(&mut self, port: &str) -> String {
+        self.requested.insert(port.to_string());
         self.topics
             .get(port)
             .cloned()
             .unwrap_or_else(|| format!("/{port}"))
+    }
+
+    // A mismatch is dead wiring: an unclaimed topic reaches no port, and an
+    // unsent one leaves the port on a fallback name nothing else publishes to.
+    pub(crate) fn enforce_topics_match_ports(&self) -> io::Result<()> {
+        let provided: BTreeSet<&String> = self.topics.keys().collect();
+        let requested: BTreeSet<&String> = self.requested.iter().collect();
+        if provided == requested {
+            return Ok(());
+        }
+        let missing: Vec<&&String> = requested.difference(&provided).collect();
+        let unexpected: Vec<&&String> = provided.difference(&requested).collect();
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "topics do not match module ports: missing {missing:?}, unexpected {unexpected:?}"
+            ),
+        ))
+    }
+
+    fn add_route<T: Send + 'static>(
+        &mut self,
+        topic: &str,
+        decode: fn(&[u8]) -> io::Result<T>,
+    ) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        self.routes
+            .entry(topic.to_string())
+            .or_default()
+            .push(Box::new(TypedRoute {
+                topic: topic.to_string(),
+                decode,
+                sender: tx,
+                drop_count: AtomicU64::new(0),
+                last_log_ns: AtomicU64::new(0),
+            }));
+        rx
+    }
+
+    fn add_publisher(&mut self, topic: &str) -> mpsc::Sender<Vec<u8>> {
+        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        self.outputs.push((topic.to_string(), rx));
+        tx
     }
 
     pub fn input<T: Send + 'static>(
@@ -302,32 +378,53 @@ impl Builder {
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> Input<T> {
         let topic = self.topic_for(port);
-        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
-        self.routes
-            .entry(topic.clone())
-            .or_default()
-            .push(Box::new(TypedRoute {
-                topic: topic.clone(),
-                decode,
-                sender: tx,
-                drop_count: AtomicU64::new(0),
-                last_log_ns: AtomicU64::new(0),
-            }));
-        Input {
-            topic,
-            receiver: rx,
-        }
+        let receiver = self.add_route(&topic, decode);
+        Input { topic, receiver }
     }
 
     pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
         let topic = self.topic_for(port);
-        let (tx, rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
-        self.outputs.push((topic.clone(), rx));
+        let sender = self.add_publisher(&topic);
         Output {
             topic,
             encode,
-            sender: tx,
+            sender,
         }
+    }
+
+    /// A port that both subscribes and publishes on one topic.
+    pub fn io<T: Send + 'static>(
+        &mut self,
+        port: &str,
+        decode: fn(&[u8]) -> io::Result<T>,
+        encode: fn(&T) -> Vec<u8>,
+    ) -> Io<T> {
+        let topic = self.topic_for(port);
+        let receiver = self.add_route(&topic, decode);
+        let sender = self.add_publisher(&topic);
+        Io {
+            topic,
+            receiver,
+            encode,
+            sender,
+        }
+    }
+
+    /// A handle that answers transform queries and publishes on the `tf` topic.
+    ///
+    /// The graph fills in the background as `tf` messages arrive. Repeated calls
+    /// share one graph.
+    pub fn tf(&mut self) -> crate::tf::Tf {
+        if let Some(tf) = &self.tf {
+            return tf.clone();
+        }
+        let topic = self.topic_for("tf");
+        let sender = self.add_publisher(&topic);
+        let (tf, route) =
+            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        self.routes.entry(topic).or_default().push(route);
+        self.tf = Some(tf.clone());
+        tf
     }
 }
 
@@ -423,6 +520,7 @@ where
 
     let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
+    builder.enforce_topics_match_ports()?;
 
     subscribe_routes(&transport, builder.routes).await?;
     // Kept alive until teardown so the subscriptions stay live.
@@ -739,13 +837,13 @@ mod tests {
 
     #[test]
     fn unmapped_port_falls_back_to_slash_port() {
-        let builder = builder_with_topics(&[]);
+        let mut builder = builder_with_topics(&[]);
         assert_eq!(builder.topic_for("cmd_vel"), "/cmd_vel");
     }
 
     #[test]
     fn mapped_port_uses_given_topic() {
-        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         assert_eq!(builder.topic_for("cmd_vel"), "/robot/cmd_vel");
     }
 
@@ -768,6 +866,108 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
+    }
+
+    #[test]
+    fn topics_matching_ports_exactly_pass() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd"), ("odom", "/robot/odom")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        builder.output("odom", |b: &Vec<u8>| b.clone());
+        builder.enforce_topics_match_ports().expect("exact match");
+    }
+
+    #[test]
+    fn a_port_the_coordinator_never_sent_is_rejected() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        builder.output("odom", |b: &Vec<u8>| b.clone());
+        let err = builder
+            .enforce_topics_match_ports()
+            .expect_err("odom has no topic");
+        assert!(err.to_string().contains("missing [\"odom\"]"), "{err}");
+    }
+
+    #[test]
+    fn a_topic_no_port_claimed_is_rejected() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd"), ("stale", "/robot/stale")]);
+        builder.input("cmd", |b| Ok(b.to_vec()));
+        let err = builder
+            .enforce_topics_match_ports()
+            .expect_err("stale is unclaimed");
+        assert!(err.to_string().contains("unexpected [\"stale\"]"), "{err}");
+    }
+
+    #[test]
+    fn a_tf_field_claims_the_tf_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/tf#tf2_msgs.TFMessage")]);
+        builder.tf();
+        builder.enforce_topics_match_ports().expect("tf claimed");
+    }
+
+    #[test]
+    fn a_module_with_no_ports_and_no_topics_passes() {
+        let builder = builder_with_topics(&[]);
+        builder
+            .enforce_topics_match_ports()
+            .expect("nothing to match");
+    }
+
+    #[test]
+    fn io_uses_mapped_topic() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        assert_eq!(io.topic, "/robot/cmd");
+    }
+
+    #[test]
+    fn io_registers_one_route_and_one_publisher_on_the_same_topic() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let _io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        assert_eq!(builder.routes.get("/robot/cmd").map(Vec::len), Some(1));
+        assert_eq!(builder.outputs.len(), 1);
+        assert_eq!(builder.outputs[0].0, "/robot/cmd");
+    }
+
+    #[tokio::test]
+    async fn io_receives_on_its_route_and_publishes_to_its_queue() {
+        let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
+        let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+
+        builder.routes["/robot/cmd"][0].try_dispatch(b"inbound");
+        assert_eq!(io.recv().await.expect("inbound message"), b"inbound");
+
+        io.publish(&b"outbound".to_vec()).await.expect("publish");
+        let (_, rx) = &mut builder.outputs[0];
+        assert_eq!(rx.recv().await.expect("published bytes"), b"outbound");
+    }
+
+    #[tokio::test]
+    async fn io_publish_errors_when_the_publish_worker_is_gone() {
+        let mut builder = builder_with_topics(&[]);
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        builder.outputs.clear();
+        let err = io
+            .publish(&b"x".to_vec())
+            .await
+            .expect_err("publish should fail with no worker");
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn tf_uses_mapped_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/robot/tf")]);
+        builder.tf();
+        assert!(builder.routes.contains_key("/robot/tf"));
+        assert_eq!(builder.outputs[0].0, "/robot/tf");
+    }
+
+    #[test]
+    fn repeated_tf_calls_share_one_graph() {
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        builder.tf();
+        builder.tf();
+        assert_eq!(builder.outputs.len(), 1);
+        assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
     }
 
     // recv/publish concurrency
@@ -987,5 +1187,53 @@ mod tests {
         route.try_dispatch(&[1u8]); // now we warn
         assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
         assert!(logs_contain("handler was full"));
+    }
+
+    // Exercises the code #[derive(Module)] generates for an #[io] field.
+    mod derive_io {
+        use super::*;
+        use crate::Io;
+
+        struct Msg(Vec<u8>);
+
+        fn decode(bytes: &[u8]) -> io::Result<Msg> {
+            Ok(Msg(bytes.to_vec()))
+        }
+
+        fn encode(msg: &Msg) -> Vec<u8> {
+            msg.0.clone()
+        }
+
+        #[derive(crate::Module)]
+        struct Echo {
+            #[io(decode = decode, encode = encode)]
+            cmd: Io<Msg>,
+        }
+
+        impl Echo {
+            async fn handle_cmd(&mut self, msg: Msg) {
+                if msg.0 == b"ping" {
+                    self.cmd
+                        .publish(&Msg(b"pong".to_vec()))
+                        .await
+                        .expect("publish");
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn io_field_is_wired_to_its_handler_and_can_publish() {
+            let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
+            let mut echo = Echo::build(&mut builder, NoConfig);
+
+            builder.routes["/robot/cmd"][0].try_dispatch(b"ping");
+            // Dropping the routes closes the sender, so handle() drains and returns.
+            builder.routes.clear();
+            echo.handle().await;
+
+            let (topic, rx) = &mut builder.outputs[0];
+            assert_eq!(topic, "/robot/cmd");
+            assert_eq!(rx.recv().await.expect("handler reply"), b"pong");
+        }
     }
 }

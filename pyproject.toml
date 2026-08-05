@@ -103,10 +103,13 @@ dependencies = [
     "dimos-lcm>=0.1.3",
     "eclipse-zenoh>=1.9.0,<2.0",
     "PyTurboJPEG==1.8.2",
+    "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
+    "pin-pink>=4.3.0",
+    "qpsolvers[proxqp]>=4.12.0",
     "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
@@ -270,8 +273,6 @@ manipulation = [
     # Planning (Drake)
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "pin-pink>=4.2.0",
-    "qpsolvers[proxqp]>=4.12.0",
 
     # Hardware SDKs
     "piper-sdk",
@@ -590,6 +591,8 @@ module = [
     "nav_msgs.*",
     "open_clip",
     "pinocchio",
+    "pink",
+    "pink.*",
     "piper_sdk.*",
     "plotext",
     "plum.*",

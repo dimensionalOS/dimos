@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import datetime, timezone
 import inspect
 import json
@@ -23,7 +22,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
 # Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
 # cores and spin-waits at barriers (libgomp: ~300k pause iterations per region;
@@ -46,14 +45,12 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined
 import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
@@ -71,7 +68,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
+    from dimos.core.coordination.blueprints import Blueprint
 
 logger = setup_logger()
 
@@ -116,7 +113,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
         field_type = field_info.annotation
 
         # Container generics (e.g. `tuple[...]` fields) have no single-flag CLI
-        # representation; they're configured via env/JSON. Skip like arg_help does.
+        # representation; they're configured via environment variables or JSON.
         if isinstance(field_type, types.GenericAlias):
             continue
 
@@ -177,164 +174,10 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
+main.add_typer(hardware_app, name="hardware")
 main.add_typer(piper_app, name="piper")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
-
-
-def arg_help(
-    config: type[BaseModel],
-    blueprint: Blueprint,
-    indent: str = "    ",
-    module: str = "",
-    _atom: BlueprintAtom | None = None,
-    _defaults: BaseModel | dict[str, Any] | None = None,
-) -> str:
-    # Imported here for performance reasons.
-    from dimos.core.coordination.blueprints import config_key
-
-    output = ""
-    for k, info in config.model_fields.items():
-        if k in ("g", "instance_name"):
-            continue
-        t: object = info.annotation
-        if isinstance(t, types.GenericAlias):
-            # Can't be specified on CLI
-            continue
-
-        fallback = _field_default(info)
-        field_defaults = _get_default_value(_defaults, k, fallback)
-        t = _unwrap_base_model_annotation(t, field_defaults)
-
-        if inspect.isclass(t) and issubclass(t, BaseModel):
-            output += f"{indent}{module}{k}:\n"
-            if _atom is None:
-                # Root BlueprintConfig fields are blueprint atoms, except schema
-                # branches such as transports.* that have no backing atom.
-                bp = next((bp for bp in blueprint.blueprints if config_key(bp.name) == k), None)
-                defaults = bp.kwargs if bp is not None else field_defaults
-            else:
-                # Nested BaseModel fields belong to the current atom and must not
-                # be atom-looked-up.
-                bp = _atom
-                defaults = field_defaults
-            output += arg_help(
-                t,
-                blueprint,
-                indent=indent + "  ",
-                module=module + k + ".",
-                _atom=bp,
-                _defaults=defaults,
-            )
-        else:
-            # Use __name__ to avoid "<class 'int'>" style output on basic types.
-            display_type = t.__name__ if isinstance(t, type) else t
-            has_default = _has_default_value(_defaults, k)
-            required = "[Required] " if info.is_required() and not has_default else ""
-            d = field_defaults
-            default = f" (default: {d})" if d is not PydanticUndefined else ""
-            output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
-    return output
-
-
-def _field_default(info: FieldInfo) -> Any:
-    if info.default is not PydanticUndefined:
-        return info.default
-    if info.default_factory is not None:
-        return info.get_default(call_default_factory=True)
-    return PydanticUndefined
-
-
-def _unwrap_base_model_annotation(annotation: object, defaults: object) -> object:
-    # TODO(PY314): if isinstance(annotation, Union):
-    if get_origin(annotation) not in {Union, types.UnionType}:
-        return annotation
-
-    candidates = tuple(
-        u for u in get_args(annotation) if inspect.isclass(u) and issubclass(u, BaseModel)
-    )
-    if not candidates:
-        return annotation
-    return _select_base_model_candidate(candidates, defaults)
-
-
-def _select_base_model_candidate(
-    candidates: tuple[type[BaseModel], ...], defaults: object
-) -> type[BaseModel]:
-    backend = _backend_default(defaults)
-    if backend is not PydanticUndefined:
-        for candidate in candidates:
-            backend_info = candidate.model_fields.get("backend")
-            if backend_info is not None and _field_default(backend_info) == backend:
-                return candidate
-    return candidates[0]
-
-
-def _backend_default(defaults: object) -> object:
-    if isinstance(defaults, BaseModel):
-        return getattr(defaults, "backend", PydanticUndefined)
-    if isinstance(defaults, dict):
-        return defaults.get("backend", PydanticUndefined)
-    return PydanticUndefined
-
-
-def _has_default_value(defaults: BaseModel | dict[str, Any] | None, key: str) -> bool:
-    if isinstance(defaults, BaseModel):
-        return key in defaults.model_fields_set
-    if isinstance(defaults, dict):
-        return key in defaults
-    return False
-
-
-def _get_default_value(defaults: object, key: str, fallback: Any) -> Any:
-    if isinstance(defaults, BaseModel):
-        if key in defaults.model_fields_set:
-            return getattr(defaults, key)
-    if isinstance(defaults, dict):
-        return defaults.get(key, fallback)
-    return fallback
-
-
-def load_config_args(
-    config: type[BaseModel],
-    args: Iterable[str],
-    path: Path,
-    cli_g_overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    try:
-        kwargs = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        kwargs = {}
-
-    for k, v in os.environ.items():
-        parts = k.lower().split("__")
-        if parts[0] not in config.model_fields:
-            continue
-        d = kwargs
-        for p in parts[:-1]:
-            d = d.setdefault(p, {})
-        d[parts[-1]] = v
-
-    for arg in args:
-        k, _, v = arg.partition("=")
-        # Accept namespaced instance names in both forms: robot0/sensor.ip
-        # and robot0_sensor.ip (config keys escape "/" to "_").
-        parts = [p.replace("/", "_") for p in k.split(".")]
-        d = kwargs
-        for p in parts[:-1]:
-            d = d.setdefault(p, {})
-        d[parts[-1]] = v
-
-    if cli_g_overrides:
-        # Explicit CLI flags (--transport, --local-relay, ...) win for their
-        # own keys but must not wipe the rest of the g subtree built above.
-        kwargs.setdefault("g", {}).update(cli_g_overrides)
-
-    # We don't need this config, but this atleast validates the user input first.
-    # This will help catch misspellings and similar mistakes.
-    config(**kwargs)
-
-    return kwargs  # type: ignore[no-any-return]
 
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
@@ -352,14 +195,13 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
-@main.command()
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
-    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
         CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
     ),
@@ -374,8 +216,11 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
-    logger.info("Starting DimOS")
-
+    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+    from dimos.core.coordination.blueprint_config.parser import (
+        BlueprintConfigParser,
+        split_run_arguments,
+    )
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.coordination.process_lifecycle import (
@@ -392,7 +237,13 @@ def run(
 
     setup_exception_handler()
 
-    cli_config_overrides: dict[str, Any] = ctx.obj
+    try:
+        blueprint_names, config_tokens = split_run_arguments(robot_types)
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    global_option_overrides: dict[str, Any] = dict(ctx.obj or {})
 
     # These flags are accepted on `run` itself, not just as global options.
     run_overrides = {
@@ -401,15 +252,67 @@ def run(
         if value is not None
     }
     if run_overrides:
-        cli_config_overrides.update(run_overrides)
-        global_config.update(**run_overrides)
+        global_option_overrides.update(run_overrides)
 
-    # Clean stale registry entries
+    try:
+        preparsed_global_config = BlueprintConfigParser.preparse_global_config(
+            config_tokens,
+            config_path=config_path,
+            environ=os.environ,
+            global_overrides=global_option_overrides,
+        )
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    # Some blueprint modules select their composition at import time, so all
+    # global sources must be visible before resolving the requested names.
+    global_config.update(**preparsed_global_config)
+
+    blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
+
+    if disable:
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
+    blueprint = _with_relay_bridge(blueprint)
+    parser = BlueprintConfigParser(blueprint)
+
+    if show_help:
+        reserved_options = {
+            option
+            for parameter in ctx.command.params
+            for option in (
+                *getattr(parameter, "opts", ()),
+                *getattr(parameter, "secondary_opts", ()),
+            )
+            if option.startswith("--")
+        }
+        typer.echo(ctx.get_help())
+        typer.echo()
+        typer.echo(parser.format_help(reserved_options))
+        return
+
+    try:
+        parsed_config = parser.parse(
+            config_tokens,
+            config_path=config_path,
+            environ=os.environ,
+            global_overrides=global_option_overrides,
+        )
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    logger.info("Starting DimOS")
+
+    # Clean stale registry entries only after the full command has validated.
     stale = cleanup_stale()
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
 
-    blueprint_name = "-".join(robot_types)
+    blueprint_name = "-".join(blueprint_names)
     run_id = generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
@@ -421,27 +324,7 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
-
-    if disable:
-        disabled_classes = tuple(
-            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
-        )
-        blueprint = blueprint.disabled_modules(*disabled_classes)
-
-    blueprint = _with_relay_bridge(blueprint)
-
-    if show_help:
-        print("Blueprint arguments:")
-        print("  Override with --option/-o module.field=value.")
-        print("  Nested config paths use dotted names, e.g. module.nested.field=value.")
-        print(arg_help(blueprint.config(), blueprint))
-        return
-
-    blueprint_config = blueprint.config()
-    kwargs = load_config_args(blueprint_config, blueprint_args, config_path, cli_config_overrides)
-
-    coordinator = ModuleCoordinator.build(blueprint, kwargs)
+    coordinator = ModuleCoordinator.build(blueprint, parsed_config)
 
     if daemon:
         # Health check before daemonizing — catch early crashes
@@ -469,8 +352,8 @@ def run(
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
             log_dir=str(log_dir),
-            cli_args=list(robot_types),
-            config_overrides=cli_config_overrides,
+            cli_args=list(blueprint_names),
+            config_overrides=global_option_overrides,
             original_argv=sys.argv,
         )
         entry.save()
@@ -484,8 +367,8 @@ def run(
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
             log_dir=str(log_dir),
-            cli_args=list(robot_types),
-            config_overrides=cli_config_overrides,
+            cli_args=list(blueprint_names),
+            config_overrides=global_option_overrides,
             original_argv=sys.argv,
         )
         entry.save()

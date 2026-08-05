@@ -559,6 +559,15 @@ class PointCloud2(Timestamped):
         return msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
+    def lcm_warmup(cls) -> None:
+        """Preload the heavy imports lcm_decode needs.
+
+        Called at subscribe time (see LCMEncoderMixin.subscribe) so the first
+        decode doesn't stall the LCM handler thread on the open3d import.
+        """
+        import open3d.core  # type: ignore[import-untyped] # noqa: F401
+
+    @classmethod
     def lcm_decode(cls, data: bytes) -> PointCloud2:
         import open3d as o3d  # type: ignore[import-untyped]
         import open3d.core as o3c  # type: ignore[import-untyped]

@@ -19,6 +19,7 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
@@ -52,17 +53,17 @@ Pink IK is the default solver. Tune it with nested module config overrides:
 
 ```bash
 dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.kinematics.backend=pink \
-  -o manipulationmodule.kinematics.max_iterations=100 \
-  -o manipulationmodule.kinematics.dt=0.02
+  --kinematics.backend=pink \
+  --kinematics.max-iterations=100 \
+  --kinematics.dt=0.02
 ```
 
-For blueprints that instantiate `PickAndPlaceModule`, use the corresponding
-module prefix:
+The same nested shorthand applies to blueprints that instantiate
+`PickAndPlaceModule`:
 
 ```bash
 dimos run xarm-perception-sim \
-  -o pickandplacemodule.kinematics.backend=pink
+  --kinematics.backend=pink
 ```
 
 Then use the IPython client:
@@ -96,8 +97,8 @@ Select the legacy Drake world and generic RRT planner explicitly when needed:
 
 ```bash
 dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.world_backend=drake \
-  -o manipulationmodule.planner.backend=rrt_connect
+  --world-backend=drake \
+  --planner.backend=rrt_connect
 ```
 
 Valid combinations:
@@ -150,6 +151,45 @@ RoboPlan plans all target groups simultaneously. The Viser panel constructs a
 two-waypoint absolute path for interactive planning. There is no skill, MCP
 tool, or CLI motion command yet.
 
+### Cartesian control IK
+
+Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
+direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
+package paths, Xacro arguments, the named end-effector frame, and
+coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
+startup; teleop configuration does not use a separate model path or numeric
+end-effector joint ID.
+
+Each control tick starts from measured joints, applies model position and
+velocity limits, and holds the measured position when a solve cannot produce a
+safe command. This local control path is separate from manipulation planning and
+does not use `WorldSpec` or provide world-obstacle avoidance.
+
+For a custom robot, pass the typed model configuration to the helper:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+
+task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
+```
+
+Teleop pose commands are deltas from an end-effector pose captured from measured
+joints at engagement. Disengage, timeout, stop, clear, or E-STOP discards that
+baseline; commands received during E-STOP are rejected rather than replayed
+after clear.
+
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
+
 Install the manipulation dependencies:
 
 ```bash
@@ -190,7 +230,7 @@ CLI example:
 
 ```bash
 uv run dimos run xarm7-planner-coordinator \
-  -o manipulationmodule.visualization.backend=viser
+  --visualization.backend=viser
 ```
 
 Blueprint example:
@@ -270,7 +310,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   TwistStamped           EEFTwistTask             RRT planner
-  spatial EEF twist      (Pinocchio FK/IK)        JacobianIK
+  spatial EEF twist      (control IK)             JacobianIK
                                │                   DrakeWorld
                           JointState ────────────→ (visualization)
 ```
@@ -299,6 +339,7 @@ planner is locked for its whole native call.
 | Blueprint | Description |
 |-----------|-------------|
 | `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
+| `keyboard-teleop-a1z` | Galaxea A1Z keyboard teleop, planning, and hardware control |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
@@ -314,6 +355,7 @@ planner is locked for its whole native call.
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
 | Piper | 6 | Y | Y | — |
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
