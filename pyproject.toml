@@ -602,6 +602,8 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
+    "graspgenx",
+    "graspgenx.*",
     "h5py",
     "h5py.*",
     "mcap",

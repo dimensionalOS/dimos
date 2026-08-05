@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, GraspProposalSpec
 import dimos.manipulation.grasping.grasp_gen_x as grasp_gen_x
 from dimos.manipulation.grasping.grasp_gen_x import (
     GraspGenXConfig,
@@ -107,9 +107,15 @@ def test_messages_round_trip_empty_and_score() -> None:
     )
 
 
-def test_spec_signature() -> None:
-    signature = inspect.signature(GraspGenSpec.propose_grasps)
+def test_spec_signatures_keep_pose_and_proposal_contracts_separate() -> None:
+    legacy_signature = inspect.signature(GraspGenSpec.generate_grasps)
+    signature = inspect.signature(GraspProposalSpec.propose_grasps)
 
+    assert list(legacy_signature.parameters) == [
+        "self",
+        "pointcloud",
+        "scene_pointcloud",
+    ]
     assert list(signature.parameters) == ["self", "object_pointcloud"]
     assert signature.parameters["object_pointcloud"].annotation.__name__ == "PointCloud2"
     assert signature.return_annotation is GraspCandidateArray
