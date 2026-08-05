@@ -250,6 +250,11 @@ class DamiaoWholeBodyAdapter(ABC):
                 for position, velocity, effort in zip(q, dq, tau, strict=True)
             )
         for name in self.gripper_joints:
+            if not self._active:
+                # Gripper opening calibrates during activation; report a
+                # placeholder so read-only sessions still stream arm state.
+                states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
+                continue
             opening = float(self._grippers[name].opening)
             if not np.isfinite(opening) or not 0.0 <= opening <= 1.0:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")

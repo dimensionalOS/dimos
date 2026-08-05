@@ -725,3 +725,17 @@ def test_write_motor_commands_gravity_enabled_adds_computed_torque(
     assert compute_gravity.call_count == 1
     assert cast("FakeArm", dual_robot["left_arm"]).commands[-1][:, 4].tolist() == [1.5, 2.5]
     assert cast("FakeArm", dual_robot["right_arm"]).commands[-1][:, 4].tolist() == [3.5, 4.5]
+
+
+def test_read_motor_states_inactive_gripper_reports_placeholder(
+    connected_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+) -> None:
+    """Gripper opening calibrates at activation; before that the read path
+    must not touch it so read-only bring-up sessions still stream arm state."""
+    cast("FakeGripper", dual_robot["left_gripper"]).opening = None
+    cast("FakeGripper", dual_robot["right_gripper"]).opening = None
+
+    states = connected_dual_adapter.read_motor_states()
+
+    assert states[4:] == [MotorState(q=0.0), MotorState(q=0.0)]
