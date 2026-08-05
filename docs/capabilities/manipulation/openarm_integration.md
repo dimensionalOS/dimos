@@ -35,10 +35,8 @@ from LFS at connect time) and is preflighted against the declared joint order
 before the motors enable.
 
 Planning also uses the bimanual URDF: one robot model with a
-`left_manipulator` and a `right_manipulator` planning group. Automatic SRDF
-generation does not compose collision exclusions across robots, so the
-exclusions come from a hand-written SRDF
-(`dimos/robot/manipulators/openarm/openarm_v20_bimanual.srdf`).
+`left_manipulator` and a `right_manipulator` planning group, since collision
+exclusions cannot span robots.
 
 ## Bring-up
 

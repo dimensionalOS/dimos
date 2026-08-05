@@ -42,7 +42,6 @@ OPENARM_PKG = LfsPath("openarm_description")
 OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_left.urdf"
 OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_right.urdf"
 OPENARM_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_bimanual.urdf"
-OPENARM_BIMANUAL_SRDF = Path(__file__).parent / "openarm_v20_bimanual.srdf"
 OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 
 # MIT gains measured on v1.0 hardware, carried over as the v2.0 starting
@@ -118,9 +117,7 @@ def openarm_control_model_config(side: str) -> RobotModelConfig:
 def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModelConfig:
     """Build the single fourteen-joint planning model with one group per arm.
 
-    SRDF generation does not compose collision exclusions across robots, so
-    both arms plan as one robot and the exclusions come from a hand-written
-    SRDF.
+    Collision exclusions cannot span robots, so both arms plan as one robot.
     """
     local_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
     return RobotModelConfig(
@@ -144,7 +141,6 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
             ),
         ],
         package_paths=OPENARM_PACKAGE_PATHS,
-        srdf_path=OPENARM_BIMANUAL_SRDF,
         auto_convert_meshes=True,
         max_velocity=0.5,
         max_acceleration=1.0,
