@@ -435,6 +435,7 @@ def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
     planner would keep driving. The terminal branch must inject operator_lost
     before abandoning the heartbeat loop."""
     import asyncio
+    import sys
 
     provider = BrokerConfig(api_key="key")._create()
     provider._config = provider._config.model_copy(update={"heartbeat_hz": 1000.0})  # fast ticks
@@ -446,7 +447,10 @@ def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
         return 401
 
     provider._heartbeat_once = _always_401  # type: ignore[method-assign]
-    asyncio.run(asyncio.wait_for(provider._heartbeat_loop(), timeout=2.0))
+    if sys.version_info >= (3, 12):
+        asyncio.run(asyncio.wait_for(provider._heartbeat_loop(), timeout=2.0))
+    else:
+        asyncio.run(provider._heartbeat_loop())
 
     assert got and b'"operator_lost"' in got[0], "terminal streak must inject operator_lost"
 

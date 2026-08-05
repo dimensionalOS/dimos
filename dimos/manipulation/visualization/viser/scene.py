@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import replace
-from enum import StrEnum
+from enum import Enum
 import hashlib
 import math
 import os
@@ -104,7 +104,7 @@ OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
 
 
-class RobotDisplayMode(StrEnum):
+class RobotDisplayMode(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     VISUAL = "visual"
     COLLISION = "collision"
     BOTH = "both"

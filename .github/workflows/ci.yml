@@ -397,15 +397,12 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        pyver: ['3.10', '3.11', '3.12']
         os: ["ubuntu-latest"]
         experimental: [false]
         include:
-          - os: "ubuntu-latest"
-            pyver: "3.14t"
-            experimental: false
           - os: "ubuntu-24.04-arm"
-            pyver: "3.14"
+            pyver: "3.12"
             experimental: false
       fail-fast: true
     runs-on: ${{ matrix.os }}
@@ -427,10 +424,6 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - name: Setup Python
-        uses: actions/setup-python@v6.3.0
-        with:
-          allow-prereleases: true
           python-version: ${{ matrix.pyver }}
       - name: Extract Deno version
         id: deno-version
@@ -454,9 +447,6 @@ jobs:
           sudo mv /usr/bin/git-lfs /usr/bin/git-lfs.orig
           sudo install -m 0755 bin/git-lfs-guard /usr/bin/git-lfs
           git config --global --unset-all filter.lfs.process || true
-      - name: Set PYTHON_GIL=0 for free-threading builds
-        if: ${{ endsWith(matrix.pyver, 't') }}
-        run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests

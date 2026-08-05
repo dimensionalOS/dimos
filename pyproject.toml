@@ -315,7 +315,9 @@ sim = [
 mapping = [
     # PGO for reloc premap + cmu_nav experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
-    "gtsam-extended>=4.3a1.post1",
+    # TODO(PY311): drop the marker. gtsam-extended has no cp310 wheels beyond
+    # macOS arm64 (cp310 Linux x86_64 is missing in every release).
+    "gtsam-extended>=4.3a1.post1; python_full_version >= '3.11' or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
@@ -400,7 +402,7 @@ project-deps = [
 tests = [
     # Test runner
     "pytest==8.3.5",
-    "pytest-asyncio==0.26.0",
+    "pytest-asyncio==1.4.0",
     "pytest-mock==3.15.0",
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
@@ -490,6 +492,13 @@ required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
+constraint-dependencies = [
+    # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
+    # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
+    # user installing fresh would receive).
+    "onnxruntime<1.24; python_full_version < '3.11'",
+    "onnxruntime-gpu<1.24; python_full_version < '3.11'",
+]
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

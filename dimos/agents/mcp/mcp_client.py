@@ -19,12 +19,9 @@ import time
 from typing import Any
 import uuid
 
-from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
-from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
@@ -47,6 +44,11 @@ _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 def _init_model(model_name: str) -> Any:
     """Initialize a model while preserving LangChain provider resolution."""
+    # ~2s: langchain's chat-model machinery pulls transformers+torch; deferred to
+    # keep module import (test collection, CLI startup) light.
+    from langchain.chat_models import init_chat_model
+    from langchain_openai import ChatOpenAI
+
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
         return init_chat_model(model=model_name)
 
@@ -226,6 +228,9 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
+        # ~2s: pulls transformers+torch; deferred to keep module import light.
+        from langchain.agents import create_agent
+
         tools = self._fetch_tools()
 
         if self.config.model_fixture is not None:
