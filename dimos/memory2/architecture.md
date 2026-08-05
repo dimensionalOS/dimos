@@ -91,11 +91,15 @@ latest = images.last()
 edges = images.transform(Canny()).save(store.stream("edges"))
 edges.drain()  # actually run the pipeline; .save() is lazy
 
+
 def running_avg(upstream):
     total, n = 0.0, 0
     for obs in upstream:
-        total += obs.data; n += 1
+        total += obs.data
+        n += 1
         yield obs.derive(data=total / n)
+
+
 avgs = stream.transform(running_avg).to_list()
 
 # Live

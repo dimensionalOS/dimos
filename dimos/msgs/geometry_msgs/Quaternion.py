@@ -56,7 +56,7 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
     def __init__(self) -> None: ...
 
     @dispatch  # type: ignore[no-redef]
-    def __init__(self, x: int | float, y: int | float, z: int | float, w: int | float) -> None:
+    def __init__(self, x: float, y: float, z: float, w: float) -> None:
         self.x = float(x)
         self.y = float(y)
         self.z = float(z)

@@ -11,12 +11,15 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 
+
 class ConnectionConfig(ModuleConfig):
     arg1: int
     arg2: str = "value"
 
+
 class ConnectionModule(Module):
     config: ConnectionConfig
+
 
 blueprint = Blueprint.create(ConnectionModule, arg1=5, arg2="foo")
 ```
@@ -40,17 +43,20 @@ You can link multiple blueprints together with `autoconnect`:
 ```python session=blueprint-ex1
 from dimos.core.coordination.blueprints import autoconnect
 
+
 class Config(ModuleConfig):
     arg1: int = 42
+
 
 class Module1(Module):
     config: Config
 
-class Module2(Module):
-    ...
 
-class Module3(Module):
-    ...
+class Module2(Module): ...
+
+
+class Module3(Module): ...
+
 
 module1 = Module1.blueprint
 module2 = Module2.blueprint
@@ -66,11 +72,11 @@ blueprint = autoconnect(
 `blueprint` itself is a `Blueprint` so you can link it with other modules:
 
 ```python session=blueprint-ex1
-class Module4(Module):
-    ...
+class Module4(Module): ...
 
-class Module5(Module):
-    ...
+
+class Module5(Module): ...
+
 
 module4 = Module4.blueprint
 module5 = Module5.blueprint
@@ -155,13 +161,16 @@ from dimos.core.module import Module
 from dimos.core.stream import Out, In
 from dimos.msgs.sensor_msgs import Image
 
+
 class ModuleA(Module):
     image: Out[Image]
     start_explore: Out[bool]
 
+
 class ModuleB(Module):
     image: In[Image]
     begin_explore: In[bool]
+
 
 module_a = partial(Blueprint.create, ModuleA)
 module_b = partial(Blueprint.create, ModuleB)
@@ -197,12 +206,15 @@ expanded_blueprint = autoconnect(
     module4(),
     module5(),
 )
-base_blueprint = base_blueprint.transports({
-    ("image", Image): pSHMTransport(
-        "/go2/color_image", default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
-    ),
-    ("start_explore", bool): pLCMTransport("/start_explore"),
-})
+base_blueprint = base_blueprint.transports(
+    {
+        ("image", Image): pSHMTransport(
+            "/go2/color_image",
+            default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
+        ),
+        ("start_explore", bool): pLCMTransport("/start_explore"),
+    }
+)
 ```
 
 Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `base_blueprint`, not the second.
@@ -218,22 +230,24 @@ from dimos.core.module import Module
 from dimos.core.stream import Out, In
 from dimos.msgs.sensor_msgs import Image
 
+
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
+
 
 class ProcessingModule(Module):
     rgb_image: In[Image]  # Expects input on 'rgb_image'
 
+
 # Without remapping, these wouldn't connect automatically
 # With remapping, color_image is renamed to rgb_image
-blueprint = (
-    autoconnect(
-        ConnectionModule.blueprint(),
-        ProcessingModule.blueprint(),
-    )
-    .remappings([
-        (ConnectionModule, 'color_image', 'rgb_image'),
-    ])
+blueprint = autoconnect(
+    ConnectionModule.blueprint(),
+    ProcessingModule.blueprint(),
+).remappings(
+    [
+        (ConnectionModule, "color_image", "rgb_image"),
+    ]
 )
 ```
 
@@ -246,11 +260,16 @@ If you want to override the topic, you still have to do it manually:
 
 ```python session=blueprint-ex2
 from dimos.core.transport import LCMTransport
-blueprint.remappings([
-    (ConnectionModule, 'color_image', 'rgb_image'),
-]).transports({
-    ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
-})
+
+blueprint.remappings(
+    [
+        (ConnectionModule, "color_image", "rgb_image"),
+    ]
+).transports(
+    {
+        ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
+    }
+)
 ```
 
 ## Multi-robot blueprints (namespaces)
@@ -266,20 +285,24 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 
+
 class SensorConfig(ModuleConfig):
     ip: str = ""
+
 
 class Sensor(Module):
     config: SensorConfig
     pointcloud: Out[str]
 
+
 class AggregateMapper(Module):
     pointcloud: In[str]
+
 
 robot_ips = ["10.0.0.1", "10.0.0.2"]
 
 fleet = autoconnect(
-    AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
+    AggregateMapper.blueprint(),  # shared: one instance for the whole fleet
     *[
         Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
         for i, ip in enumerate(robot_ips)
@@ -340,6 +363,7 @@ Each module includes the global config available as `self.config.g`. E.g.:
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.global_config import GlobalConfig
+
 
 class ModuleA(Module):
     def some_method(self):
@@ -414,15 +438,14 @@ Imagine you have this code:
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
-class Drone(Module):
 
+class Drone(Module):
     @rpc
-    def get_time(self) -> str:
-        ...
+    def get_time(self) -> str: ...
+
 
 class HelperModule(Module):
-    def set_alarm_clock(self) -> None:
-        ...
+    def set_alarm_clock(self) -> None: ...
 ```
 
 And you want to call `Drone.get_time` in `HelperModule.set_alarm_clock`.
@@ -431,6 +454,7 @@ To do this, you can request a module reference. Annotate an attribute with the m
 
 ```python session=blueprint-ex3
 from dimos.core.module import Module
+
 
 class HelperModule(Module):
     drone_module: Drone
@@ -445,19 +469,23 @@ But what if we want `HelperModule` to work for more than just `Drone`? For that 
 from dimos.spec.utils import Spec
 from typing import Protocol
 
+
 class Drone(Module):
     @rpc
     def get_time(self) -> str:
         return "1:00 PM"
+
 
 class Car(Module):
     @rpc
     def get_time(self) -> str:
         return "2:00 PM"
 
+
 # Your Spec
 class AnyModuleWithGetTime(Spec, Protocol):
     def get_time(self) -> str: ...
+
 
 class HelperModule(Module):
     device: AnyModuleWithGetTime
@@ -490,8 +518,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.agents.annotation import skill
 
-class SomeSkill(Module):
 
+class SomeSkill(Module):
     @skill
     def some_skill(self) -> str:
         """Description of the skill for the LLM."""

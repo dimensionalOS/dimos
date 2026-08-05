@@ -236,9 +236,12 @@ def _build_blueprint(
     from dimos.hardware.sensors.lidar.fastlio2.recorder import FastLio2Recorder
     from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
-    fastlio_kwargs: dict[str, Any] = dict(
-        host_ip=args.host_ip, lidar_ip=args.lidar_ip, odom_freq=args.odom_freq, debug=False
-    )
+    fastlio_kwargs: dict[str, Any] = {
+        "host_ip": args.host_ip,
+        "lidar_ip": args.lidar_ip,
+        "odom_freq": args.odom_freq,
+        "debug": False,
+    }
     fastlio_kwargs.update(overrides)
 
     return (

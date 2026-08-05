@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
@@ -68,9 +68,6 @@ class QuestTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
-
-
-_Config = TypeVar("_Config", bound=QuestTeleopConfig)
 
 
 class QuestTeleopModule(Module):

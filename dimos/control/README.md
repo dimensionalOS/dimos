@@ -154,6 +154,7 @@ Tasks output commands in one of three modes:
 ```python
 from dimos.control.task import ControlTask, ResourceClaim, JointCommandOutput, ControlMode
 
+
 class PIDController:
     def __init__(self, joints: list[str], priority: int = 10):
         self._name = "pid_controller"
@@ -181,8 +182,10 @@ class PIDController:
         # PID
         self._integral = [i + e * state.dt for i, e in zip(self._integral, error)]
         derivative = [(e - le) / state.dt for e, le in zip(error, self._last_error)]
-        output = [self.Kp*e + self.Ki*i + self.Kd*d
-                  for e, i, d in zip(error, self._integral, derivative)]
+        output = [
+            self.Kp * e + self.Ki * i + self.Kd * d
+            for e, i, d in zip(error, self._integral, derivative)
+        ]
         self._last_error = error
 
         return JointCommandOutput(

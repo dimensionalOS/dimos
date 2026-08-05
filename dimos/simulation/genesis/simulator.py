@@ -156,4 +156,3 @@ class GenesisSimulator(SimulatorBase):
     def close(self) -> None:
         """Close the simulation."""
         # Genesis handles cleanup automatically
-        pass

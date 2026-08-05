@@ -7,7 +7,7 @@ Separates payload blob storage from metadata indexing. Observation payloads vary
 ```python
 class BlobStore(Resource):
     def put(self, stream_name: str, key: int, data: bytes) -> None: ...
-    def get(self, stream_name: str, key: int) -> bytes: ...    # raises KeyError if missing
+    def get(self, stream_name: str, key: int) -> bytes: ...  # raises KeyError if missing
     def delete(self, stream_name: str, key: int) -> None: ...  # silent if missing
 ```
 
@@ -67,9 +67,9 @@ WHERE m.ts > ?
 
 ```python
 # Per-stream blob store choice
-poses = store.stream("poses", PoseStamped)                              # default, lazy
-images = store.stream("images", Image, eager_blobs=True)                # eager
-images = store.stream("images", Image, blob_store=file_blobs)           # override
+poses = store.stream("poses", PoseStamped)  # default, lazy
+images = store.stream("images", Image, eager_blobs=True)  # eager
+images = store.stream("images", Image, blob_store=file_blobs)  # override
 ```
 
 ## Files
