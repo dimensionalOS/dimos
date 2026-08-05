@@ -39,6 +39,41 @@ MARKER_STEM = 1.0
 # Conventional world frames tried in order when --frame isn't given.
 _WORLD_FRAMES = ("world", "map", "odom")
 
+# Default --lidar value. When that stream is missing/empty, try these
+# Point-LIO / Fast-LIO recorder names before failing.
+_DEFAULT_LIDAR_STREAM = "lidar"
+_LIDAR_FALLBACKS = ("pointlio_lidar", "fastlio_lidar")
+
+
+def _resolve_lidar_stream(store: Any, requested: str) -> str:
+    """Pick a non-empty lidar stream; auto-fallback when using the default name.
+
+    ``Store.stream`` creates missing streams, so we must consult
+    ``list_streams`` / counts before opening the reconstruction pipeline —
+    otherwise an empty default ``lidar`` stream yields a late
+    ``LookupError: No matching observation`` from PGO.
+    """
+    available = store.list_streams()
+    candidates: list[str] = [requested]
+    if requested == _DEFAULT_LIDAR_STREAM:
+        candidates.extend(name for name in _LIDAR_FALLBACKS if name not in candidates)
+
+    for name in candidates:
+        if name not in available:
+            continue
+        if store.stream(name).count() == 0:
+            continue
+        if name != requested:
+            print(f"using lidar stream {name!r} (default {requested!r} missing or empty)")
+        return name
+
+    known = ", ".join(sorted(available)) or "(none)"
+    raise typer.BadParameter(
+        f"lidar stream {requested!r} is missing or empty; available streams: {known}. "
+        "Pass --lidar <name> (Point-LIO recordings use --lidar pointlio_lidar).",
+        param_hint="--lidar",
+    )
+
 
 def _detect_world(tf_buf: Any, cloud_frame: str, ts: float) -> str | None:
     """Pick the first conventional world frame that resolves the cloud frame via tf."""
@@ -438,6 +473,7 @@ def main(
     if export or full_pgo:
         pgo = True
 
+    lidar_stream = _resolve_lidar_stream(store, lidar_stream)
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())
