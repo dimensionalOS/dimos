@@ -23,6 +23,8 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 import math
@@ -38,11 +40,17 @@ from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_x import (
+    IDENTITY_TRANSFORM,
+    RigidTransform,
+    SweepVolumeGripperConfig,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization import grasp_layers
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -111,6 +119,12 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     grasp_retreat_offset: FiniteFloat | None = Field(default=None, gt=0.0)
     grasp_approach_vector: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0.0, 0.0, -1.0)
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+    # Gripper geometry for grasp visualization only. Source from the same config
+    # object as the grasp generator: grasp_gen_x bakes grasp_frame_to_tcp into
+    # candidate poses and the wireframe un-applies it, so a divergence would
+    # draw correct-looking grasps while the robot goes elsewhere.
+    grasp_viz_gripper: SweepVolumeGripperConfig | None = None
+    grasp_viz_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
 
     @model_validator(mode="after")
     def _validate_grasp_pipeline(self) -> PickAndPlaceModuleConfig:
@@ -668,7 +682,52 @@ then refreshes perception obstacles.
                 "GRASP_GENERATION_FAILED",
                 f"No grasp proposals were generated for '{detection.name}'",
             )
-        return sorted(proposals.candidates, key=lambda candidate: candidate.score, reverse=True)
+        ranked = sorted(proposals.candidates, key=lambda candidate: candidate.score, reverse=True)
+        self._publish_cloud_layer(points)
+        self._publish_candidate_layers(ranked[: self.config.max_grasp_candidates_to_check])
+        return ranked
+
+    def _grasp_viz(self) -> Any | None:
+        """Visualization backend, or None when disabled or gripper geometry is unset."""
+        if self._world_monitor is None or self.config.grasp_viz_gripper is None:
+            return None
+        return self._world_monitor.visualization
+
+    def _publish_cloud_layer(self, points: Any) -> None:
+        vis = self._grasp_viz()
+        if vis is None:
+            return
+        with suppress(Exception):
+            vis.set_layer(grasp_layers.cloud_layer(points, self.config.planning_frame))
+
+    def _publish_candidate_layers(self, candidates: Sequence[GraspCandidate]) -> None:
+        vis = self._grasp_viz()
+        if vis is None:
+            return
+        with suppress(Exception):
+            vis.set_layer(
+                grasp_layers.candidates_layer(
+                    candidates,
+                    self.config.grasp_viz_gripper,
+                    self.config.grasp_viz_frame_to_tcp,
+                    self.config.planning_frame,
+                )
+            )
+
+    def _publish_attempt_layer(self, grasp: Pose, pre_grasp: Pose) -> None:
+        vis = self._grasp_viz()
+        if vis is None:
+            return
+        with suppress(Exception):
+            vis.set_layer(
+                grasp_layers.attempt_layer(
+                    grasp,
+                    pre_grasp,
+                    self.config.grasp_viz_gripper,
+                    self.config.grasp_viz_frame_to_tcp,
+                    self.config.planning_frame,
+                )
+            )
 
     @staticmethod
     def _valid_candidate(candidate: GraspCandidate) -> bool:
@@ -710,6 +769,7 @@ then refreshes perception obstacles.
                 continue
             pre_grasp = self._compute_pre_grasp_pose(candidate.pose, pre_offset, vector)
             retreat = self._compute_pre_grasp_pose(candidate.pose, retreat_offset, vector)
+            self._publish_attempt_layer(candidate.pose, pre_grasp)
             rejections = (
                 _CandidateRejection.PRE_GRASP_INFEASIBLE,
                 _CandidateRejection.GRASP_INFEASIBLE,

@@ -59,3 +59,19 @@ _Avoid_: Coordinated arm-gripper plan, validated finger sweep
 **Candidate Rejection Reason (MVP)**:
 Candidate rejection is reported by failed sequence stage: `pre_grasp_infeasible`, `grasp_infeasible`, or `retreat_infeasible`. Detailed IK and planner outcomes remain diagnostic logs rather than public skill-result categories.
 _Avoid_: Backend-specific public failure codes
+
+**Visualization Layer**:
+A display-only, named collection of visual elements owned by exactly one producer. Publishing replaces its contents, while clearing leaves the layer registered and preserves viewer-owned visibility; the layer cannot affect collision checking or other planning behavior.
+_Avoid_: Collision layer, shared scene state, visualization object
+
+**Visual Element**:
+A backend-neutral drawable contained in a Visualization Layer, initially a point cloud or line set. It carries no collision or planning authority.
+_Avoid_: Grasp visualization command, Viser handle, collision object
+
+**Visualization Layer Group**:
+A viewer-only grouping of independently replaceable and toggleable Visualization Layers that share a name prefix, such as `grasp/object-cloud` and `grasp/proposals`.
+_Avoid_: Compound layer, element-level visibility
+
+**Accepted Collision Projection**:
+A display-only representation published after the planning world accepts a collision-object change. Its presence, absence, or rendering failure never changes collision checking.
+_Avoid_: Collision authority, visualization obstacle
