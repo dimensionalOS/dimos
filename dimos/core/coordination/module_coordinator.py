@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping
 import dataclasses
 import importlib
 import inspect
@@ -24,6 +24,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.core.coordination.blueprint_config.values import deep_merge, plain
 from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
@@ -46,6 +47,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
+    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
@@ -85,6 +87,7 @@ class ModuleCoordinator(Resource):
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
         self._started = False
         self._modules_lock = threading.RLock()
+        self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
 
     def start(self) -> None:
@@ -96,9 +99,10 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
-        if self._coordinator_rpc is not None:
-            self._coordinator_rpc.stop()
-            self._coordinator_rpc = None
+        with self._rpc_lock:
+            if self._coordinator_rpc is not None:
+                self._coordinator_rpc.stop()
+                self._coordinator_rpc = None
 
         for name, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=name)
@@ -118,9 +122,10 @@ class ModuleCoordinator(Resource):
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""
-        if self._coordinator_rpc is not None:
-            return
-        self._coordinator_rpc = CoordinatorRPC.serve(self)
+        with self._rpc_lock:
+            if self._coordinator_rpc is not None:
+                return
+            self._coordinator_rpc = CoordinatorRPC.serve(self)
 
     @property
     def rpcs(self) -> dict[str, Callable[..., Any]]:
@@ -192,9 +197,7 @@ class ModuleCoordinator(Resource):
             self._instance_classes[name] = module_class
         return deployed_module  # type: ignore[return-value]
 
-    def deploy_parallel(
-        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
-    ) -> list[ModuleProxy]:
+    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
         if not self._managers:
             raise ValueError("Not started")
 
@@ -210,7 +213,7 @@ class ModuleCoordinator(Resource):
         results: list[Any] = [None] * len(module_specs)
 
         def _deploy_group(dep: str) -> None:
-            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], blueprint_args)
+            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep])
             for index, module in zip(indices_by_deployment[dep], deployed, strict=True):
                 results[index] = module
 
@@ -333,14 +336,20 @@ class ModuleCoordinator(Resource):
     def build(
         cls,
         blueprint: Blueprint,
-        blueprint_args: MutableMapping[str, Any] | None = None,
+        parsed_config: ParsedBlueprintConfig | None = None,
     ) -> ModuleCoordinator:
+        """Build a blueprint from its pinned values or an exact parsed config.
+
+        With ``parsed_config`` this resets the process-global ``global_config``
+        singleton to the full parsed resolution (schema defaults plus all
+        sources); :meth:`load_blueprint` instead applies only explicitly-set
+        fields.
+        """
         logger.info("Building the blueprint")
-        global_config.update(**dict(blueprint.global_config_overrides))
-        blueprint_args = blueprint_args or {}
-        if "g" in blueprint_args:
-            global_config.update(**blueprint_args.pop("g"))
-        transport_overrides = blueprint_args.pop("transports", None) or {}
+        global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
+            blueprint, parsed_config
+        )
+        global_config.update(**global_values)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
@@ -351,7 +360,7 @@ class ModuleCoordinator(Resource):
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config, blueprint_args)
+        _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
         coordinator._connect_streams(blueprint, transports)
         _connect_module_refs(blueprint, coordinator)
 
@@ -365,31 +374,30 @@ class ModuleCoordinator(Resource):
     def load_blueprint(
         self,
         blueprint: Blueprint,
-        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
+        parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
         """Load a blueprint into an already-running coordinator.
 
         Deploys, wires, builds and starts the modules described by *blueprint*.
         Workers are added automatically based on the blueprint's ``n_workers``
-        global-config override (additive).
+        global-config override (additive). ``parsed_config``, when provided,
+        must have been produced for this exact blueprint.
         """
         if not self._started:
             raise RuntimeError("ModuleCoordinator not started; call start() first")
 
         with self._modules_lock:
-            self._load_blueprint(blueprint, blueprint_args)
+            self._load_blueprint(blueprint, parsed_config)
 
     def _load_blueprint(
         self,
         blueprint: Blueprint,
-        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
+        parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
-        # Apply config overrides.
-        self._global_config.update(**dict(blueprint.global_config_overrides))
-        blueprint_args = blueprint_args or {}
-        if "g" in blueprint_args:
-            self._global_config.update(**blueprint_args.pop("g"))
-        transport_overrides = blueprint_args.pop("transports", None) or {}
+        global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
+            blueprint, parsed_config, sparse_globals=True
+        )
+        self._global_config.update(**global_values)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         # Scale worker pool.
@@ -418,7 +426,7 @@ class ModuleCoordinator(Resource):
         )
         existing_classes = {self._instance_classes[name] for name in before}
 
-        _deploy_all_modules(blueprint, self, self._global_config, blueprint_args)
+        _deploy_all_modules(blueprint, self, self._global_config, module_kwargs)
         self._connect_streams(blueprint, transports)
         _connect_module_refs(
             blueprint,
@@ -437,12 +445,8 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
-    def load_module(
-        self,
-        module_class: type[ModuleBase],
-        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
-    ) -> None:
-        self.load_blueprint(module_class.blueprint(**blueprint_args or {}))
+    def load_module(self, module_class: type[ModuleBase]) -> None:
+        self.load_blueprint(module_class.blueprint())
 
     def unload_module(self, module: type[ModuleBase] | str) -> None:
         """Stop and tear down a single deployed module.
@@ -632,9 +636,14 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
-        stop = threading.Event()
+        """Serve coordinator RPC and block until the process is interrupted.
+
+        Owning service startup here gives CLI and direct Python ``build().loop()``
+        launches the same attachment behavior.
+        """
+        self.start_rpc_service()
         try:
-            stop.wait()
+            threading.Event().wait()
         except KeyboardInterrupt:
             return
         finally:
@@ -713,12 +722,58 @@ def _materialize_transports(
         config = None
         config_cls = spec.config_cls
         if config_cls is not None:
-            # Config-field kwargs pinned on the spec
-            spec_fields = {k: v for k, v in spec.kwargs.items() if k in config_cls.model_fields}
-            sub = overrides.get(transport_config_name(config_cls), {})
-            config = config_cls(**{**spec_fields, **sub})
+            # Config-field kwargs pinned on the spec, sparse overrides on top.
+            spec_fields = {
+                k: plain(v) for k, v in spec.kwargs.items() if k in config_cls.model_fields
+            }
+            deep_merge(spec_fields, overrides.get(transport_config_name(config_cls), {}))
+            config = config_cls(**spec_fields)
         materialized[key] = _coerce_transport_to_backend(spec.build(config=config))
     return materialized
+
+
+def _resolve_blueprint_config(
+    blueprint: Blueprint,
+    parsed_config: ParsedBlueprintConfig | None,
+    *,
+    sparse_globals: bool = False,
+) -> tuple[
+    dict[str, Any],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
+    """Return the config values one build or dynamic load should apply.
+
+    A bare coordinator build remains convenient for programmatic callers:
+    module arguments pinned by the blueprint and its GlobalConfig overrides
+    are used directly. All external configuration sources must first be
+    resolved and validated by ``BlueprintConfigParser``. ``sparse_globals``
+    restricts the parsed path to GlobalConfig fields a configuration source
+    explicitly set, so loading into a live coordinator does not reset
+    unrelated fields to schema defaults.
+    """
+    if parsed_config is None:
+        return dict(blueprint.global_config_overrides), {}, {}
+
+    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
+
+    if not isinstance(parsed_config, ParsedBlueprintConfig):
+        raise TypeError(
+            "parsed_config must be a ParsedBlueprintConfig; "
+            "resolve overrides with BlueprintConfigParser.parse()"
+        )
+
+    parsed_config.assert_matches(blueprint)
+    global_values = (
+        parsed_config.explicit_global_config_values()
+        if sparse_globals
+        else parsed_config.global_config_values()
+    )
+    return (
+        global_values,
+        {atom.name: parsed_config.module_kwargs(atom.name) for atom in blueprint.active_blueprints},
+        cast("dict[str, dict[str, Any]]", parsed_config.transport_overrides()),
+    )
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
@@ -785,9 +840,11 @@ def _verify_no_conflicts_with_existing(
 def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
+    from dimos.protocol.service.system_configurator.zenoh_config import zenoh_configurators
 
     lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
-    configurators = [*lcm_checks, *blueprint.configurator_checks]
+    zenoh_checks = zenoh_configurators() if global_config.transport == "zenoh" else []
+    configurators = [*lcm_checks, *zenoh_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)
@@ -820,19 +877,26 @@ def _deploy_all_modules(
     blueprint: Blueprint,
     module_coordinator: ModuleCoordinator,
     gc: GlobalConfig,
-    blueprint_args: Mapping[str, Mapping[str, Any]],
+    module_kwargs: Mapping[str, Mapping[str, Any]],
 ) -> None:
     module_specs: list[ModuleSpec] = []
+    deployed_atoms: dict[str, BlueprintAtom] = {}
     for bp in blueprint.active_blueprints:
-        kwargs = bp.kwargs.copy()
+        # Shallow copies: pinned kwargs may hold objects that cannot be
+        # deep-copied, and parsed values are already independent snapshots.
+        kwargs = dict(bp.kwargs)
+        kwargs.update(module_kwargs.get(bp.name, {}))
+        # Instance identity belongs to blueprint composition, not user config.
+        kwargs.pop("instance_name", None)
         if bp.instance_name is not None:
-            kwargs.setdefault("instance_name", bp.instance_name)
+            kwargs["instance_name"] = bp.instance_name
         module_specs.append((bp.module, gc, kwargs))
+        deployed_atoms[bp.name] = dataclasses.replace(bp, kwargs=dict(kwargs))
 
-    module_coordinator.deploy_parallel(module_specs, blueprint_args)
+    module_coordinator.deploy_parallel(module_specs)
 
     for bp in blueprint.active_blueprints:
-        module_coordinator._deployed_atoms[bp.name] = bp
+        module_coordinator._deployed_atoms[bp.name] = deployed_atoms[bp.name]
 
 
 def _ref_msg(module_name: str, ref: object, spec_name: str, detail: str) -> str:

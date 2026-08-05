@@ -42,7 +42,6 @@ class RobotInfo(TypedDict):
     max_velocity: float
     max_acceleration: float
     has_joint_name_mapping: bool
-    coordinator_task_name: str | None
     home_joints: list[float] | None
     pre_grasp_offset: float
     init_joints: list[float] | None

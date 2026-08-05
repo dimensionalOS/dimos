@@ -23,7 +23,6 @@ import json
 import os
 from typing import Any
 
-import cv2
 import numpy as np
 from pydantic import Field
 
@@ -92,6 +91,8 @@ def save_debug_image_with_points(
     Returns:
         Path to the saved image
     """
+    import cv2
+
     # Create a copy to avoid modifying original
     debug_image = image.copy()
 
@@ -327,6 +328,8 @@ class PickAndPlace(AbstractRobotSkill):
         Returns:
             Dictionary with operation results
         """
+        import cv2
+
         super().__call__()  # type: ignore[no-untyped-call]
 
         if not self._robot:

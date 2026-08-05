@@ -508,14 +508,12 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 def _make_yourarm_config(
     name: str = "arm",
     y_offset: float = 0.0,
-    coordinator_task: str | None = None,
 ) -> RobotModelConfig:
     """Create YourArm robot config for planning.
 
     Args:
         name: Robot name in the Drake planning world.
         y_offset: Y-axis offset for multi-arm setups.
-        coordinator_task: Coordinator task name for trajectory execution via RPC.
     """
     # These must match the joint names in your URDF
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -540,7 +538,6 @@ def _make_yourarm_config(
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
-        coordinator_task_name=coordinator_task,
     )
 ```
 
@@ -551,7 +548,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 ```python skip
 
 yourarm_planner = manipulation_module(
-    robots=[_make_yourarm_config("arm", coordinator_task="traj_arm")],
+    robots=[_make_yourarm_config("arm")],
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
 )
@@ -569,7 +566,6 @@ yourarm_planner = manipulation_module(
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
-| `coordinator_task_name` | Must match the `TaskConfig.name` in your coordinator blueprint |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
 
 Coordinator-facing joint states and trajectories use global joint names derived
@@ -581,6 +577,48 @@ Planning-group `base_link`/`tip_link` values define kinematic chains and pose
 target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
+
+### 4d. Configure Cartesian, EEF-twist, and teleop control IK
+
+Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
+or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
+name the end-effector link, and map coordinator joints to model joints. The task
+validates the prepared model, frame, and joint mapping at startup. Teleop uses
+the named frame and does not accept a separate model path or numeric
+end-effector joint ID.
+
+Pass the same model configuration to the common helpers:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import (
+    cartesian_ik_task,
+    eef_twist_task,
+    teleop_ik_task,
+)
+
+cartesian_task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+twist_task = eef_twist_task(
+    hardware,
+    robot_model=robot_model,
+)
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
+```
+
+Each tick starts from measured joints and applies model position and velocity
+limits. Twist targets are derived from measured forward kinematics. Teleop
+targets apply controller deltas to a measured engagement baseline and discard
+that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
+or mappings fail at startup; invalid runtime output holds the measured position.
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
 
 ## Step 5: Register Blueprints
 

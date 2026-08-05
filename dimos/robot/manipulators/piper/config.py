@@ -41,7 +41,6 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
     "piper_description": LfsPath("piper_description"),
     "piper_gazebo": LfsPath("piper_description"),
 }
-PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
     0.793,
@@ -131,7 +130,6 @@ def make_piper_model_config(
     name: str = "arm",
     *,
     joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     dof = 6
@@ -159,7 +157,6 @@ def make_piper_model_config(
             dof,
             joint_prefix=joint_prefix,
         ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
         home_joints=model_home_joints,
     )

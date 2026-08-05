@@ -27,7 +27,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-from dimos.perception.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import quaternion_to_euler
 

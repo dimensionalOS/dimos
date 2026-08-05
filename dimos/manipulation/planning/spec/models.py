@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -54,6 +55,13 @@ GlobalJointName: TypeAlias = str
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
+
+
+CartesianWaypoint: TypeAlias = "PoseStamped | Transform"
+"""One absolute TCP pose or relative rigid displacement from the planning start."""
+
+CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[Transform]"
+"""Ordered homogeneous Cartesian waypoints for one planning group."""
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,10 @@ Jacobian: TypeAlias = "NDArray[np.float64]"
 """6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
 
 
+DEFAULT_OBSTACLE_RGBA: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+"""Default RGBA (0-1 range) applied to obstacles that carry no explicit color."""
+
+
 @dataclass
 class Obstacle:
     """Obstacle specification for collision avoidance.
@@ -112,7 +124,7 @@ class Obstacle:
     obstacle_type: ObstacleType
     pose: PoseStamped
     dimensions: tuple[float, ...] = ()
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
 
 
@@ -201,7 +213,7 @@ class CollisionObjectMessage:
         primitive_type: "box", "sphere", or "cylinder" (for add/update)
         pose: Pose of the obstacle (for add/update)
         dimensions: Type-specific dimensions (for add/update)
-        color: RGBA color tuple
+        color: RGBA color tuple. ``None`` means the field was omitted.
     """
 
     id: str
@@ -209,4 +221,4 @@ class CollisionObjectMessage:
     primitive_type: str | None = None
     pose: PoseStamped | None = None
     dimensions: tuple[float, ...] | None = None
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] | None = None

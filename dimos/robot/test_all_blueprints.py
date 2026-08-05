@@ -49,7 +49,6 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-velocity-xarm6",
         "coordinator-xarm6",
         "coordinator-xarm7",
-        "dual-xarm6-planner",
         "dual-xarm6-planner-coordinator",
         "learning-collect-quest-xarm7",
         "teleop-hosted-go2-multicam",
@@ -68,7 +67,6 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "xarm-perception-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
-        "xarm6-planner-only",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }

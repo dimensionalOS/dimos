@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 COMPLEX_TYPES: set[str] = {
     "sensor_msgs.PointCloud2",
     "sensor_msgs.Image",
+    "sensor_msgs.CompressedImage",
     "sensor_msgs.CameraInfo",
     "geometry_msgs.PoseStamped",
 }

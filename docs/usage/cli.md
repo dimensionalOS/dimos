@@ -67,16 +67,22 @@ Start one or more robot blueprints. Built-in DimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
-| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
-| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
+| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--help` | Display the run options and available blueprint configuration flags |
+
+Dynamic values accept both `--field=value` and `--field value`. A shorthand is
+available only when it identifies one active module. If two modules expose the
+same field, the CLI reports the ambiguity and lists stable qualified forms such
+as `--relocalizationmodule.map-file`. Global flags work on either side of
+`run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -93,6 +99,9 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
+
+# Blueprint configuration (both value forms are accepted)
+dimos run unitree-go2-relocalization --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
@@ -134,6 +143,69 @@ This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. Ext
 packages do not edit that file; they expose blueprints through Python package entry
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
+
+### `dimos shell`
+
+Open an IPython session attached to the coordinator on the configured transport bus:
+
+```bash skip
+dimos shell
+```
+
+The command requires an interactive terminal. For scripts and automation, use
+`Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
+While attaching, the shell displays a waiting indicator and retries coordinator
+discovery within the default five-second connection budget.
+
+The shell starts with five names:
+
+| Name | Purpose |
+|------|---------|
+| `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
+| `guide()` | Reprint the shell's quick-start guide |
+| `modules()` | Print module instances, classes, and RPC counts |
+| `rpcs()` | Print every RPC's signature and docstring summary |
+| `describe(value)` | Pretty-print a module or RPC's signature and documentation |
+
+For example:
+
+```python skip
+modules()
+guide()
+rpcs("StressTestModule")
+describe("StressTestModule.ping")
+app.StressTestModule.ping()
+```
+
+For example, `describe("StressTestModule.echo")` prints:
+
+```text
+RPC: StressTestModule.echo
+Signature: echo(message: str) -> str
+
+Documentation:
+Echo a message back to the caller.
+```
+
+Use `app.describe(...)` when you want the structured `ModuleInfo` or `RpcInfo`
+record instead of formatted output.
+
+Discovery is live, so modules loaded after attachment appear on the next
+`modules()` or `rpcs()` call. Use `app.list_modules()` and `app.list_rpcs()` when
+you want structured records. Exact instance names select one deployment when
+multiple instances share a class.
+
+RPC calls execute immediately against the running system. The shell does not filter
+methods or ask for confirmation, so an RPC may move hardware or change lifecycle
+state. Start with a non-hardware, simulation, or replay stack.
+
+Exiting IPython closes only the shell's client connection. The coordinator and its
+modules keep running. If the coordinator stops or restarts, calls fail visibly; start
+a new `dimos shell` session to reconnect.
+
+The shell normally displays the CLI run ID and blueprint. Coordinators launched
+directly from Python have no run-registry metadata and are shown as
+`unregistered coordinator`.
 
 ### `dimos status`
 
