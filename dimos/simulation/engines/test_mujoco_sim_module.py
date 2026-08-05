@@ -25,7 +25,11 @@ import numpy as np
 import pytest
 
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
 
 
 class _FakeData:
@@ -79,6 +83,30 @@ class _FakeSimHooks:
 
     def clear_latched_commands(self) -> None:
         self.cleared = True
+
+
+@pytest.mark.parametrize(
+    ("driver_joint_position", "expected_aperture"),
+    [(0.0, 0.85), (0.425, 0.425), (0.85, 0.0)],
+)
+def test_gripper_feedback_reports_aperture_not_closing_joint_angle(
+    driver_joint_position: float, expected_aperture: float
+) -> None:
+    shm = MagicMock()
+    hooks = _WholeBodySimHooks(
+        shm,
+        7,
+        gripper_idx=7,
+        gripper_joint_range=(0.0, 0.85),
+    )
+    engine = MagicMock()
+    engine.joint_positions = [0.0] * 7 + [driver_joint_position]
+    engine.joint_velocities = [0.0] * 8
+    engine.joint_efforts = [0.0] * 8
+
+    hooks.post_step(engine)
+
+    shm.write_gripper_state.assert_called_once_with(pytest.approx(expected_aperture))
 
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
@@ -164,6 +192,28 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         assert camera_link_tf.frame_id == "link7"
         assert camera_link_tf.child_frame_id == "wrist_camera_link"
         assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+    finally:
+        module.stop()
+
+
+def test_get_body_poses_omits_unknown_bodies() -> None:
+    module = MujocoSimModule()
+
+    class _FakeEngine:
+        def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray] | None:
+            if body_name == "known":
+                return np.array([1.0, 2.0, 3.0]), np.array([0.0, 0.0, 0.0, 1.0])
+            return None
+
+        def disconnect(self) -> None:
+            pass
+
+    try:
+        module._engine = _FakeEngine()
+
+        assert module.get_body_poses(["known", "missing"]) == {
+            "known": [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0]
+        }
     finally:
         module.stop()
 

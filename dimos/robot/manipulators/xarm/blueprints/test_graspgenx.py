@@ -25,9 +25,14 @@ from dimos.manipulation.pick_and_place_module import (
 from dimos.perception.experimental.object_scene_registration import (
     ObjectSceneRegistrationModule,
 )
-from dimos.robot.manipulators.xarm.blueprints.agentic import xarm_graspgenx_agent
+from dimos.perception.sim_object_scene import SimObjectScene
+from dimos.robot.manipulators.xarm.blueprints.agentic import (
+    xarm_grasp_sim_agent,
+    xarm_graspgenx_agent,
+)
 from dimos.robot.manipulators.xarm.blueprints.graspgenx import xarm_graspgenx
 from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
+from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_grasp_sim
 from dimos.robot.manipulators.xarm.grasp_config import (
     XARM_GRASP_FRAME_TO_TCP,
     XARM_GRIPPER_SWEEP,
@@ -51,7 +56,12 @@ def test_xarm_graspgenx_geometry_is_explicit_and_import_safe() -> None:
     assert config.gripper.extents_open == (0.085, 0.032, 0.067)
     assert config.gripper.extents_half_open == (0.0425, 0.032, 0.067)
     assert config.gripper.fingertip_depth == 0.162
-    assert config.grasp_frame_to_tcp[2][3] == 0.172
+    assert config.grasp_frame_to_tcp == (
+        (0.0, -1.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.172),
+        (0.0, 0.0, 0.0, 1.0),
+    )
 
 
 def test_existing_xarm_perception_keeps_explicit_heuristic_fallback() -> None:
@@ -78,3 +88,26 @@ def test_xarm_graspgenx_agent_composes_one_mcp_pair() -> None:
     assert _module_count(xarm_graspgenx_agent, ObjectSceneRegistrationModule) == 1
     assert _module_count(xarm_graspgenx_agent, GraspGenXModule) == 1
     assert _module_count(xarm_graspgenx_agent, PickAndPlaceModule) == 1
+
+
+def test_xarm_grasp_sim_uses_gt_scene_and_pick_diagnostics() -> None:
+    config = PickAndPlaceModuleConfig(**_module_kwargs(xarm_grasp_sim, PickAndPlaceModule))
+
+    assert _module_count(xarm_grasp_sim, ObjectSceneRegistrationModule) == 0
+    assert _module_count(xarm_grasp_sim, SimObjectScene) == 1
+    assert _module_count(xarm_grasp_sim, GraspGenXModule) == 1
+    assert _module_count(xarm_grasp_sim, PickAndPlaceModule) == 1
+    assert config.max_grasp_candidates_to_check == 30
+    assert config.pick_suppress_all_object_obstacles is False
+    assert config.grasp_viz_gripper == XARM_GRIPPER_SWEEP
+    assert config.grasp_viz_frame_to_tcp == XARM_GRASP_FRAME_TO_TCP
+    assert config.use_mesh_obstacles is True
+
+
+def test_xarm_grasp_sim_agent_keeps_gt_scene_provider() -> None:
+    assert _module_count(xarm_grasp_sim_agent, McpServer) == 1
+    assert _module_count(xarm_grasp_sim_agent, McpClient) == 1
+    assert _module_count(xarm_grasp_sim_agent, ObjectSceneRegistrationModule) == 0
+    assert _module_count(xarm_grasp_sim_agent, SimObjectScene) == 1
+    assert _module_count(xarm_grasp_sim_agent, GraspGenXModule) == 1
+    assert _module_count(xarm_grasp_sim_agent, PickAndPlaceModule) == 1

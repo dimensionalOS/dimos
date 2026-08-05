@@ -408,14 +408,16 @@ class TestProposalSelection:
         self, module: PickAndPlaceModule, mocker: MockerFixture
     ) -> None:
         endpoint = JointState(name=["arm/joint1"], position=[0.1])
+        # Each candidate is checked in two legs: pre-grasp against the whole
+        # scene, then grasp+retreat with the target suppressed.
         plan_sequence = mocker.patch.object(
             module,
             "_check_connected_pose_sequence",
-            side_effect=[(0, None), (None, endpoint)],
+            side_effect=[(0, None), (None, endpoint), (None, endpoint)],
         )
         plan_motion = mocker.patch.object(module, "plan_to_pose")
         command_gripper = mocker.patch.object(module, "_set_gripper_position")
-        transaction = SimpleNamespace(rejections=Counter())
+        transaction = SimpleNamespace(rejections=Counter(), object_id="abc12345")
 
         selected = module._select_feasible_grasp(
             [_candidate(0.4, 0.9), _candidate(0.5, 0.8)],
@@ -426,7 +428,7 @@ class TestProposalSelection:
 
         assert selected.rank == 2
         assert selected.candidate.score == 0.8
-        assert plan_sequence.call_count == 2
+        assert plan_sequence.call_count == 3
         assert transaction.rejections == {"pre_grasp_infeasible": 1}
         plan_motion.assert_not_called()
         command_gripper.assert_not_called()
@@ -525,6 +527,22 @@ class TestPickTransaction:
             mocker.call(Pose(0.4, 0.0, 0.3), "arm"),
         ]
 
+    def test_pick_can_suppress_all_object_obstacles_for_diagnostics(
+        self, module: PickAndPlaceModule, mocker: MockerFixture
+    ) -> None:
+        self._arrange_success(module, mocker)
+        module.config.pick_suppress_all_object_obstacles = True
+        all_suppression = SimpleNamespace(cleanup_error=None)
+        module._world_monitor.suppress_all_object_obstacles.return_value = nullcontext(  # type: ignore[union-attr]
+            all_suppression
+        )
+
+        result = module.pick("cup", object_id="abc12345")
+
+        assert result.is_success()
+        module._world_monitor.suppress_all_object_obstacles.assert_called_once_with()  # type: ignore[union-attr]
+        module._world_monitor.suppress_object_obstacle.assert_not_called()  # type: ignore[union-attr]
+
     def test_no_safety_lift_validates_candidates_from_current_state(
         self, module: PickAndPlaceModule, mocker: MockerFixture
     ) -> None:
@@ -621,7 +639,8 @@ class TestPickTransaction:
     ) -> None:
         _, suppression = self._arrange_success(module, mocker)
         suppression.cleanup_error = "restore failed"
-        module.plan_to_pose.side_effect = [False]
+        # Approach plans; the grasp leg fails inside the target suppression.
+        module.plan_to_pose.side_effect = [True, False]
 
         result = module.pick("cup", object_id="abc12345")
 
@@ -720,7 +739,8 @@ def test_full_pick_pipeline_uses_real_messages_and_fake_boundary_providers(
     plan_sequence = mocker.patch.object(
         module,
         "_check_connected_pose_sequence",
-        side_effect=[(0, None), (None, JointState())],
+        # Per candidate: the pre-grasp leg, then the suppressed grasp+retreat leg.
+        side_effect=[(0, None), (None, JointState()), (None, JointState())],
     )
     mocker.patch.object(module, "_safety_lift_pose", return_value=None)
     mocker.patch.object(module, "_lift_if_low", return_value=SkillResult.ok())
@@ -742,9 +762,9 @@ def test_full_pick_pipeline_uses_real_messages_and_fake_boundary_providers(
     assert result.metadata["rejections"] == {"pre_grasp_infeasible": 1}
     scene.get_object_pointcloud_by_object_id.assert_called_once_with("abc12345")
     generator.propose_grasps.assert_called_once_with(scene.get_object_pointcloud_by_object_id())
-    world.suppress_object_obstacle.assert_called_once_with("abc12345")
-    assert world.method_calls == [mocker.call.suppress_object_obstacle("abc12345")]
-    assert plan_sequence.call_count == 2
+    # Suppressed twice: once to validate the grasp leg, once to execute it.
+    assert world.method_calls == [mocker.call.suppress_object_obstacle("abc12345")] * 2
+    assert plan_sequence.call_count == 3
     assert plan.call_count == 3
     assert execute.call_count == 3
     assert gripper.call_args_list == [mocker.call(0.85, "arm"), mocker.call(0.0, "arm")]

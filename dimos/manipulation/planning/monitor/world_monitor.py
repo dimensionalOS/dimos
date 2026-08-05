@@ -234,7 +234,7 @@ class WorldMonitor:
             self._state_monitors[robot_id] = monitor
             logger.info(f"State monitor started for '{robot_id}'")
 
-    def start_obstacle_monitor(self) -> None:
+    def start_obstacle_monitor(self, use_mesh_obstacles: bool = False) -> None:
         """Start monitoring obstacle updates."""
         with self._lock:
             if self._obstacle_monitor is not None:
@@ -243,6 +243,7 @@ class WorldMonitor:
 
             self._obstacle_monitor = WorldObstacleMonitor(
                 parent=self,
+                use_mesh_obstacles=use_mesh_obstacles,
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")
@@ -323,6 +324,15 @@ class WorldMonitor:
             yield ObjectObstacleSuppression(object_id=object_id)
             return
         with self._obstacle_monitor.suppress_object_obstacle(object_id) as suppression:
+            yield suppression
+
+    @contextmanager
+    def suppress_all_object_obstacles(self) -> Iterator[ObjectObstacleSuppression]:
+        """Temporarily exclude all perception objects from collision checking."""
+        if self._obstacle_monitor is None:
+            yield ObjectObstacleSuppression(object_id="*")
+            return
+        with self._obstacle_monitor.suppress_all_object_obstacles() as suppression:
             yield suppression
 
     def clear_perception_obstacles(self) -> int:

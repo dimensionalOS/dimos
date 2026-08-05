@@ -32,7 +32,7 @@ import threading
 import time
 from typing import Any, Literal, TypeAlias
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
@@ -146,6 +146,12 @@ class ConnectedPoseSequenceResult:
     paths: tuple[tuple[JointState, ...], ...]
 
 
+class StaticBoxObstacle(BaseModel):
+    name: str
+    center: tuple[float, float, float]
+    size: tuple[float, float, float]
+
+
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
@@ -163,6 +169,10 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Static box obstacles added at startup, for scene furniture the planner
+    # must always respect (e.g. a table). Center and size are world-frame,
+    # axis-aligned, full extents.
+    static_box_obstacles: list[StaticBoxObstacle] = Field(default_factory=list)
 
 
 class ManipulationModule(Module):
@@ -285,6 +295,17 @@ class ManipulationModule(Module):
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
+
+        for box in self.config.static_box_obstacles:
+            self._world_monitor.add_obstacle(
+                Obstacle(
+                    name=box.name,
+                    pose=Pose(Vector3(*box.center), Quaternion(0.0, 0.0, 0.0, 1.0)),
+                    obstacle_type=ObstacleType.BOX,
+                    dimensions=tuple(box.size),
+                )
+            )
+            logger.info(f"Static obstacle '{box.name}' added at {box.center}")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)

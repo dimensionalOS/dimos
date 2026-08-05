@@ -36,6 +36,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import TYPE_CHECKING
+import uuid
 
 from dimos.constants import CACHE_DIR
 from dimos.utils.logging_config import setup_logger
@@ -304,7 +305,10 @@ def pointcloud_to_convex_hull_obj(
     if output_path is None:
         hull_dir = _CACHE_DIR / "convex_hulls"
         hull_dir.mkdir(parents=True, exist_ok=True)
-        output_path = hull_dir / f"hull_{id(points):x}.obj"
+        # Not id(points): that is a memory address, and CPython reuses a freed
+        # address for the next same-sized array, so sequential callers silently
+        # overwrite each other's hulls.
+        output_path = hull_dir / f"hull_{uuid.uuid4().hex}.obj"
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

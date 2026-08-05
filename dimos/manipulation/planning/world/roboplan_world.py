@@ -83,6 +83,8 @@ logger = setup_logger()
 _WORLD_FRAME = "dimos_world"
 _CARTESIAN_COLLISION_STEP_SIZE = 0.05
 
+_START_STATE_ATOL = 0.01
+
 
 @dataclass
 class _RoboPlanRobotData:
@@ -613,7 +615,9 @@ class RoboPlanWorld:
         start_by_name = dict(zip(normalized.name, normalized.position, strict=True))
         current_by_name = self._current_global_positions()
         if any(
-            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
+            not np.isclose(
+                start_by_name[name], current_by_name[name], atol=_START_STATE_ATOL, rtol=0.0
+            )
             for name in selection.joint_names
         ):
             raise ValueError("Requested start state does not match current scene state")

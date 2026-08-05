@@ -214,7 +214,9 @@ class _WholeBodySimHooks:
         if self._gripper_idx is not None:
             positions = engine.joint_positions
             if self._gripper_idx < len(positions):
-                shm.write_gripper_state(positions[self._gripper_idx])
+                shm.write_gripper_state(
+                    self._gripper_joint_to_position(positions[self._gripper_idx])
+                )
 
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
@@ -230,6 +232,12 @@ class _WholeBodySimHooks:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
         return chi - t * (chi - clo)
+
+    def _gripper_joint_to_position(self, joint_position: float) -> float:
+        """Convert the internal closing-joint angle to the public aperture."""
+        jlo, jhi = self._gripper_joint_range
+        clamped = max(jlo, min(jhi, joint_position))
+        return jlo + jhi - clamped
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -697,6 +705,20 @@ class MujocoSimModule(
         applied = engine.request_reset(wait=True)
         logger.info("MujocoSimModule: reset requested", applied=applied)
         return applied
+
+    @rpc
+    def get_body_poses(self, names: list[str]) -> dict[str, list[float]]:
+        """World poses [x, y, z, qx, qy, qz, qw] for named bodies; unknown names omitted."""
+        engine = self._engine
+        if engine is None:
+            return {}
+        poses: dict[str, list[float]] = {}
+        for name in names:
+            pose = engine.get_body_pose(name)
+            if pose is not None:
+                position, orientation = pose
+                poses[name] = [*position.tolist(), *orientation.tolist()]
+        return poses
 
     @rpc
     def respawn_at(
