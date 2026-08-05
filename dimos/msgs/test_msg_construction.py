@@ -55,9 +55,7 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 IDENTITY = (0.0, 0.0, 0.0, 1.0)
 
 
-# --------------------------------------------------------------------------
 # Quaternion
-# --------------------------------------------------------------------------
 
 
 def test_quaternion_empty_is_identity() -> None:
@@ -122,9 +120,7 @@ def test_quaternion_lcm_roundtrip_uses_the_sequence_form() -> None:
     assert decoded.to_tuple() == (1.0, 2.0, 3.0, 4.0)
 
 
-# --------------------------------------------------------------------------
 # Pose
-# --------------------------------------------------------------------------
 
 
 def test_pose_empty_is_origin_with_identity() -> None:
@@ -254,9 +250,7 @@ def test_pose_position_and_orientation_are_wrapper_types() -> None:
     assert isinstance(p.orientation, Quaternion)
 
 
-# --------------------------------------------------------------------------
 # Twist
-# --------------------------------------------------------------------------
 
 
 def test_twist_empty_is_zero() -> None:
@@ -331,9 +325,7 @@ def test_twist_keyword_angular_quaternion_is_converted_to_euler() -> None:
     assert t.angular.to_tuple() == (0.0, 0.0, 0.0)
 
 
-# --------------------------------------------------------------------------
 # PoseWithCovariance
-# --------------------------------------------------------------------------
 
 
 def test_pwc_empty() -> None:
@@ -394,9 +386,7 @@ def test_pwc_covariance_matrix_view() -> None:
     assert p.covariance_matrix.shape == (6, 6)
 
 
-# --------------------------------------------------------------------------
 # TwistWithCovariance
-# --------------------------------------------------------------------------
 
 
 def test_twc_empty() -> None:
@@ -446,9 +436,7 @@ def test_twc_from_dict_with_covariance() -> None:
     assert np.array_equal(t.covariance, np.arange(36.0))
 
 
-# --------------------------------------------------------------------------
 # JointState
-# --------------------------------------------------------------------------
 
 
 def test_jointstate_empty_has_empty_lists() -> None:
@@ -491,9 +479,7 @@ def test_jointstate_from_lcm() -> None:
     assert j.name == []
 
 
-# --------------------------------------------------------------------------
 # Joy
-# --------------------------------------------------------------------------
 
 
 def test_joy_empty() -> None:
@@ -539,9 +525,7 @@ def test_joy_from_lcm() -> None:
     assert j.axes == []
 
 
-# --------------------------------------------------------------------------
 # Stamped wrappers: ts / frame_id plumbing
-# --------------------------------------------------------------------------
 
 
 def test_posestamped_defaults_stamp_to_now() -> None:
@@ -634,13 +618,11 @@ def test_twcs_empty_defaults() -> None:
     assert t.twist.linear.to_tuple() == (0.0, 0.0, 0.0)
 
 
-# --------------------------------------------------------------------------
 # The ``ts`` sentinel
 #
 # ``ts`` defaults to None and means "stamp me now". 0.0 is an ordinary
 # timestamp and is stored as given — it used to be swallowed by a
 # ``ts if ts != 0`` sentinel that made it unrepresentable.
-# --------------------------------------------------------------------------
 
 STAMPED_TYPES = [
     PoseStamped,
@@ -679,14 +661,12 @@ def test_lcm_decode_of_an_unstamped_message_keeps_the_zero_stamp() -> None:
     assert decoded.ts == 0.0
 
 
-# --------------------------------------------------------------------------
 # Forms that used to build a silently-broken object
 #
 # Under plum these calls matched no overload and fell through to the LCM base
 # __init__, which stores its arguments verbatim — leaving fields holding raw
 # scalars/lists instead of Vector3/Quaternion/Pose, to blow up later in
 # __repr__ or on encode. They now either do the obvious thing or raise.
-# --------------------------------------------------------------------------
 
 
 def test_pose_from_scalar_is_an_x_only_position() -> None:
