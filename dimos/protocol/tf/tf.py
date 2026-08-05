@@ -18,6 +18,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import field
 from functools import reduce
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -184,6 +185,41 @@ class MultiTBuffer:
                 if child == frame_id:
                     connections.add(parent)
         return connections
+
+    def get_parent(self, frame_id: str) -> str | None:
+        """Get the parent of a frame, or None when it is a tree root.
+
+        A well formed tf tree gives every frame a single parent; if several were
+        published the most recently updated edge wins.
+        """
+        best_parent: str | None = None
+        best_ts = -math.inf
+        with self._cv:
+            for (parent, child), buffer in self.buffers.items():
+                if child != frame_id:
+                    continue
+                latest = buffer.last()
+                ts = latest.ts if latest else -math.inf
+                if best_parent is None or ts > best_ts:
+                    best_parent, best_ts = parent, ts
+        return best_parent
+
+    def get_chain(self, frame_id: str) -> list[str]:
+        """Get the frame ids from the tree root down to ``frame_id``, inclusive.
+
+        Walks parents and stops on a cycle, so a malformed tree yields a
+        truncated chain rather than hanging.
+        """
+        chain = [frame_id]
+        seen = {frame_id}
+        with self._cv:
+            parent = self.get_parent(frame_id)
+            while parent is not None and parent not in seen:
+                chain.append(parent)
+                seen.add(parent)
+                parent = self.get_parent(parent)
+        chain.reverse()
+        return chain
 
     def get_transform(
         self,

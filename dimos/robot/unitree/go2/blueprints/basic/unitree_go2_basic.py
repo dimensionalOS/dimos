@@ -40,6 +40,17 @@ def _convert_navigation_costmap(grid: Any) -> Any:
         opacity=0.2,
         background="#484981",
     )
+    
+    
+def _static_base_link(rr: Any) -> list[Any]:
+    return [
+        rr.Boxes3D(
+            half_sizes=[0.35, 0.155, 0.2],
+            colors=[(0, 255, 127)],
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
 
 def _go2_rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world view side by side."""
@@ -87,6 +98,9 @@ rerun_config: dict[str, Any] = {
         "world/lidar": 1,  # publishes at ~7.7 Hz; hidden by default in the blueprint
     },
     # slapping a go2 shaped box on top of tf/base_link
+    "static": {
+        "world/tf/base_link": _static_base_link,
+    },
 }
 
 _with_vis = autoconnect(
