@@ -131,22 +131,83 @@ impl VoxelMap {
         }
     }
 
+    /// Count of a key's 26 neighbors that currently exist and are healthy. O(26)
+    /// map lookups — called once per voxel, when it's first created, to seed its
+    /// incremental `support` field. (Also the differential-test reference for
+    /// that field.)
+    fn count_healthy_neighbors(&self, key: VoxelKey) -> u32 {
+        let mut n = 0;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if (dx, dy, dz) == (0, 0, 0) {
+                        continue;
+                    }
+                    let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
+                    if self.voxels.get(&nk).is_some_and(|c| c.health > 0) {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    }
+
+    /// Adjust every existing neighbor's `support` count by `delta` (+1 or -1),
+    /// following `key`'s own health crossing the healthy/unhealthy boundary.
+    /// Neighbors that don't exist yet are skipped — they pick up the right count
+    /// from `count_healthy_neighbors` when they're created.
+    fn propagate_neighbor_support(&mut self, key: VoxelKey, delta: i32) {
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if (dx, dy, dz) == (0, 0, 0) {
+                        continue;
+                    }
+                    let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
+                    if let Some(c) = self.voxels.get_mut(&nk) {
+                        let updated = c.support as i32 + delta;
+                        debug_assert!(
+                            (0..=26).contains(&updated),
+                            "support count out of range: {updated}"
+                        );
+                        c.support = updated as u32;
+                    }
+                }
+            }
+        }
+    }
+
     /// Register a ray hit: create the voxel at `min_health` if new, then bump its
-    /// health, keeping the healthy-chunk index in sync.
+    /// health. Keeps the healthy-chunk index and every neighbor's `support` count
+    /// in sync.
     fn record_hit(&mut self, key: VoxelKey, min_health: VoxelHealth, max_health: VoxelHealth) {
-        let c = self.voxels.entry(key).or_insert_with(|| Voxel {
-            health: min_health,
-            ..Default::default()
-        });
-        let was_healthy = c.health > 0;
-        c.health = (c.health + 1).min(max_health);
-        let now_healthy = c.health > 0;
+        let (was_healthy, now_healthy) = if let Some(c) = self.voxels.get_mut(&key) {
+            let was_healthy = c.health > 0;
+            c.health = (c.health + 1).min(max_health);
+            (was_healthy, c.health > 0)
+        } else {
+            let support = self.count_healthy_neighbors(key);
+            let health = (min_health + 1).min(max_health);
+            self.voxels.insert(
+                key,
+                Voxel {
+                    health,
+                    support,
+                    ..Default::default()
+                },
+            );
+            (false, health > 0)
+        };
         self.update_health_index(key, was_healthy, now_healthy);
+        if was_healthy != now_healthy {
+            self.propagate_neighbor_support(key, if now_healthy { 1 } else { -1 });
+        }
     }
 
     /// Apply a clearing miss: drop the voxel's health by one, removing it once it
-    /// reaches `min_health`. Keeps the healthy-chunk index in sync. Returns whether
-    /// the voxel was removed.
+    /// reaches `min_health`. Keeps the healthy-chunk index and every neighbor's
+    /// `support` count in sync. Returns whether the voxel was removed.
     fn record_miss(&mut self, key: VoxelKey, min_health: VoxelHealth) -> bool {
         let Some(c) = self.voxels.get_mut(&key) else {
             return false;
@@ -159,17 +220,39 @@ impl VoxelMap {
             self.voxels.remove(&key);
         }
         self.update_health_index(key, was_healthy, now_healthy);
+        if was_healthy != now_healthy {
+            self.propagate_neighbor_support(key, if now_healthy { 1 } else { -1 });
+        }
         removed
     }
 
     /// Set a voxel's health directly, creating it if absent and leaving any
     /// existing accumulated moments untouched. Bypasses hit/miss health
     /// accounting — for tests and map construction outside `update_map`'s normal
-    /// flow. Keeps the healthy-chunk index in sync.
+    /// flow. Keeps the healthy-chunk index and every neighbor's `support` count
+    /// in sync.
     pub fn set_health(&mut self, key: VoxelKey, health: VoxelHealth) {
-        let was_healthy = self.voxels.get(&key).is_some_and(|c| c.health > 0);
-        self.voxels.entry(key).or_default().health = health;
-        self.update_health_index(key, was_healthy, health > 0);
+        let was_healthy = if let Some(c) = self.voxels.get_mut(&key) {
+            let was_healthy = c.health > 0;
+            c.health = health;
+            was_healthy
+        } else {
+            let support = self.count_healthy_neighbors(key);
+            self.voxels.insert(
+                key,
+                Voxel {
+                    health,
+                    support,
+                    ..Default::default()
+                },
+            );
+            false
+        };
+        let now_healthy = health > 0;
+        self.update_health_index(key, was_healthy, now_healthy);
+        if was_healthy != now_healthy {
+            self.propagate_neighbor_support(key, if now_healthy { 1 } else { -1 });
+        }
     }
 
     /// Reset to empty, including the healthy-chunk index.
@@ -212,6 +295,9 @@ const NORMAL_MIN_SUPPORT: f32 = 0.5;
 #[derive(Clone)]
 pub struct Voxel {
     pub health: VoxelHealth,
+    /// Count of this voxel's 26 neighbors that currently exist and are healthy,
+    /// maintained incrementally by `VoxelMap` instead of rescanned per query.
+    support: u32,
     num_pts: u32,
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
@@ -222,6 +308,7 @@ impl Default for Voxel {
     fn default() -> Self {
         Self {
             health: 0,
+            support: 0,
             num_pts: 0,
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
@@ -487,29 +574,6 @@ pub fn iter_global_normals(
         })
 }
 
-/// Whether at least `support_min` of a voxel's 26 neighbors are surface
-/// (health > 0).
-fn has_support(voxels: &AHashMap<VoxelKey, Voxel>, key: VoxelKey, support_min: i32) -> bool {
-    let mut n = 0;
-    for dx in -1..=1 {
-        for dy in -1..=1 {
-            for dz in -1..=1 {
-                if (dx, dy, dz) == (0, 0, 0) {
-                    continue;
-                }
-                let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
-                if voxels.get(&nk).is_some_and(|c| c.health > 0) {
-                    n += 1;
-                    if n >= support_min {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
 /// Chunk range (inclusive) covering the axis-aligned box a cylinder bounds fits in.
 fn chunk_range_for_bounds(bounds: &LocalBounds, voxel_size: f32) -> (ChunkKey, ChunkKey) {
     let inv = 1.0 / voxel_size;
@@ -541,8 +605,14 @@ fn emit_candidate(
     if !bounds.is_none_or(|b| b.contains(x, y, z)) {
         return None;
     }
-    if support_min > 0 && !has_support(&map.voxels, key, support_min) {
-        return None;
+    if support_min > 0 {
+        let supported = map
+            .voxels
+            .get(&key)
+            .is_some_and(|c| c.support >= support_min as u32);
+        if !supported {
+            return None;
+        }
     }
     Some((x, y, z))
 }
@@ -1548,7 +1618,7 @@ mod tests {
             if !in_bounds(x, y, z) {
                 continue;
             }
-            if support_min > 0 && !has_support(&map.voxels, key, support_min) {
+            if support_min > 0 && c.support < support_min as u32 {
                 continue;
             }
             out.push((x, y, z));
@@ -1675,6 +1745,79 @@ mod tests {
             indexed,
             vec![(5, 0, 0)],
             "index drops the cleared voxel and gains the new hit"
+        );
+    }
+
+    /// Every voxel's incremental `support` field must equal a from-scratch
+    /// 26-neighbor scan, after any sequence of hits, misses, and direct
+    /// `set_health` calls in any order — including transitions that happen after
+    /// a voxel's neighbors already exist (the case a naive "only seed the count on
+    /// this voxel's own creation" implementation would get wrong).
+    #[test]
+    fn support_field_matches_neighbor_scan_after_random_transitions() {
+        let mut state = 5573589319906701683_u64;
+        let mut next_u64 = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+
+        let cfg = Config {
+            min_health: -1,
+            max_health: 2,
+            ..basic_config()
+        };
+
+        for trial in 0..10 {
+            let mut map = VoxelMap::default();
+            for step in 0..300 {
+                let key = (
+                    (next_u64() % 8) as i32 - 4,
+                    (next_u64() % 8) as i32 - 4,
+                    (next_u64() % 4) as i32 - 2,
+                );
+                match next_u64() % 3 {
+                    0 => {
+                        map.record_hit(key, cfg.min_health, cfg.max_health);
+                    }
+                    1 => {
+                        map.record_miss(key, cfg.min_health);
+                    }
+                    _ => {
+                        let health = (next_u64() % 5) as i32 - 2;
+                        map.set_health(key, health);
+                    }
+                }
+
+                let keys: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+                for k in keys {
+                    let want = map.count_healthy_neighbors(k);
+                    let got = map.voxels[&k].support;
+                    assert_eq!(
+                        got, want,
+                        "trial {trial} step {step}: support({k:?}) = {got}, want {want}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A voxel created into a neighborhood that already has healthy neighbors
+    /// must pick up their count immediately, not start at zero.
+    #[test]
+    fn new_voxel_seeds_support_from_existing_healthy_neighbors() {
+        let mut map = VoxelMap::default();
+        map.set_health((1, 0, 0), 1);
+        map.set_health((-1, 0, 0), 1);
+        map.set_health((0, 1, 0), 1);
+
+        map.set_health((0, 0, 0), 1);
+
+        assert_eq!(
+            map.voxels[&(0, 0, 0)].support,
+            3,
+            "new voxel must count its 3 pre-existing healthy neighbors"
         );
     }
 }
