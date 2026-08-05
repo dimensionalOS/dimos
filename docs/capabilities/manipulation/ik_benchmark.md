@@ -2,7 +2,7 @@
 title: "IK Backend Benchmark"
 ---
 
-`benchmarks/ik_backends.py` compares manipulation IK backends (Pink, RoboPlan
+`misc/ik_benchmark/ik_backends.py` compares manipulation IK backends (Pink, RoboPlan
 OInK, and any future `KinematicsSpec` implementation) on representative DimOS
 workloads: latency, convergence reliability, solution accuracy, and coarse
 resource usage, across supported robot configurations.
@@ -36,14 +36,14 @@ resource usage, across supported robot configurations.
 uv sync --extra manipulation --inexact
 
 # Full benchmark (all scenarios, both backends):
-uv run python benchmarks/ik_backends.py --samples 200 --warmup 10 --output /tmp/ik.json
+uv run python misc/ik_benchmark/ik_backends.py --samples 200 --warmup 10 --output /tmp/ik.json
 
 # Single scenario / backend, custom attempt budget:
-uv run python benchmarks/ik_backends.py --scenario dual_xarm6 --solver pink --max-attempts 3
+uv run python misc/ik_benchmark/ik_backends.py --scenario dual_xarm6 --solver pink --max-attempts 3
 
 # Sweep the attempt budget to trace the success-rate vs latency tradeoff:
 for n in 1 2 5 10; do
-  uv run python benchmarks/ik_backends.py --max-attempts "$n" --output "/tmp/ik_a$n.json"
+  uv run python misc/ik_benchmark/ik_backends.py --max-attempts "$n" --output "/tmp/ik_a$n.json"
 done
 ```
 

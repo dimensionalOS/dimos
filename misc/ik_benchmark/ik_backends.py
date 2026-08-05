@@ -27,9 +27,9 @@ by pushing it back through the world's FK and comparing against the target
 with ``compute_pose_error``.
 
 Usage:
-    uv run python benchmarks/ik_backends.py
-    uv run python benchmarks/ik_backends.py --scenario dual_xarm6 --solver pink
-    uv run python benchmarks/ik_backends.py --samples 200 --output /tmp/ik.json
+    uv run python misc/ik_benchmark/ik_backends.py
+    uv run python misc/ik_benchmark/ik_backends.py --scenario dual_xarm6 --solver pink
+    uv run python misc/ik_benchmark/ik_backends.py --samples 200 --output /tmp/ik.json
 
 Extend by adding entries to ``SCENARIOS`` / ``_solver_registry``.
 """
