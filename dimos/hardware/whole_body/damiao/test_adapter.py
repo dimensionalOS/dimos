@@ -739,3 +739,19 @@ def test_read_motor_states_inactive_gripper_reports_placeholder(
     states = connected_dual_adapter.read_motor_states()
 
     assert states[4:] == [MotorState(q=0.0), MotorState(q=0.0)]
+
+
+def test_read_motor_states_inactive_adapter_pumps_feedback(
+    connected_dual_adapter: DualAdapter,
+    dual_robot: FakeRobot,
+) -> None:
+    """Without the active write path ticking the bus, the read path must
+    refresh feedback itself or read-only sessions stream a frozen snapshot."""
+    refreshes_before = dual_robot.refresh_count
+    ticks_before = dual_robot.tick_count
+
+    connected_dual_adapter.read_motor_states()
+    connected_dual_adapter.read_motor_states()
+
+    assert dual_robot.refresh_count == refreshes_before + 2
+    assert dual_robot.tick_count == ticks_before + 2
