@@ -59,6 +59,7 @@ from dimos.utils.transform_utils import offset_distance
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
@@ -696,6 +697,7 @@ then refreshes perception obstacles.
         robot_name: str,
         robot_pre_grasp_offset: float,
         transaction: _PickTransaction,
+        sequence_start: JointState | None = None,
     ) -> _FeasibleGrasp:
         vector = Vector3(self.config.grasp_approach_vector)
         pre_offset = self.config.grasp_pre_grasp_offset or robot_pre_grasp_offset
@@ -708,21 +710,20 @@ then refreshes perception obstacles.
                 continue
             pre_grasp = self._compute_pre_grasp_pose(candidate.pose, pre_offset, vector)
             retreat = self._compute_pre_grasp_pose(candidate.pose, retreat_offset, vector)
-            targets = (
-                (_CandidateRejection.PRE_GRASP_INFEASIBLE, pre_grasp),
-                (_CandidateRejection.GRASP_INFEASIBLE, candidate.pose),
-                (_CandidateRejection.RETREAT_INFEASIBLE, retreat),
+            rejections = (
+                _CandidateRejection.PRE_GRASP_INFEASIBLE,
+                _CandidateRejection.GRASP_INFEASIBLE,
+                _CandidateRejection.RETREAT_INFEASIBLE,
             )
-            feasible = True
-            for rejection, target in targets:
-                if not self.inverse_kinematics_single(
-                    target, robot_name=robot_name, check_collision=True
-                ).is_success():
-                    transaction.rejections[rejection.value] += 1
-                    feasible = False
-                    break
-            if feasible:
-                return _FeasibleGrasp(candidate, rank, pre_grasp, retreat)
+            failed_index, _ = self._check_connected_pose_sequence(
+                (pre_grasp, candidate.pose, retreat),
+                robot_name,
+                start=sequence_start,
+            )
+            if failed_index is not None:
+                transaction.rejections[rejections[failed_index].value] += 1
+                continue
+            return _FeasibleGrasp(candidate, rank, pre_grasp, retreat)
 
         summary = ", ".join(
             f"{reason}={count}" for reason, count in sorted(transaction.rejections.items())
@@ -906,9 +907,25 @@ then refreshes perception obstacles.
                 )
 
             with self._world_monitor.suppress_object_obstacle(detection.object_id) as suppression:
+                sequence_start = None
+                lift_pose = self._safety_lift_pose(rname)
+                if lift_pose is not None:
+                    transaction.phase = _PickPhase.PREPARE
+                    failed_index, sequence_start = self._check_connected_pose_sequence(
+                        (lift_pose,), rname
+                    )
+                    if failed_index is not None:
+                        raise _PickPipelineError(
+                            "PLANNING_FAILED",
+                            "Required safety-lift planning failed",
+                        )
                 transaction.phase = _PickPhase.SELECT
                 transaction.selected = self._select_feasible_grasp(
-                    candidates, rname, robot_config.pre_grasp_offset, transaction
+                    candidates,
+                    rname,
+                    robot_config.pre_grasp_offset,
+                    transaction,
+                    sequence_start,
                 )
                 result = self._execute_selected_pick(transaction, rname)
             if suppression.cleanup_error is not None:

@@ -25,6 +25,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 import math
 import threading
@@ -134,6 +135,15 @@ class ManipulationState(Enum):
     EXECUTING = 2
     COMPLETED = 3
     FAULT = 4
+
+
+@dataclass(frozen=True)
+class ConnectedPoseSequenceResult:
+    """Motion-free result for an ordered sequence of pose plans."""
+
+    failed_index: int | None
+    endpoint: JointState | None
+    paths: tuple[tuple[JointState, ...], ...]
 
 
 class ManipulationModuleConfig(ModuleConfig):
@@ -1122,6 +1132,94 @@ class ManipulationModule(Module):
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
 
+    def _check_connected_pose_sequence(
+        self,
+        poses: Sequence[Pose],
+        robot_name: RobotName,
+        start: JointState | None = None,
+    ) -> tuple[int | None, JointState | None]:
+        """Dry-run a connected pose sequence and return failure index and endpoint.
+
+        The check does not store a plan or change module state. Each IK solve and
+        path plan starts at the preceding path's endpoint. When ``start`` is
+        omitted, the sequence begins at the robot's current authoritative state.
+        """
+        result = self._plan_connected_pose_sequence(poses, robot_name, start)
+        return result.failed_index, result.endpoint
+
+    def _plan_connected_pose_sequence(
+        self,
+        poses: Sequence[Pose],
+        robot_name: RobotName,
+        start: JointState | None = None,
+    ) -> ConnectedPoseSequenceResult:
+        """Dry-run connected pose plans and retain each successful segment path."""
+        if not poses:
+            return ConnectedPoseSequenceResult(None, start, ())
+        if self._world_monitor is None or self._kinematics is None or self._planner is None:
+            logger.warning("Connected pose planning is unavailable")
+            return ConnectedPoseSequenceResult(0, None, ())
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(robot_name)
+            selection = self._world_monitor.planning_groups.select((group_id,))
+            if start is None:
+                current = self._world_monitor.current_global_joint_state()
+                start = filter_joint_state_to_selected_joints(current, selection.joint_names)
+            else:
+                start = filter_joint_state_to_selected_joints(start, selection.joint_names)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Failed to initialize connected pose planning: %s", exc)
+            return ConnectedPoseSequenceResult(0, None, ())
+
+        paths: list[tuple[JointState, ...]] = []
+        for index, pose in enumerate(poses):
+            target = PoseStamped(
+                frame_id="world",
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            ik = self.inverse_kinematics(
+                pose_targets={group_id: target},
+                seed=start,
+                check_collision=True,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                logger.info(
+                    "Connected pose planning failed IK at index %d: %s%s",
+                    index,
+                    ik.status.name,
+                    f": {ik.message}" if ik.message else "",
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            result = self._planner.plan_selected_joint_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                goal=ik.joint_state,
+                timeout=self.config.planning_timeout,
+            )
+            if not result.is_success() or not result.path:
+                logger.info(
+                    "Connected pose planning failed path at index %d: %s%s",
+                    index,
+                    result.status.name,
+                    f": {result.message}" if result.message else "",
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            try:
+                start = filter_joint_state_to_selected_joints(
+                    result.path[-1], selection.joint_names
+                )
+            except ValueError as exc:
+                logger.info(
+                    "Connected pose planning returned an invalid endpoint at index %d: %s",
+                    index,
+                    exc,
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            paths.append(tuple(result.path))
+        return ConnectedPoseSequenceResult(None, start, tuple(paths))
+
     @rpc
     def plan_cartesian_targets(
         self,
@@ -1710,21 +1808,29 @@ class ManipulationModule(Module):
         time.sleep(wait_time)
         return True
 
+    def _safety_lift_pose(
+        self, robot_name: RobotName | None = None, min_z: float = 0.05
+    ) -> Pose | None:
+        """Return the required safety-lift target, if the end effector is low."""
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        return Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
     ) -> SkillResult[ManipulationSkillError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
-        ee = self.get_ee_pose(robot_name)
-        if ee is None or ee.position.z >= min_z:
+        lift_pose = self._safety_lift_pose(robot_name, min_z)
+        if lift_pose is None:
             return SkillResult.ok()
-
-        lift_z = min_z + 0.05
-        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
-        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
         if not self.plan_to_pose(lift_pose, robot_name):
             return SkillResult.fail(
                 "PLANNING_FAILED",
-                f"Failed to plan lift from z={ee.position.z:.3f}",
+                f"Failed to plan safety lift to z={lift_pose.position.z:.3f}",
             )
         return self._preview_execute_wait(robot_name)
 

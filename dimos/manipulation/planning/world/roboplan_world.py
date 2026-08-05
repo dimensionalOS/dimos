@@ -450,7 +450,7 @@ class RoboPlanWorld:
         goal: JointState,
         timeout: float = 10.0,
     ) -> PlanningResult:
-        """Plan using the legacy robot-scoped local-name contract."""
+        """Plan between explicit states using the legacy robot-scoped contract."""
         if world is not self:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -470,12 +470,6 @@ class RoboPlanWorld:
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
         robot = self._get_robot(robot_id)
-        current = self._live_context.q_by_robot[robot_id]
-        if not np.allclose(q_start, current, atol=1e-6, rtol=0.0):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
         group = self._legacy_group(robot.config.name)
         return self._plan_group(
             group,
@@ -494,7 +488,7 @@ class RoboPlanWorld:
         timeout: float = 10.0,
         max_iterations: int = 5000,
     ) -> PlanningResult:
-        """Plan one or more non-overlapping groups through RoboPlan RRT."""
+        """Plan selected groups between explicit states through RoboPlan RRT."""
         if world is not self:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -516,7 +510,7 @@ class RoboPlanWorld:
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
         try:
-            normalized_start = self._validated_selection_start(selection, start)
+            normalized_start = self._normalized_selection_start(selection, start)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
         start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
@@ -615,11 +609,7 @@ class RoboPlanWorld:
         start: JointState,
     ) -> JointState:
         """Return a normalized start matching the authoritative scene state."""
-        if not self._is_ready():
-            raise ValueError(
-                "RoboPlan planning scene is not ready: authoritative state is incomplete"
-            )
-        normalized = normalize_selection_target(selection, start, "start")
+        normalized = self._normalized_selection_start(selection, start)
         start_by_name = dict(zip(normalized.name, normalized.position, strict=True))
         current_by_name = self._current_global_positions()
         if any(
@@ -628,6 +618,18 @@ class RoboPlanWorld:
         ):
             raise ValueError("Requested start state does not match current scene state")
         return normalized
+
+    def _normalized_selection_start(
+        self,
+        selection: PlanningGroupSelection,
+        start: JointState,
+    ) -> JointState:
+        """Return a normalized explicit start when the planning scene is ready."""
+        if not self._is_ready():
+            raise ValueError(
+                "RoboPlan planning scene is not ready: authoritative state is incomplete"
+            )
+        return normalize_selection_target(selection, start, "start")
 
     def _validate_cartesian_request(
         self,

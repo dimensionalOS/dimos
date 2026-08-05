@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,6 +30,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.manipulation.conftest import ModuleFactory
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
@@ -185,6 +187,23 @@ def _generated_plan_trajectory(joint_names: list[str], *points: list[float]) -> 
     )
 
 
+def _connected_sequence_module(
+    robot_config: RobotModelConfig,
+    module_factory: ModuleFactory,
+) -> tuple[ManipulationModule, list[str], JointState]:
+    module = module_factory()
+    module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+    module._world_monitor = MagicMock()
+    module._world_monitor.world = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+    names = ["test_arm/joint1", "test_arm/joint2", "test_arm/joint3"]
+    live = JointState(name=names, position=[0.0, 0.0, 0.0])
+    module._world_monitor.current_global_joint_state.return_value = live
+    module._kinematics = MagicMock()
+    module._planner = MagicMock()
+    return module, names, live
+
+
 def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
     joint_names = [f"j{i}" for i in range(len(points[0][1]))] if points else []
     return JointTrajectory(
@@ -194,6 +213,43 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
             for time_from_start, positions in points
         ],
     )
+
+
+class TestSafetyLift:
+    @pytest.mark.parametrize(
+        ("current_z", "expected_z"),
+        [(0.01, 0.10), (0.05, None), (0.20, None)],
+    )
+    def test_safety_lift_target_is_derived_without_motion(
+        self,
+        mocker: MockerFixture,
+        module_factory: ModuleFactory,
+        current_z: float,
+        expected_z: float | None,
+    ) -> None:
+        module = module_factory()
+        orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+        mocker.patch.object(
+            module,
+            "get_ee_pose",
+            return_value=Pose(Vector3(0.2, -0.1, current_z), orientation),
+        )
+        plan = mocker.patch.object(module, "plan_to_pose")
+
+        target = module._safety_lift_pose("test_arm")
+
+        if expected_z is None:
+            assert target is None
+        else:
+            assert target is not None
+            assert target.position.as_tuple == pytest.approx((0.2, -0.1, expected_z))
+            assert (
+                target.orientation.x,
+                target.orientation.y,
+                target.orientation.z,
+                target.orientation.w,
+            ) == pytest.approx((0.0, 0.0, 0.0, 1.0))
+        plan.assert_not_called()
 
 
 class TestObstacleUpdates:
@@ -760,6 +816,312 @@ class TestPlanningGroupApis:
         ]
         _, planner_kwargs = module._planner.plan_selected_joint_path.call_args
         assert planner_kwargs["goal"] is ik_goal
+
+    def test_connected_pose_check_chains_each_plan_endpoint_into_the_next_start(
+        self, robot_config, mocker: MockerFixture, module_factory: ModuleFactory
+    ):
+        module, names, live = _connected_sequence_module(robot_config, module_factory)
+        goals = [
+            JointState(name=names, position=[0.1, 0.0, 0.0]),
+            JointState(name=names, position=[0.2, 0.1, 0.0]),
+            JointState(name=names, position=[0.1, 0.2, 0.1]),
+        ]
+        solve = mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            side_effect=[IKResult(status=IKStatus.SUCCESS, joint_state=goal) for goal in goals],
+        )
+        module._planner.plan_selected_joint_path.side_effect = lambda **kwargs: PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[kwargs["start"], kwargs["goal"]],
+        )
+        poses = [
+            Pose(position=Vector3(x=0.4 + index * 0.1), orientation=Quaternion())
+            for index in range(3)
+        ]
+
+        failed_index, endpoint = module._check_connected_pose_sequence(poses, "test_arm")
+
+        assert failed_index is None
+        assert endpoint is not None
+        assert endpoint.position == goals[-1].position
+        ik_seeds = [call.kwargs["seed"] for call in solve.call_args_list]
+        planner_starts = [
+            call.kwargs["start"] for call in module._planner.plan_selected_joint_path.call_args_list
+        ]
+        assert [seed.position for seed in ik_seeds] == [
+            live.position,
+            goals[0].position,
+            goals[1].position,
+        ]
+        assert [start.position for start in planner_starts] == [
+            live.position,
+            goals[0].position,
+            goals[1].position,
+        ]
+        assert module._state == ManipulationState.IDLE
+        assert module._last_plan is None
+
+    def test_connected_pose_plan_exposes_paths_without_storing_them(
+        self, robot_config, mocker: MockerFixture, module_factory: ModuleFactory
+    ) -> None:
+        module, names, live = _connected_sequence_module(robot_config, module_factory)
+        goals = [
+            JointState(name=names, position=[0.1, 0.0, 0.0]),
+            JointState(name=names, position=[0.2, 0.1, 0.0]),
+        ]
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            side_effect=[IKResult(status=IKStatus.SUCCESS, joint_state=goal) for goal in goals],
+        )
+        module._planner.plan_selected_joint_path.side_effect = lambda **kwargs: PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[kwargs["start"], kwargs["goal"]],
+        )
+
+        result = module._plan_connected_pose_sequence(
+            [
+                Pose(position=Vector3(x=0.4), orientation=Quaternion()),
+                Pose(position=Vector3(x=0.5), orientation=Quaternion()),
+            ],
+            "test_arm",
+        )
+
+        assert result.failed_index is None
+        assert result.endpoint is not None
+        assert result.endpoint.position == goals[-1].position
+        assert [[state.position for state in path] for path in result.paths] == [
+            [live.position, goals[0].position],
+            [goals[0].position, goals[1].position],
+        ]
+        assert module._state == ManipulationState.IDLE
+        assert module._last_plan is None
+
+    def test_connected_pose_check_accepts_explicit_start(
+        self, robot_config, mocker: MockerFixture, module_factory: ModuleFactory
+    ):
+        module, names, _ = _connected_sequence_module(robot_config, module_factory)
+        explicit_start = JointState(name=names, position=[0.3, 0.2, 0.1])
+        goal = JointState(name=names, position=[0.4, 0.2, 0.1])
+        solve = mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            return_value=IKResult(status=IKStatus.SUCCESS, joint_state=goal),
+        )
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[explicit_start, goal],
+        )
+
+        failed_index, endpoint = module._check_connected_pose_sequence(
+            [Pose(position=Vector3(x=0.5), orientation=Quaternion())],
+            "test_arm",
+            explicit_start,
+        )
+
+        assert failed_index is None
+        assert endpoint is not None
+        assert endpoint.position == goal.position
+        assert solve.call_args.kwargs["seed"].position == explicit_start.position
+        assert (
+            module._planner.plan_selected_joint_path.call_args.kwargs["start"].position
+            == explicit_start.position
+        )
+        module._world_monitor.current_global_joint_state.assert_not_called()
+
+    def test_connected_pose_check_returns_first_ik_failure_with_diagnostics(
+        self,
+        robot_config,
+        mocker: MockerFixture,
+        module_factory: ModuleFactory,
+    ):
+        module, names, live = _connected_sequence_module(robot_config, module_factory)
+        first_goal = JointState(name=names, position=[0.1, 0.0, 0.0])
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            side_effect=[
+                IKResult(status=IKStatus.SUCCESS, joint_state=first_goal),
+                IKResult(status=IKStatus.NO_SOLUTION, message="blocked IK"),
+            ],
+        )
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=[live, first_goal],
+        )
+        poses = [
+            Pose(position=Vector3(x=0.4), orientation=Quaternion()),
+            Pose(position=Vector3(x=0.5), orientation=Quaternion()),
+        ]
+        log_info = mocker.patch("dimos.manipulation.manipulation_module.logger.info")
+
+        failed_index, endpoint = module._check_connected_pose_sequence(poses, "test_arm")
+
+        assert (failed_index, endpoint) == (1, None)
+        log_info.assert_called_with(
+            "Connected pose planning failed IK at index %d: %s%s",
+            1,
+            "NO_SOLUTION",
+            ": blocked IK",
+        )
+        assert module._planner.plan_selected_joint_path.call_count == 1
+
+    def test_connected_pose_check_returns_path_failure_with_diagnostics(
+        self,
+        robot_config,
+        mocker: MockerFixture,
+        module_factory: ModuleFactory,
+    ):
+        module, names, _ = _connected_sequence_module(robot_config, module_factory)
+        goal = JointState(name=names, position=[0.1, 0.0, 0.0])
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            return_value=IKResult(status=IKStatus.SUCCESS, joint_state=goal),
+        )
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.NO_SOLUTION,
+            message="blocked path",
+        )
+        log_info = mocker.patch("dimos.manipulation.manipulation_module.logger.info")
+
+        failed_index, endpoint = module._check_connected_pose_sequence(
+            [Pose(position=Vector3(x=0.4), orientation=Quaternion())],
+            "test_arm",
+        )
+
+        assert (failed_index, endpoint) == (0, None)
+        log_info.assert_called_with(
+            "Connected pose planning failed path at index %d: %s%s",
+            0,
+            "NO_SOLUTION",
+            ": blocked path",
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            [],
+            [
+                JointState(
+                    name=["wrong/joint1", "wrong/joint2", "wrong/joint3"],
+                    position=[0.1, 0.0, 0.0],
+                )
+            ],
+        ],
+        ids=["empty", "malformed-endpoint"],
+    )
+    def test_connected_pose_check_rejects_invalid_success_path(
+        self,
+        robot_config,
+        mocker: MockerFixture,
+        module_factory: ModuleFactory,
+        path: list[JointState],
+    ):
+        module, names, _ = _connected_sequence_module(robot_config, module_factory)
+        goal = JointState(name=names, position=[0.1, 0.0, 0.0])
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            return_value=IKResult(status=IKStatus.SUCCESS, joint_state=goal),
+        )
+        module._planner.plan_selected_joint_path.return_value = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=path,
+        )
+
+        result = module._check_connected_pose_sequence(
+            [Pose(position=Vector3(x=0.4), orientation=Quaternion())],
+            "test_arm",
+        )
+
+        assert result == (0, None)
+
+    @pytest.mark.parametrize(
+        "blocked_index",
+        [None, 0, 1, 2],
+        ids=["open-scene", "pre-grasp-blocked", "grasp-blocked", "retreat-blocked"],
+    )
+    def test_connected_pose_check_uses_one_reusable_scene_with_optional_blocker(
+        self,
+        robot_config,
+        mocker: MockerFixture,
+        module_factory: ModuleFactory,
+        blocked_index: int | None,
+    ) -> None:
+        module, names, live = _connected_sequence_module(robot_config, module_factory)
+        goals = [
+            JointState(name=names, position=[0.1 + index * 0.1, 0.0, 0.0]) for index in range(3)
+        ]
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            side_effect=[IKResult(status=IKStatus.SUCCESS, joint_state=goal) for goal in goals],
+        )
+        starts = [live, goals[0], goals[1]]
+        module._planner.plan_selected_joint_path.side_effect = [
+            (
+                PlanningResult(status=PlanningStatus.NO_SOLUTION, message="scene blocker")
+                if index == blocked_index
+                else PlanningResult(
+                    status=PlanningStatus.SUCCESS,
+                    path=[starts[index], goals[index]],
+                )
+            )
+            for index in range(3)
+        ]
+        poses = [
+            Pose(position=Vector3(x=0.4 + index * 0.1), orientation=Quaternion())
+            for index in range(3)
+        ]
+
+        failed_index, endpoint = module._check_connected_pose_sequence(poses, "test_arm")
+
+        assert failed_index == blocked_index
+        if blocked_index is None:
+            assert endpoint is not None
+            assert endpoint.position == goals[-1].position
+        else:
+            assert endpoint is None
+            assert module._planner.plan_selected_joint_path.call_count == blocked_index + 1
+
+    def test_connected_pose_check_observes_live_scene_on_each_segment(
+        self, robot_config, mocker: MockerFixture, module_factory: ModuleFactory
+    ) -> None:
+        module, names, live = _connected_sequence_module(robot_config, module_factory)
+        world = SimpleNamespace(revision=0)
+        module._world_monitor.world = world
+        goals = [
+            JointState(name=names, position=[0.1 + index * 0.1, 0.0, 0.0]) for index in range(3)
+        ]
+        mocker.patch.object(
+            module,
+            "inverse_kinematics",
+            side_effect=[IKResult(status=IKStatus.SUCCESS, joint_state=goal) for goal in goals],
+        )
+        starts = [live, goals[0], goals[1]]
+        observed_revisions: list[int] = []
+
+        def plan_with_live_scene(**kwargs) -> PlanningResult:
+            observed_revisions.append(kwargs["world"].revision)
+            index = len(observed_revisions) - 1
+            world.revision += 1
+            return PlanningResult(
+                status=PlanningStatus.SUCCESS,
+                path=[starts[index], goals[index]],
+            )
+
+        module._planner.plan_selected_joint_path.side_effect = plan_with_live_scene
+        poses = [
+            Pose(position=Vector3(x=0.4 + index * 0.1), orientation=Quaternion())
+            for index in range(3)
+        ]
+
+        failed_index, _ = module._check_connected_pose_sequence(poses, "test_arm")
+
+        assert failed_index is None
+        assert observed_revisions == [0, 1, 2]
 
     def test_failed_plan_materialization_clears_generated_plan(self, robot_config, module_factory):
         module = module_factory()

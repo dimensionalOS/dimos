@@ -47,6 +47,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.experimental.object import Object as DetObject
@@ -406,13 +407,14 @@ class TestProposalSelection:
     def test_selection_skips_higher_scored_infeasible_candidate(
         self, module: PickAndPlaceModule, mocker: MockerFixture
     ) -> None:
-        failed = SimpleNamespace(is_success=lambda: False)
-        succeeded = SimpleNamespace(is_success=lambda: True)
-        solve = mocker.patch.object(
+        endpoint = JointState(name=["arm/joint1"], position=[0.1])
+        plan_sequence = mocker.patch.object(
             module,
-            "inverse_kinematics_single",
-            side_effect=[failed, succeeded, succeeded, succeeded],
+            "_check_connected_pose_sequence",
+            side_effect=[(0, None), (None, endpoint)],
         )
+        plan_motion = mocker.patch.object(module, "plan_to_pose")
+        command_gripper = mocker.patch.object(module, "_set_gripper_position")
         transaction = SimpleNamespace(rejections=Counter())
 
         selected = module._select_feasible_grasp(
@@ -424,8 +426,37 @@ class TestProposalSelection:
 
         assert selected.rank == 2
         assert selected.candidate.score == 0.8
-        assert solve.call_count == 4
+        assert plan_sequence.call_count == 2
         assert transaction.rejections == {"pre_grasp_infeasible": 1}
+        plan_motion.assert_not_called()
+        command_gripper.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("failed_index", "expected_rejection"),
+        [
+            (0, "pre_grasp_infeasible"),
+            (1, "grasp_infeasible"),
+            (2, "retreat_infeasible"),
+        ],
+    )
+    def test_selection_reports_failed_connected_segment(
+        self,
+        module: PickAndPlaceModule,
+        mocker: MockerFixture,
+        failed_index: int,
+        expected_rejection: str,
+    ) -> None:
+        mocker.patch.object(
+            module,
+            "_check_connected_pose_sequence",
+            return_value=(failed_index, None),
+        )
+        transaction = SimpleNamespace(rejections=Counter())
+
+        with pytest.raises(RuntimeError, match="No feasible grasp among 1"):
+            module._select_feasible_grasp([_candidate(0.4, 0.9)], "arm", 0.1, transaction)
+
+        assert transaction.rejections == {expected_rejection: 1}
 
     def test_selection_rejects_malformed_candidate_and_honors_limit(
         self, module: PickAndPlaceModule, mocker: MockerFixture
@@ -433,13 +464,13 @@ class TestProposalSelection:
         module.config.max_grasp_candidates_to_check = 1
         invalid = _candidate(0.4, 0.9)
         invalid.pose.orientation.w = 0.0
-        solve = mocker.patch.object(module, "inverse_kinematics_single")
+        plan_sequence = mocker.patch.object(module, "_check_connected_pose_sequence")
         transaction = SimpleNamespace(rejections=Counter())
 
         with pytest.raises(RuntimeError, match="No feasible grasp among 1"):
             module._select_feasible_grasp([invalid, _candidate(0.5, 0.8)], "arm", 0.1, transaction)
 
-        solve.assert_not_called()
+        plan_sequence.assert_not_called()
         assert transaction.rejections == {"invalid": 1}
 
 
@@ -457,6 +488,7 @@ class TestPickTransaction:
         mocker.patch.object(module, "_require_pick_object", return_value=detection)
         mocker.patch.object(module, "_provider_candidates", return_value=[candidate])
         mocker.patch.object(module, "_select_feasible_grasp", return_value=selected)
+        mocker.patch.object(module, "_safety_lift_pose", return_value=None)
         mocker.patch.object(module, "_lift_if_low", return_value=SkillResult.ok())
         mocker.patch.object(module, "plan_to_pose", return_value=True)
         mocker.patch.object(module, "_preview_execute_wait", return_value=SkillResult.ok())
@@ -487,7 +519,65 @@ class TestPickTransaction:
             mocker.call(0.85, "arm"),
             mocker.call(0.0, "arm"),
         ]
-        assert module.plan_to_pose.call_count == 3
+        assert module.plan_to_pose.call_args_list == [
+            mocker.call(Pose(0.4, 0.0, 0.3), "arm"),
+            mocker.call(candidate.pose, "arm"),
+            mocker.call(Pose(0.4, 0.0, 0.3), "arm"),
+        ]
+
+    def test_no_safety_lift_validates_candidates_from_current_state(
+        self, module: PickAndPlaceModule, mocker: MockerFixture
+    ) -> None:
+        self._arrange_success(module, mocker)
+        check_sequence = mocker.patch.object(module, "_check_connected_pose_sequence")
+
+        result = module.pick("cup", object_id="abc12345")
+
+        assert result.is_success()
+        check_sequence.assert_not_called()
+        assert module._select_feasible_grasp.call_args.args[4] is None
+
+    def test_safety_lift_endpoint_is_shared_with_candidate_validation(
+        self, module: PickAndPlaceModule, mocker: MockerFixture
+    ) -> None:
+        self._arrange_success(module, mocker)
+        lift_pose = Pose(0.2, 0.0, 0.1)
+        lift_endpoint = JointState(name=["arm/joint1"], position=[0.2])
+        module._safety_lift_pose.return_value = lift_pose
+        check_sequence = mocker.patch.object(
+            module,
+            "_check_connected_pose_sequence",
+            return_value=(None, lift_endpoint),
+        )
+
+        result = module.pick("cup", object_id="abc12345")
+
+        assert result.is_success()
+        check_sequence.assert_called_once_with((lift_pose,), "arm")
+        assert module._select_feasible_grasp.call_args.args[4] is lift_endpoint
+
+    def test_safety_lift_planning_failure_aborts_prepare_without_candidate_rejection(
+        self, module: PickAndPlaceModule, mocker: MockerFixture
+    ) -> None:
+        self._arrange_success(module, mocker)
+        lift_pose = Pose(0.2, 0.0, 0.1)
+        module._safety_lift_pose.return_value = lift_pose
+        check_sequence = mocker.patch.object(
+            module,
+            "_check_connected_pose_sequence",
+            return_value=(0, None),
+        )
+
+        result = module.pick("cup", object_id="abc12345")
+
+        assert result.error_code == "PLANNING_FAILED"
+        assert result.metadata["phase"] == "PREPARE"
+        assert result.metadata["rejections"] == {}
+        check_sequence.assert_called_once_with((lift_pose,), "arm")
+        module._select_feasible_grasp.assert_not_called()
+        module._lift_if_low.assert_not_called()
+        module.plan_to_pose.assert_not_called()
+        module._set_gripper_position.assert_not_called()
 
     def test_retreat_failure_keeps_gripper_closed(
         self, module: PickAndPlaceModule, mocker: MockerFixture
@@ -607,6 +697,7 @@ class TestPickTransaction:
 
         assert result.error_code == expected_code
         assert result.metadata["phase"] == expected_phase
+        module._select_feasible_grasp.assert_called_once()
 
 
 def test_full_pick_pipeline_uses_real_messages_and_fake_boundary_providers(
@@ -626,13 +717,12 @@ def test_full_pick_pipeline_uses_real_messages_and_fake_boundary_providers(
     module._grasp_generator = generator
     robot_config = SimpleNamespace(pre_grasp_offset=0.1)
     mocker.patch.object(module, "_get_robot", return_value=("arm", "robot-id", robot_config, None))
-    failed = SimpleNamespace(is_success=lambda: False)
-    feasible = SimpleNamespace(is_success=lambda: True)
-    ik = mocker.patch.object(
+    plan_sequence = mocker.patch.object(
         module,
-        "inverse_kinematics_single",
-        side_effect=[failed, feasible, feasible, feasible],
+        "_check_connected_pose_sequence",
+        side_effect=[(0, None), (None, JointState())],
     )
+    mocker.patch.object(module, "_safety_lift_pose", return_value=None)
     mocker.patch.object(module, "_lift_if_low", return_value=SkillResult.ok())
     plan = mocker.patch.object(module, "plan_to_pose", return_value=True)
     execute = mocker.patch.object(module, "_preview_execute_wait", return_value=SkillResult.ok())
@@ -653,7 +743,8 @@ def test_full_pick_pipeline_uses_real_messages_and_fake_boundary_providers(
     scene.get_object_pointcloud_by_object_id.assert_called_once_with("abc12345")
     generator.propose_grasps.assert_called_once_with(scene.get_object_pointcloud_by_object_id())
     world.suppress_object_obstacle.assert_called_once_with("abc12345")
-    assert ik.call_count == 4
+    assert world.method_calls == [mocker.call.suppress_object_obstacle("abc12345")]
+    assert plan_sequence.call_count == 2
     assert plan.call_count == 3
     assert execute.call_count == 3
     assert gripper.call_args_list == [mocker.call(0.85, "arm"), mocker.call(0.0, "arm")]

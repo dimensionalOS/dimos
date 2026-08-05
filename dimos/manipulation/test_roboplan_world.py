@@ -1357,6 +1357,26 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
+def test_native_planner_accepts_hypothetical_start_without_mutating_live_state(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+
+    result = world.plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.2, -0.1]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.3]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx([0.2, -0.1])
+    assert result.path[-1].position == pytest.approx([0.4, 0.3])
+    live_state = world.get_joint_state(world.get_live_context(), robot_id)
+    assert live_state.position == pytest.approx([0.0, 0.0])
+
+
 def test_native_selected_planner_returns_global_selected_joint_names(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -1798,12 +1818,12 @@ def test_cartesian_postvalidation_checks_between_waypoints(
     assert "collision post-validation" in result.message
 
 
-def test_native_planner_preserves_other_robot_and_auxiliary_joint_state(
+def test_native_planner_uses_hypothetical_start_and_preserves_live_scene_state(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
     mocker: MockerFixture,
 ) -> None:
-    world, _, second_id, second_config = _make_two_robot_world(fake_roboplan, robot_config)
+    world, first_id, second_id, second_config = _make_two_robot_world(fake_roboplan, robot_config)
     world.sync_from_joint_state(
         second_id,
         JointState(name=["joint1", "joint2"], position=[0.3, 0.1]),
@@ -1831,15 +1851,20 @@ def test_native_planner_preserves_other_robot_and_auxiliary_joint_state(
     result = world.plan_selected_joint_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
+        JointState(name=list(selection.joint_names), position=[0.15, -0.1]),
         JointState(name=list(selection.joint_names), position=[0.2, 0.1]),
     )
 
     assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx([0.15, -0.1])
+    assert observed_positions["arm__joint1"] == pytest.approx(0.0)
+    assert observed_positions["arm__joint2"] == pytest.approx(0.0)
     assert observed_positions["right__joint1"] == pytest.approx(0.3)
     assert observed_positions["right__joint2"] == pytest.approx(0.1)
     assert observed_positions["arm__joint3"] == pytest.approx(0.0)
     assert observed_positions["right__joint3"] == pytest.approx(0.0)
+    live_state = world.get_joint_state(world.get_live_context(), first_id)
+    assert live_state.position == pytest.approx([0.0, 0.0])
 
 
 def test_native_planner_waits_for_every_robot_state(
