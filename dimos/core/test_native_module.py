@@ -32,6 +32,7 @@ from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -88,6 +89,10 @@ class StubNativeModule(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
+
+
+class StubBuildModule(NativeModule):
+    pass
 
 
 class StubIoModule(NativeModule):
@@ -265,6 +270,31 @@ def test_autoconnect(args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def run_build(tmp_path: Path, *, build_native: bool) -> Path:
+    """Builds a module whose executable already exists. Returns the build sentinel path."""
+    sentinel = tmp_path / "build_ran"
+    exe = tmp_path / "already_built"
+    exe.touch()
+    module = StubBuildModule(
+        executable=str(exe),
+        build_command=f"touch {sentinel}",
+        g=GlobalConfig(build_native=build_native),
+    )
+    try:
+        module.build()
+    finally:
+        module.stop()
+    return sentinel
+
+
+def test_existing_executable_skips_build(tmp_path: Path) -> None:
+    assert not run_build(tmp_path, build_native=False).exists()
+
+
+def test_build_native_forces_build(tmp_path: Path) -> None:
+    assert run_build(tmp_path, build_native=True).exists()
 
 
 def test_base_field_not_sent_without_opt_in() -> None:
