@@ -25,8 +25,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::gnc::{
+    add_backbone_keyframe, add_rebuild_loop_factor, build_isam2_from_backbone,
     build_odometry_backbone, gnc_worker_loop, solve_gnc, BackboneKeyframe, BackboneNoise, GncJob,
-    GncResult, GncWorker,
+    GncResult, GncWorker, RebuildLoopNoise, RebuiltIsam2,
 };
 use crate::gtsam::{symbol_key, FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
@@ -154,7 +155,7 @@ pub(crate) const LOOP_GNC_MIN_VARIANCE: f64 = 1e-6;
 /// Approach B: a background GNC weight below this classifies the loop as an
 /// outlier, so its between factor is dropped from iSAM2. GNC's TLS weights are
 /// near 0 (reject) or near 1 (keep), so the midpoint is a safe cut.
-const LOOP_GNC_INLIER_THRESHOLD: f64 = 0.5;
+pub(crate) const LOOP_GNC_INLIER_THRESHOLD: f64 = 0.5;
 
 /// A would-be long-jump loop closure parked in the buffer. It carries the same
 /// constraint a `LoopPair` does, plus the rigid map-correction SE3 it implies so
@@ -534,10 +535,6 @@ pub struct GscPgo {
     /// classification poll drains the worker channel, so without this the
     /// batch poses would be gone by the time the pipeline goes idle.
     latest_gnc_result: Option<GncResult>,
-    /// Set when batch poses were adopted without rebuilding iSAM2 yet; the
-    /// rebuild is deferred so the pipeline thread can publish the adopted
-    /// poses before blocking on the (40-90s) rebuild.
-    isam2_stale: bool,
 }
 
 /// Cumulative per-stage wall time, printed periodically when `debug` is on —
@@ -585,7 +582,6 @@ impl GscPgo {
             gnc_sequence_applied: 0,
             gnc_sequence_adopted: 0,
             latest_gnc_result: None,
-            isam2_stale: false,
             key_poses: Vec::new(),
             history_pairs: Vec::new(),
             committed_loops: Vec::new(),
@@ -1746,6 +1742,7 @@ impl GscPgo {
             keyframes,
             loops: self.committed_loops.clone(),
             backbone_noise: BackboneNoise::from_config(&self.config),
+            rebuild_loop_noise: RebuildLoopNoise::from_config(&self.config),
             loop_gnc_var_scale: self.config.loop_gnc_var_scale,
             loop_gnc_inlier_probability: self.config.loop_gnc_inlier_probability,
             sequence: self.gnc_sequence_dispatched,
@@ -1868,7 +1865,9 @@ impl GscPgo {
         let mut latest_result: Option<GncResult> = None;
         if let Some(worker) = &self.gnc_worker {
             while let Ok(result) = worker.result_receiver.try_recv() {
-                latest_result = Some(result);
+                if let Some(superseded) = latest_result.replace(result) {
+                    retire_gnc_result(superseded);
+                }
             }
         }
         let Some(result) = latest_result else {
@@ -1891,141 +1890,158 @@ impl GscPgo {
                 }
             }
         }
-        self.latest_gnc_result = Some(result);
+        if let Some(superseded) = self.latest_gnc_result.replace(result) {
+            retire_gnc_result(superseded);
+        }
         removed_any
     }
 
     /// Idle path: adopt the newest background GNC solve wholesale — batch
-    /// poses written back, iSAM2 marked stale — because iSAM2 linearization
-    /// never recovers from mass false-closure removal. Uses the stored result
-    /// if the per-keyframe classification poll already drained the channel.
-    /// The caller publishes right after, then triggers the deferred rebuild
-    /// via `rebuild_isam2_if_stale`. Rebuild drops location-constraint
-    /// factors, so callers gate on `use_location_constraints`.
+    /// poses written back, the worker's rebuilt iSAM2 swapped in and caught up —
+    /// because iSAM2 linearization never recovers from mass false-closure
+    /// removal. Uses the stored result if the per-keyframe classification poll
+    /// already drained the channel. Cheap: the rebuild already ran on the
+    /// worker. The rebuilt iSAM2 drops location-constraint factors, so callers
+    /// gate on `use_location_constraints`.
     pub fn poll_and_adopt_gnc_solution(&mut self) -> bool {
         if let Some(worker) = &self.gnc_worker {
             while let Ok(result) = worker.result_receiver.try_recv() {
                 self.gnc_sequence_applied = self.gnc_sequence_applied.max(result.sequence);
-                self.latest_gnc_result = Some(result);
+                if let Some(superseded) = self.latest_gnc_result.replace(result) {
+                    retire_gnc_result(superseded);
+                }
             }
         }
         let Some(result) = self.latest_gnc_result.take() else {
             return false;
         };
         if result.sequence <= self.gnc_sequence_adopted {
+            retire_gnc_result(result);
             return false;
         }
+        self.adopt_gnc_result(result);
+        true
+    }
+
+    /// Write a GNC result's poses and loop weights back and swap in the iSAM2
+    /// the worker rebuilt from them (rebuilt here, blocking, if it has none).
+    fn adopt_gnc_result(&mut self, mut result: GncResult) {
+        let rebuilt = result.rebuilt.take();
         self.gnc_sequence_adopted = result.sequence;
         self.apply_gnc_result(&result);
-        self.isam2_stale = true;
-        true
-    }
-
-    /// Deferred half of adoption: rebuild iSAM2 from the adopted poses. Call
-    /// only when no newer GNC solve is in flight — the rebuild blocks the
-    /// pipeline thread for tens of seconds, and doing it while a solve is
-    /// pending would silence republishes right when they matter most.
-    pub fn rebuild_isam2_if_stale(&mut self) -> bool {
-        if !self.isam2_stale {
-            return false;
+        match rebuilt {
+            Some(rebuilt) => self.swap_in_rebuilt_isam2(rebuilt),
+            None => self.rebuild_isam2_from_backbone(),
         }
-        self.rebuild_isam2_from_backbone();
-        true
     }
 
-    /// Discard the incremental iSAM2 and rebuild it from the odometry backbone
-    /// plus every committed loop whose GNC weight still marks it an inlier
-    /// (unclassified loops carry 1.0 and re-enter — the next GNC vets them),
-    /// seeded at the current keyframe globals. Loop factors keep the same
-    /// robust kernel the live path uses. If GTSAM throws even on the fresh
-    /// graph (mid-rejection it can hold hundreds of conflicting false
-    /// closures), fall back to the backbone alone — pure odometry always
-    /// solves, and the next GNC adoption restores the vetted loops.
+    /// Discard the incremental iSAM2 and rebuild it, blocking, from the odometry
+    /// backbone plus every committed loop whose GNC weight still marks it an
+    /// inlier (unclassified loops carry 1.0 and re-enter — the next GNC vets
+    /// them), seeded at the current keyframe globals. Recovery path for a throwing
+    /// update; adoption gets the same rebuild prebuilt from the worker.
     fn rebuild_isam2_from_backbone(&mut self) {
-        for include_loops in [true, false] {
-            let mut graph = FactorGraph::new();
-            let mut values = Values::new();
-            let backbone: Vec<BackboneKeyframe> = self
-                .key_poses
-                .iter()
-                .map(|key_pose| BackboneKeyframe {
-                    rotation_local: key_pose.rotation_local,
-                    translation_local: key_pose.translation_local,
-                    initial_rotation: key_pose.rotation_global,
-                    initial_translation: key_pose.translation_global,
-                })
-                .collect();
-            build_odometry_backbone(
+        let backbone: Vec<BackboneKeyframe> = self
+            .key_poses
+            .iter()
+            .map(|key_pose| BackboneKeyframe {
+                rotation_local: key_pose.rotation_local,
+                translation_local: key_pose.translation_local,
+                initial_rotation: key_pose.rotation_global,
+                initial_translation: key_pose.translation_global,
+            })
+            .collect();
+        let rebuilt = build_isam2_from_backbone(
+            &backbone,
+            &self.committed_loops,
+            &BackboneNoise::from_config(&self.config),
+            &RebuildLoopNoise::from_config(&self.config),
+        );
+        self.swap_in_rebuilt_isam2(rebuilt);
+    }
+
+    /// Replace the incremental iSAM2 with a rebuilt one, repoint the loop
+    /// bookkeeping at its factor indices, and catch it up with whatever was
+    /// added after its snapshot. Staged factors and pending removals refer to the
+    /// old iSAM2 and are dropped; the old iSAM2 is freed off-thread.
+    fn swap_in_rebuilt_isam2(&mut self, rebuilt: RebuiltIsam2) {
+        retire_isam2(std::mem::replace(&mut self.isam2, rebuilt.isam2));
+        self.pending_removals.clear();
+        self.graph.clear();
+        self.initial_values.clear();
+        self.staged_constraint_factors.clear();
+        for loop_edge in &mut self.committed_loops {
+            loop_edge.active_in_isam2 = false;
+            loop_edge.isam2_factor_index = None;
+        }
+        for (edge_index, factor_index) in rebuilt.loop_factor_indices {
+            self.committed_loops[edge_index].isam2_factor_index = Some(factor_index);
+            self.committed_loops[edge_index].active_in_isam2 = true;
+        }
+        self.catch_up_isam2(
+            rebuilt.keyframe_count,
+            rebuilt.loop_count,
+            rebuilt.loops_included,
+        );
+    }
+
+    /// Add to a swapped-in iSAM2 what came after its snapshot: backbone factors
+    /// and values (at the re-anchored globals) for the newer keyframes, and the
+    /// still-inlier loops smoothed since, with the rebuild's noise. Loops still
+    /// in `cache_pairs` reach it through the next `smooth_and_update` as usual.
+    fn catch_up_isam2(&mut self, keyframe_count: usize, loop_count: usize, loops_included: bool) {
+        let smoothed_loop_count = self.committed_loops.len() - self.cache_pairs.len();
+        if keyframe_count >= self.key_poses.len() && loop_count >= smoothed_loop_count {
+            return;
+        }
+        let mut graph = FactorGraph::new();
+        let mut values = Values::new();
+        let backbone_noise = BackboneNoise::from_config(&self.config);
+        let seeded_at_global = |key_pose: &KeyPoseWithCloud| BackboneKeyframe {
+            rotation_local: key_pose.rotation_local,
+            translation_local: key_pose.translation_local,
+            initial_rotation: key_pose.rotation_global,
+            initial_translation: key_pose.translation_global,
+        };
+        for idx in keyframe_count..self.key_poses.len() {
+            let previous = idx
+                .checked_sub(1)
+                .map(|previous_idx| seeded_at_global(&self.key_poses[previous_idx]));
+            add_backbone_keyframe(
                 &mut graph,
                 &mut values,
-                &backbone,
-                &BackboneNoise::from_config(&self.config),
+                previous.as_ref(),
+                &seeded_at_global(&self.key_poses[idx]),
+                idx as u64,
+                &backbone_noise,
             );
-            let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
-            if include_loops {
-                for (edge_index, loop_edge) in self.committed_loops.iter().enumerate() {
-                    if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
-                        continue;
-                    }
-                    let scale = if loop_edge.strong {
-                        1.0
-                    } else {
-                        self.config.loop_gnc_var_scale
-                    };
-                    let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * scale;
-                    let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
-                    let robust;
-                    let noise: &NoiseModel = if self.config.loop_robust_kernel && !loop_edge.strong
-                    {
-                        robust =
-                            NoiseModel::robust_huber(self.config.loop_robust_huber_k, &gaussian);
-                        &robust
-                    } else {
-                        &gaussian
-                    };
-                    kept_loop_positions.push((edge_index, graph.len()));
-                    graph
-                        .add_between_pose3(
-                            loop_edge.target_id as u64,
-                            loop_edge.source_id as u64,
-                            &Pose3 {
-                                rotation: loop_edge.rotation_offset,
-                                translation: loop_edge.translation_offset,
-                            },
-                            noise,
-                        )
-                        .expect("gtsam: rebuild loop between factor");
-                }
-            }
-            let mut rebuilt_isam2 = Isam2::new();
-            let new_factor_indices = match rebuilt_isam2.update(&graph, &values, &[]) {
-                Ok(indices) => indices,
-                Err(gtsam_error) if include_loops => {
-                    eprintln!(
-                        "gtsam: isam2 rebuild with loops failed ({gtsam_error:?}); \
-                         retrying backbone-only"
-                    );
+        }
+        let mut loop_positions: Vec<(usize, usize)> = Vec::new();
+        if loops_included {
+            let loop_noise = RebuildLoopNoise::from_config(&self.config);
+            for edge_index in loop_count..smoothed_loop_count {
+                let loop_edge = &self.committed_loops[edge_index];
+                if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
                     continue;
                 }
-                Err(gtsam_error) => panic!("gtsam: backbone-only isam2 rebuild: {gtsam_error:?}"),
-            };
-            self.isam2 = rebuilt_isam2;
-            self.pending_removals.clear();
-            self.graph.clear();
-            self.initial_values.clear();
-            for loop_edge in &mut self.committed_loops {
-                loop_edge.active_in_isam2 = false;
-                loop_edge.isam2_factor_index = None;
+                loop_positions.push((edge_index, graph.len()));
+                add_rebuild_loop_factor(&mut graph, loop_edge, &loop_noise);
             }
-            for (edge_index, graph_position) in kept_loop_positions {
-                if graph_position < new_factor_indices.len() {
-                    self.committed_loops[edge_index].isam2_factor_index =
-                        Some(new_factor_indices[graph_position]);
-                    self.committed_loops[edge_index].active_in_isam2 = true;
+        }
+        match self.isam2.update(&graph, &values, &[]) {
+            Ok(new_factor_indices) => {
+                for (edge_index, graph_position) in loop_positions {
+                    if graph_position < new_factor_indices.len() {
+                        self.committed_loops[edge_index].isam2_factor_index =
+                            Some(new_factor_indices[graph_position]);
+                        self.committed_loops[edge_index].active_in_isam2 = true;
+                    }
                 }
             }
-            self.isam2_stale = false;
-            return;
+            Err(gtsam_error) => {
+                eprintln!("gtsam: isam2 catch-up failed ({gtsam_error:?}); rebuilding in place");
+                self.rebuild_isam2_from_backbone();
+            }
         }
     }
 
@@ -2037,5 +2053,166 @@ impl GscPgo {
     }
 }
 
+/// Free an iSAM2 on a short-lived thread: tearing down a large Bayes tree would
+/// stall the pipeline thread.
+fn retire_isam2(isam2: Isam2) {
+    let _ = std::thread::Builder::new()
+        .name("isam2-retire".to_string())
+        .stack_size(GTSAM_THREAD_STACK_BYTES)
+        .spawn(move || drop(isam2));
+}
+
+/// Drop a GNC result that will never be adopted, its rebuilt iSAM2 off-thread.
+fn retire_gnc_result(result: GncResult) {
+    if let Some(rebuilt) = result.rebuilt {
+        retire_isam2(rebuilt.isam2);
+    }
+}
+
 // Re-export the point-cloud helpers alongside the PGO for wiring layers.
 pub use pointcloud::IcpResult;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gnc::solve_gnc_and_rebuild;
+
+    const RADIUS: f64 = 20.0;
+    const STEPS_PER_LAP: usize = 120;
+    const YAW_BIAS: f64 = 0.0005;
+
+    /// Biased odometry around a circle (it spirals open); one keyframe per step,
+    /// each smoothed. Step `i` is truly at circle angle `i / STEPS_PER_LAP`.
+    fn drive(pgo: &mut GscPgo, steps: std::ops::Range<usize>) {
+        for i in steps {
+            let mut rotation = mat3::identity();
+            let mut translation = [0.0; 3];
+            let step_length = 2.0 * RADIUS * (std::f64::consts::PI / STEPS_PER_LAP as f64).sin();
+            let turn = 2.0 * std::f64::consts::PI / STEPS_PER_LAP as f64 + YAW_BIAS;
+            for _ in 0..i {
+                translation = mat3::add(
+                    &translation,
+                    &mat3::mat_vec(&rotation, &[step_length, 0.0, 0.0]),
+                );
+                rotation = mat3::mat_mul(&rotation, &mat3::rot_z(turn));
+            }
+            let mut pose = PoseWithTime::new(rotation, translation);
+            pose.set_time(i as i32, 0);
+            let cloud_with_pose = CloudWithPose {
+                cloud: None,
+                pose,
+                frame_id: "odom".to_string(),
+            };
+            assert!(pgo.add_key_pose(&cloud_with_pose));
+            pgo.smooth_and_update();
+        }
+    }
+
+    /// Commit a loop source -> target with relative pose `offset_xyz` (identity
+    /// rotation) and smooth it in.
+    fn close(pgo: &mut GscPgo, source_id: usize, target_id: usize, offset_xyz: Vec3) {
+        let score = 0.05;
+        pgo.commit_loop_pair(LoopPair {
+            source_id,
+            target_id,
+            rotation_offset: mat3::identity(),
+            translation_offset: offset_xyz,
+            score,
+            noise: NoiseModel::diagonal_variances(&[score; 6]),
+            strong: false,
+        });
+        pgo.smooth_and_update();
+    }
+
+    /// One lap closed by a true loop plus a false one GNC should reject.
+    fn first_lap() -> GscPgo {
+        let mut pgo = GscPgo::new(Config::default());
+        drive(&mut pgo, 0..STEPS_PER_LAP + 1);
+        close(&mut pgo, STEPS_PER_LAP, 0, [0.0; 3]);
+        close(&mut pgo, STEPS_PER_LAP / 2, 0, [0.5, 0.0, 0.0]);
+        pgo
+    }
+
+    /// Part of a second lap with another true loop: what arrives while GNC runs.
+    fn added_meanwhile(pgo: &mut GscPgo) {
+        drive(pgo, STEPS_PER_LAP + 1..STEPS_PER_LAP + 31);
+        close(pgo, STEPS_PER_LAP + 20, 20, [0.0; 3]);
+        drive(pgo, STEPS_PER_LAP + 31..STEPS_PER_LAP + 36);
+    }
+
+    fn max_position_diff(a: &GscPgo, b: &GscPgo) -> f64 {
+        assert_eq!(a.key_poses().len(), b.key_poses().len());
+        a.key_poses()
+            .iter()
+            .zip(b.key_poses())
+            .map(|(pa, pb)| mat3::norm(&mat3::sub(&pa.translation_global, &pb.translation_global)))
+            .fold(0.0, f64::max)
+    }
+
+    /// Old path: adopt the GNC poses, then rebuild iSAM2 in place over everything.
+    fn adopt_blocking(pgo: &mut GscPgo, result: &GncResult) {
+        pgo.gnc_sequence_adopted = result.sequence;
+        pgo.apply_gnc_result(result);
+        pgo.rebuild_isam2_from_backbone();
+    }
+
+    fn snapshot(pgo: &mut GscPgo) -> GncJob {
+        pgo.gnc_sequence_dispatched += 1;
+        pgo.build_gnc_job()
+    }
+
+    #[test]
+    fn swapped_isam2_matches_blocking_rebuild_with_nothing_added() {
+        let mut blocking = first_lap();
+        let mut swapped = first_lap();
+        let job_blocking = snapshot(&mut blocking);
+        let job_swapped = snapshot(&mut swapped);
+        adopt_blocking(&mut blocking, &solve_gnc(&job_blocking));
+        swapped.adopt_gnc_result(solve_gnc_and_rebuild(&job_swapped));
+        assert_eq!(max_position_diff(&blocking, &swapped), 0.0);
+        blocking.smooth_and_update();
+        swapped.smooth_and_update();
+        assert_eq!(max_position_diff(&blocking, &swapped), 0.0);
+        let active = |pgo: &GscPgo| -> Vec<bool> {
+            pgo.committed_loops()
+                .iter()
+                .map(|l| l.active_in_isam2)
+                .collect()
+        };
+        assert_eq!(active(&blocking), vec![true, false]);
+        assert_eq!(active(&swapped), active(&blocking));
+    }
+
+    #[test]
+    fn swapped_isam2_catches_up_keyframes_and_loops_added_after_the_snapshot() {
+        let mut blocking = first_lap();
+        let mut swapped = first_lap();
+        let job_blocking = snapshot(&mut blocking);
+        let job_swapped = snapshot(&mut swapped);
+        let result_blocking = solve_gnc(&job_blocking);
+        let result_swapped = solve_gnc_and_rebuild(&job_swapped);
+        added_meanwhile(&mut blocking);
+        added_meanwhile(&mut swapped);
+        adopt_blocking(&mut blocking, &result_blocking);
+        swapped.adopt_gnc_result(result_swapped);
+        let active = |pgo: &GscPgo| -> Vec<bool> {
+            pgo.committed_loops()
+                .iter()
+                .map(|l| l.active_in_isam2)
+                .collect()
+        };
+        assert_eq!(active(&blocking), vec![true, false, true]);
+        assert_eq!(active(&swapped), active(&blocking));
+        // Same poses at the swap; after smoothing, batch vs incremental
+        // elimination of the same factors may differ by float noise only.
+        assert_eq!(max_position_diff(&blocking, &swapped), 0.0);
+        blocking.smooth_and_update();
+        swapped.smooth_and_update();
+        let diff = max_position_diff(&blocking, &swapped);
+        eprintln!("max keyframe position diff, blocking vs swapped: {diff:.3e} m");
+        assert!(
+            diff < 1e-6,
+            "swapped iSAM2 drifts from the blocking rebuild by {diff} m"
+        );
+    }
+}

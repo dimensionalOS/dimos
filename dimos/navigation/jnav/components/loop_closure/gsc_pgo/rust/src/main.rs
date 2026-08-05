@@ -539,10 +539,10 @@ impl Worker {
                 // Idle: fold in any finished background GNC solve now instead
                 // of waiting for the next keyframe, so the map snaps into
                 // place when the robot pauses (or the stream ends). Adopting
-                // the batch solution (poses + rebuilt iSAM2) recovers from
-                // incremental divergence; with location constraints in use the
-                // rebuild would drop their factors, so fall back to
-                // classification-only there.
+                // the batch solution (poses + the iSAM2 the worker rebuilt)
+                // recovers from incremental divergence and is only a swap here;
+                // with location constraints in use the rebuild would drop their
+                // factors, so fall back to classification-only there.
                 let gnc_folded = if self.config.use_location_constraints {
                     let applied = pgo.poll_and_apply_gnc_classification();
                     if applied {
@@ -553,23 +553,6 @@ impl Worker {
                     pgo.poll_and_adopt_gnc_solution()
                 };
                 if gnc_folded {
-                    let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
-                    self.publish_graph(
-                        &pgo,
-                        last_time,
-                        &frame_id,
-                        deformation_tf_id,
-                        &mut deformation_ids,
-                        &mut deformation_last,
-                        &mut deformation_rng,
-                    );
-                    continue;
-                }
-                // Deferred half of adoption: the iSAM2 rebuild blocks this
-                // thread for tens of seconds, so it only runs once no newer
-                // solve is pending — republishes stay alive until the final
-                // solve's poses are already out the door.
-                if !pgo.gnc_in_flight() && pgo.rebuild_isam2_if_stale() {
                     let last_time = pgo.key_poses().last().map(|kp| kp.time).unwrap_or(0.0);
                     self.publish_graph(
                         &pgo,

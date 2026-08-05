@@ -22,7 +22,8 @@
 //!
 //! All handles are RAII (`Drop` frees the underlying gtsam object). The raw
 //! pointers make every type `!Send`/`!Sync`, matching gtsam's
-//! thread-unsafety.
+//! thread-unsafety; only `Isam2` is `Send`, so a worker can build one and hand
+//! it over whole.
 
 use std::os::raw::{c_char, c_void};
 
@@ -468,6 +469,9 @@ impl Isam2 {
         unsafe { ffi::gtsam_shim_isam2_error(self.handle) }
     }
 }
+
+// Owned handle, built on the GNC worker and moved to the pipeline thread; never shared between threads.
+unsafe impl Send for Isam2 {}
 
 impl Default for Isam2 {
     fn default() -> Isam2 {

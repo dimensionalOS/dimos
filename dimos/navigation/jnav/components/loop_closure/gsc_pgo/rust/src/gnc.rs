@@ -22,8 +22,10 @@
 
 use std::sync::mpsc::{Receiver, Sender};
 
-use crate::gsc_pgo::{CommittedLoop, Config, FREE_VARIANCE, LOOP_GNC_MIN_VARIANCE};
-use crate::gtsam::{FactorGraph, NoiseModel, Pose3, Values};
+use crate::gsc_pgo::{
+    CommittedLoop, Config, FREE_VARIANCE, LOOP_GNC_INLIER_THRESHOLD, LOOP_GNC_MIN_VARIANCE,
+};
+use crate::gtsam::{FactorGraph, Isam2, NoiseModel, Pose3, Values};
 use crate::mat3::{self, Mat3, Vec3};
 
 /// One keyframe's contribution to the odometry backbone: the local
@@ -76,73 +78,207 @@ pub(crate) fn build_odometry_backbone(
     keyframes: &[BackboneKeyframe],
     noise: &BackboneNoise,
 ) {
+    for (idx, keyframe) in keyframes.iter().enumerate() {
+        let previous = idx
+            .checked_sub(1)
+            .map(|previous_idx| &keyframes[previous_idx]);
+        add_backbone_keyframe(graph, values, previous, keyframe, idx as u64, noise);
+    }
+}
+
+/// One keyframe's share of the backbone at `key`: its initial value, plus the
+/// anchor prior (no `previous`) or the odom between-factor from `previous` and
+/// the optional per-keyframe roll/pitch prior. Also extends a swapped-in iSAM2
+/// with keyframes added after its GNC snapshot.
+pub(crate) fn add_backbone_keyframe(
+    graph: &mut FactorGraph,
+    values: &mut Values,
+    previous: Option<&BackboneKeyframe>,
+    keyframe: &BackboneKeyframe,
+    key: u64,
+    noise: &BackboneNoise,
+) {
     const ANCHOR_YAW_VAR: f64 = 1e-12;
     const ANCHOR_TRANS_VAR: f64 = 1e-12;
-    for (idx, keyframe) in keyframes.iter().enumerate() {
-        let initial_pose = Pose3 {
-            rotation: keyframe.initial_rotation,
-            translation: keyframe.initial_translation,
-        };
-        values
-            .insert_pose3(idx as u64, &initial_pose)
-            .expect("gtsam: backbone init value");
-        if idx == 0 {
-            let prior_var = [
-                noise.anchor_roll_pitch_var,
-                noise.anchor_roll_pitch_var,
-                ANCHOR_YAW_VAR,
-                ANCHOR_TRANS_VAR,
-                ANCHOR_TRANS_VAR,
-                ANCHOR_TRANS_VAR,
-            ];
-            let anchor_noise = NoiseModel::diagonal_variances(&prior_var);
-            graph
-                .add_prior_pose3(0, &initial_pose, &anchor_noise)
-                .expect("gtsam: backbone anchor prior");
-            continue;
-        }
-        let previous = &keyframes[idx - 1];
-        let previous_rotation_transpose = mat3::transpose(&previous.rotation_local);
-        let rotation_between =
-            mat3::mat_mul(&previous_rotation_transpose, &keyframe.rotation_local);
-        let translation_between = mat3::mat_vec(
-            &previous_rotation_transpose,
-            &mat3::sub(&keyframe.translation_local, &previous.translation_local),
-        );
-        let odom_noise = NoiseModel::diagonal_variances(&[
-            noise.odom_rot_roll_pitch_var,
-            noise.odom_rot_roll_pitch_var,
-            noise.odom_rot_yaw_var,
-            noise.odom_trans_xy_var,
-            noise.odom_trans_xy_var,
-            noise.odom_trans_z_var,
-        ]);
+    let initial_pose = Pose3 {
+        rotation: keyframe.initial_rotation,
+        translation: keyframe.initial_translation,
+    };
+    values
+        .insert_pose3(key, &initial_pose)
+        .expect("gtsam: backbone init value");
+    let Some(previous) = previous else {
+        let prior_var = [
+            noise.anchor_roll_pitch_var,
+            noise.anchor_roll_pitch_var,
+            ANCHOR_YAW_VAR,
+            ANCHOR_TRANS_VAR,
+            ANCHOR_TRANS_VAR,
+            ANCHOR_TRANS_VAR,
+        ];
+        let anchor_noise = NoiseModel::diagonal_variances(&prior_var);
         graph
-            .add_between_pose3(
-                (idx - 1) as u64,
-                idx as u64,
-                &Pose3 {
-                    rotation: rotation_between,
-                    translation: translation_between,
-                },
-                &odom_noise,
-            )
-            .expect("gtsam: backbone odom between factor");
-        if noise.per_keyframe_roll_pitch_prior {
-            let roll_pitch_var = [
-                noise.per_keyframe_roll_pitch_var,
-                noise.per_keyframe_roll_pitch_var,
-                FREE_VARIANCE,
-                FREE_VARIANCE,
-                FREE_VARIANCE,
-                FREE_VARIANCE,
-            ];
-            let roll_pitch_noise = NoiseModel::diagonal_variances(&roll_pitch_var);
-            graph
-                .add_prior_pose3(idx as u64, &initial_pose, &roll_pitch_noise)
-                .expect("gtsam: backbone per-keyframe prior");
+            .add_prior_pose3(key, &initial_pose, &anchor_noise)
+            .expect("gtsam: backbone anchor prior");
+        return;
+    };
+    let previous_rotation_transpose = mat3::transpose(&previous.rotation_local);
+    let rotation_between = mat3::mat_mul(&previous_rotation_transpose, &keyframe.rotation_local);
+    let translation_between = mat3::mat_vec(
+        &previous_rotation_transpose,
+        &mat3::sub(&keyframe.translation_local, &previous.translation_local),
+    );
+    let odom_noise = NoiseModel::diagonal_variances(&[
+        noise.odom_rot_roll_pitch_var,
+        noise.odom_rot_roll_pitch_var,
+        noise.odom_rot_yaw_var,
+        noise.odom_trans_xy_var,
+        noise.odom_trans_xy_var,
+        noise.odom_trans_z_var,
+    ]);
+    graph
+        .add_between_pose3(
+            key - 1,
+            key,
+            &Pose3 {
+                rotation: rotation_between,
+                translation: translation_between,
+            },
+            &odom_noise,
+        )
+        .expect("gtsam: backbone odom between factor");
+    if noise.per_keyframe_roll_pitch_prior {
+        let roll_pitch_var = [
+            noise.per_keyframe_roll_pitch_var,
+            noise.per_keyframe_roll_pitch_var,
+            FREE_VARIANCE,
+            FREE_VARIANCE,
+            FREE_VARIANCE,
+            FREE_VARIANCE,
+        ];
+        let roll_pitch_noise = NoiseModel::diagonal_variances(&roll_pitch_var);
+        graph
+            .add_prior_pose3(key, &initial_pose, &roll_pitch_noise)
+            .expect("gtsam: backbone per-keyframe prior");
+    }
+}
+
+/// The loop-factor noise knobs of a rebuilt iSAM2, pulled out of `Config` so the
+/// rebuild can run on the worker thread.
+#[derive(Clone, Copy)]
+pub(crate) struct RebuildLoopNoise {
+    loop_gnc_var_scale: f64,
+    loop_robust_kernel: bool,
+    loop_robust_huber_k: f64,
+}
+
+impl RebuildLoopNoise {
+    pub(crate) fn from_config(config: &Config) -> RebuildLoopNoise {
+        RebuildLoopNoise {
+            loop_gnc_var_scale: config.loop_gnc_var_scale,
+            loop_robust_kernel: config.loop_robust_kernel,
+            loop_robust_huber_k: config.loop_robust_huber_k,
         }
     }
+}
+
+/// Stage one committed loop as a rebuild between-factor: variance from its ICP
+/// score (GNC's scale), same robust kernel the live path uses.
+pub(crate) fn add_rebuild_loop_factor(
+    graph: &mut FactorGraph,
+    loop_edge: &CommittedLoop,
+    loop_noise: &RebuildLoopNoise,
+) {
+    let scale = if loop_edge.strong {
+        1.0
+    } else {
+        loop_noise.loop_gnc_var_scale
+    };
+    let variance = loop_edge.score.max(LOOP_GNC_MIN_VARIANCE) * scale;
+    let gaussian = NoiseModel::diagonal_variances(&[variance; 6]);
+    let robust;
+    let noise: &NoiseModel = if loop_noise.loop_robust_kernel && !loop_edge.strong {
+        robust = NoiseModel::robust_huber(loop_noise.loop_robust_huber_k, &gaussian);
+        &robust
+    } else {
+        &gaussian
+    };
+    graph
+        .add_between_pose3(
+            loop_edge.target_id as u64,
+            loop_edge.source_id as u64,
+            &Pose3 {
+                rotation: loop_edge.rotation_offset,
+                translation: loop_edge.translation_offset,
+            },
+            noise,
+        )
+        .expect("gtsam: rebuild loop between factor");
+}
+
+/// A fresh iSAM2 holding the odometry backbone plus the kept loops, and the
+/// bookkeeping to swap it in for the incremental one.
+pub(crate) struct RebuiltIsam2 {
+    pub(crate) isam2: Isam2,
+    /// (committed loop index, iSAM2 factor index) of every loop it holds.
+    pub(crate) loop_factor_indices: Vec<(usize, u64)>,
+    /// Keyframes and committed loops it was built from (a prefix of each).
+    pub(crate) keyframe_count: usize,
+    pub(crate) loop_count: usize,
+    /// False when gtsam threw with the loops in and it fell back to the backbone.
+    pub(crate) loops_included: bool,
+}
+
+/// Build an iSAM2 from the odometry backbone plus every loop whose GNC weight
+/// still marks it an inlier, seeded at the keyframes' `initial_*`. If GTSAM
+/// throws even on the fresh graph (mid-rejection it can hold hundreds of
+/// conflicting false closures), fall back to the backbone alone.
+pub(crate) fn build_isam2_from_backbone(
+    keyframes: &[BackboneKeyframe],
+    loops: &[CommittedLoop],
+    backbone_noise: &BackboneNoise,
+    loop_noise: &RebuildLoopNoise,
+) -> RebuiltIsam2 {
+    for include_loops in [true, false] {
+        let mut graph = FactorGraph::new();
+        let mut values = Values::new();
+        build_odometry_backbone(&mut graph, &mut values, keyframes, backbone_noise);
+        let mut kept_loop_positions: Vec<(usize, usize)> = Vec::new();
+        if include_loops {
+            for (edge_index, loop_edge) in loops.iter().enumerate() {
+                if loop_edge.gnc_weight < LOOP_GNC_INLIER_THRESHOLD {
+                    continue;
+                }
+                kept_loop_positions.push((edge_index, graph.len()));
+                add_rebuild_loop_factor(&mut graph, loop_edge, loop_noise);
+            }
+        }
+        let mut isam2 = Isam2::new();
+        let new_factor_indices = match isam2.update(&graph, &values, &[]) {
+            Ok(indices) => indices,
+            Err(gtsam_error) if include_loops => {
+                eprintln!(
+                    "gtsam: isam2 rebuild with loops failed ({gtsam_error:?}); \
+                     retrying backbone-only"
+                );
+                continue;
+            }
+            Err(gtsam_error) => panic!("gtsam: backbone-only isam2 rebuild: {gtsam_error:?}"),
+        };
+        let loop_factor_indices = kept_loop_positions
+            .into_iter()
+            .filter(|(_, graph_position)| *graph_position < new_factor_indices.len())
+            .map(|(edge_index, graph_position)| (edge_index, new_factor_indices[graph_position]))
+            .collect();
+        return RebuiltIsam2 {
+            isam2,
+            loop_factor_indices,
+            keyframe_count: keyframes.len(),
+            loop_count: loops.len(),
+            loops_included: include_loops,
+        };
+    }
+    unreachable!("backbone-only rebuild either returns or panics")
 }
 
 /// A self-contained snapshot of everything the batch GNC re-solve needs, built
@@ -152,6 +288,7 @@ pub(crate) struct GncJob {
     pub(crate) keyframes: Vec<BackboneKeyframe>,
     pub(crate) loops: Vec<CommittedLoop>,
     pub(crate) backbone_noise: BackboneNoise,
+    pub(crate) rebuild_loop_noise: RebuildLoopNoise,
     pub(crate) loop_gnc_var_scale: f64,
     pub(crate) loop_gnc_inlier_probability: f64,
     /// Monotonic dispatch counter, echoed in the result so the pipeline can
@@ -160,11 +297,13 @@ pub(crate) struct GncJob {
 }
 
 /// The result of one batch GNC re-solve: the corrected global pose of every
-/// keyframe that was in the job, and each committed loop's final GNC weight.
+/// keyframe that was in the job, each committed loop's final GNC weight, and
+/// (from `solve_gnc_and_rebuild`) an iSAM2 already rebuilt from them.
 pub(crate) struct GncResult {
     pub(crate) keyframe_globals: Vec<(Mat3, Vec3)>,
     pub(crate) loop_weights: Vec<f64>,
     pub(crate) sequence: u64,
+    pub(crate) rebuilt: Option<RebuiltIsam2>,
 }
 
 /// Run one batch GNC re-solve. Pure function of the job — no shared state — so it
@@ -226,13 +365,49 @@ pub(crate) fn solve_gnc(job: &GncJob) -> GncResult {
         keyframe_globals,
         loop_weights,
         sequence: job.sequence,
+        rebuilt: None,
     }
+}
+
+/// What the background worker runs: the GNC solve, then the iSAM2 rebuild from
+/// its poses and kept loops, so adopting it on the pipeline thread is a swap.
+pub(crate) fn solve_gnc_and_rebuild(job: &GncJob) -> GncResult {
+    let mut result = solve_gnc(job);
+    let keyframes: Vec<BackboneKeyframe> = job
+        .keyframes
+        .iter()
+        .zip(&result.keyframe_globals)
+        .map(
+            |(keyframe, (rotation_global, translation_global))| BackboneKeyframe {
+                rotation_local: keyframe.rotation_local,
+                translation_local: keyframe.translation_local,
+                initial_rotation: *rotation_global,
+                initial_translation: *translation_global,
+            },
+        )
+        .collect();
+    let loops: Vec<CommittedLoop> = job
+        .loops
+        .iter()
+        .zip(&result.loop_weights)
+        .map(|(loop_edge, weight)| CommittedLoop {
+            gnc_weight: *weight,
+            ..*loop_edge
+        })
+        .collect();
+    result.rebuilt = Some(build_isam2_from_backbone(
+        &keyframes,
+        &loops,
+        &job.backbone_noise,
+        &job.rebuild_loop_noise,
+    ));
+    result
 }
 
 /// Handles for the background GNC worker thread. The main thread sends a fresh
 /// `GncJob` after every closure; the worker coalesces (only the newest queued
-/// job is solved) and sends back a `GncResult` when done, so the pipeline thread
-/// never blocks on the growing full-graph batch solve.
+/// job is solved) and sends back a `GncResult` with its rebuilt iSAM2 when
+/// done, so the pipeline thread never blocks on the solve or the rebuild.
 pub(crate) struct GncWorker {
     pub(crate) job_sender: Sender<GncJob>,
     pub(crate) result_receiver: Receiver<GncResult>,
@@ -248,9 +423,9 @@ pub(crate) fn gnc_worker_loop(job_receiver: Receiver<GncJob>, result_sender: Sen
             latest_job = newer_job;
         }
         let solve_t0 = std::time::Instant::now();
-        let result = solve_gnc(&latest_job);
+        let result = solve_gnc_and_rebuild(&latest_job);
         eprintln!(
-            "gnc-solve (background): {} keyframes, {} loop factors, {:.1} ms",
+            "gnc-solve + isam2 rebuild (background): {} keyframes, {} loop factors, {:.1} ms",
             latest_job.keyframes.len(),
             latest_job.loops.len(),
             solve_t0.elapsed().as_secs_f64() * 1000.0,
