@@ -214,6 +214,7 @@ all_modules = {
     "goal-relay": "dimos.navigation.nav_3d.mls_planner.goal_relay.GoalRelay",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
+    "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.GraspGenXModule",
     "grasping-module": "dimos.manipulation.grasping.grasping.GraspingModule",
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
