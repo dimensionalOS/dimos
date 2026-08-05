@@ -15,7 +15,7 @@
 from pathlib import Path
 import subprocess
 import sys
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pinocchio
@@ -56,9 +56,9 @@ def _robot(path: Path) -> RobotModelConfig:
     )
 
 
-def _state(t_now: float, dt: float = 0.01) -> CoordinatorState:
+def _state(t_now: float, dt: float = 0.01, position: float = 0.0) -> CoordinatorState:
     return CoordinatorState(
-        joints=JointStateSnapshot(joint_positions={"joint1": 0.0}), t_now=t_now, dt=dt
+        joints=JointStateSnapshot(joint_positions={"joint1": position}), t_now=t_now, dt=dt
     )
 
 
@@ -66,13 +66,17 @@ class _FakeControlIK:
     nq = 1
 
     def __init__(self) -> None:
-        self.target: object | None = None
+        self.target: Any | None = None
         self.dt: float | None = None
+        self.increment = 0.0
+        self.solve_seeds: list[np.ndarray] = []
 
-    def solve(self, target: object, measured: np.ndarray, dt: float) -> ControlIKResult:
+    def solve(self, target: Any, measured: np.ndarray, dt: float) -> ControlIKResult:
         self.target = target
         self.dt = dt
-        return ControlIKResult(measured.copy(), np.zeros(1))
+        self.solve_seeds.append(measured.copy())
+        positions = measured + self.increment
+        return ControlIKResult(positions, positions - measured)
 
 
 def test_cartesian_pipeline_passes_se3_target_and_bounded_dt(tmp_path: Path, mocker) -> None:
@@ -167,7 +171,7 @@ def test_cartesian_runtime_error_is_a_measured_state_hold(
 ) -> None:
     backend = _FakeControlIK()
 
-    def fail(target: object, measured: np.ndarray, dt: float) -> ControlIKResult:
+    def fail(target: Any, measured: np.ndarray, dt: float) -> ControlIKResult:
         raise IKControlRuntimeError("solver failed")
 
     monkeypatch.setattr(backend, "solve", fail)
@@ -185,5 +189,72 @@ def test_cartesian_runtime_error_is_a_measured_state_hold(
     assert task.on_cartesian_command(PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]), 1.0)
 
     hold = task.compute(_state(1.01))
+    assert hold is not None
+    assert hold.positions == [0.0]
+
+
+def test_cartesian_pipeline_accumulates_from_accepted_commands_while_feedback_tracks(
+    tmp_path: Path, mocker
+) -> None:
+    backend = _FakeControlIK()
+    backend.increment = 0.01
+    mocker.patch(
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
+        return_value=backend,
+    )
+    task = CartesianIKTask(
+        "cartesian",
+        CartesianIKTaskConfig(
+            joint_names=["joint1"],
+            control_ik=PinkControlIKConfig(robot_model=_robot(tmp_path / "unused.urdf")),
+            max_tracking_error_deg=10.0,
+        ),
+    )
+    assert task.on_cartesian_command(PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]), 1.0)
+
+    first = task.compute(_state(1.01))
+    second = task.compute(_state(1.02))
+
+    assert first is not None
+    assert second is not None
+    assert first.positions == pytest.approx([0.01])
+    assert second.positions == pytest.approx([0.02])
+    np.testing.assert_allclose(backend.solve_seeds, [[0.0], [0.01]])
+
+
+def test_cartesian_pipeline_rebases_when_command_outpaces_feedback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    backend = _FakeControlIK()
+    backend.increment = 0.1
+    mocker.patch(
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
+        return_value=backend,
+    )
+    task = CartesianIKTask(
+        "cartesian",
+        CartesianIKTaskConfig(
+            joint_names=["joint1"],
+            control_ik=PinkControlIKConfig(robot_model=_robot(tmp_path / "unused.urdf")),
+            max_tracking_error_deg=5.0,
+        ),
+    )
+    assert task.on_cartesian_command(PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]), 1.0)
+
+    first = task.compute(_state(1.01))
+    second = task.compute(_state(1.02))
+
+    assert first is not None
+    assert second is not None
+    assert first.positions == pytest.approx([0.1])
+    assert second.positions == pytest.approx([0.1])
+    np.testing.assert_allclose(backend.solve_seeds, [[0.0], [0.0]])
+
+    def fail(target: Any, measured: np.ndarray, dt: float) -> ControlIKResult:
+        raise IKControlRuntimeError("solver failed")
+
+    monkeypatch.setattr(backend, "solve", fail)
+    hold = task.compute(_state(1.03))
+
     assert hold is not None
     assert hold.positions == [0.0]

@@ -23,7 +23,11 @@ from dimos.robot.manipulators.a1z.config import (
     a1z_hardware,
     make_a1z_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import eef_twist_task, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    eef_twist_task,
+    teleop_ik_task,
+    trajectory_task,
+)
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a1z_keyboard_hw = a1z_hardware("arm")
@@ -50,6 +54,36 @@ keyboard_teleop_a1z = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_a1z_model],
+        visualization={"backend": "viser"},
+    ),
+)
+
+
+_a1z_quest_hw = a1z_hardware("arm")
+_a1z_quest_model = make_a1z_model_config()
+
+coordinator_teleop_a1z = autoconnect(
+    ControlCoordinator.blueprint(
+        hardware=[_a1z_quest_hw],
+        tasks=[
+            teleop_ik_task(
+                _a1z_quest_hw,
+                hand="left",
+                name="teleop_a1z",
+                robot_model=_a1z_quest_model,
+                control_ik={"max_velocity": 2.0},
+                priority=20,
+                params={
+                    "gripper_joint": _a1z_quest_hw.gripper_joints[0],
+                    "gripper_open_pos": 1.0,
+                    "gripper_closed_pos": 0.0,
+                },
+            ),
+            trajectory_task(_a1z_quest_hw),
+        ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[_a1z_quest_model],
         visualization={"backend": "viser"},
     ),
 )

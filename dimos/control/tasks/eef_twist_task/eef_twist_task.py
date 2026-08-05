@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Measured-state end-effector twist control."""
+"""Command-integrating end-effector twist control."""
 
 from __future__ import annotations
 
@@ -22,16 +22,16 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pinocchio
-from pydantic import FiniteFloat
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,
+    CartesianIKTaskParams,
+    append_gripper_position,
+    claim_with_gripper,
 )
-from dimos.control.tasks.cartesian_ik_task.pink_control_ik import PinkControlIKConfig
-from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import twist_to_numpy
 
@@ -44,7 +44,7 @@ logger = setup_logger()
 
 @dataclass
 class EEFTwistTaskConfig(CartesianIKTaskConfig):
-    """Configuration for measured-FK-relative EEF twist control."""
+    """Configuration for command-relative EEF twist control."""
 
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -52,7 +52,7 @@ class EEFTwistTaskConfig(CartesianIKTaskConfig):
 
 
 class EEFTwistTask(CartesianIKTask):
-    """Cartesian task specialization whose target is prepared from a twist."""
+    """Integrate twists from the last accepted command while the stream is active."""
 
     _config: EEFTwistTaskConfig
 
@@ -62,16 +62,10 @@ class EEFTwistTask(CartesianIKTask):
         self._latest_twist: TwistStamped | None = None
         self._estopped = False
         self._gripper_target = config.gripper_open_pos
+        self._gripper_active = config.gripper_joint is not None
 
     def claim(self) -> ResourceClaim:
-        claim = super().claim()
-        if self._config.gripper_joint is None:
-            return claim
-        return ResourceClaim(
-            joints=claim.joints | frozenset([self._config.gripper_joint]),
-            priority=claim.priority,
-            mode=claim.mode,
-        )
+        return claim_with_gripper(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
         with self._twist_lock:
@@ -106,10 +100,14 @@ class EEFTwistTask(CartesianIKTask):
             else:
                 self._latest_twist = twist
                 cleared = False
+        if cleared:
+            self._reset_command_state()
         if cleared and self._config.gripper_joint is None:
             super().clear()
             return True
         with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._last_update_time = t_now
             self._active = True
         return True
@@ -123,7 +121,10 @@ class EEFTwistTask(CartesianIKTask):
             self._gripper_target = (
                 self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
             )
+            self._gripper_active = True
         with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._last_update_time = t_now
             self._active = True
         return True
@@ -133,17 +134,19 @@ class EEFTwistTask(CartesianIKTask):
             self._estopped = estopped
             if estopped:
                 self._latest_twist = None
+                self._gripper_active = False
+        if estopped:
+            super().clear()
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         output = super().compute(state)
-        if output is None or self._config.gripper_joint is None:
-            return output
         with self._twist_lock:
             gripper_target = self._gripper_target
-        return JointCommandOutput(
-            joint_names=[*output.joint_names, self._config.gripper_joint],
-            positions=[*(output.positions or []), gripper_target],
-            mode=output.mode,
+            gripper_joint = self._config.gripper_joint if self._gripper_active else None
+        return append_gripper_position(
+            output,
+            gripper_joint,
+            gripper_target,
         )
 
     def _prepare_target(
@@ -167,26 +170,26 @@ class EEFTwistTask(CartesianIKTask):
         return pose
 
     def stop(self) -> None:
+        self._clear_inputs()
+        super().stop()
+
+    def _clear_inputs(self) -> None:
+        """Discard twist and gripper commands owned by this specialization."""
         with self._twist_lock:
             self._latest_twist = None
-        super().stop()
+            self._gripper_active = False
 
     def _on_timeout(self) -> None:
         with self._twist_lock:
             self._latest_twist = None
 
     def clear(self) -> None:
-        with self._twist_lock:
-            self._latest_twist = None
+        self._clear_inputs()
         super().clear()
 
 
-class EEFTwistTaskParams(BaseConfig):
+class EEFTwistTaskParams(CartesianIKTaskParams):
     timeout: float = 0.3
-    max_joint_delta_deg: float = 15.0
-    min_dt: FiniteFloat = 1e-4
-    max_dt: FiniteFloat = 0.05
-    control_ik: PinkControlIKConfig
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
@@ -201,6 +204,7 @@ def create_task(cfg: TaskConfig, hardware: object) -> EEFTwistTask:
             priority=cfg.priority,
             timeout=params.timeout,
             max_joint_delta_deg=params.max_joint_delta_deg,
+            max_tracking_error_deg=params.max_tracking_error_deg,
             min_dt=params.min_dt,
             max_dt=params.max_dt,
             control_ik=params.control_ik,

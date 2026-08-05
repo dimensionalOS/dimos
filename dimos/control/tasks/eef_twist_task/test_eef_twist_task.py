@@ -48,8 +48,10 @@ class FakeIK:
         self.nq = 3
         self.fk_calls: list[np.ndarray] = []
         self.solve_calls: list[FakePose] = []
+        self.q_calls: list[np.ndarray] = []
         self.dt_calls: list[float] = []
         self.solution = np.array([0.01, 0.02, 0.03], dtype=np.float64)
+        self.increment: np.ndarray | None = None
         self.raise_runtime = False
 
     def forward_kinematics(self, q_current: NDArray[np.float64]) -> FakePose:
@@ -60,8 +62,10 @@ class FakeIK:
         if self.raise_runtime:
             raise IKControlRuntimeError("synthetic solver failure")
         self.solve_calls.append(pose.copy())
+        self.q_calls.append(q_current.copy())
         self.dt_calls.append(dt)
-        return ControlIKResult(self.solution.copy(), self.solution - q_current)
+        solution = self.solution if self.increment is None else q_current + self.increment
+        return ControlIKResult(solution.copy(), solution - q_current)
 
 
 @pytest.fixture
@@ -158,17 +162,23 @@ def test_ik_runtime_error_is_a_bounded_hold(task: EEFTwistTask, fake_ik: FakeIK)
     assert hold.positions == [0.0, 0.0, 0.0]
 
 
-def test_integration_uses_current_fk_and_coordinator_dt(
+def test_integration_uses_last_command_and_coordinator_dt_when_feedback_lags(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
     assert task.on_ee_twist_command(_twist(1.0), t_now=1.0)
+    fake_ik.increment = np.array([0.01, 0.0, 0.0], dtype=np.float64)
 
     first = task.compute(_state(1.01, dt=0.01))
-    fake_ik.solution = np.array([0.51, 0.0, 0.0], dtype=np.float64)
-    second = task.compute(_state(1.04, positions=[0.5, 0.0, 0.0], dt=0.01))
+    second = task.compute(_state(1.02, dt=0.01))
 
     assert first is not None
     assert second is not None
+    assert first.positions == pytest.approx([0.01, 0.0, 0.0])
+    assert second.positions == pytest.approx([0.02, 0.0, 0.0])
+    np.testing.assert_allclose(
+        fake_ik.q_calls,
+        np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0]]),
+    )
     assert fake_ik.dt_calls == [0.02, 0.02]
     assert fake_ik.solve_calls[1].translation[0] > fake_ik.solve_calls[0].translation[0]
 
@@ -225,7 +235,7 @@ def test_joint_delta_rejection_returns_a_hold(task: EEFTwistTask, fake_ik: FakeI
     assert rejected.positions == [0.0, 0.0, 0.0]
 
 
-def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds(
+def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds_from_measured(
     task: EEFTwistTask, fake_ik: FakeIK
 ) -> None:
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
@@ -237,10 +247,29 @@ def test_timeout_and_zero_command_clear_then_next_nonzero_reseeds(
     fake_ik.solution = np.array([1.01, 0.0, 0.0], dtype=np.float64)
     assert task.on_ee_twist_command(_twist(), t_now=2.0)
     assert task.compute(_state(2.01, positions=[1.0, 0.0, 0.0])) is not None
+    np.testing.assert_allclose(fake_ik.q_calls[-1], [1.0, 0.0, 0.0])
     assert fake_ik.solve_calls[-1].translation[0] > 1.0
 
     assert task.on_ee_twist_command(_twist(0.0), t_now=2.02)
     assert not task.is_active()
+
+    fake_ik.solution = np.array([2.01, 0.0, 0.0], dtype=np.float64)
+    assert task.on_ee_twist_command(_twist(), t_now=3.0)
+    assert task.compute(_state(3.01, positions=[2.0, 0.0, 0.0])) is not None
+    np.testing.assert_allclose(fake_ik.q_calls[-1], [2.0, 0.0, 0.0])
+
+
+def test_preemption_discards_last_commanded_solve_seed(task: EEFTwistTask, fake_ik: FakeIK) -> None:
+    fake_ik.increment = np.array([0.01, 0.0, 0.0], dtype=np.float64)
+    assert task.on_ee_twist_command(_twist(), t_now=1.0)
+    assert task.compute(_state(1.01)) is not None
+
+    task.on_preempted("higher_priority", frozenset(["arm/joint1"]))
+    output = task.compute(_state(1.02, positions=[0.5, 0.0, 0.0]))
+
+    assert output is not None
+    assert output.positions == pytest.approx([0.51, 0.0, 0.0])
+    np.testing.assert_allclose(fake_ik.q_calls[-1], [0.5, 0.0, 0.0])
 
 
 @pytest.fixture
@@ -288,6 +317,9 @@ def test_commands_during_estop_are_rejected(gripper_task: EEFTwistTask) -> None:
     assert not gripper_task.on_gripper_command(Bool(data=True), 1.0)
 
     gripper_task.set_estop(False)
-    output = gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3]))
+    assert gripper_task.compute(_state(2.0, positions=[0.1, 0.2, 0.3])) is None
+
+    assert gripper_task.on_gripper_command(Bool(data=True), 2.1)
+    output = gripper_task.compute(_state(2.2, positions=[0.1, 0.2, 0.3]))
     assert output is not None
-    assert output.positions[-1] == 0.85
+    assert output.positions[-1] == 0.0

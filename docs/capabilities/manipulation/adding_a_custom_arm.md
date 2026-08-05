@@ -578,17 +578,23 @@ target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
-### 4d. Configure Cartesian and EEF-twist control IK
+### 4d. Configure Cartesian, EEF-twist, and teleop control IK
 
-Cartesian and EEF-twist tasks use the direct URDF or Xacro in
-`RobotModelConfig`. Set `package_paths` and `xacro_args` when needed, name the
-end-effector link, and map coordinator joints to model joints. The task validates
-the prepared model, frame, and joint mapping at startup.
+Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
+or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
+name the end-effector link, and map coordinator joints to model joints. The task
+validates the prepared model, frame, and joint mapping at startup. Teleop uses
+the named frame and does not accept a separate model path or numeric
+end-effector joint ID.
 
 Pass the same model configuration to the common helpers:
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, eef_twist_task
+from dimos.robot.manipulators.common.blueprints import (
+    cartesian_ik_task,
+    eef_twist_task,
+    teleop_ik_task,
+)
 
 cartesian_task = cartesian_ik_task(
     hardware,
@@ -598,12 +604,20 @@ twist_task = eef_twist_task(
     hardware,
     robot_model=robot_model,
 )
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
 ```
 
 Each tick starts from measured joints and applies model position and velocity
-limits. Twist targets are derived from measured forward kinematics. Invalid
-models or mappings fail at startup; invalid runtime output holds the measured
-position. Validate Cartesian and twist behavior in simulation or replay before
+limits. Twist targets are derived from measured forward kinematics. Teleop
+targets apply controller deltas to a measured engagement baseline and discard
+that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
+or mappings fail at startup; invalid runtime output holds the measured position.
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
 hardware use.
 
 ## Step 5: Register Blueprints

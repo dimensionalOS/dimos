@@ -13,10 +13,11 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pink import Configuration
-from pink.tasks import PostureTask
+from pink.tasks import DampingTask, FrameTask, PostureTask
 import pytest
 
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import CartesianIKTaskConfig
@@ -118,8 +119,16 @@ def test_pink_settings_use_finite_declarative_validation(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="finite"):
         PinkControlIKConfig(robot_model=robot, max_velocity=np.inf)
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        PinkControlIKConfig(robot_model=robot, damping_cost=-1e-3)
     with pytest.raises(ValueError, match="finite"):
         PinkControlIKConfig(robot_model=robot, qpsolver_options={"eps": np.nan})
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        PinkControlIKConfig(robot_model=robot, joint_centering_cost=-1e-3)
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        PinkControlIKConfig(robot_model=robot, position_limit_margin=-1e-3)
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        PinkControlIKConfig(robot_model=robot, seed_limit_tolerance=-1e-3)
     with pytest.raises(ValueError, match="ordered"):
         CartesianIKTaskConfig(
             joint_names=["joint1", "joint2"],
@@ -142,7 +151,7 @@ def test_pink_prepares_xacro_with_package_paths_and_arguments(
             "xacro_args": {"dof": "2"},
         }
     )
-    prepared: dict[str, object] = {}
+    prepared: dict[str, Any] = {}
 
     def prepare(
         path: Path,
@@ -192,6 +201,18 @@ def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> N
         )
 
 
+def test_pink_rejects_position_margin_that_eliminates_valid_range(tmp_path: Path) -> None:
+    model_path = _write_urdf(tmp_path)
+
+    with pytest.raises(ValueError, match="margin leaves no valid joint range"):
+        create_pink_control_ik(
+            PinkControlIKConfig(
+                robot_model=_robot(model_path),
+                position_limit_margin=2.0,
+            )
+        )
+
+
 def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -201,10 +222,10 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     )
     measured = np.array([0.3, 0.1])
     target = backend.forward_kinematics(measured)
-    calls: list[tuple[Configuration, list[object], float, dict[str, object]]] = []
+    calls: list[tuple[Configuration, list[Any], float, dict[str, Any]]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append((configuration, tasks, dt, kwargs))
         return np.zeros(configuration.model.nv)
@@ -223,7 +244,7 @@ def test_pink_reanchors_measured_state_and_runs_one_frame_task_step(
     assert kwargs["damping"] == 1e-4
     assert kwargs["eps"] == 1e-6
     assert isinstance(kwargs["limits"], list)
-    assert len(kwargs["limits"]) == 2
+    assert len(kwargs["limits"]) == 1
 
 
 def test_pink_solver_dependency_failure_is_translated_to_runtime_error(
@@ -231,9 +252,7 @@ def test_pink_solver_dependency_failure_is_translated_to_runtime_error(
 ) -> None:
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=_robot(_write_urdf(tmp_path))))
 
-    def solve(
-        configuration: object, tasks: list[object], dt: float, **kwargs: object
-    ) -> np.ndarray:
+    def solve(configuration: Any, tasks: list[Any], dt: float, **kwargs: Any) -> np.ndarray:
         raise RuntimeError("solver dependency failed")
 
     monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
@@ -252,7 +271,7 @@ def test_pink_receives_pre_bounded_dt_unchanged(
     calls: list[float] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(dt)
         return np.zeros(configuration.model.nv)
@@ -269,10 +288,10 @@ def test_pink_posture_task_can_be_disabled(tmp_path: Path, monkeypatch: pytest.M
     backend = create_pink_control_ik(
         PinkControlIKConfig(robot_model=_robot(model_path), posture_cost=0.0)
     )
-    calls: list[list[object]] = []
+    calls: list[list[Any]] = []
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         calls.append(tasks)
         return np.zeros(configuration.model.nv)
@@ -282,6 +301,72 @@ def test_pink_posture_task_can_be_disabled(tmp_path: Path, monkeypatch: pytest.M
     backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
     assert calls and len(calls[0]) == 1
+
+
+def test_pink_joint_centering_task_targets_position_limit_midpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = _write_urdf(tmp_path)
+    robot = _robot(model_path).model_copy(
+        update={
+            "joint_limits_lower": [-1.0, -0.25],
+            "joint_limits_upper": [0.5, 0.75],
+        }
+    )
+    backend = create_pink_control_ik(
+        PinkControlIKConfig(
+            robot_model=robot,
+            posture_cost=0.0,
+            joint_centering_cost=1e-3,
+        )
+    )
+    calls: list[list[Any]] = []
+
+    def solve(
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
+    ) -> np.ndarray:
+        calls.append(tasks)
+        return np.zeros(configuration.model.nv)
+
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
+    measured = np.array([0.1, 0.2])
+    backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+    assert isinstance(calls[0][0], FrameTask)
+    centering_task = calls[0][1]
+    assert isinstance(centering_task, PostureTask)
+    np.testing.assert_allclose(centering_task.target_q, [-0.25, 0.25])
+
+
+def test_pink_damping_task_replaces_posture_for_low_motion_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = _write_urdf(tmp_path)
+    backend = create_pink_control_ik(
+        PinkControlIKConfig(
+            robot_model=_robot(model_path),
+            posture_cost=0.0,
+            damping_cost=1e-3,
+        )
+    )
+    calls: list[list[Any]] = []
+
+    def solve(
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
+    ) -> np.ndarray:
+        calls.append(tasks)
+        return np.zeros(configuration.model.nv)
+
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
+    measured = np.array([0.3, 0.1])
+    backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+    assert len(calls) == 1
+    assert len(calls[0]) == 2
+    assert isinstance(calls[0][0], FrameTask)
+    assert isinstance(calls[0][1], DampingTask)
 
 
 def test_pink_rejects_uncontrolled_end_effector_chain_without_reference(
@@ -314,7 +399,7 @@ def test_continuous_joint_scalar_limits_fail_with_actionable_diagnostic(
     angle = np.array([3.0])
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         return np.zeros(configuration.model.nv)
 
@@ -329,7 +414,11 @@ def test_pink_applies_position_velocity_limits_and_finite_output(
 ) -> None:
     model_path = _write_urdf(tmp_path)
     robot = _robot(model_path).model_copy(
-        update={"joint_limits_lower": [-0.5, -0.25], "joint_limits_upper": [0.5, 0.25]}
+        update={
+            "joint_limits_lower": [-0.5, -0.25],
+            "joint_limits_upper": [0.5, 0.25],
+            "velocity_limits": [0.1, 1.0],
+        }
     )
     backend = create_pink_control_ik(
         PinkControlIKConfig(robot_model=robot, max_velocity=0.2),
@@ -337,7 +426,7 @@ def test_pink_applies_position_velocity_limits_and_finite_output(
     solver_inputs: dict[str, np.ndarray] = {}
 
     def solve(
-        configuration: Configuration, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
         solver_inputs["lower_position"] = configuration.model.lowerPositionLimit.copy()
         solver_inputs["velocity"] = configuration.model.velocityLimit.copy()
@@ -349,12 +438,37 @@ def test_pink_applies_position_velocity_limits_and_finite_output(
     )
 
     assert np.array_equal(solver_inputs["lower_position"][:2], np.array([-0.5, -0.25]))
-    assert np.all(solver_inputs["velocity"][:2] <= 0.2)
+    assert np.array_equal(solver_inputs["velocity"][:2], np.array([0.1, 0.2]))
     assert result.positions.shape == (2,)
     assert np.all(np.isfinite(result.positions))
 
 
-def test_pink_clamps_tiny_position_limit_overshoot(
+def test_pink_uniformly_scales_solver_velocity_before_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = _write_urdf(tmp_path)
+    robot = _robot(model_path).model_copy(update={"velocity_limits": [0.1, 1.0]})
+    backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot, max_velocity=0.2))
+    measured = np.array([0.3, 0.1])
+    calls: list[dict[str, Any]] = []
+
+    def solve(
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
+    ) -> np.ndarray:
+        calls.append(kwargs)
+        return np.array([1.0, 0.5])
+
+    monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
+
+    result = backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+    assert np.allclose(result.velocity, [0.1, 0.05])
+    assert np.allclose(result.positions, [0.301, 0.1005])
+    assert isinstance(calls[0]["limits"], list)
+    assert len(calls[0]["limits"]) == 1
+
+
+def test_pink_projects_seed_and_solution_to_inward_position_limit_margin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_path = _write_urdf(tmp_path)
@@ -362,21 +476,36 @@ def test_pink_clamps_tiny_position_limit_overshoot(
         update={"joint_limits_lower": [-1.22, -0.25], "joint_limits_upper": [1.22, 0.25]}
     )
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot))
-    measured = np.array([1.22, 0.1])
+    measured = np.array([1.221940718699932, 0.1])
+    solver_seed: list[np.ndarray] = []
 
     def solve(
-        configuration: object, tasks: list[object], dt: float, **kwargs: object
+        configuration: Configuration, tasks: list[Any], dt: float, **kwargs: Any
     ) -> np.ndarray:
-        return np.array([0.00013784674535, -0.2])
+        solver_seed.append(configuration.q.copy())
+        return np.array([0.5, -0.2])
 
     monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
     result = backend.solve(backend.forward_kinematics(measured), measured, 0.01)
 
-    assert np.array_equal(result.positions, np.array([1.22, 0.098]))
-    assert np.array_equal(result.velocity, np.array([0.00013784674535, -0.2]))
+    np.testing.assert_allclose(solver_seed, [[1.219, 0.1]])
+    np.testing.assert_allclose(result.positions, [1.219, 0.098])
+    np.testing.assert_allclose(result.velocity, [0.5, -0.2])
 
 
-def test_pink_rejects_material_position_limit_violation(
+def test_pink_rejects_seed_beyond_position_limit_tolerance(tmp_path: Path) -> None:
+    model_path = _write_urdf(tmp_path)
+    robot = _robot(model_path).model_copy(
+        update={"joint_limits_lower": [-1.22, -0.25], "joint_limits_upper": [1.22, 0.25]}
+    )
+    backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot))
+    measured = np.array([1.231, 0.1])
+
+    with pytest.raises(IKControlRuntimeError, match="solve seed.*joint1"):
+        backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+
+
+def test_pink_rejects_candidate_beyond_position_limit_tolerance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_path = _write_urdf(tmp_path)
@@ -384,16 +513,14 @@ def test_pink_rejects_material_position_limit_violation(
         update={"joint_limits_lower": [-1.22, -0.25], "joint_limits_upper": [1.22, 0.25]}
     )
     backend = create_pink_control_ik(PinkControlIKConfig(robot_model=robot))
-    measured = np.array([1.22, 0.1])
+    measured = np.array([1.2, 0.1])
 
-    def solve(
-        configuration: object, tasks: list[object], dt: float, **kwargs: object
-    ) -> np.ndarray:
-        return np.array([0.01, -0.2])
+    def solve(configuration: Any, tasks: list[Any], dt: float, **kwargs: Any) -> np.ndarray:
+        return np.array([10.0, 0.0])
 
     monkeypatch.setattr("dimos.control.tasks.cartesian_ik_task.pink_control_ik.solve_ik", solve)
-    with pytest.raises(IKControlRuntimeError, match="out-of-bounds"):
-        backend.solve(backend.forward_kinematics(measured), measured, 0.01)
+    with pytest.raises(IKControlRuntimeError, match="candidate.*joint1"):
+        backend.solve(backend.forward_kinematics(measured), measured, 0.05)
 
 
 @pytest.mark.parametrize("legacy_field", ["backend", "ee_joint_id", "self_collision_enabled"])

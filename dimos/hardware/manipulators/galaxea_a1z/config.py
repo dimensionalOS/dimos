@@ -35,7 +35,7 @@ def _validate_optional_path(
 
 @attrs.frozen(slots=False)
 class A1ZGripperConfig:
-    """G1Z gripper configuration."""
+    """A1Z gripper configuration."""
 
     max_torque: float = attrs.field(
         default=0.5,
@@ -71,6 +71,8 @@ class A1ZConfig:
             attrs.validators.le(1.0),
         ),
     )
+    default_kp: tuple[float, ...] = (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)
+    default_kd: tuple[float, ...] = (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)
     urdf_path: str | Path | None = attrs.field(
         default=None,
         validator=_validate_optional_path,

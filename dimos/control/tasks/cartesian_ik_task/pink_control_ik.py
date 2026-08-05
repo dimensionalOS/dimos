@@ -28,8 +28,8 @@ _PINK_INSTALL_ERROR = "Pink control tasks require the 'pink' dependency. Install
 
 try:
     from pink import Configuration, solve_ik
-    from pink.limits import ConfigurationLimit, VelocityLimit
-    from pink.tasks import FrameTask, PostureTask
+    from pink.limits import ConfigurationLimit
+    from pink.tasks import DampingTask, FrameTask, PostureTask
 except ModuleNotFoundError as exc:
     raise ModuleNotFoundError(
         f"{_PINK_INSTALL_ERROR} Missing module: {exc.name}",
@@ -39,9 +39,6 @@ except ModuleNotFoundError as exc:
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.protocol.service.spec import BaseConfig
-
-# Pink's integration/QP boundary tolerance is small but larger than machine epsilon.
-_POSITION_LIMIT_EPSILON_RAD = 1e-5
 
 
 class PinkControlIKConfig(BaseConfig):
@@ -55,6 +52,10 @@ class PinkControlIKConfig(BaseConfig):
     position_cost: FiniteFloat = Field(1.0, ge=0.0)
     orientation_cost: FiniteFloat = Field(1.0, ge=0.0)
     posture_cost: FiniteFloat = Field(1e-3, ge=0.0)
+    joint_centering_cost: FiniteFloat = Field(0.0, ge=0.0)
+    damping_cost: FiniteFloat = Field(0.0, ge=0.0)
+    position_limit_margin: FiniteFloat = Field(1e-3, ge=0.0)
+    seed_limit_tolerance: FiniteFloat = Field(1e-2, ge=0.0)
     reference_q: list[float] | None = None
     qpsolver_options: dict[str, FiniteFloat] = Field(default_factory=dict)
 
@@ -89,8 +90,11 @@ class _PinkRuntime:
     configuration: Configuration
     frame_task: FrameTask
     posture_task: PostureTask | None
+    joint_centering_task: PostureTask | None
+    damping_task: DampingTask | None
     tasks: list[object]
     limits: list[object]
+    velocity_limits: NDArray[np.float64]
 
 
 class _PinkControlIKBuilder:
@@ -150,9 +154,29 @@ class _PinkControlIKBuilder:
             gain=config.task_gain,
         )
         posture_task = PostureTask(cost=config.posture_cost) if config.posture_cost > 0.0 else None
+        joint_centering_task = (
+            PostureTask(cost=config.joint_centering_cost)
+            if config.joint_centering_cost > 0.0
+            else None
+        )
+        if joint_centering_task is not None:
+            joint_centering_task.set_target(self._build_joint_center_q(model, mapping, reference_q))
+        damping_task = DampingTask(cost=config.damping_cost) if config.damping_cost > 0.0 else None
         tasks: list[object] = [frame_task]
         if posture_task is not None:
             tasks.append(posture_task)
+        if joint_centering_task is not None:
+            tasks.append(joint_centering_task)
+        if damping_task is not None:
+            tasks.append(damping_task)
+
+        velocity_limits = np.asarray(model.velocityLimit, dtype=np.float64).copy()
+        if (
+            velocity_limits.size != model.nv
+            or not np.all(np.isfinite(velocity_limits))
+            or np.any(velocity_limits <= 0.0)
+        ):
+            raise ValueError("effective Pink velocity limits are invalid")
 
         return _PinkRuntime(
             config=config,
@@ -164,8 +188,11 @@ class _PinkControlIKBuilder:
             configuration=configuration,
             frame_task=frame_task,
             posture_task=posture_task,
+            joint_centering_task=joint_centering_task,
+            damping_task=damping_task,
             tasks=tasks,
             limits=limits,
+            velocity_limits=velocity_limits,
         )
 
     @staticmethod
@@ -256,6 +283,22 @@ class _PinkControlIKBuilder:
         return False
 
     @staticmethod
+    def _build_joint_center_q(
+        model: pinocchio.Model,
+        mapping: _CoordinateMapping,
+        reference_q: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        center_q = reference_q.copy()
+        for q_index, width in zip(mapping.q_indices, mapping.q_widths, strict=True):
+            if width != 1:
+                continue
+            lower = model.lowerPositionLimit[q_index]
+            upper = model.upperPositionLimit[q_index]
+            if np.isfinite(lower) and np.isfinite(upper):
+                center_q[q_index] = (lower + upper) / 2.0
+        return center_q
+
+    @staticmethod
     def _validate_frame(model: pinocchio.Model, frame_name: str) -> int:
         if not model.existFrame(frame_name):
             raise ValueError(f"unknown control end-effector frame: {frame_name}")
@@ -302,7 +345,18 @@ class _PinkControlIKBuilder:
                 model.velocityLimit[index] = limit
         for index in mapping.v_indices:
             model.velocityLimit[index] = min(model.velocityLimit[index], self._config.max_velocity)
-        return [ConfigurationLimit(model), VelocityLimit(model)]
+        margin = self._config.position_limit_margin
+        for q_index, width in zip(mapping.q_indices, mapping.q_widths, strict=True):
+            if width != 1:
+                continue
+            lower = model.lowerPositionLimit[q_index]
+            upper = model.upperPositionLimit[q_index]
+            if np.isfinite(lower) and np.isfinite(upper) and upper - lower <= 2.0 * margin:
+                raise ValueError("position limit margin leaves no valid joint range")
+        # Keep position bounds in the QP, but apply velocity limits by uniformly
+        # scaling the solution. Tiny per-tick velocity boxes can make ProxQP
+        # misclassify feasible differential IK problems as primal-infeasible.
+        return [ConfigurationLimit(model)]
 
 
 class PinkControlIK:
@@ -339,7 +393,8 @@ class PinkControlIK:
         configuration = runtime.configuration
         frame_task = runtime.frame_task
         try:
-            configuration.update(self._full_q(measured))
+            solve_seed = self._project_position_limits(measured, "solve seed")
+            configuration.update(self._full_q(solve_seed))
             frame_task.set_target(target)
             if runtime.posture_task is not None:
                 runtime.posture_task.set_target(configuration.q.copy())
@@ -355,11 +410,12 @@ class PinkControlIK:
             velocity = np.asarray(velocity, dtype=np.float64).reshape(-1)
             if velocity.size != runtime.model.nv or not np.all(np.isfinite(velocity)):
                 raise IKControlRuntimeError("Pink produced an invalid velocity")
+            velocity = self._scale_velocity(velocity)
             configuration.integrate_inplace(velocity, dt)
-            candidate = self._project_controlled_positions(configuration.q, measured)
-            if candidate.size != measured.size or not np.all(np.isfinite(candidate)):
+            candidate = self._project_controlled_positions(configuration.q, solve_seed)
+            if candidate.size != solve_seed.size or not np.all(np.isfinite(candidate)):
                 raise IKControlRuntimeError("Pink produced an invalid joint candidate")
-            candidate = self._clamp_position_limits(candidate)
+            candidate = self._project_position_limits(candidate, "candidate")
             return ControlIKResult(candidate, self._controlled_velocity(velocity))
         except IKControlRuntimeError:
             raise
@@ -405,10 +461,30 @@ class PinkControlIK:
             [velocity[index] for index in self._runtime.mapping.v_indices], dtype=np.float64
         )
 
-    def _clamp_position_limits(self, candidate: NDArray[np.float64]) -> NDArray[np.float64]:
+    def _scale_velocity(self, velocity: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Uniformly scale a Pink solution to preserve its joint-space direction."""
+        max_ratio = float(np.max(np.abs(velocity) / self._runtime.velocity_limits))
+        if max_ratio <= 1.0:
+            return velocity
+        return velocity / max_ratio
+
+    def _project_position_limits(
+        self,
+        positions: NDArray[np.float64],
+        source: str,
+    ) -> NDArray[np.float64]:
+        """Clamp small boundary drift but reject materially out-of-limit states.
+
+        Pink requires a valid configuration before it can solve. Floating-point
+        and one-tick integration drift within ``seed_limit_tolerance`` is
+        projected back inside the configured margin; larger violations remain
+        visible as runtime failures so model or feedback problems are not hidden.
+        """
         runtime = self._runtime
         mapping = runtime.mapping
-        bounded = candidate.copy()
+        bounded = positions.copy()
+        margin = runtime.config.position_limit_margin
+        tolerance = runtime.config.seed_limit_tolerance
         for index, width in enumerate(mapping.q_widths):
             if width != 1:
                 continue
@@ -416,16 +492,20 @@ class PinkControlIK:
             lower = runtime.model.lowerPositionLimit[q_index]
             upper = runtime.model.upperPositionLimit[q_index]
             value = bounded[index]
-            if value < lower:
-                if lower - value <= _POSITION_LIMIT_EPSILON_RAD:
-                    bounded[index] = lower
-                else:
-                    raise IKControlRuntimeError("Pink produced an out-of-bounds joint candidate")
-            elif value > upper:
-                if value - upper <= _POSITION_LIMIT_EPSILON_RAD:
-                    bounded[index] = upper
-                else:
-                    raise IKControlRuntimeError("Pink produced an out-of-bounds joint candidate")
+            joint_name = mapping.joint_names[index]
+            if np.isfinite(lower) and value < lower - tolerance:
+                raise IKControlRuntimeError(
+                    f"Pink {source} for {joint_name} violates lower position limit: "
+                    f"{value} < {lower}"
+                )
+            if np.isfinite(upper) and value > upper + tolerance:
+                raise IKControlRuntimeError(
+                    f"Pink {source} for {joint_name} violates upper position limit: "
+                    f"{value} > {upper}"
+                )
+            safe_lower = lower + margin if np.isfinite(lower) else -np.inf
+            safe_upper = upper - margin if np.isfinite(upper) else np.inf
+            bounded[index] = np.clip(value, safe_lower, safe_upper)
         return bounded
 
 
