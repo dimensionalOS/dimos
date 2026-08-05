@@ -1705,6 +1705,7 @@ class ManipulationModule(Module):
                         self._state = ManipulationState.FAULT
                         self._error_message = result.message
         return bool(result and result.accepted)
+
     @rpc
     def execute_and_wait(self, timeout: float = 60.0) -> bool:
         """Execute the stored plan and wait for its expected trajectory duration."""
@@ -1913,6 +1914,7 @@ class ManipulationModule(Module):
             return False
         time.sleep(wait_time)
         return True
+
     def _safety_lift_pose(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
     ) -> Pose | None:

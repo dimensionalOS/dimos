@@ -433,7 +433,7 @@ class PickNPlaceModule(Module):
         if height <= 0.0:
             return SkillResult.fail(
                 "PERCEPTION_FAILED", "Box rim is not above the estimated tabletop"
-        )
+            )
         center = Vector3(obj.center.x, obj.center.y, self._tabletop_z + height / 2.0)
         orientation = self._upright_orientation(obj)
 
@@ -595,7 +595,9 @@ class PickNPlaceModule(Module):
         time.sleep(self.config.grasp_feedback_delay)
         gripper_position = self._pick_execution.get_gripper(robot_name)
         if gripper_position is None:
-            return SkillResult.fail("GRIPPER_FAILED", "Cannot verify pickup: gripper feedback unavailable")
+            return SkillResult.fail(
+                "GRIPPER_FAILED", "Cannot verify pickup: gripper feedback unavailable"
+            )
         if gripper_position <= self.config.grasp_empty_closed_threshold:
             self._pick_execution.open_gripper(robot_name)
             recovery = move(pre_grasp)
@@ -615,7 +617,9 @@ class PickNPlaceModule(Module):
             return retreat
         selected_object = self._selected_object
         if selected_object is None:
-            return SkillResult.fail("INVALID_STATE", "Selected object details are unavailable after grasp")
+            return SkillResult.fail(
+                "INVALID_STATE", "Selected object details are unavailable after grasp"
+            )
         self._held_object_size = Vector3(selected_object.size)
         return SkillResult.ok(
             "Pick complete: grasp verified and object retreated from the table",
@@ -634,16 +638,20 @@ class PickNPlaceModule(Module):
         box = self._open_box
         held_size = self._held_object_size
         if box is None:
-            return SkillResult.fail("INVALID_STATE", "Measure the destination with install_open_box first")
+            return SkillResult.fail(
+                "INVALID_STATE", "Measure the destination with install_open_box first"
+            )
         if held_size is None:
-            return SkillResult.fail("INVALID_STATE", "No verified held object is available to place")
+            return SkillResult.fail(
+                "INVALID_STATE", "No verified held object is available to place"
+            )
         if held_size.x > box["opening_width"] or held_size.y > box["opening_depth"]:
-            return SkillResult.fail("INVALID_INPUT", "Held object does not fit inside the measured box opening")
+            return SkillResult.fail(
+                "INVALID_INPUT", "Held object does not fit inside the measured box opening"
+            )
 
         def move(x: float, y: float, z: float) -> SkillResult:
-            return self._pick_execution.move_to_pose(
-                x, y, z, robot_name=robot_name
-            )
+            return self._pick_execution.move_to_pose(x, y, z, robot_name=robot_name)
 
         # The held object's bottom remains above the rim throughout lateral travel.
         drop_z = box["rim_z"] + held_size.z / 2.0 + 0.02

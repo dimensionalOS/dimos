@@ -269,6 +269,7 @@ class TestAgentMotionRecovery:
         assert "FAULT" in result.message
         assert "reset" in result.message
 
+
 class TestObstacleUpdates:
     def test_complete_update_forwards_new_obstacle_value(self, module_factory) -> None:
         module = module_factory()

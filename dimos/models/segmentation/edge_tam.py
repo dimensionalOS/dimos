@@ -100,7 +100,9 @@ class EdgeTAMImageSegmenter:
 
         self._predictor = SAM2ImagePredictor(_build_model())
 
-    def segment(self, detections: ImageDetections2D[Detection2DBBox]) -> ImageDetections2D[Detection2DSeg]:
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]:
         """Return masks that preserve each input detection's metadata."""
         import cv2
 
@@ -109,7 +111,9 @@ class EdgeTAMImageSegmenter:
 
         image = detections.image
         rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
-        boxes = np.asarray([detection.bbox for detection in detections.detections], dtype=np.float32)
+        boxes = np.asarray(
+            [detection.bbox for detection in detections.detections], dtype=np.float32
+        )
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             self._predictor.set_image(rgb)
             masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)

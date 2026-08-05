@@ -167,7 +167,9 @@ def test_cancelled_turn_closes_unresolved_tool_calls(mcp_client: McpClient) -> N
     mcp_client._history = [
         AIMessage(
             content="",
-            tool_calls=[{"name": "move_to_pose", "args": {}, "id": "call-pending", "type": "tool_call"}],
+            tool_calls=[
+                {"name": "move_to_pose", "args": {}, "id": "call-pending", "type": "tool_call"}
+            ],
         ),
         AIMessage(
             content="",
