@@ -194,6 +194,7 @@ class Config(ModuleConfig):
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
+    tf_axis_length: float = 0.15
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str | None = None
     memory_limit: str = "25%"
@@ -356,6 +357,11 @@ class RerunBridgeModule(Module):
                     del self._tf_paths[frame]
 
         self._tf_paths[frame_id] = path
+        if self.config.tf_axis_length > 0:
+            # A Transform3D draws nothing on its own, so a tf-only recording would leave the
+            # 3D view empty. Axes are logged once per path rather than per transform to keep
+            # the volume down, and not `static=True` so a re-anchor's Clear removes them.
+            rr.log(path, rr.TransformAxes3D(axis_length=self.config.tf_axis_length))
         return path
 
     def _log_tf(self, msg: TFMessage) -> None:
