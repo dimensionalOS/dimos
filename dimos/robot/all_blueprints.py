@@ -151,6 +151,8 @@ all_blueprints = {
     "unitree-go2-webrtc-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_keyboard_teleop:unitree_go2_webrtc_keyboard_teleop",
     "unitree-go2-webrtc-rage-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_rage_keyboard_teleop:unitree_go2_webrtc_rage_keyboard_teleop",
     "unity-sim": "dimos.simulation.unity.blueprint:unity_sim",
+    "xarm-graspgenx": "dimos.robot.manipulators.xarm.blueprints.graspgenx:xarm_graspgenx",
+    "xarm-graspgenx-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_graspgenx_agent",
     "xarm-perception": "dimos.robot.manipulators.xarm.blueprints.perception:xarm_perception",
     "xarm-perception-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_agent",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
