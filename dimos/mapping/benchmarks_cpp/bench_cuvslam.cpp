@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -101,6 +102,7 @@ int main(int argc, char** argv) {
     bool debug_imu = false;
     std::string dump_dir;
     bool state_debug = false;
+    bool use_slam = false;
     int verbosity = 0;
     // Kalibr T_cam0_imu as-is. An earlier 180 deg X flip was wrong: with fusion
     // actually running it diverges (velocity ~99 m/s, gravity -Y), while this gives
@@ -124,6 +126,8 @@ int main(int argc, char** argv) {
                         &imu_quat[3]);
         } else if (std::strcmp(argv[arg], "--verbosity") == 0 && arg + 1 < argc) {
             verbosity = std::atoi(argv[++arg]);
+        } else if (std::strcmp(argv[arg], "--slam") == 0) {
+            use_slam = true;
         } else if (std::strcmp(argv[arg], "--state-debug") == 0) {
             state_debug = true;
         } else if (std::strcmp(argv[arg], "--debug-imu") == 0) {
@@ -229,7 +233,7 @@ int main(int argc, char** argv) {
         config.async_sba = false;
     }
     config.debug_imu_mode = debug_imu;
-    if (state_debug) {
+    if (state_debug || use_slam) {
         config.enable_observations_export = true;
         config.enable_landmarks_export = true;
     }
@@ -238,6 +242,17 @@ int main(int argc, char** argv) {
     }
 
     cuvslam::Odometry tracker(rig, config);
+
+    // Loop closure and pose-graph optimisation live in Slam, not Odometry. Without it
+    // every cuVSLAM number here is open-loop odometry and is not comparable with
+    // ORB-SLAM3 or an offline RTAB-Map pose graph.
+    std::unique_ptr<cuvslam::Slam> slam;
+    if (use_slam) {
+        cuvslam::Slam::Config slam_config = cuvslam::Slam::GetDefaultConfig();
+        slam_config.max_map_size = 0;  // unlimited pose graph, offline quality
+        slam_config.enable_reading_internals = true;
+        slam = std::make_unique<cuvslam::Slam>(rig, std::vector<std::uint8_t>{0}, slam_config);
+    }
 
     // Nanoseconds as an integer: a unix timestamp in seconds needs more
     // significant digits than a default-formatted double carries.
@@ -337,6 +352,17 @@ int main(int argc, char** argv) {
         worst_ms = std::max(worst_ms, elapsed_ms);
 
         const bool ok = estimate.world_from_rig.has_value();
+        if (slam && ok) {
+            cuvslam::Odometry::State state;
+            tracker.GetState(state);
+            try {
+                slam->Track(state);
+            } catch (const std::exception& error) {
+                std::printf("\nSlam::Track threw at frame %zu: %s\n", i, error.what());
+                std::fflush(stdout);
+                break;
+            }
+        }
         if (use_imu && (i % 500 == 0 || i + 1 == frames.size())) {
             const auto gravity = tracker.GetLastGravity();
             const auto imu_state = tracker.GetImuState();
@@ -395,5 +421,21 @@ int main(int argc, char** argv) {
         tracked, frames.size(), skipped_stamps,
         total_ms / static_cast<double>(frames.size()), worst_ms,
         1000.0 * static_cast<double>(frames.size()) / total_ms, wall_s, span_s, wall_s / span_s);
+
+    if (slam) {
+        std::vector<cuvslam::PoseStamped> slam_poses;
+        slam->GetAllSlamPoses(slam_poses);
+        std::vector<cuvslam::PoseStamped> closures;
+        slam->GetLoopClosurePoses(closures);
+        std::ofstream corrected(dir + "/standalone_slam_trajectory.tum");
+        for (const cuvslam::PoseStamped& stamped : slam_poses) {
+            corrected << stamped.timestamp_ns << ' ' << stamped.pose.translation[0] << ' '
+                      << stamped.pose.translation[1] << ' ' << stamped.pose.translation[2] << ' '
+                      << stamped.pose.rotation[0] << ' ' << stamped.pose.rotation[1] << ' '
+                      << stamped.pose.rotation[2] << ' ' << stamped.pose.rotation[3] << '\n';
+        }
+        std::printf("slam: %zu pose-graph poses, %zu loop closures\n", slam_poses.size(),
+                    closures.size());
+    }
     return 0;
 }

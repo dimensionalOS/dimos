@@ -14,7 +14,7 @@
 
 """Score a standalone-harness TUM trajectory against the Point-LIO reference.
 
-    python -m dimos.mapping.cuvslam_native.score_traj <recording> <traj.tum> [...]
+    python -m dimos.mapping.cuvslam_score_traj <recording> <traj.tum> [...]
 
 cuVSLAM silently restarts its world frame rather than reporting tracking loss, so a
 raw trajectory contains teleports. Those are rebased here before scoring -- otherwise

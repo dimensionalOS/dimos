@@ -55,7 +55,7 @@ COLOURS = {
     "nerf_vo": "#e06be0",
 }
 LABELS = {
-    "pointlio": "Point-LIO (reference)",
+    "pointlio": "⏫ 📺 Point-LIO (ref)",
     "cuvslam": "cuVSLAM (live odometry)",
     "cuvslam_corrected": "cuVSLAM (pose-graph corrected, retroactive)",
     "rtabmap": "RTAB-Map",

@@ -65,6 +65,11 @@ IMU_NOISE_ACC = 1.862e-3
 IMU_GYRO_WALK = 1.9e-5
 IMU_ACC_WALK = 3.0e-3
 IMU_RATE_HZ = 400.0
+# Gyro magnitude below which the rig is taken to be stationary. Measured noise floor at
+# rest on this unit is ~0.007 rad/s, so this is a comfortable margin.
+STILL_GYRO_RAD_S = 0.02
+# Refuse to trust a "stationary" window shorter than this.
+MIN_STILL_SECONDS = 0.5
 # 40 (the D435i default) leaves nearly every outdoor point classified as far, which
 # drives the pose to NaN and aborts inside Sophus on the outdoor sequence. 60 with a
 # larger feature budget tracks all six recordings under one setting.
@@ -136,7 +141,53 @@ def stage_euroc(db_path: Path, out_dir: Path) -> dict[str, object]:
     }
 
 
-def write_settings(path: Path, manifest: dict[str, object]) -> None:
+def measure_gravity_at_rest(db_path: Path) -> tuple[list[float], float] | None:
+    """Gravity in the IMU body frame, from the stationary period every recording starts with.
+
+    ORB-SLAM3 otherwise estimates gravity from accumulated preintegrated velocity, which is
+    only weakly constrained in pitch under smooth motion -- it lands in the mirrored
+    minimum roughly 39 degrees away, and the sign flips between re-initialisations. At rest
+    the accelerometer measures specific force, which is -gravity, directly and
+    unambiguously.
+    """
+    replay = Replay(store=SqliteStore(path=str(db_path)))
+    stamps, accel, gyro = [], [], []
+    for _ts, sample in replay.stream("realsense_imu").iterate_ts():
+        stamps.append(sample.ts)
+        accel.append(
+            [
+                sample.linear_acceleration.x,
+                sample.linear_acceleration.y,
+                sample.linear_acceleration.z,
+            ]
+        )
+        gyro.append(
+            [sample.angular_velocity.x, sample.angular_velocity.y, sample.angular_velocity.z]
+        )
+    stamps = np.asarray(stamps)
+    accel = np.asarray(accel)
+    rotation_rate = np.linalg.norm(np.asarray(gyro), axis=1)
+
+    count = 0
+    while count < len(rotation_rate) and rotation_rate[count] < STILL_GYRO_RAD_S:
+        count += 1
+    if count < 2 or stamps[count - 1] - stamps[0] < MIN_STILL_SECONDS:
+        return None
+
+    specific_force = accel[:count].mean(axis=0)
+    gravity = -specific_force
+    return [float(v) for v in gravity], float(stamps[count - 1] - stamps[0])
+
+
+def write_settings(
+    path: Path, manifest: dict[str, object], gravity: list[float] | None = None
+) -> None:
+    gravity_block = ""
+    if gravity is not None:
+        gravity_block = (
+            "\nIMU.InitialGravity: !!opencv-matrix\n   rows: 3\n   cols: 1\n   dt: f\n"
+            f"   data: [{gravity[0]:.6f}, {gravity[1]:.6f}, {gravity[2]:.6f}]\n"
+        )
     # ORB-SLAM3's IMU.T_b_c1 is the camera pose in the IMU (body) frame, the inverse of
     # what Kalibr reports.
     t_body_cam = np.linalg.inv(KALIBR_T_CAM_IMU)
@@ -169,6 +220,7 @@ IMU.NoiseAcc: {IMU_NOISE_ACC}
 IMU.GyroWalk: {IMU_GYRO_WALK}
 IMU.AccWalk: {IMU_ACC_WALK}
 IMU.Frequency: {IMU_RATE_HZ}
+{gravity_block}
 
 ORBextractor.nFeatures: {ORB_FEATURES}
 ORBextractor.scaleFactor: 1.2
@@ -255,6 +307,11 @@ def main() -> int:
     parser.add_argument("--modes", default="stereo,stereo_inertial")
     parser.add_argument("--stage-root", type=Path, default=Path("/tmp/orb_stage"))
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument(
+        "--no-static-gravity",
+        action="store_true",
+        help="use ORB-SLAM3's motion-based gravity estimate instead",
+    )
     args = parser.parse_args()
 
     recording = args.recording
@@ -279,7 +336,22 @@ def main() -> int:
     )
 
     settings = stage / "orbslam3.yaml"
-    write_settings(settings, manifest)
+    gravity = None
+    if not args.no_static_gravity:
+        measured = measure_gravity_at_rest(db_path)
+        if measured is None:
+            logger.warning(
+                "%s: no usable stationary period, falling back to motion-based gravity", recording
+            )
+        else:
+            gravity, still_seconds = measured
+            logger.info(
+                "%s: gravity at rest %s from %.1f s stationary",
+                recording,
+                [round(v, 3) for v in gravity],
+                still_seconds,
+            )
+    write_settings(settings, manifest, gravity)
 
     results = []
     for mode in args.modes.split(","):

@@ -200,19 +200,12 @@ def record(recording_dir: Path, method: str, result: dict[str, Any], duration: f
     stats_path.write_text(json.dumps(stats, indent=2) + "\n")
 
 
-METHODS = {
-    # cuVSLAM replays as fast as it can, so wall clock over recording duration is
-    # its throughput headroom rather than a simulated live run.
-    "cuvslam": lambda db, out: [
-        str(Path.home() / "repos/dimos4/.venv/bin/python"),
-        "-m",
-        "dimos.mapping.cuvslam_native.demo_cuvslam_replay",
-        "--db",
-        str(db),
-        "--out",
-        str(out),
-    ],
-}
+# The cuVSLAM entry pointed at demo_cuvslam_replay, which drove the tracker through the
+# dimos module and froze partway through every recording -- so what it timed was the
+# transport, not cuVSLAM. Timing now comes from the standalone harness instead:
+#     python -m dimos.mapping.cuvslam_replay_export <db> <dir>
+#     bench_cuvslam <dir>            # prints track ms and real-time factor
+METHODS: dict[str, object] = {}
 
 
 def main() -> int:

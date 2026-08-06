@@ -27,6 +27,7 @@
 #include "nav_msgs/Odometry.hpp"
 #include "sensor_msgs/CameraInfo.hpp"
 #include "sensor_msgs/Image.hpp"
+#include "sensor_msgs/Imu.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
 
@@ -190,8 +191,18 @@ struct CuvslamConfig {
     int slam_max_map_size;
     /// Floor on the interval between loop closures, milliseconds.
     int slam_throttling_ms;
-    /// Largest map->odom the pose graph is allowed to ask for, metres.
-    double max_correction_m;
+    /// Fuse the IMU. NVIDIA's mode table calls Inertial "stereo VIO, adds
+    /// robustness to brief visual failures", which is exactly what a world-frame
+    /// restart is: vision briefly had nothing to hold on to.
+    bool enable_imu;
+    /// rig_from_imu, rig being the left camera. Kalibr's T_cam0_imu.
+    double imu_tx, imu_ty, imu_tz;
+    double imu_qx, imu_qy, imu_qz, imu_qw;
+    double gyro_noise_density;
+    double gyro_random_walk;
+    double accel_noise_density;
+    double accel_random_walk;
+    double imu_frequency;
     /// Mask the lidar's dots out of the IR frames before tracking on them.
     bool mask_speckle;
     /// How far above its local median a pixel must sit to count as a lidar dot.
@@ -216,7 +227,7 @@ public:
         slam_sync_mode_ = cfg.slam_sync_mode;
         slam_max_map_size_ = cfg.slam_max_map_size;
         slam_throttling_ms_ = cfg.slam_throttling_ms;
-        max_correction_m_ = cfg.max_correction_m;
+        cfg_imu_ = cfg;
         mask_speckle_ = cfg.mask_speckle;
         speckle_threshold_ = cfg.speckle_threshold;
         speckle_grow_ = cfg.speckle_grow;
@@ -229,6 +240,9 @@ public:
                                                this);
         builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
         builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
+        if (cfg.enable_imu) {
+            builder.input<sensor_msgs::Imu>("imu", &CuvslamOdometry::on_imu, this);
+        }
 
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         landmarks_ = builder.output<sensor_msgs::PointCloud2>("landmarks");
@@ -242,8 +256,7 @@ public:
                        logging::Field("tracked", static_cast<std::int64_t>(tracked_)),
                        logging::Field("resets", static_cast<std::int64_t>(segment_id_)),
                        logging::Field("loop_closures", static_cast<std::int64_t>(loop_closures_)),
-                       logging::Field("rejected_corrections",
-                                      static_cast<std::int64_t>(rejected_corrections_))});
+                       logging::Field("imu_samples", static_cast<std::int64_t>(imu_samples_))});
     }
 
 private:
@@ -258,6 +271,23 @@ private:
         cx_ = info.K[2];
         cy_ = info.K[5];
         have_info_ = true;
+    }
+
+    /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
+    void on_imu(const sensor_msgs::Imu& msg) {
+        if (!tracker_) {
+            return;  // the rig, and so the tracker, does not exist yet
+        }
+        cuvslam::ImuMeasurement m{};
+        m.timestamp_ns = stamp_to_ns(msg.header);
+        m.linear_accelerations = {static_cast<float>(msg.linear_acceleration.x),
+                                  static_cast<float>(msg.linear_acceleration.y),
+                                  static_cast<float>(msg.linear_acceleration.z)};
+        m.angular_velocities = {static_cast<float>(msg.angular_velocity.x),
+                                static_cast<float>(msg.angular_velocity.y),
+                                static_cast<float>(msg.angular_velocity.z)};
+        tracker_->RegisterImuMeasurement(0, m);
+        ++imu_samples_;
     }
 
     void on_left(const sensor_msgs::Image& img) {
@@ -290,9 +320,25 @@ private:
 
         cuvslam::Rig rig;
         rig.cameras = {left, right};
+        if (cfg_imu_.enable_imu) {
+            cuvslam::ImuCalibration imu{};
+            imu.rig_from_imu.translation = {static_cast<float>(cfg_imu_.imu_tx),
+                                            static_cast<float>(cfg_imu_.imu_ty),
+                                            static_cast<float>(cfg_imu_.imu_tz)};
+            imu.rig_from_imu.rotation = {
+                static_cast<float>(cfg_imu_.imu_qx), static_cast<float>(cfg_imu_.imu_qy),
+                static_cast<float>(cfg_imu_.imu_qz), static_cast<float>(cfg_imu_.imu_qw)};
+            imu.gyroscope_noise_density = static_cast<float>(cfg_imu_.gyro_noise_density);
+            imu.gyroscope_random_walk = static_cast<float>(cfg_imu_.gyro_random_walk);
+            imu.accelerometer_noise_density = static_cast<float>(cfg_imu_.accel_noise_density);
+            imu.accelerometer_random_walk = static_cast<float>(cfg_imu_.accel_random_walk);
+            imu.frequency = static_cast<float>(cfg_imu_.imu_frequency);
+            rig.imus = {imu};
+        }
 
         cuvslam::Odometry::Config cfg = cuvslam::Odometry::GetDefaultConfig();
-        cfg.odometry_mode = cuvslam::Odometry::OdometryMode::Multicamera;
+        cfg.odometry_mode = cfg_imu_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
+                                               : cuvslam::Odometry::OdometryMode::Multicamera;
         cfg.rectified_stereo_camera = rectified_;
         cfg.enable_landmarks_export = publish_landmarks_ || enable_slam_;
         // Slam reads the tracker's State, which GetState() only fills when the
@@ -437,24 +483,13 @@ private:
         // Slam finishes the frame before Track() returns. See slam_sync_mode.
         const Transform map_from_rig = to_transform(slam_->GetPose());
 
-        // map->odom is a correction, not a teleport. A loop closure in a building
-        // moves the robot by a room at most; anything larger is the pose graph
-        // diverging, and letting it through would throw the robot across the map.
+        // No magnitude guard here. When the odometry restarts its world frame the
+        // module rebases to keep odom continuous, and that offset has to land
+        // somewhere: map->odom is exactly where it belongs. A correction of
+        // several metres after a handful of restarts is the right answer, not
+        // divergence -- an earlier absolute cap threw away 6161 good corrections
+        // on one run and made cuVSLAM look like it had stopped.
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
-        double correction_m = 0.0;
-        for (int axis = 0; axis < 3; ++axis) {
-            correction_m += map_from_odom_raw.translation[axis] * map_from_odom_raw.translation[axis];
-        }
-        correction_m = std::sqrt(correction_m);
-        if (correction_m > max_correction_m_) {
-            ++rejected_corrections_;
-            if (rejected_corrections_ == 1) {
-                logging::warn("cuvslam slam correction rejected, pose graph is diverging",
-                              {logging::Field("correction_m", correction_m),
-                               logging::Field("limit_m", max_correction_m_)});
-            }
-            return;
-        }
 
         nav_msgs::Odometry corrected{};
         fill_pose(corrected, map_from_rig, timestamp_ns, map_frame_, base_frame_);
@@ -560,8 +595,8 @@ private:
     bool slam_sync_mode_{false};
     int slam_max_map_size_{300};
     int slam_throttling_ms_{0};
-    double max_correction_m_{5.0};
-    std::uint64_t rejected_corrections_{0};
+    CuvslamConfig cfg_imu_{};
+    std::uint64_t imu_samples_{0};
     bool mask_speckle_{true};
     int speckle_threshold_{6};
     int speckle_grow_{2};

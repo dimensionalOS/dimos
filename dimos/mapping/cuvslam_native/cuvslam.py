@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
@@ -114,9 +115,23 @@ class CuvslamConfig(NativeModuleConfig):
     slam_sync_mode: bool = True
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
-    # A loop closure in a building moves the robot by a room at most; a bigger
-    # map->odom is the pose graph diverging and is dropped rather than published.
-    max_correction_m: float = 5.0
+    # Inertial mode. NVIDIA's mode table: "1 stereo pair + 1 IMU ... adds
+    # robustness to brief visual failures", which is what a world-frame restart
+    # is. Extrinsic is Kalibr's T_cam0_imu from calib_d455_imucam.yaml; the rig
+    # frame is the left camera, so that transform is rig_from_imu directly.
+    enable_imu: bool = True
+    imu_tx: float = 0.030829037
+    imu_ty: float = -0.004349224
+    imu_tz: float = -0.015419659
+    imu_qx: float = 0.00119659
+    imu_qy: float = -0.003184443
+    imu_qz: float = -0.003371026
+    imu_qw: float = 0.999988532
+    gyro_noise_density: float = 6.07e-3
+    gyro_random_walk: float = 3.6e-5
+    accel_noise_density: float = 3.36e-2
+    accel_random_walk: float = 9.8e-4
+    imu_frequency: float = 400.0
 
     # Off because masking the Mid-360's dots measurably *hurts*: over three full
     # airbnb runs each way it left ATE unchanged inside the run-to-run spread and
@@ -160,6 +175,7 @@ class CuvslamOdometry(NativeModule):
     image_left: In[Image]
     image_right: In[Image]
     camera_info: In[CameraInfo]
+    imu: In[Imu]
 
     odometry: Out[Odometry]
     landmarks: Out[PointCloud2]

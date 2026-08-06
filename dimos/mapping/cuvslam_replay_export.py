@@ -14,7 +14,7 @@
 
 """Flatten a recording into raw files a standalone cuVSLAM harness can read.
 
-    python -m dimos.mapping.cuvslam_native.export_replay <recording.db> <out_dir>
+    python -m dimos.mapping.cuvslam_replay_export <recording.db> <out_dir>
 
 The point is to get dimos out of the measurement. Driving the tracker through the
 module puts sqlite, lz4 and an LCM round trip of two 400 kB images per frame in
