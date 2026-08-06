@@ -37,7 +37,6 @@ import sys
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 
 from dimos.memory2.replay import Replay
@@ -85,6 +84,8 @@ MODES = {
 
 def stage_euroc(db_path: Path, out_dir: Path) -> dict[str, object]:
     """Flatten a recording into the EuRoC layout ORB-SLAM3 expects."""
+    import cv2
+
     replay = Replay(store=SqliteStore(path=str(db_path)))
     cam0 = out_dir / "mav0" / "cam0" / "data"
     cam1 = out_dir / "mav0" / "cam1" / "data"
