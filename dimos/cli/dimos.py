@@ -53,6 +53,7 @@ from dimos.cli.cache import app as cache_app
 from dimos.cli.eval import app as eval_app
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
+from dimos.cli.vqa import app as vqa_app
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
@@ -77,6 +78,7 @@ main = typer.Typer(
     help="Dimensional CLI",
     no_args_is_help=True,
 )
+main.add_typer(vqa_app, name="vqa")
 
 load_dotenv()
 
