@@ -1038,12 +1038,19 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         selection, start = resolved
+        speed_scale = self.get_motion_speed()
+        scaled_config = config.model_copy(
+            update={
+                "velocity_scale": config.velocity_scale * speed_scale,
+                "acceleration_scale": config.acceleration_scale * speed_scale,
+            }
+        )
         result = self._planner.plan_cartesian_path(
             world=self._world_monitor.world,
             selection=selection,
             start=start,
             targets=normalized_targets,
-            config=config,
+            config=scaled_config,
             auxiliary_groups=auxiliary_ids,
         )
         if not result.is_success():

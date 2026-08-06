@@ -131,8 +131,7 @@ dimos run xarm7-planner-coordinator
 # Equivalent explicit TOPP-RA selection
 dimos run xarm7-planner-coordinator \
   --world-backend=roboplan \
-  --trajectory-parametrization.backend=roboplan_toppra \
-  --trajectory-parametrization.fitting-mode=linear_blend
+  --trajectory-parametrization.backend=roboplan_toppra
 
 # DrakeWorld selects simple_trapezoid when no parametrizer is specified
 dimos run xarm7-planner-coordinator \
@@ -146,7 +145,9 @@ RoboPlan's planner or the generic RRT planner, but it requires
 `world_backend=roboplan` because it reuses that world's model, groups, and URDF
 motion limits. A planner-native result that already has timestamps and
 velocities bypasses path parametrization and retains its existing timing after
-canonical validation. Explicit configuration overrides the world-based default.
+canonical validation. TOPP-RA follows the collision-checked geometric path
+without corner blending; collision checking remains the planner's concern.
+Explicit configuration overrides the world-based default.
 RoboPlan model composition preserves authored acceleration limits and inserts a
 temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
 acceleration overrides will replace this fallback.

@@ -598,7 +598,6 @@ yourarm_planner = manipulation_module(
     world_backend="roboplan",
     trajectory_parametrization={
         "backend": "roboplan_toppra",
-        "fitting_mode": "linear_blend",
         "velocity_scale": 0.8,
         "acceleration_scale": 0.8,
     },

@@ -149,15 +149,12 @@ ManipulationModuleConfig(
         "output_period": 0.01,
         "velocity_scale": 0.8,
         "acceleration_scale": 0.8,
-        "fitting_mode": "linear_blend",
-        "max_blend_deviation": 0.01,
     },
 )
 ```
 
-The selectable fitting modes are `hermite`, `cubic`, `adaptive`, and
-`linear_blend`. Adaptive fitting also exposes `max_adaptive_iterations` and
-`max_adaptive_step_size`. `linear_blend` exposes `max_blend_deviation`.
+DimOS uses zero-deviation linear fitting so parametrization changes timing,
+not the collision-checked geometric path.
 
 `roboplan_toppra` can parametrize a geometric path from any planner, but only
 when `world_backend="roboplan"`: it reuses the finalized `RoboPlanWorld` model

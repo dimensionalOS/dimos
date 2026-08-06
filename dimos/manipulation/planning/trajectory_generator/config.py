@@ -37,10 +37,6 @@ class RoboPlanTOPPRAParametrizationConfig(BaseConfig):
     output_period: float = Field(default=0.01, gt=0.0)
     velocity_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     acceleration_scale: float = Field(default=1.0, gt=0.0, le=1.0)
-    fitting_mode: Literal["hermite", "cubic", "adaptive", "linear_blend"] = "linear_blend"
-    max_adaptive_iterations: int = Field(default=10, ge=1)
-    max_adaptive_step_size: float = Field(default=0.05, gt=0.0)
-    max_blend_deviation: float = Field(default=0.01, ge=0.0)
 
 
 TrajectoryParametrizationConfig = Annotated[

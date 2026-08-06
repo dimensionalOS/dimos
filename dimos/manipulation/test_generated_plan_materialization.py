@@ -146,6 +146,7 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
     module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
+    assert module.set_motion_speed(0.5)
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])
     path = [
@@ -166,7 +167,10 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
                 Transform(translation=Vector3(0.01, 0.0, 0.0)),
             )
         },
-        RoboPlanCartesianPathConfig(),
+        RoboPlanCartesianPathConfig(
+            velocity_scale=0.8,
+            acceleration_scale=0.6,
+        ),
     )
     plan = module._last_plan
 
@@ -181,6 +185,8 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     request = module._planner.plan_cartesian_path.call_args.kwargs
     assert request["start"].name == names
     assert request["auxiliary_groups"] == ()
+    assert request["config"].velocity_scale == 0.4
+    assert request["config"].acceleration_scale == 0.3
 
 
 def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, module_factory):

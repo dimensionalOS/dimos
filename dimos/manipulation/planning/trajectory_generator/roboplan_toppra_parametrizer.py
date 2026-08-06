@@ -160,17 +160,10 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
     def _options(self, speed_scale: float) -> Any:
         return roboplan_toppra.TOPPRAOptions(
             dt=self._config.output_period,
-            mode={
-                "hermite": roboplan_toppra.SplineFittingMode.Hermite,
-                "cubic": roboplan_toppra.SplineFittingMode.Cubic,
-                "adaptive": roboplan_toppra.SplineFittingMode.Adaptive,
-                "linear_blend": roboplan_toppra.SplineFittingMode.LinearBlend,
-            }[self._config.fitting_mode],
+            mode=roboplan_toppra.SplineFittingMode.LinearBlend,
             velocity_scale=self._config.velocity_scale * speed_scale,
             acceleration_scale=self._config.acceleration_scale * speed_scale,
-            max_adaptive_iterations=self._config.max_adaptive_iterations,
-            max_adaptive_step_size=self._config.max_adaptive_step_size,
-            max_blend_deviation=self._config.max_blend_deviation,
+            max_blend_deviation=0.0,
         )
 
     @staticmethod

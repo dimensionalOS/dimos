@@ -169,6 +169,8 @@ def test_roboplan_parametrizer_maps_composite_order_and_native_output(
     ]
     assert options.velocity_scale == 0.25
     assert options.acceleration_scale == 0.125
+    assert options.mode.name == "LinearBlend"
+    assert options.max_blend_deviation == 0.0
     assert result.trajectory.joint_names == ["left/a", "right/b"]
     assert [point.positions for point in result.trajectory.points] == [
         [0.0, 0.1],

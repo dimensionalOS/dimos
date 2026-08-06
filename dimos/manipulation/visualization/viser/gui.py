@@ -326,7 +326,6 @@ class ViserPanelGui:
             )
             for group_id, pose in pose_targets.items()
         }
-        speed_scale = self.operator.get_motion_speed()
         plan = self.operator.plan_cartesian(
             CartesianTargetRequest(
                 stamped,
@@ -334,8 +333,6 @@ class ViserPanelGui:
                     speed_mode="time_optimal",
                     # The coordinator interpolates between trajectory points at control rate.
                     dt=0.05,
-                    velocity_scale=speed_scale,
-                    acceleration_scale=speed_scale,
                 ),
                 tuple(auxiliary_group_ids),
             )
