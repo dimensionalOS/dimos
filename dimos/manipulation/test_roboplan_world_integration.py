@@ -23,9 +23,9 @@ import pytest
 pytest.importorskip("roboplan.cartesian_planning")
 roboplan_world_module = importlib.import_module("dimos.manipulation.planning.world.roboplan_world")
 
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
+from dimos.manipulation.planning.world.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState

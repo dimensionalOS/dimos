@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for typed manipulation planner configuration."""
+"""Tests for typed RoboPlan planning configuration."""
 
 from pydantic import ValidationError
 import pytest
 
-from dimos.manipulation.planning.planners.config import (
+from dimos.manipulation.planning.world.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPathShortcuttingConfig,
 )

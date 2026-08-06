@@ -35,15 +35,15 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import (
-    RoboPlanCartesianPathConfig,
-    RoboPlanPathShortcuttingConfig,
-    RoboPlanPlannerConfig,
-)
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.world.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPathShortcuttingConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -1424,6 +1424,29 @@ def test_native_planner_uses_raw_path_when_shortcutting_fails(
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_native_planner_surfaces_unexpected_shortcutting_error(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=TypeError("unexpected shortcut integration error"),
+    )
+
+    with pytest.raises(TypeError, match="unexpected shortcut integration error"):
+        world.plan_joint_path(
+            world,
+            robot_id,
+            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+            JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+            timeout=1.0,
+        )
 
 
 @pytest.mark.parametrize("endpoint_index", [0, -1], ids=["start", "goal"])

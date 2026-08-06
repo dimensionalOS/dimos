@@ -46,10 +46,6 @@ except ImportError as exc:
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
-from dimos.manipulation.planning.planners.config import (
-    RoboPlanCartesianPathConfig,
-    RoboPlanPlannerConfig,
-)
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -63,6 +59,10 @@ from dimos.manipulation.planning.spec.models import (
 )
 from dimos.manipulation.planning.spec.validation import validate_obstacle
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
+from dimos.manipulation.planning.world.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanGroup,
     RoboPlanModel,
@@ -125,9 +125,10 @@ class RoboPlanWorld:
 
     def configure_planner(self, config: RoboPlanPlannerConfig) -> None:
         """Configure native planning before finalizing the RoboPlan scene."""
-        if self._finalized:
-            raise RuntimeError("Cannot configure RoboPlan planner after world finalization")
-        self._planner_config = config.model_copy(deep=True)
+        with self._lock:
+            if self._finalized:
+                raise RuntimeError("Cannot configure RoboPlan planner after world finalization")
+            self._planner_config = config.model_copy(deep=True)
 
     # Robot Management
 
@@ -1200,19 +1201,30 @@ class RoboPlanWorld:
         if not config.enabled:
             return path
 
+        options = roboplan_core.PathShortcuttingOptions()
+        options.group_name = group.name
+        options.max_step_size = config.max_step_size
+        options.max_iters = config.max_iters
+        options.seed = config.seed
+        options.max_convergence_iters = config.max_convergence_iters
+        options.redundant_removal_iters = config.redundant_removal_iters
+        shortcutter = roboplan_core.PathShortcutter(self._require_scene(), options)
         try:
-            options = roboplan_core.PathShortcuttingOptions()
-            options.group_name = group.name
-            options.max_step_size = config.max_step_size
-            options.max_iters = config.max_iters
-            options.seed = config.seed
-            options.max_convergence_iters = config.max_convergence_iters
-            options.redundant_removal_iters = config.redundant_removal_iters
-            shortcutter = roboplan_core.PathShortcutter(self._require_scene(), options)
             shortened = shortcutter.shortcut(path)
+        except RuntimeError as exc:
+            logger.warning(
+                "RoboPlan path shortcutting failed; using raw path",
+                error=str(exc),
+            )
+            return path
+
+        try:
             self._validate_shortcut_path(group, path, shortened)
-        except Exception as exc:
-            logger.warning("RoboPlan path shortcutting failed; using raw path: %s", exc)
+        except ValueError as exc:
+            logger.warning(
+                "RoboPlan path shortcutting returned an invalid path; using raw path",
+                error=str(exc),
+            )
             return path
         return shortened
 

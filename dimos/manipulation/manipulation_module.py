@@ -65,7 +65,6 @@ from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
     ManipulationPlannerConfig,
-    RoboPlanPlannerConfig,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
@@ -84,6 +83,7 @@ from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSp
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
+from dimos.manipulation.planning.world.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,

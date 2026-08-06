@@ -22,10 +22,10 @@ import pytest
 from dimos.manipulation.manipulation_module import ManipulationState
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.world.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform

@@ -126,6 +126,9 @@ dimos run xarm7-planner-coordinator \
   --planner.path-shortcutting.max-step-size 0.05
 ```
 
+Existing RoboPlan deployments may therefore receive paths with fewer waypoints.
+Shortcutting configuration is fixed when the planning world is finalized.
+
 The remaining options mirror RoboPlan's native path shortcutter:
 `seed`, `max_convergence_iters`, and `redundant_removal_iters`. If shortcutting
 fails, planning returns the valid raw RRT path and logs a warning.
@@ -133,7 +136,7 @@ fails, planning returns the valid raw RRT path and logs a warning.
 RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
-from dimos.manipulation.planning.planners.config import (
+from dimos.manipulation.planning.world.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
