@@ -102,8 +102,7 @@ def write_camera_info_yaml(
 ) -> None:
     """Write ROS-style CameraInfo YAML loadable by dimos CameraInfo helpers.
 
-    The emitted schema is accepted by ``CameraInfo.from_yaml``,
-    ``load_camera_info``, and ``load_camera_info_opencv``.
+    The emitted schema is accepted by ``CameraInfo.from_yaml``.
     """
     k = np.asarray(K, dtype=np.float64).reshape(3, 3)
     d = np.asarray(D, dtype=np.float64).ravel()

@@ -82,6 +82,8 @@ unitree_go2_mls_htc = autoconnect(
         world_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
+        # The start pose is raw go2 odometry, so the planner ground-projects it.
+        start_z_offset_m=go2_lidar_height,
         wall_clearance_m=0.2,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,

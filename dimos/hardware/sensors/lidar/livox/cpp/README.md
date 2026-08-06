@@ -79,17 +79,26 @@ autoconnect(
 
 ### Manual invocation (for debugging)
 
+The module reads one line of JSON on stdin: the LCM topics for its `lidar` and
+`imu` output ports plus the full config. `DIMOS_TRANSPORT` selects the transport.
+
+Every config field is required. Python owns the defaults and always sends them,
+so build the blob from `Mid360Config` rather than by hand. `host_ip` is the only
+field without a default, since `Mid360` normally resolves it from the NIC on the
+lidar's subnet:
+
 ```bash
-./result/bin/mid360_native \
-    --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
-    --imu '/imu#sensor_msgs.Imu' \
-    --host_ip 192.168.1.5 \
-    --lidar_ip 192.168.1.155 \
-    --frequency 10
+python -c '
+import json
+from dimos.hardware.sensors.lidar.livox.module import Mid360Config
+print(json.dumps({
+    "topics": {"lidar": "/lidar#sensor_msgs.PointCloud2", "imu": "/imu#sensor_msgs.Imu"},
+    "config": Mid360Config(host_ip="192.168.1.5").to_config_dict(),
+}))' | DIMOS_TRANSPORT=lcm ./result/bin/mid360_native
 ```
 
-Topic strings must include the `#type` suffix -- this is the actual LCM channel
-name used by dimos subscribers.
+Topic strings include the `#type` suffix, the actual LCM channel name dimos
+subscribers use. Normally `Mid360` builds this blob for you.
 
 View data in another terminal:
 
@@ -107,8 +116,7 @@ lcm-spy
 
 | File                      | Description                                              |
 |---------------------------|----------------------------------------------------------|
-| `main.cpp`                | Livox SDK2 callbacks, frame accumulation, LCM publishing |
-| `dimos_native_module.hpp` | Reusable header for parsing NativeModule CLI args        |
+| `main.cpp`                | `Mid360` module on the dimos native SDK: SDK2 callbacks, frame accumulation, publishing |
 | `flake.nix`               | Nix flake for hermetic builds                            |
 | `CMakeLists.txt`          | Build config, fetches dimos-lcm headers automatically    |
 | `../module.py`            | Python NativeModule wrapper (`Mid360`)                   |

@@ -41,7 +41,7 @@ Usage:
 
 Overrides (replace the old env-var dance):
     dimos run unitree-g1-groot-wbc \\
-        -o g1wholebodyconnection.network_interface=enp2s0
+        --network-interface=enp2s0
 """
 
 from __future__ import annotations

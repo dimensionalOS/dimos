@@ -44,11 +44,11 @@ class DimosCliCall:
         # defaults to a hard-coded `http://localhost:9990/mcp`) so server
         # and client agree on the same port.
         #
-        # The McpClient URL goes through an env var rather than a `-o`
-        # blueprint override: `load_config_args` silently skips env-var
-        # overrides whose module is absent from the blueprint, but rejects
-        # unknown `-o` keys outright. Blueprints without an mcpclient (e.g.
-        # `coordinator-mock`) would otherwise fail config validation.
+        # The McpClient URL goes through an env var rather than a dynamic
+        # blueprint flag: BlueprintConfigParser skips environment overrides
+        # whose module is absent from the blueprint, but rejects unknown CLI
+        # configuration flags. Blueprints without an mcpclient (e.g.
+        # `coordinator-mock`) would otherwise fail configuration validation.
         global_overrides: list[str] = list(self.global_args)
         env = os.environ.copy()
         env.update(self.extra_env)

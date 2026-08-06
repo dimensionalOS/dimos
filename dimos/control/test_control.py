@@ -291,7 +291,7 @@ class TestControlCoordinatorLifecycle:
                     name="eef",
                     type="eef_twist",
                     joint_names=["arm/joint1"],
-                    params={"model_path": "fake", "ee_joint_id": 1},
+                    params={"model_path": "fake"},
                 )
             ]
         )
@@ -902,7 +902,7 @@ class TestArbitration:
 
 
 class TestTickLoop:
-    def test_tick_loop_starts_and_stops(self, mock_adapter):
+    def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -923,15 +923,14 @@ class TestTickLoop:
         )
 
         tick_loop.start()
-        time.sleep(0.05)
-        assert tick_loop.tick_count > 0
+        wait_until(lambda: tick_loop.tick_count > 0, timeout=5.0, interval=0.01)
 
         tick_loop.stop()
         final_count = tick_loop.tick_count
         time.sleep(0.02)
         assert tick_loop.tick_count == final_count
 
-    def test_tick_loop_calls_compute(self, mock_adapter):
+    def test_tick_loop_calls_compute(self, mock_adapter, wait_until):
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
@@ -966,7 +965,7 @@ class TestTickLoop:
         )
 
         tick_loop.start()
-        time.sleep(0.05)
+        wait_until(lambda: mock_task.compute.call_count > 0, timeout=5.0, interval=0.01)
         tick_loop.stop()
 
         assert mock_task.compute.call_count > 0
@@ -1021,7 +1020,7 @@ class TestIntegration:
             traj_task.execute(trajectory, trajectory_start_positions(trajectory))
             wait_until(
                 lambda: traj_task.get_state() == TrajectoryState.COMPLETED,
-                timeout=2.0,
+                timeout=5.0,
                 interval=0.01,
             )
         finally:

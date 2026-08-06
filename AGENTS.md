@@ -202,7 +202,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 - **SHMTransport/pSHMTransport**: Shared memory — use for images and point clouds.
 - **pLCMTransport**: Pickled LCM — use for complex Python objects.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
-- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
+- **DDSTransport**: DDS pub/sub — available when `DDS_AVAILABLE`; install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 
 ---
 
