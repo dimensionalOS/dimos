@@ -422,7 +422,7 @@ int main(int argc, char** argv) {
     const double span_s =
         static_cast<double>(frames.back().left_ns - frames.front().left_ns) / kNsPerSec;
     std::printf(
-        "\ntracked %zu/%zu frames\n"
+        "\ntracked %zu/%zu frames, %zu skipped\n"
         "track mean %.2f ms, worst %.2f ms  -> %.1f fps sustained\n"
         "loop wall %.1f s for %.1f s of recording -> real-time factor %.3f\n",
         tracked, frames.size(), skipped_stamps,
