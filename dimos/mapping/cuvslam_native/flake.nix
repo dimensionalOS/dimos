@@ -36,16 +36,28 @@
         # into the repo: the NVIDIA Community License permits redistribution, but
         # a 111 MB binary does not belong in git.
         #
-        # Version note: this is the cuda12.6 / ubuntu24.04 build, chosen to match
-        # the pycuvslam 17.0.0 wheel already in use (same version, same bundled
-        # libcudart 12.6.77) so C++ and Python results are comparable.
-        cuvslam-sdk = pkgs.stdenv.mkDerivation {
-          pname = "cuvslam-sdk";
-          version = "17.0.0";
-          src = pkgs.fetchurl {
+        # Version note: both are the cuda12.6 build, chosen to match the pycuvslam
+        # 17.0.0 wheel already in use (same version, same bundled libcudart
+        # 12.6.77) so C++ and Python results are comparable.
+        #
+        # NVIDIA ships a separate tarball per architecture. The aarch64 one is the
+        # "orin" build and is Ubuntu 22.04 based, matching JetPack 6 (L4T R36) --
+        # there is no aarch64 24.04 build, so this is not an oversight.
+        sdkSource = {
+          x86_64-linux = {
             url = "https://github.com/nvidia-isaac/cuVSLAM/releases/download/v17.0.0/cuvslam-cpp-17.0.0-x86_64-cuda12.6.3-ubuntu24.04.tar.gz";
             hash = "sha256-X2iCVMzKTlOuFcLyZJZU3vgQOdoWAU4LuXU0WpdyE9Q=";
           };
+          aarch64-linux = {
+            url = "https://github.com/nvidia-isaac/cuVSLAM/releases/download/v17.0.0/cuvslam-cpp-17.0.0-orin-cuda12.6.3-ubuntu22.04.tar.gz";
+            hash = "sha256-V6e4zKsSZJG0rCqaPkHyw7wSPVCyeN/6Ma/tiY9GDw0=";
+          };
+        }.${system} or (throw "cuVSLAM ships no SDK for ${system}");
+
+        cuvslam-sdk = pkgs.stdenv.mkDerivation {
+          pname = "cuvslam-sdk";
+          version = "17.0.0";
+          src = pkgs.fetchurl { inherit (sdkSource) url hash; };
           sourceRoot = ".";
           nativeBuildInputs = [ pkgs.autoPatchelfHook ];
           buildInputs = [
