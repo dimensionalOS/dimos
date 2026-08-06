@@ -432,28 +432,25 @@ class RoboPlanPlanner:
             "bounded": roboplan_cartesian.CartesianSpeedMode.Bounded,
             "time_optimal": roboplan_cartesian.CartesianSpeedMode.TimeOptimal,
         }[config.speed_mode]
-        for field_name in (
-            "dt",
-            "max_linear_speed",
-            "max_angular_speed",
-            "max_linear_acceleration",
-            "max_angular_acceleration",
-            "max_position_error",
-            "max_orientation_error",
-            "position_cost",
-            "orientation_cost",
-            "task_gain",
-            "lm_damping",
-            "regularization",
-            "config_task_weight",
-            "velocity_scale",
-            "acceleration_scale",
-            "limit_ratio_tolerance",
-            "toppra_blend_deviation",
-            "position_limit_gain",
-            "max_attempts_per_step",
-        ):
-            setattr(options, field_name, getattr(config, field_name))
+        options.dt = config.dt
+        options.max_linear_speed = config.max_linear_speed
+        options.max_angular_speed = config.max_angular_speed
+        options.max_linear_acceleration = config.max_linear_acceleration
+        options.max_angular_acceleration = config.max_angular_acceleration
+        options.max_position_error = config.max_position_error
+        options.max_orientation_error = config.max_orientation_error
+        options.position_cost = config.position_cost
+        options.orientation_cost = config.orientation_cost
+        options.task_gain = config.task_gain
+        options.lm_damping = config.lm_damping
+        options.regularization = config.regularization
+        options.config_task_weight = config.config_task_weight
+        options.velocity_scale = config.velocity_scale
+        options.acceleration_scale = config.acceleration_scale
+        options.limit_ratio_tolerance = config.limit_ratio_tolerance
+        options.toppra_blend_deviation = config.toppra_blend_deviation
+        options.position_limit_gain = config.position_limit_gain
+        options.max_attempts_per_step = config.max_attempts_per_step
         return options
 
     def _path_from_cartesian_trajectory(
