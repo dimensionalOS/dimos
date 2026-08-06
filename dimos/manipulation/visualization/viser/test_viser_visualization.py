@@ -617,7 +617,7 @@ def test_cartesian_space_mode_plans_absolute_pose_targets_with_auxiliary_groups(
     targets, config, auxiliary_ids = module.cartesian_plans[0]
     assert tuple(targets) == (pose_group.id,)
     assert targets[pose_group.id].frame_id == "world"
-    assert config.speed_mode == "bounded"  # type: ignore[attr-defined]
+    assert config.speed_mode == "time_optimal"  # type: ignore[attr-defined]
     assert auxiliary_ids == (auxiliary_group.id,)
     assert gui.state.plan_state.status == PlanStatus.FRESH
     assert gui.state.last_result == "plan_cartesian_space=True"

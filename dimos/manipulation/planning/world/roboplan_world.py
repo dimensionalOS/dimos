@@ -812,10 +812,8 @@ class RoboPlanWorld:
             "config_task_weight",
             "velocity_scale",
             "acceleration_scale",
-            "limit_ratio_tolerance",
             "toppra_blend_deviation",
             "position_limit_gain",
-            "max_attempts_per_step",
         ):
             setattr(options, field_name, getattr(config, field_name))
         return options

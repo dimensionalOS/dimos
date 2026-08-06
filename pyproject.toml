@@ -292,7 +292,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan>=0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
 ]
 
 cpu = [
@@ -457,7 +457,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
