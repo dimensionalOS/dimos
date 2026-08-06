@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware diagnostics and configuration commands."""
+from typer.testing import CliRunner
 
-import typer
+from dimos.cli import hardware_cli
 
-from dimos.cli.hardware.a1z import app as a1z_app
-from dimos.teleop.openarm_mini.cli.app import app as openarm_mini_app
+runner = CliRunner()
 
-app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
-app.add_typer(a1z_app, name="a1z")
-app.add_typer(openarm_mini_app, name="openarm-mini")
+
+def test_hardware_namespace_mounts_openarm_mini_commands() -> None:
+    result = runner.invoke(hardware_cli.app, ["openarm-mini", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "calibrate" in result.output
+    assert "joint-tui" in result.output
+    assert "setup-motor-id" in result.output

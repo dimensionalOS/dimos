@@ -101,6 +101,7 @@
               "capabilities/manipulation/agentic",
               "capabilities/manipulation/adding_a_custom_arm",
               "capabilities/manipulation/openarm_integration",
+              "capabilities/manipulation/openarm_mini_teleop",
               "capabilities/manipulation/piper_integration",
               "capabilities/manipulation/a750"
             ]

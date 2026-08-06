@@ -295,6 +295,14 @@ manipulation = [
     "roboplan>=0.5.1",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+    # The demo viser blueprints load the DAE OpenArm meshes; without this
+    # the mesh conversion fails and viser startup crashes.
+    "pycollada",
+]
+
 cpu = [
     # CPU inference backends
     "onnxruntime",
@@ -374,7 +382,7 @@ graspgenx = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,openarm-mini-teleop,perception,scene,sim,unitree,visualization,web,webrtc]",
 ]
 
 [dependency-groups]
@@ -632,6 +640,8 @@ module = [
     "reportlab",
     "reportlab.*",
     "sam2.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "scipy",
     "scipy.*",
     "sensor_msgs.*",

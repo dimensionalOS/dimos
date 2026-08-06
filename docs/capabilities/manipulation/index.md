@@ -5,6 +5,11 @@ title: "Manipulation"
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
 
+OpenArm-specific setup guides:
+
+- [OpenArm Integration](/docs/capabilities/manipulation/openarm_integration.md): full-size OpenArm follower hardware setup, CAN bring-up, and manipulation stack integration.
+- [OpenArm Mini Teleop](/docs/capabilities/manipulation/openarm_mini_teleop.md): Feetech leader setup, calibration, and Viser bring-up for OpenArm Mini teleop.
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:

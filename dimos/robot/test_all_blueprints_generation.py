@@ -43,7 +43,7 @@ BLUEPRINT_METHODS = {
     "requirements",
     "configurators",
 }
-_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
+_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule", "TeleopModule"}
 
 
 def test_all_blueprints_is_current() -> None:

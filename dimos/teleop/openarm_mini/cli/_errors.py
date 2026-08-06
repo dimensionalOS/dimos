@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware diagnostics and configuration commands."""
+"""Shared error presentation for OpenArm Mini commands."""
+
+from typing import NoReturn
 
 import typer
 
-from dimos.cli.hardware.a1z import app as a1z_app
-from dimos.teleop.openarm_mini.cli.app import app as openarm_mini_app
+from dimos.teleop.openarm_mini.feetech import OpenArmMiniDependencyError
 
-app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
-app.add_typer(a1z_app, name="a1z")
-app.add_typer(openarm_mini_app, name="openarm-mini")
+
+def exit_for_missing_dependency(error: OpenArmMiniDependencyError) -> NoReturn:
+    """Print one actionable dependency error and exit without a traceback."""
+    typer.echo(str(error), err=True)
+    raise typer.Exit(1)
