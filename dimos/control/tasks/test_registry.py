@@ -167,6 +167,12 @@ def test_seeded_cards_load_into_registry() -> None:
     g1 = control_task_registry.bindings_for("g1_groot_wbc")
     assert g1.consumes == (StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),)
     assert g1.exposes == frozenset({"arm", "disarm", "set_dry_run", "reset_runtime_state"})
+    dual_arm = control_task_registry.bindings_for("g1_dual_arm_ik")
+    assert dual_arm.consumes == (
+        StreamBinding("coordinator_cartesian_command", "on_cartesian_command", Routing.DIRECT),
+        StreamBinding("teleop_buttons", "on_teleop_buttons", Routing.BROADCAST),
+    )
+    assert dual_arm.exposes == frozenset({"reset_runtime_state"})
 
 
 def _scannable_task_classes(task_type: str) -> list[type] | None:
