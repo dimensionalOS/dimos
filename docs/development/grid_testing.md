@@ -17,6 +17,7 @@ from typing import Any, Generic, TypeVar
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
 
+
 @dataclass
 class Case(Generic[TopicT, MsgT]):
     name: str  # For pytest id
@@ -71,6 +72,7 @@ def test_subscribe_all(case: Case) -> None:
         # Test logic using case.topic_values
         ...
 
+
 @pytest.mark.parametrize("case", glob_cases, ids=lambda c: c.name)
 def test_subscribe_glob(case: Case) -> None:
     if not glob_cases:
@@ -88,6 +90,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
 
 @contextmanager
 def lcm_typed_context() -> Generator[LCM, None, None]:

@@ -120,7 +120,7 @@ class ContourPolygons3D(Timestamped):
             polys[int(intensity)].append((x, y, z))
 
         strips: list[list[list[float]]] = []
-        for _poly_id, verts in polys.items():
+        for verts in polys.values():
             if len(verts) < 3:
                 continue
             # Close the polygon by appending first vertex at the end

@@ -135,9 +135,11 @@ def test_no_section_markers():
     violations = find_section_markers()
     if violations:
         report_lines = [
-            f"Found {len(violations)} section marker(s). "
-            "If a file is too complicated to be understood without sections, "
-            'then the sections should be files. We don\'t need "subfiles".',
+            (
+                f"Found {len(violations)} section marker(s). "
+                "If a file is too complicated to be understood without sections, "
+                'then the sections should be files. We don\'t need "subfiles".'
+            ),
             "",
         ]
         for path, lineno, text in violations:

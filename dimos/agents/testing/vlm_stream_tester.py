@@ -79,8 +79,7 @@ class VlmStreamTester(Module):
         now = time.time()
         if self._last_image_wall_ts is not None:
             gap = now - self._last_image_wall_ts
-            if gap > self._max_gap_seen_s:
-                self._max_gap_seen_s = gap
+            self._max_gap_seen_s = max(self._max_gap_seen_s, gap)
         self._last_image_wall_ts = now
         self._latest_image_wall_ts = now
         self._latest_image = image

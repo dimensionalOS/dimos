@@ -373,8 +373,7 @@ class PathFollowerTask(BaseControlTask):
         pos = np.array([self._current_odom.position.x, self._current_odom.position.y])
 
         closest = self._windowed_closest(pos)
-        if closest > self._max_progress_idx:
-            self._max_progress_idx = closest
+        self._max_progress_idx = max(self._max_progress_idx, closest)
 
         # Arrival is only valid AFTER we've traversed enough of the path.
         # Otherwise closed paths (goal==start) would arrive on tick 1.
@@ -426,11 +425,11 @@ class PathFollowerTask(BaseControlTask):
         lookahead_min: float | None = None,
         lookahead_max: float | None = None,
         lookahead_speed_scale: float | None = None,
-        max_yaw_rate: float | None | object = _UNSET,
+        max_yaw_rate: float | object | None = _UNSET,
         forward_only: bool | None = None,
-        ff_config: FeedforwardGainConfig | None | object = _UNSET,
-        velocity_profile_config: VelocityProfileConfig | None | object = _UNSET,
-        external_profile_cap: PathSpeedCapProtocol | None | object = _UNSET,
+        ff_config: FeedforwardGainConfig | object | None = _UNSET,
+        velocity_profile_config: VelocityProfileConfig | object | None = _UNSET,
+        external_profile_cap: PathSpeedCapProtocol | object | None = _UNSET,
         **ignored: Any,
     ) -> bool:
         """Override per-run knobs before start_path. ``ff_config``,

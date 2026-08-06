@@ -208,11 +208,9 @@ class Transform(Timestamped):
 
         # Handle both Pose and PoseStamped
         result: PoseStamped = _PoseStamped(
-            **{
-                "position": self.translation,
-                "orientation": self.rotation,
-                "frame_id": self.frame_id,
-            },
+            position=self.translation,
+            orientation=self.rotation,
+            frame_id=self.frame_id,
             **kwargs,
         )
         return result

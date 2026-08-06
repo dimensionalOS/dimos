@@ -337,7 +337,7 @@ class TestStuckEscalation:
 
     def test_escalation_shrinks_inflation(self):
         state = self._initial_state(inflation_radius=0.4)
-        kwargs = dict(stuck_seconds=5.0, stuck_shrink_factor=0.5)
+        kwargs = {"stuck_seconds": 5.0, "stuck_shrink_factor": 0.5}
         state = self._step(state, 10.0, 0.0, **kwargs)
         state = self._step(state, 10.0, 4.9, **kwargs)
         assert state.effective_inflation == pytest.approx(0.4)
@@ -348,7 +348,7 @@ class TestStuckEscalation:
 
     def test_escalation_respects_floor(self):
         state = self._initial_state(inflation_radius=0.4)
-        kwargs = dict(stuck_seconds=1.0, stuck_shrink_factor=0.5, stuck_min_inflation=0.2)
+        kwargs = {"stuck_seconds": 1.0, "stuck_shrink_factor": 0.5, "stuck_min_inflation": 0.2}
         state = self._step(state, 10.0, 0.0, **kwargs)
         state = self._step(state, 10.0, 1.0, **kwargs)
         assert state.effective_inflation == pytest.approx(0.2)

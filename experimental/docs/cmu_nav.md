@@ -36,16 +36,15 @@ All configuration goes through `create_cmu_nav()` keyword arguments. Top-level s
 
 ```python skip
 create_cmu_nav(
-    planner="simple",              # "far" (default) or "simple" (A*)
-    use_tare=False,                # Add TARE frontier exploration
-    use_terrain_map_ext=True,      # Persistent terrain accumulator
-    vehicle_height=None,           # Propagated to terrain + planners
-    max_speed=None,                # Propagated to local planner + path follower
-    waypoint_threshold=None,       # "Close enough" distance (m)
+    planner="simple",  # "far" (default) or "simple" (A*)
+    use_tare=False,  # Add TARE frontier exploration
+    use_terrain_map_ext=True,  # Persistent terrain accumulator
+    vehicle_height=None,  # Propagated to terrain + planners
+    max_speed=None,  # Propagated to local planner + path follower
+    waypoint_threshold=None,  # "Close enough" distance (m)
     terrain_voxel_size=0.2,
-    replan_rate=0.5,               # Global planner replan rate (Hz)
-    record=False,                  # Enable NavRecord module
-
+    replan_rate=0.5,  # Global planner replan rate (Hz)
+    record=False,  # Enable NavRecord module
     # Per-module config overrides (merged onto defaults):
     terrain_analysis={...},
     local_planner={...},
@@ -105,7 +104,7 @@ from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config
 
 vis_config = cmu_nav_rerun_config(
     user_config=None,
-    agentic_debug=False,    # lift nav elements above terrain for top-down clarity
+    agentic_debug=False,  # lift nav elements above terrain for top-down clarity
 )
 ```
 
@@ -185,24 +184,23 @@ from dimos.navigation.cmu_nav.main import create_cmu_nav
 
 from my_robot.control import MyRobotControl  # your module
 
-my_robot_nav = (
-    autoconnect(
-        FastLio2.blueprint(
-            host_ip="192.168.1.5",       # your machine's IP on the lidar network
-            lidar_ip="192.168.1.155",
-            mount=Pose(z=0.5),           # sensor height above ground
-        ),
-        create_cmu_nav(
-            planner="simple",
-            vehicle_height=0.8,
-        ),
-        MovementManager.blueprint(),     # click→goal relay + teleop/nav velocity mux
-        MyRobotControl.blueprint(),
-    )
-    .remappings([
+my_robot_nav = autoconnect(
+    FastLio2.blueprint(
+        host_ip="192.168.1.5",  # your machine's IP on the lidar network
+        lidar_ip="192.168.1.155",
+        mount=Pose(z=0.5),  # sensor height above ground
+    ),
+    create_cmu_nav(
+        planner="simple",
+        vehicle_height=0.8,
+    ),
+    MovementManager.blueprint(),  # click→goal relay + teleop/nav velocity mux
+    MyRobotControl.blueprint(),
+).remappings(
+    [
         # FastLio2 publishes "lidar"; cmu_nav expects "registered_scan"
         (FastLio2, "lidar", "registered_scan"),
-    ])
+    ]
 )
 ```
 
@@ -216,6 +214,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 
+
 class MyRobotControl(Module):
     config: ModuleConfig
     cmd_vel: In[Twist]
@@ -226,9 +225,9 @@ class MyRobotControl(Module):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
     def _on_cmd_vel(self, twist: Twist) -> None:
-        v_x = twist.linear.x      # forward (m/s)
-        v_y = twist.linear.y      # strafe (m/s)
-        v_yaw = twist.angular.z   # yaw rate (rad/s)
+        v_x = twist.linear.x  # forward (m/s)
+        v_y = twist.linear.y  # strafe (m/s)
+        v_yaw = twist.angular.z  # yaw rate (rad/s)
         # ...send to hardware SDK...
 ```
 
