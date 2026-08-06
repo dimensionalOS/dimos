@@ -156,7 +156,9 @@ The Viser panel's **Next plan speed** slider provides runtime speed tuning from
 unchanged; press **Plan** again to generate motion at the new scale. For
 joint-space planning the value reduces the selected parametrizer's configured
 velocity and acceleration scales. For Cartesian planning Viser puts the same
-scale into the native planning request before its timestamps are generated.
+scale into a native time-optimal planning request before its timestamps are
+generated. Cartesian output is sampled every 50 ms; the control coordinator
+interpolates it at execution rate.
 
 RoboPlan shortens native joint-space RRT paths by default. Configure or disable
 the backend's best-effort shortcutting pass with nested planner options:

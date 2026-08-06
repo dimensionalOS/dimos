@@ -331,6 +331,9 @@ class ViserPanelGui:
             CartesianTargetRequest(
                 stamped,
                 RoboPlanCartesianPathConfig(
+                    speed_mode="time_optimal",
+                    # The coordinator interpolates between trajectory points at control rate.
+                    dt=0.05,
                     velocity_scale=speed_scale,
                     acceleration_scale=speed_scale,
                 ),
