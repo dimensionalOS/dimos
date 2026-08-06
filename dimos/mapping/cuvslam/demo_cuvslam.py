@@ -39,18 +39,46 @@ cuVSLAM deterministic; with it on, ATE varied 0.406-3.418 m across identical run
 
 What to look for: ``odometry`` advancing pose after pose, and restarts staying rare.
 Frames arriving in the viewer only proves the camera works -- cuVSLAM restarting its world
-frame constantly still publishes odometry and still draws.
+frame constantly still publishes odometry and still draws. ``world/path`` is the trail of
+everywhere the camera has been, which is the quickest read on both: it should retrace your
+own route, and a restart shows up as a straight jump across it.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
+from dimos.mapping.odometry_path import OdometryPath
 from dimos.visualization.vis_module import vis_module
 
+if TYPE_CHECKING:
+    from dimos.msgs.nav_msgs.Path import Path
+
 CAMERA_NAME = "d455"
+
+_PATH_COLOR_RGB = (0, 255, 128)
+_PATH_RADIUS_M = 0.02
+
+
+def _path_at_true_height(path: Path) -> Any:
+    """Draw the trail where it actually is.
+
+    ``Path.to_rerun`` lifts the line half a metre by default so it clears a
+    costmap. There is no costmap here and the camera flies at whatever height you
+    carry it, so the lift would just put the trail somewhere the camera never was.
+    """
+    import rerun as rr
+
+    if not path.poses:
+        # Empty geometry rather than nothing, so a cleared path actually clears.
+        return rr.LineStrips3D([])
+    points = [[pose.x, pose.y, pose.z] for pose in path.poses]
+    return rr.LineStrips3D([points], colors=[_PATH_COLOR_RGB], radii=_PATH_RADIUS_M)
+
 
 demo_cuvslam = (
     autoconnect(
@@ -77,7 +105,13 @@ demo_cuvslam = (
             odom_frame="odom",
             map_frame="map",
         ),
-        vis_module(global_config.viewer),
+        # cuVSLAM publishes only where the camera is now. This keeps the history so
+        # the viewer can draw where it has been.
+        OdometryPath.blueprint(),
+        vis_module(
+            global_config.viewer,
+            rerun_config={"visual_override": {"world/path": _path_at_true_height}},
+        ),
     )
     .remappings(
         [
@@ -86,5 +120,5 @@ demo_cuvslam = (
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
         ]
     )
-    .global_config(n_workers=3)
+    .global_config(n_workers=4)
 )

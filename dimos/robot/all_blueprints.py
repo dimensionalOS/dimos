@@ -250,6 +250,7 @@ all_modules = {
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.experimental.object_tracker_3d.ObjectTracker3D",
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
+    "odometry-path": "dimos.mapping.odometry_path.OdometryPath",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-follower": "dimos.navigation.cmu_nav.modules.path_follower.path_follower.PathFollower",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
