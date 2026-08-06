@@ -47,7 +47,7 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.mapping.cuvslam_native.cuvslam import CuvslamOdometry
+from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
 from dimos.visualization.vis_module import vis_module
 
 CAMERA_NAME = "d455"

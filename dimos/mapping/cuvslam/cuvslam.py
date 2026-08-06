@@ -104,7 +104,7 @@ def _driver_env() -> dict[str, str]:
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    build_command: str | None = f"nix build '{_REPO_ROOT}?dir=dimos/mapping/cuvslam_native'"
+    build_command: str | None = f"nix build '{_REPO_ROOT}?dir=dimos/mapping/cuvslam'"
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 

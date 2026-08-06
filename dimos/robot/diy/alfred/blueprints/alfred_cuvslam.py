@@ -45,7 +45,7 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.mapping.cuvslam_native.cuvslam import CuvslamOdometry
+from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.visualization.vis_module import vis_module

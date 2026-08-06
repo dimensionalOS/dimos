@@ -35,7 +35,7 @@ import subprocess
 import pytest
 
 from dimos.core.native_module import NativeModule
-from dimos.mapping.cuvslam_native.cuvslam import CuvslamConfig, CuvslamOdometry
+from dimos.mapping.cuvslam.cuvslam import CuvslamConfig, CuvslamOdometry
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
