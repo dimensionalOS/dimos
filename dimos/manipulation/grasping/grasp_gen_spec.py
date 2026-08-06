@@ -20,7 +20,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import Spec
 
 
-class GraspGenSpec(Spec, Protocol):
+class LegacyGraspGenSpec(Spec, Protocol):
     def generate_grasps(
         self,
         pointcloud: PointCloud2,
@@ -28,5 +28,5 @@ class GraspGenSpec(Spec, Protocol):
     ) -> PoseArray | None: ...
 
 
-class GraspProposalSpec(Spec, Protocol):
+class GraspGenSpec(Spec, Protocol):
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...

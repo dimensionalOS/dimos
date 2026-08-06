@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, GraspProposalSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
 import dimos.manipulation.grasping.grasp_gen_x as grasp_gen_x
 from dimos.manipulation.grasping.grasp_gen_x import (
     GraspGenXConfig,
@@ -107,9 +107,9 @@ def test_messages_round_trip_empty_and_score() -> None:
     )
 
 
-def test_spec_signatures_keep_pose_and_proposal_contracts_separate() -> None:
-    legacy_signature = inspect.signature(GraspGenSpec.generate_grasps)
-    signature = inspect.signature(GraspProposalSpec.propose_grasps)
+def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
+    legacy_signature = inspect.signature(LegacyGraspGenSpec.generate_grasps)
+    signature = inspect.signature(GraspGenSpec.propose_grasps)
 
     assert list(legacy_signature.parameters) == [
         "self",

@@ -23,7 +23,7 @@ from pydantic import Field, FiniteFloat, field_validator
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_spec import GraspProposalSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -101,7 +101,7 @@ def _create_runtime(config: GraspGenXConfig) -> GraspGenXRuntime:
     return GraspGenXRuntime(config)
 
 
-class GraspGenXModule(Module, GraspProposalSpec):
+class GraspGenXModule(Module, GraspGenSpec):
     """Direct adapter whose optional runtime is loaded synchronously by ``start``."""
 
     dedicated_worker = True
