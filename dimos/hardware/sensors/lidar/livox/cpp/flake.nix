@@ -70,6 +70,16 @@
 
           src = ./.;
 
+          # nix-portable/proot fails stdenv directory unpack (cp -p on 'cpp').
+          unpackPhase = ''
+            runHook preUnpack
+            mkdir source
+            cp -a --no-preserve=mode,ownership "$src"/. source/
+            chmod -R u+w source
+            cd source
+            runHook postUnpack
+          '';
+
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json ];
 
