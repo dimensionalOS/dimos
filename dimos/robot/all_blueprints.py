@@ -176,6 +176,7 @@ all_modules = {
     "collection-recorder": "dimos.imitation.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
+    "cuvslam-odometry": "dimos.mapping.cuvslam_native.cuvslam.CuvslamOdometry",
     "dan-holonomic-tc": "dimos.navigation.dannav.holonomic_tc.module.DanHolonomicTC",
     "dan-local-planner": "dimos.navigation.dannav.local_planner.module.DanLocalPlanner",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
