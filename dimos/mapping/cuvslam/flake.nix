@@ -88,7 +88,15 @@
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "dimos-cuvslam-native";
           version = "0.1.0";
-          src = ./.;
+          # Only what cmake actually reads. `./.` would drag the Python module in
+          # beside it, and since the derivation is keyed on its source, editing
+          # cuvslam.py would then force a full C++ rebuild before the module could
+          # start. Whole directories rather than named files, so a new .cpp is
+          # picked up without touching this list.
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [ ./CMakeLists.txt ./src ];
+          };
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config pkgs.autoPatchelfHook ];
           buildInputs = [
