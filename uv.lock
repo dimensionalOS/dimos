@@ -26,7 +26,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-03T19:08:40.466827Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1726,6 +1726,7 @@ all = [
     { name = "lap" },
     { name = "manifold3d" },
     { name = "matplotlib" },
+    { name = "mavsdk" },
     { name = "moondream" },
     { name = "mujoco" },
     { name = "ollama" },
@@ -1740,6 +1741,7 @@ all = [
     { name = "portal" },
     { name = "pycollada" },
     { name = "pygame" },
+    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pymavlink" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
@@ -1810,6 +1812,8 @@ dds = [
     { name = "cyclonedds" },
 ]
 drone = [
+    { name = "mavsdk" },
+    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pymavlink" },
 ]
 graspgenx = [
@@ -2193,6 +2197,7 @@ requires-dist = [
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "mavsdk", marker = "extra == 'drone'", specifier = ">=3.17.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
@@ -2224,6 +2229,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.11.0,<3" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
+    { name = "pygobject", marker = "sys_platform == 'linux' and extra == 'drone'", specifier = ">=3.46,<3.52" },
     { name = "pymavlink", marker = "extra == 'drone'" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
@@ -4962,6 +4968,26 @@ wheels = [
 ]
 
 [[package]]
+name = "mavsdk"
+version = "3.17.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/42/bf38eb788ed238dbfe0b54e2a3c8c6e73ca227bf48abf61171c6cf06162f/mavsdk-3.17.2-py3-none-linux_armv6l.whl", hash = "sha256:90ac3826e37dd70f5fdeea4c2d60b3681c22a54e78162d87955313f3deb77083", size = 16588500, upload-time = "2026-07-22T08:19:46.616Z" },
+    { url = "https://files.pythonhosted.org/packages/45/9e/567b2957c1d12e15edf0837fbfcdbd43f139ca32490d848a095bbc55c3f3/mavsdk-3.17.2-py3-none-linux_armv7l.whl", hash = "sha256:1aa441c7c290c4e1df5cb43376aa776194ea80004ef156826dd60c5d8b13f2c0", size = 16588546, upload-time = "2026-07-22T08:19:43.234Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/91/2005f11804d277a4b599e97bef9c5021c949079ac2c992e5d4f44e304e3f/mavsdk-3.17.2-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:24c40b9f9fa0ce5cea4c05d300cafbb21dfc1483da7518de77c15356112f2c97", size = 12221440, upload-time = "2026-07-22T08:19:53.168Z" },
+    { url = "https://files.pythonhosted.org/packages/10/38/da962106d56d68e9290390ec7e1fbfa6d6914580c11673a89d0a8406241d/mavsdk-3.17.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:0247c9dcc0d4390b8734358ded178764efa4b83c304cb2f77162758b29cd6f57", size = 11684503, upload-time = "2026-07-22T08:19:48.707Z" },
+    { url = "https://files.pythonhosted.org/packages/73/b6/72dc4499cb7172665c1e0c3af0b18f5d0ca0160b810c1e05ea6668dd5488/mavsdk-3.17.2-py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:78ac2402306022bb6000e1fa02dfe4af7a634c803d4ca90673b1c7918a23c937", size = 15246122, upload-time = "2026-07-22T08:20:01.196Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/b3/2b177c2350bbc0785bc3a74f770cfc7cdc134128ad566a4f759631b4e549/mavsdk-3.17.2-py3-none-manylinux2014_aarch64.whl", hash = "sha256:99e58f26705127986fa5e1358e3688aa4e4f8d006e719d2d39179d03368039f8", size = 18233585, upload-time = "2026-07-22T08:19:47.112Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/3e/843a6bba46b3d442b870c02186003c27c1f7cbe57d9abcf4df35f855f6ba/mavsdk-3.17.2-py3-none-win32.whl", hash = "sha256:a5bb3618b044820c679f62a4d2b5b1fd4029c2145f53fd3ed80a62bf6768e8e2", size = 14342433, upload-time = "2026-07-22T08:20:16.778Z" },
+    { url = "https://files.pythonhosted.org/packages/47/4e/6bbd365a6119be77d93d7d61d7f3bb54faa8cc026ddc4471fe204b652e80/mavsdk-3.17.2-py3-none-win_amd64.whl", hash = "sha256:b613775dbf9324b542e29814f530a5e361cad0234304cb48fe56da4054642fc1", size = 14342433, upload-time = "2026-07-22T08:20:23.647Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/81/209201c6e2420cc27c377b3bc6e38b7880af19ba8e93f15e082cd7554705/mavsdk-3.17.2-py3-none-win_arm64.whl", hash = "sha256:727b2047e326d64e698bfccb8ca77f7eaada0d4b4d562b57d7e7ac55fa579ac1", size = 14342433, upload-time = "2026-07-22T08:20:10.977Z" },
+]
+
+[[package]]
 name = "mcap"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -6963,6 +6989,12 @@ wheels = [
 ]
 
 [[package]]
+name = "pycairo"
+version = "1.29.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/d9/1728840a22a4ef8a8f479b9156aa2943cd98c3907accd3849fb0d5f82bfd/pycairo-1.29.0.tar.gz", hash = "sha256:f3f7fde97325cae80224c09f12564ef58d0d0f655da0e3b040f5807bd5bd3142", size = 665871, upload-time = "2025-11-11T19:13:01.584Z" }
+
+[[package]]
 name = "pycodestyle"
 version = "2.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7224,6 +7256,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b014
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
 ]
+
+[[package]]
+name = "pygobject"
+version = "3.50.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pycairo", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a7/5d/f2946cc6c1baf56dee6e942af8cfa16472538a8ad9d780d9f484e7554288/pygobject-3.50.2.tar.gz", hash = "sha256:ece6b860aab77cb649fdfc6e88d8a83765e7a62f7ffd39a628d6e2a0d397a7ff", size = 1085854, upload-time = "2025-10-18T13:44:45.634Z" }
 
 [[package]]
 name = "pyjwt"

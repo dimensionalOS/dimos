@@ -1,6 +1,6 @@
 # DimOS Drone Module
 
-DJI drone integration via RosettaDrone MAVLink bridge, with visual servoing, autonomous tracking, and LLM agent control.
+DJI drone integration via RosettaDrone MAVLink bridge, with visual servoing, autonomous tracking, and LLM agent control. For the PX4 MAVSDK stack, see [`px4/README.md`](px4/README.md).
 
 ## Quick Start
 
@@ -148,15 +148,17 @@ DJI Drone ← Wireless → DJI Controller ← USB → Android Device ← WiFi �
 ### Module Structure
 ```
 dimos/robot/drone/
-├── blueprints/
-│   ├── basic/drone_basic.py              # Base blueprint (connection + camera + vis)
-│   └── agentic/drone_agentic.py          # Agentic blueprint (composes on basic)
-├── connection_module.py                   # MAVLink communication & skills
-├── camera_module.py                       # Camera processing & intrinsics
-├── drone_tracking_module.py               # Visual servoing & object tracking
-├── drone_visual_servoing_controller.py    # PID-based visual servoing
-├── mavlink_connection.py                  # Low-level MAVLink protocol
-└── dji_video_stream.py                    # GStreamer video capture + replay
+├── dji/
+│   ├── blueprints/
+│   │   ├── basic/drone_basic.py           # Base blueprint (connection + camera + vis)
+│   │   └── agentic/drone_agentic.py       # Agentic blueprint (composes on basic)
+│   ├── connection_module.py               # MAVLink communication & skills
+│   ├── camera_module.py                   # Camera processing & intrinsics
+│   ├── drone_tracking_module.py           # Visual servoing & object tracking
+│   ├── drone_visual_servoing_controller.py # PID-based visual servoing
+│   ├── mavlink_connection.py              # Low-level MAVLink protocol
+│   └── dji_video_stream.py                # GStreamer video capture + replay
+└── px4/                                    # MAVSDK flight, video, and mapping stack
 ```
 
 ### Communication Flow

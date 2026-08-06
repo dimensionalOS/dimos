@@ -643,6 +643,8 @@ class ModuleBase(Configurable, CompositeResource):
         # Validate every handler before subscribing any of them.
         bindings: list[tuple[Any, Callable[[Any], Any]]] = []
         for input_name, in_stream in {**self.inputs, **self.ios}.items():
+            if in_stream.transport is None:
+                continue
             handler = getattr(self, f"handle_{input_name}", None)
             if handler is None:
                 continue

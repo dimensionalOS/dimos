@@ -20,8 +20,8 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.robot.drone.camera_module import DroneCameraModule
-from dimos.robot.drone.connection_module import DroneConnectionModule
+from dimos.robot.drone.dji.camera_module import DroneCameraModule
+from dimos.robot.drone.dji.connection_module import DroneConnectionModule
 from dimos.visualization.vis_module import vis_module
 
 
