@@ -98,7 +98,7 @@ CAVEATED = {
     ("hotel", "rtabmap_stereo_imu_online"),
     ("small_loop_right_night", "rtabmap"),
 }
-REPORTED_DRIFT_PCT = {
+REPORTED_DRIFT_PCT: dict[str, dict[str, Any]] = {
     "sf_office_stairs": {
         "rtabmap": 0.43,
         "rtabmap_online": 0.97,
@@ -185,7 +185,8 @@ def yaw_align(trajectory: np.ndarray, reference: np.ndarray) -> np.ndarray:
     dot = float(np.sum(moving[:, 0] * fixed[:, 0] + moving[:, 1] * fixed[:, 1]))
     angle = np.arctan2(cross, dot)
     rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
-    return (trajectory - trajectory[0]) @ rotation.T + reference[0]
+    aligned: np.ndarray = (trajectory - trajectory[0]) @ rotation.T + reference[0]
+    return aligned
 
 
 def collect(recording_dir: Path) -> dict[str, Any]:

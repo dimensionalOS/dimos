@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Any
 
 import cv2
 import numpy as np
@@ -91,18 +92,19 @@ def stage_euroc(db_path: Path, out_dir: Path) -> dict[str, object]:
         directory.mkdir(parents=True, exist_ok=True)
     (out_dir / "mav0" / "imu0").mkdir(parents=True, exist_ok=True)
 
-    info = next(iter(replay.stream("realsense_infra_left_camera_info").iterate_ts()))[1]
-    right_info = next(iter(replay.stream("realsense_infra_right_camera_info").iterate_ts()))[1]
+    info: Any = next(iter(replay.stream("realsense_infra_left_camera_info").iterate_ts()))[1]
+    right_info: Any = next(iter(replay.stream("realsense_infra_right_camera_info").iterate_ts()))[1]
     baseline_m = -right_info.P[3] / right_info.P[0] if right_info.P[0] else 0.0
 
-    right_by_ts = {
-        round(message.ts, 4): message
-        for _ts, message in replay.stream("realsense_infra_right").iterate_ts()
-    }
+    right_by_ts: dict[float, Any] = {}
+    message: Any
+    for _ts, message in replay.stream("realsense_infra_right").iterate_ts():
+        right_by_ts[round(message.ts, 4)] = message
     right_stamps = np.array(sorted(right_by_ts))
 
     stamps: list[int] = []
     unpaired = 0
+    left: Any
     for _ts, left in replay.stream("realsense_infra_left").iterate_ts():
         nearest = right_stamps[np.argmin(np.abs(right_stamps - left.ts))]
         right = right_by_ts[nearest]
@@ -119,6 +121,7 @@ def stage_euroc(db_path: Path, out_dir: Path) -> dict[str, object]:
     imu_rows = 0
     with (out_dir / "mav0" / "imu0" / "data.csv").open("w") as handle:
         handle.write("#timestamp [ns],w_x,w_y,w_z,a_x,a_y,a_z\n")
+        sample: Any
         for _ts, sample in replay.stream("realsense_imu").iterate_ts():
             angular, linear = sample.angular_velocity, sample.linear_acceleration
             stamp_ns = int((sample.ts + KALIBR_TIMESHIFT_CAM_IMU_S) * NS_PER_S)
@@ -151,22 +154,25 @@ def measure_gravity_at_rest(db_path: Path) -> tuple[list[float], float] | None:
     unambiguously.
     """
     replay = Replay(store=SqliteStore(path=str(db_path)))
-    stamps, accel, gyro = [], [], []
+    raw_stamps: list[float] = []
+    raw_accel: list[list[float]] = []
+    raw_gyro: list[list[float]] = []
+    sample: Any
     for _ts, sample in replay.stream("realsense_imu").iterate_ts():
-        stamps.append(sample.ts)
-        accel.append(
+        raw_stamps.append(sample.ts)
+        raw_accel.append(
             [
                 sample.linear_acceleration.x,
                 sample.linear_acceleration.y,
                 sample.linear_acceleration.z,
             ]
         )
-        gyro.append(
+        raw_gyro.append(
             [sample.angular_velocity.x, sample.angular_velocity.y, sample.angular_velocity.z]
         )
-    stamps = np.asarray(stamps)
-    accel = np.asarray(accel)
-    rotation_rate = np.linalg.norm(np.asarray(gyro), axis=1)
+    stamps = np.asarray(raw_stamps)
+    accel = np.asarray(raw_accel)
+    rotation_rate = np.linalg.norm(np.asarray(raw_gyro), axis=1)
 
     count = 0
     while count < len(rotation_rate) and rotation_rate[count] < STILL_GYRO_RAD_S:

@@ -32,6 +32,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 import numpy as np
 
@@ -48,18 +49,19 @@ def export(db_path: Path, out_dir: Path, limit: int | None = None) -> dict[str, 
     (out_dir / "left").mkdir(parents=True, exist_ok=True)
     (out_dir / "right").mkdir(parents=True, exist_ok=True)
 
-    info = next(iter(replay.stream("realsense_infra_left_camera_info").iterate_ts()))[1]
-    right_info = next(iter(replay.stream("realsense_infra_right_camera_info").iterate_ts()))[1]
+    info: Any = next(iter(replay.stream("realsense_infra_left_camera_info").iterate_ts()))[1]
+    right_info: Any = next(iter(replay.stream("realsense_infra_right_camera_info").iterate_ts()))[1]
     baseline_m = -right_info.P[3] / right_info.P[0] if right_info.P[0] else 0.0
 
-    right_by_ts = {
-        round(message.ts, 4): message
-        for _ts, message in replay.stream("realsense_infra_right").iterate_ts()
-    }
+    right_by_ts: dict[float, Any] = {}
+    message: Any
+    for _ts, message in replay.stream("realsense_infra_right").iterate_ts():
+        right_by_ts[round(message.ts, 4)] = message
     right_stamps = np.array(sorted(right_by_ts))
 
     frames = []
     unpaired = 0
+    left: Any
     for index, (_ts, left) in enumerate(replay.stream("realsense_infra_left").iterate_ts()):
         if limit is not None and index >= limit:
             break
@@ -81,6 +83,7 @@ def export(db_path: Path, out_dir: Path, limit: int | None = None) -> dict[str, 
     imu_rows = 0
     with (out_dir / "imu.csv").open("w") as handle:
         handle.write("ts_ns,gx,gy,gz,ax,ay,az\n")
+        sample: Any
         for _ts, sample in replay.stream("realsense_imu").iterate_ts():
             angular, linear = sample.angular_velocity, sample.linear_acceleration
             handle.write(

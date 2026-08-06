@@ -31,6 +31,7 @@ with the measurement rather than living in someone's memory.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 from pathlib import Path
 import re
@@ -205,7 +206,7 @@ def record(recording_dir: Path, method: str, result: dict[str, Any], duration: f
 # transport, not cuVSLAM. Timing now comes from the standalone harness instead:
 #     python -m dimos.mapping.cuvslam_replay_export <db> <dir>
 #     bench_cuvslam <dir>            # prints track ms and real-time factor
-METHODS: dict[str, object] = {}
+METHODS: dict[str, Callable[[Path, Path], list[str]]] = {}
 
 
 def main() -> int:
@@ -239,7 +240,8 @@ def main() -> int:
         shutil.copy2(corrected, args.recording_dir / f"{args.method}_corrected_traj.npy")
 
     print(json.dumps({k: v for k, v in result.items() if k != "output_tail"}, indent=2))
-    return result["exit_code"]
+    exit_code: int = result["exit_code"]
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
     double imu_offset_s = 0.0;
     bool sync_sba = false;
     int start_frame = 0;
+    int max_frames = 0;  // 0 = to the end
     bool debug_imu = false;
     std::string dump_dir;
     bool state_debug = false;
@@ -121,6 +122,8 @@ int main(int argc, char** argv) {
             sync_sba = true;
         } else if (std::strcmp(argv[arg], "--start-frame") == 0 && arg + 1 < argc) {
             start_frame = std::atoi(argv[++arg]);
+        } else if (std::strcmp(argv[arg], "--max-frames") == 0 && arg + 1 < argc) {
+            max_frames = std::atoi(argv[++arg]);
         } else if (std::strcmp(argv[arg], "--imu-quat") == 0 && arg + 1 < argc) {
             std::sscanf(argv[++arg], "%f,%f,%f,%f", &imu_quat[0], &imu_quat[1], &imu_quat[2],
                         &imu_quat[3]);
@@ -268,7 +271,11 @@ int main(int argc, char** argv) {
     double worst_ms = 0.0;
     const auto wall_start = std::chrono::steady_clock::now();
 
-    for (std::size_t i = static_cast<std::size_t>(start_frame); i < frames.size(); ++i) {
+    const std::size_t stop_frame =
+        max_frames > 0
+            ? std::min(frames.size(), static_cast<std::size_t>(start_frame + max_frames))
+            : frames.size();
+    for (std::size_t i = static_cast<std::size_t>(start_frame); i < stop_frame; ++i) {
         if (left_planes[i].empty() || right_planes[i].empty()) {
             continue;
         }

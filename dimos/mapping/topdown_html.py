@@ -66,7 +66,8 @@ LABELS = {
 def pointlio_trajectory(db_path: Path) -> np.ndarray:
     """Reference trajectory as ``ts x y z``, in the gravity-aligned world frame."""
     replay = Replay(store=SqliteStore(path=str(db_path)))
-    rows = []
+    rows: list[list[float]] = []
+    odometry: Any
     for _ts, odometry in replay.stream("pointlio_odometry").iterate_ts():
         pose = odometry.pose.pose if hasattr(odometry.pose, "pose") else odometry.pose
         rows.append([odometry.ts, pose.position.x, pose.position.y, pose.position.z])

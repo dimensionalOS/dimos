@@ -31,6 +31,7 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import Any
 
 import numpy as np
 
@@ -50,7 +51,7 @@ METHOD_FOR = {
 }
 
 
-def plot_traces(text: str, index: int) -> list[dict]:
+def plot_traces(text: str, index: int) -> list[dict[str, Any]]:
     key = f'"map-{index}",'
     start = text.index(key) + len(key)
     while text[start] in " \n\t":
@@ -62,7 +63,8 @@ def plot_traces(text: str, index: int) -> list[dict]:
         elif text[position] == "]":
             depth -= 1
             if depth == 0:
-                return json.loads(text[start : position + 1])
+                loaded: list[dict[str, Any]] = json.loads(text[start : position + 1])
+                return loaded
     raise RuntimeError(f"map-{index} payload is not terminated")
 
 
