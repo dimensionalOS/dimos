@@ -704,6 +704,7 @@ ignore = [
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
 ]
