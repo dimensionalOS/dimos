@@ -19,7 +19,6 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
-dimos run keyboard-teleop-openarm # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
@@ -32,12 +31,6 @@ for fully open; it does not use meters. Hardware activation calibrates both
 mechanical endpoints, so clear the gripper jaws and workspace before startup.
 The gripper has no default startup target and moves only after joint control has
 an explicit target.
-
-OpenArm follows the same whole-body model with both arms and both grippers in
-one device: fourteen angular joints (`left_arm/joint1..7`,
-`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
-`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
-its pose; keyboard gripper bindings are a follow-up.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 

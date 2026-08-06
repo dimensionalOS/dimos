@@ -231,12 +231,9 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
             # Load mesh
             mesh = trimesh.load(original_path, force="mesh")
 
-            # Generate output path. Include a source-path hash: different
-            # meshes may share a stem (visual/link3.dae vs collision/link3.stl)
-            # and stem-only names would overwrite each other.
+            # Generate output path
             mesh_name = Path(original_path).stem
-            path_tag = hashlib.md5(original_path.encode()).hexdigest()[:8]
-            obj_path = mesh_dir / f"{mesh_name}_{path_tag}.obj"
+            obj_path = mesh_dir / f"{mesh_name}.obj"
 
             # Export as OBJ (trimesh.export returns None, ignore)
             mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]

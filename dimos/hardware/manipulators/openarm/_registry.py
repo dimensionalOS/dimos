@@ -13,5 +13,5 @@
 # limitations under the License.
 
 ADAPTER_FACTORIES = {
-    "openarm_damiao": ("dimos.hardware.whole_body.openarm_damiao.adapter:OpenArmDamiaoAdapter"),
+    "openarm": "dimos.hardware.manipulators.openarm.adapter:OpenArmAdapter",
 }

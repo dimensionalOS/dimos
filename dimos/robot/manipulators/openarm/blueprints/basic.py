@@ -16,40 +16,53 @@
 
 from __future__ import annotations
 
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner
-from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
+from dimos.robot.manipulators.common.blueprints import trajectory_task
 from dimos.robot.manipulators.openarm.config import (
-    OPENARM_ARM_JOINTS,
-    openarm_bimanual_model_config,
+    LEFT_CAN,
+    OPENARM_ADAPTER_KWARGS,
+    RIGHT_CAN,
     openarm_hardware,
 )
 
 
-def _trajectory_task() -> TaskConfig:
-    return TaskConfig(
-        name=DEFAULT_TRAJECTORY_TASK_NAME,
-        type="trajectory",
-        joint_names=list(OPENARM_ARM_JOINTS),
-        priority=10,
-        params={"start_position_tolerance": 0.05},
-    )
+def openarm_task(hw: HardwareComponent, name: str | None = None) -> TaskConfig:
+    return trajectory_task(hw, name=name)
 
 
-_openarm_planner_hw = openarm_hardware()
+mock_left = openarm_hardware(side="left")
+mock_right = openarm_hardware(side="right")
 
-openarm_planner_coordinator = autoconnect(
-    planner(robots=[openarm_bimanual_model_config()]),
-    coordinator(
-        hardware=[_openarm_planner_hw],
-        tasks=[_trajectory_task()],
-    ),
+coordinator_openarm_mock = ControlCoordinator.blueprint(
+    hardware=[mock_left, mock_right],
+    tasks=[trajectory_task(mock_left, mock_right)],
 )
 
-_openarm_hw = openarm_hardware()
+left_hw = openarm_hardware(
+    side="left",
+    address=LEFT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=OPENARM_ADAPTER_KWARGS,
+)
+right_hw = openarm_hardware(
+    side="right",
+    address=RIGHT_CAN,
+    adapter_type="openarm",
+    adapter_kwargs=OPENARM_ADAPTER_KWARGS,
+)
 
-coordinator_openarm = ControlCoordinator.blueprint(
-    hardware=[_openarm_hw],
-    tasks=[_trajectory_task()],
+coordinator_openarm_left = ControlCoordinator.blueprint(
+    hardware=[left_hw],
+    tasks=[openarm_task(left_hw)],
+)
+
+coordinator_openarm_right = ControlCoordinator.blueprint(
+    hardware=[right_hw],
+    tasks=[openarm_task(right_hw)],
+)
+
+coordinator_openarm_bimanual = ControlCoordinator.blueprint(
+    hardware=[left_hw, right_hw],
+    tasks=[trajectory_task(left_hw, right_hw)],
 )

@@ -53,6 +53,7 @@ EXPECTED_NAMES = {
     "manipulators": {
         "a750",
         "mock",
+        "openarm",
         "piper",
         "sim_mujoco",
         "xarm",
@@ -66,7 +67,6 @@ EXPECTED_NAMES = {
     },
     "whole_body": {
         "mock_whole_body",
-        "openarm_damiao",
         "openyam_damiao",
         "sim_mujoco_g1",
         "transport_lcm",
