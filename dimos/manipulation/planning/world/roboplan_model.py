@@ -33,8 +33,10 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.transform_utils import pose_to_matrix
 
+ROBOPLAN_WORLD_FRAME = "dimos_world"
+
 _MAX_COMPOSITE_GROUPS = 64
-_ROOT_LINK = "dimos_world"
+_ROOT_LINK = ROBOPLAN_WORLD_FRAME
 _ROOT_JOINT = "dimos_world_joint"
 _FREE_ROOTS = {"world", "map", _ROOT_LINK}
 _REFERENCE_ATTRIBUTES = (

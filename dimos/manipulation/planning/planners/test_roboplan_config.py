@@ -17,7 +17,7 @@
 from pydantic import ValidationError
 import pytest
 
-from dimos.manipulation.planning.world.roboplan_config import (
+from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPathShortcuttingConfig,
 )

@@ -20,7 +20,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from dimos.manipulation.planning.world.roboplan_config import (
+from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig as _RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig as _RoboPlanPlannerConfig,
 )
