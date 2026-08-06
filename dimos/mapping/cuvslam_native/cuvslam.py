@@ -49,7 +49,20 @@ D455_FACTORY_BASELINE_M = 0.09486231207847595
 # at the path below; elsewhere we hand the loader a directory holding only these
 # libs, because the whole system lib dir would shadow the binary's own libstdc++.
 _NIXOS_DRIVER_LIB_DIR = Path("/run/opengl-driver/lib")
-_HOST_LIB_DIRS = (Path("/usr/lib/x86_64-linux-gnu"), Path("/usr/lib/aarch64-linux-gnu"))
+# Jetson (L4T) keeps the driver in an `nvidia` subdirectory rather than beside the rest
+# of the arch libs, so a Jetson looks driverless if only the parent is searched.
+_HOST_LIB_DIRS = (
+    Path("/usr/lib/x86_64-linux-gnu"),
+    Path("/usr/lib/aarch64-linux-gnu"),
+    Path("/usr/lib/aarch64-linux-gnu/nvidia"),
+    Path("/usr/lib/aarch64-linux-gnu/tegra"),
+)
+# nixpkgs tracks a newer CUDA than JetPack ships, and a 12.9 cuSOLVER against a 12.6
+# driver fails at cusolverDnCreate with INTERNAL_ERROR. Where the host has its own
+# matching runtime, it goes first so the versions agree. This directory holds only CUDA
+# runtime libraries, so unlike a full system lib dir it cannot shadow the binary's
+# libstdc++.
+_HOST_CUDA_LIB_DIR = Path("/usr/local/cuda/lib64")
 _DRIVER_LIBS = (
     "libcuda.so.1",
     "libnvidia-ptxjitcompiler.so.1",
@@ -76,11 +89,16 @@ def driver_library_dir() -> Path | None:
 
 
 def _driver_env() -> dict[str, str]:
+    parts = [str(_HOST_CUDA_LIB_DIR)] if _HOST_CUDA_LIB_DIR.is_dir() else []
     driver_dir = driver_library_dir()
-    if driver_dir is None:
+    if driver_dir is not None:
+        parts.append(str(driver_dir))
+    if not parts:
         return {}
     existing = os.environ.get("LD_LIBRARY_PATH", "")
-    return {"LD_LIBRARY_PATH": f"{driver_dir}:{existing}" if existing else str(driver_dir)}
+    if existing:
+        parts.append(existing)
+    return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
 class CuvslamConfig(NativeModuleConfig):

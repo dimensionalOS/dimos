@@ -93,6 +93,23 @@ Transform invert(const Transform& t) {
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
+/// cuVSLAM's rig is the left camera, so every pose it returns is in the optical
+/// convention: z forward, x right, y down. REP-103 wants a body frame -- x forward,
+/// y left, z up -- and publishing the optical pose as `base_link` tilts the entire
+/// tree ninety degrees, which reads in a viewer as the robot lying on its back.
+///
+/// This is the fixed body <- optical rotation, RPY(-pi/2, 0, -pi/2), and it matches
+/// `OPTICAL_ROTATION` in dimos/hardware/sensors/camera/spec.py so the tracker and the
+/// camera driver agree on what an optical frame is.
+const Transform kBaseFromRig{{-0.5, 0.5, -0.5, 0.5}, {0.0, 0.0, 0.0}};
+
+/// cuVSLAM's world is aligned with the rig's first pose, so it is optical-convention
+/// too. Rotating both ends -- R * T * R^-1 -- moves the world axes and the body axes
+/// together, which is what makes gravity fall along -z instead of +y.
+Transform to_body_frame(const Transform& t) {
+    return compose(compose(kBaseFromRig, t), invert(kBaseFromRig));
+}
+
 /// 3x3 median, then "how far above its own neighbourhood is this pixel", then a
 /// dilation to cover each spot's halo. The Mid-360 paints bright dots on the IR
 /// frame that move with the lidar's spin rather than with the world; measured at
@@ -492,11 +509,12 @@ private:
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
-        fill_pose(corrected, map_from_rig, timestamp_ns, map_frame_, base_frame_);
+        fill_pose(corrected, to_body_frame(map_from_rig), timestamp_ns, map_frame_, base_frame_);
         corrected_odometry_.publish(corrected);
 
         nav_msgs::Odometry correction{};
-        fill_pose(correction, map_from_odom_raw, timestamp_ns, map_frame_, odom_frame_);
+        fill_pose(correction, to_body_frame(map_from_odom_raw), timestamp_ns, map_frame_,
+                  odom_frame_);
         map_tf_.publish(correction);
 
         cuvslam::Slam::Metrics metrics{};
@@ -531,7 +549,7 @@ private:
     /// Resets are debugging output, on the log, not a break in this stream.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
-        fill_pose(msg, world_from_rig_, timestamp_ns, odom_frame_, base_frame_);
+        fill_pose(msg, to_body_frame(world_from_rig_), timestamp_ns, odom_frame_, base_frame_);
         odometry_.publish(msg);
     }
 
@@ -566,13 +584,16 @@ private:
 
         msg.data.resize(static_cast<std::size_t>(msg.row_step));
         auto* out = reinterpret_cast<float*>(msg.data.data());
+        // The pose published for `odom` is body-convention, so the points have to be
+        // rotated the same way or the map sits ninety degrees off its own trajectory.
+        const Transform odom_from_rig = compose(kBaseFromRig, world_from_rig_);
         for (std::size_t i = 0; i < pts.size(); ++i) {
             const std::array<double, 3> local{pts[i].coords[0], pts[i].coords[1],
                                               pts[i].coords[2]};
-            const std::array<double, 3> world = quat_rotate(world_from_rig_.rotation, local);
+            const std::array<double, 3> world = quat_rotate(odom_from_rig.rotation, local);
             for (int axis = 0; axis < 3; ++axis) {
                 out[3 * i + axis] =
-                    static_cast<float>(world[axis] + world_from_rig_.translation[axis]);
+                    static_cast<float>(world[axis] + odom_from_rig.translation[axis]);
             }
         }
         msg.data_length = static_cast<std::int32_t>(msg.data.size());
