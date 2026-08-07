@@ -235,9 +235,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         available = self.replay.list_streams()
         present = [name for name in names if name in available]
         if not present:
-            raise KeyError(
-                f"None of {names!r} in dataset {self.dataset!r}; available: {available}"
-            )
+            raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
         for name in present:
             if self.replay.stream(name).count() > 0:
                 return name

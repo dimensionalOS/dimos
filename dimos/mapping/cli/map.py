@@ -356,7 +356,7 @@ def main(
         "--voxel",
         help="Voxel size for the rebuild (m). Default: 0.05, or 0.03 with --lidar-config mid360",
     ),
- device: str = typer.Option(
+    device: str = typer.Option(
         "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
     ),
     pgo: bool = typer.Option(

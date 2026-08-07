@@ -136,7 +136,9 @@ class RelocalizationModule(Module):
         if log_first:
             self._first_reloc_logged = True
             elapsed = (
-                time.monotonic() - self._start_mono if self._start_mono is not None else float("nan")
+                time.monotonic() - self._start_mono
+                if self._start_mono is not None
+                else float("nan")
             )
             logger.info(
                 f"relocalize first event before ICP: elapsed_s={elapsed:.1f} voxels={n_pts}"
