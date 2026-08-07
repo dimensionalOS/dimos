@@ -13,9 +13,7 @@ let xrRefSpace = null;
 let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
-const pinchActive = new Map();
-const PINCH_START_DISTANCE_METERS = 0.025;
-const PINCH_END_DISTANCE_METERS = 0.04;
+const handSelectActive = new Map();
 
 // Video panel state
 const videoEl = document.getElementById('videoFeed');
@@ -272,21 +270,11 @@ function processTracking(frame) {
         const hand = inputSource.hand;
         if (hand) {
             const wristPose = frame.getJointPose(hand.get('wrist'), xrRefSpace);
-            const thumbTipPose = frame.getJointPose(hand.get('thumb-tip'), xrRefSpace);
-            const indexTipPose = frame.getJointPose(hand.get('index-finger-tip'), xrRefSpace);
-            if (!wristPose || !thumbTipPose || !indexTipPose) continue;
-
-            const thumb = thumbTipPose.transform.position;
-            const index = indexTipPose.transform.position;
-            const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
-            const wasPinching = pinchActive.get(handedness) ?? false;
-            const threshold = wasPinching ? PINCH_END_DISTANCE_METERS : PINCH_START_DISTANCE_METERS;
-            const isPinching = distance < threshold;
-            pinchActive.set(handedness, isPinching);
+            if (!wristPose) continue;
 
             sendPose(handedness, wristPose);
-            // Keep the Quest Joy layout; primary is the pinch button consumed by HandTeleopModule.
-            sendJoy(handedness, [0, 0, 0, 0], [0, 0, 0, 0, isPinching ? 1 : 0, 0, 0]);
+            // Keep the Quest Joy layout; primary is the native hand-select gesture.
+            sendJoy(handedness, [0, 0, 0, 0], [0, 0, 0, 0, handSelectActive.get(handedness) ? 1 : 0, 0, 0]);
             continue;
         }
 
@@ -396,6 +384,19 @@ async function startVR() {
             setStatus('VR session ended');
             xrSession = null;
             window.disconnect();
+        });
+
+        session.addEventListener('selectstart', (event) => {
+            const { handedness, hand } = event.inputSource;
+            if (hand && (handedness === 'left' || handedness === 'right')) {
+                handSelectActive.set(handedness, true);
+            }
+        });
+        session.addEventListener('selectend', (event) => {
+            const { handedness, hand } = event.inputSource;
+            if (hand && (handedness === 'left' || handedness === 'right')) {
+                handSelectActive.set(handedness, false);
+            }
         });
 
         // Start render loop
