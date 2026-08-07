@@ -18,10 +18,10 @@ from importlib import resources
 import sys
 from threading import Thread
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import Field
-from reactivex import empty
+from reactivex import empty, operators as rxops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -224,31 +225,81 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
     def _stream_name(self, *names: str) -> str:
         """Return the first of ``names`` present in the dataset (stream naming
-        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
-        lidar/odom)."""
+        changed over time: mid360 Point-LIO uses pointlio_*, mid360 Go2
+        recordings use go2_lidar/go2_odom, older ones lidar/odom).
+
+        Prefer a non-empty stream when an older empty table shares the DB
+        (e.g. Mid-360 recordings that create ``go2_lidar`` but only fill
+        ``pointlio_lidar``).
+        """
         available = self.replay.list_streams()
-        for name in names:
-            if name in available:
+        present = [name for name in names if name in available]
+        if not present:
+            raise KeyError(
+                f"None of {names!r} in dataset {self.dataset!r}; available: {available}"
+            )
+        for name in present:
+            if self.replay.stream(name).count() > 0:
                 return name
-        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
+        return present[0]
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        stream: ReplayStream[PointCloud2] = self.replay.stream(
-            self._stream_name("go2_lidar", "lidar")
-        )
+        name = self._stream_name("go2_lidar", "lidar", "pointlio_lidar")
+        stream: ReplayStream[PointCloud2] = self.replay.stream(name)
+        if name != "pointlio_lidar":
+            return stream.observable()
+
+        # Point-LIO clouds are sensor-frame (mid360_link) but often carry a
+        # baked odom pose on the Observation. Lift into odom so VoxelGridMapper
+        # / relocalization see world-frame clouds like native Go2 lidar.
+        # Decode from the full Observation (not a second sqlite stream) to
+        # avoid concurrent blob-store races.
+        def _decode(obs: Any) -> PointCloud2:
+            cloud = cast("PointCloud2", obs.data)
+            pose = obs.pose
+            if pose is None:
+                return cloud
+            tf = Transform.from_pose(
+                cloud.frame_id,
+                PoseStamped(
+                    ts=cloud.ts,
+                    frame_id="odom",
+                    position=pose.position,
+                    orientation=pose.orientation,
+                ),
+            )
+            out = cloud.transform(tf)
+            out.frame_id = "odom"
+            return out
+
+        stream._decode = _decode  # type: ignore[method-assign]
         return stream.observable()
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        stream: ReplayStream[PoseStamped] = self.replay.stream(
-            self._stream_name("go2_odom", "odom")
-        )
-        return stream.observable()
+        name = self._stream_name("go2_odom", "odom", "pointlio_odometry")
+        if name == "pointlio_odometry":
+            # Point-LIO stores nav_msgs/Odometry; navigation ports want PoseStamped.
+            odom: ReplayStream[Odometry] = self.replay.stream(name)
+            return odom.observable().pipe(rxops.map(lambda msg: msg.to_pose_stamped()))
+        pose_stream: ReplayStream[PoseStamped] = self.replay.stream(name)
+        return pose_stream.observable()
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
+        if "color_image" not in self.replay.list_streams():
+            # Mid-360 Point-LIO datasets often have no camera stream.
+            return empty()
         return self.replay.streams.color_image.observable()
+
+    @simple_mcache
+    def tf_stream(self) -> Observable[TFMessage] | None:
+        """Dataset-recorded tf (e.g. odom→mid360_link), when present."""
+        if "tf" not in self.replay.list_streams():
+            return None
+        stream: ReplayStream[TFMessage] = self.replay.stream("tf")
+        return stream.observable()
 
     @simple_mcache
     def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
@@ -329,6 +380,13 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self.config.lidar:
             self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+
+        # Mid-360 Point-LIO recordings store odom→mid360_link on a `tf` stream —
+        # replay that for sensor-frame consumers. Always also drive odom→base_link
+        # from the odom stream so the Go2 box in Rerun (world/tf/base_link) moves.
+        replay_tf = getattr(self.connection, "tf_stream", lambda: None)()
+        if replay_tf is not None and self.config.publish_tf:
+            self.register_disposable(replay_tf.subscribe(self.tf.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
