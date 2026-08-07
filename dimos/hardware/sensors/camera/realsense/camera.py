@@ -232,6 +232,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
 
         self._profile = self._pipeline.start(config)
+        self._require_global_time()
 
         if self.config.enable_depth or self.config.enable_infrared:
             depth_sensor = self._profile.get_device().first_depth_sensor()
@@ -305,6 +306,31 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             imu_config.enable_stream(rs.stream.accel)
             imu_config.enable_stream(rs.stream.gyro)
             self._imu_pipeline.start(imu_config, self._on_motion_frame)
+        # Starting a pipeline on the motion module can reset the option, and it is the
+        # one sensor whose clock has to agree with the imagers'.
+        self._require_global_time()
+
+    def _require_global_time(self) -> None:
+        """Put every sensor's timestamps on the host clock.
+
+        Without this a sensor reports milliseconds since its own boot. The imagers and
+        the motion module are separate sensors with separate clocks, so one of them
+        falling back leaves the IMU and the images on unrelated time bases -- which
+        does not fail anywhere, it just quietly ruins any estimator that fuses them.
+        """
+        import pyrealsense2 as rs
+
+        if self._profile is None:
+            return
+        for sensor in self._profile.get_device().query_sensors():
+            if not sensor.supports(rs.option.global_time_enabled):
+                logger.warning(
+                    "RealSense %s has no global timestamps, so its stream is on the "
+                    "device's own clock and cannot be fused with the others",
+                    sensor.get_info(rs.camera_info.name),
+                )
+                continue
+            sensor.set_option(rs.option.global_time_enabled, 1.0)
 
     def _on_motion_frame(self, frame: rs.frame) -> None:
         import pyrealsense2 as rs
