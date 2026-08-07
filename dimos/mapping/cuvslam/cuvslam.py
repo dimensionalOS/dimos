@@ -162,10 +162,10 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" tracks on an image pair, "mono" on one image alone -- and mono is
-    # accurate only up to an unknown scale, so its poses are not metres. Which ports
-    # the tracker subscribes to follows from this.
-    camera_mode: Literal["stereo", "mono"] = "stereo"
+    # "stereo" tracks on an image pair, "rgbd" on one image plus its depth, "mono" on
+    # one image alone -- and mono is accurate only up to an unknown scale, so its poses
+    # are not metres. Which ports the tracker subscribes to follows from this.
+    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
     # Stereo only: the distance between the two imagers, which is what makes the poses
     # metric. Left unset it is read off the right camera_info, so a different camera
     # model is a different baseline without touching this file.
@@ -200,6 +200,10 @@ class CuvslamConfig(NativeModuleConfig):
     # belongs to one physical unit.
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
+    # rgbd only: how many raw depth units make a metre. cuVSLAM divides by this, and
+    # assumes 1 -- i.e. that the raw values are already metres. Depth images are 16-bit
+    # millimetres, so left at 1 every point lands a thousand times too far away.
+    depth_units_per_meter: float = 1000.0
 
     @model_validator(mode="after")
     def _imu_needs_calibration(self) -> CuvslamConfig:
@@ -239,7 +243,10 @@ class CuvslamOdometry(NativeModule):
     ``camera_info`` is the left imager's. In ``stereo`` mode ``camera_info_right`` is
     required too: it carries the baseline in ``P[3]``, which is the per-unit source of
     metric scale. ``mono`` uses ``image_left`` alone and is accurate only up to scale.
-    The tracker subscribes only to what its ``camera_mode`` uses.
+    ``rgbd`` pairs ``image_left`` with ``depth_image`` and needs no baseline, but the two
+    must share a viewpoint -- on a RealSense the depth stream is already aligned to the
+    left infrared imager, so those two go together. The tracker subscribes only to what
+    its ``camera_mode`` uses.
 
     ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
     at a loop closure, which is the point: that is where a revisit gets pulled back
@@ -261,6 +268,7 @@ class CuvslamOdometry(NativeModule):
 
     image_left: In[Image]
     image_right: In[Image]
+    depth_image: In[Image]
     camera_info: In[CameraInfo]
     camera_info_right: In[CameraInfo]
     imu: In[Imu]
