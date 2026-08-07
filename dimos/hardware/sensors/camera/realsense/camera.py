@@ -74,7 +74,8 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
-    camera_name: str = "camera"
+    # Prefixes every frame this publishes. Empty it is the model, e.g. "d455".
+    camera_name: str = ""
     base_frame_id: str = "base_link"
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
@@ -109,53 +110,57 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     tf: Out[TFMessage]
 
     @property
+    def _name(self) -> str:
+        return self.config.camera_name or self._detected_name
+
+    @property
     def _bottom_screw_frame(self) -> str:
-        return f"{self.config.camera_name}_bottom_screw_frame"
+        return f"{self._name}_bottom_screw_frame"
 
     @property
     def _camera_link(self) -> str:
-        return f"{self.config.camera_name}_link"
+        return f"{self._name}_link"
 
     @property
     def _color_frame(self) -> str:
-        return f"{self.config.camera_name}_color_frame"
+        return f"{self._name}_color_frame"
 
     @property
     def _color_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_color_optical_frame"
+        return f"{self._name}_color_optical_frame"
 
     @property
     def _depth_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_frame"
+        return f"{self._name}_depth_frame"
 
     @property
     def _depth_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_optical_frame"
+        return f"{self._name}_depth_optical_frame"
 
     @property
     def _infra1_frame(self) -> str:
-        return f"{self.config.camera_name}_infra1_frame"
+        return f"{self._name}_infra1_frame"
 
     @property
     def _infra1_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_infra1_optical_frame"
+        return f"{self._name}_infra1_optical_frame"
 
     @property
     def _infra2_frame(self) -> str:
-        return f"{self.config.camera_name}_infra2_frame"
+        return f"{self._name}_infra2_frame"
 
     @property
     def _infra2_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_infra2_optical_frame"
+        return f"{self._name}_infra2_optical_frame"
 
     @property
     def _imu_frame(self) -> str:
-        return f"{self.config.camera_name}_accel_frame"
+        return f"{self._name}_accel_frame"
 
     @property
     def _imu_optical_frame(self) -> str:
         # accel and gyro are co-located on the motion module.
-        return f"{self.config.camera_name}_accel_optical_frame"
+        return f"{self._name}_accel_optical_frame"
 
     # A slow start is normal; a minute of nothing is a real fault.
     MAX_CONSECUTIVE_TIMEOUTS = 60
@@ -169,6 +174,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
+        self._detected_name = "camera"
         # (parent, child, translation, rotation), from the tripod screw down.
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
@@ -231,6 +237,10 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
 
         self._profile = self._pipeline.start(config)
+        # "RealSense D455" -> "d455", so frames say which camera they came off.
+        self._detected_name = (
+            self._profile.get_device().get_info(rs.camera_info.name).split()[-1].lower()
+        )
         self._require_global_time()
 
         if self.config.enable_depth or self.config.enable_infrared:

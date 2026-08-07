@@ -33,8 +33,6 @@ from dimos.mapping.odometry_path import OdometryPath
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.visualization.vis_module import vis_module
 
-CAMERA_NAME = "d455"
-
 
 def _path_at_true_height(path: Path) -> Any:
     """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
@@ -70,9 +68,6 @@ def _rerun_blueprint() -> Any:
 demo_cuvslam = (
     autoconnect(
         RealSenseCamera.blueprint(
-            camera_name=CAMERA_NAME,
-            width=848,
-            height=480,
             fps=30,
             enable_infrared=True,
             emitter_enabled=False,
