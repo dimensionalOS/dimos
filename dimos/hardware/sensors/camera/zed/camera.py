@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import atexit
-import copy
 import threading
 import time
 
@@ -143,17 +142,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_image_ts
         if ts is None:
             return
+        # with_ts copies: subscribers hold the object by reference, so restamping the
+        # stored one would rewrite an already-delivered message.
         for info, stream in (
             (self._color_camera_info, self.camera_info),
             (self._depth_camera_info, self.depth_camera_info),
         ):
-            if info is None:
-                continue
-            # A copy per publish: subscribers hold the object by reference, so
-            # restamping the stored one rewrites an already-delivered message.
-            stamped = copy.copy(info)
-            stamped.ts = ts
-            stream.publish(stamped)
+            if info is not None:
+                stream.publish(info.with_ts(ts))
 
     @rpc
     def start(self) -> None:
@@ -245,22 +241,17 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _intrinsics_to_camera_info(
         self, intrinsics: sl.CameraParameters, frame_id: str
     ) -> CameraInfo:
-        fx, fy = intrinsics.fx, intrinsics.fy
-        cx, cy = intrinsics.cx, intrinsics.cy
-
-        K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-        P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
-        D = list(intrinsics.disto)
-
-        return CameraInfo(
-            height=self._stream_height,
-            width=self._stream_width,
-            distortion_model="plumb_bob",
-            D=D,
-            K=K,
-            P=P,
-            frame_id=frame_id,
+        info = CameraInfo.from_intrinsics(
+            intrinsics.fx,
+            intrinsics.fy,
+            intrinsics.cx,
+            intrinsics.cy,
+            self._stream_width,
+            self._stream_height,
+            frame_id,
         )
+        info.D = list(intrinsics.disto)
+        return info
 
     def _get_extrinsics(self) -> None:
         if self._sl_camera_info is None:

@@ -95,6 +95,13 @@ Transform invert(const Transform& t) {
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
+std_msgs::Time to_stamp(std::int64_t timestamp_ns) {
+    std_msgs::Time stamp{};
+    stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
+    stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
+    return stamp;
+}
+
 Transform to_transform(const cuvslam::Pose& pose) {
     return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
                      {pose.translation[0], pose.translation[1], pose.translation[2]}};
@@ -103,6 +110,14 @@ Transform to_transform(const cuvslam::Pose& pose) {
 Transform to_transform(const geometry_msgs::Transform& t) {
     return Transform{{t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w},
                      {t.translation.x, t.translation.y, t.translation.z}};
+}
+
+std::string join(const std::vector<std::string>& parts) {
+    std::string joined;
+    for (const std::string& part : parts) {
+        joined += joined.empty() ? part : ", " + part;
+    }
+    return joined;
 }
 
 cuvslam::Pose to_pose(const Transform& t) {
@@ -114,6 +129,16 @@ cuvslam::Pose to_pose(const Transform& t) {
                         static_cast<float>(t.translation[2])};
     return pose;
 }
+
+/// One camera of the rig: where it is, what it sees through, and the frame waiting to
+/// be tracked. Kept together because the four are only ever indexed as one.
+struct RigCamera {
+    std::string frame;
+    Transform rig_from_camera;
+    sensor_msgs::CameraInfo info;
+    sensor_msgs::Image image;
+    bool have_image{false};
+};
 
 }  // namespace
 
@@ -172,16 +197,20 @@ struct CuvslamConfig {
 
 class CuvslamOdometry : public Module {
 public:
+    /// What the tracker is fed. Stereo covers any two or more overlapping cameras.
+    enum class Mode { Stereo, Mono, Rgbd };
+
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<CuvslamConfig>();
-        stereo_ = cfg_.camera_mode == "stereo";
-        rgbd_ = cfg_.camera_mode == "rgbd";
+        mode_ = cfg_.camera_mode == "stereo" ? Mode::Stereo
+                : cfg_.camera_mode == "rgbd"  ? Mode::Rgbd
+                                              : Mode::Mono;
 
         builder.input<tf2_msgs::TFMessage>("tf", &CuvslamOdometry::on_tf, this);
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
         builder.input<sensor_msgs::Image>("image", &CuvslamOdometry::on_image, this);
-        if (rgbd_) {
+        if (mode_ == Mode::Rgbd) {
             builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
         }
         if (cfg_.enable_imu) {
@@ -274,56 +303,62 @@ private:
     /// Place every camera against base_frame. Silent until the whole rig resolves,
     /// because a tracker built on half a rig is a tracker built on the wrong one.
     void resolve_rig() {
-        if (!camera_frames_.empty()) {
+        if (!cameras_.empty()) {
             return;
         }
+        const bool discovered = cfg_.camera_frames.empty();
         std::vector<std::string> frames = cfg_.camera_frames;
-        if (frames.empty()) {
+        if (discovered) {
             for (const auto& [frame, info] : camera_info_) {
                 frames.push_back(frame);
             }
             // camera_info_ has no order of its own, and the rig is indexed.
             std::sort(frames.begin(), frames.end());
-            const std::size_t expected = stereo_ ? 2 : 1;
+            const std::size_t expected = mode_ == Mode::Stereo ? 2 : 1;
             if (frames.size() != expected) {
-                if (frames.size() > expected && !too_many_cameras_warned_) {
-                    too_many_cameras_warned_ = true;
-                    logging::error(
+                if (frames.size() > expected) {
+                    DIMOS_LOG_THROTTLED(
+                        logging::Level::Error, logging::from_secs(10),
                         "cuvslam found more cameras on camera_info than camera_mode uses, "
                         "and they have no discoverable order. Set camera_frames.",
-                        {logging::Field("found", join(frames)),
-                         logging::Field("mode", cfg_.camera_mode)});
+                        logging::Field("found", join(frames)),
+                        logging::Field("mode", cfg_.camera_mode));
                 }
                 return;
             }
         }
 
-        std::vector<Transform> placed;
+        std::vector<RigCamera> cameras;
         for (const std::string& frame : frames) {
-            std::optional<Transform> rig_from_camera = tf_lookup(cfg_.base_frame, frame);
-            if (!rig_from_camera) {
+            const std::optional<Transform> rig_from_camera = tf_lookup(cfg_.base_frame, frame);
+            const auto info = camera_info_.find(frame);
+            if (!rig_from_camera || info == camera_info_.end()) {
                 return;
             }
-            placed.push_back(*rig_from_camera);
+            cameras.push_back(RigCamera{frame, *rig_from_camera, info->second});
         }
         // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
         // partner sits at +x -- optical convention, x to the right.
-        if (cfg_.camera_frames.empty() && placed.size() == 2 &&
-            compose(invert(placed[0]), placed[1]).translation[0] < 0.0) {
-            std::swap(frames[0], frames[1]);
-            std::swap(placed[0], placed[1]);
+        if (discovered && cameras.size() == 2 &&
+            compose(invert(cameras[0].rig_from_camera), cameras[1].rig_from_camera)
+                    .translation[0] < 0.0) {
+            std::swap(cameras[0], cameras[1]);
         }
+        cameras_ = std::move(cameras);
+    }
 
-        camera_frames_ = std::move(frames);
-        rig_from_camera_ = std::move(placed);
-        images_.assign(camera_frames_.size(), sensor_msgs::Image{});
-        have_image_.assign(camera_frames_.size(), false);
+    std::vector<std::string> rig_frames() const {
+        std::vector<std::string> frames;
+        for (const RigCamera& camera : cameras_) {
+            frames.push_back(camera.frame);
+        }
+        return frames;
     }
 
     /// Which camera in the rig a frame_id names, or -1 for one that is not on it.
     int camera_index(const std::string& frame_id) const {
-        for (std::size_t i = 0; i < camera_frames_.size(); ++i) {
-            if (camera_frames_[i] == frame_id) {
+        for (std::size_t i = 0; i < cameras_.size(); ++i) {
+            if (cameras_[i].frame == frame_id) {
                 return static_cast<int>(i);
             }
         }
@@ -358,17 +393,18 @@ private:
         if (index < 0) {
             // Both a rig that has not resolved yet and a camera that is not on it are
             // silent no-output modes. Once only; the teardown count carries the rest.
-            if (++unplaced_images_ == kWaitingWarnFrames) {
-                logging::warn("cuvslam is dropping images from a camera that is not on the rig",
-                              {logging::Field("frame_id", img.header.frame_id),
-                               logging::Field("dropped", static_cast<std::int64_t>(unplaced_images_)),
-                               logging::Field("rig_cameras",
-                                              static_cast<std::int64_t>(camera_frames_.size()))});
-            }
+            ++unplaced_images_;
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                "cuvslam is dropping images from a camera that is not on the rig",
+                                logging::Field("frame_id", img.header.frame_id),
+                                logging::Field("dropped",
+                                               static_cast<std::int64_t>(unplaced_images_)),
+                                logging::Field("rig_cameras",
+                                               static_cast<std::int64_t>(cameras_.size())));
             return;
         }
-        images_[index] = img;
-        have_image_[index] = true;
+        cameras_[index].image = img;
+        cameras_[index].have_image = true;
         try_track();
     }
 
@@ -379,15 +415,15 @@ private:
     }
 
     cuvslam::Odometry::OdometryMode odometry_mode() const {
-        using Mode = cuvslam::Odometry::OdometryMode;
-        if (rgbd_) {
-            return Mode::RGBD;
+        using OdometryMode = cuvslam::Odometry::OdometryMode;
+        if (mode_ == Mode::Rgbd) {
+            return OdometryMode::RGBD;
         }
-        if (!stereo_) {
-            return Mode::Mono;
+        if (mode_ == Mode::Mono) {
+            return OdometryMode::Mono;
         }
         // Inertial is the stereo pair plus an IMU; there is no inertial mono or rgbd.
-        return cfg_.enable_imu ? Mode::Inertial : Mode::Multicamera;
+        return cfg_.enable_imu ? OdometryMode::Inertial : OdometryMode::Multicamera;
     }
 
     /// The rig frame is the body frame the transforms were resolved against, so every
@@ -396,32 +432,14 @@ private:
         if (tracker_) {
             return;
         }
-        const bool have_rig = !camera_frames_.empty();
-        std::size_t with_info = 0;
-        for (const std::string& frame : camera_frames_) {
-            with_info += camera_info_.count(frame);
-        }
-        if (!have_rig || with_info != camera_frames_.size()) {
-            if (!waiting_warned_ && ++frames_waiting_ % kWaitingWarnFrames == 0) {
-                waiting_warned_ = true;
-                logging::warn("cuvslam has consumed frames without starting",
-                              {logging::Field("frames", static_cast<std::int64_t>(frames_waiting_)),
-                               logging::Field("rig_cameras",
-                                              static_cast<std::int64_t>(camera_frames_.size())),
-                               logging::Field("with_camera_info",
-                                              static_cast<std::int64_t>(with_info))});
-            }
-            return;
-        }
-
         cuvslam::Rig rig;
-        for (std::size_t i = 0; i < camera_frames_.size(); ++i) {
-            const sensor_msgs::CameraInfo& info = camera_info_.at(camera_frames_[i]);
+        for (const RigCamera& rig_camera : cameras_) {
+            const sensor_msgs::CameraInfo& info = rig_camera.info;
             cuvslam::Camera camera{};
             camera.size = {info.width, info.height};
             camera.principal = {static_cast<float>(info.K[2]), static_cast<float>(info.K[5])};
             camera.focal = {static_cast<float>(info.K[0]), static_cast<float>(info.K[4])};
-            camera.rig_from_camera = to_pose(rig_from_camera_[i]);
+            camera.rig_from_camera = to_pose(rig_camera.rig_from_camera);
             camera.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
             rig.cameras.push_back(camera);
         }
@@ -429,11 +447,9 @@ private:
             const std::optional<Transform> rig_from_imu =
                 imu_frame_.empty() ? std::nullopt : tf_lookup(cfg_.base_frame, imu_frame_);
             if (!rig_from_imu) {
-                if (!imu_warned_) {
-                    imu_warned_ = true;
-                    logging::warn("cuvslam: enable_imu is on but tf does not place the IMU",
-                                  {logging::Field("imu_frame", imu_frame_)});
-                }
+                DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                    "cuvslam: enable_imu is on but tf does not place the IMU",
+                                    logging::Field("imu_frame", imu_frame_));
                 return;
             }
             cuvslam::ImuCalibration imu{};
@@ -450,7 +466,7 @@ private:
         odometry_cfg.odometry_mode = odometry_mode();
         // cuVSLAM rejects this outright unless the rig has a stereo pair: "Rectified
         // stereo camera mode only works with 1+ stereo cameras".
-        odometry_cfg.rectified_stereo_camera = cfg_.rectified && stereo_;
+        odometry_cfg.rectified_stereo_camera = cfg_.rectified && mode_ == Mode::Stereo;
         odometry_cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
@@ -476,7 +492,7 @@ private:
                       {logging::Field("cameras", static_cast<std::int64_t>(rig.cameras.size())),
                        logging::Field("width", static_cast<std::int64_t>(rig.cameras[0].size[0])),
                        logging::Field("height", static_cast<std::int64_t>(rig.cameras[0].size[1])),
-                       logging::Field("rig_frames", join(camera_frames_))});
+                       logging::Field("rig_frames", join(rig_frames()))});
     }
 
     static cuvslam::Image to_cuvslam_image(const sensor_msgs::Image& img,
@@ -498,26 +514,20 @@ private:
     }
 
     void clear_frame_set() {
-        have_image_.assign(have_image_.size(), false);
+        for (RigCamera& camera : cameras_) {
+            camera.have_image = false;
+        }
         have_depth_ = false;
     }
 
-    static std::string join(const std::vector<std::string>& parts) {
-        std::string joined;
-        for (const std::string& part : parts) {
-            joined += joined.empty() ? part : ", " + part;
-        }
-        return joined;
-    }
-
     void try_track() {
-        for (const bool have : have_image_) {
-            if (!have) {
+        if (cameras_.empty() || (mode_ == Mode::Rgbd && !have_depth_)) {
+            return;
+        }
+        for (const RigCamera& camera : cameras_) {
+            if (!camera.have_image) {
                 return;
             }
-        }
-        if (have_image_.empty() || (rgbd_ && !have_depth_)) {
-            return;
         }
         ensure_tracker();
         if (!tracker_) {
@@ -526,19 +536,19 @@ private:
 
         // One frame per camera, all of the same instant: pairing across motion is worse
         // than waiting. A fixed offset between two streams lands here every frame.
-        std::int64_t oldest = stamp_to_ns(images_[0].header);
+        std::int64_t oldest = stamp_to_ns(cameras_[0].image.header);
         std::int64_t newest = oldest;
-        for (const sensor_msgs::Image& image : images_) {
-            const std::int64_t ts = stamp_to_ns(image.header);
+        for (const RigCamera& camera : cameras_) {
+            const std::int64_t ts = stamp_to_ns(camera.image.header);
             oldest = std::min(oldest, ts);
             newest = std::max(newest, ts);
         }
         if (newest - oldest > kMaxPairSkewNs) {
-            if (++skew_rejects_ % kWaitingWarnFrames == 0) {
-                logging::warn("cuvslam frame sets exceed the 1 ms skew limit",
-                              {logging::Field("rejected", static_cast<std::int64_t>(skew_rejects_)),
-                               logging::Field("skew_ms", (newest - oldest) / 1.0e6)});
-            }
+            ++skew_rejects_;
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                "cuvslam frame sets exceed the 1 ms skew limit",
+                                logging::Field("rejected", static_cast<std::int64_t>(skew_rejects_)),
+                                logging::Field("skew_ms", (newest - oldest) / 1.0e6));
             return;
         }
         // cuVSLAM rejects a frame that is not strictly newer than the last one.
@@ -548,11 +558,12 @@ private:
         }
 
         cuvslam::Odometry::ImageSet images;
-        for (std::size_t i = 0; i < images_.size(); ++i) {
-            images.push_back(to_cuvslam_image(images_[i], newest, static_cast<std::uint32_t>(i)));
+        for (std::size_t i = 0; i < cameras_.size(); ++i) {
+            images.push_back(
+                to_cuvslam_image(cameras_[i].image, newest, static_cast<std::uint32_t>(i)));
         }
         cuvslam::Odometry::ImageSet depths;
-        if (rgbd_) {
+        if (mode_ == Mode::Rgbd) {
             cuvslam::Image d = to_cuvslam_image(depth_, newest, images[0].camera_index);
             d.encoding = cuvslam::ImageData::Encoding::MONO;
             d.data_type = cuvslam::ImageData::DataType::UINT16;
@@ -653,8 +664,7 @@ private:
 
     static void fill_pose(nav_msgs::Odometry& msg, const Transform& pose, std::int64_t timestamp_ns,
                           const std::string& frame, const std::string& child) {
-        msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
-        msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
+        msg.header.stamp = to_stamp(timestamp_ns);
         msg.header.frame_id = frame;
         msg.child_frame_id = child;
         msg.pose.pose.position.x = pose.translation[0];
@@ -669,8 +679,7 @@ private:
     void publish_tf(const Transform& pose, std::int64_t timestamp_ns, const std::string& frame,
                     const std::string& child) {
         geometry_msgs::TransformStamped stamped{};
-        stamped.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
-        stamped.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
+        stamped.header.stamp = to_stamp(timestamp_ns);
         stamped.header.frame_id = frame;
         stamped.child_frame_id = child;
         stamped.transform.translation.x = pose.translation[0];
@@ -704,10 +713,8 @@ private:
     // config. Every one of these is set from cfg_ in build(), so no initializer
     // here can ever apply; python owns the defaults.
     CuvslamConfig cfg_{};
-    /// camera_mode, parsed once. Everything downstream asks these rather than
-    /// re-comparing the string, so an unknown mode cannot quietly mean "not stereo".
-    bool stereo_{true};
-    bool rgbd_{false};
+    /// camera_mode, parsed once, so an unknown value cannot quietly mean "not stereo".
+    Mode mode_{Mode::Stereo};
 
     // slam
     std::optional<cuvslam::Slam> slam_;
@@ -717,20 +724,13 @@ private:
     std::uint64_t loop_closures_{0};
     std::int64_t last_closure_ns_{-1};
 
-    /// Frames consumed before the tracker could start. A blueprint that mis-wires
-    /// camera_info otherwise runs forever publishing nothing.
-    static constexpr std::uint64_t kWaitingWarnFrames = 100;
-    std::uint64_t frames_waiting_{0};
     std::uint64_t skew_rejects_{0};
-    bool waiting_warned_{false};
 
-    /// The rig, in cuVSLAM's camera order, and each camera's intrinsics by frame_id.
-    std::vector<std::string> camera_frames_;
-    std::vector<Transform> rig_from_camera_;
+    /// The rig, in cuVSLAM's camera order, once every camera is placed.
+    std::vector<RigCamera> cameras_;
+    /// Intrinsics by frame_id, which arrive before the rig can be built.
     std::unordered_map<std::string, sensor_msgs::CameraInfo> camera_info_;
     std::uint64_t unplaced_images_{0};
-    bool too_many_cameras_warned_{false};
-    bool imu_warned_{false};
     std::string imu_frame_;
 
     /// The mount tree: child frame -> (its parent, parent_from_child). One parent per
@@ -738,9 +738,6 @@ private:
     static constexpr std::size_t kMaxTfDepth = 32;
     std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
 
-    // the frame set being assembled, one slot per rig camera
-    std::vector<sensor_msgs::Image> images_;
-    std::vector<bool> have_image_;
     sensor_msgs::Image depth_{};
     bool have_depth_{false};
     std::optional<std::int64_t> last_ts_ns_;

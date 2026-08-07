@@ -175,7 +175,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
-        self._unknown_model_warned = False
+        # Everything from the tripod screw down: (parent, child, translation, rotation).
+        self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
         self._thread: threading.Thread | None = None
         self._color_camera_info: CameraInfo | None = None
@@ -269,7 +270,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: print(f"Pointcloud error: {e}"),
+                    on_error=lambda e: logger.error("RealSense pointcloud: %s", e),
                 )
             )
 
@@ -277,39 +278,38 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: print(f"CameraInfo error: {e}"),
+                on_error=lambda e: logger.error("RealSense camera_info: %s", e),
             )
         )
 
     def _start_imu(self) -> None:
-        """Stream the accel+gyro motion module on its own pipeline and callback.
+        """Stream the motion module on its own pipeline, at the configured rates or the
+        unit's own if it does not offer them.
 
-        The motion module runs at its native rate (~200-400 Hz), far faster than the
-        video loop, so it gets a dedicated pipeline with an async frame callback. Each
-        gyro sample is paired with the most recent accel sample to form one Imu.
+        It runs far faster than the video loop, so it gets a dedicated pipeline with an
+        async frame callback.
         """
         import pyrealsense2 as rs
 
-        self._imu_pipeline = rs.pipeline()
-        imu_config = rs.config()
-        if self.config.serial_number:
-            imu_config.enable_device(self.config.serial_number)
-        try:
-            imu_config.enable_stream(
-                rs.stream.accel, rs.format.motion_xyz32f, self.config.imu_accel_hz
-            )
-            imu_config.enable_stream(
-                rs.stream.gyro, rs.format.motion_xyz32f, self.config.imu_gyro_hz
-            )
-            self._imu_pipeline.start(imu_config, self._on_motion_frame)
-        except RuntimeError:
-            # Rate not offered by this unit.
-            imu_config = rs.config()
+        def imu_config(rates: tuple[int, int] | None) -> rs.config:
+            config = rs.config()
             if self.config.serial_number:
-                imu_config.enable_device(self.config.serial_number)
-            imu_config.enable_stream(rs.stream.accel)
-            imu_config.enable_stream(rs.stream.gyro)
-            self._imu_pipeline.start(imu_config, self._on_motion_frame)
+                config.enable_device(self.config.serial_number)
+            for stream, rate in ((rs.stream.accel, 0), (rs.stream.gyro, 1)):
+                if rates is None:
+                    config.enable_stream(stream)
+                else:
+                    config.enable_stream(stream, rs.format.motion_xyz32f, rates[rate])
+            return config
+
+        self._imu_pipeline = rs.pipeline()
+        try:
+            self._imu_pipeline.start(
+                imu_config((self.config.imu_accel_hz, self.config.imu_gyro_hz)),
+                self._on_motion_frame,
+            )
+        except RuntimeError:
+            self._imu_pipeline.start(imu_config(None), self._on_motion_frame)
         # Starting a pipeline can reset the option.
         self._require_global_time()
 
@@ -323,13 +323,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         for model, offset in SCREW_TO_LINK_METERS.items():
             if model in name:
                 return offset
-        if not self._unknown_model_warned:
-            self._unknown_model_warned = True
-            logger.warning(
-                "RealSense %s has no mount offset here, so its screw frame sits on "
-                "camera_link. Add it from that model's realsense2_description URDF.",
-                name,
-            )
+        logger.warning(
+            "RealSense %s has no mount offset here, so its screw frame sits on "
+            "camera_link. Add it from that model's realsense2_description URDF.",
+            name,
+        )
         return (0.0, 0.0, 0.0)
 
     def _require_global_time(self) -> None:
@@ -396,18 +394,16 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_hardware_ts
         if ts is None:
             return
-        if self._color_camera_info:
-            self._color_camera_info.ts = ts
-            self.camera_info.publish(self._color_camera_info)
-        if self._depth_camera_info:
-            self._depth_camera_info.ts = ts
-            self.depth_camera_info.publish(self._depth_camera_info)
-        if self._infra1_camera_info:
-            self._infra1_camera_info.ts = ts
-            self.infrared_left_camera_info.publish(self._infra1_camera_info)
-        if self._infra2_camera_info:
-            self._infra2_camera_info.ts = ts
-            self.infrared_right_camera_info.publish(self._infra2_camera_info)
+        # with_ts copies: subscribers hold the object by reference, so restamping the
+        # stored one would rewrite an already-delivered message.
+        for info, stream in (
+            (self._color_camera_info, self.camera_info),
+            (self._depth_camera_info, self.depth_camera_info),
+            (self._infra1_camera_info, self.infrared_left_camera_info),
+            (self._infra2_camera_info, self.infrared_right_camera_info),
+        ):
+            if info is not None:
+                stream.publish(info.with_ts(ts))
 
     def _build_camera_info(self) -> None:
         import pyrealsense2 as rs
@@ -498,14 +494,17 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
         import pyrealsense2 as rs
 
-        fx, fy = intrinsics.fx, intrinsics.fy
-        cx, cy = intrinsics.ppx, intrinsics.ppy
-
-        K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-        P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
-        D = list(intrinsics.coeffs) if intrinsics.coeffs else []
-
-        distortion_model = {
+        info = CameraInfo.from_intrinsics(
+            intrinsics.fx,
+            intrinsics.fy,
+            intrinsics.ppx,
+            intrinsics.ppy,
+            intrinsics.width,
+            intrinsics.height,
+            frame_id,
+        )
+        info.D = list(intrinsics.coeffs) if intrinsics.coeffs else []
+        info.distortion_model = {
             rs.distortion.none: "",
             rs.distortion.modified_brown_conrady: "plumb_bob",
             rs.distortion.inverse_brown_conrady: "plumb_bob",
@@ -513,16 +512,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             rs.distortion.brown_conrady: "plumb_bob",
             rs.distortion.kannala_brandt4: "equidistant",
         }.get(intrinsics.model, "")
-
-        return CameraInfo(
-            height=intrinsics.height,
-            width=intrinsics.width,
-            distortion_model=distortion_model,
-            D=D,
-            K=K,
-            P=P,
-            frame_id=frame_id,
-        )
+        return info
 
     def _device_stream_profile(
         self, stream_type: rs.stream, index: int | None = None
@@ -581,15 +571,43 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 translation[1] * 1000.0,
                 translation[2] * 1000.0,
             )
+        self._build_mount_edges()
 
-    def _extrinsics_to_transform(
-        self,
-        extrinsics: rs.extrinsics,
-        frame_id: str,
-        child_frame_id: str,
-        ts: float,
-    ) -> Transform:
-        """Convert a librealsense extrinsic into a body-frame (REP-103) transform.
+    def _build_mount_edges(self) -> None:
+        """Everything from the tripod screw down, which is rigid once the device is open.
+
+        Built here rather than per frame: it is the same answer every time, and the
+        conversion out of librealsense's optical axes is not cheap.
+        """
+        identity = Quaternion(0.0, 0.0, 0.0, 1.0)
+        # camera_link coincides with the depth frame, so an imager's extrinsic to depth
+        # already is its placement here -- no inversion.
+        body_frames = {self._depth_frame: (Vector3(0.0, 0.0, 0.0), identity)} | {
+            frame_id: self._extrinsics_to_body(extrinsics)
+            for frame_id, extrinsics in self._frame_extrinsics.items()
+        }
+        # With depth disabled there are no extrinsics at all, so colour falls back to
+        # the camera_link origin rather than vanishing from tf.
+        if self.config.enable_color and self._color_frame not in body_frames:
+            body_frames[self._color_frame] = (Vector3(0.0, 0.0, 0.0), identity)
+
+        self._mount_edges = [
+            (self._bottom_screw_frame, self._camera_link, Vector3(*self._screw_to_link()), identity)
+        ]
+        for frame_id, (translation, rotation) in body_frames.items():
+            self._mount_edges.append((self._camera_link, frame_id, translation, rotation))
+            self._mount_edges.append(
+                (
+                    frame_id,
+                    f"{frame_id.removesuffix('_frame')}_optical_frame",
+                    Vector3(0.0, 0.0, 0.0),
+                    OPTICAL_ROTATION,
+                )
+            )
+
+    @staticmethod
+    def _extrinsics_to_body(extrinsics: rs.extrinsics) -> tuple[Vector3, Quaternion]:
+        """Convert a librealsense extrinsic into body (REP-103) axes.
 
         librealsense measures between optical frames, camera_link and its children are
         body frames. Conjugating the whole transform, rather than permuting the
@@ -597,27 +615,16 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         """
         body_from_optical = np.eye(4)
         body_from_optical[:3, :3] = Rotation.from_quat(
-            [
-                OPTICAL_ROTATION.x,
-                OPTICAL_ROTATION.y,
-                OPTICAL_ROTATION.z,
-                OPTICAL_ROTATION.w,
-            ]
+            [OPTICAL_ROTATION.x, OPTICAL_ROTATION.y, OPTICAL_ROTATION.z, OPTICAL_ROTATION.w]
         ).as_matrix()
 
         optical = np.eye(4)
         optical[:3, :3] = np.array(extrinsics.rotation).reshape(3, 3)
         optical[:3, 3] = np.array(extrinsics.translation)
 
-        body = body_from_optical @ optical @ np.linalg.inv(body_from_optical)
+        body = body_from_optical @ optical @ body_from_optical.T
         quat = Rotation.from_matrix(body[:3, :3]).as_quat()  # [x, y, z, w]
-        return Transform(
-            translation=Vector3(*body[:3, 3]),
-            rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
-            frame_id=frame_id,
-            child_frame_id=child_frame_id,
-            ts=ts,
-        )
+        return Vector3(*body[:3, 3]), Quaternion(quat[0], quat[1], quat[2], quat[3])
 
     def _fresh(self, key: str, frame: rs.frame | None) -> float | None:
         """This frame's own timestamp, or None if the stream has not advanced.
@@ -787,63 +794,13 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     ts=ts,
                 )
             )
-
-        transforms.append(
-            Transform(
-                translation=Vector3(*self._screw_to_link()),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self._bottom_screw_frame,
-                child_frame_id=self._camera_link,
-                ts=ts,
-            )
-        )
-
-        # camera_link -> camera_depth_frame (identity, depth is at camera_link origin)
-        camera_link_to_depth = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=self._camera_link,
-            child_frame_id=self._depth_frame,
-            ts=ts,
-        )
-        transforms.append(camera_link_to_depth)
-
-        # camera_link -> every other imager, then each one's optical child. No inversion:
-        # camera_link coincides with the depth frame, so an imager's extrinsic to depth
-        # already is its placement here.
-        for frame_id, extrinsics in self._frame_extrinsics.items():
-            transforms.append(
-                self._extrinsics_to_transform(extrinsics, self._camera_link, frame_id, ts)
-            )
-        for frame_id in (self._depth_frame, *self._frame_extrinsics):
+        for parent, child, translation, rotation in self._mount_edges:
             transforms.append(
                 Transform(
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=OPTICAL_ROTATION,
-                    frame_id=frame_id,
-                    child_frame_id=f"{frame_id.removesuffix('_frame')}_optical_frame",
-                    ts=ts,
-                )
-            )
-
-        # With depth disabled there are no extrinsics at all, so colour falls back to
-        # the camera_link origin rather than vanishing from tf.
-        if self.config.enable_color and self._color_frame not in self._frame_extrinsics:
-            transforms.append(
-                Transform(
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    frame_id=self._camera_link,
-                    child_frame_id=self._color_frame,
-                    ts=ts,
-                )
-            )
-            transforms.append(
-                Transform(
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=OPTICAL_ROTATION,
-                    frame_id=self._color_frame,
-                    child_frame_id=self._color_optical_frame,
+                    translation=translation,
+                    rotation=rotation,
+                    frame_id=parent,
+                    child_frame_id=child,
                     ts=ts,
                 )
             )
@@ -868,7 +825,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
-            print(f"Pointcloud generation error: {e}")
+            logger.error("RealSense pointcloud generation failed: %s", e)
 
     @rpc
     def stop(self) -> None:
