@@ -162,10 +162,10 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" tracks on an image pair, "rgbd" on one image plus its depth, "mono" on
-    # one image alone -- and mono is accurate only up to an unknown scale, so its poses
-    # are not metres. Which ports the tracker subscribes to follows from this.
-    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
+    # "stereo" tracks on an image pair, "mono" on one image alone -- and mono is
+    # accurate only up to an unknown scale, so its poses are not metres. Which ports
+    # the tracker subscribes to follows from this.
+    camera_mode: Literal["stereo", "mono"] = "stereo"
     # Stereo only: the distance between the two imagers, which is what makes the poses
     # metric. Left unset it is read off the right camera_info, so a different camera
     # model is a different baseline without touching this file.
@@ -238,9 +238,8 @@ class CuvslamOdometry(NativeModule):
 
     ``camera_info`` is the left imager's. In ``stereo`` mode ``camera_info_right`` is
     required too: it carries the baseline in ``P[3]``, which is the per-unit source of
-    metric scale. ``mono`` uses ``image_left`` alone and is accurate only up to scale;
-    ``rgbd`` pairs ``image_left`` with ``depth_image`` and needs no baseline. The
-    tracker subscribes only to what its ``camera_mode`` uses.
+    metric scale. ``mono`` uses ``image_left`` alone and is accurate only up to scale.
+    The tracker subscribes only to what its ``camera_mode`` uses.
 
     ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
     at a loop closure, which is the point: that is where a revisit gets pulled back
@@ -262,7 +261,6 @@ class CuvslamOdometry(NativeModule):
 
     image_left: In[Image]
     image_right: In[Image]
-    depth_image: In[Image]
     camera_info: In[CameraInfo]
     camera_info_right: In[CameraInfo]
     imu: In[Imu]

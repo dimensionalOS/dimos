@@ -115,8 +115,8 @@ Transform to_transform(const cuvslam::Pose& pose) {
 }  // namespace
 
 struct CuvslamConfig {
-    /// "stereo", "mono" or "rgbd". Stereo and rgbd are metric; mono is accurate only
-    /// up to an unknown scale, so its poses are not metres.
+    /// "stereo" or "mono". Mono is accurate only up to an unknown scale, so its
+    /// poses are not metres.
     std::string camera_mode;
     /// Stereo only. Metres, or 0 to read it off the right camera_info's P[3].
     double stereo_baseline_meters;
@@ -176,9 +176,6 @@ public:
             builder.input<sensor_msgs::CameraInfo>("camera_info_right",
                                                    &CuvslamOdometry::on_camera_info_right, this);
             builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
-        }
-        if (cfg_.camera_mode == "rgbd") {
-            builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
         }
         if (cfg_.enable_imu) {
             builder.input<sensor_msgs::Imu>("imu", &CuvslamOdometry::on_imu, this);
@@ -276,21 +273,12 @@ private:
         try_track();
     }
 
-    void on_depth(const sensor_msgs::Image& img) {
-        depth_ = img;
-        have_depth_ = true;
-        try_track();
-    }
-
     cuvslam::Odometry::OdometryMode odometry_mode() const {
         using Mode = cuvslam::Odometry::OdometryMode;
         if (cfg_.camera_mode == "mono") {
             return Mode::Mono;
         }
-        if (cfg_.camera_mode == "rgbd") {
-            return Mode::RGBD;
-        }
-        // Inertial is the stereo pair plus an IMU; there is no inertial mono or rgbd.
+        // Inertial is the stereo pair plus an IMU; there is no inertial mono.
         return cfg_.enable_imu ? Mode::Inertial : Mode::Multicamera;
     }
 
@@ -373,9 +361,6 @@ private:
         if (cfg_.camera_mode == "stereo" && !have_right_) {
             return;
         }
-        if (cfg_.camera_mode == "rgbd" && !have_depth_) {
-            return;
-        }
         ensure_tracker();
         if (!tracker_) {
             return;  // no camera_info yet
@@ -397,7 +382,7 @@ private:
         }
         // cuVSLAM rejects a frame that is not strictly newer than the last one.
         if (last_ts_ns_ && t_left <= *last_ts_ns_) {
-            have_left_ = have_right_ = have_depth_ = false;
+            have_left_ = have_right_ = false;
             return;
         }
 
@@ -406,32 +391,28 @@ private:
         l.width = left_.width;
         l.height = left_.height;
         l.pitch = left_.step;
-        l.encoding = cuvslam::ImageData::Encoding::MONO;
+        // A three-channel image has to be declared as such: fed as MONO, cuVSLAM
+        // reads a third of each row and tracks nothing.
+        l.encoding = left_.encoding == "mono8" ? cuvslam::ImageData::Encoding::MONO
+                                               : cuvslam::ImageData::Encoding::RGB;
         l.data_type = cuvslam::ImageData::DataType::UINT8;
         l.is_gpu_mem = false;
         l.timestamp_ns = t_left;
         l.camera_index = 0;
 
         cuvslam::Odometry::ImageSet images{l};
-        cuvslam::Odometry::ImageSet depths;
         if (cfg_.camera_mode == "stereo") {
             cuvslam::Image r = l;
             r.pixels = right_.data.data();
             r.pitch = right_.step;
             r.camera_index = 1;
             images.push_back(r);
-        } else if (cfg_.camera_mode == "rgbd") {
-            cuvslam::Image d = l;
-            d.pixels = depth_.data.data();
-            d.pitch = depth_.step;
-            d.data_type = cuvslam::ImageData::DataType::UINT16;
-            depths.push_back(d);
         }
 
-        const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
+        const cuvslam::PoseEstimate est = tracker_->Track(images);
         ++frames_;
         last_ts_ns_ = t_left;
-        have_left_ = have_right_ = have_depth_ = false;
+        have_left_ = have_right_ = false;
 
         if (!est.world_from_rig.has_value()) {
             if (was_tracking_) {
@@ -582,8 +563,8 @@ private:
     double fx_{0.0}, fy_{0.0}, cx_{0.0}, cy_{0.0};
 
     // stereo pairing
-    sensor_msgs::Image left_{}, right_{}, depth_{};
-    bool have_left_{false}, have_right_{false}, have_depth_{false};
+    sensor_msgs::Image left_{}, right_{};
+    bool have_left_{false}, have_right_{false};
     std::optional<std::int64_t> last_ts_ns_;
 
     // tracking state
