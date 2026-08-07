@@ -7,9 +7,9 @@ import json
 import re
 from typing import Any
 
+from dimos.benchmark.vqa.models import QuestionIntent
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.vqa.models import QuestionIntent
 
 QUESTION_PROMPT = """You generate challenging but visually answerable single-frame VQA questions.
 Inspect only this image. Do not assume depth, point clouds, metadata, or temporal context.

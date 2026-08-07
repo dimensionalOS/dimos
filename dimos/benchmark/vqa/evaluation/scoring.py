@@ -16,10 +16,29 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
+from typing import Protocol
 
+from dimos.benchmark.vqa.models import VqaExample
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.vqa.models import VisualQuestionAnswerer, VqaEvaluation, VqaExample
+
+
+@dataclass(frozen=True)
+class VqaEvaluation:
+    """The result of asking an image-only agent one generated question."""
+
+    example_id: str
+    expected_answer: str
+    raw_response: str
+    normalized_response: str | None
+    passed: bool
+
+
+class VisualQuestionAnswerer(Protocol):
+    """Answers a question from an image without access to ground truth."""
+
+    def answer(self, image: Image, question: str) -> str: ...
 
 
 def evaluate_examples(

@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.benchmark.vqa.generation.geometry import project_visible_points
+from dimos.benchmark.vqa.models import CalibratedFrame, GroundedObject, ProjectionConfig
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-from dimos.perception.vqa.geometry import project_visible_points
-from dimos.perception.vqa.models import CalibratedFrame, GroundedObject, ProjectionConfig
 
 
 def ground_segmented_objects(

@@ -17,12 +17,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dimos.benchmark.vqa.generation.geometry import project_visible_points
+from dimos.benchmark.vqa.models import CalibratedFrame
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.vqa.geometry import project_visible_points
-from dimos.perception.vqa.models import CalibratedFrame
 
 
 def _frame(points: np.ndarray, *, rectified: bool = True) -> CalibratedFrame:

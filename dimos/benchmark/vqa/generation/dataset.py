@@ -10,12 +10,11 @@ from typing import Any
 
 import cv2
 
-from dimos.perception.vqa.ground_truth_agent import GroundTruthPerceptionAgent
-from dimos.perception.vqa.models import (
+from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     GroundTruthResult,
     QuestionIntent,
-    VqaEvaluation,
 )
 
 
@@ -26,8 +25,7 @@ def write_frame_record(
     frame_index: int,
     intents: list[QuestionIntent],
     results: list[GroundTruthResult],
-    evaluations: list[VqaEvaluation],
-    ground_truth: GroundTruthPerceptionAgent,
+    ground_truth: VqaGroundTruthGenerator,
     metadata: dict[str, Any],
 ) -> None:
     """Write one self-contained frame record and its private evidence."""
@@ -60,7 +58,6 @@ def write_frame_record(
     _write_json(output / "intents.json", [asdict(item) for item in intents])
     _write_json(output / "examples.json", [asdict(item) for item in examples])
     _write_json(output / "ground_truth.json", [asdict(item) for item in results])
-    _write_json(output / "evaluations.json", [asdict(item) for item in evaluations])
 
 
 def write_dataset_manifest(output: Path) -> dict[str, int]:

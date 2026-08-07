@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection2d.point import Detection2DPoint
-from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-from dimos.perception.vqa.grounding import ground_segmented_objects
-from dimos.perception.vqa.models import (
+from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
+from dimos.benchmark.vqa.generation.questions import generate_questions
+from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     GroundedObject,
     GroundingConfig,
@@ -20,10 +18,12 @@ from dimos.perception.vqa.models import (
     ToolTrace,
     VqaExample,
 )
-from dimos.perception.vqa.questions import generate_questions
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
-class GroundTruthPerceptionAgent:
+class VqaGroundTruthGenerator:
     """Answer constrained questions by calling detection, segmentation, and geometry tools."""
 
     def __init__(

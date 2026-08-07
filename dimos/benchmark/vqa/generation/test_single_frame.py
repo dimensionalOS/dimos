@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.benchmark.vqa.evaluation.scoring import evaluate_examples
+from dimos.benchmark.vqa.generation.pipeline import generate_ground_truth
+from dimos.benchmark.vqa.models import CalibratedFrame
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-from dimos.perception.vqa.models import CalibratedFrame
-from dimos.perception.vqa.pipeline import evaluate_ground_truth, generate_ground_truth
 
 
 class _Answerer:
@@ -69,7 +70,7 @@ def test_single_frame_ground_truth_and_image_only_evaluation() -> None:
         frame, ["chair", "table"], _Detector(image, detection), _Segmenter()
     )
     answerer = _Answerer()
-    evaluations = evaluate_ground_truth(frame, examples, answerer)
+    evaluations = evaluate_examples(frame.image, examples, answerer)
 
     assert {example.expected_answer for example in examples} == {"yes", "no", "center"}
     assert all(image_arg is image for image_arg, _ in answerer.calls)

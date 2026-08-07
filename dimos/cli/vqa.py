@@ -10,24 +10,22 @@ from pathlib import Path
 import cv2
 import typer
 
+from dimos.benchmark.vqa.generation.adapters import (
+    EdgeTamObjectSegmenter,
+    MoondreamObjectDetector,
+)
+from dimos.benchmark.vqa.generation.dataset import write_dataset_manifest, write_frame_record
+from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
+from dimos.benchmark.vqa.generation.recording import load_go2_frame
+from dimos.benchmark.vqa.models import GroundingConfig, QuestionIntent
 from dimos.constants import STATE_DIR
 from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.openai import OpenAIVlModel
-from dimos.perception.vqa.adapters import (
-    EdgeTamObjectSegmenter,
-    MoondreamObjectDetector,
-    MoondreamQuestionAnswerer,
-)
-from dimos.perception.vqa.dataset import write_dataset_manifest, write_frame_record
-from dimos.perception.vqa.ground_truth_agent import GroundTruthPerceptionAgent
-from dimos.perception.vqa.models import GroundingConfig, QuestionIntent
-from dimos.perception.vqa.pipeline import evaluate_ground_truth
-from dimos.perception.vqa.question_agent import OpenAIQuestionAgent
-from dimos.perception.vqa.recording import load_go2_frame
 from dimos.utils.data import resolve_named_path
 
-app = typer.Typer(help="Generate and evaluate point-cloud-grounded VQA examples")
+app = typer.Typer(help="Generate point-cloud-grounded VQA benchmark examples")
 
 
 @app.command("single-frame")
@@ -70,7 +68,7 @@ def single_frame(
                 )
             ]
         )
-        ground_truth = GroundTruthPerceptionAgent(
+        ground_truth = VqaGroundTruthGenerator(
             detector := MoondreamObjectDetector(model),
             segmenter := EdgeTamObjectSegmenter(EdgeTAMImageSegmenter()),
             localizer=detector,
@@ -82,7 +80,6 @@ def single_frame(
         )
         results = [ground_truth.answer(frame, intent) for intent in intents]
         examples = [result.question for result in results if result.status == "answered"]
-        evaluations = evaluate_ground_truth(frame, examples, MoondreamQuestionAnswerer(model))
     finally:
         model.stop()
     output.mkdir(parents=True)
@@ -131,10 +128,7 @@ def single_frame(
     (output / "ground_truth.json").write_text(
         json.dumps([asdict(item) for item in results], indent=2) + "\n"
     )
-    (output / "evaluations.json").write_text(
-        json.dumps([asdict(item) for item in evaluations], indent=2) + "\n"
-    )
-    typer.echo(f"Wrote {len(examples)} examples and {len(evaluations)} evaluations to {output}")
+    typer.echo(f"Wrote {len(examples)} examples to {output}")
 
 
 @app.command("generate")
@@ -191,7 +185,7 @@ def generate(
                     )
                 ]
             )
-            ground_truth = GroundTruthPerceptionAgent(
+            ground_truth = VqaGroundTruthGenerator(
                 detector,
                 segmenter,
                 localizer=detector,
@@ -201,8 +195,6 @@ def generate(
                 ),
             )
             results = [ground_truth.answer(frame, intent) for intent in intents]
-            examples = [result.question for result in results if result.status == "answered"]
-            evaluations = evaluate_ground_truth(frame, examples, MoondreamQuestionAnswerer(model))
             write_frame_record(
                 frame_output,
                 frame,
@@ -210,7 +202,6 @@ def generate(
                 frame_index,
                 intents,
                 results,
-                evaluations,
                 ground_truth,
                 {
                     "question_source": "openai_image_agent"

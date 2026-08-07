@@ -49,13 +49,3 @@ class EdgeTamObjectSegmenter:
 
     def segment_points(self, points: ImageDetections2D) -> ImageDetections2D:
         return self._segmenter.segment_points(points)
-
-
-class MoondreamQuestionAnswerer:
-    """Ask MoonDream a question using only the supplied image."""
-
-    def __init__(self, model: MoondreamVlModel) -> None:
-        self._model = model
-
-    def answer(self, image: Image, question: str) -> str:
-        return self._model.query(image, question)

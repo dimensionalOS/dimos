@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.benchmark.vqa.models import CalibratedFrame
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.vqa.models import CalibratedFrame
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 
 
