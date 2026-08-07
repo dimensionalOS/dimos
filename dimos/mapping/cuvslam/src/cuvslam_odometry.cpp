@@ -7,12 +7,9 @@
 //      tf, depth_image, imu
 // out: odometry, corrected_odometry, tf
 //
-// cuVSLAM restarts its world frame after a tracking loss. The module rebases each
-// restart onto the last published pose, so consumers see ONE continuous odometry
-// path in ONE frame and never a jump. Resets are logged as debugging output; the
-// motion across one is unmeasured, which is drift the stream cannot account for.
-// The rig -- which cameras there are and where each one sits -- is read off the tf
-// tree, so the mount geometry is the calibration and there is none in here.
+// cuVSLAM restarts its world frame after a tracking loss; each restart is rebased onto
+// the last published pose, so odometry never jumps. The motion across one is lost, and
+// only the log says so. The rig is read off the tf tree, so no calibration lives here.
 
 #include <algorithm>
 #include <array>
@@ -130,8 +127,7 @@ cuvslam::Pose to_pose(const Transform& t) {
     return pose;
 }
 
-/// One camera of the rig: where it is, what it sees through, and the frame waiting to
-/// be tracked. Kept together because the four are only ever indexed as one.
+/// One camera of the rig.
 struct RigCamera {
     std::string frame;
     Transform rig_from_camera;
@@ -143,45 +139,38 @@ struct RigCamera {
 }  // namespace
 
 struct CuvslamConfig {
-    /// "stereo", "mono" or "rgbd". Mono is accurate only up to an unknown scale, so
-    /// its poses are not metres.
+    /// "stereo", "mono" or "rgbd". Mono is accurate only up to scale.
     std::string camera_mode;
-    /// One tf frame per camera, in the order cuVSLAM indexes them. Empty discovers
-    /// them off camera_info, which only has an order for a single camera or one pair.
+    /// One tf frame per camera, in cuVSLAM's index order. Empty discovers them off
+    /// camera_info.
     std::vector<std::string> camera_frames;
-    /// The stereo pair arrives rectified: D all zero, R identity.
+    /// Asserts the pair arrives rectified -- no distortion, rows already aligned -- so
+    /// cuVSLAM can match along a scanline.
     bool rectified;
-    bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
     /// A step implying more than this is cuVSLAM changing world frames, not motion.
     double implausible_speed_meters_per_second;
     std::string odom_frame;
     std::string base_frame;
     std::string map_frame;
-    /// Only read when Slam is off: pure odometry has no global correction, so its
-    /// map->odom can only be identity, and something else may already own that edge.
+    /// Only read when Slam is off, where map->odom can only be identity.
     bool publish_map_to_odom;
-    /// cuvslam::Slam: pose graph + loop closure on top of the odometry. Without it
-    /// there is nothing to pull a revisit back together and the map smears.
+    /// Pose graph + loop closure.
     bool enable_slam;
-    /// GetPose() carries no timestamp, so a Slam thread running behind produces a
-    /// pose that cannot be matched to the odometry pose it corrects.
+    /// GetPose() carries no timestamp, so a Slam thread running behind cannot be
+    /// matched to the odometry pose it corrects.
     bool slam_sync_mode;
     /// Poses kept in the graph. 300 is NVIDIA's real-time figure, 0 is unlimited.
     int slam_max_map_size;
     /// Floor on the interval between loop closures, milliseconds.
     int slam_throttling_ms;
-    /// Fuse the IMU. NVIDIA's mode table calls Inertial "stereo VIO, adds
-    /// robustness to brief visual failures", which is exactly what a world-frame
-    /// restart is: vision briefly had nothing to hold on to.
+    /// cuVSLAM's Inertial mode is stereo plus one IMU.
     bool enable_imu;
-    /// Flattened from the python side's ImuCalibration, which is per-serial and has
-    /// no default -- all zero here means enable_imu is off and none of it is read.
+    /// Flattened from the python ImuCalibration. All zero means enable_imu is off.
     double imu_gyro_noise_density;
     double imu_gyro_random_walk;
     double imu_accel_noise_density;
     double imu_accel_random_walk;
-    /// The rate actually fed. Declaring more than arrives makes cuVSLAM log a drop
-    /// ratio and silently never initialise inertial alignment.
+    /// The rate actually fed. Declaring more than arrives never initialises alignment.
     double imu_frequency;
     /// rgbd only: raw depth units per metre. 1000 for sixteen-bit millimetres.
     double depth_units_per_meter;
@@ -197,7 +186,7 @@ struct CuvslamConfig {
 
 class CuvslamOdometry : public Module {
 public:
-    /// What the tracker is fed. Stereo covers any two or more overlapping cameras.
+    /// Stereo covers any two or more overlapping cameras.
     enum class Mode { Stereo, Mono, Rgbd };
 
     void build(Builder& builder, Config& config) override {
@@ -245,16 +234,13 @@ private:
         resolve_rig();
     }
 
-    /// The mount tree. Every camera's place on the rig is read from it, which is the
-    /// whole of the extrinsic calibration -- a stereo baseline is the gap between two
-    /// of these frames -- so nothing here is a per-model constant.
+    /// The mount tree, which is the whole of the extrinsic calibration.
     void on_tf(const tf2_msgs::TFMessage& message) {
         if (tracker_) {
             return;  // rig is fixed once the tracker exists
         }
         for (const geometry_msgs::TransformStamped& stamped : message.transforms) {
-            // Skip what this module publishes itself: the transport loops it back, and
-            // odom and map are poses, not mount geometry.
+            // Skip what this module publishes itself: odom and map are poses, not mount.
             if (stamped.header.frame_id == cfg_.map_frame ||
                 stamped.header.frame_id == cfg_.odom_frame) {
                 continue;
@@ -265,9 +251,8 @@ private:
         resolve_rig();
     }
 
-    /// parent_frame -> child_frame, composed through the two frames' nearest common
-    /// ancestor. Nothing here is time-aware: the mount tree is rigid, and the moving
-    /// edges are filtered out above.
+    /// parent_frame -> child_frame through their nearest common ancestor. Not
+    /// time-aware; the mount tree is rigid.
     std::optional<Transform> tf_lookup(const std::string& parent_frame,
                                        const std::string& child_frame) const {
         std::unordered_map<std::string, Transform> from_child{{child_frame, Transform{}}};
@@ -300,8 +285,7 @@ private:
         return std::nullopt;
     }
 
-    /// Place every camera against base_frame. Silent until the whole rig resolves,
-    /// because a tracker built on half a rig is a tracker built on the wrong one.
+    /// Place every camera against base_frame, or nothing until they all resolve.
     void resolve_rig() {
         if (!cameras_.empty()) {
             return;
@@ -391,8 +375,7 @@ private:
     void on_image(const sensor_msgs::Image& img) {
         const int index = camera_index(img.header.frame_id);
         if (index < 0) {
-            // Both a rig that has not resolved yet and a camera that is not on it are
-            // silent no-output modes. Once only; the teardown count carries the rest.
+            // Both a rig that has not resolved and a camera not on it are silent here.
             ++unplaced_images_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam is dropping images from a camera that is not on the rig",
@@ -426,8 +409,7 @@ private:
         return cfg_.enable_imu ? OdometryMode::Inertial : OdometryMode::Multicamera;
     }
 
-    /// The rig frame is the body frame the transforms were resolved against, so every
-    /// pose cuVSLAM returns is already the body's and needs no re-referencing.
+    /// The rig frame is base_frame, so cuVSLAM's poses are already the body's.
     void ensure_tracker() {
         if (tracker_) {
             return;
@@ -471,13 +453,14 @@ private:
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
         odometry_cfg.enable_observations_export = cfg_.enable_slam;
-        odometry_cfg.async_sba = cfg_.async_sba;
+        // Not configurable: on, cuVSLAM's bundle adjustment throws from its own
+        // thread, where no caller-side handler can catch it, and the process aborts.
+        // NVIDIA's own launcher leaves it off too.
+        odometry_cfg.async_sba = false;
         odometry_cfg.rgbd_settings.depth_scale_factor =
             static_cast<float>(cfg_.depth_units_per_meter);
-        // Which camera the depth is aligned with. The default of -1 means none, and a
-        // depth image belonging to nothing is silently ignored -- every frame consumed,
-        // no pose. A depth stream usually reports its own frame rather than that
-        // imager's, and RGBD takes one camera anyway, so unrecognised means camera 0.
+        // The default of -1 means no camera, and depth belonging to nothing is silently
+        // ignored. A depth stream usually reports its own frame, so unrecognised means 0.
         odometry_cfg.rgbd_settings.depth_camera_id = std::max(camera_index(depth_.header.frame_id), 0);
 
         tracker_.emplace(rig, odometry_cfg);
@@ -534,8 +517,7 @@ private:
             return;  // no camera_info yet
         }
 
-        // One frame per camera, all of the same instant: pairing across motion is worse
-        // than waiting. A fixed offset between two streams lands here every frame.
+        // One frame per camera, all of the same instant.
         std::int64_t oldest = stamp_to_ns(cameras_[0].image.header);
         std::int64_t newest = oldest;
         for (const RigCamera& camera : cameras_) {
@@ -586,9 +568,7 @@ private:
             return;
         }
         const Transform tracker_from_rig = to_transform(est.world_from_rig->pose);
-        // cuVSLAM restarts its world frame after a loss without ever returning an empty
-        // pose, so the restart shows up only as a step no robot could have travelled.
-        // Odometry may drift but not jump: rebase onto the last pose published.
+        // A restart shows up only as a step no robot could have travelled.
         const Transform candidate = compose(world_from_tracker_, tracker_from_rig);
         if (last_pose_ns_) {
             const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
@@ -620,27 +600,22 @@ private:
         }
     }
 
-    /// Pose graph on top of the odometry. Its pose jumps at a loop closure, which
-    /// is exactly why the jump belongs on map->odom and not on the odometry.
+    /// Its pose jumps at a loop closure, which is why the jump belongs on map->odom.
     void run_slam(std::int64_t timestamp_ns) {
         cuvslam::Odometry::State state;
         tracker_->GetState(state);
         slam_->Track(state);
 
-        // Slam's pose is identity until it has a keyframe; publishing that would
-        // read as a correction the size of however far the robot has driven.
+        // Identity until Slam has a keyframe, which would read as a huge correction.
         slam_started_ = slam_started_ || state.keyframe;
         if (!slam_started_) {
             return;
         }
         // GetPose() carries no timestamp, so it can only be differenced against the
-        // odometry pose of the frame just tracked. That holds in sync mode, where
-        // Slam finishes the frame before Track() returns. See slam_sync_mode.
+        // frame just tracked. That holds in sync mode.
         const Transform map_from_rig = to_transform(slam_->GetPose());
 
-        // No magnitude guard: the rebase that keeps odom continuous across a restart
-        // has to land somewhere, and map->odom is where it belongs. Several metres
-        // after a few restarts is the right answer, not divergence.
+        // No magnitude guard: the rebase that keeps odom continuous lands here.
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
@@ -697,21 +672,18 @@ private:
     }
 
     /// One edge for the whole run: a robot only ever sees a single odom path.
-    /// Resets are debugging output, on the log, not a break in this stream.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
         fill_pose(msg, world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         odometry_.publish(msg);
         publish_tf(world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
-        // With Slam running, map->odom is its correction and is published there. Only
-        // one publisher may own an edge.
+        // With Slam running, map->odom is its correction; only one publisher per edge.
         if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
             publish_tf(Transform{}, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
         }
     }
 
-    // config. Every one of these is set from cfg_ in build(), so no initializer
-    // here can ever apply; python owns the defaults.
+    // All set from cfg_ in build(); python owns the defaults.
     CuvslamConfig cfg_{};
     /// camera_mode, parsed once, so an unknown value cannot quietly mean "not stereo".
     Mode mode_{Mode::Stereo};
@@ -726,15 +698,14 @@ private:
 
     std::uint64_t skew_rejects_{0};
 
-    /// The rig, in cuVSLAM's camera order, once every camera is placed.
+    /// The rig, in cuVSLAM's camera order.
     std::vector<RigCamera> cameras_;
-    /// Intrinsics by frame_id, which arrive before the rig can be built.
+    /// Intrinsics by frame_id.
     std::unordered_map<std::string, sensor_msgs::CameraInfo> camera_info_;
     std::uint64_t unplaced_images_{0};
     std::string imu_frame_;
 
-    /// The mount tree: child frame -> (its parent, parent_from_child). One parent per
-    /// frame is what makes a tf tree a tree. The bound is a cycle guard.
+    /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
     static constexpr std::size_t kMaxTfDepth = 32;
     std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
 

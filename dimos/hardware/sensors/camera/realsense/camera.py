@@ -54,10 +54,8 @@ if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
 
-# Where camera_link sits relative to the tripod screw, per model, in body axes. The
-# device cannot report this -- it is the case, not the optics -- so it comes from Intel's
-# own realsense2_description URDFs. Matched as a substring, so a D435i and a D435if take
-# the D435 body they share.
+# camera_link relative to the tripod screw, from Intel's realsense2_description URDFs;
+# the device cannot report it. Substring match, so a D435i takes the D435 body.
 SCREW_TO_LINK_METERS: dict[str, tuple[float, float, float]] = {
     "D455": (0.011150, 0.0475, 0.0145),
     "D435": (0.010580, 0.0175, 0.0125),
@@ -84,14 +82,11 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     # Colour is three times the bytes of an IR frame, so leave it off for VIO.
     enable_color: bool = True
     enable_pointcloud: bool = False
-    # The global-shutter IR pair, as infrared_left / infrared_right.
     enable_infrared: bool = False
-    # The projector's dots make depth much better and the IR pair useless for feature
-    # tracking. One or the other.
+    # Dots make depth much better and the IR pair useless for feature tracking.
     emitter_enabled: bool = True
     enable_imu: bool = False
-    # Falls back to the sensor's own rates if these are not offered. One Imu goes out
-    # per gyro sample, so imu_gyro_hz is the output rate.
+    # Falls back to the unit's own rates if these are not offered.
     imu_accel_hz: int = 400
     imu_gyro_hz: int = 400
     pointcloud_fps: float = 5.0
@@ -170,12 +165,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._pipeline: rs.pipeline | None = None
         self._profile: rs.pipeline_profile | None = None
         self._imu_pipeline: rs.pipeline | None = None
-        # The pair a gyro sample is interpolated between, and the gyro samples still
-        # waiting for one past them. Bounded so a stalled accelerometer cannot grow it.
+        # Bounded so a stalled accelerometer cannot grow the queue.
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
-        # Everything from the tripod screw down: (parent, child, translation, rotation).
+        # (parent, child, translation, rotation), from the tripod screw down.
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
         self._thread: threading.Thread | None = None
@@ -225,7 +219,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
         if self.config.enable_infrared:
-            # index 1 = left imager, index 2 = right imager (global shutter stereo pair)
+            # index 1 = left imager, index 2 = right
             for ir_index in (1, 2):
                 config.enable_stream(
                     rs.stream.infrared,
@@ -242,7 +236,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.enable_depth or self.config.enable_infrared:
             depth_sensor = self._profile.get_device().first_depth_sensor()
             self._depth_scale = depth_sensor.get_depth_scale()
-            # The projector aids depth but paints dots over the IR stereo pair.
             if depth_sensor.supports(rs.option.emitter_enabled):
                 depth_sensor.set_option(
                     rs.option.emitter_enabled, 1.0 if self.config.emitter_enabled else 0.0
@@ -356,8 +349,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # Hardware capture time, in milliseconds. A host stamp taken here would carry
-        # callback jitter.
+        # Hardware capture time in ms; a host stamp here would carry callback jitter.
         ts = motion.get_timestamp() / 1000.0
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
@@ -394,8 +386,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_hardware_ts
         if ts is None:
             return
-        # with_ts copies: subscribers hold the object by reference, so restamping the
-        # stored one would rewrite an already-delivered message.
+        # with_ts copies; restamping the stored one would rewrite a delivered message.
         for info, stream in (
             (self._color_camera_info, self.camera_info),
             (self._depth_camera_info, self.depth_camera_info),
@@ -482,7 +473,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 for profile in sensor.get_stream_profiles()
                 if profile.stream_type() == rs.stream.infrared
             ]
-            # index 1 = left imager, index 2 = right imager
+            # index 1 = left imager, index 2 = right
             left = next((p for p in profiles if p.stream_index() == 1), None)
             right = next((p for p in profiles if p.stream_index() == 2), None)
             if left is None or right is None:
@@ -574,20 +565,15 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._build_mount_edges()
 
     def _build_mount_edges(self) -> None:
-        """Everything from the tripod screw down, which is rigid once the device is open.
-
-        Built here rather than per frame: it is the same answer every time, and the
-        conversion out of librealsense's optical axes is not cheap.
-        """
+        """Everything from the tripod screw down, which is rigid once the device is open."""
         identity = Quaternion(0.0, 0.0, 0.0, 1.0)
-        # camera_link coincides with the depth frame, so an imager's extrinsic to depth
-        # already is its placement here -- no inversion.
+        # camera_link coincides with the depth frame, so an extrinsic to depth already
+        # is a placement here.
         body_frames = {self._depth_frame: (Vector3(0.0, 0.0, 0.0), identity)} | {
             frame_id: self._extrinsics_to_body(extrinsics)
             for frame_id, extrinsics in self._frame_extrinsics.items()
         }
-        # With depth disabled there are no extrinsics at all, so colour falls back to
-        # the camera_link origin rather than vanishing from tf.
+        # With depth off there are no extrinsics, so colour falls back to camera_link.
         if self.config.enable_color and self._color_frame not in body_frames:
             body_frames[self._color_frame] = (Vector3(0.0, 0.0, 0.0), identity)
 
@@ -646,9 +632,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._repeated_frames[key] = self._repeated_frames.get(key, 0) + 1
             return None
         if previous is not None and number > previous + 1:
-            # The loss happens in the driver or on the wire, so it can only be
-            # counted here -- but a capture that quietly shed frames should not
-            # look complete afterwards.
+            # The loss is in the driver or on the wire, so it can only be counted here.
             missed = number - previous - 1
             self._dropped_frames[key] = self._dropped_frames.get(key, 0) + missed
             logger.warning(
@@ -674,8 +658,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 # Pipeline went away underneath us.
                 break
             except RuntimeError:
-                # Raised on timeout as well as on a stopped pipeline, and a slow first
-                # frameset is normal.
+                # Raised on timeout as well as on a stop, and a slow first frameset is
+                # normal.
                 if not self._running:
                     break
                 consecutive_timeouts += 1
@@ -740,7 +724,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
                 self.depth_image.publish(depth_img)
 
-            # Process infrared stereo pair (single-channel, global shutter)
             if infra1_frame and infra1_ts is not None:
                 self.infrared_left.publish(
                     Image(
@@ -782,8 +765,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         """
         transforms = []
 
-        # The mount point, for a camera nothing else places. Leave base_transform unset
-        # when a rig already publishes this edge.
+        # The mount point, for a camera nothing else places.
         if self.config.base_transform is not None:
             transforms.append(
                 Transform(

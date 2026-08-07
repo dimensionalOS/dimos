@@ -74,7 +74,6 @@ demo_cuvslam = (
             width=848,
             height=480,
             fps=30,
-            # The IR pair, which the device delivers already rectified.
             enable_infrared=True,
             emitter_enabled=False,
             enable_color=False,
@@ -83,7 +82,6 @@ demo_cuvslam = (
             enable_imu=False,
         ),
         CuvslamOdometry.blueprint(),
-        # cuVSLAM publishes only the current pose; this keeps the trail.
         OdometryPath.blueprint(),
         vis_module(
             global_config.viewer,

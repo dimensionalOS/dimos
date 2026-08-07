@@ -79,9 +79,8 @@ LIDAR_ABOVE_BOX_CENTER = 0.017
 # IMU position in point-cloud (lidar) coordinates, from Livox Mid-360 extrinsics.
 IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
-# The rig, hung off the camera's tripod screw. Everything from that screw down into the
-# camera belongs to RealSenseCamera, which reads it off the device: a second publisher
-# here would fight it, and with numbers for whichever model the table was written for.
+# The rig, hung off the camera's tripod screw. Everything below that screw belongs to
+# RealSenseCamera, which reads it off the device.
 FRAMES: list[FrameSpec] = [
     (CAMERA_SCREW_FRAME, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
     ("box_pitch_frame", CAMERA_SCREW_FRAME, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
@@ -116,8 +115,6 @@ class Mid360RealsenseRecorder(PointlioRecorder):
 
 
 mid360_realsense_record = autoconnect(
-    # base_transform unset: the screw frame is the root of the rig tree below, and two
-    # publishers of one edge fight.
     RealSenseCamera.blueprint(camera_name=CAMERA_NAME, base_transform=None).remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),

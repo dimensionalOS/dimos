@@ -130,20 +130,16 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._sl_camera_info: sl.CameraInformation | None = None
-        # The last frame's capture time, which is what camera_info is stamped with.
         self._last_image_ts: float | None = None
-        # The depth frame the last cloud was built from, so a slow capture republishes
-        # nothing rather than the same cloud twice.
+        # So a capture slower than the interval does not repeat a cloud.
         self._last_pointcloud_ts: float | None = None
 
     def _publish_camera_info(self) -> None:
-        # The capture clock, so camera_info can be matched to the frames it describes.
-        # Nothing goes out before the first frame; there is no time to give it.
+        # The capture clock, so camera_info matches the frames it describes.
         ts = self._last_image_ts
         if ts is None:
             return
-        # with_ts copies: subscribers hold the object by reference, so restamping the
-        # stored one would rewrite an already-delivered message.
+        # with_ts copies; restamping the stored one would rewrite a delivered message.
         for info, stream in (
             (self._color_camera_info, self.camera_info),
             (self._depth_camera_info, self.depth_camera_info),
@@ -307,9 +303,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            # The SDK's capture stamp, not time.time(): grab() blocks through the depth
-            # inference, so a host stamp afterwards is late by however long that took.
-            # Same epoch either way, so this only removes the bias.
+            # The SDK's capture stamp: grab() blocks through the depth inference, so a
+            # host stamp here would be late by that much. Same epoch.
             ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
             self._last_image_ts = ts
 
@@ -400,8 +395,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             transforms.append(base_to_camera)
 
-        # camera_imu_transform is IMU -> left_camera (coordinate transform),
-        # we need to invert to get the pose of left camera in camera_link frame
+        # camera_imu_transform is IMU -> left camera, so invert it to place the camera.
         camera_link_to_depth = self._extrinsics_to_transform(
             self._camera_link_to_color_extrinsics,
             self._camera_link,

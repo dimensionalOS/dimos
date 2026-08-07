@@ -9,12 +9,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
-    # Generated LCM message headers, consumed via a FetchContent source override.
+    # Generated LCM message headers, via a FetchContent source override.
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
-    # Standalone Boost.PFR, consumed by the dimos native SDK the same way.
+    # Standalone Boost.PFR, the same way.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
       flake = false;
@@ -32,17 +32,9 @@
         lcm = lcm-extended.packages.${system}.lcm;
         cuda = pkgs.cudaPackages;
 
-        # NVIDIA's official prebuilt C++ SDK. Pinned by hash rather than vendored
-        # into the repo: the NVIDIA Community License permits redistribution, but
-        # a 111 MB binary does not belong in git.
-        #
-        # Version note: both are the cuda12.6 build, chosen to match the pycuvslam
-        # 17.0.0 wheel already in use (same version, same bundled libcudart
-        # 12.6.77) so C++ and Python results are comparable.
-        #
-        # NVIDIA ships a separate tarball per architecture. The aarch64 one is the
-        # "orin" build and is Ubuntu 22.04 based, matching JetPack 6 (L4T R36) --
-        # there is no aarch64 24.04 build, so this is not an oversight.
+        # Pinned by hash rather than vendored: a 111 MB binary does not belong in
+        # git. Both are the cuda12.6 build, matching the pycuvslam wheel; the
+        # aarch64 one is the "orin" 22.04 build, there is no aarch64 24.04.
         sdkSource = {
           x86_64-linux = {
             url = "https://github.com/nvidia-isaac/cuVSLAM/releases/download/v17.0.0/cuvslam-cpp-17.0.0-x86_64-cuda12.6.3-ubuntu24.04.tar.gz";
@@ -73,8 +65,7 @@
             cp bin/libcuvslam.so $out/lib/
             cp bin/cuvslam_api_launcher $out/bin/ || true
             cp -r include/cuvslam $out/include/
-            # NVIDIA Community License requires the attribution notice to travel
-            # with any redistribution.
+            # The NVIDIA Community License requires this to travel with the binary.
             cp LICENSE $out/share/cuvslam/
             echo "Licensed by NVIDIA Corporation under the NVIDIA Community License." \
               > $out/share/cuvslam/NOTICE
@@ -88,11 +79,8 @@
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "dimos-cuvslam-native";
           version = "0.1.0";
-          # Only what cmake actually reads. `./.` would drag the Python module in
-          # beside it, and since the derivation is keyed on its source, editing
-          # cuvslam.py would then force a full C++ rebuild before the module could
-          # start. Whole directories rather than named files, so a new .cpp is
-          # picked up without touching this list.
+          # Only what cmake reads: the derivation is keyed on its source, so pulling
+          # cuvslam.py in would rebuild the C++ on every python edit.
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [ ./CMakeLists.txt ./src ];
@@ -111,14 +99,12 @@
           ];
 
           cmakeFlags = [
-            # Without this cmake defaults to no optimisation at all, which showed
-            # up as the per-frame speckle mask taking 20x longer than the tracker.
+            # cmake otherwise defaults to no optimisation at all.
             "-DCMAKE_BUILD_TYPE=Release"
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
-            # Header-only dimos native SDK lives outside this dir; a git-tree
-            # flake can reach it as a path literal within the repo tree.
+            # Outside this dir, which a git-tree flake reaches as a path literal.
             "-DDIMOS_NATIVE_CPP_DIR=${../../../native/cpp}"
             "-DCUVSLAM_SDK_DIR=${cuvslam-sdk}"
           ];

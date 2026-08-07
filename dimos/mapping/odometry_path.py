@@ -30,21 +30,11 @@ from dimos.msgs.nav_msgs.Path import Path
 
 
 class OdometryPathConfig(ModuleConfig):
-    # Frame the path is stamped in. Left empty it follows the odometry's own
-    # ``frame_id``, which is what puts the line under the right node of the tf
-    # tree in a viewer.
+    # Empty follows the odometry's own frame_id.
     frame_id: str = ""
-    # Poses closer together than this are dropped. A stationary robot otherwise
-    # piles thousands of identical points onto the same spot, and every one of
-    # them is re-encoded on every publish.
     min_step_m: float = 0.02
-    # Oldest poses fall off past this. Decimating instead would keep the whole
-    # history, but a trail whose shape changes under you is worse than one with a
-    # known, honest horizon.
     max_poses: int = 20000
-    # Publish rate ceiling, in seconds between messages. The path is republished
-    # whole, so at 30 Hz odometry an unbounded rate spends more time serializing
-    # the trail than tracking.
+    # The path is republished whole, so this bounds the serializing cost.
     min_publish_interval_s: float = 0.1
 
 
@@ -104,8 +94,8 @@ class OdometryPath(Module):
         if msg.ts - self._last_publish_ts < self.config.min_publish_interval_s:
             return
         self._last_publish_ts = msg.ts
-        # A copy, because Path holds the list by reference and the next pose would
-        # otherwise mutate a message already on its way out.
+        # A copy: Path holds the list by reference, and the next pose would mutate a
+        # message already on its way out.
         self.path.publish(
             Path(
                 ts=msg.ts,

@@ -33,27 +33,23 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 MODULE_DIR = Path(__file__).resolve().parent
 
-# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails and cudart
-# blames the driver version instead. Directories holding nothing but driver
-# libraries go on the path whole, which Jetson needs: libcuda.so.1 there depends on
-# a dozen siblings that live beside it.
+# The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails and cudart blames
+# the driver version instead. Directories holding nothing but driver libraries go on the
+# path whole, which Jetson needs: libcuda.so.1 there depends on its siblings.
 _DRIVER_ONLY_LIB_DIRS = (
-    # NixOS and CUDA containers.
     Path("/run/opengl-driver/lib"),
-    # Jetson / L4T. Both names are the same set of files on JetPack 6; which one
-    # exists has varied across releases, so try both.
+    # Jetson / L4T. Which of the two names exists has varied across releases.
     Path("/usr/lib/aarch64-linux-gnu/nvidia"),
     Path("/usr/lib/aarch64-linux-gnu/tegra"),
 )
-# Directories holding the driver among the system's own libraries: exposing one
-# whole would shadow the binary's libstdc++, so symlinks to the driver stand in.
+# Directories holding the driver among the system's own libraries: exposing one whole
+# would shadow the binary's libstdc++, so symlinks to the driver stand in.
 _HOST_LIB_DIRS = (
     Path("/usr/lib/x86_64-linux-gnu"),
     Path("/usr/lib/aarch64-linux-gnu"),
 )
-# nixpkgs tracks a newer CUDA than JetPack ships, and the mismatch fails at
-# cusolverDnCreate, so the host's own runtime goes first where it exists. Holding
-# only CUDA runtime libraries, it cannot shadow the binary's libstdc++.
+# nixpkgs tracks a newer CUDA than JetPack ships and the mismatch fails at
+# cusolverDnCreate, so the host's own runtime goes first where it exists.
 _HOST_CUDA_LIB_DIR = Path("/usr/local/cuda/lib64")
 _DRIVER_LIBS = (
     "libcuda.so.1",
@@ -110,8 +106,7 @@ class ImuCalibration(BaseModel):
     gyro_random_walk: float
     accel_noise_density: float
     accel_random_walk: float
-    # The rate actually fed, not the rate requested: cuVSLAM computes expected samples
-    # per frame from this, and declaring more than it receives disables fusion silently.
+    # The rate actually fed. Declaring more than arrives disables fusion, silently.
     frequency: float
 
     @classmethod
@@ -138,46 +133,36 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" tracks on two or more cameras with overlapping views, "rgbd" on one
-    # image plus its depth, "mono" on one image alone -- and mono is accurate only up
-    # to an unknown scale, so its poses are not metres.
+    # "stereo" is two or more cameras with overlapping views; "mono" is up to scale.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
     # One tf frame per camera, in the order cuVSLAM indexes them. Empty discovers them
     # off camera_info, which only has an order for a single camera or one pair.
     camera_frames: list[str] = Field(default_factory=list)
+    # Asserts the pair arrives rectified -- no distortion, rows already aligned -- so
+    # cuVSLAM can match along a scanline. Claiming it for images that are not costs
+    # tracking quality with nothing to show for it, since the model is fed as pinhole
+    # either way.
     rectified: bool = True
-    # cuVSLAM's async bundle adjustment throws from its own thread, where nothing can
-    # catch it, and the process aborts. NVIDIA's launcher defaults it off too.
-    async_sba: bool = False
-    # A step implying the camera moved faster than this is cuVSLAM restarting its
-    # world frame rather than real motion, so the module rebases instead of jumping.
+    # A step implying more than this is cuVSLAM restarting its world frame, not motion.
     implausible_speed_meters_per_second: float = 10.0
 
     map_frame: str = "map"
     odom_frame: str = "odom"
-    # Also the rig frame: every camera is placed against this one, so the pose cuVSLAM
-    # returns is this frame's and nothing has to be re-referenced afterwards.
+    # Also the rig frame, so the pose cuVSLAM returns is already this frame's.
     base_frame: str = "base_link"
-    # Only used when Slam is off: pure visual odometry has no global correction,
-    # so its map->odom can only be identity. Turn it off whenever something else
-    # in the graph owns that edge -- two publishers of one tf edge fight.
+    # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
 
-    # cuvslam::Slam on top of the odometry: pose graph, loop closure, and the
-    # same-run relocalization that pulls a revisit back onto itself. Without it
-    # map->odom carries nothing and the landmark map smears with the drift.
+    # Pose graph and loop closure. Without it map->odom carries nothing.
     enable_slam: bool = True
     slam_sync_mode: bool = True
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
-    # Off by default because for non-drone applications it usually hurts. Turning it on
-    # requires imu_calibration and imu_frame: there is no default noise model, because
-    # it belongs to one physical unit.
+    # Off by default because for non-drone applications it usually hurts.
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
-    # rgbd only: how many raw depth units make a metre. cuVSLAM divides by this, and
-    # assumes 1 -- i.e. that the raw values are already metres. Depth images are 16-bit
-    # millimetres, so left at 1 every point lands a thousand times too far away.
+    # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
+    # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
 
     @model_validator(mode="after")
@@ -237,5 +222,4 @@ class CuvslamOdometry(NativeModule):
 
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
-    # Read for the mount tree the rig is built from, written with the pose.
     tf: IO[TFMessage]

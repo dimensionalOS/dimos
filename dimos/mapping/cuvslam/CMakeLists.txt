@@ -9,9 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# Generated LCM message headers (sensor_msgs::Image, nav_msgs::Odometry, ...).
-# Under nix, -DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM points this at the flake input,
-# so the sandboxed build needs no network.
+# Generated LCM message headers. Under nix, -DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM
+# points this at the flake input so the sandboxed build needs no network.
 FetchContent_Declare(dimos_lcm
   GIT_REPOSITORY https://github.com/dimensionalOS/dimos-lcm.git
   GIT_TAG main
@@ -22,17 +21,14 @@ FetchContent_MakeAvailable(dimos_lcm)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LCM REQUIRED lcm)
 
-# Header-only dimos native C++ SDK. Overridable so nix can point at the flake
-# input instead of the in-repo relative path.
+# Header-only dimos native C++ SDK, overridable so nix can point at the flake input.
 if(NOT DEFINED DIMOS_NATIVE_CPP_DIR)
   set(DIMOS_NATIVE_CPP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../native/cpp)
 endif()
 add_subdirectory(${DIMOS_NATIVE_CPP_DIR} ${CMAKE_BINARY_DIR}/dimos_native)
 
-# NVIDIA's prebuilt cuVSLAM C++ SDK (headers + libcuvslam.so). The nix flake
-# packages the official release archive and passes its store path here. There is
-# deliberately no fallback to a hand-written header: guessing at NVIDIA's ABI
-# would compile and then fail at runtime in ways that are very hard to diagnose.
+# NVIDIA's prebuilt cuVSLAM C++ SDK, packaged by the nix flake. No fallback to a
+# hand-written header: guessing at the ABI compiles and then fails at runtime.
 if(NOT DEFINED CUVSLAM_SDK_DIR)
   message(FATAL_ERROR
     "CUVSLAM_SDK_DIR is not set. Build via `nix build` (which packages NVIDIA's "
