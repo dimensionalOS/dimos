@@ -397,6 +397,7 @@ async function startVR() {
         // Session event handlers
         session.addEventListener('end', () => {
             setStatus('VR session ended');
+            handSelectActive.clear();
             xrSession = null;
             window.disconnect();
         });
