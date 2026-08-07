@@ -54,6 +54,16 @@ if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
 
+# Where camera_link sits relative to the tripod screw, per model, in body axes. The
+# device cannot report this -- it is the case, not the optics -- so it comes from Intel's
+# own realsense2_description URDFs. Matched as a substring, so a D435i and a D435if take
+# the D435 body they share.
+SCREW_TO_LINK_METERS: dict[str, tuple[float, float, float]] = {
+    "D455": (0.011150, 0.0475, 0.0145),
+    "D435": (0.010580, 0.0175, 0.0125),
+}
+
+
 def default_base_transform() -> Transform:
     """Default identity transform for camera mounting."""
     return Transform(
@@ -102,6 +112,10 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     infrared_left_camera_info: Out[CameraInfo]
     infrared_right_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
+
+    @property
+    def _bottom_screw_frame(self) -> str:
+        return f"{self.config.camera_name}_bottom_screw_frame"
 
     @property
     def _camera_link(self) -> str:
@@ -161,6 +175,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
+        self._unknown_model_warned = False
         self._running = False
         self._thread: threading.Thread | None = None
         self._color_camera_info: CameraInfo | None = None
@@ -297,6 +312,25 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._imu_pipeline.start(imu_config, self._on_motion_frame)
         # Starting a pipeline can reset the option.
         self._require_global_time()
+
+    def _screw_to_link(self) -> tuple[float, float, float]:
+        """The mount offset for whichever model is plugged in, or zero if it is new."""
+        if self._profile is None:
+            return (0.0, 0.0, 0.0)
+        import pyrealsense2 as rs
+
+        name = self._profile.get_device().get_info(rs.camera_info.name).upper()
+        for model, offset in SCREW_TO_LINK_METERS.items():
+            if model in name:
+                return offset
+        if not self._unknown_model_warned:
+            self._unknown_model_warned = True
+            logger.warning(
+                "RealSense %s has no mount offset here, so its screw frame sits on "
+                "camera_link. Add it from that model's realsense2_description URDF.",
+                name,
+            )
+        return (0.0, 0.0, 0.0)
 
     def _require_global_time(self) -> None:
         """Put every sensor on the host clock rather than its own boot time.
@@ -731,26 +765,38 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._publish_tf(max(latest))
 
     def _publish_tf(self, ts: float) -> None:
-        """Publish everything at and below ``camera_link``, from the device.
+        """Publish everything at and below the tripod screw, from the device.
 
-        This module owns the camera's internals on tf, because it is the only thing
-        that can read the per-unit factory calibration. Whatever describes the *mount*
-        -- a URDF, usually -- owns ``camera_link`` upward, and must not also publish
-        these edges: a frame with two parents makes tf pick whichever arrived last.
+        This module owns the camera's internals, because it is the only thing that can
+        read the per-unit factory calibration, and the screw is where a rig actually
+        bolts to it. Whatever describes the mount owns the screw frame upward and must
+        not also publish these edges: a frame with two parents makes tf pick whichever
+        arrived last.
         """
         transforms = []
 
-        # base_link -> camera_link, for a camera whose mount nothing else describes.
-        # Leave base_transform unset when a rig URDF already places the camera.
+        # The mount point, for a camera nothing else places. Leave base_transform unset
+        # when a rig already publishes this edge.
         if self.config.base_transform is not None:
-            base_to_camera = Transform(
-                translation=self.config.base_transform.translation,
-                rotation=self.config.base_transform.rotation,
-                frame_id=self.config.base_frame_id,
+            transforms.append(
+                Transform(
+                    translation=self.config.base_transform.translation,
+                    rotation=self.config.base_transform.rotation,
+                    frame_id=self.config.base_frame_id,
+                    child_frame_id=self._bottom_screw_frame,
+                    ts=ts,
+                )
+            )
+
+        transforms.append(
+            Transform(
+                translation=Vector3(*self._screw_to_link()),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=self._bottom_screw_frame,
                 child_frame_id=self._camera_link,
                 ts=ts,
             )
-            transforms.append(base_to_camera)
+        )
 
         # camera_link -> camera_depth_frame (identity, depth is at camera_link origin)
         camera_link_to_depth = Transform(

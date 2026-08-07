@@ -15,12 +15,12 @@
 """The RealSense D435i + Mid-360 rig: static mount frames, recorder, record blueprints.
 
 A single physical sensor assembly described in one place: the mount geometry published
-onto tf (:class:`Mid360RealsenseStaticTf`), the memory recorder
+onto tf (:class:`Mid360RealsenseStaticTf`), the memory2 recorder
 (:class:`Mid360RealsenseRecorder`), and the record blueprints that wire them to the
 live sensors.
 
 Point-LIO odom+lidar and the RealSense color/depth/pointcloud streams are recorded into
-a memory db, with the rig's mount frames published continuously onto tf. Two variants:
+a memory2 db, with the rig's mount frames published continuously onto tf. Two variants:
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
@@ -34,7 +34,7 @@ Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
 Frame sources
 -------------
 The RealSense's own frames come from RealSenseCamera, which reads them off the device;
-this file places the lidar side.
+this file places its tripod screw and everything on the lidar side.
 
 Mid-360 geometry (manual): body is 65 x 65 x 60 mm; the point-cloud origin O lies on the
 central vertical axis, ~47 mm above the base. The IMU chip is *not* on that axis. The
@@ -63,11 +63,12 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
-BASE_LINK = "base_link"
+CAMERA_NAME = "d455"
+CAMERA_SCREW_FRAME = f"{CAMERA_NAME}_bottom_screw_frame"
 
 CAMERA_ANGLE_UP = math.radians(10)
 
-# Mid-360 box: pitched down from camera_link, then offset back/up in that frame
+# Mid-360 box: pitched down from the camera's screw, then offset back/up in that frame
 BOX_PITCH_DOWN = math.radians(26) + CAMERA_ANGLE_UP
 BOX_BACK = 0.085
 BOX_UP = 0.037
@@ -78,11 +79,12 @@ LIDAR_ABOVE_BOX_CENTER = 0.017
 # IMU position in point-cloud (lidar) coordinates, from Livox Mid-360 extrinsics.
 IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
-# The lidar side of the rig. The camera hangs its own frames off base_link, named for
-# whichever model is plugged in, and reads their geometry off the device.
+# The rig, hung off the camera's tripod screw. Everything from that screw down into the
+# camera belongs to RealSenseCamera, which reads it off the device: a second publisher
+# here would fight it, and with numbers for whichever model the table was written for.
 FRAMES: list[FrameSpec] = [
-    (BASE_LINK, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("box_pitch_frame", BASE_LINK, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
+    (CAMERA_SCREW_FRAME, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("box_pitch_frame", CAMERA_SCREW_FRAME, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
     ("box_center", "box_pitch_frame", (-BOX_BACK, 0.0, BOX_UP), (0.0, 0.0, 0.0)),
     ("lidar_frame", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
     ("imu_frame", "lidar_frame", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
@@ -97,7 +99,7 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
 
 
 class Mid360RealsenseRecorder(PointlioRecorder):
-    """Records Point-LIO odom+lidar plus the RealSense streams into a memory db.
+    """Records Point-LIO odom+lidar plus the RealSense streams into a memory2 db.
 
     Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
     The raw Livox stream is NOT recorded here — enable the pcap recorder in the record
@@ -114,7 +116,9 @@ class Mid360RealsenseRecorder(PointlioRecorder):
 
 
 mid360_realsense_record = autoconnect(
-    RealSenseCamera.blueprint().remappings(
+    # base_transform unset: the screw frame is the root of the rig tree below, and two
+    # publishers of one edge fight.
+    RealSenseCamera.blueprint(camera_name=CAMERA_NAME, base_transform=None).remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "pointcloud", "realsense_pointcloud"),
