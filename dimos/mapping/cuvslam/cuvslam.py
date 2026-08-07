@@ -28,9 +28,7 @@ from dimos.constants import CACHE_DIR, CONFIG_DIR
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -266,10 +264,6 @@ class CuvslamOdometry(NativeModule):
     onto itself. ``tf`` carries ``odom`` -> ``base_link`` from the odometry and
     ``map`` -> ``odom`` from the correction, so the jump lands on the edge that is
     allowed to jump. With ``enable_slam`` off, ``map`` -> ``odom`` is identity.
-
-    ``cpp_tf_workaround`` carries the ``map`` -> ``odom`` correction back from the
-    native half only because there is no TFMessage in the C++ SDK, so the tracker
-    cannot publish tf itself. Delete it the moment that lands.
     """
 
     config: CuvslamConfig
@@ -281,10 +275,10 @@ class CuvslamOdometry(NativeModule):
 
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
-    cpp_tf_workaround: Out[Odometry]
     # The rig, resolved from tf here because only the python half has a tf buffer, and
     # handed to the native half in cuVSLAM's camera order.
     rig_transforms: Out[TFMessage]
+    # Published by the native half; read here to place the cameras.
     tf: IO[TFMessage]
 
     _rig_from_camera: dict[str, Transform] = {}
@@ -300,14 +294,6 @@ class CuvslamOdometry(NativeModule):
         self._rig_from_imu = None
         self._rig_published_at = 0.0
         self._unplaced_frames = set()
-        self.register_disposable(
-            Disposable(self.odometry.transport.subscribe(self._on_odometry, self.odometry))
-        )
-        self.register_disposable(
-            Disposable(
-                self.cpp_tf_workaround.transport.subscribe(self._on_map_tf, self.cpp_tf_workaround)
-            )
-        )
         # Subscribed directly rather than through handle_camera_info: the cameras
         # publish theirs back to back, and the coalescing that handler gets keeps only
         # the newest, which can hide a camera for as long as the others keep arriving.
@@ -384,36 +370,3 @@ class CuvslamOdometry(NativeModule):
         left, right = frames
         between = self._rig_from_camera[left].inverse() + self._rig_from_camera[right]
         return [left, right] if between.translation.x > 0 else [right, left]
-
-    def _on_map_tf(self, message: Odometry) -> None:
-        """Slam's correction. Replaces the identity map->odom once Slam is running."""
-        self.tfbuffer.publish(
-            self._transform(message, self.config.map_frame, self.config.odom_frame)
-        )
-
-    @staticmethod
-    def _transform(message: Odometry, frame_id: str, child_frame_id: str) -> Transform:
-        return Transform(
-            frame_id=frame_id,
-            child_frame_id=child_frame_id,
-            translation=Vector3(message.pose.position),
-            rotation=Quaternion(message.pose.orientation),
-            ts=message.ts or time.time(),
-        )
-
-    def _on_odometry(self, message: Odometry) -> None:
-        transforms = [self._transform(message, self.config.odom_frame, self.config.base_frame)]
-        # With Slam running, map->odom is its correction and arrives on _on_map_tf.
-        # Only one publisher may own that edge.
-        if not self.config.enable_slam and self.config.publish_map_to_odom:
-            transforms.insert(
-                0,
-                Transform(
-                    frame_id=self.config.map_frame,
-                    child_frame_id=self.config.odom_frame,
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    ts=message.ts or time.time(),
-                ),
-            )
-        self.tfbuffer.publish(*transforms)

@@ -5,7 +5,7 @@
 //
 // in:  image, camera_info (every camera on the one stream, told apart by frame_id),
 //      rig_transforms, depth_image, imu
-// out: odometry, corrected_odometry
+// out: odometry, corrected_odometry, tf
 //
 // cuVSLAM restarts its world frame after a tracking loss. The module rebases each
 // restart onto the last published pose, so consumers see ONE continuous odometry
@@ -129,8 +129,8 @@ struct CuvslamConfig {
     std::string odom_frame;
     std::string base_frame;
     std::string map_frame;
-    /// Unused here: the python half acts on it. Config for one module lives in one
-    /// struct, so it crosses the boundary anyway -- parse<T>() requires every key.
+    /// Only read when Slam is off: pure odometry has no global correction, so its
+    /// map->odom can only be identity, and something else may already own that edge.
     bool publish_map_to_odom;
     /// cuvslam::Slam: pose graph + loop closure on top of the odometry. Without it
     /// there is nothing to pull a revisit back together and the map smears.
@@ -191,7 +191,7 @@ public:
 
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
-        cpp_tf_workaround_ = builder.output<nav_msgs::Odometry>("cpp_tf_workaround");
+        tf_ = builder.output<tf2_msgs::TFMessage>("tf");
     }
 
     void teardown() override {
@@ -557,9 +557,7 @@ private:
         fill_pose(corrected, map_from_rig, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
-        nav_msgs::Odometry correction{};
-        fill_pose(correction, map_from_odom_raw, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
-        cpp_tf_workaround_.publish(correction);
+        publish_tf(map_from_odom_raw, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
@@ -589,12 +587,39 @@ private:
         msg.pose.pose.orientation.w = pose.rotation[3];
     }
 
+    void publish_tf(const Transform& pose, std::int64_t timestamp_ns, const std::string& frame,
+                    const std::string& child) {
+        geometry_msgs::TransformStamped stamped{};
+        stamped.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
+        stamped.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
+        stamped.header.frame_id = frame;
+        stamped.child_frame_id = child;
+        stamped.transform.translation.x = pose.translation[0];
+        stamped.transform.translation.y = pose.translation[1];
+        stamped.transform.translation.z = pose.translation[2];
+        stamped.transform.rotation.x = pose.rotation[0];
+        stamped.transform.rotation.y = pose.rotation[1];
+        stamped.transform.rotation.z = pose.rotation[2];
+        stamped.transform.rotation.w = pose.rotation[3];
+
+        tf2_msgs::TFMessage message{};
+        message.transforms = {stamped};
+        message.transforms_length = 1;
+        tf_.publish(message);
+    }
+
     /// One edge for the whole run: a robot only ever sees a single odom path.
     /// Resets are debugging output, on the log, not a break in this stream.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
         fill_pose(msg, world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         odometry_.publish(msg);
+        publish_tf(world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
+        // With Slam running, map->odom is its correction and is published there. Only
+        // one publisher may own an edge.
+        if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
+            publish_tf(Transform{}, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
+        }
     }
 
     // config. Every one of these is set from cfg_ in build(), so no initializer
@@ -647,7 +672,7 @@ private:
 
     Output<nav_msgs::Odometry> odometry_;
     Output<nav_msgs::Odometry> corrected_odometry_;
-    Output<nav_msgs::Odometry> cpp_tf_workaround_;
+    Output<tf2_msgs::TFMessage> tf_;
 };
 
 int main() {
