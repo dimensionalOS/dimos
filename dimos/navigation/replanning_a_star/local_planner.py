@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import os
 from threading import Event, RLock, Thread
 import time
@@ -39,6 +40,14 @@ PlannerState: TypeAlias = Literal[
     "idle", "initial_rotation", "path_following", "final_rotation", "arrived"
 ]
 StopMessage: TypeAlias = Literal["arrived", "obstacle_found", "error"]
+PlanEpochs: TypeAlias = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class PlanStopEvent:
+    reason: StopMessage
+    plan_epochs: PlanEpochs | None = None
+
 
 logger = setup_logger()
 
@@ -46,6 +55,7 @@ logger = setup_logger()
 class LocalPlanner(Resource):
     cmd_vel: Subject[Twist]
     stopped_navigating: Subject[StopMessage]
+    _plan_stopped: Subject[PlanStopEvent]
     navigation_costmap: Subject[OccupancyGrid]
 
     _thread: Thread | None = None
@@ -75,6 +85,7 @@ class LocalPlanner(Resource):
     ) -> None:
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
+        self._plan_stopped = Subject()
         self.navigation_costmap = Subject()
 
         self._pose_index = 0
@@ -108,25 +119,56 @@ class LocalPlanner(Resource):
 
     def start_planning(self, path: Path) -> None:
         self.stop_planning()
+        self._start_planning(path, None)
 
-        self._stop_planning_event = Event()
+    @property
+    def plan_stopped(self) -> Subject[PlanStopEvent]:
+        return self._plan_stopped
+
+    def start_tagged_planning(self, path: Path, plan_epochs: PlanEpochs) -> None:
+        self._deactivate_planning()
+        self._start_planning(path, plan_epochs)
+
+    def deactivate_planning(self) -> None:
+        self._deactivate_planning()
+
+    def publish_stop_command(self) -> None:
+        self._publish_stop_command()
+
+    def _start_planning(self, path: Path, plan_epochs: PlanEpochs | None) -> None:
+        stop_event = Event()
 
         with self._lock:
+            self._stop_planning_event.set()
+            self._stop_planning_event = stop_event
             self._path = path
             self._path_clearance = PathClearance(self._global_config, self._path)
             self._path_distancer = PathDistancer(self._path)
             self._pose_index = 0
-            self._thread = Thread(target=self._thread_entrypoint, daemon=True)
+            self._thread = Thread(
+                target=self._thread_entrypoint,
+                args=(stop_event, plan_epochs),
+                daemon=True,
+            )
             self._thread.start()
 
     def stop_planning(self) -> None:
-        self.cmd_vel.on_next(Twist())
-        self._stop_planning_event.set()
+        try:
+            self._deactivate_planning()
+        finally:
+            self._publish_stop_command()
 
+    def _deactivate_planning(self) -> None:
         with self._lock:
+            self._stop_planning_event.set()
             self._thread = None
+            self._reset_state()
 
-        self._reset_state()
+    def _publish_stop_command(self) -> None:
+        try:
+            self.cmd_vel.on_next(Twist())
+        except Exception as error:
+            logger.exception("Error publishing local planner stop command", exc_info=error)
 
     def get_state(self) -> NavigationState:
         with self._lock:
@@ -144,16 +186,35 @@ class LocalPlanner(Resource):
         with self._lock:
             return (self._state, self._state_unique_id)
 
-    def _thread_entrypoint(self) -> None:
+    def _thread_entrypoint(
+        self,
+        stop_event: Event,
+        plan_epochs: PlanEpochs | None,
+    ) -> None:
         try:
-            self._loop()
+            self._loop(stop_event, plan_epochs)
         except Exception as e:
             traceback.print_exc()
             logger.exception("Error in local planning", exc_info=e)
-            self.stopped_navigating.on_next("error")
+            self._publish_stop_event("error", plan_epochs)
         finally:
-            self._reset_state()
-            self.cmd_vel.on_next(Twist())
+            is_current = False
+            with self._lock:
+                is_current = self._stop_planning_event is stop_event
+                if is_current:
+                    self._reset_state()
+            if is_current:
+                self._publish_stop_command()
+
+    def _publish_stop_event(self, reason: StopMessage, plan_epochs: PlanEpochs | None) -> None:
+        try:
+            self._plan_stopped.on_next(PlanStopEvent(reason, plan_epochs))
+        except Exception as error:
+            logger.exception("Error notifying tagged local planner stop observers", exc_info=error)
+        try:
+            self.stopped_navigating.on_next(reason)
+        except Exception as error:
+            logger.exception("Error notifying local planner stop observers", exc_info=error)
 
     def _change_state(self, new_state: PlannerState) -> None:
         if new_state == self._state:
@@ -162,10 +223,13 @@ class LocalPlanner(Resource):
         self._state_unique_id += 1
         logger.info("changed state", state=new_state)
 
-    def _loop(self) -> None:
-        stop_event = self._stop_planning_event
+    def _worker_is_current(self, stop_event: Event) -> bool:
+        return self._stop_planning_event is stop_event and not stop_event.is_set()
 
+    def _loop(self, stop_event: Event, plan_epochs: PlanEpochs | None) -> None:
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return
             path = self._path
             path_clearance = self._path_clearance
             current_odom = self._current_odom
@@ -175,11 +239,11 @@ class LocalPlanner(Resource):
 
         # Determine initial state: skip initial_rotation if already aligned.
         new_state: PlannerState = "initial_rotation"
+        initial_yaw_error: float | None = None
         if current_odom is not None and len(path.poses) > 0:
             first_yaw = path.poses[0].orientation.euler[2]
             robot_yaw = current_odom.orientation.euler[2]
             initial_yaw_error = angle_diff(first_yaw, robot_yaw)
-            self._controller.reset_yaw_error(initial_yaw_error)
             angle_in_tolerance = abs(initial_yaw_error) < self._orientation_tolerance
             if angle_in_tolerance:
                 position_in_tolerance = (
@@ -191,39 +255,57 @@ class LocalPlanner(Resource):
                     new_state = "path_following"
 
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return
+            if initial_yaw_error is not None:
+                self._controller.reset_yaw_error(initial_yaw_error)
             self._change_state(new_state)
 
-        while not stop_event.is_set():
+        while True:
             start_time = time.perf_counter()
 
             with self._lock:
+                if not self._worker_is_current(stop_event):
+                    break
                 path_clearance.update_costmap(self._navigation_map.binary_costmap)
                 path_clearance.update_pose_index(self._pose_index)
 
             self._send_navigation_costmap(path, path_clearance)
 
             if path_clearance.is_obstacle_ahead():
+                with self._lock:
+                    if not self._worker_is_current(stop_event):
+                        break
                 logger.info("Obstacle detected ahead, stopping local planner.")
-                self.stopped_navigating.on_next("obstacle_found")
+                self._publish_stop_event("obstacle_found", plan_epochs)
                 break
 
             with self._lock:
+                if not self._worker_is_current(stop_event):
+                    break
                 state: PlannerState = self._state
 
-            if state == "initial_rotation":
-                cmd_vel = self._compute_initial_rotation()
-            elif state == "path_following":
-                cmd_vel = self._compute_path_following()
-            elif state == "final_rotation":
-                cmd_vel = self._compute_final_rotation()
-            elif state == "arrived":
-                self.stopped_navigating.on_next("arrived")
-                break
-            elif state == "idle":
-                cmd_vel = None
+            cmd_vel: Twist | None
+            match state:
+                case "initial_rotation":
+                    cmd_vel = self._compute_initial_rotation(stop_event)
+                case "path_following":
+                    cmd_vel = self._compute_path_following(stop_event)
+                case "final_rotation":
+                    cmd_vel = self._compute_final_rotation(stop_event)
+                case "arrived":
+                    self._publish_stop_event("arrived", plan_epochs)
+                    break
+                case "idle":
+                    cmd_vel = None
+                case _:
+                    raise ValueError(f"Unknown planner state: {state}")
 
             if cmd_vel is not None:
-                self.cmd_vel.on_next(cmd_vel)
+                with self._lock:
+                    publish_command = self._worker_is_current(stop_event)
+                if publish_command:
+                    self.cmd_vel.on_next(cmd_vel)
 
             elapsed = time.perf_counter() - start_time
             sleep_time = max(0.0, (1.0 / self._control_frequency) - elapsed)
@@ -232,8 +314,10 @@ class LocalPlanner(Resource):
         if stop_event.is_set():
             logger.info("Local planner loop exited due to stop event.")
 
-    def _compute_initial_rotation(self) -> Twist:
+    def _compute_initial_rotation(self, stop_event: Event) -> Twist | None:
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
             path = self._path
             current_odom = self._current_odom
 
@@ -247,10 +331,15 @@ class LocalPlanner(Resource):
 
         if abs(yaw_error) < self._orientation_tolerance:
             with self._lock:
+                if not self._worker_is_current(stop_event):
+                    return None
                 self._change_state("path_following")
-            return self._compute_path_following()
+            return self._compute_path_following(stop_event)
 
-        return self._controller.rotate(yaw_error)
+        with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
+            return self._controller.rotate(yaw_error)
 
     def get_distance_to_path(self) -> float | None:
         with self._lock:
@@ -264,8 +353,10 @@ class LocalPlanner(Resource):
 
         return path_distancer.get_distance_to_path(current_pos)
 
-    def _compute_path_following(self) -> Twist:
+    def _compute_path_following(self, stop_event: Event) -> Twist | None:
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
             path_distancer = self._path_distancer
             current_odom = self._current_odom
 
@@ -277,20 +368,29 @@ class LocalPlanner(Resource):
         if path_distancer.distance_to_goal(current_pos) < self._goal_tolerance:
             logger.info("Reached goal position, starting final rotation")
             with self._lock:
+                if not self._worker_is_current(stop_event):
+                    return None
                 self._change_state("final_rotation")
-            return self._compute_final_rotation()
+            return self._compute_final_rotation(stop_event)
 
         closest_index = path_distancer.find_closest_point_index(current_pos)
 
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
             self._pose_index = closest_index
 
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
 
-        return self._controller.advance(lookahead_point, current_odom)
-
-    def _compute_final_rotation(self) -> Twist:
         with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
+            return self._controller.advance(lookahead_point, current_odom)
+
+    def _compute_final_rotation(self, stop_event: Event) -> Twist | None:
+        with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
             path = self._path
             current_odom = self._current_odom
 
@@ -304,10 +404,15 @@ class LocalPlanner(Resource):
         if abs(yaw_error) < self._orientation_tolerance:
             logger.info("Final rotation complete, goal reached")
             with self._lock:
+                if not self._worker_is_current(stop_event):
+                    return None
                 self._change_state("arrived")
             return Twist()
 
-        return self._controller.rotate(yaw_error)
+        with self._lock:
+            if not self._worker_is_current(stop_event):
+                return None
+            return self._controller.rotate(yaw_error)
 
     def _reset_state(self) -> None:
         with self._lock:
