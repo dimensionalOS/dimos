@@ -71,7 +71,7 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build -L .#pointlio_native"
+    build_command: str | None = "NP_RUNTIME=proot nix build -L .#pointlio_native"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
