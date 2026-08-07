@@ -161,25 +161,35 @@ struct CuvslamConfig {
     double imu_frequency;
     /// rgbd only: raw depth units per metre. 1000 for sixteen-bit millimetres.
     double depth_units_per_meter;
+
+    /// Called by parse(). Without it an unrecognised mode would quietly behave as mono.
+    void validate() const {
+        if (camera_mode != "stereo" && camera_mode != "mono" && camera_mode != "rgbd") {
+            throw std::runtime_error("camera_mode must be stereo, mono or rgbd, got '" +
+                                     camera_mode + "'");
+        }
+    }
 };
 
 class CuvslamOdometry : public Module {
 public:
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<CuvslamConfig>();
+        stereo_ = cfg_.camera_mode == "stereo";
+        rgbd_ = cfg_.camera_mode == "rgbd";
         baseline_meters_ = cfg_.stereo_baseline_meters;
         // Only stereo triangulates, so only stereo needs a baseline before it can start.
-        have_baseline_ = cfg_.camera_mode != "stereo";
+        have_baseline_ = !stereo_;
 
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
         builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
-        if (cfg_.camera_mode == "stereo") {
+        if (stereo_) {
             builder.input<sensor_msgs::CameraInfo>("camera_info_right",
                                                    &CuvslamOdometry::on_camera_info_right, this);
             builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
         }
-        if (cfg_.camera_mode == "rgbd") {
+        if (rgbd_) {
             builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
         }
         if (cfg_.enable_imu) {
@@ -286,11 +296,11 @@ private:
 
     cuvslam::Odometry::OdometryMode odometry_mode() const {
         using Mode = cuvslam::Odometry::OdometryMode;
-        if (cfg_.camera_mode == "mono") {
-            return Mode::Mono;
-        }
-        if (cfg_.camera_mode == "rgbd") {
+        if (rgbd_) {
             return Mode::RGBD;
+        }
+        if (!stereo_) {
+            return Mode::Mono;
         }
         // Inertial is the stereo pair plus an IMU; there is no inertial mono or rgbd.
         return cfg_.enable_imu ? Mode::Inertial : Mode::Multicamera;
@@ -320,7 +330,7 @@ private:
         left.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
 
         cuvslam::Rig rig;
-        if (cfg_.camera_mode == "stereo") {
+        if (stereo_) {
             cuvslam::Camera right = left;
             right.rig_from_camera.translation = {static_cast<float>(baseline_meters_), 0.0f, 0.0f};
             rig.cameras = {left, right};
@@ -347,7 +357,7 @@ private:
         odometry_cfg.odometry_mode = odometry_mode();
         // cuVSLAM rejects this outright unless the rig has a stereo pair: "Rectified
         // stereo camera mode only works with 1+ stereo cameras".
-        odometry_cfg.rectified_stereo_camera = cfg_.rectified && cfg_.camera_mode == "stereo";
+        odometry_cfg.rectified_stereo_camera = cfg_.rectified && stereo_;
         odometry_cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
@@ -378,10 +388,10 @@ private:
         if (!have_left_) {
             return;
         }
-        if (cfg_.camera_mode == "stereo" && !have_right_) {
+        if (stereo_ && !have_right_) {
             return;
         }
-        if (cfg_.camera_mode == "rgbd" && !have_depth_) {
+        if (rgbd_ && !have_depth_) {
             return;
         }
         ensure_tracker();
@@ -391,7 +401,7 @@ private:
 
         const std::int64_t t_left = stamp_to_ns(left_.header);
         const std::int64_t t_right =
-            cfg_.camera_mode == "stereo" ? stamp_to_ns(right_.header) : t_left;
+            stereo_ ? stamp_to_ns(right_.header) : t_left;
         if (std::llabs(t_left - t_right) > kMaxPairSkewNs) {
             // Wait for the matching eye rather than pairing across motion. A fixed
             // offset between the two streams lands here every frame, so say so once
@@ -425,13 +435,13 @@ private:
 
         cuvslam::Odometry::ImageSet images{l};
         cuvslam::Odometry::ImageSet depths;
-        if (cfg_.camera_mode == "stereo") {
+        if (stereo_) {
             cuvslam::Image r = l;
             r.pixels = right_.data.data();
             r.pitch = right_.step;
             r.camera_index = 1;
             images.push_back(r);
-        } else if (cfg_.camera_mode == "rgbd") {
+        } else if (rgbd_) {
             cuvslam::Image d = l;
             d.pixels = depth_.data.data();
             d.pitch = depth_.step;
@@ -566,6 +576,10 @@ private:
     // config. Every one of these is set from cfg_ in build(), so no initializer
     // here can ever apply; python owns the defaults.
     CuvslamConfig cfg_{};
+    /// camera_mode, parsed once. Everything downstream asks these rather than
+    /// re-comparing the string, so an unknown mode cannot quietly mean "not stereo".
+    bool stereo_{true};
+    bool rgbd_{false};
     /// The only config value that is not simply cfg_: zero there means "read it off
     /// the right camera_info", and this is where the reading lands.
     double baseline_meters_{0.0};
