@@ -463,20 +463,22 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             frame_id=frame_id,
         )
 
-    def _motion_stream_profile(self) -> rs.stream_profile | None:
-        """The device's accel profile, whichever sensor happens to carry it.
+    def _device_stream_profile(
+        self, stream_type: rs.stream, index: int | None = None
+    ) -> rs.stream_profile | None:
+        """A profile for one of the device's streams, running or not.
 
-        Read off the device graph rather than the IMU pipeline, so the extrinsic is
-        available even before that pipeline starts — and on units where the motion
-        module is a separate sensor from the imagers.
+        Extrinsics belong to the device, not to the pipeline, so reading them off the
+        sensor graph keeps an imager placeable on tf with its stream switched off — a
+        rig that runs the infrared pair alone still has to say where those imagers are.
         """
-        import pyrealsense2 as rs
-
         if self._profile is None:
             return None
         for sensor in self._profile.get_device().query_sensors():
             for profile in sensor.get_stream_profiles():
-                if profile.stream_type() == rs.stream.accel:
+                if profile.stream_type() == stream_type and (
+                    index is None or profile.stream_index() == index
+                ):
                     return profile
         return None
 
@@ -490,9 +492,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         """
         import pyrealsense2 as rs
 
-        if self._profile is None or not self.config.enable_depth:
+        depth_stream = self._device_stream_profile(rs.stream.depth)
+        if depth_stream is None:
             return
-        depth_stream = self._profile.get_stream(rs.stream.depth)
 
         # The infrared streams need their index; the others are named by type alone.
         streams: list[tuple[str, tuple[Any, ...]]] = []
@@ -501,10 +503,17 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.enable_infrared:
             streams.append((self._infra1_frame, (rs.stream.infrared, 1)))
             streams.append((self._infra2_frame, (rs.stream.infrared, 2)))
+        if self.config.enable_imu:
+            streams.append((self._imu_frame, (rs.stream.accel,)))
 
         self._frame_extrinsics = {}
         for frame_id, stream in streams:
-            source = self._profile.get_stream(*stream)
+            source = self._device_stream_profile(*stream)
+            if source is None:
+                logger.warning(
+                    "RealSense: no %s stream on the device, %s stays off tf", stream[0], frame_id
+                )
+                continue
             self._frame_extrinsics[frame_id] = source.get_extrinsics_to(depth_stream)
             translation = self._frame_extrinsics[frame_id].translation
             logger.info(
@@ -514,18 +523,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 translation[1] * 1000.0,
                 translation[2] * 1000.0,
             )
-
-        # The camera-to-IMU extrinsic is on the device too. Publishing it is what
-        # keeps a consumer from having to carry a hand-copied calibration of one
-        # particular unit.
-        if self.config.enable_imu:
-            accel_profile = self._motion_stream_profile()
-            if accel_profile is None:
-                logger.warning("RealSense: no motion module, IMU extrinsic unavailable")
-            else:
-                self._frame_extrinsics[self._imu_frame] = accel_profile.get_extrinsics_to(
-                    depth_stream
-                )
 
     def _extrinsics_to_transform(
         self,

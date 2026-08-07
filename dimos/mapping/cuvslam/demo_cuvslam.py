@@ -56,15 +56,18 @@ def _path_at_true_height(path: Path) -> Any:
 
 
 def _rerun_blueprint() -> Any:
-    """The stereo pair stacked down one side, the 3D world taking the rest."""
+    """The cameras down one side, the 3D world taking the rest.
+
+    One view, not one per imager: the rerun bridge names an entity after the topic, and
+    every camera shares the one the tracker reads, so this alternates between them.
+    """
     import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Vertical(
-                rrb.Spatial2DView(origin="world/image_left", name="IR left"),
-                rrb.Spatial2DView(origin="world/image_right", name="IR right"),
+                rrb.Spatial2DView(origin="world/image", name="cameras"),
             ),
             rrb.Spatial3DView(
                 origin="world",
@@ -110,12 +113,12 @@ demo_cuvslam = (
     )
     .remappings(
         [
-            (RealSenseCamera, "infrared_left", "image_left"),
-            (RealSenseCamera, "infrared_right", "image_right"),
+            # Both imagers onto the one stream: the tracker tells its cameras apart by
+            # frame_id, so a second camera is two more lines here and nothing else.
+            (RealSenseCamera, "infrared_left", "image"),
+            (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
-            # The right one carries the baseline in P[3]; without it there is no
-            # metric scale.
-            (RealSenseCamera, "infrared_right_camera_info", "camera_info_right"),
+            (RealSenseCamera, "infrared_right_camera_info", "camera_info"),
         ]
     )
     .global_config(n_workers=4)

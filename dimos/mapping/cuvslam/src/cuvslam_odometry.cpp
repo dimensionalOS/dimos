@@ -1,24 +1,28 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// NVIDIA cuVSLAM stereo visual odometry as a dimos native module.
+// NVIDIA cuVSLAM visual odometry as a dimos native module.
 //
-// in:  image_left/image_right (mono8, rectified), camera_info
-// out: odometry, corrected_odometry, tf
+// in:  image, camera_info (every camera on the one stream, told apart by frame_id),
+//      rig_transforms, depth_image, imu
+// out: odometry, corrected_odometry
 //
 // cuVSLAM restarts its world frame after a tracking loss. The module rebases each
 // restart onto the last published pose, so consumers see ONE continuous odometry
 // path in ONE frame and never a jump. Resets are logged as debugging output; the
 // motion across one is unmeasured, which is drift the stream cannot account for.
-// The baseline comes off the right camera_info's P[3], so any rectified stereo
-// camera works without a per-model constant; stereo_baseline_meters overrides it.
+// The rig -- which cameras there are, in which order, and where each one sits --
+// arrives on rig_transforms, resolved from tf by the python half.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "cuvslam/cuvslam2.h"
@@ -27,6 +31,7 @@
 #include "sensor_msgs/CameraInfo.hpp"
 #include "sensor_msgs/Image.hpp"
 #include "sensor_msgs/Imu.hpp"
+#include "tf2_msgs/TFMessage.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -90,26 +95,24 @@ Transform invert(const Transform& t) {
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
-/// cuVSLAM's rig is the left camera, so every pose it returns is in the optical
-/// convention: z forward, x right, y down. REP-103 wants a body frame -- x forward,
-/// y left, z up -- and publishing the optical pose as `base_link` tilts the entire
-/// tree ninety degrees, which reads in a viewer as the robot lying on its back.
-///
-/// This is the fixed body <- optical rotation, RPY(-pi/2, 0, -pi/2), and it matches
-/// `OPTICAL_ROTATION` in dimos/hardware/sensors/camera/spec.py so the tracker and the
-/// camera driver agree on what an optical frame is.
-const Transform kBaseFromRig{{-0.5, 0.5, -0.5, 0.5}, {0.0, 0.0, 0.0}};
-
-/// cuVSLAM's world is aligned with the rig's first pose, so it is optical-convention
-/// too. Rotating both ends -- R * T * R^-1 -- moves the world axes and the body axes
-/// together, which is what makes gravity fall along -z instead of +y.
-Transform to_body_frame(const Transform& t) {
-    return compose(compose(kBaseFromRig, t), invert(kBaseFromRig));
-}
-
 Transform to_transform(const cuvslam::Pose& pose) {
     return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
                      {pose.translation[0], pose.translation[1], pose.translation[2]}};
+}
+
+Transform to_transform(const geometry_msgs::Transform& t) {
+    return Transform{{t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w},
+                     {t.translation.x, t.translation.y, t.translation.z}};
+}
+
+cuvslam::Pose to_pose(const Transform& t) {
+    cuvslam::Pose pose{};
+    pose.rotation = {static_cast<float>(t.rotation[0]), static_cast<float>(t.rotation[1]),
+                     static_cast<float>(t.rotation[2]), static_cast<float>(t.rotation[3])};
+    pose.translation = {static_cast<float>(t.translation[0]),
+                        static_cast<float>(t.translation[1]),
+                        static_cast<float>(t.translation[2])};
+    return pose;
 }
 
 }  // namespace
@@ -118,8 +121,6 @@ struct CuvslamConfig {
     /// "stereo", "mono" or "rgbd". Mono is accurate only up to an unknown scale, so
     /// its poses are not metres.
     std::string camera_mode;
-    /// Stereo only. Metres, or 0 to read it off the right camera_info's P[3].
-    double stereo_baseline_meters;
     /// The stereo pair arrives rectified: D all zero, R identity.
     bool rectified;
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
@@ -147,11 +148,10 @@ struct CuvslamConfig {
     /// robustness to brief visual failures", which is exactly what a world-frame
     /// restart is: vision briefly had nothing to hold on to.
     bool enable_imu;
-    /// rig_from_imu, rig being the left camera. Flattened from the python side's
-    /// ImuCalibration, which is per-serial and has no default -- all zero here
-    /// means enable_imu is off and none of it is read.
-    double imu_tx, imu_ty, imu_tz;
-    double imu_qx, imu_qy, imu_qz, imu_qw;
+    /// Which transform on rig_transforms places the IMU rather than a camera.
+    std::string imu_frame;
+    /// Flattened from the python side's ImuCalibration, which is per-serial and has
+    /// no default -- all zero here means enable_imu is off and none of it is read.
     double imu_gyro_noise_density;
     double imu_gyro_random_walk;
     double imu_accel_noise_density;
@@ -177,18 +177,11 @@ public:
         cfg_ = config.parse<CuvslamConfig>();
         stereo_ = cfg_.camera_mode == "stereo";
         rgbd_ = cfg_.camera_mode == "rgbd";
-        baseline_meters_ = cfg_.stereo_baseline_meters;
-        // Only stereo triangulates, so only stereo needs a baseline before it can start.
-        have_baseline_ = !stereo_;
 
+        builder.input<tf2_msgs::TFMessage>("rig_transforms", &CuvslamOdometry::on_rig, this);
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
-        builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
-        if (stereo_) {
-            builder.input<sensor_msgs::CameraInfo>("camera_info_right",
-                                                   &CuvslamOdometry::on_camera_info_right, this);
-            builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
-        }
+        builder.input<sensor_msgs::Image>("image", &CuvslamOdometry::on_image, this);
         if (rgbd_) {
             builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
         }
@@ -210,8 +203,9 @@ public:
                        logging::Field("imu_samples", static_cast<std::int64_t>(imu_samples_)),
                        logging::Field("imu_dropped_before_start",
                                       static_cast<std::int64_t>(imu_dropped_)),
-                       logging::Field("stereo_skew_rejects",
-                                      static_cast<std::int64_t>(skew_rejects_))});
+                       logging::Field("skew_rejects", static_cast<std::int64_t>(skew_rejects_)),
+                       logging::Field("images_off_the_rig",
+                                      static_cast<std::int64_t>(unplaced_images_))});
     }
 
 private:
@@ -219,41 +213,40 @@ private:
         if (tracker_) {
             return;  // rig is fixed once the tracker exists
         }
-        width_ = info.width;
-        height_ = info.height;
-        fx_ = info.K[0];
-        fy_ = info.K[4];
-        cx_ = info.K[2];
-        cy_ = info.K[5];
-        have_info_ = true;
+        camera_info_[info.header.frame_id] = info;
     }
 
-    /// The right imager carries the baseline: P = [fx 0 cx -fx*B; ...], so
-    /// B = -P[3]/P[0]. Reading it here is what lets any stereo camera work without
-    /// a per-model constant compiled in.
-    void on_camera_info_right(const sensor_msgs::CameraInfo& info) {
-        if (tracker_ || have_baseline_) {
+    /// The rig: which cameras there are, in cuVSLAM's index order, and where each one
+    /// sits relative to the body. It is the whole of the extrinsic calibration -- a
+    /// stereo baseline is the gap between two of these -- so nothing here is a
+    /// per-model constant.
+    void on_rig(const tf2_msgs::TFMessage& message) {
+        if (tracker_) {
             return;
         }
-        if (cfg_.stereo_baseline_meters > 0.0) {
-            baseline_meters_ = cfg_.stereo_baseline_meters;
-            have_baseline_ = true;
-            return;
-        }
-        if (info.P[0] == 0.0 || info.P[3] == 0.0) {
-            if (!baseline_warned_) {
-                baseline_warned_ = true;
-                logging::warn(
-                    "right camera_info carries no baseline (P[3] == 0), so there is no metric "
-                    "scale. The camera driver is not publishing the stereo extrinsic; set "
-                    "stereo_baseline_meters explicitly to override.");
+        camera_frames_.clear();
+        rig_from_camera_.clear();
+        rig_from_imu_.reset();
+        for (const geometry_msgs::TransformStamped& stamped : message.transforms) {
+            if (!cfg_.imu_frame.empty() && stamped.child_frame_id == cfg_.imu_frame) {
+                rig_from_imu_ = to_transform(stamped.transform);
+                continue;
             }
-            return;
+            camera_frames_.push_back(stamped.child_frame_id);
+            rig_from_camera_.push_back(to_transform(stamped.transform));
         }
-        baseline_meters_ = std::abs(info.P[3] / info.P[0]);
-        have_baseline_ = true;
-        logging::info("cuvslam baseline from camera_info",
-                      {logging::Field("baseline_mm", baseline_meters_ * 1000.0)});
+        images_.assign(camera_frames_.size(), sensor_msgs::Image{});
+        have_image_.assign(camera_frames_.size(), false);
+    }
+
+    /// Which camera in the rig a frame_id names, or -1 for one that is not on it.
+    int camera_index(const std::string& frame_id) const {
+        for (std::size_t i = 0; i < camera_frames_.size(); ++i) {
+            if (camera_frames_[i] == frame_id) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
     }
 
     /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
@@ -276,15 +269,22 @@ private:
         ++imu_samples_;
     }
 
-    void on_left(const sensor_msgs::Image& img) {
-        left_ = img;
-        have_left_ = true;
-        try_track();
-    }
-
-    void on_right(const sensor_msgs::Image& img) {
-        right_ = img;
-        have_right_ = true;
+    void on_image(const sensor_msgs::Image& img) {
+        const int index = camera_index(img.header.frame_id);
+        if (index < 0) {
+            // Either the rig has not arrived yet or this camera is not on it. Both
+            // are silent no-output modes, so they are counted and reported.
+            if (++unplaced_images_ % kWaitingWarnFrames == 0) {
+                logging::warn("cuvslam is dropping images from a camera that is not on the rig",
+                              {logging::Field("frame_id", img.header.frame_id),
+                               logging::Field("dropped", static_cast<std::int64_t>(unplaced_images_)),
+                               logging::Field("rig_cameras",
+                                              static_cast<std::int64_t>(camera_frames_.size()))});
+            }
+            return;
+        }
+        images_[index] = img;
+        have_image_[index] = true;
         try_track();
     }
 
@@ -306,45 +306,49 @@ private:
         return cfg_.enable_imu ? Mode::Inertial : Mode::Multicamera;
     }
 
-    /// cuVSLAM uses OpenCV convention (x right, y down, z forward), so the right
-    /// camera sits at +baseline on x. The rig frame is the left camera.
+    /// The rig frame is the body frame the transforms were resolved against, so every
+    /// pose cuVSLAM returns is already the body's and needs no re-referencing.
     void ensure_tracker() {
         if (tracker_) {
             return;
         }
-        if (!have_info_ || !have_baseline_) {
+        const bool have_rig = !camera_frames_.empty();
+        std::size_t with_info = 0;
+        for (const std::string& frame : camera_frames_) {
+            with_info += camera_info_.count(frame);
+        }
+        if (!have_rig || with_info != camera_frames_.size()) {
             if (!waiting_warned_ && ++frames_waiting_ % kWaitingWarnFrames == 0) {
                 waiting_warned_ = true;
                 logging::warn("cuvslam has consumed frames without starting",
                               {logging::Field("frames", static_cast<std::int64_t>(frames_waiting_)),
-                               logging::Field("have_camera_info", have_info_),
-                               logging::Field("have_baseline", have_baseline_)});
+                               logging::Field("rig_cameras",
+                                              static_cast<std::int64_t>(camera_frames_.size())),
+                               logging::Field("with_camera_info",
+                                              static_cast<std::int64_t>(with_info))});
             }
             return;
         }
-        cuvslam::Camera left{};
-        left.size = {width_, height_};
-        left.principal = {static_cast<float>(cx_), static_cast<float>(cy_)};
-        left.focal = {static_cast<float>(fx_), static_cast<float>(fy_)};
-        left.rig_from_camera = cuvslam::Pose{};  // identity: rig == left camera
-        left.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
 
         cuvslam::Rig rig;
-        if (stereo_) {
-            cuvslam::Camera right = left;
-            right.rig_from_camera.translation = {static_cast<float>(baseline_meters_), 0.0f, 0.0f};
-            rig.cameras = {left, right};
-        } else {
-            rig.cameras = {left};
+        for (std::size_t i = 0; i < camera_frames_.size(); ++i) {
+            const sensor_msgs::CameraInfo& info = camera_info_.at(camera_frames_[i]);
+            cuvslam::Camera camera{};
+            camera.size = {info.width, info.height};
+            camera.principal = {static_cast<float>(info.K[2]), static_cast<float>(info.K[5])};
+            camera.focal = {static_cast<float>(info.K[0]), static_cast<float>(info.K[4])};
+            camera.rig_from_camera = to_pose(rig_from_camera_[i]);
+            camera.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
+            rig.cameras.push_back(camera);
         }
         if (cfg_.enable_imu) {
+            if (!rig_from_imu_) {
+                logging::warn("cuvslam: enable_imu is on but tf never placed the IMU",
+                              {logging::Field("imu_frame", cfg_.imu_frame)});
+                return;
+            }
             cuvslam::ImuCalibration imu{};
-            imu.rig_from_imu.translation = {static_cast<float>(cfg_.imu_tx),
-                                            static_cast<float>(cfg_.imu_ty),
-                                            static_cast<float>(cfg_.imu_tz)};
-            imu.rig_from_imu.rotation = {
-                static_cast<float>(cfg_.imu_qx), static_cast<float>(cfg_.imu_qy),
-                static_cast<float>(cfg_.imu_qz), static_cast<float>(cfg_.imu_qw)};
+            imu.rig_from_imu = to_pose(*rig_from_imu_);
             imu.gyroscope_noise_density = static_cast<float>(cfg_.imu_gyro_noise_density);
             imu.gyroscope_random_walk = static_cast<float>(cfg_.imu_gyro_random_walk);
             imu.accelerometer_noise_density = static_cast<float>(cfg_.imu_accel_noise_density);
@@ -367,8 +371,10 @@ private:
             static_cast<float>(cfg_.depth_units_per_meter);
         // Which camera the depth is pixel-aligned with. It defaults to -1, meaning no
         // camera, and a depth image that belongs to nothing is silently ignored: the
-        // tracker runs, consumes every frame and returns no pose at all.
-        odometry_cfg.rgbd_settings.depth_camera_id = 0;
+        // tracker runs, consumes every frame and returns no pose at all. A depth stream
+        // usually reports its own frame rather than the imager it is aligned to, and
+        // cuVSLAM takes one RGB-D camera anyway, so an unrecognised frame means camera 0.
+        odometry_cfg.rgbd_settings.depth_camera_id = std::max(camera_index(depth_.header.frame_id), 0);
 
         tracker_.emplace(rig, odometry_cfg);
         if (cfg_.enable_slam) {
@@ -379,19 +385,50 @@ private:
             slam_.emplace(rig, tracker_->GetPrimaryCameras(), slam_cfg);
         }
         logging::info("cuvslam tracker created",
-                      {logging::Field("width", static_cast<std::int64_t>(width_)),
-                       logging::Field("height", static_cast<std::int64_t>(height_)),
-                       logging::Field("baseline_mm", baseline_meters_ * 1000.0)});
+                      {logging::Field("cameras", static_cast<std::int64_t>(rig.cameras.size())),
+                       logging::Field("width", static_cast<std::int64_t>(rig.cameras[0].size[0])),
+                       logging::Field("height", static_cast<std::int64_t>(rig.cameras[0].size[1])),
+                       logging::Field("rig_frames", join(camera_frames_))});
+    }
+
+    static cuvslam::Image to_cuvslam_image(const sensor_msgs::Image& img,
+                                           std::int64_t timestamp_ns, std::uint32_t camera_index) {
+        cuvslam::Image out{};
+        out.pixels = img.data.data();
+        out.width = img.width;
+        out.height = img.height;
+        out.pitch = img.step;
+        // A three-channel image has to be declared as such: fed as MONO, cuVSLAM
+        // reads a third of each row and tracks nothing.
+        out.encoding = img.encoding == "mono8" ? cuvslam::ImageData::Encoding::MONO
+                                               : cuvslam::ImageData::Encoding::RGB;
+        out.data_type = cuvslam::ImageData::DataType::UINT8;
+        out.is_gpu_mem = false;
+        out.timestamp_ns = timestamp_ns;
+        out.camera_index = camera_index;
+        return out;
+    }
+
+    void clear_frame_set() {
+        have_image_.assign(have_image_.size(), false);
+        have_depth_ = false;
+    }
+
+    static std::string join(const std::vector<std::string>& parts) {
+        std::string joined;
+        for (const std::string& part : parts) {
+            joined += joined.empty() ? part : ", " + part;
+        }
+        return joined;
     }
 
     void try_track() {
-        if (!have_left_) {
-            return;
+        for (const bool have : have_image_) {
+            if (!have) {
+                return;
+            }
         }
-        if (stereo_ && !have_right_) {
-            return;
-        }
-        if (rgbd_ && !have_depth_) {
+        if (have_image_.empty() || (rgbd_ && !have_depth_)) {
             return;
         }
         ensure_tracker();
@@ -399,52 +436,38 @@ private:
             return;  // no camera_info yet
         }
 
-        const std::int64_t t_left = stamp_to_ns(left_.header);
-        const std::int64_t t_right =
-            stereo_ ? stamp_to_ns(right_.header) : t_left;
-        if (std::llabs(t_left - t_right) > kMaxPairSkewNs) {
-            // Wait for the matching eye rather than pairing across motion. A fixed
-            // offset between the two streams lands here every frame, so say so once
-            // instead of tracking nothing in silence.
+        // One frame per camera, and they have to be the same instant: pairing across
+        // motion is worse than waiting for the camera that is behind. A fixed offset
+        // between two streams lands here every frame, so say so rather than tracking
+        // nothing in silence.
+        std::int64_t oldest = stamp_to_ns(images_[0].header);
+        std::int64_t newest = oldest;
+        for (const sensor_msgs::Image& image : images_) {
+            const std::int64_t ts = stamp_to_ns(image.header);
+            oldest = std::min(oldest, ts);
+            newest = std::max(newest, ts);
+        }
+        if (newest - oldest > kMaxPairSkewNs) {
             if (++skew_rejects_ % kWaitingWarnFrames == 0) {
-                logging::warn("cuvslam stereo pairs exceed the 1 ms skew limit",
+                logging::warn("cuvslam frame sets exceed the 1 ms skew limit",
                               {logging::Field("rejected", static_cast<std::int64_t>(skew_rejects_)),
-                               logging::Field("skew_ms", (t_left - t_right) / 1.0e6)});
+                               logging::Field("skew_ms", (newest - oldest) / 1.0e6)});
             }
             return;
         }
         // cuVSLAM rejects a frame that is not strictly newer than the last one.
-        if (last_ts_ns_ && t_left <= *last_ts_ns_) {
-            have_left_ = have_right_ = have_depth_ = false;
+        if (last_ts_ns_ && newest <= *last_ts_ns_) {
+            clear_frame_set();
             return;
         }
 
-        cuvslam::Image l{};
-        l.pixels = left_.data.data();
-        l.width = left_.width;
-        l.height = left_.height;
-        l.pitch = left_.step;
-        // A three-channel image has to be declared as such: fed as MONO, cuVSLAM
-        // reads a third of each row and tracks nothing.
-        l.encoding = left_.encoding == "mono8" ? cuvslam::ImageData::Encoding::MONO
-                                               : cuvslam::ImageData::Encoding::RGB;
-        l.data_type = cuvslam::ImageData::DataType::UINT8;
-        l.is_gpu_mem = false;
-        l.timestamp_ns = t_left;
-        l.camera_index = 0;
-
-        cuvslam::Odometry::ImageSet images{l};
+        cuvslam::Odometry::ImageSet images;
+        for (std::size_t i = 0; i < images_.size(); ++i) {
+            images.push_back(to_cuvslam_image(images_[i], newest, static_cast<std::uint32_t>(i)));
+        }
         cuvslam::Odometry::ImageSet depths;
-        if (stereo_) {
-            cuvslam::Image r = l;
-            r.pixels = right_.data.data();
-            r.pitch = right_.step;
-            r.camera_index = 1;
-            images.push_back(r);
-        } else if (rgbd_) {
-            cuvslam::Image d = l;
-            d.pixels = depth_.data.data();
-            d.pitch = depth_.step;
+        if (rgbd_) {
+            cuvslam::Image d = to_cuvslam_image(depth_, newest, images[0].camera_index);
             d.encoding = cuvslam::ImageData::Encoding::MONO;
             d.data_type = cuvslam::ImageData::DataType::UINT16;
             depths.push_back(d);
@@ -452,8 +475,8 @@ private:
 
         const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
         ++frames_;
-        last_ts_ns_ = t_left;
-        have_left_ = have_right_ = have_depth_ = false;
+        last_ts_ns_ = newest;
+        clear_frame_set();
 
         if (!est.world_from_rig.has_value()) {
             if (was_tracking_) {
@@ -529,12 +552,11 @@ private:
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
-        fill_pose(corrected, to_body_frame(map_from_rig), timestamp_ns, cfg_.map_frame, cfg_.base_frame);
+        fill_pose(corrected, map_from_rig, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
         nav_msgs::Odometry correction{};
-        fill_pose(correction, to_body_frame(map_from_odom_raw), timestamp_ns, cfg_.map_frame,
-                  cfg_.odom_frame);
+        fill_pose(correction, map_from_odom_raw, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
         cpp_tf_workaround_.publish(correction);
 
         cuvslam::Slam::Metrics metrics{};
@@ -569,7 +591,7 @@ private:
     /// Resets are debugging output, on the log, not a break in this stream.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
-        fill_pose(msg, to_body_frame(world_from_rig_), timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
+        fill_pose(msg, world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         odometry_.publish(msg);
     }
 
@@ -580,11 +602,6 @@ private:
     /// re-comparing the string, so an unknown mode cannot quietly mean "not stereo".
     bool stereo_{true};
     bool rgbd_{false};
-    /// The only config value that is not simply cfg_: zero there means "read it off
-    /// the right camera_info", and this is where the reading lands.
-    double baseline_meters_{0.0};
-    bool have_baseline_{false};
-    bool baseline_warned_{false};
 
     // slam
     std::optional<cuvslam::Slam> slam_;
@@ -601,15 +618,18 @@ private:
     std::uint64_t skew_rejects_{0};
     bool waiting_warned_{false};
 
-    // intrinsics
-    bool have_info_{false};
-    std::int32_t width_{0};
-    std::int32_t height_{0};
-    double fx_{0.0}, fy_{0.0}, cx_{0.0}, cy_{0.0};
+    /// The rig, in cuVSLAM's camera order, and each camera's intrinsics by frame_id.
+    std::vector<std::string> camera_frames_;
+    std::vector<Transform> rig_from_camera_;
+    std::optional<Transform> rig_from_imu_;
+    std::unordered_map<std::string, sensor_msgs::CameraInfo> camera_info_;
+    std::uint64_t unplaced_images_{0};
 
-    // stereo pairing
-    sensor_msgs::Image left_{}, right_{}, depth_{};
-    bool have_left_{false}, have_right_{false}, have_depth_{false};
+    // the frame set being assembled, one slot per rig camera
+    std::vector<sensor_msgs::Image> images_;
+    std::vector<bool> have_image_;
+    sensor_msgs::Image depth_{};
+    bool have_depth_{false};
     std::optional<std::int64_t> last_ts_ns_;
 
     // tracking state

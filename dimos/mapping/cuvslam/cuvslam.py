@@ -36,8 +36,15 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 MODULE_DIR = Path(__file__).resolve().parent
+
+# The rig only has to reach the native half once, but nothing on this side can tell
+# when it has, so it goes out again at this interval for as long as frames arrive.
+RIG_REPUBLISH_SECONDS = 0.5
 
 # The nix binary runs under the nix loader, whose ld.so.cache does not list the
 # host driver, so dlopen("libcuda.so.1") fails and cudart reports the misleading
@@ -115,21 +122,14 @@ def _driver_env() -> dict[str, str]:
 
 
 class ImuCalibration(BaseModel):
-    """One physical camera's IMU calibration: where it sits, and how much it lies.
+    """How much one physical IMU lies.
 
-    There is deliberately no default. The extrinsic belongs to a single unit, and the
-    noise densities come from an Allan-variance run on that unit; carrying either as a
-    module default means every other camera silently gets someone else's numbers.
+    Where it sits is not here: that comes off tf, published by whatever driver owns the
+    device. There is deliberately no default for the rest either, because the noise
+    densities come from an Allan-variance run on a single unit and a module default
+    means every other unit silently gets someone else's numbers.
     """
 
-    # rig_from_imu, the rig being the left camera.
-    tx: float
-    ty: float
-    tz: float
-    qx: float
-    qy: float
-    qz: float
-    qw: float
     gyro_noise_density: float
     gyro_random_walk: float
     accel_noise_density: float
@@ -162,14 +162,17 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" tracks on an image pair, "rgbd" on one image plus its depth, "mono" on
-    # one image alone -- and mono is accurate only up to an unknown scale, so its poses
-    # are not metres. Which ports the tracker subscribes to follows from this.
+    # "stereo" tracks on two or more cameras with overlapping views, "rgbd" on one
+    # image plus its depth, "mono" on one image alone -- and mono is accurate only up
+    # to an unknown scale, so its poses are not metres.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # Stereo only: the distance between the two imagers, which is what makes the poses
-    # metric. Left unset it is read off the right camera_info, so a different camera
-    # model is a different baseline without touching this file.
-    stereo_baseline_meters: float | None = None
+    # The rig, one tf frame per camera, in the order cuVSLAM indexes them: stereo pairs
+    # are consecutive. Left empty the cameras are discovered off the stream, which
+    # works for the one that mono and rgbd need and for a single stereo pair; more
+    # cameras than that have no discoverable order, so they have to be named here.
+    camera_frames: list[str] = Field(default_factory=list)
+    # Which tf frame the IMU reports in, which is what places it on the rig.
+    imu_frame: str | None = None
     rectified: bool = True
     # cuVSLAM's asynchronous bundle adjustment thread races and throws
     # std::out_of_range from that thread, where no caller-side handler can catch it, so
@@ -182,6 +185,8 @@ class CuvslamConfig(NativeModuleConfig):
 
     map_frame: str = "map"
     odom_frame: str = "odom"
+    # Also the rig frame: every camera is placed against this one, so the pose cuVSLAM
+    # returns is this frame's and nothing has to be re-referenced afterwards.
     base_frame: str = "base_link"
     # Only used when Slam is off: pure visual odometry has no global correction,
     # so its map->odom can only be identity. Turn it off whenever something else
@@ -196,8 +201,8 @@ class CuvslamConfig(NativeModuleConfig):
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
     # Off by default because for non-drone applications it usually hurts. Turning it on
-    # requires imu_calibration: there is no default, because a camera-to-IMU extrinsic
-    # belongs to one physical unit.
+    # requires imu_calibration and imu_frame: there is no default noise model, because
+    # it belongs to one physical unit.
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
     # rgbd only: how many raw depth units make a metre. cuVSLAM divides by this, and
@@ -212,8 +217,10 @@ class CuvslamConfig(NativeModuleConfig):
                 "enable_imu is on but imu_calibration is unset. Load it for the camera "
                 "actually plugged in -- ImuCalibration.for_serial(<serial>) reads "
                 f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
-                "unit's extrinsic."
+                "unit's noise model."
             )
+        if self.enable_imu and not self.imu_frame:
+            raise ValueError("enable_imu is on but imu_frame is unset, so tf cannot place it")
         return self
 
     def to_config_dict(self) -> dict[str, Any]:
@@ -226,27 +233,33 @@ class CuvslamConfig(NativeModuleConfig):
         calibration = blob.pop("imu_calibration", None) or dict.fromkeys(
             ImuCalibration.model_fields, 0.0
         )
-        # An unset baseline is dropped by the base class, but the native struct needs
-        # every key; zero is what it reads as "take it from camera_info".
-        blob.setdefault("stereo_baseline_meters", 0.0)
+        # The rig arrives on a stream, so the native half never reads the frame names.
+        blob.pop("camera_frames", None)
+        # Unset fields are dropped by the base class, but the native struct needs every
+        # key.
+        blob.setdefault("imu_frame", "")
         return blob | {f"imu_{key}": value for key, value in calibration.items()}
 
 
 class CuvslamOdometry(NativeModule):
-    """Stereo visual odometry on the GPU.
+    """Visual odometry on the GPU, on one to thirty-two cameras.
+
+    Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
+    told apart by ``frame_id``, so adding a camera is a wiring change and not a port.
+    Which frames make up the rig, and in which order cuVSLAM indexes them, is
+    ``camera_frames``; discovery off the stream covers the single-camera and single-pair
+    cases. ``stereo`` needs two or more cameras with overlapping views, ``mono`` one and
+    is accurate only up to scale, and ``rgbd`` one plus ``depth_image`` -- whose own
+    ``frame_id`` says which camera the depth is aligned with.
+
+    Where each camera sits is read from tf against ``base_frame``, so that is also the
+    rig frame and the pose cuVSLAM returns is already the body's. A stereo baseline is
+    just the distance between two of those frames; nothing here holds calibration.
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path: cuVSLAM restarts
     its world frame after a tracking loss and the module rebases each restart onto
     the last published pose, so the stream never jumps. A restart costs the motion
     that happened across it, and is reported only on the log.
-
-    ``camera_info`` is the left imager's. In ``stereo`` mode ``camera_info_right`` is
-    required too: it carries the baseline in ``P[3]``, which is the per-unit source of
-    metric scale. ``mono`` uses ``image_left`` alone and is accurate only up to scale.
-    ``rgbd`` pairs ``image_left`` with ``depth_image`` and needs no baseline, but the two
-    must share a viewpoint -- on a RealSense the depth stream is already aligned to the
-    left infrared imager, so those two go together. The tracker subscribes only to what
-    its ``camera_mode`` uses.
 
     ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
     at a loop closure, which is the point: that is where a revisit gets pulled back
@@ -257,30 +270,36 @@ class CuvslamOdometry(NativeModule):
     ``cpp_tf_workaround`` carries the ``map`` -> ``odom`` correction back from the
     native half only because there is no TFMessage in the C++ SDK, so the tracker
     cannot publish tf itself. Delete it the moment that lands.
-
-    The pose is the *left camera's*. Publishing it as ``base_frame`` assumes the
-    camera is the body origin; on a real robot either set ``base_frame`` to the
-    camera's own frame and let the static tree carry it to the body, or feed the
-    mount extrinsic in.
     """
 
     config: CuvslamConfig
 
-    image_left: In[Image]
-    image_right: In[Image]
+    image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
-    camera_info_right: In[CameraInfo]
     imu: In[Imu]
 
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
     cpp_tf_workaround: Out[Odometry]
+    # The rig, resolved from tf here because only the python half has a tf buffer, and
+    # handed to the native half in cuVSLAM's camera order.
+    rig_transforms: Out[TFMessage]
     tf: IO[TFMessage]
+
+    _rig_from_camera: dict[str, Transform] = {}
+    _rig_from_imu: Transform | None = None
+    _rig_published_at: float = 0.0
+    _unplaced_frames: set[str] = set()
+    _too_many_warned: bool = False
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._rig_from_camera = {}
+        self._rig_from_imu = None
+        self._rig_published_at = 0.0
+        self._unplaced_frames = set()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odometry, self.odometry))
         )
@@ -289,6 +308,82 @@ class CuvslamOdometry(NativeModule):
                 self.cpp_tf_workaround.transport.subscribe(self._on_map_tf, self.cpp_tf_workaround)
             )
         )
+        # Subscribed directly rather than through handle_camera_info: the cameras
+        # publish theirs back to back, and the coalescing that handler gets keeps only
+        # the newest, which can hide a camera for as long as the others keep arriving.
+        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
+
+    def _on_camera_info(self, info: CameraInfo) -> None:
+        """Place each camera on the rig from tf and hand the result to the native half.
+
+        Repeated rather than done once: the mount tree is usually still arriving when
+        the first frames are, and the native half subscribes on its own schedule, so
+        the rig is republished until something else stops it being needed.
+        """
+        self._place(info.frame_id, self._rig_from_camera)
+        if self.config.enable_imu and self._rig_from_imu is None:
+            imu_frame = self.config.imu_frame
+            assert imu_frame is not None  # enforced by the config validator
+            placed: dict[str, Transform] = {}
+            self._place(imu_frame, placed)
+            self._rig_from_imu = placed.get(imu_frame)
+
+        order = self._rig_order()
+        if order is None:
+            return
+        now = time.time()
+        if now - self._rig_published_at < RIG_REPUBLISH_SECONDS:
+            return
+        self._rig_published_at = now
+        transforms = [self._rig_from_camera[frame] for frame in order]
+        if self._rig_from_imu is not None:
+            transforms.append(self._rig_from_imu)
+        self.rig_transforms.publish(TFMessage(*transforms))
+
+    def _place(self, frame_id: str, into: dict[str, Transform]) -> None:
+        if not frame_id or frame_id in into:
+            return
+        transform = self.tfbuffer.get(self.config.base_frame, frame_id)
+        if transform is None:
+            if frame_id not in self._unplaced_frames:
+                self._unplaced_frames.add(frame_id)
+                logger.warning(
+                    "cuvslam: no tf from %s to %s yet, so it cannot join the rig",
+                    self.config.base_frame,
+                    frame_id,
+                )
+            return
+        into[frame_id] = transform
+
+    def _rig_order(self) -> list[str] | None:
+        """The camera frames in cuVSLAM's index order, or None until they are all placed."""
+        if self.config.camera_frames:
+            missing = [f for f in self.config.camera_frames if f not in self._rig_from_camera]
+            return None if missing else list(self.config.camera_frames)
+
+        expected = 2 if self.config.camera_mode == "stereo" else 1
+        frames = list(self._rig_from_camera)
+        if len(frames) < expected:
+            return None
+        if len(frames) > expected:
+            if not self._too_many_warned:
+                self._too_many_warned = True
+                logger.error(
+                    "cuvslam saw %d cameras on camera_info (%s) but camera_mode %s discovers "
+                    "%d. Set camera_frames to name the rig and its order.",
+                    len(frames),
+                    ", ".join(frames),
+                    self.config.camera_mode,
+                    expected,
+                )
+            return None
+        if expected != 2:
+            return frames
+        # cuVSLAM wants camera 0 to be the left of the pair, which is the one whose
+        # partner sits at +x -- optical convention, x to the right.
+        left, right = frames
+        between = self._rig_from_camera[left].inverse() + self._rig_from_camera[right]
+        return [left, right] if between.translation.x > 0 else [right, left]
 
     def _on_map_tf(self, message: Odometry) -> None:
         """Slam's correction. Replaces the identity map->odom once Slam is running."""
