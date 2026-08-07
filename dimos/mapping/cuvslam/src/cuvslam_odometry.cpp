@@ -355,6 +355,10 @@ private:
         odometry_cfg.async_sba = cfg_.async_sba;
         odometry_cfg.rgbd_settings.depth_scale_factor =
             static_cast<float>(cfg_.depth_units_per_meter);
+        // Which camera the depth is pixel-aligned with. It defaults to -1, meaning no
+        // camera, and a depth image that belongs to nothing is silently ignored: the
+        // tracker runs, consumes every frame and returns no pose at all.
+        odometry_cfg.rgbd_settings.depth_camera_id = 0;
 
         tracker_.emplace(rig, odometry_cfg);
         if (cfg_.enable_slam) {
