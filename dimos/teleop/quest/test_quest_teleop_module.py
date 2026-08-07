@@ -49,13 +49,16 @@ def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:
     try:
         publish = mocker.patch.object(module.teleop_buttons, "publish")
         module._current_poses[Hand.RIGHT] = mocker.Mock()
-        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
+        module._controllers[Hand.RIGHT] = QuestControllerState(
+            is_left=False, primary=True, trigger=1.0
+        )
 
         module._handle_engage()
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
         assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
 
         module._handle_engage()
 

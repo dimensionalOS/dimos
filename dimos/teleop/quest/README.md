@@ -30,7 +30,9 @@ Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
 
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
-again to disengage. Hand tracking must be enabled for the Quest browser.
+again to disengage. Pinch the thumb and middle finger to close the gripper;
+release it to open the gripper. Hand tracking must be enabled for the Quest
+browser.
 
 ## Subclassing
 

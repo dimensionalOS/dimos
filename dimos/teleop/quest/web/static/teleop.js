@@ -14,6 +14,7 @@ let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
 const handSelectActive = new Map();
+const GRIPPER_PINCH_DISTANCE_METERS = 0.04;
 
 // Video panel state
 const videoEl = document.getElementById('videoFeed');
@@ -270,11 +271,25 @@ function processTracking(frame) {
         const hand = inputSource.hand;
         if (hand) {
             const wristPose = frame.getJointPose(hand.get('wrist'), xrRefSpace);
-            if (!wristPose) continue;
+            const thumbTipPose = frame.getJointPose(hand.get('thumb-tip'), xrRefSpace);
+            const middleTipPose = frame.getJointPose(hand.get('middle-finger-tip'), xrRefSpace);
+            if (!wristPose || !thumbTipPose || !middleTipPose) continue;
+
+            const thumb = thumbTipPose.transform.position;
+            const middle = middleTipPose.transform.position;
+            const gripperPinched = Math.hypot(
+                thumb.x - middle.x,
+                thumb.y - middle.y,
+                thumb.z - middle.z,
+            ) < GRIPPER_PINCH_DISTANCE_METERS;
 
             sendPose(handedness, wristPose);
-            // Keep the Quest Joy layout; primary is the native hand-select gesture.
-            sendJoy(handedness, [0, 0, 0, 0], [0, 0, 0, 0, handSelectActive.get(handedness) ? 1 : 0, 0, 0]);
+            // Index pinch selects arm tracking; middle pinch closes the gripper.
+            sendJoy(
+                handedness,
+                [0, 0, gripperPinched ? 1 : 0, 0],
+                [0, 0, 0, 0, handSelectActive.get(handedness) ? 1 : 0, 0, 0],
+            );
             continue;
         }
 
