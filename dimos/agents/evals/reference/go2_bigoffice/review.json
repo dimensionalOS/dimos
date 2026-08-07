@@ -1,0 +1,110 @@
+{
+  "arcade machine": {
+    "status": "dropped",
+    "note": "white service robot; it moves between sightings (~0.9 m drift across the location group), so it has no fixed reference position"
+  },
+  "beam": {
+    "status": "dropped",
+    "note": "structural pillar, and the scene has several similar ones"
+  },
+  "bookstore": {
+    "status": "dropped",
+    "display_name": "liquor shelf",
+    "note": "backlit bottle display shelf; the label is wrong but the contents are unambiguous. Dropped because it sits centrally among the other questions: teacher viewpoints of the houseplant, the storage boxes and the snack rack all fall inside its pass radius (1.15 m / 2.65 m / 2.67 m vs radius 2.689 m), so a wrong-object retrieval could pass it. Dropped per the confusability gate; restore it as 'renamed' if the pass radius ever stops being a viewing distance."
+  },
+  "computer tower": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "dance floor": {
+    "status": "dropped",
+    "note": "floor region with light streaks, not an object"
+  },
+  "dollhouse": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "dressing room": {
+    "status": "dropped",
+    "note": "generic goods shelf bay; class-ambiguous in a retail scene"
+  },
+  "elevator door": {
+    "status": "dropped",
+    "note": "reference point sits on the blank side wall adjacent to a dark shutter surface \u2014 bbox contamination pulled the inlier median off the object (caught by multi-frame context verification after passing two rounds of single-crop review); a corridor-region question would belong to a room-level question type (#1913)"
+  },
+  "glass wall": {
+    "status": "dropped",
+    "note": "wall surface, not an askable object"
+  },
+  "harpsichord": {
+    "status": "dropped",
+    "note": "unidentifiable stacked objects"
+  },
+  "houseplant": {
+    "status": "verified",
+    "note": "potted plant, unique in the scene; plausible from close-range crops (frond silhouette, spread 0.125 m); far-frame context neither confirms nor refutes"
+  },
+  "ice sculpture": {
+    "status": "dropped",
+    "note": "cleaning robot (identified in a full-video review pass; the dim crops alone did not resolve it) \u2014 a dynamic object with no fixed reference position"
+  },
+  "obelisk": {
+    "status": "dropped",
+    "note": "ambiguous white pole, too dim to identify"
+  },
+  "organization": {
+    "status": "renamed",
+    "display_name": "stack of storage boxes",
+    "note": "brown storage boxes on an LED-lit shelf bay"
+  },
+  "parking meter": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  },
+  "podium": {
+    "status": "dropped",
+    "note": "same location as 'speaker'; both crops unverifiable"
+  },
+  "profile": {
+    "status": "dropped",
+    "note": "same moving white service robot as 'arcade machine'"
+  },
+  "room divider": {
+    "status": "dropped",
+    "note": "corrugated shutter surface, not an askable object"
+  },
+  "server room": {
+    "status": "dropped",
+    "display_name": "snack rack",
+    "note": "shelf bay with hanging snack packets; the label and the crop are fine, but it is the most confusable row in the table: viewpoints of the houseplant (2.07 m), the storage boxes (1.96 m) and the row of white bottles (1.74 m) all fall inside its 2.24 m radius, and its own viewpoints fall inside the bottle shelf's. Dropped per the confusability gate; restore it as 'renamed' if the pass radius ever stops being a viewing distance."
+  },
+  "shaver": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  },
+  "shelf": {
+    "status": "dropped",
+    "note": "class-ambiguous: the scene is full of shelves"
+  },
+  "speaker": {
+    "status": "dropped",
+    "note": "same location as 'podium'; both crops unverifiable"
+  },
+  "water cooler": {
+    "status": "dropped",
+    "note": "generic goods shelf bay; class-ambiguous in a retail scene"
+  },
+  "window": {
+    "status": "dropped",
+    "note": "misread shelf display; there is no window here"
+  },
+  "window sill": {
+    "status": "renamed",
+    "display_name": "row of white bottles",
+    "note": "row of white bottles on a low ledge"
+  },
+  "wine cooler": {
+    "status": "dropped",
+    "note": "blue crate stack; at least two visually identical stacks in the scene"
+  }
+}

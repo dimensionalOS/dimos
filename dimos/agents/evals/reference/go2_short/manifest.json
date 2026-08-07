@@ -1,0 +1,267 @@
+{
+  "camera": {
+    "D": [
+      -0.073094,
+      -0.023411,
+      -0.006931,
+      0.009239
+    ],
+    "K": [
+      797.475616,
+      0.0,
+      643.535217,
+      0.0,
+      796.487211,
+      349.278361,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "distortion_model": "equidistant",
+    "height": 720,
+    "source": "dimos/robot/unitree/go2/front_camera_720.yaml",
+    "width": 1280
+  },
+  "dataset": "go2_short",
+  "detector": {
+    "conf": 0.25,
+    "device": "cpu",
+    "max_area_ratio": 0.3,
+    "model": "yoloe-11s-seg-pf.pt",
+    "prompt_mode": "lrpc"
+  },
+  "extrinsics": {
+    "frame": "base_link -> camera_optical",
+    "rotation_xyzw": [
+      -0.5,
+      0.5,
+      -0.5,
+      0.5
+    ],
+    "source": "dimos.robot.unitree.go2.connection.BASE_TO_OPTICAL",
+    "translation": [
+      0.3,
+      0.0,
+      0.0
+    ]
+  },
+  "funnel": {
+    "clusters_formed": 163,
+    "dropped_below_conf": 0,
+    "dropped_clusters_insufficient_independent_views": 123,
+    "dropped_clusters_spread_too_large": 12,
+    "dropped_depth_iqr": 79,
+    "dropped_envelope_height": 0,
+    "dropped_envelope_range": 31,
+    "dropped_min_points": 350,
+    "dropped_no_lidar_match": 0,
+    "dropped_no_points_in_detection": 760,
+    "frames_detected": 214,
+    "frames_too_dark": 0,
+    "frames_visited": 214,
+    "frames_without_lidar": 0,
+    "frames_without_pose": 0,
+    "labels_ambiguous_multi_instance": 5,
+    "labels_no_qualified_cluster": 72,
+    "labels_qualified": 14,
+    "location_groups": 12,
+    "measured_from_bbox": 815,
+    "measured_from_mask": 0,
+    "raw_detections": 1575,
+    "surviving_measurements": 355
+  },
+  "gates": {
+    "bbox_shrink": 0.15,
+    "cluster_radius_m": 0.75,
+    "conf": 0.25,
+    "front_z_m": 0.05,
+    "ground_z_m": 0.1,
+    "lidar_tolerance_s": 0.5,
+    "link_radius_m": 0.75,
+    "max_depth_iqr_m": 0.6,
+    "max_height_m": 1.2,
+    "max_range_m": 3.2,
+    "max_spread_m": 0.5,
+    "min_baseline_m": 0.3,
+    "min_gray": 30.0,
+    "min_independent_views": 2,
+    "min_points": 20,
+    "point_selection": "bbox",
+    "sample_hz": 4.0
+  },
+  "generated_utc": "2026-07-30T17:29:40+00:00",
+  "generator": "dimos/agents/evals/teacher.py",
+  "location_groups": [
+    {
+      "centroid": [
+        4.8875,
+        14.625,
+        0.325
+      ],
+      "location_group": "loc-01",
+      "max_pairwise_m": 0.4008,
+      "raw_labels": [
+        "aqua",
+        "gift bag"
+      ]
+    },
+    {
+      "centroid": [
+        -3.025,
+        13.425,
+        0.425
+      ],
+      "location_group": "loc-02",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "bookstore"
+      ]
+    },
+    {
+      "centroid": [
+        -1.375,
+        10.725,
+        0.225
+      ],
+      "location_group": "loc-03",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "church bench"
+      ]
+    },
+    {
+      "centroid": [
+        2.2375,
+        3.05,
+        0.4
+      ],
+      "location_group": "loc-04",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "entrance hall"
+      ]
+    },
+    {
+      "centroid": [
+        4.1562,
+        11.7125,
+        0.2812
+      ],
+      "location_group": "loc-05",
+      "max_pairwise_m": 0.0673,
+      "raw_labels": [
+        "fridge",
+        "podium"
+      ]
+    },
+    {
+      "centroid": [
+        2.05,
+        0.775,
+        0.3375
+      ],
+      "location_group": "loc-06",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "houseplant"
+      ]
+    },
+    {
+      "centroid": [
+        -3.875,
+        5.325,
+        0.825
+      ],
+      "location_group": "loc-07",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "national flag"
+      ]
+    },
+    {
+      "centroid": [
+        1.5,
+        14.7875,
+        0.4
+      ],
+      "location_group": "loc-08",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "newsstand"
+      ]
+    },
+    {
+      "centroid": [
+        -1.1125,
+        6.9125,
+        0.525
+      ],
+      "location_group": "loc-09",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "office desk"
+      ]
+    },
+    {
+      "centroid": [
+        1.875,
+        16.7,
+        0.625
+      ],
+      "location_group": "loc-10",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "storage box"
+      ]
+    },
+    {
+      "centroid": [
+        2.925,
+        7.425,
+        0.475
+      ],
+      "location_group": "loc-11",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "ticket booth"
+      ]
+    },
+    {
+      "centroid": [
+        3.65,
+        11.025,
+        0.3
+      ],
+      "location_group": "loc-12",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "vanity"
+      ]
+    }
+  ],
+  "n_references": 14,
+  "note": "go2_short (repo default recording, office interior); second question set",
+  "pipeline_version": "spatial-goal-eval/teacher/2",
+  "raw_labels": [
+    "aqua",
+    "bookstore",
+    "church bench",
+    "entrance hall",
+    "fridge",
+    "gift bag",
+    "houseplant",
+    "national flag",
+    "newsstand",
+    "office desk",
+    "podium",
+    "storage box",
+    "ticket booth",
+    "vanity"
+  ],
+  "timing": {
+    "detection_sweep_s": 31.86,
+    "lidar_dt_ms_max_abs": 98.5,
+    "wallclock_s": 42.82,
+    "yoloe_inference_ms_median": 136.0
+  }
+}

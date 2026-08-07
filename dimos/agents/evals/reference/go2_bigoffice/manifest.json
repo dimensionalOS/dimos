@@ -1,0 +1,368 @@
+{
+  "camera": {
+    "D": [
+      -0.073094,
+      -0.023411,
+      -0.006931,
+      0.009239
+    ],
+    "K": [
+      797.475616,
+      0.0,
+      643.535217,
+      0.0,
+      796.487211,
+      349.278361,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "distortion_model": "equidistant",
+    "height": 720,
+    "source": "dimos/robot/unitree/go2/front_camera_720.yaml",
+    "width": 1280
+  },
+  "dataset": "go2_bigoffice",
+  "detector": {
+    "conf": 0.25,
+    "device": "cpu",
+    "max_area_ratio": 0.3,
+    "model": "yoloe-11s-seg-pf.pt",
+    "prompt_mode": "lrpc"
+  },
+  "extrinsics": {
+    "frame": "base_link -> camera_optical",
+    "rotation_xyzw": [
+      -0.5,
+      0.5,
+      -0.5,
+      0.5
+    ],
+    "source": "dimos.robot.unitree.go2.connection.BASE_TO_OPTICAL",
+    "translation": [
+      0.3,
+      0.0,
+      0.0
+    ]
+  },
+  "funnel": {
+    "clusters_formed": 313,
+    "dropped_below_conf": 0,
+    "dropped_clusters_insufficient_independent_views": 250,
+    "dropped_clusters_spread_too_large": 22,
+    "dropped_depth_iqr": 144,
+    "dropped_envelope_height": 0,
+    "dropped_envelope_range": 21,
+    "dropped_min_points": 379,
+    "dropped_no_lidar_match": 0,
+    "dropped_no_points_in_detection": 688,
+    "frames_detected": 452,
+    "frames_too_dark": 588,
+    "frames_visited": 1040,
+    "frames_without_lidar": 0,
+    "frames_without_pose": 0,
+    "labels_ambiguous_multi_instance": 5,
+    "labels_no_qualified_cluster": 115,
+    "labels_qualified": 26,
+    "location_groups": 19,
+    "measured_from_bbox": 1040,
+    "measured_from_mask": 0,
+    "raw_detections": 1728,
+    "surviving_measurements": 496
+  },
+  "gates": {
+    "bbox_shrink": 0.15,
+    "cluster_radius_m": 0.75,
+    "conf": 0.25,
+    "front_z_m": 0.05,
+    "ground_z_m": 0.1,
+    "lidar_tolerance_s": 0.5,
+    "link_radius_m": 0.75,
+    "max_depth_iqr_m": 0.6,
+    "max_height_m": 1.2,
+    "max_range_m": 3.2,
+    "max_spread_m": 0.5,
+    "min_baseline_m": 0.3,
+    "min_gray": 30.0,
+    "min_independent_views": 2,
+    "min_points": 20,
+    "point_selection": "bbox",
+    "sample_hz": 4.0
+  },
+  "generated_utc": "2026-07-30T08:24:15+00:00",
+  "generator": "dimos/agents/evals/teacher.py",
+  "location_groups": [
+    {
+      "centroid": [
+        -2.7625,
+        1.0938,
+        0.5062
+      ],
+      "location_group": "loc-01",
+      "max_pairwise_m": 0.9192,
+      "raw_labels": [
+        "arcade machine",
+        "computer tower",
+        "dollhouse",
+        "profile"
+      ]
+    },
+    {
+      "centroid": [
+        -12.95,
+        10.05,
+        0.3625
+      ],
+      "location_group": "loc-02",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "beam"
+      ]
+    },
+    {
+      "centroid": [
+        -0.825,
+        -1.85,
+        0.3
+      ],
+      "location_group": "loc-03",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "bookstore"
+      ]
+    },
+    {
+      "centroid": [
+        -3.925,
+        -4.3,
+        0.125
+      ],
+      "location_group": "loc-04",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "dance floor"
+      ]
+    },
+    {
+      "centroid": [
+        -2.3625,
+        -0.5938,
+        0.3438
+      ],
+      "location_group": "loc-05",
+      "max_pairwise_m": 0.2253,
+      "raw_labels": [
+        "dressing room",
+        "water cooler"
+      ]
+    },
+    {
+      "centroid": [
+        -15.925,
+        2.575,
+        0.425
+      ],
+      "location_group": "loc-06",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "elevator door"
+      ]
+    },
+    {
+      "centroid": [
+        -14.475,
+        -0.175,
+        0.3375
+      ],
+      "location_group": "loc-07",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "glass wall"
+      ]
+    },
+    {
+      "centroid": [
+        0.45,
+        1.2,
+        0.5
+      ],
+      "location_group": "loc-08",
+      "max_pairwise_m": 0.0707,
+      "raw_labels": [
+        "harpsichord",
+        "window"
+      ]
+    },
+    {
+      "centroid": [
+        -0.2125,
+        0.6,
+        0.55
+      ],
+      "location_group": "loc-09",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "houseplant"
+      ]
+    },
+    {
+      "centroid": [
+        0.225,
+        3.6625,
+        0.5
+      ],
+      "location_group": "loc-10",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "ice sculpture"
+      ]
+    },
+    {
+      "centroid": [
+        -2.275,
+        1.875,
+        0.575
+      ],
+      "location_group": "loc-11",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "obelisk"
+      ]
+    },
+    {
+      "centroid": [
+        -3.875,
+        0.425,
+        0.375
+      ],
+      "location_group": "loc-12",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "organization"
+      ]
+    },
+    {
+      "centroid": [
+        0.5563,
+        2.7,
+        0.4625
+      ],
+      "location_group": "loc-13",
+      "max_pairwise_m": 0.0125,
+      "raw_labels": [
+        "parking meter",
+        "shaver"
+      ]
+    },
+    {
+      "centroid": [
+        -1.825,
+        -5.525,
+        0.175
+      ],
+      "location_group": "loc-14",
+      "max_pairwise_m": 0.3162,
+      "raw_labels": [
+        "podium",
+        "speaker"
+      ]
+    },
+    {
+      "centroid": [
+        -14.375,
+        2.15,
+        0.425
+      ],
+      "location_group": "loc-15",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "room divider"
+      ]
+    },
+    {
+      "centroid": [
+        -3.1,
+        -3.425,
+        0.275
+      ],
+      "location_group": "loc-16",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "server room"
+      ]
+    },
+    {
+      "centroid": [
+        -1.625,
+        -4.45,
+        0.175
+      ],
+      "location_group": "loc-17",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "shelf"
+      ]
+    },
+    {
+      "centroid": [
+        -5.1,
+        -3.2,
+        0.15
+      ],
+      "location_group": "loc-18",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "window sill"
+      ]
+    },
+    {
+      "centroid": [
+        -4.2625,
+        -0.725,
+        0.3375
+      ],
+      "location_group": "loc-19",
+      "max_pairwise_m": 0.0,
+      "raw_labels": [
+        "wine cooler"
+      ]
+    }
+  ],
+  "n_references": 26,
+  "note": "Human review of these labels is recorded in review.json alongside this file; labels absent from that overlay default to dropped. Labels sharing a location_group are the same physical place under different detector names and must be resolved in review before any of them becomes a question.",
+  "pipeline_version": "spatial-goal-eval/teacher/2",
+  "raw_labels": [
+    "arcade machine",
+    "beam",
+    "bookstore",
+    "computer tower",
+    "dance floor",
+    "dollhouse",
+    "dressing room",
+    "elevator door",
+    "glass wall",
+    "harpsichord",
+    "houseplant",
+    "ice sculpture",
+    "obelisk",
+    "organization",
+    "parking meter",
+    "podium",
+    "profile",
+    "room divider",
+    "server room",
+    "shaver",
+    "shelf",
+    "speaker",
+    "water cooler",
+    "window",
+    "window sill",
+    "wine cooler"
+  ],
+  "timing": {
+    "detection_sweep_s": 62.15,
+    "lidar_dt_ms_max_abs": 84.0,
+    "wallclock_s": 68.48,
+    "yoloe_inference_ms_median": 120.9
+  }
+}

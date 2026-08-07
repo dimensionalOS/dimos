@@ -1,0 +1,126 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Dataset discovery, and the shape of what it discovers.
+
+Discovery decides which cases the ``self_hosted`` sweep even has, so it is
+worth a test that does not need a recording: the sweep's own lane cannot check
+it, because a machine without an ingested store skips before it would notice
+that a dataset went missing.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from dimos.agents.evals.reference_sets import (
+    QUESTIONS_NAME,
+    dataset_dir,
+    dataset_names,
+    load_question_set,
+)
+
+#: What a dataset directory has to hold. ``crops/`` is deliberately absent: the
+#: review images are presentation, some questions ship without them (see
+#: ``reference/go2_short/README.md``), and the sweep reads none of them.
+DATASET_ARTIFACTS = ("refs.jsonl", "manifest.json", "review.json", QUESTIONS_NAME)
+
+#: The two names ``crops.write_crops`` gives one reference's review images:
+#: ``<question_id>.jpg`` (identification) and ``<question_id>_measurement.jpg``
+#: (the detection frame the position came from).
+CROP_SUFFIX = ".jpg"
+MEASUREMENT_SUFFIX = "_measurement"
+
+
+def test_a_dataset_is_a_directory_that_ships_a_question_set(tmp_path: Path) -> None:
+    """Discovery is the glob, sorted -- and a directory without questions is not one.
+
+    The half-finished case is the one that matters: a directory holding a
+    reference table and a review but no question set yet is *work in progress*,
+    not a dataset the sweep should try to run and fail on.
+    """
+    for name in ("zulu_two", "alpha_one"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / QUESTIONS_NAME).write_text("")
+    (tmp_path / "mid_review").mkdir()
+    (tmp_path / "mid_review" / "refs.jsonl").write_text("")
+
+    assert dataset_names(tmp_path) == ["alpha_one", "zulu_two"]
+    assert dataset_names(tmp_path / "nothing-here") == []
+    assert dataset_dir("alpha_one", tmp_path) == tmp_path / "alpha_one"
+
+
+def test_the_committed_tree_ships_at_least_one_dataset() -> None:
+    """An empty reference tree would make the sweep collect zero cases and pass."""
+    assert dataset_names()
+
+
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_every_committed_dataset_ships_the_whole_artifact_set(dataset: str) -> None:
+    """Questions, and the evidence they rest on, travel together.
+
+    A question set committed without the reference table and review overlay it
+    came from would still run the sweep and still produce numbers -- it would
+    just be unauditable, and ``test_questions`` could no longer re-derive it.
+    """
+    directory = dataset_dir(dataset)
+    for artifact in DATASET_ARTIFACTS:
+        path = directory / artifact
+        assert path.is_file(), f"{dataset!r} ships no {artifact}"
+        assert path.stat().st_size > 0, f"{dataset!r} ships an empty {artifact}"
+    assert load_question_set(dataset), f"{dataset!r} ships an empty question set"
+
+
+@pytest.mark.parametrize("dataset", dataset_names())
+def test_every_committed_crop_belongs_to_a_question_of_its_own_dataset(dataset: str) -> None:
+    """``crops/`` holds review images for *this* dataset's questions, and nothing else.
+
+    The direction that matters is crop -> question, not the reverse: a question
+    may legitimately ship without images (``go2_short``'s meeting table, whose
+    every candidate frame contains an identifiable person), so a missing pair is
+    not a failure. A crop with *no* question is -- it is either an image for a
+    label review dropped, left behind when the question set was regenerated, or
+    one copied out of the wrong dataset's ``--crops`` run. Both survive every
+    other test here, because nothing in the eval reads a crop: the images exist
+    only for a human auditor, who would be reading evidence for a question that
+    is not being asked.
+    """
+    questions = {question.question_id for question in load_question_set(dataset)}
+    crops = dataset_dir(dataset) / "crops"
+    if not crops.is_dir():
+        pytest.skip(f"{dataset!r} ships no crops directory")
+
+    stray = [
+        path.name
+        for path in sorted(crops.iterdir())
+        if path.stem.removesuffix(MEASUREMENT_SUFFIX) not in questions or path.suffix != CROP_SUFFIX
+    ]
+    assert stray == [], (
+        f"{dataset!r} ships crop file(s) that belong to no question in its questions.jsonl: {stray}"
+    )
+
+
+def test_dataset_names_refuse_what_the_grouping_key_cannot_recover(tmp_path: Path) -> None:
+    """One-token and nested names defeat ``render.dataset_of`` silently -- refused at discovery."""
+    for name in ("kitchen", "go2_short_v2", "go2_fine"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "questions.jsonl").write_text("")
+    with pytest.raises(ValueError, match="exactly two hyphen tokens") as err:
+        dataset_names(tmp_path)
+    assert "kitchen" in str(err.value)
+    assert "go2_short_v2" in str(err.value)
+    assert "go2_fine" not in str(err.value)

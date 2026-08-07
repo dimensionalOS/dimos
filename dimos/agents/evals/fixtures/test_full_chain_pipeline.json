@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "navigate_with_text",
+          "args": {
+            "query": "stack of storage boxes"
+          },
+          "id": "call_smoke_nav_1",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I am heading to the stack of storage boxes.",
+      "tool_calls": []
+    }
+  ]
+}
