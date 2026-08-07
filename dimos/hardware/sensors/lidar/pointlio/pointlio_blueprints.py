@@ -15,20 +15,18 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.mapping.voxels.lidar_defaults import MID360_VOXEL_SIZE
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
-
-voxel_size = 0.05
-
 
 mid360_pointlio = autoconnect(
     PointLio.blueprint(),
     vis_module("rerun"),
-).global_config(n_workers=2, robot_model="mid360_pointlio")
+).global_config(n_workers=2, robot_model="mid360_pointlio", lidar_config="mid360")
 
 mid360_pointlio_voxels = autoconnect(
     PointLio.blueprint(),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
+    VoxelGridMapper.blueprint(voxel_size=MID360_VOXEL_SIZE, carve_columns=False),
     vis_module(
         "rerun",
         rerun_config={
@@ -37,4 +35,4 @@ mid360_pointlio_voxels = autoconnect(
             },
         },
     ),
-).global_config(n_workers=3, robot_model="mid360_pointlio_voxels")
+).global_config(n_workers=3, robot_model="mid360_pointlio_voxels", lidar_config="mid360")

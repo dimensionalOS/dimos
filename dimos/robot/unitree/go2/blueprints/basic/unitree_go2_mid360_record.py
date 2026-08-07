@@ -99,7 +99,7 @@ unitree_go2_mid360_record = autoconnect(
             (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
         ]
     ),
-).global_config(n_workers=12, robot_model="unitree_go2")
+).global_config(n_workers=12, robot_model="unitree_go2", lidar_config="mid360")
 
 if _RECORD_PCAP:
     unitree_go2_mid360_record = autoconnect(

@@ -17,13 +17,16 @@
 """Basic Go2 + Mid-360 / Point-LIO visualization blueprint.
 
 Same stack as ``unitree_go2_basic``, with Rerun tuned for Point-LIO worlds
-where the floor often sits at Z << 0 (start pose is the origin).
+where the floor often sits at Z << 0 (start pose is the origin), plus a
+``VoxelGridMapper`` at Mid-360 resolution (3 cm).
 """
 
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.mapping.voxels.lidar_defaults import MID360_VOXEL_SIZE
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
@@ -132,7 +135,8 @@ unitree_mid360_basic = (
     autoconnect(
         _with_vis,
         GO2Connection.blueprint(),
-    ).global_config(n_workers=4, robot_model="unitree_go2")
+        VoxelGridMapper.blueprint(emit_every=5, voxel_size=MID360_VOXEL_SIZE),
+    ).global_config(n_workers=5, robot_model="unitree_go2", lidar_config="mid360")
     # we temporarily disabled sensor timestamps
     # and are derriving all timestmaps upon reception
     # this is because image webrtc stream doesn't have timestamps,
