@@ -170,7 +170,7 @@ public:
                                                &CuvslamOdometry::on_camera_info_right, this);
         builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
         builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
-        if (cfg.enable_imu) {
+        if (cfg_.enable_imu) {
             builder.input<sensor_msgs::Imu>("imu", &CuvslamOdometry::on_imu, this);
         }
 
@@ -310,17 +310,17 @@ private:
             rig.imus = {imu};
         }
 
-        cuvslam::Odometry::Config cfg = cuvslam::Odometry::GetDefaultConfig();
-        cfg.odometry_mode = cfg_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
+        cuvslam::Odometry::Config odometry_cfg = cuvslam::Odometry::GetDefaultConfig();
+        odometry_cfg.odometry_mode = cfg_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
                                                : cuvslam::Odometry::OdometryMode::Multicamera;
-        cfg.rectified_stereo_camera = cfg_.rectified;
-        cfg.enable_landmarks_export = cfg_.enable_slam;
+        odometry_cfg.rectified_stereo_camera = cfg_.rectified;
+        odometry_cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
-        cfg.enable_observations_export = cfg_.enable_slam;
-        cfg.async_sba = cfg_.async_sba;
+        odometry_cfg.enable_observations_export = cfg_.enable_slam;
+        odometry_cfg.async_sba = cfg_.async_sba;
 
-        tracker_.emplace(rig, cfg);
+        tracker_.emplace(rig, odometry_cfg);
         if (cfg_.enable_slam) {
             cuvslam::Slam::Config slam_cfg = cuvslam::Slam::GetDefaultConfig();
             slam_cfg.sync_mode = cfg_.slam_sync_mode;
