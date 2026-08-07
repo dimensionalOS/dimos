@@ -174,6 +174,45 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
+def _spawn_env(extra_env: dict[str, str]) -> dict[str, str]:
+    """Environment for the native subprocess."""
+    env = {**os.environ, **extra_env}
+
+    # set transport so native modules know which one to spawn
+    env["DIMOS_TRANSPORT"] = global_config.transport
+
+    # Native zenoh sessions scout on their own; on multicast-filtering
+    # LANs they never find the robot. Hand them the same explicit dial
+    # endpoints the python sessions use.
+    from dimos.protocol.service.zenohservice import ZenohConfig, _default_connect_endpoints
+
+    endpoints = _default_connect_endpoints()
+    if endpoints:
+        env["DIMOS_ZENOH_CONNECT"] = ",".join(endpoints)
+
+    # Scouting only pairs two sessions when both bind the same interface, so the
+    # child inherits the resolved one rather than picking its own default.
+    if global_config.transport == "zenoh":
+        zenoh_config = ZenohConfig()
+        env["DIMOS_ZENOH_INTERFACE"] = zenoh_config.multicast_interface
+        # A `client` deployment only pays off if the whole process tree joins as
+        # one: a single peer left behind gossip-meshes straight past the router
+        # it was meant to funnel through, and the wifi link carries the stream
+        # twice again.
+        env["DIMOS_ZENOH_MODE"] = zenoh_config.mode
+        # Same reason for the discovery knobs: a child left gossiping still
+        # meshes past the router, and one left multicasting still finds peers
+        # the parent deliberately stopped looking for.
+        env["DIMOS_ZENOH_MULTICAST"] = "on" if zenoh_config.multicast else "off"
+        env["DIMOS_ZENOH_GOSSIP"] = "on" if zenoh_config.gossip else "off"
+
+    # set Rust logging to match Python level
+    env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+        os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+    )
+    return env
+
+
 class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
@@ -241,24 +280,9 @@ class NativeModule(Module):
 
         # Built before the spawn: a config that cannot be serialized must fail
         # without leaving a child blocked on a stdin line it will never get.
-        stdin_blob: bytes | None = None
-        if self.config.stdin_config:
-            config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
-            qos = self._collect_output_qos()
-            if qos:
-                blob["qos"] = qos
-            stdin_blob = json.dumps(blob).encode() + b"\n"
+        stdin_blob = self._stdin_blob(topics)
 
-        env = {**os.environ, **self.config.extra_env}
-
-        # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = global_config.transport
-
-        # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env = _spawn_env(self.config.extra_env)
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
@@ -472,6 +496,17 @@ class NativeModule(Module):
             executable=str(exe),
             duration_sec=round(build_elapsed, 3),
         )
+
+    def _stdin_blob(self, topics: dict[str, str]) -> bytes | None:
+        """The single JSON line the native process reads its wiring from."""
+        if not self.config.stdin_config:
+            return None
+        config_dict = self.config.to_config_dict()
+        blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+        qos = self._collect_output_qos()
+        if qos:
+            blob["qos"] = qos
+        return json.dumps(blob).encode() + b"\n"
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}

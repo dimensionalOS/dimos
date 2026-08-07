@@ -16,7 +16,13 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
-zenoh = { version = "1", features = ["unstable"] }
+# default-features would pull QUIC/TLS -> `ring`, which breaks static musl
+# cross-linking (the robot builds); tcp+udp is all dimos uses on any target.
+zenoh = { version = "1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable"] }
+
+[target.'cfg(unix)'.dependencies]
+# setpriority for the optional per-module `nice` in a baked host
+libc = "0.2"
 
 [dev-dependencies]
 tracing-test = "0.2"

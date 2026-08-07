@@ -1,0 +1,23 @@
+[project]
+name = "motion-autoresearch-lab"
+version = "0.1.0"
+description = "Self-contained autoresearch lab for the dimos local planner (see README.md, PROVENANCE.md)"
+requires-python = ">=3.11"
+dependencies = [
+    # Pinned to the versions the referee was exported and baselined under.
+    # numpy in particular: the gold cache is a pickle of numpy arrays and is
+    # not portable across numpy major versions.
+$pinned_deps
+]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.7",
+    "pytest>=8",
+]
+
+[project.optional-dependencies]
+view = ["rerun-sdk"]
+
+[tool.uv]
+package = false

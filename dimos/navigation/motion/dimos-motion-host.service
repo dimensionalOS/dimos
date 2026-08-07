@@ -1,0 +1,39 @@
+[Unit]
+Description=dimos baked motion host (planner, follower, cmd_vel mux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/motion-host
+# 7448 because dimos-helper (the go2web zenoh bridge) owns 7447. The laptop
+# dials both: --robot-ips <ip>:7447,<ip>:7448.
+Environment=DIMOS_TRANSPORT=zenoh
+# Load-bearing: go2web publishes dimos/odometry from its own session on this
+# machine, and both robot-side sessions are passive listeners, so without this
+# dial they never link and the planner and follower are fed nothing. local_map
+# and planner_path still arrive (the laptop's native children dial 7448
+# directly), so the symptom is a half-connected host, not an obviously broken
+# one. dimos/tf comes from GO2Zenoh on the laptop over 7448; without it both
+# modules hold their pose and plan nothing.
+# Loopback also keeps 30 Hz odometry off the wifi.
+Environment=DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447
+Environment=DIMOS_ZENOH_LISTEN=tcp/0.0.0.0:7448
+# This LAN filters multicast, so scouting off-box finds nothing and only wastes
+# time. Unset would already keep it on loopback; this is here to say so.
+Environment=DIMOS_ZENOH_INTERFACE=lo
+# Session mode. `client` is the endgame -- a zenohd on the robot every local
+# session dials, so the wifi link carries one copy of a stream however many
+# processes want it -- but it needs that router running first, so this stays
+# peer until it is. Spelled out because the baked host never sees the python
+# knob: systemd is the only thing that sets its environment.
+Environment=DIMOS_ZENOH_MODE=peer
+Environment=RUST_LOG=info
+# The host reads its whole config from one line on stdin and exits if it is
+# missing a key, so the file is the unit is the wiring.
+ExecStart=/bin/sh -c "exec /root/motion-host/motion-host < /root/motion-host/motion-host.json"
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

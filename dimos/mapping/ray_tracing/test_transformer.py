@@ -91,6 +91,23 @@ def test_tags_region_bounds_around_registered_origin() -> None:
     assert z_max == pytest.approx(0.5 + margin)
 
 
+def test_a_fixed_region_radius_does_not_follow_what_the_sweep_saw() -> None:
+    # the percentile window breathes with the reach of the last sweeps, and a
+    # consumer routing around the emitted set sees that as the world changing
+    near = _ring((0.0, 0.0), radius=1.0, z=0.0)
+    far = _ring((0.0, 0.0), radius=6.0, z=0.0)
+
+    def radius_of(rtm: RayTraceMap, pts: NDArray[np.float32]) -> float:
+        obs = _obs(pts, ts=1.0, pose=(0.0, 0.0, 0.5))
+        [emitted] = list(rtm(iter([obs])))
+        return float(emitted.tags["region_bounds"][2])
+
+    assert radius_of(RayTraceMap(), near) != pytest.approx(radius_of(RayTraceMap(), far))
+    pinned = radius_of(RayTraceMap(region_radius_m=5.0), near)
+    assert pinned == pytest.approx(5.0)
+    assert radius_of(RayTraceMap(region_radius_m=5.0), far) == pytest.approx(pinned)
+
+
 def test_empty_frame_yields_zero_radius_region_at_robot() -> None:
     empty = np.empty((0, 3), dtype=np.float32)
     obs = _obs(empty, ts=1.0, pose=(1.0, 2.0, 3.0))

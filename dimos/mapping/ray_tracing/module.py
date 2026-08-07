@@ -55,7 +55,14 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Publish the global map every Nth frame. Zero disables it.
     global_emit_every: int = 1
     # Size the local region to this percentile of batch point distances.
+    # Ignored when region_radius_m is set.
     region_percentile: float = 95.0
+    # Fixed emitted-cylinder radius (m). Zero keeps the percentile sizing.
+    # The percentile BREATHES -- it follows what the last few sweeps happened to
+    # see, so a doorway inflates the window by metres and the next batch
+    # collapses it again, deleting and re-inventing thousands of voxels a
+    # consumer was routing around. Set it wherever the local map feeds a planner.
+    region_radius_m: float = 0.0
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

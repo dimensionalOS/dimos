@@ -80,10 +80,12 @@ def local_bounds(
     origins: NDArray[np.float32],
     percentile: float,
     margin: float,
+    fixed_radius: float = 0.0,
 ) -> tuple[float, float, float, float, float]:
     """Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
 
-    Non-finite points are ignored.
+    A positive `fixed_radius` pins the cylinder instead of sizing it to the
+    percentile. Non-finite points are ignored.
     """
     ...
 

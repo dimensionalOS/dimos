@@ -21,6 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.config import LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
@@ -58,6 +59,7 @@ alfred_nav = (
         ),
         create_cmu_nav(**nav_config),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
         AlfredHighLevel.blueprint(),
         vis_module(
             global_config.viewer,

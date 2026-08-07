@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Build the candidate and run the scored battery through the referee's own
+# CLI. The last stdout line is the summary JSON the optimizer reads.
+#   ./eval                  # curated 16 + GEN generated worlds (default 40)
+#   GEN=6 ./eval            # smaller generated set (cached after first run)
+#   VERBOSE=1 ./eval        # full battery table instead of JSON-only
+#   ./eval --view -s NAME   # write sim2d.rrd for rerun (needs rerun-sdk)
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PY="$HERE/.venv/bin/python"
+[[ -x "$PY" ]] || { echo "no venv at $HERE/.venv -- run 'uv sync' here" >&2; exit 1; }
+
+# Same build + rename-staging discipline as bench/run; never a venv install.
+cargo build --release --locked --quiet --manifest-path "$HERE/candidate/Cargo.toml" 1>&2
+mkdir -p "$HERE/.ext"
+soname="libdimos_motion2_target.so"
+[[ -e "$HERE/candidate/target/release/$soname" ]] || soname="libdimos_motion2_target.dylib"
+staged="$HERE/.ext/.staging.$$.so"
+cp -f "$HERE/candidate/target/release/$soname" "$staged"
+mv -f "$staged" "$HERE/.ext/dimos_motion2_target.so"
+
+QUIET=(--quiet)
+[[ "${VERBOSE:-0}" == "1" ]] && QUIET=()
+# Hard wall: a hung candidate must still yield parseable output. The referee
+# package __main__ pins the BLAS pools itself.
+if ! timeout -k 10 "${EVAL_TIMEOUT:-600}" env \
+    AUTORESEARCH_CACHE_DIR="$HERE/.evo/cache" \
+    PYTHONPATH="$HERE/.ext:$HERE" \
+    "$PY" -m referee --planner target --score --gen "${GEN:-40}" "${QUIET[@]}" "$@"; then
+    echo '{"score": 0.0, "dq": "eval-timeout-or-crash", "worlds": 0}'
+    exit 0
+fi

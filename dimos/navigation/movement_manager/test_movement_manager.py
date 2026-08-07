@@ -21,10 +21,13 @@ import time
 
 import pytest
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.movement_manager.cmd_vel_mux_native import (
+    CmdVelMuxNative,
+    CmdVelMuxNativeConfig,
+)
 from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,
 )
@@ -34,8 +37,6 @@ from dimos.navigation.movement_manager.movement_manager import (
 class Captured:
     """Captures messages published by a MovementManager via real subscribers."""
 
-    cmd_vel: list = field(default_factory=list)
-    stop_movement: list = field(default_factory=list)
     goal: list = field(default_factory=list)
     way_point: list = field(default_factory=list)
 
@@ -44,8 +45,6 @@ def _attach(module):
     """Subscribe to every Out port; return (captured, unsubscribers)."""
     captured = Captured()
     unsubs = [
-        module.cmd_vel.subscribe(captured.cmd_vel.append),
-        module.stop_movement.subscribe(captured.stop_movement.append),
         module.goal.subscribe(captured.goal.append),
         module.way_point.subscribe(captured.way_point.append),
     ]
@@ -54,7 +53,7 @@ def _attach(module):
 
 @pytest.fixture()
 def manager_and_captured() -> Generator[tuple[MovementManager, Captured], None, None]:
-    module = MovementManager(tele_cooldown_sec=0.1)
+    module = MovementManager()
     captured, unsubs = _attach(module)
     try:
         yield module, captured
@@ -72,35 +71,15 @@ def _click(x=1.0, y=2.0, z=0.0):
     return PointStamped(ts=time.time(), frame_id="map", x=x, y=y, z=z)
 
 
-def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
-    """Teleop arriving should suppress nav, publish stop_movement, and cancel the goal with NaN."""
+def test_teleop_cancels_the_goal_with_nan(manager_and_captured):
+    """Teleop cancels nav on the laptop side; the rust mux owns the velocity half."""
     manager, captured = manager_and_captured
-    manager.config.tele_cooldown_sec = 10.0
     manager._on_teleop(_twist(lx=0.3))
 
-    cmd_count_after_teleop = len(captured.cmd_vel)
-    manager._on_nav(_twist(lx=0.9))
-    # Nav was suppressed: no new cmd_vel
-    assert len(captured.cmd_vel) == cmd_count_after_teleop
-
-    # stop_movement fired
-    assert len(captured.stop_movement) == 1
-
-    # Goal cancelled with NaN
     assert len(captured.goal) == 1
     assert math.isnan(captured.goal[0].x)
-
-
-def test_nav_resumes_after_cooldown(manager_and_captured):
-    """After the cooldown expires, nav commands pass through again."""
-    manager, captured = manager_and_captured
-    manager.config.tele_cooldown_sec = 0.05
-    manager._on_teleop(_twist(lx=0.3))
-    time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT)
-    cmd_count_before = len(captured.cmd_vel)
-
-    manager._on_nav(_twist(lx=0.9))
-    assert len(captured.cmd_vel) == cmd_count_before + 1
+    assert len(captured.way_point) == 1
+    assert math.isnan(captured.way_point[0].x)
 
 
 def test_valid_click_publishes_goal(manager_and_captured):
@@ -124,18 +103,28 @@ def test_invalid_clicks_rejected(manager_and_captured):
     assert captured.goal == []
 
 
-def test_tele_cmd_vel_scaling(manager_and_captured):
-    """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
-    manager, captured = manager_and_captured
-    scaling = Twist(Vector3(0.5, 2.0, 0.0), Vector3(1.0, 1.0, 0.25))
-    manager.config.tele_cmd_vel_scaling = scaling
-    manager.config.tele_cooldown_sec = 10.0
+def test_velocity_ports_moved_to_the_mux(manager_and_captured):
+    """The split: velocities are the mux's, clicks and the cancel are the manager's.
 
-    manager._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
+    Both keep tele_cmd_vel — one keystroke has to land on both halves.
+    """
+    manager, _ = manager_and_captured
+    assert set(manager.inputs) == {"clicked_point", "tele_cmd_vel"}
+    assert set(manager.outputs) == {"goal", "way_point"}
 
-    assert len(captured.cmd_vel) == 1
-    published = captured.cmd_vel[0]
-    assert published.linear.x == pytest.approx(0.5)
-    assert published.linear.y == pytest.approx(2.0)
-    assert published.linear.z == pytest.approx(0.0)
-    assert published.angular.z == pytest.approx(0.25)
+    mux = CmdVelMuxNative()
+    try:
+        assert set(mux.inputs) == {"nav_cmd_vel", "tele_cmd_vel"}
+        assert set(mux.outputs) == {"cmd_vel", "stop_movement"}
+    finally:
+        mux._close_module()
+
+
+def test_mux_config_crosses_the_boundary_whole():
+    """Every rust config field, every time — a missing key is a startup error."""
+    assert set(CmdVelMuxNativeConfig().to_config_dict()) == {
+        "tele_cooldown_sec",
+        "tele_scale_linear",
+        "tele_scale_angular",
+        "nav_stale_s",
+    }

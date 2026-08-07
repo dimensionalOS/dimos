@@ -354,6 +354,10 @@
       "destination": "/usage/transports/dds"
     },
     {
+      "source": "/docs/usage/transports/zenoh.md",
+      "destination": "/usage/transports/zenoh"
+    },
+    {
       "source": "/docs/coding-agents/index.md",
       "destination": "/coding-agents/index"
     },

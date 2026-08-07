@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Invariants against the built .so, in the battery's own environment.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec env BENCH_ENTRY="$HERE/ext_invariants.py" "$HERE/run" "$@"

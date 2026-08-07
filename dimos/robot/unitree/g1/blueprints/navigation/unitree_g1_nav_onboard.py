@@ -19,6 +19,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unitree_g1_onboard
 from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
@@ -57,6 +58,7 @@ unitree_g1_nav_onboard = (
             },
         ),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
             rerun_config=cmu_nav_rerun_config(

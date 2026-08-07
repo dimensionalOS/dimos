@@ -1,0 +1,74 @@
+# motion-planner autoresearch lab
+
+Self-contained research workspace for the dimos local planner. The
+**referee** (worlds, gold oracle, judge, scoring) is the local `referee/`
+package and is **off-limits** — hash-pinned by `.evo/referee.lock` and
+verified by the gates; this lab is the place where `candidate/` gets
+rewritten. Branch and commit freely.
+
+## The task
+
+`candidate/` is a rust crate implementing the local planner (pyo3 module
+`dimos_motion2_target`). The seeded planner scores:
+
+- full battery (16 curated + 40 generated worlds): **referee $baseline_referee / 111**
+  — gold $baseline_gold, consistency $baseline_consistency, speed $baseline_speed, zero DQ.
+
+The remaining headroom is almost entirely **gold closeness** ($baseline_gold → 1.0
+is worth ~$gold_headroom referee points); speed is largely saturated at the
+20 ms budget. Ideas that respect the rules are all fair game.
+
+## Eval
+
+```
+uv sync           # once
+./eval            # build + scored battery; last stdout line = summary JSON
+GEN=6 ./eval      # smaller generated set
+VERBOSE=1 ./eval  # per-world table
+bash bench/run --gen 40 --seed 0   # the instrumented battery (evo fitness + traces)
+```
+
+Two numbers per run, not the same number:
+
+| number | formula | role |
+|---|---|---|
+| `referee_score` | `gate * (100*gold + 10*consistency + 1*speed)`, max 111 | shipping — what review judges |
+| `fitness` | weights in `bench/fitness.py`, max $fitness_max | what evo climbs |
+
+`gate` is 0 on a non-vetoed collision (DQ). Priorities are lexicographic by
+magnitude: speed never buys back deviation; nothing buys back a collision.
+Timings are `time.process_time()` — CPU across all threads — measured on one
+pinned core with BLAS pools pinned to 1 thread.
+
+## Rules (enforced by the gates in gates.json)
+
+1. **Deterministic.** Same inputs -> bit-identical output. No HashMap
+   iteration order, no RandomState, no time-dependence.
+2. **Threading is permitted but pointless-by-default.** plan() is charged
+   total CPU across all its threads, so parallelism buys no free speed; what
+   constrains it is rule 1 (bit-identical output), enforced by consequence.
+   The deployment budget is one core on a shared RK3588.
+3. **Honest inputs only.** The planner sees the cloud, its pose, the goal
+   and its embodiment. Never the true world geometry — the referee's truth
+   and gold paths are out of reach by construction; do not try. No fs, env,
+   net, subprocess, pyo3-reach, or cross-call state (bench/check_rules.py).
+4. **Interface frozen.** Rewrite `candidate/src/planner.rs`; do not change
+   `python.rs`'s `plan()` signature, `lib.rs`, or the module name
+   (`dimos_motion2_target`). Hashes in `bench/frozen.json`.
+
+## Starting an optimization loop
+
+Run `/evo:discover` in this directory. `gates.json` carries the benchmark
+command, the recommended gates with thresholds, and the seeded baseline —
+register them as-is. Run experiments serially (`subagents=1`): speed is a
+scored pillar and `bench/run` holds a machine-wide flock.
+
+## Layout
+
+- `referee/` — the judge. Off-limits; every gate verifies it.
+- `candidate/` — the optimization target (only `src/planner.rs` should move;
+  `tests/invariants.rs` are optional developer aids, not a gate).
+- `bench/` — the measurement harness. It measures the candidate; it is not
+  part of the candidate (hash-pinned by `.evo/harness.lock`).
+- `.evo/` — locks, shared world/gold caches, and (once you start) evo state.
+- `PROVENANCE.md` — where this lab came from, exact versions, baseline.
