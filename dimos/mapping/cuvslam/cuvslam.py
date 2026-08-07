@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 from reactivex.disposable import Disposable
@@ -27,7 +27,7 @@ from reactivex.disposable import Disposable
 from dimos.constants import CACHE_DIR, CONFIG_DIR
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -162,7 +162,11 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # Distance between the two imagers, in metres, which is what makes the poses
+    # "stereo" tracks on an image pair, "rgbd" on one image plus its depth, "mono" on
+    # one image alone -- and mono is accurate only up to an unknown scale, so its poses
+    # are not metres. Which ports the tracker subscribes to follows from this.
+    camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
+    # Stereo only: the distance between the two imagers, which is what makes the poses
     # metric. Left unset it is read off the right camera_info, so a different camera
     # model is a different baseline without touching this file.
     stereo_baseline_meters: float | None = None
@@ -232,9 +236,11 @@ class CuvslamOdometry(NativeModule):
     the last published pose, so the stream never jumps. A restart costs the motion
     that happened across it, and is reported only on the log.
 
-    ``camera_info`` is the left imager's, and ``camera_info_right`` the right's.
-    Both are required: the left carries the intrinsics, and the right carries the
-    baseline in ``P[3]``, which is the only per-unit source of metric scale.
+    ``camera_info`` is the left imager's. In ``stereo`` mode ``camera_info_right`` is
+    required too: it carries the baseline in ``P[3]``, which is the per-unit source of
+    metric scale. ``mono`` uses ``image_left`` alone and is accurate only up to scale;
+    ``rgbd`` pairs ``image_left`` with ``depth_image`` and needs no baseline. The
+    tracker subscribes only to what its ``camera_mode`` uses.
 
     ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
     at a loop closure, which is the point: that is where a revisit gets pulled back
@@ -256,6 +262,7 @@ class CuvslamOdometry(NativeModule):
 
     image_left: In[Image]
     image_right: In[Image]
+    depth_image: In[Image]
     camera_info: In[CameraInfo]
     camera_info_right: In[CameraInfo]
     imu: In[Imu]
@@ -263,7 +270,7 @@ class CuvslamOdometry(NativeModule):
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
     cpp_tf_workaround: Out[Odometry]
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -279,8 +286,8 @@ class CuvslamOdometry(NativeModule):
 
     def _on_map_tf(self, message: Odometry) -> None:
         """Slam's correction. Replaces the identity map->odom once Slam is running."""
-        self.tf.publish(
-            TFMessage(self._transform(message, self.config.map_frame, self.config.odom_frame))
+        self.tfbuffer.publish(
+            self._transform(message, self.config.map_frame, self.config.odom_frame)
         )
 
     @staticmethod
@@ -288,15 +295,8 @@ class CuvslamOdometry(NativeModule):
         return Transform(
             frame_id=frame_id,
             child_frame_id=child_frame_id,
-            translation=Vector3(
-                message.pose.position.x, message.pose.position.y, message.pose.position.z
-            ),
-            rotation=Quaternion(
-                message.pose.orientation.x,
-                message.pose.orientation.y,
-                message.pose.orientation.z,
-                message.pose.orientation.w,
-            ),
+            translation=Vector3(message.pose.position),
+            rotation=Quaternion(message.pose.orientation),
             ts=message.ts or time.time(),
         )
 
@@ -315,4 +315,4 @@ class CuvslamOdometry(NativeModule):
                     ts=message.ts or time.time(),
                 ),
             )
-        self.tf.publish(TFMessage(*transforms))
+        self.tfbuffer.publish(*transforms)

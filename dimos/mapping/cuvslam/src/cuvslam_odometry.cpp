@@ -115,7 +115,10 @@ Transform to_transform(const cuvslam::Pose& pose) {
 }  // namespace
 
 struct CuvslamConfig {
-    /// Metres, or 0 to read it off the right camera_info's P[3].
+    /// "stereo", "mono" or "rgbd". Stereo and rgbd are metric; mono is accurate only
+    /// up to an unknown scale, so its poses are not metres.
+    std::string camera_mode;
+    /// Stereo only. Metres, or 0 to read it off the right camera_info's P[3].
     double stereo_baseline_meters;
     /// The stereo pair arrives rectified: D all zero, R identity.
     bool rectified;
@@ -163,13 +166,20 @@ public:
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<CuvslamConfig>();
         baseline_meters_ = cfg_.stereo_baseline_meters;
+        // Only stereo triangulates, so only stereo needs a baseline before it can start.
+        have_baseline_ = cfg_.camera_mode != "stereo";
 
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
-        builder.input<sensor_msgs::CameraInfo>("camera_info_right",
-                                               &CuvslamOdometry::on_camera_info_right, this);
         builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
-        builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
+        if (cfg_.camera_mode == "stereo") {
+            builder.input<sensor_msgs::CameraInfo>("camera_info_right",
+                                                   &CuvslamOdometry::on_camera_info_right, this);
+            builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
+        }
+        if (cfg_.camera_mode == "rgbd") {
+            builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
+        }
         if (cfg_.enable_imu) {
             builder.input<sensor_msgs::Imu>("imu", &CuvslamOdometry::on_imu, this);
         }
@@ -266,6 +276,24 @@ private:
         try_track();
     }
 
+    void on_depth(const sensor_msgs::Image& img) {
+        depth_ = img;
+        have_depth_ = true;
+        try_track();
+    }
+
+    cuvslam::Odometry::OdometryMode odometry_mode() const {
+        using Mode = cuvslam::Odometry::OdometryMode;
+        if (cfg_.camera_mode == "mono") {
+            return Mode::Mono;
+        }
+        if (cfg_.camera_mode == "rgbd") {
+            return Mode::RGBD;
+        }
+        // Inertial is the stereo pair plus an IMU; there is no inertial mono or rgbd.
+        return cfg_.enable_imu ? Mode::Inertial : Mode::Multicamera;
+    }
+
     /// cuVSLAM uses OpenCV convention (x right, y down, z forward), so the right
     /// camera sits at +baseline on x. The rig frame is the left camera.
     void ensure_tracker() {
@@ -289,11 +317,14 @@ private:
         left.rig_from_camera = cuvslam::Pose{};  // identity: rig == left camera
         left.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
 
-        cuvslam::Camera right = left;
-        right.rig_from_camera.translation = {static_cast<float>(baseline_meters_), 0.0f, 0.0f};
-
         cuvslam::Rig rig;
-        rig.cameras = {left, right};
+        if (cfg_.camera_mode == "stereo") {
+            cuvslam::Camera right = left;
+            right.rig_from_camera.translation = {static_cast<float>(baseline_meters_), 0.0f, 0.0f};
+            rig.cameras = {left, right};
+        } else {
+            rig.cameras = {left};
+        }
         if (cfg_.enable_imu) {
             cuvslam::ImuCalibration imu{};
             imu.rig_from_imu.translation = {static_cast<float>(cfg_.imu_tx),
@@ -311,8 +342,7 @@ private:
         }
 
         cuvslam::Odometry::Config odometry_cfg = cuvslam::Odometry::GetDefaultConfig();
-        odometry_cfg.odometry_mode = cfg_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
-                                               : cuvslam::Odometry::OdometryMode::Multicamera;
+        odometry_cfg.odometry_mode = odometry_mode();
         odometry_cfg.rectified_stereo_camera = cfg_.rectified;
         odometry_cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
@@ -335,7 +365,13 @@ private:
     }
 
     void try_track() {
-        if (!have_left_ || !have_right_) {
+        if (!have_left_) {
+            return;
+        }
+        if (cfg_.camera_mode == "stereo" && !have_right_) {
+            return;
+        }
+        if (cfg_.camera_mode == "rgbd" && !have_depth_) {
             return;
         }
         ensure_tracker();
@@ -344,7 +380,8 @@ private:
         }
 
         const std::int64_t t_left = stamp_to_ns(left_.header);
-        const std::int64_t t_right = stamp_to_ns(right_.header);
+        const std::int64_t t_right =
+            cfg_.camera_mode == "stereo" ? stamp_to_ns(right_.header) : t_left;
         if (std::llabs(t_left - t_right) > kMaxPairSkewNs) {
             // Wait for the matching eye rather than pairing across motion. A fixed
             // offset between the two streams lands here every frame, so say so once
@@ -358,7 +395,7 @@ private:
         }
         // cuVSLAM rejects a frame that is not strictly newer than the last one.
         if (last_ts_ns_ && t_left <= *last_ts_ns_) {
-            have_left_ = have_right_ = false;
+            have_left_ = have_right_ = have_depth_ = false;
             return;
         }
 
@@ -373,15 +410,26 @@ private:
         l.timestamp_ns = t_left;
         l.camera_index = 0;
 
-        cuvslam::Image r = l;
-        r.pixels = right_.data.data();
-        r.pitch = right_.step;
-        r.camera_index = 1;
+        cuvslam::Odometry::ImageSet images{l};
+        cuvslam::Odometry::ImageSet depths;
+        if (cfg_.camera_mode == "stereo") {
+            cuvslam::Image r = l;
+            r.pixels = right_.data.data();
+            r.pitch = right_.step;
+            r.camera_index = 1;
+            images.push_back(r);
+        } else if (cfg_.camera_mode == "rgbd") {
+            cuvslam::Image d = l;
+            d.pixels = depth_.data.data();
+            d.pitch = depth_.step;
+            d.data_type = cuvslam::ImageData::DataType::UINT16;
+            depths.push_back(d);
+        }
 
-        const cuvslam::PoseEstimate est = tracker_->Track({l, r}, {});
+        const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
         ++frames_;
         last_ts_ns_ = t_left;
-        have_left_ = have_right_ = false;
+        have_left_ = have_right_ = have_depth_ = false;
 
         if (!est.world_from_rig.has_value()) {
             if (was_tracking_) {
@@ -532,8 +580,8 @@ private:
     double fx_{0.0}, fy_{0.0}, cx_{0.0}, cy_{0.0};
 
     // stereo pairing
-    sensor_msgs::Image left_{}, right_{};
-    bool have_left_{false}, have_right_{false};
+    sensor_msgs::Image left_{}, right_{}, depth_{};
+    bool have_left_{false}, have_right_{false}, have_depth_{false};
     std::optional<std::int64_t> last_ts_ns_;
 
     // tracking state

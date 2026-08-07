@@ -174,7 +174,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._infra1_camera_info: CameraInfo | None = None
         self._infra2_camera_info: CameraInfo | None = None
         self._depth_scale: float = 0.001
-        self._color_to_depth_extrinsics: rs.extrinsics | None = None
         # frame_id -> that imager's extrinsic to depth, filled in at start.
         self._frame_extrinsics: dict[str, rs.extrinsics] = {}
         # Frame-continuity bookkeeping; see _capture_loop.
@@ -396,16 +395,56 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             # depth. Read the baseline off the device rather than hardcoding it:
             # it is per-model (D435 ~50mm, D455 ~95mm) and per-unit.
             extrinsics = infra2_stream.get_extrinsics_to(infra1_stream)
-            self._ir_baseline = abs(float(extrinsics.translation[0]))
+            baseline = abs(float(extrinsics.translation[0]))
             projection = list(self._infra2_camera_info.P)
-            projection[3] = -projection[0] * self._ir_baseline
+            projection[3] = -projection[0] * baseline
             self._infra2_camera_info.P = projection
             logger.info(
                 "RealSense IR baseline %.2f mm (fx %.2f) -> right P[3] = %.3f",
-                self._ir_baseline * 1000.0,
+                baseline * 1000.0,
                 projection[0],
                 projection[3],
             )
+
+    @staticmethod
+    def between_cam_distance(serial_number: str | None = None) -> float:
+        """Metres between the two IR imagers, read off the attached camera.
+
+        The factory stereo extrinsic of the unit that is actually plugged in, so a
+        D435 answers ~50 mm and a D455 ~95 mm without anything downstream knowing
+        which is which. Needs no running pipeline -- it queries the device directly.
+
+        Args:
+            serial_number: which camera, when more than one is attached. The first
+                one found otherwise.
+
+        Raises:
+            RuntimeError: no RealSense attached, or none with that serial.
+        """
+        import pyrealsense2 as rs
+
+        devices = list(rs.context().query_devices())
+        if serial_number is not None:
+            devices = [
+                device
+                for device in devices
+                if device.get_info(rs.camera_info.serial_number) == serial_number
+            ]
+        if not devices:
+            attached = serial_number or "any"
+            raise RuntimeError(f"no RealSense device found (looking for {attached})")
+
+        profiles = [
+            profile
+            for sensor in devices[0].query_sensors()
+            for profile in sensor.get_stream_profiles()
+            if profile.stream_type() == rs.stream.infrared
+        ]
+        by_index = {profile.stream_index(): profile for profile in profiles}
+        if not {1, 2} <= by_index.keys():
+            raise RuntimeError("device has no infrared stereo pair to measure")
+        extrinsics = by_index[2].get_extrinsics_to(by_index[1])
+        return abs(float(extrinsics.translation[0]))
 
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
         import pyrealsense2 as rs
@@ -499,8 +538,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._frame_extrinsics[self._imu_frame] = accel_profile.get_extrinsics_to(
                     depth_stream
                 )
-
-        self._color_to_depth_extrinsics = self._frame_extrinsics.get(self._color_frame)
 
     def _extrinsics_to_transform(
         self,
@@ -826,7 +863,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 dict(self._repeated_frames),
             )
         self._last_frame_numbers = {}
-        self._color_to_depth_extrinsics = None
         self._frame_extrinsics = {}
         self._latest_color_img = None
         self._latest_depth_img = None
