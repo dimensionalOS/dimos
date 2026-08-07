@@ -131,13 +131,16 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
 def relocalize(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, float]:
     """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
 
     Multi-scale x multi-restart FPFH+RANSAC -> gravity-filtered, re-ranked by
     fine-scale inlier ratio (not RANSAC's own fitness) -> fine ICP. The
     rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
+
+    Returns:
+        ``(T, fitness, inlier_rmse)`` from the final full-cloud ICP.
     """
     import open3d as o3d
 
@@ -220,7 +223,7 @@ def relocalize(
             _reg.ICPConvergenceCriteria(max_iteration=70),
         )
         polished.append((float(r.fitness), np.asarray(r.transformation)))
-    best_fit, best_T = max(polished, key=lambda fT: fT[0])
+    _best_wall_fit, best_T = max(polished, key=lambda fT: fT[0])
 
     # Stage 3: final ICP on full clouds, incl. floor/ceiling
     final = _reg.registration_icp(
@@ -231,4 +234,4 @@ def relocalize(
         tukey,
         _reg.ICPConvergenceCriteria(max_iteration=50),
     )
-    return np.asarray(final.transformation), best_fit
+    return np.asarray(final.transformation), float(final.fitness), float(final.inlier_rmse)

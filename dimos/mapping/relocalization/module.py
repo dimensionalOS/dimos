@@ -63,6 +63,8 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
+        self._first_reloc_logged = False
+        self._start_mono: float | None = None
 
     @rpc
     def start(self) -> None:
@@ -75,6 +77,7 @@ class RelocalizationModule(Module):
         path = resolve_named_path(self.config.map_file, MAP_SUFFIX)
         self._premap = PointCloud2.lcm_decode(path.read_bytes())
         self._premap.frame_id = FRAME_MAP
+        self._start_mono = time.monotonic()
 
         self.register_disposable(
             backpressure(
@@ -128,19 +131,35 @@ class RelocalizationModule(Module):
 
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
         assert self._premap is not None
+        n_pts = len(msg)
+        log_first = not self._first_reloc_logged
+        if log_first:
+            self._first_reloc_logged = True
+            elapsed = (
+                time.monotonic() - self._start_mono if self._start_mono is not None else float("nan")
+            )
+            logger.info(
+                f"relocalize first event before ICP: elapsed_s={elapsed:.1f} voxels={n_pts}"
+            )
+
         t0 = time.monotonic()
         try:
-            T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
+            T, fitness, inlier_rmse = _relocalize(self._premap.pointcloud, msg.pointcloud)
         except Exception:
             logger.exception("relocalize() failed")
             return None
         dt = time.monotonic() - t0
-        n_pts = len(msg)
+
+        if log_first:
+            logger.info(
+                f"relocalize first event after ICP: fitness={fitness:.6f} "
+                f"inlier_rmse={inlier_rmse:.6f} time_cost={dt:.1f}s n_pts={n_pts}"
+            )
 
         if fitness < self.config.fitness_threshold:
             logger.warning(
                 f"relocalize rejected: fitness={fitness:.3f} < threshold={self.config.fitness_threshold} "
-                f"time_cost={dt:.1f}s n_pts={n_pts}"
+                f"inlier_rmse={inlier_rmse:.6f} time_cost={dt:.1f}s n_pts={n_pts}"
             )
             return None
 
@@ -155,7 +174,8 @@ class RelocalizationModule(Module):
             child_frame_id=FRAME_MAP,
         )
         logger.info(
-            f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
+            f"relocalize: fitness={fitness:.3f} inlier_rmse={inlier_rmse:.6f} "
+            f"time_cost={dt:.1f}s n_pts={n_pts} "
             f"reloc_t={T[:3, 3].round(3).tolist()} "
             f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
             f"published_t={T_inv[:3, 3].round(3).tolist()} "
