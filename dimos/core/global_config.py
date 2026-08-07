@@ -81,6 +81,10 @@ class GlobalConfig(BaseSettings):
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None
+    # Voxel-map preset: ``mid360`` uses 3 cm voxels; ``default`` keeps 5 cm.
+    # Modules (e.g. VoxelGridMapper) and ``dimos map`` honor this unless an
+    # explicit ``--voxel`` / ``--voxel-size`` override is given.
+    lidar_config: Literal["default", "mid360"] = "default"
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0

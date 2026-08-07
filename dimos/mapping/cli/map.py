@@ -18,9 +18,11 @@ from collections.abc import Callable, Iterable
 import math
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import typer
+
+from dimos.mapping.voxels.lidar_defaults import voxel_size_for_lidar
 
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
@@ -339,12 +341,22 @@ def main(
     lidar_stream: str = typer.Option(
         "lidar", "--lidar", help="Lidar point-cloud stream to reconstruct"
     ),
+    lidar_config: Literal["default", "mid360"] = typer.Option(
+        "default",
+        "--lidar-config",
+        help="Lidar preset for default voxel size: 'default'→0.05 m, 'mid360'→0.03 m "
+        "(ignored when --voxel is set)",
+    ),
     seek: float = typer.Option(0.0, "--seek", help="Skip the first N seconds of the recording"),
     duration: float | None = typer.Option(
         None, "--duration", help="Use only N seconds from --seek (default: to the end)"
     ),
-    voxel: float = typer.Option(0.05, "--voxel", help="Voxel size for the rebuild"),
-    device: str = typer.Option(
+    voxel: float | None = typer.Option(
+        None,
+        "--voxel",
+        help="Voxel size for the rebuild (m). Default: 0.05, or 0.03 with --lidar-config mid360",
+    ),
+ device: str = typer.Option(
         "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
     ),
     pgo: bool = typer.Option(
@@ -472,6 +484,10 @@ def main(
         out = Path.cwd() / f"{db_path.stem}.rrd"
     if export or full_pgo:
         pgo = True
+
+    if voxel is None:
+        voxel = voxel_size_for_lidar(lidar_config)
+    print(f"voxel_size={voxel} (lidar_config={lidar_config!r})")
 
     lidar_stream = _resolve_lidar_stream(store, lidar_stream)
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)

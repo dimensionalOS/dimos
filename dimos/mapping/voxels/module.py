@@ -20,15 +20,19 @@ from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.voxels.grid import VoxelGrid
+from dimos.mapping.voxels.lidar_defaults import LidarConfigName, voxel_size_for_lidar
 from dimos.memory2.module import StreamModule
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory2.type.observation import Observation
+
+logger = setup_logger()
 
 
 class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
@@ -53,10 +57,13 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
         self, grid: VoxelGrid, last_obs: Observation[PointCloud2], count: int
     ) -> Observation[PointCloud2]:
         # pose=None: the global map is in world frame, per-observation pose is meaningless
+        cloud = grid.get_global_pointcloud2()
+        n_voxels = grid.size()
+        logger.info(f"live map: frames={count} voxels={n_voxels}")
         return last_obs.derive(
-            data=grid.get_global_pointcloud2(),
+            data=cloud,
             pose=None,
-            tags={**last_obs.tags, "frame_count": count},
+            tags={**last_obs.tags, "frame_count": count, "voxel_count": n_voxels},
         )
 
     def __call__(
@@ -85,12 +92,21 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
 class VoxelGridMapperConfig(ModuleConfig):
     """Configuration for VoxelGridMapper."""
 
-    voxel_size: float = 0.05
+    # None → inherit GlobalConfig.lidar_config (``default`` / ``mid360``).
+    lidar_config: LidarConfigName | None = None
+    # None → derive from lidar_config (0.05 default, 0.03 for mid360).
+    voxel_size: float | None = None
     block_count: int = 2_000_000
     device: str = "CUDA:0"
     carve_columns: bool = True
     frame_id: str = "world"
     emit_every: int = 1
+
+    def resolved_voxel_size(self) -> float:
+        if self.voxel_size is not None:
+            return self.voxel_size
+        lidar = self.lidar_config if self.lidar_config is not None else self.g.lidar_config
+        return voxel_size_for_lidar(lidar)
 
 
 class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
@@ -101,6 +117,12 @@ class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
     def pipeline(self, stream: Stream[PointCloud2]) -> Stream[PointCloud2]:
         cfg = self.config.model_dump(
             include=set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields)
+        )
+        cfg.pop("lidar_config", None)
+        cfg["voxel_size"] = self.config.resolved_voxel_size()
+        logger.info(
+            f"VoxelGridMapper voxel_size={cfg['voxel_size']} "
+            f"(lidar_config={self.config.lidar_config or self.config.g.lidar_config!r})"
         )
         return stream.transform(VoxelMapTransformer(**cfg))
 
