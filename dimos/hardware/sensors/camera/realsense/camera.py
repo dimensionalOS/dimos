@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import atexit
+from collections import deque
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from pydantic import Field
@@ -164,8 +165,12 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._pipeline: rs.pipeline | None = None
         self._profile: rs.pipeline_profile | None = None
         self._imu_pipeline: rs.pipeline | None = None
-        # Latest accel sample (x, y, z), paired with each gyro sample to form an Imu.
-        self._latest_accel: tuple[float, float, float] | None = None
+        # The two accelerometer samples an incoming gyro sample is interpolated
+        # between, and the gyro samples still waiting for one past them. Bounded
+        # because a stalled accelerometer stream would otherwise grow this forever;
+        # at 400 Hz it is 40 ms of slack.
+        self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
+        self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
         self._running = False
         self._thread: threading.Thread | None = None
@@ -308,22 +313,44 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
+        # The RS hardware timestamp (global_time domain: host epoch but
+        # hardware-precise), NOT time.time() at the callback — the latter adds Python
+        # callback latency/jitter that desyncs cam<->IMU and makes VIO (cuVSLAM etc.)
+        # diverge. Both the imagers and the motion module use frame.get_timestamp(),
+        # so they share one clock. get_timestamp() is ms -> seconds.
+        ts = motion.get_timestamp() / 1000.0
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
-            self._latest_accel = (data.x, data.y, data.z)
-        elif stream == rs.stream.gyro and self._latest_accel is not None:
-            ax, ay, az = self._latest_accel
-            # Use the RS hardware timestamp (global_time domain: host epoch but
-            # hardware-precise), NOT time.time() at the callback — the latter adds
-            # Python callback latency/jitter that desyncs cam<->IMU and makes VIO
-            # (cuVSLAM etc.) diverge. Both IR and IMU use frame.get_timestamp() so
-            # they share one clock. get_timestamp() is ms -> seconds.
+            self._accel_history.append((ts, (data.x, data.y, data.z)))
+        elif stream == rs.stream.gyro:
+            self._pending_gyro.append((ts, (data.x, data.y, data.z)))
+        self._publish_paired_imu()
+
+    def _publish_paired_imu(self) -> None:
+        """Emit one Imu per gyro sample, with the accelerometer read at that instant.
+
+        The motion module samples the two independently and they never share a
+        timestamp — even asked for 400 Hz each they land ~1.2 ms apart and drift, and
+        at mixed rates it is half an accel period. So a gyro sample waits here for an
+        accelerometer sample past it and takes the interpolated value, rather than
+        being paired with whatever accel happened to arrive last and carrying that
+        stale reading under the gyro's own timestamp.
+        """
+        while self._pending_gyro and len(self._accel_history) == 2:
+            (start_ts, start), (end_ts, end) = self._accel_history
+            ts, angular = self._pending_gyro[0]
+            if ts > end_ts:
+                return  # no accelerometer past it yet; waiting beats extrapolating
+            self._pending_gyro.popleft()
+            span = end_ts - start_ts
+            ratio = 0.0 if span <= 0.0 else max(0.0, min(1.0, (ts - start_ts) / span))
+            linear = tuple(a + (b - a) * ratio for a, b in zip(start, end, strict=True))
             self.imu.publish(
                 Imu(
-                    angular_velocity=Vector3(data.x, data.y, data.z),
-                    linear_acceleration=Vector3(ax, ay, az),
+                    angular_velocity=Vector3(*angular),
+                    linear_acceleration=Vector3(*linear),
                     frame_id=self._imu_optical_frame,
-                    ts=motion.get_timestamp() / 1000.0,
+                    ts=ts,
                 )
             )
 
@@ -497,21 +524,21 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             return
 
         # The infrared streams need their index; the others are named by type alone.
-        streams: list[tuple[str, tuple[Any, ...]]] = []
+        streams: list[tuple[str, rs.stream, int | None]] = []
         if self.config.enable_color:
-            streams.append((self._color_frame, (rs.stream.color,)))
+            streams.append((self._color_frame, rs.stream.color, None))
         if self.config.enable_infrared:
-            streams.append((self._infra1_frame, (rs.stream.infrared, 1)))
-            streams.append((self._infra2_frame, (rs.stream.infrared, 2)))
+            streams.append((self._infra1_frame, rs.stream.infrared, 1))
+            streams.append((self._infra2_frame, rs.stream.infrared, 2))
         if self.config.enable_imu:
-            streams.append((self._imu_frame, (rs.stream.accel,)))
+            streams.append((self._imu_frame, rs.stream.accel, None))
 
         self._frame_extrinsics = {}
-        for frame_id, stream in streams:
-            source = self._device_stream_profile(*stream)
+        for frame_id, stream_type, index in streams:
+            source = self._device_stream_profile(stream_type, index)
             if source is None:
                 logger.warning(
-                    "RealSense: no %s stream on the device, %s stays off tf", stream[0], frame_id
+                    "RealSense: no %s stream on the device, %s stays off tf", stream_type, frame_id
                 )
                 continue
             self._frame_extrinsics[frame_id] = source.get_extrinsics_to(depth_stream)
