@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 from pathlib import Path
+import platform
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -80,6 +82,32 @@ def driver_library_dir() -> Path | None:
     return _DRIVER_LINK_DIR
 
 
+def driver_cuda_major() -> int:
+    """The CUDA major the installed driver supports, or 0 if there is no driver."""
+    try:
+        driver = ctypes.CDLL("libcuda.so.1")
+    except OSError:
+        return 0
+    version = ctypes.c_int()
+    if driver.cuDriverGetVersion(ctypes.byref(version)) != 0:
+        return 0
+    return version.value // 1000
+
+
+def sdk_variant() -> str:
+    """Which of NVIDIA's builds this machine needs.
+
+    Jetsons are split by GPU generation rather than CUDA version -- an Orin build does
+    not run on a Thor. Elsewhere the newest build the driver supports is taken, since a
+    driver runs any CUDA older than itself but nothing newer.
+    """
+    if platform.machine() == "aarch64":
+        compatible = Path("/proc/device-tree/compatible")
+        chip = compatible.read_bytes() if compatible.exists() else b""
+        return "thor" if b"tegra264" in chip else "orin"
+    return "x86_64-cuda13" if driver_cuda_major() >= 13 else "x86_64-cuda12"
+
+
 def _driver_env() -> dict[str, str]:
     parts = [str(_HOST_CUDA_LIB_DIR)] if _HOST_CUDA_LIB_DIR.is_dir() else []
     driver_dir = driver_library_dir()
@@ -112,7 +140,7 @@ class ImuCalibration(BaseModel):
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    build_command: str | None = "nix build ."
+    build_command: str | None = Field(default_factory=lambda: f"nix build .#{sdk_variant()}")
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
