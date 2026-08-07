@@ -273,8 +273,10 @@ private:
         const int index = camera_index(img.header.frame_id);
         if (index < 0) {
             // Either the rig has not arrived yet or this camera is not on it. Both
-            // are silent no-output modes, so they are counted and reported.
-            if (++unplaced_images_ % kWaitingWarnFrames == 0) {
+            // are silent no-output modes, so say so -- once, since a rig that never
+            // arrives would otherwise repeat this for the length of the run. The
+            // teardown count is what says how long it went on for.
+            if (++unplaced_images_ == kWaitingWarnFrames) {
                 logging::warn("cuvslam is dropping images from a camera that is not on the rig",
                               {logging::Field("frame_id", img.header.frame_id),
                                logging::Field("dropped", static_cast<std::int64_t>(unplaced_images_)),
