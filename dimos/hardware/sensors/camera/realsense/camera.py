@@ -71,26 +71,17 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
-    # The colour imager is the heaviest stream the camera produces: bgr8 is 3
-    # bytes/pixel against mono8's 1, so at 848x480/30 it is ~37 MB/s — more than
-    # the whole IR pair. It used to be enabled, colour-converted and published
-    # unconditionally, so VIO captures that never record colour still paid the USB
-    # bandwidth, a full-frame cvtColor per frame, and the LCM traffic.
+    # Colour is three times the bytes of an IR frame, so leave it off for VIO.
     enable_color: bool = True
     enable_pointcloud: bool = False
-    # Publish the left/right infrared imagers as a stereo pair (infrared_left /
-    # infrared_right). This is the global-shutter stereo pair used for VIO.
+    # The global-shutter IR pair, as infrared_left / infrared_right.
     enable_infrared: bool = False
-    # The IR projector paints a dot pattern that greatly improves depth but
-    # corrupts the infrared images for feature-based stereo/VIO. Turn it off for
-    # clean stereo (relies on ambient/scene texture); keep it on for depth quality.
+    # The projector's dots make depth much better and the IR pair useless for feature
+    # tracking. One or the other.
     emitter_enabled: bool = True
-    # Publish the accel+gyro motion module as a combined Imu stream (for VIO). Runs
-    # on its own pipeline/thread at the IMU's native rate, independent of the video.
     enable_imu: bool = False
-    # Motion-module rates in Hz. One Imu is emitted per gyro sample, so imu_gyro_hz
-    # sets the IMU output rate. D435i maxes at 400/400; falls back to sensor
-    # defaults if the exact rate isn't offered.
+    # Falls back to the sensor's own rates if these are not offered. One Imu goes out
+    # per gyro sample, so imu_gyro_hz is the output rate.
     imu_accel_hz: int = 400
     imu_gyro_hz: int = 400
     pointcloud_fps: float = 5.0
@@ -165,10 +156,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._pipeline: rs.pipeline | None = None
         self._profile: rs.pipeline_profile | None = None
         self._imu_pipeline: rs.pipeline | None = None
-        # The two accelerometer samples an incoming gyro sample is interpolated
-        # between, and the gyro samples still waiting for one past them. Bounded
-        # because a stalled accelerometer stream would otherwise grow this forever;
-        # at 400 Hz it is 40 ms of slack.
+        # The pair a gyro sample is interpolated between, and the gyro samples still
+        # waiting for one past them. Bounded so a stalled accelerometer cannot grow it.
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
@@ -299,24 +288,20 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             self._imu_pipeline.start(imu_config, self._on_motion_frame)
         except RuntimeError:
-            # Requested rate not offered by this unit — fall back to sensor defaults.
+            # Rate not offered by this unit.
             imu_config = rs.config()
             if self.config.serial_number:
                 imu_config.enable_device(self.config.serial_number)
             imu_config.enable_stream(rs.stream.accel)
             imu_config.enable_stream(rs.stream.gyro)
             self._imu_pipeline.start(imu_config, self._on_motion_frame)
-        # Starting a pipeline on the motion module can reset the option, and it is the
-        # one sensor whose clock has to agree with the imagers'.
+        # Starting a pipeline can reset the option.
         self._require_global_time()
 
     def _require_global_time(self) -> None:
-        """Put every sensor's timestamps on the host clock.
+        """Put every sensor on the host clock rather than its own boot time.
 
-        Without this a sensor reports milliseconds since its own boot. The imagers and
-        the motion module are separate sensors with separate clocks, so one of them
-        falling back leaves the IMU and the images on unrelated time bases -- which
-        does not fail anywhere, it just quietly ruins any estimator that fuses them.
+        The imagers and the motion module are separate sensors with separate clocks.
         """
         import pyrealsense2 as rs
 
@@ -339,11 +324,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # The RS hardware timestamp (global_time domain: host epoch but
-        # hardware-precise), NOT time.time() at the callback — the latter adds Python
-        # callback latency/jitter that desyncs cam<->IMU and makes VIO (cuVSLAM etc.)
-        # diverge. Both the imagers and the motion module use frame.get_timestamp(),
-        # so they share one clock. get_timestamp() is ms -> seconds.
+        # Hardware capture time, in milliseconds. A host stamp taken here would carry
+        # callback jitter.
         ts = motion.get_timestamp() / 1000.0
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
@@ -355,12 +337,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _publish_paired_imu(self) -> None:
         """Emit one Imu per gyro sample, with the accelerometer read at that instant.
 
-        The motion module samples the two independently and they never share a
-        timestamp — even asked for 400 Hz each they land ~1.2 ms apart and drift, and
-        at mixed rates it is half an accel period. So a gyro sample waits here for an
-        accelerometer sample past it and takes the interpolated value, rather than
-        being paired with whatever accel happened to arrive last and carrying that
-        stale reading under the gyro's own timestamp.
+        The two are sampled independently and never share a timestamp.
         """
         while self._pending_gyro and len(self._accel_history) == 2:
             (start_ts, start), (end_ts, end) = self._accel_history
@@ -381,9 +358,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
     def _publish_camera_info(self) -> None:
-        # The hardware clock, not time.time(): a recording should carry one time
-        # base, and camera_info that cannot be lined up with the frames it
-        # describes is a trap for anything matching them by timestamp.
+        # The hardware clock, so camera_info matches the frames it describes.
         ts = self._last_hardware_ts
         if ts is None:
             return
@@ -443,8 +418,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._infra2_camera_info = self._intrinsics_to_camera_info(
                 infra2_stream.get_intrinsics(), self._infra2_optical_frame
             )
-            # The right eye's P[3] carries the stereo baseline as -fx * baseline.
-            # Left at 0 (the default), every stereo consumer computes infinite depth.
+            # P[3] is -fx * baseline; left at 0 a stereo consumer sees infinite depth.
             baseline = self.between_cam_distance(self.config.serial_number)
             if baseline is None:
                 logger.warning("RealSense: no stereo baseline, right P[3] stays 0")
@@ -521,9 +495,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     ) -> rs.stream_profile | None:
         """A profile for one of the device's streams, running or not.
 
-        Extrinsics belong to the device, not to the pipeline, so reading them off the
-        sensor graph keeps an imager placeable on tf with its stream switched off — a
-        rig that runs the infrared pair alone still has to say where those imagers are.
+        Extrinsics belong to the device, not the pipeline, so an imager stays placeable
+        on tf with its stream switched off.
         """
         if self._profile is None:
             return None
@@ -538,10 +511,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _get_extrinsics(self) -> None:
         """Where each imager sits relative to the depth origin, read off the device.
 
-        Per-unit factory calibration, not a datasheet. This is the only source that
-        gets a rig right when the nominal number is wrong for the model actually
-        plugged in — a D455's 95mm IR baseline published as the D435's 50mm halves
-        every depth derived from tf, and nothing downstream can tell.
+        Per-unit factory calibration, not a datasheet: the nominal number is wrong for
+        whichever model is actually plugged in.
         """
         import pyrealsense2 as rs
 
@@ -586,16 +557,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     ) -> Transform:
         """Convert a librealsense extrinsic into a body-frame (REP-103) transform.
 
-        librealsense reports extrinsics between *optical* frames — x right, y down,
-        z forward — while camera_link and its children are body frames — x forward,
-        y left, z up. Writing the optical translation straight into a body-frame joint
-        puts a lateral imager offset on the forward axis instead. That does not fail;
-        it silently misplaces the colour camera by its own baseline, which then shows
-        up as unregistered depth and as reprojection error downstream.
-
-        Changing basis means conjugating the whole rigid transform by the optical
-        rotation, not just permuting the translation, so any rotation between the two
-        imagers lands in the right frame too.
+        librealsense measures between optical frames, camera_link and its children are
+        body frames. Conjugating the whole transform, rather than permuting the
+        translation, carries any rotation between the imagers across too.
         """
         body_from_optical = np.eye(4)
         body_from_optical[:3, :3] = Rotation.from_quat(
@@ -669,12 +633,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 # Pipeline went away underneath us.
                 break
             except RuntimeError:
-                # wait_for_frames() raises this on *timeout* as well as on a stopped
-                # pipeline. Treating both as "stopped" meant a slow first frameset --
-                # which happens on some startups -- silently killed capture for the whole
-                # run, with the IMU still streaming from its own callback so the
-                # recording looked alive. Retry, and only give up if frames really have
-                # stopped coming.
+                # Raised on timeout as well as on a stopped pipeline, and a slow first
+                # frameset is normal.
                 if not self._running:
                     break
                 consecutive_timeouts += 1
@@ -802,10 +762,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(camera_link_to_depth)
 
-        # camera_link -> every other imager, then each one's optical child. No
-        # inversion: camera_link coincides with the depth frame, so the imager's
-        # extrinsic to depth already IS its placement in camera_link, once
-        # _extrinsics_to_transform has moved it into body axes.
+        # camera_link -> every other imager, then each one's optical child. No inversion:
+        # camera_link coincides with the depth frame, so an imager's extrinsic to depth
+        # already is its placement here.
         for frame_id, extrinsics in self._frame_extrinsics.items():
             transforms.append(
                 self._extrinsics_to_transform(extrinsics, self._camera_link, frame_id, ts)

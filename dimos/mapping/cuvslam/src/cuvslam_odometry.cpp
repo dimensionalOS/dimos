@@ -138,10 +138,8 @@ struct CuvslamConfig {
     /// cuvslam::Slam: pose graph + loop closure on top of the odometry. Without it
     /// there is nothing to pull a revisit back together and the map smears.
     bool enable_slam;
-    /// Slam must finish each frame before Track() returns: GetPose() has no
-    /// timestamp, so a pose from a thread running behind cannot be matched to the
-    /// odometry pose it should be differenced against. Async measured 77 m ATE
-    /// against 0.25 m for the odometry it is supposed to be correcting.
+    /// GetPose() carries no timestamp, so a Slam thread running behind produces a
+    /// pose that cannot be matched to the odometry pose it corrects.
     bool slam_sync_mode;
     /// Poses kept in the graph. 300 is NVIDIA's real-time figure, 0 is unlimited.
     int slam_max_map_size;
@@ -358,10 +356,8 @@ private:
     void on_image(const sensor_msgs::Image& img) {
         const int index = camera_index(img.header.frame_id);
         if (index < 0) {
-            // Either the rig has not arrived yet or this camera is not on it. Both
-            // are silent no-output modes, so say so -- once, since a rig that never
-            // arrives would otherwise repeat this for the length of the run. The
-            // teardown count is what says how long it went on for.
+            // Both a rig that has not resolved yet and a camera that is not on it are
+            // silent no-output modes. Once only; the teardown count carries the rest.
             if (++unplaced_images_ == kWaitingWarnFrames) {
                 logging::warn("cuvslam is dropping images from a camera that is not on the rig",
                               {logging::Field("frame_id", img.header.frame_id),
@@ -462,11 +458,10 @@ private:
         odometry_cfg.async_sba = cfg_.async_sba;
         odometry_cfg.rgbd_settings.depth_scale_factor =
             static_cast<float>(cfg_.depth_units_per_meter);
-        // Which camera the depth is pixel-aligned with. It defaults to -1, meaning no
-        // camera, and a depth image that belongs to nothing is silently ignored: the
-        // tracker runs, consumes every frame and returns no pose at all. A depth stream
-        // usually reports its own frame rather than the imager it is aligned to, and
-        // cuVSLAM takes one RGB-D camera anyway, so an unrecognised frame means camera 0.
+        // Which camera the depth is aligned with. The default of -1 means none, and a
+        // depth image belonging to nothing is silently ignored -- every frame consumed,
+        // no pose. A depth stream usually reports its own frame rather than that
+        // imager's, and RGBD takes one camera anyway, so unrecognised means camera 0.
         odometry_cfg.rgbd_settings.depth_camera_id = std::max(camera_index(depth_.header.frame_id), 0);
 
         tracker_.emplace(rig, odometry_cfg);
@@ -529,10 +524,8 @@ private:
             return;  // no camera_info yet
         }
 
-        // One frame per camera, and they have to be the same instant: pairing across
-        // motion is worse than waiting for the camera that is behind. A fixed offset
-        // between two streams lands here every frame, so say so rather than tracking
-        // nothing in silence.
+        // One frame per camera, all of the same instant: pairing across motion is worse
+        // than waiting. A fixed offset between two streams lands here every frame.
         std::int64_t oldest = stamp_to_ns(images_[0].header);
         std::int64_t newest = oldest;
         for (const sensor_msgs::Image& image : images_) {
@@ -582,11 +575,9 @@ private:
             return;
         }
         const Transform tracker_from_rig = to_transform(est.world_from_rig->pose);
-        // cuVSLAM restarts its world frame after a loss, and measurement shows it
-        // does so *without* ever returning an empty pose, so the restart has to be
-        // caught here: a step no robot could have travelled is a frame change.
-        // Odometry is allowed to drift but not to jump, so rebase onto the last
-        // pose published and let the segment id say the motion is unmeasured.
+        // cuVSLAM restarts its world frame after a loss without ever returning an empty
+        // pose, so the restart shows up only as a step no robot could have travelled.
+        // Odometry may drift but not jump: rebase onto the last pose published.
         const Transform candidate = compose(world_from_tracker_, tracker_from_rig);
         if (last_pose_ns_) {
             const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
@@ -636,12 +627,9 @@ private:
         // Slam finishes the frame before Track() returns. See slam_sync_mode.
         const Transform map_from_rig = to_transform(slam_->GetPose());
 
-        // No magnitude guard here. When the odometry restarts its world frame the
-        // module rebases to keep odom continuous, and that offset has to land
-        // somewhere: map->odom is exactly where it belongs. A correction of
-        // several metres after a handful of restarts is the right answer, not
-        // divergence -- an earlier absolute cap threw away 6161 good corrections
-        // on one run and made cuVSLAM look like it had stopped.
+        // No magnitude guard: the rebase that keeps odom continuous across a restart
+        // has to land somewhere, and map->odom is where it belongs. Several metres
+        // after a few restarts is the right answer, not divergence.
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};

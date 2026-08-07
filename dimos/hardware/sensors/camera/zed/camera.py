@@ -133,14 +133,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._sl_camera_info: sl.CameraInformation | None = None
         # The last frame's capture time, which is what camera_info is stamped with.
         self._last_image_ts: float | None = None
-        # The depth frame the last pointcloud was built from, so a capture slower than
-        # the pointcloud interval republishes nothing rather than the same cloud twice.
+        # The depth frame the last cloud was built from, so a slow capture republishes
+        # nothing rather than the same cloud twice.
         self._last_pointcloud_ts: float | None = None
 
     def _publish_camera_info(self) -> None:
-        # The capture clock, not time.time(): camera_info that cannot be lined up with
-        # the frames it describes is a trap for anything matching them by timestamp.
-        # Nothing goes out before the first frame, since there is no time to give it.
+        # The capture clock, so camera_info can be matched to the frames it describes.
+        # Nothing goes out before the first frame; there is no time to give it.
         ts = self._last_image_ts
         if ts is None:
             return
@@ -150,9 +149,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ):
             if info is None:
                 continue
-            # A copy per publish: in-process subscribers get the object by reference, so
-            # restamping the stored one rewrites the stamp of a message already
-            # delivered.
+            # A copy per publish: subscribers hold the object by reference, so
+            # restamping the stored one rewrites an already-delivered message.
             stamped = copy.copy(info)
             stamped.ts = ts
             stream.publish(stamped)
@@ -192,8 +190,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._sl_camera_info is not None:
             self._stream_width = self._sl_camera_info.camera_configuration.resolution.width
             self._stream_height = self._sl_camera_info.camera_configuration.resolution.height
-            # The SDK substitutes a rate it can do rather than failing, and consumers
-            # read config.fps expecting the real one.
+            # The SDK substitutes a rate it can do rather than failing.
             delivered_fps = self._sl_camera_info.camera_configuration.fps
             if delivered_fps != self.config.fps:
                 logger.warning(
@@ -319,10 +316,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            # The capture timestamp from the SDK, NOT time.time() here: grab() blocks
-            # through the depth inference, so a host stamp taken afterwards is late by
-            # however long that took, and jitters frame to frame. Both are on the host
-            # epoch, so this only removes the bias.
+            # The SDK's capture stamp, not time.time(): grab() blocks through the depth
+            # inference, so a host stamp afterwards is late by however long that took.
+            # Same epoch either way, so this only removes the bias.
             ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
             self._last_image_ts = ts
 

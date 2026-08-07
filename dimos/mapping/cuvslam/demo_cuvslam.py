@@ -16,18 +16,9 @@
 
     dimos run demo-cuvslam --viewer rerun --rerun-host 0.0.0.0
 
-The smallest thing that shows whether cuVSLAM is tracking: a camera, the tracker, and a
-viewer. Wire it into a robot and when that misbehaves this narrows down whether the
-problem is the tracker or everything around it.
-
-``emitter_enabled`` is **off**: the projector's dot pattern is fixed to the camera, so it
-moves exactly with it and feature trackers latch onto it and bias motion toward zero.
-
-What to look for: ``odometry`` advancing pose after pose, and restarts staying rare.
-Frames arriving in the viewer only proves the camera works -- cuVSLAM restarting its world
-frame constantly still publishes odometry and still draws. ``world/path`` is the trail of
-everywhere the camera has been, which is the quickest read on both: it should retrace your
-own route, and a restart shows up as a straight jump across it.
+A camera, the tracker and a viewer: enough to tell whether cuVSLAM itself is tracking.
+``world/path`` is the quickest read -- it should retrace the route walked, and a world
+frame restart shows up as a straight jump across it.
 """
 
 from __future__ import annotations
@@ -46,20 +37,14 @@ CAMERA_NAME = "d455"
 
 
 def _path_at_true_height(path: Path) -> Any:
-    """Draw the trail where it actually is.
-
-    ``to_rerun`` lifts the line half a metre by default so it clears a costmap. There
-    is no costmap here and the camera flies at whatever height you carry it, so the
-    lift would just put the trail somewhere the camera never was.
-    """
+    """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
     return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
 def _rerun_blueprint() -> Any:
     """The cameras down one side, the 3D world taking the rest.
 
-    One view, not one per imager: the rerun bridge names an entity after the topic, and
-    every camera shares the one the tracker reads, so this alternates between them.
+    One view for all of them: rerun names an entity after the topic, which they share.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -89,9 +74,7 @@ demo_cuvslam = (
             width=848,
             height=480,
             fps=30,
-            # cuVSLAM tracks on the IR pair. The device delivers it already rectified,
-            # which is what lets the module run a pinhole model with an identity
-            # inter-camera rotation.
+            # The IR pair, which the device delivers already rectified.
             enable_infrared=True,
             emitter_enabled=False,
             enable_color=False,
@@ -100,8 +83,7 @@ demo_cuvslam = (
             enable_imu=False,
         ),
         CuvslamOdometry.blueprint(),
-        # cuVSLAM publishes only where the camera is now. This keeps the history so
-        # the viewer can draw where it has been.
+        # cuVSLAM publishes only the current pose; this keeps the trail.
         OdometryPath.blueprint(),
         vis_module(
             global_config.viewer,
@@ -113,8 +95,7 @@ demo_cuvslam = (
     )
     .remappings(
         [
-            # Both imagers onto the one stream: the tracker tells its cameras apart by
-            # frame_id, so a second camera is two more lines here and nothing else.
+            # Both imagers onto the one stream; the tracker tells them apart by frame_id.
             (RealSenseCamera, "infrared_left", "image"),
             (RealSenseCamera, "infrared_right", "image"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
