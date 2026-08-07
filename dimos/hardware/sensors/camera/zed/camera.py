@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import atexit
+import copy
 import threading
 import time
 
@@ -41,7 +42,10 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+
+logger = setup_logger()
 
 
 def default_base_transform() -> Transform:
@@ -127,15 +131,31 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._sl_camera_info: sl.CameraInformation | None = None
+        # The last frame's capture time, which is what camera_info is stamped with.
+        self._last_image_ts: float | None = None
+        # The depth frame the last pointcloud was built from, so a capture slower than
+        # the pointcloud interval republishes nothing rather than the same cloud twice.
+        self._last_pointcloud_ts: float | None = None
 
     def _publish_camera_info(self) -> None:
-        ts = time.time()
-        if self._color_camera_info:
-            self._color_camera_info.ts = ts
-            self.camera_info.publish(self._color_camera_info)
-        if self._depth_camera_info:
-            self._depth_camera_info.ts = ts
-            self.depth_camera_info.publish(self._depth_camera_info)
+        # The capture clock, not time.time(): camera_info that cannot be lined up with
+        # the frames it describes is a trap for anything matching them by timestamp.
+        # Nothing goes out before the first frame, since there is no time to give it.
+        ts = self._last_image_ts
+        if ts is None:
+            return
+        for info, stream in (
+            (self._color_camera_info, self.camera_info),
+            (self._depth_camera_info, self.depth_camera_info),
+        ):
+            if info is None:
+                continue
+            # A copy per publish: in-process subscribers get the object by reference, so
+            # restamping the stored one rewrites the stamp of a message already
+            # delivered.
+            stamped = copy.copy(info)
+            stamped.ts = ts
+            stream.publish(stamped)
 
     @rpc
     def start(self) -> None:
@@ -172,6 +192,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._sl_camera_info is not None:
             self._stream_width = self._sl_camera_info.camera_configuration.resolution.width
             self._stream_height = self._sl_camera_info.camera_configuration.resolution.height
+            # The SDK substitutes a rate it can do rather than failing, and consumers
+            # read config.fps expecting the real one.
+            delivered_fps = self._sl_camera_info.camera_configuration.fps
+            if delivered_fps != self.config.fps:
+                logger.warning(
+                    "ZED runs at %s fps, not the %s asked for", delivered_fps, self.config.fps
+                )
 
         self._build_camera_info()
         self._get_extrinsics()
@@ -183,7 +210,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: print(f"CameraInfo error: {e}"),
+                on_error=lambda e: logger.error("ZED camera_info: %s", e),
             )
         )
 
@@ -196,7 +223,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: print(f"Pointcloud error: {e}"),
+                    on_error=lambda e: logger.error("ZED pointcloud: %s", e),
                 )
             )
 
@@ -272,7 +299,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         tracking_params.set_floor_as_origin = self.config.set_floor_as_origin
         err = self._zed.enable_positional_tracking(tracking_params)
         if err != sl.ERROR_CODE.SUCCESS:
-            print(f"Failed to enable positional tracking: {err}")
+            logger.error("ZED positional tracking did not start: %s", err)
             self._tracking_enabled = False
             return
         self._tracking_enabled = True
@@ -292,7 +319,12 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            ts = time.time()
+            # The capture timestamp from the SDK, NOT time.time() here: grab() blocks
+            # through the depth inference, so a host stamp taken afterwards is late by
+            # however long that took, and jitters frame to frame. Both are on the host
+            # epoch, so this only removes the bias.
+            ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
+            self._last_image_ts = ts
 
             color_img = None
             if self._image_left is not None:
@@ -434,6 +466,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         if color_img is None or depth_img is None or self._color_camera_info is None:
             return
+        if depth_img.ts == self._last_pointcloud_ts:
+            return
+        self._last_pointcloud_ts = depth_img.ts
 
         try:
             pcd = PointCloud2.from_rgbd(
@@ -445,7 +480,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
-            print(f"Pointcloud generation error: {e}")
+            logger.error("ZED pointcloud generation failed: %s", e)
 
     @rpc
     def stop(self) -> None:
