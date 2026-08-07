@@ -122,8 +122,6 @@ demo_cuvslam = (
             enable_imu=False,
         ),
         CuvslamOdometry.blueprint(
-            enable_imu=False,
-            async_sba=False,
             enable_slam=True,
             base_frame="base_link",
             odom_frame="odom",
@@ -145,6 +143,9 @@ demo_cuvslam = (
             (RealSenseCamera, "infrared_left", "image_left"),
             (RealSenseCamera, "infrared_right", "image_right"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
+            # The right one carries the baseline in P[3]; without it there is no
+            # metric scale.
+            (RealSenseCamera, "infrared_right_camera_info", "camera_info_right"),
         ]
     )
     .global_config(n_workers=4)

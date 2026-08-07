@@ -23,17 +23,9 @@ and ``map -> odom -> base_link``.
 Two things carry over from benchmarking six handheld D455 recordings, because both change
 the answer rather than the tuning:
 
-``enable_imu`` is **off**. On every recording measured, feeding the D455's IMU made
-cuVSLAM worse -- mildly at walking pace and by 4x at jogging pace -- and no gravity,
-excitation or time-offset correction recovered it. The module's own default is on, so this
-is a deliberate override, and it should be revisited on a rig whose IMU has been validated
-end to end rather than assumed.
-
-``async_sba`` is **off**. cuVSLAM's asynchronous bundle adjustment thread races: the
-resulting ``std::out_of_range`` is thrown from that thread, so no caller-side handler sees
-it, and the process aborts. Reproduced in NVIDIA's own ``cuvslam_api_launcher``, which
-already defaults the flag off. Turning it off also makes cuVSLAM deterministic; with it on,
-ATE varied 0.406-3.418 m across identical runs.
+``enable_imu`` and ``async_sba`` are both off, which is now the module's own default --
+see ``CuvslamConfig`` for why. Turning the IMU back on needs an ``ImuCalibration`` for the
+camera actually fitted; there is deliberately no default extrinsic to fall back on.
 
 Loop closure (``enable_slam``) is left on: it is what makes the difference between drifting
 odometry and a pose that survives a revisit, and it costs about 2.5x wall clock while still
@@ -75,8 +67,6 @@ alfred_cuvslam = (
             base_transform=None,
         ),
         CuvslamOdometry.blueprint(
-            enable_imu=False,
-            async_sba=False,
             enable_slam=True,
             base_frame="base_link",
             odom_frame="odom",
@@ -91,6 +81,9 @@ alfred_cuvslam = (
             (RealSenseCamera, "infrared_left", "image_left"),
             (RealSenseCamera, "infrared_right", "image_right"),
             (RealSenseCamera, "infrared_left_camera_info", "camera_info"),
+            # The right one carries the baseline in P[3]; without it there is no
+            # metric scale.
+            (RealSenseCamera, "infrared_right_camera_info", "camera_info_right"),
         ]
     )
     .global_config(n_workers=6)

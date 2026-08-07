@@ -19,8 +19,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import time
+from typing import Any
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -39,9 +40,8 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 MODULE_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = MODULE_DIR.parents[2]
 
-# The recordings carry right P[3] == 0, so the baseline cannot be read off
-# CameraInfo; this is the D455 factory extrinsic.
-D455_FACTORY_BASELINE_M = 0.09486231207847595
+# baseline_m left at this reads the baseline off the right camera_info instead.
+DERIVE_BASELINE_FROM_CAMERA_INFO = 0.0
 
 # The nix binary runs under the nix loader, whose ld.so.cache does not list the
 # host driver, so dlopen("libcuda.so.1") fails and cudart reports the misleading
@@ -118,6 +118,50 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
+class ImuCalibration(BaseModel):
+    """One physical camera's IMU calibration: where it sits, and how much it lies.
+
+    There is deliberately no default. The extrinsic belongs to a single unit, and the
+    noise densities come from an Allan-variance run on that unit; carrying either as a
+    module default means every other camera silently gets someone else's numbers.
+    """
+
+    # rig_from_imu, the rig being the left camera.
+    tx: float
+    ty: float
+    tz: float
+    qx: float
+    qy: float
+    qz: float
+    qw: float
+    gyro_noise_density: float
+    gyro_random_walk: float
+    accel_noise_density: float
+    accel_random_walk: float
+    # The rate actually fed, not the rate requested: cuVSLAM computes expected samples
+    # per frame from this, and declaring more than it receives disables fusion silently.
+    frequency: float
+
+    @classmethod
+    def for_serial(cls, serial: str) -> ImuCalibration | None:
+        """Load ``<calibration dir>/imu_<serial>.yaml``, or None if there is none."""
+        import yaml
+
+        path = calibration_dir() / f"imu_{serial}.yaml"
+        if not path.is_file():
+            return None
+        with path.open() as handle:
+            return cls(**yaml.safe_load(handle))
+
+
+def calibration_dir() -> Path:
+    """Where per-unit calibration lives, keyed by device serial number."""
+    override = os.environ.get("DIMOS_CALIBRATION_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / ".config/dimos/calibration"
+
+
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
@@ -125,12 +169,18 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    baseline_m: float = D455_FACTORY_BASELINE_M
+    # Metric scale. Read from the right camera_info's P[3] unless set here, so a
+    # different camera model is a different baseline without touching this file.
+    baseline_m: float = DERIVE_BASELINE_FROM_CAMERA_INFO
     rectified: bool = True
-    publish_landmarks: bool = True
-    # cuVSLAM's own default. Measured better than synchronous SBA on the airbnb
-    # replay (windowed ATE 0.73 m vs 0.94 m), so there is no reason to override it.
-    async_sba: bool = True
+    # Off because the port is ``_landmarks``, which the coordinator does not wire.
+    # Rename it to publish, and expect the bandwidth: every tracked point, every frame.
+    publish_landmarks: bool = False
+    # cuVSLAM's asynchronous bundle adjustment thread races and throws
+    # std::out_of_range from that thread, where no caller-side handler can catch it,
+    # so the process aborts. NVIDIA's own launcher already defaults it off. Off also
+    # makes cuVSLAM deterministic; on, ATE varied 0.406-3.418 m across identical runs.
+    async_sba: bool = False
     # No indoor robot travels this fast, so a step implying it is cuVSLAM
     # restarting its world frame rather than motion.
     max_speed_mps: float = 10.0
@@ -150,34 +200,32 @@ class CuvslamConfig(NativeModuleConfig):
     slam_sync_mode: bool = True
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
-    # Inertial mode. NVIDIA's mode table: "1 stereo pair + 1 IMU ... adds
-    # robustness to brief visual failures", which is what a world-frame restart
-    # is. Extrinsic is Kalibr's T_cam0_imu from calib_d455_imucam.yaml; the rig
-    # frame is the left camera, so that transform is rig_from_imu directly.
-    enable_imu: bool = True
-    imu_tx: float = 0.030829037
-    imu_ty: float = -0.004349224
-    imu_tz: float = -0.015419659
-    imu_qx: float = 0.00119659
-    imu_qy: float = -0.003184443
-    imu_qz: float = -0.003371026
-    imu_qw: float = 0.999988532
-    gyro_noise_density: float = 6.07e-3
-    gyro_random_walk: float = 3.6e-5
-    accel_noise_density: float = 3.36e-2
-    accel_random_walk: float = 9.8e-4
-    imu_frequency: float = 400.0
+    # Inertial mode. Off because it lost on every recording measured -- mildly at
+    # walking pace, 4x at jogging pace -- and no gravity, excitation or time-offset
+    # correction recovered it. Turning it on requires imu_calibration: there is no
+    # default, because a camera-to-IMU extrinsic belongs to one physical unit.
+    enable_imu: bool = False
+    imu_calibration: ImuCalibration | None = None
 
-    # Off because masking the Mid-360's dots measurably *hurts*: over three full
-    # airbnb runs each way it left ATE unchanged inside the run-to-run spread and
-    # raised world-frame restarts. A controlled probe (none / mask / inverted
-    # mask) confirmed the masks do reach the tracker, so this is a real result,
-    # not a no-op: the dots are apparently usable texture on blank indoor walls,
-    # and their count at a restart is a proxy for "pointed at a featureless
-    # surface" rather than the cause.
-    mask_speckle: bool = False
-    speckle_threshold: int = 6
-    speckle_grow: int = 2
+    def to_config_dict(self) -> dict[str, Any]:
+        """Flatten the calibration, because the native struct is a plain aggregate.
+
+        With the IMU off the values are never read, so zeros go across rather than
+        stand-in numbers that would look like a calibration to anyone reading a log.
+        """
+        blob = super().to_config_dict()
+        calibration = blob.pop("imu_calibration", None)
+        if blob.get("enable_imu") and calibration is None:
+            raise ValueError(
+                "enable_imu is on but imu_calibration is unset. Load it for the camera "
+                f"actually plugged in -- ImuCalibration.for_serial(<serial>) reads "
+                f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
+                "unit's extrinsic."
+            )
+        empty = dict.fromkeys(ImuCalibration.model_fields, 0.0)
+        for key, value in (calibration or empty).items():
+            blob[f"imu_{key}"] = value
+        return blob
 
 
 class CuvslamOdometry(NativeModule):
@@ -188,10 +236,15 @@ class CuvslamOdometry(NativeModule):
     the last published pose, so the stream never jumps. A restart costs the motion
     that happened across it, and is reported only on the log.
 
-    ``landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
+    ``_landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
     the ``odom`` frame. They are a live view rather than an accumulated map, so
     they carry the odometry's drift; put them through ``map`` -> ``odom`` to get
-    the corrected positions.
+    the corrected positions. Underscored, so nothing subscribes and nothing is
+    published unless the port is renamed and ``publish_landmarks`` turned on.
+
+    ``camera_info`` is the left imager's, and ``camera_info_right`` the right's.
+    Both are required: the left carries the intrinsics, and the right carries the
+    baseline in ``P[3]``, which is the only per-unit source of metric scale.
 
     ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``. It jumps
     at a loop closure, which is the point: that is where a revisit gets pulled back
@@ -210,10 +263,11 @@ class CuvslamOdometry(NativeModule):
     image_left: In[Image]
     image_right: In[Image]
     camera_info: In[CameraInfo]
+    camera_info_right: In[CameraInfo]
     imu: In[Imu]
 
     odometry: Out[Odometry]
-    landmarks: Out[PointCloud2]
+    _landmarks: Out[PointCloud2]
     corrected_odometry: Out[Odometry]
     map_tf: Out[Odometry]
     tf: Out[TFMessage]

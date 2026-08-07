@@ -61,29 +61,6 @@ def default_base_transform() -> Transform:
     )
 
 
-def device_published_frames(camera_name: str = "camera") -> tuple[str, ...]:
-    """The frames :meth:`RealSenseCamera._publish_tf` puts on tf from the device.
-
-    A rig URDF that also describes this camera has to leave these edges alone:
-    two publishers means two parents, and tf keeps whichever arrived last. The
-    motion-module frames are absent on purpose -- accel and gyro come off a
-    separate pipeline with no extrinsic to depth, so the URDF still owns those.
-    """
-    return tuple(
-        f"{camera_name}_{name}"
-        for name in (
-            "depth_frame",
-            "depth_optical_frame",
-            "color_frame",
-            "color_optical_frame",
-            "infra1_frame",
-            "infra1_optical_frame",
-            "infra2_frame",
-            "infra2_optical_frame",
-        )
-    )
-
-
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
@@ -171,8 +148,12 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         return f"{self.config.camera_name}_infra2_optical_frame"
 
     @property
+    def _imu_frame(self) -> str:
+        return f"{self.config.camera_name}_accel_frame"
+
+    @property
     def _imu_optical_frame(self) -> str:
-        # accel and gyro are co-located on the D435i motion module.
+        # accel and gyro are co-located on the motion module.
         return f"{self.config.camera_name}_accel_optical_frame"
 
     # A slow start is normal; a minute of nothing is a real fault.
@@ -455,6 +436,23 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             frame_id=frame_id,
         )
 
+    def _motion_stream_profile(self) -> rs.stream_profile | None:
+        """The device's accel profile, whichever sensor happens to carry it.
+
+        Read off the device graph rather than the IMU pipeline, so the extrinsic is
+        available even before that pipeline starts — and on units where the motion
+        module is a separate sensor from the imagers.
+        """
+        import pyrealsense2 as rs
+
+        if self._profile is None:
+            return None
+        for sensor in self._profile.get_device().query_sensors():
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() == rs.stream.accel:
+                    return profile
+        return None
+
     def _get_extrinsics(self) -> None:
         """Where each imager sits relative to the depth origin, read off the device.
 
@@ -489,6 +487,19 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 translation[1] * 1000.0,
                 translation[2] * 1000.0,
             )
+
+        # The camera-to-IMU extrinsic is on the device too. Publishing it is what
+        # keeps a consumer from having to carry a hand-copied calibration of one
+        # particular unit.
+        if self.config.enable_imu:
+            accel_profile = self._motion_stream_profile()
+            if accel_profile is None:
+                logger.warning("RealSense: no motion module, IMU extrinsic unavailable")
+            else:
+                self._frame_extrinsics[self._imu_frame] = accel_profile.get_extrinsics_to(
+                    depth_stream
+                )
+
         self._color_to_depth_extrinsics = self._frame_extrinsics.get(self._color_frame)
 
     def _extrinsics_to_transform(

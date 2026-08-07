@@ -4,21 +4,21 @@
 // NVIDIA cuVSLAM stereo visual odometry as a dimos native module.
 //
 // in:  image_left/image_right (mono8, rectified), camera_info
-// out: odometry, landmarks (cuVSLAM's tracked 3D points)
+// out: odometry, corrected_odometry, tf
 //
 // cuVSLAM restarts its world frame after a tracking loss. The module rebases each
 // restart onto the last published pose, so consumers see ONE continuous odometry
 // path in ONE frame and never a jump. Resets are logged as debugging output; the
 // motion across one is unmeasured, which is drift the stream cannot account for.
-// baseline_m is config, not derived: these recordings have right P[3] == 0.
+// The baseline comes off the right camera_info's P[3], so any rectified stereo
+// camera works without a per-model constant; baseline_m overrides it.
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -110,72 +110,6 @@ Transform to_body_frame(const Transform& t) {
     return compose(compose(kBaseFromRig, t), invert(kBaseFromRig));
 }
 
-/// 3x3 median, then "how far above its own neighbourhood is this pixel", then a
-/// dilation to cover each spot's halo. The Mid-360 paints bright dots on the IR
-/// frame that move with the lidar's spin rather than with the world; measured at
-/// a cuVSLAM world-frame restart there are ~46k such pixels against ~1.8k on an
-/// average frame, so they are what breaks tracking on a lidar+camera rig.
-void speckle_mask(const std::uint8_t* pixels, std::int32_t width, std::int32_t height,
-                  std::int32_t pitch, int threshold, int grow, std::vector<std::uint8_t>& spike,
-                  std::vector<std::uint8_t>& mask) {
-    spike.assign(static_cast<std::size_t>(width) * height, 0);
-    mask.assign(static_cast<std::size_t>(width) * height, 0);
-    auto sort2 = [](std::uint8_t& a, std::uint8_t& b) {
-        const std::uint8_t low = std::min(a, b);
-        b = std::max(a, b);
-        a = low;
-    };
-    for (std::int32_t y = 1; y < height - 1; ++y) {
-        const std::uint8_t* above = pixels + (y - 1) * pitch;
-        const std::uint8_t* row = pixels + y * pitch;
-        const std::uint8_t* below = pixels + (y + 1) * pitch;
-        for (std::int32_t x = 1; x < width - 1; ++x) {
-            // 19-op median network; nth_element per pixel was the whole cost.
-            std::uint8_t p0 = above[x - 1], p1 = above[x], p2 = above[x + 1];
-            std::uint8_t p3 = row[x - 1], p4 = row[x], p5 = row[x + 1];
-            std::uint8_t p6 = below[x - 1], p7 = below[x], p8 = below[x + 1];
-            sort2(p1, p2); sort2(p4, p5); sort2(p7, p8);
-            sort2(p0, p1); sort2(p3, p4); sort2(p6, p7);
-            sort2(p1, p2); sort2(p4, p5); sort2(p7, p8);
-            sort2(p0, p3); sort2(p5, p8); sort2(p4, p7);
-            sort2(p3, p6); sort2(p1, p4); sort2(p2, p5);
-            sort2(p4, p7); sort2(p4, p2); sort2(p6, p4);
-            sort2(p4, p2);
-            if (static_cast<int>(row[x]) - static_cast<int>(p4) > threshold) {
-                spike[static_cast<std::size_t>(y) * width + x] = 255;
-            }
-        }
-    }
-    // Separable max filter: cheaper than a square structuring element and the
-    // result is the same for a box.
-    std::vector<std::uint8_t>& rows = mask;
-    for (std::int32_t y = 0; y < height; ++y) {
-        for (std::int32_t x = 0; x < width; ++x) {
-            std::uint8_t best = 0;
-            for (std::int32_t dx = -grow; dx <= grow && best == 0; ++dx) {
-                const std::int32_t sx = x + dx;
-                if (sx >= 0 && sx < width) {
-                    best = spike[static_cast<std::size_t>(y) * width + sx];
-                }
-            }
-            rows[static_cast<std::size_t>(y) * width + x] = best;
-        }
-    }
-    spike = rows;
-    for (std::int32_t y = 0; y < height; ++y) {
-        for (std::int32_t x = 0; x < width; ++x) {
-            std::uint8_t best = 0;
-            for (std::int32_t dy = -grow; dy <= grow && best == 0; ++dy) {
-                const std::int32_t sy = y + dy;
-                if (sy >= 0 && sy < height) {
-                    best = spike[static_cast<std::size_t>(sy) * width + x];
-                }
-            }
-            mask[static_cast<std::size_t>(y) * width + x] = best;
-        }
-    }
-}
-
 Transform to_transform(const cuvslam::Pose& pose) {
     return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
                      {pose.translation[0], pose.translation[1], pose.translation[2]}};
@@ -184,8 +118,10 @@ Transform to_transform(const cuvslam::Pose& pose) {
 }  // namespace
 
 struct CuvslamConfig {
-    double baseline_m;   ///< metres
-    bool rectified;      ///< D455 IR pair is rectified on-device (D=0, R=I)
+    /// Metres, or 0 to read it off the right camera_info's P[3].
+    double baseline_m;
+    /// The stereo pair arrives rectified: D all zero, R identity.
+    bool rectified;
     bool publish_landmarks;
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
     /// A step implying more than this is cuVSLAM changing world frames, not motion.
@@ -212,20 +148,18 @@ struct CuvslamConfig {
     /// robustness to brief visual failures", which is exactly what a world-frame
     /// restart is: vision briefly had nothing to hold on to.
     bool enable_imu;
-    /// rig_from_imu, rig being the left camera. Kalibr's T_cam0_imu.
+    /// rig_from_imu, rig being the left camera. Flattened from the python side's
+    /// ImuCalibration, which is per-serial and has no default -- all zero here
+    /// means enable_imu is off and none of it is read.
     double imu_tx, imu_ty, imu_tz;
     double imu_qx, imu_qy, imu_qz, imu_qw;
-    double gyro_noise_density;
-    double gyro_random_walk;
-    double accel_noise_density;
-    double accel_random_walk;
+    double imu_gyro_noise_density;
+    double imu_gyro_random_walk;
+    double imu_accel_noise_density;
+    double imu_accel_random_walk;
+    /// The rate actually fed. Declaring more than arrives makes cuVSLAM log a drop
+    /// ratio and silently never initialise inertial alignment.
     double imu_frequency;
-    /// Mask the lidar's dots out of the IR frames before tracking on them.
-    bool mask_speckle;
-    /// How far above its local median a pixel must sit to count as a lidar dot.
-    int speckle_threshold;
-    /// Dilation radius, to cover each dot's halo.
-    int speckle_grow;
 };
 
 class CuvslamOdometry : public Module {
@@ -244,17 +178,15 @@ public:
         slam_sync_mode_ = cfg.slam_sync_mode;
         slam_max_map_size_ = cfg.slam_max_map_size;
         slam_throttling_ms_ = cfg.slam_throttling_ms;
-        cfg_imu_ = cfg;
-        mask_speckle_ = cfg.mask_speckle;
-        speckle_threshold_ = cfg.speckle_threshold;
-        speckle_grow_ = cfg.speckle_grow;
-        if (!(baseline_m_ > 0.0)) {
-            throw std::runtime_error(
-                "baseline_m must be a positive number of metres (D455 factory value is 0.09486)");
+        cfg_ = cfg;
+        if (baseline_m_ < 0.0) {
+            throw std::runtime_error("baseline_m cannot be negative");
         }
 
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
+        builder.input<sensor_msgs::CameraInfo>("camera_info_right",
+                                               &CuvslamOdometry::on_camera_info_right, this);
         builder.input<sensor_msgs::Image>("image_left", &CuvslamOdometry::on_left, this);
         builder.input<sensor_msgs::Image>("image_right", &CuvslamOdometry::on_right, this);
         if (cfg.enable_imu) {
@@ -262,7 +194,9 @@ public:
         }
 
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
-        landmarks_ = builder.output<sensor_msgs::PointCloud2>("landmarks");
+        if (publish_landmarks_) {
+            landmarks_ = builder.output<sensor_msgs::PointCloud2>("landmarks");
+        }
         corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
         map_tf_ = builder.output<nav_msgs::Odometry>("map_tf");
     }
@@ -273,7 +207,11 @@ public:
                        logging::Field("tracked", static_cast<std::int64_t>(tracked_)),
                        logging::Field("resets", static_cast<std::int64_t>(segment_id_)),
                        logging::Field("loop_closures", static_cast<std::int64_t>(loop_closures_)),
-                       logging::Field("imu_samples", static_cast<std::int64_t>(imu_samples_))});
+                       logging::Field("imu_samples", static_cast<std::int64_t>(imu_samples_)),
+                       logging::Field("imu_dropped_before_start",
+                                      static_cast<std::int64_t>(imu_dropped_)),
+                       logging::Field("stereo_skew_rejects",
+                                      static_cast<std::int64_t>(skew_rejects_))});
     }
 
 private:
@@ -290,10 +228,41 @@ private:
         have_info_ = true;
     }
 
+    /// The right imager carries the baseline: P = [fx 0 cx -fx*B; ...], so
+    /// B = -P[3]/P[0]. Reading it here is what lets any stereo camera work without
+    /// a per-model constant compiled in.
+    void on_camera_info_right(const sensor_msgs::CameraInfo& info) {
+        if (tracker_ || have_baseline_) {
+            return;
+        }
+        if (cfg_.baseline_m > 0.0) {
+            baseline_m_ = cfg_.baseline_m;
+            have_baseline_ = true;
+            return;
+        }
+        if (info.P[0] == 0.0 || info.P[3] == 0.0) {
+            if (!baseline_warned_) {
+                baseline_warned_ = true;
+                logging::warn(
+                    "right camera_info carries no baseline (P[3] == 0), so there is no metric "
+                    "scale. The camera driver is not publishing the stereo extrinsic; set "
+                    "baseline_m explicitly to override.");
+            }
+            return;
+        }
+        baseline_m_ = std::abs(info.P[3] / info.P[0]);
+        have_baseline_ = true;
+        logging::info("cuvslam baseline from camera_info",
+                      {logging::Field("baseline_mm", baseline_m_ * 1000.0)});
+    }
+
     /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
     void on_imu(const sensor_msgs::Imu& msg) {
         if (!tracker_) {
-            return;  // the rig, and so the tracker, does not exist yet
+            // The rig, and so the tracker, does not exist yet. Counted rather than
+            // dropped silently: this is exactly the window inertial init needs.
+            ++imu_dropped_;
+            return;
         }
         cuvslam::ImuMeasurement m{};
         m.timestamp_ns = stamp_to_ns(msg.header);
@@ -322,7 +291,17 @@ private:
     /// cuVSLAM uses OpenCV convention (x right, y down, z forward), so the right
     /// camera sits at +baseline on x. The rig frame is the left camera.
     void ensure_tracker() {
-        if (tracker_ || !have_info_) {
+        if (tracker_) {
+            return;
+        }
+        if (!have_info_ || !have_baseline_) {
+            if (!waiting_warned_ && ++frames_waiting_ % kWaitingWarnFrames == 0) {
+                waiting_warned_ = true;
+                logging::warn("cuvslam has consumed frames without starting",
+                              {logging::Field("frames", static_cast<std::int64_t>(frames_waiting_)),
+                               logging::Field("have_camera_info", have_info_),
+                               logging::Field("have_baseline", have_baseline_)});
+            }
             return;
         }
         cuvslam::Camera left{};
@@ -337,24 +316,24 @@ private:
 
         cuvslam::Rig rig;
         rig.cameras = {left, right};
-        if (cfg_imu_.enable_imu) {
+        if (cfg_.enable_imu) {
             cuvslam::ImuCalibration imu{};
-            imu.rig_from_imu.translation = {static_cast<float>(cfg_imu_.imu_tx),
-                                            static_cast<float>(cfg_imu_.imu_ty),
-                                            static_cast<float>(cfg_imu_.imu_tz)};
+            imu.rig_from_imu.translation = {static_cast<float>(cfg_.imu_tx),
+                                            static_cast<float>(cfg_.imu_ty),
+                                            static_cast<float>(cfg_.imu_tz)};
             imu.rig_from_imu.rotation = {
-                static_cast<float>(cfg_imu_.imu_qx), static_cast<float>(cfg_imu_.imu_qy),
-                static_cast<float>(cfg_imu_.imu_qz), static_cast<float>(cfg_imu_.imu_qw)};
-            imu.gyroscope_noise_density = static_cast<float>(cfg_imu_.gyro_noise_density);
-            imu.gyroscope_random_walk = static_cast<float>(cfg_imu_.gyro_random_walk);
-            imu.accelerometer_noise_density = static_cast<float>(cfg_imu_.accel_noise_density);
-            imu.accelerometer_random_walk = static_cast<float>(cfg_imu_.accel_random_walk);
-            imu.frequency = static_cast<float>(cfg_imu_.imu_frequency);
+                static_cast<float>(cfg_.imu_qx), static_cast<float>(cfg_.imu_qy),
+                static_cast<float>(cfg_.imu_qz), static_cast<float>(cfg_.imu_qw)};
+            imu.gyroscope_noise_density = static_cast<float>(cfg_.imu_gyro_noise_density);
+            imu.gyroscope_random_walk = static_cast<float>(cfg_.imu_gyro_random_walk);
+            imu.accelerometer_noise_density = static_cast<float>(cfg_.imu_accel_noise_density);
+            imu.accelerometer_random_walk = static_cast<float>(cfg_.imu_accel_random_walk);
+            imu.frequency = static_cast<float>(cfg_.imu_frequency);
             rig.imus = {imu};
         }
 
         cuvslam::Odometry::Config cfg = cuvslam::Odometry::GetDefaultConfig();
-        cfg.odometry_mode = cfg_imu_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
+        cfg.odometry_mode = cfg_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
                                                : cuvslam::Odometry::OdometryMode::Multicamera;
         cfg.rectified_stereo_camera = rectified_;
         cfg.enable_landmarks_export = publish_landmarks_ || enable_slam_;
@@ -389,7 +368,15 @@ private:
         const std::int64_t t_left = stamp_to_ns(left_.header);
         const std::int64_t t_right = stamp_to_ns(right_.header);
         if (std::llabs(t_left - t_right) > kMaxPairSkewNs) {
-            return;  // wait for the matching eye rather than pairing across motion
+            // Wait for the matching eye rather than pairing across motion. A fixed
+            // offset between the two streams lands here every frame, so say so once
+            // instead of tracking nothing in silence.
+            if (++skew_rejects_ % kWaitingWarnFrames == 0) {
+                logging::warn("cuvslam stereo pairs exceed the 1 ms skew limit",
+                              {logging::Field("rejected", static_cast<std::int64_t>(skew_rejects_)),
+                               logging::Field("skew_ms", (t_left - t_right) / 1.0e6)});
+            }
+            return;
         }
         // cuVSLAM rejects a frame that is not strictly newer than the last one.
         if (last_ts_ns_ && t_left <= *last_ts_ns_) {
@@ -413,21 +400,7 @@ private:
         r.pitch = right_.step;
         r.camera_index = 1;
 
-        std::vector<cuvslam::Image> masks;
-        if (mask_speckle_) {
-            speckle_mask(left_.data.data(), left_.width, left_.height, left_.step,
-                         speckle_threshold_, speckle_grow_, spike_buffer_, mask_left_);
-            speckle_mask(right_.data.data(), right_.width, right_.height, right_.step,
-                         speckle_threshold_, speckle_grow_, spike_buffer_, mask_right_);
-            cuvslam::Image ml = l;
-            ml.pixels = mask_left_.data();
-            ml.pitch = left_.width;
-            cuvslam::Image mr = r;
-            mr.pixels = mask_right_.data();
-            mr.pitch = right_.width;
-            masks = {ml, mr};
-        }
-        const cuvslam::PoseEstimate est = tracker_->Track({l, r}, masks);
+        const cuvslam::PoseEstimate est = tracker_->Track({l, r}, {});
         ++frames_;
         last_ts_ns_ = t_left;
         have_left_ = have_right_ = false;
@@ -577,7 +550,7 @@ private:
         for (int i = 0; i < 3; ++i) {
             msg.fields[i].name = names[i];
             msg.fields[i].offset = i * static_cast<std::int32_t>(sizeof(float));
-            msg.fields[i].datatype = 7;  // FLOAT32
+            msg.fields[i].datatype = sensor_msgs::PointField::FLOAT32;
             msg.fields[i].count = 1;
         }
         msg.fields_length = static_cast<std::int32_t>(msg.fields.size());
@@ -600,31 +573,38 @@ private:
         landmarks_.publish(msg);
     }
 
-    // config
-    double baseline_m_{0.0};
-    bool rectified_{true};
-    bool publish_landmarks_{true};
-    bool async_sba_{true};
-    double max_speed_mps_{10.0};
-    std::string odom_frame_{"odom"};
-    std::string base_frame_{"base_link"};
-    std::string map_frame_{"map"};
+    // config. Every one of these is set from cfg_ in build(), so no initializer
+    // here can ever apply; python owns the defaults.
+    CuvslamConfig cfg_{};
+    double baseline_m_;
+    bool rectified_;
+    bool publish_landmarks_;
+    bool async_sba_;
+    double max_speed_mps_;
+    std::string odom_frame_;
+    std::string base_frame_;
+    std::string map_frame_;
+    bool have_baseline_{false};
+    bool baseline_warned_{false};
 
     // slam
     std::optional<cuvslam::Slam> slam_;
-    bool enable_slam_{true};
-    bool slam_sync_mode_{false};
-    int slam_max_map_size_{300};
-    int slam_throttling_ms_{0};
-    CuvslamConfig cfg_imu_{};
+    bool enable_slam_;
+    bool slam_sync_mode_;
+    int slam_max_map_size_;
+    int slam_throttling_ms_;
     std::uint64_t imu_samples_{0};
-    bool mask_speckle_{true};
-    int speckle_threshold_{6};
-    int speckle_grow_{2};
-    std::vector<std::uint8_t> spike_buffer_, mask_left_, mask_right_;
+    std::uint64_t imu_dropped_{0};
     bool slam_started_{false};
     std::uint64_t loop_closures_{0};
     std::int64_t last_closure_ns_{-1};
+
+    /// Frames consumed before the tracker could start. A blueprint that mis-wires
+    /// camera_info otherwise runs forever publishing nothing.
+    static constexpr std::uint64_t kWaitingWarnFrames = 100;
+    std::uint64_t frames_waiting_{0};
+    std::uint64_t skew_rejects_{0};
+    bool waiting_warned_{false};
 
     // intrinsics
     bool have_info_{false};
