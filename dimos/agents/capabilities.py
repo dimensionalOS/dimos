@@ -35,6 +35,7 @@ import time
 from typing import NamedTuple
 
 CAP_MOVEMENT = "movement"
+CAP_PERCEPTION = "perception"
 
 
 class _Hold(NamedTuple):

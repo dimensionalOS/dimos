@@ -43,6 +43,56 @@ uv run dimos stop
 
 Use `dimos log -f` to follow the log while the run is active.
 
+## Learned grasp-to-pick pipeline
+
+The real-hardware `xarm-graspgenx-agent` blueprint adds GraspGenX proposals to
+the xArm perception stack. Install the optional runtime and start it with:
+
+```bash
+uv sync --extra graspgenx --extra manipulation --inexact
+uv run dimos run xarm-graspgenx-agent
+```
+
+`pick` remains the only high-level picking tool. It resolves one current
+object, obtains that object's planning-frame point cloud, requests ranked
+GraspGenX candidates, and rejects candidates that fail pre-grasp, grasp, or
+retreat inverse kinematics. During planning, the selected target is
+temporarily removed from the collision scene while all other obstacles remain
+active. The selected candidate then runs through prepare, approach, grasp,
+close, verify, and retreat phases.
+
+Use the stable object ID returned by `scan_objects` whenever names are
+ambiguous. A name is accepted only when it identifies exactly one current
+detection; an object-ID prefix must also be unique. Existing
+`xarm-perception` and `xarm-perception-sim` blueprints retain their explicit
+heuristic grasp fallback and do not load the optional GraspGenX runtime.
+
+The learned pipeline configuration lives in
+`dimos/robot/manipulators/xarm/grasp_config.py`. It records the xArm gripper
+sweep volume and the transform from GraspGenX's gripper frame to the planned
+TCP. `PickAndPlaceModuleConfig` controls the planning frame, maximum point
+cloud age, candidate-check limit, TCP approach direction, approach/retreat
+offsets, heuristic fallback, and closure-feedback verification thresholds.
+Changing the frame transform, approach direction, or closure threshold
+requires robot-specific calibration.
+
+Failures are phase-specific and stop motion immediately. Before closure, a
+failed transaction leaves the gripper in its current safe state. After a
+successful close command, failures never automatically reopen the gripper;
+the result includes `object_may_be_held=true`, and an operator or agent should
+inspect state before issuing another motion. Target collision geometry is
+restored on every exit path, and restoration errors are reported without
+hiding the primary failure.
+
+The current verification is a closure-position proxy: an xArm gripper that
+stops above the calibrated empty-close threshold is treated as holding
+something. It does not measure grasp force, detect slip, or prove that the
+intended object was acquired. Force/torque or tactile feedback is required for
+those stronger guarantees. The shipped learned-grasp blueprint keeps this
+proxy disabled until the open, empty-close, and representative held-object
+positions have been measured on the target xArm; enable
+`grasp_verification.enabled` only after recording that calibration.
+
 ## Daily interaction
 
 For normal interactive use, start the human-friendly terminal client:

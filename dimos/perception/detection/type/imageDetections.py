@@ -94,4 +94,4 @@ class ImageDetections(Generic[T], TableStr):
 
         from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
 
-        return ImageMsg.from_opencv(img, ts=self.image.ts)
+        return ImageMsg.from_opencv(img, frame_id=self.image.frame_id, ts=self.image.ts)

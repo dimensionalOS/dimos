@@ -74,6 +74,7 @@ class GraspGenXConfig(ModuleConfig):
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     max_candidates: PositiveCount = 100
+    load_on_start: bool = True
 
     # Relational matrix properties cannot be expressed through scalar Field constraints.
     @field_validator("grasp_frame_to_tcp")
@@ -114,6 +115,10 @@ class GraspGenXModule(Module, GraspGenSpec):
     @rpc
     def start(self) -> None:
         super().start()
+        if self.config.load_on_start:
+            self._ensure_runtime()
+
+    def _ensure_runtime(self) -> None:
         if self._runtime is not None:
             return
         try:
@@ -123,13 +128,13 @@ class GraspGenXModule(Module, GraspGenSpec):
 
     @rpc
     def stop(self) -> None:
+        if self._runtime is not None:
+            self._runtime.stop()
         self._runtime = None
         super().stop()
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
-        if self._runtime is None:
-            raise GraspGenXError("GraspGenX module has not been started")
         if object_pointcloud.ts is None:
             raise ValueError("object pointcloud must have a timestamp")
         if not object_pointcloud.frame_id:
@@ -141,6 +146,8 @@ class GraspGenXModule(Module, GraspGenSpec):
         if not np.all(np.isfinite(points)):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
+        self._ensure_runtime()
+        assert self._runtime is not None
         try:
             poses, scores = self._runtime.infer(points)
         except Exception as exc:

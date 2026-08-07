@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PYTHON=.venv/bin/python
+uv pip install --python "$PYTHON" --extra-index-url https://download.pytorch.org/whl/cu128 \
+  --index-strategy unsafe-best-match \
+  torch==2.7.1+cu128 torchvision==0.22.1+cu128
+uv pip install --python "$PYTHON" \
+  torch-geometric h5py hydra-core matplotlib numpy==1.26.4 webdataset scikit-learn scipy \
+  tensorboard transformers tensordict diffusers==0.11.1 timm==1.0.15 \
+  huggingface-hub==0.25.2 PyOpenGL==3.1.5 addict yapf==0.40.1 tensorboardx \
+  sharedarray yourdfpy==0.0.56 urdfpy imageio viser tqdm pyyaml edgetam-dimos "networkx>=3.3"
+uv pip install --python "$PYTHON" --no-deps "git+https://github.com/NVlabs/GraspGenX.git"

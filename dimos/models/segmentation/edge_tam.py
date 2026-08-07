@@ -48,7 +48,7 @@ class SAM2InferenceState(TypedDict):
 
 
 def _build_model() -> "SAM2VideoPredictor":
-    """Build the EdgeTAM SAM2 model from the local config + checkpoint."""
+    """Build the EdgeTAM SAM2 model from the local config and checkpoint."""
     local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
 
     if not local_config_path.exists():
@@ -76,59 +76,59 @@ def _build_model() -> "SAM2VideoPredictor":
 
     predictor: SAM2VideoPredictor = instantiate(cfg.model, _recursive_=True)
 
-    # Suppress the per-frame "propagate in video" tqdm bar from sam2
+    # Suppress the per-frame "propagate in video" tqdm bar from sam2.
     import sam2.sam2_video_predictor as _svp
 
-    _svp.tqdm = lambda iterable, *a, **kw: iterable
+    _svp.tqdm = lambda iterable, *args, **kwargs: iterable
 
-    ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
-
-    sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
-    missing_keys, unexpected_keys = predictor.load_state_dict(sd)
+    checkpoint = get_data("models_edgetam") / "edgetam.pt"
+    state_dict = torch.load(checkpoint, map_location="cpu", weights_only=True)["model"]
+    missing_keys, unexpected_keys = predictor.load_state_dict(state_dict)
     if missing_keys:
-        raise RuntimeError("Missing keys in checkpoint")
+        raise RuntimeError("Missing keys in EdgeTAM checkpoint")
     if unexpected_keys:
-        raise RuntimeError("Unexpected keys in checkpoint")
+        raise RuntimeError("Unexpected keys in EdgeTAM checkpoint")
 
-    predictor = predictor.to("cuda")
-    predictor.eval()
-    return predictor
+    return predictor.to("cuda").eval()
 
 
 class EdgeTAMImageSegmenter:
-    """Box-prompted single-image segmentation using the EdgeTAM checkpoint."""
+    """Refine detector boxes into single-image EdgeTAM masks."""
 
     def __init__(self) -> None:
         from sam2.sam2_image_predictor import SAM2ImagePredictor
 
         self._predictor = SAM2ImagePredictor(_build_model())
 
-    def segment(self, detections: ImageDetections2D) -> ImageDetections2D:
-        """Refine box detections into mask detections (Detection2DSeg)."""
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]:
+        """Return masks that preserve each input detection's metadata."""
         import cv2
 
-        if not len(detections):
-            return detections
+        if not detections.detections:
+            return ImageDetections2D(detections.image, [])
 
         image = detections.image
         rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
-
+        boxes = np.asarray(
+            [detection.bbox for detection in detections.detections], dtype=np.float32
+        )
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             self._predictor.set_image(rgb)
-            boxes = np.array([det.bbox for det in detections], dtype=np.float32)
             masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)
 
-        masks = masks.reshape(-1, *masks.shape[-2:])  # (N, H, W) regardless of batch dim
-        segmented: list[Detection2DBBox] = [
+        masks = masks.reshape(-1, *masks.shape[-2:])
+        segmented = [
             Detection2DSeg.from_sam2_result(
                 mask,
-                det.track_id,
+                detection.track_id,
                 image,
-                class_id=det.class_id,
-                name=det.name,
-                confidence=det.confidence,
+                class_id=detection.class_id,
+                name=detection.name,
+                confidence=detection.confidence,
             )
-            for det, mask in zip(detections, masks, strict=False)
+            for detection, mask in zip(detections.detections, masks, strict=True)
         ]
         return ImageDetections2D(image, segmented)
 

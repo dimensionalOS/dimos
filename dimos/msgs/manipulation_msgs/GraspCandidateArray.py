@@ -27,10 +27,14 @@ class GraspCandidateArray:
     msg_name = "manipulation_msgs.GraspCandidateArray"
 
     def __init__(
-        self, header: Header | None = None, candidates: list[GraspCandidate] | None = None
+        self,
+        header: Header | None = None,
+        candidates: list[GraspCandidate] | None = None,
+        selected_index: int = 0,
     ) -> None:
         self.header = header if header is not None else Header(0.0)
         self.candidates = candidates if candidates is not None else []
+        self.selected_index = selected_index
 
     def __len__(self) -> int:
         return len(self.candidates)
@@ -40,9 +44,23 @@ class GraspCandidateArray:
 
     def encode(self) -> bytes:
         """Encode using the repository's pickle transport convention."""
-        return pickle.dumps({"header": self.header, "candidates": self.candidates})
+        return pickle.dumps(
+            {
+                "header": self.header,
+                "candidates": self.candidates,
+                "selected_index": self.selected_index,
+            }
+        )
 
     @classmethod
     def decode(cls, data: bytes) -> GraspCandidateArray:
         value = pickle.loads(data)
-        return cls(value["header"], value["candidates"])
+        return cls(value["header"], value["candidates"], value.get("selected_index", 0))
+
+    # Typed LCM transport lets the Rerun bridge subscribe to proposal updates.
+    def lcm_encode(self) -> bytes:
+        return self.encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes, **kwargs: object) -> GraspCandidateArray:
+        return cls.decode(data)
