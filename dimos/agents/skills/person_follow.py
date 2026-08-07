@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
-from turbojpeg import TurboJPEG
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -33,7 +32,7 @@ from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, _turbojpeg
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.visual.query import get_object_bbox_from_image
@@ -331,5 +330,5 @@ class PersonFollowSkillContainer(Module):
 
 
 def _decode_base64_image(b64: str) -> Image:
-    bgr_array = TurboJPEG().decode(base64.b64decode(b64))
+    bgr_array = _turbojpeg().decode(base64.b64decode(b64))
     return Image(data=bgr_array, format=ImageFormat.BGR)
