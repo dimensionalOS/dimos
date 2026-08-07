@@ -13,6 +13,9 @@ let xrRefSpace = null;
 let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
+const pinchActive = new Map();
+const PINCH_START_DISTANCE_METERS = 0.025;
+const PINCH_END_DISTANCE_METERS = 0.04;
 
 // Video panel state
 const videoEl = document.getElementById('videoFeed');
@@ -216,7 +219,43 @@ function renderVideoPanel(view, viewport) {
 }
 
 
-// Send raw controller tracking data (no processing - done in Python)
+function sendPose(handedness, pose) {
+    const pos = pose.transform.position;
+    const rot = pose.transform.orientation;
+    const nowMs = Date.now();
+    const poseStamped = new geometry_msgs.PoseStamped({
+        header: new std_msgs.Header({
+            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
+            frame_id: handedness
+        }),
+        pose: new geometry_msgs.Pose({
+            position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
+            orientation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w })
+        })
+    });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(poseStamped.encode());
+    }
+}
+
+function sendJoy(handedness, axes, buttons) {
+    const nowMs = Date.now();
+    const joyMsg = new sensor_msgs.Joy({
+        header: new std_msgs.Header({
+            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
+            frame_id: handedness
+        }),
+        axes_length: axes.length,
+        buttons_length: buttons.length,
+        axes: axes,
+        buttons: buttons
+    });
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(joyMsg.encode());
+    }
+}
+
+// Send raw controller and wrist tracking data (no processing - done in Python)
 function processTracking(frame) {
     // Rate limit tracking data
     const now = performance.now();
@@ -225,36 +264,38 @@ function processTracking(frame) {
     }
     lastSendTime = now;
 
-    // Process input sources (controllers)
+    // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
-        const trackingSpace = inputSource.gripSpace || inputSource.targetRaySpace;
-        if (!trackingSpace) continue;
-
         const handedness = inputSource.handedness;
         if (handedness !== 'left' && handedness !== 'right') continue;
 
+        const hand = inputSource.hand;
+        if (hand) {
+            const wristPose = frame.getJointPose(hand.get('wrist'), xrRefSpace);
+            const thumbTipPose = frame.getJointPose(hand.get('thumb-tip'), xrRefSpace);
+            const indexTipPose = frame.getJointPose(hand.get('index-finger-tip'), xrRefSpace);
+            if (!wristPose || !thumbTipPose || !indexTipPose) continue;
+
+            const thumb = thumbTipPose.transform.position;
+            const index = indexTipPose.transform.position;
+            const distance = Math.hypot(thumb.x - index.x, thumb.y - index.y, thumb.z - index.z);
+            const wasPinching = pinchActive.get(handedness) ?? false;
+            const threshold = wasPinching ? PINCH_END_DISTANCE_METERS : PINCH_START_DISTANCE_METERS;
+            const isPinching = distance < threshold;
+            pinchActive.set(handedness, isPinching);
+
+            sendPose(handedness, wristPose);
+            // Keep the Quest Joy layout; primary is the pinch button consumed by HandTeleopModule.
+            sendJoy(handedness, [0, 0, 0, 0], [0, 0, 0, 0, isPinching ? 1 : 0, 0, 0]);
+            continue;
+        }
+
+        const trackingSpace = inputSource.gripSpace || inputSource.targetRaySpace;
+        if (!trackingSpace) continue;
         const pose = frame.getPose(trackingSpace, xrRefSpace);
         if (!pose) continue;
 
-        // Send raw pose directly from WebXR - no processing
-        const pos = pose.transform.position;
-        const rot = pose.transform.orientation;
-
-        const nowMs = Date.now();
-        const poseStamped = new geometry_msgs.PoseStamped({
-            header: new std_msgs.Header({
-                stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
-                frame_id: handedness
-            }),
-            pose: new geometry_msgs.Pose({
-                position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
-                orientation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w })
-            })
-        });
-
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(poseStamped.encode());
-        }
+        sendPose(handedness, pose);
 
         // Send Joy message with all buttons and axes
         const gamepad = inputSource.gamepad;
@@ -282,20 +323,7 @@ function processTracking(frame) {
                 buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
             }
 
-            const joyMsg = new sensor_msgs.Joy({
-                header: new std_msgs.Header({
-                    stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
-                    frame_id: handedness
-                }),
-                axes_length: axes.length,
-                buttons_length: buttons.length,
-                axes: axes,
-                buttons: buttons
-            });
-
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(joyMsg.encode());
-            }
+            sendJoy(handedness, axes, buttons);
         }
     }
 }

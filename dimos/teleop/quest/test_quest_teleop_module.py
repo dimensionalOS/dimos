@@ -16,7 +16,9 @@ from collections.abc import Iterator
 
 import pytest
 
+from dimos.teleop.quest.quest_extensions import HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
+from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 
 
 @pytest.fixture
@@ -40,3 +42,27 @@ def test_quest_web_server_is_initialized_during_start(module: QuestTeleopModule,
     setup_routes.assert_called_once_with()
     start_server.assert_called_once_with()
     start_control_loop.assert_called_once_with()
+
+
+def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:
+    module = HandTeleopModule()
+    try:
+        module._current_poses[Hand.RIGHT] = mocker.Mock()
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
+
+        module._handle_engage()
+
+        assert module._is_engaged[Hand.RIGHT]
+
+        module._handle_engage()
+
+        assert module._is_engaged[Hand.RIGHT]
+
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=False)
+        module._handle_engage()
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
+        module._handle_engage()
+
+        assert not module._is_engaged[Hand.RIGHT]
+    finally:
+        module.stop()
