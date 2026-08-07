@@ -391,60 +391,48 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 infra2_stream.get_intrinsics(), self._infra2_optical_frame
             )
             # The right eye's P[3] carries the stereo baseline as -fx * baseline.
-            # Left at 0 (the default), every stereo consumer computes infinite
-            # depth. Read the baseline off the device rather than hardcoding it:
-            # it is per-model (D435 ~50mm, D455 ~95mm) and per-unit.
-            extrinsics = infra2_stream.get_extrinsics_to(infra1_stream)
-            baseline = abs(float(extrinsics.translation[0]))
-            projection = list(self._infra2_camera_info.P)
-            projection[3] = -projection[0] * baseline
-            self._infra2_camera_info.P = projection
-            logger.info(
-                "RealSense IR baseline %.2f mm (fx %.2f) -> right P[3] = %.3f",
-                baseline * 1000.0,
-                projection[0],
-                projection[3],
-            )
+            # Left at 0 (the default), every stereo consumer computes infinite depth.
+            baseline = self.between_cam_distance(self.config.serial_number)
+            if baseline is None:
+                logger.warning("RealSense: no stereo baseline, right P[3] stays 0")
+            else:
+                projection = list(self._infra2_camera_info.P)
+                projection[3] = -projection[0] * baseline
+                self._infra2_camera_info.P = projection
+                logger.info(
+                    "RealSense IR baseline %.2f mm (fx %.2f) -> right P[3] = %.3f",
+                    baseline * 1000.0,
+                    projection[0],
+                    projection[3],
+                )
 
     @staticmethod
-    def between_cam_distance(serial_number: str | None = None) -> float:
-        """Metres between the two IR imagers, read off the attached camera.
-
-        The factory stereo extrinsic of the unit that is actually plugged in, so a
-        D435 answers ~50 mm and a D455 ~95 mm without anything downstream knowing
-        which is which. Needs no running pipeline -- it queries the device directly.
-
-        Args:
-            serial_number: which camera, when more than one is attached. The first
-                one found otherwise.
-
-        Raises:
-            RuntimeError: no RealSense attached, or none with that serial.
+    def between_cam_distance(serial_number: str | None = None) -> float | None:
+        """Metres between the stereo cameras
+        Ex: a D435 is ~50 mm, a D455 ~95 mm
         """
-        import pyrealsense2 as rs
+        try:
+            import pyrealsense2 as rs
+        except ImportError:
+            return None
 
-        devices = list(rs.context().query_devices())
-        if serial_number is not None:
-            devices = [
-                device
-                for device in devices
-                if device.get_info(rs.camera_info.serial_number) == serial_number
+        for device in rs.context().query_devices():
+            if serial_number and device.get_info(rs.camera_info.serial_number) != serial_number:
+                continue
+            profiles = [
+                profile
+                for sensor in device.query_sensors()
+                for profile in sensor.get_stream_profiles()
+                if profile.stream_type() == rs.stream.infrared
             ]
-        if not devices:
-            attached = serial_number or "any"
-            raise RuntimeError(f"no RealSense device found (looking for {attached})")
-
-        profiles = [
-            profile
-            for sensor in devices[0].query_sensors()
-            for profile in sensor.get_stream_profiles()
-            if profile.stream_type() == rs.stream.infrared
-        ]
-        by_index = {profile.stream_index(): profile for profile in profiles}
-        if not {1, 2} <= by_index.keys():
-            raise RuntimeError("device has no infrared stereo pair to measure")
-        extrinsics = by_index[2].get_extrinsics_to(by_index[1])
-        return abs(float(extrinsics.translation[0]))
+            # index 1 = left imager, index 2 = right imager
+            left = next((p for p in profiles if p.stream_index() == 1), None)
+            right = next((p for p in profiles if p.stream_index() == 2), None)
+            if left is None or right is None:
+                continue
+            # The pair is rectified, so the whole of their offset is along x.
+            return abs(float(right.get_extrinsics_to(left).translation[0]))
+        return None
 
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
         import pyrealsense2 as rs

@@ -343,7 +343,9 @@ private:
 
         cuvslam::Odometry::Config odometry_cfg = cuvslam::Odometry::GetDefaultConfig();
         odometry_cfg.odometry_mode = odometry_mode();
-        odometry_cfg.rectified_stereo_camera = cfg_.rectified;
+        // cuVSLAM rejects this outright unless the rig has a stereo pair: "Rectified
+        // stereo camera mode only works with 1+ stereo cameras".
+        odometry_cfg.rectified_stereo_camera = cfg_.rectified && cfg_.camera_mode == "stereo";
         odometry_cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
