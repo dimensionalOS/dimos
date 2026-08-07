@@ -19,6 +19,7 @@ from collections.abc import Callable, Mapping
 import dataclasses
 import importlib
 import inspect
+import os
 import shutil
 import sys
 import threading
@@ -41,6 +42,11 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport
+from dimos.protocol.service.zenohservice import (
+    ZENOH_LOCAL_ROUTER_ENDPOINT,
+    ZENOH_ROUTER_ENDPOINT_ENV,
+    ZenohRouter,
+)
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -89,13 +95,24 @@ class ModuleCoordinator(Resource):
         self._modules_lock = threading.RLock()
         self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
+        self._zenoh_router: ZenohRouter | None = None
+        self._previous_zenoh_router_endpoint: str | None = None
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
 
         register_picklers()
-        for m in self._managers.values():
-            m.start()
+        if self._global_config.transport == "zenoh":
+            self._zenoh_router = ZenohRouter()
+            self._zenoh_router.start()
+            self._previous_zenoh_router_endpoint = os.environ.get(ZENOH_ROUTER_ENDPOINT_ENV)
+            os.environ[ZENOH_ROUTER_ENDPOINT_ENV] = ZENOH_LOCAL_ROUTER_ENDPOINT
+        try:
+            for m in self._managers.values():
+                m.start()
+        except BaseException:
+            self._stop_zenoh_router()
+            raise
         self._started = True
 
     def stop(self) -> None:
@@ -119,9 +136,21 @@ class ModuleCoordinator(Resource):
                 logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
+        self._stop_zenoh_router()
+
+    def _stop_zenoh_router(self) -> None:
+        if self._zenoh_router is not None:
+            self._zenoh_router.stop()
+            self._zenoh_router = None
+        if self._global_config.transport != "zenoh":
+            return
+        if self._previous_zenoh_router_endpoint is None:
+            os.environ.pop(ZENOH_ROUTER_ENDPOINT_ENV, None)
+        else:
+            os.environ[ZENOH_ROUTER_ENDPOINT_ENV] = self._previous_zenoh_router_endpoint
 
     def start_rpc_service(self) -> None:
-        """Expose the coordinator's API as @rpc methods over LCM."""
+        """Expose the coordinator's API over the configured RPC transport."""
         with self._rpc_lock:
             if self._coordinator_rpc is not None:
                 return

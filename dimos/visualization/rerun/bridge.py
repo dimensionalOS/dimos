@@ -223,6 +223,7 @@ class Config(ModuleConfig):
     visual_override: dict[Glob | str, VisualOverride | None] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
+    latest_state: set[str] = field(default_factory=set)
 
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
@@ -352,15 +353,20 @@ class RerunBridgeModule(Module):
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for path, archetype in rerun_data:
-                rr.log(path, archetype)
+                rr.log(path, archetype, static=path in self.config.latest_state)
         else:
-            rr.log(entity_path, cast("Archetype", rerun_data))
+            latest_state = entity_path in self.config.latest_state
+            rr.log(entity_path, cast("Archetype", rerun_data), static=latest_state)
             # if source msg carries a frame_id, attach the entity to that TF frame
             # should skip if archetype is a Transform3D
             if not isinstance(rerun_data, rr.Transform3D):
                 frame_id = getattr(msg, "frame_id", None)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    rr.log(
+                        entity_path,
+                        rr.Transform3D(parent_frame=f"tf#/{frame_id}"),
+                        static=latest_state,
+                    )
                     self._frame_attached[entity_path] = frame_id
 
     @rpc

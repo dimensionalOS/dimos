@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import rpc_backend
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
+from dimos.protocol.service.zenohservice import ZENOH_LOCAL_ROUTER_ENDPOINT
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -51,7 +53,12 @@ class CoordinatorRPC:
     @classmethod
     def connect(cls, *, timeout: float) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
-        rpc = rpc_backend()()
+        backend = rpc_backend()
+        rpc = (
+            ZenohRPC(mode="client", connect=[ZENOH_LOCAL_ROUTER_ENDPOINT])
+            if backend is ZenohRPC
+            else backend()
+        )
         rpc.start()
         client = cls(rpc)
         deadline = time.monotonic() + timeout

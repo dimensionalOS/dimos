@@ -43,6 +43,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
+from dimos.hardware.simulation.shared_memory import (
+    CMD_MODE_PD_TAU,
+    ManipShmWriter,
+    shm_key_from_path,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -58,11 +63,6 @@ from dimos.simulation.engines.mujoco_engine import (
     CameraFrame,
     MujocoEngine,
     RaycastLidarConfig,
-)
-from dimos.simulation.engines.mujoco_shm import (
-    CMD_MODE_PD_TAU,
-    ManipShmWriter,
-    shm_key_from_path,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE

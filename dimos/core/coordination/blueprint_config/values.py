@@ -55,6 +55,31 @@ def plain(value: Any) -> Any:
     return _copy_opaque(value)
 
 
+def validated_model_values(model: BaseModel) -> dict[str, Any]:
+    """Copy explicitly set validated fields without serializing runtime objects."""
+    return {
+        name: _validated_value(getattr(model, name))
+        for name in type(model).model_fields
+        if name in model.model_fields_set
+    }
+
+
+def _validated_value(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return validated_model_values(value)
+    if isinstance(value, Mapping):
+        return {_copy_opaque(key): _validated_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_validated_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_validated_value(item) for item in value)
+    if isinstance(value, set):
+        return {_validated_value(item) for item in value}
+    if isinstance(value, frozenset):
+        return frozenset(_validated_value(item) for item in value)
+    return _copy_opaque(value)
+
+
 def deep_merge(destination: dict[str, Any], incoming: Mapping[str, Any]) -> None:
     for key, value in incoming.items():
         if key in destination and isinstance(destination[key], dict) and isinstance(value, Mapping):

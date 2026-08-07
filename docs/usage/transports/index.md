@@ -351,6 +351,8 @@ Use Zenoh when:
 
 At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
 
+For a local `dimos run`, the coordinator starts or reuses one Zenoh router listening on port `7447`. Python workers, native modules, and local coordinator clients connect to it through `127.0.0.1`. This avoids an all-to-all peer mesh and keeps a local run independent of Wi-Fi, VPN, and Docker interface changes. The router remains reachable on other interfaces for explicitly configured remote participants.
+
 Performance note: zenoh's session-to-session path (modules in different processes, the common case) benchmarks faster than LCM for small messages and for >=2MiB ones. Delivery *within* one shared session (co-located modules in one worker) is its slow path for 256KiB-1MiB messages (a few GiB/s); pin shared memory transports for heavy co-located streams. The benchmark has both cases (`Zenoh` = shared session, `ZenohPeers` = separate sessions).
 
 The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.

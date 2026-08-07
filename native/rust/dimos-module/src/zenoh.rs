@@ -63,9 +63,16 @@ pub struct ZenohTransport {
 
 impl ZenohTransport {
     pub async fn new() -> io::Result<Self> {
-        let session = ::zenoh::open(::zenoh::Config::default())
-            .await
-            .map_err(to_io)?;
+        let mut config = ::zenoh::Config::default();
+        if let Ok(endpoint) = std::env::var("DIMOS_ZENOH_ROUTER_ENDPOINT") {
+            config.insert_json5("mode", r#""client""#).map_err(to_io)?;
+            let endpoints = serde_json::to_string(&[endpoint])
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            config
+                .insert_json5("connect/endpoints", &endpoints)
+                .map_err(to_io)?;
+        }
+        let session = ::zenoh::open(config).await.map_err(to_io)?;
         Ok(Self {
             session,
             qos: OnceLock::new(),

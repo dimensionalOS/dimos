@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+import pickle
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -452,6 +454,14 @@ class Anchor:
         return "Anchor:\n  multi\n  line"
 
 
+@dataclass(frozen=True)
+class CallableAnchor:
+    prefix: str
+
+    def __call__(self, value: Any) -> str:
+        return f"{self.prefix}:{value}"
+
+
 class ArbitraryConfig(ModuleConfig):
     scaling: Anchor = Field(default_factory=Anchor)
     hybrid: Anchor | str = "fallback"
@@ -488,6 +498,18 @@ def test_blueprint_pinned_arbitrary_value_survives_filtering() -> None:
     parsed = BlueprintConfigParser(ArbitraryModule.blueprint(scaling=Anchor())).parse(environ={})
 
     assert isinstance(parsed.module_kwargs("arbitrarymodule")["scaling"], Anchor)
+
+
+def test_blueprint_pinned_callable_dataclass_survives_worker_serialization() -> None:
+    blueprint = ArbitraryModule.blueprint(handlers={"scene": CallableAnchor("render")})
+
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+    worker_kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs("arbitrarymodule")))
+    worker_config = ArbitraryConfig.model_validate(worker_kwargs)
+    handler = worker_config.handlers["scene"]
+
+    assert isinstance(handler, CallableAnchor)
+    assert handler("apartment") == "render:apartment"
 
 
 def test_format_help_uses_nested_parent_default_instance() -> None:

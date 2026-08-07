@@ -23,7 +23,7 @@ import pytest
 import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
-from dimos.simulation.engines.mujoco_shm import ManipShmWriter
+from dimos.hardware.simulation.shared_memory import ManipShmWriter
 
 ARM_DOF = 7
 

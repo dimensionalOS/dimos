@@ -80,6 +80,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.simulation.providers import SimulationRequest, load_simulation_provider
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -94,6 +95,8 @@ _ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29d
 _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 
 _adapter_address: str | Path
+_using_simulation_provider = False
+_provider_rerun_config: dict[str, Any] = {}
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
 _MUJOCO_LIDAR_CAMERAS = (
     "lidar_front_camera",
@@ -265,19 +268,36 @@ if global_config.simulation == "mujoco":
             )
         return candidate
 
-    # Sim backend: MuJoCo engine via SHM.
-    _backend, _adapter_address = _scene_mujoco_backend()
+    if global_config.simulation_provider:
+        _using_simulation_provider = True
+        _provider = load_simulation_provider(global_config.simulation_provider)
+        _binding = _provider.build(
+            SimulationRequest(
+                robot_model="unitree_g1",
+                model_path=_ROBOT_ONLY_MJCF_PATH,
+                mesh_dir=_ROBOT_MESHDIR,
+                scene_package=global_config.scene_package,
+            )
+        )
+        _backend = _binding.backend
+        _adapter_address = _binding.adapter_address
+        _adapter_type = _binding.adapter_type
+        _provider_rerun_config = _binding.rerun_config
+    else:
+        # Legacy in-repo MuJoCo backend.
+        _backend, _adapter_address = _scene_mujoco_backend()
+        _adapter_type = "sim_mujoco_g1"
+
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
     # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
-    _adapter_type = "sim_mujoco_g1"
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
-    _n_workers = 2  # sim: keep the default worker count
+    _n_workers = 12 if _using_simulation_provider else 2
     _arm_holder = TaskConfig(
         name="servo_arms",
         type="servo",
@@ -303,10 +323,9 @@ if global_config.simulation == "mujoco":
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [
-        (VoxelGridMapper, "lidar", "pointcloud"),
-        (_G1GrootCoordinator, "twist_command", "cmd_vel"),
-    ]
+    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
+    if not _using_simulation_provider:
+        _remappings.insert(0, (VoxelGridMapper, "lidar", "pointcloud"))
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -443,7 +462,8 @@ def _g1_real_costmap(grid: Any) -> Any:
 _static_rerun_entities: dict[str, Any] = {
     _G1_ROOT: g1_urdf_static_robot(root_path=_G1_ROOT),
 }
-_static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
+if not _using_simulation_provider:
+    _static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
 
 _rerun_config: dict[str, Any] = {
     "blueprint": _g1_groot_rerun_blueprint,
@@ -475,6 +495,15 @@ _rerun_config: dict[str, Any] = {
     },
     "static": _static_rerun_entities,
 }
+
+for _section in ("static", "visual_override", "max_hz"):
+    _rerun_config[_section] = {
+        **_rerun_config.get(_section, {}),
+        **_provider_rerun_config.get(_section, {}),
+    }
+for _key, _value in _provider_rerun_config.items():
+    if _key not in {"static", "visual_override", "max_hz"}:
+        _rerun_config[_key] = _value
 
 if global_config.simulation != "mujoco":
     _rerun_config["visual_override"]["world/odometry"] = _g1_real_odometry_root

@@ -77,3 +77,18 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     transform = mock_log.call_args_list[1].args[1]
     assert isinstance(transform, rr.Transform3D)
     assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+
+
+def test_latest_state_entity_overwrites_data_and_frame_attachment() -> None:
+    entity_path = "world/marker_detection/detections"
+    bridge = RerunBridgeModule(latest_state={entity_path})
+    bridge._min_intervals = {}
+
+    try:
+        with patch("rerun.log") as mock_log:
+            bridge._on_message(_detection_array(), Topic("/marker_detection/detections"))
+    finally:
+        bridge.stop()
+
+    assert mock_log.call_count == 2
+    assert all(call.kwargs == {"static": True} for call in mock_log.call_args_list)
