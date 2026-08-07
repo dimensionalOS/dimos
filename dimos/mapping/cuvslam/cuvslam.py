@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from dimos.constants import CACHE_DIR, CONFIG_DIR
+from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -96,10 +96,9 @@ def _driver_env() -> dict[str, str]:
 class ImuCalibration(BaseModel):
     """How much one physical IMU lies.
 
-    Where it sits is not here: that comes off tf, published by whatever driver owns the
-    device. There is deliberately no default for the rest either, because the noise
-    densities come from an Allan-variance run on a single unit and a module default
-    means every other unit silently gets someone else's numbers.
+    Where it sits is not here: that comes off tf. There is no default for the rest
+    either, because an Allan-variance run measures one unit and no other unit should
+    silently get its numbers.
     """
 
     gyro_noise_density: float
@@ -108,22 +107,6 @@ class ImuCalibration(BaseModel):
     accel_random_walk: float
     # The rate actually fed. Declaring more than arrives disables fusion, silently.
     frequency: float
-
-    @classmethod
-    def for_serial(cls, serial: str) -> ImuCalibration | None:
-        """Load ``<calibration dir>/imu_<serial>.yaml``, or None if there is none."""
-        import yaml
-
-        path = calibration_dir() / f"imu_{serial}.yaml"
-        if not path.is_file():
-            return None
-        with path.open() as handle:
-            return cls(**yaml.safe_load(handle))
-
-
-def calibration_dir() -> Path:
-    """Where per-unit calibration lives, keyed by device serial number."""
-    return CONFIG_DIR / "dimos" / "calibration"
 
 
 class CuvslamConfig(NativeModuleConfig):
@@ -169,10 +152,8 @@ class CuvslamConfig(NativeModuleConfig):
     def _imu_needs_calibration(self) -> CuvslamConfig:
         if self.enable_imu and self.imu_calibration is None:
             raise ValueError(
-                "enable_imu is on but imu_calibration is unset. Load it for the camera "
-                "actually plugged in -- ImuCalibration.for_serial(<serial>) reads "
-                f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
-                "unit's noise model."
+                "enable_imu is on but imu_calibration is unset. Measure it for the unit "
+                "actually plugged in rather than borrowing another one's noise model."
             )
         return self
 
