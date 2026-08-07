@@ -4,15 +4,15 @@
 // NVIDIA cuVSLAM visual odometry as a dimos native module.
 //
 // in:  image, camera_info (every camera on the one stream, told apart by frame_id),
-//      rig_transforms, depth_image, imu
+//      tf, depth_image, imu
 // out: odometry, corrected_odometry, tf
 //
 // cuVSLAM restarts its world frame after a tracking loss. The module rebases each
 // restart onto the last published pose, so consumers see ONE continuous odometry
 // path in ONE frame and never a jump. Resets are logged as debugging output; the
 // motion across one is unmeasured, which is drift the stream cannot account for.
-// The rig -- which cameras there are, in which order, and where each one sits --
-// arrives on rig_transforms, resolved from tf by the python half.
+// The rig -- which cameras there are and where each one sits -- is read off the tf
+// tree, so the mount geometry is the calibration and there is none in here.
 
 #include <algorithm>
 #include <array>
@@ -121,6 +121,9 @@ struct CuvslamConfig {
     /// "stereo", "mono" or "rgbd". Mono is accurate only up to an unknown scale, so
     /// its poses are not metres.
     std::string camera_mode;
+    /// One tf frame per camera, in the order cuVSLAM indexes them. Empty discovers
+    /// them off camera_info, which only has an order for a single camera or one pair.
+    std::vector<std::string> camera_frames;
     /// The stereo pair arrives rectified: D all zero, R identity.
     bool rectified;
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
@@ -148,8 +151,6 @@ struct CuvslamConfig {
     /// robustness to brief visual failures", which is exactly what a world-frame
     /// restart is: vision briefly had nothing to hold on to.
     bool enable_imu;
-    /// Which transform on rig_transforms places the IMU rather than a camera.
-    std::string imu_frame;
     /// Flattened from the python side's ImuCalibration, which is per-serial and has
     /// no default -- all zero here means enable_imu is off and none of it is read.
     double imu_gyro_noise_density;
@@ -178,7 +179,7 @@ public:
         stereo_ = cfg_.camera_mode == "stereo";
         rgbd_ = cfg_.camera_mode == "rgbd";
 
-        builder.input<tf2_msgs::TFMessage>("rig_transforms", &CuvslamOdometry::on_rig, this);
+        builder.input<tf2_msgs::TFMessage>("tf", &CuvslamOdometry::on_tf, this);
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
         builder.input<sensor_msgs::Image>("image", &CuvslamOdometry::on_image, this);
@@ -214,27 +215,109 @@ private:
             return;  // rig is fixed once the tracker exists
         }
         camera_info_[info.header.frame_id] = info;
+        resolve_rig();
     }
 
-    /// The rig: which cameras there are, in cuVSLAM's index order, and where each one
-    /// sits relative to the body. It is the whole of the extrinsic calibration -- a
-    /// stereo baseline is the gap between two of these -- so nothing here is a
-    /// per-model constant.
-    void on_rig(const tf2_msgs::TFMessage& message) {
+    /// The mount tree. Every camera's place on the rig is read from it, which is the
+    /// whole of the extrinsic calibration -- a stereo baseline is the gap between two
+    /// of these frames -- so nothing here is a per-model constant.
+    void on_tf(const tf2_msgs::TFMessage& message) {
         if (tracker_) {
-            return;
+            return;  // rig is fixed once the tracker exists
         }
-        camera_frames_.clear();
-        rig_from_camera_.clear();
-        rig_from_imu_.reset();
         for (const geometry_msgs::TransformStamped& stamped : message.transforms) {
-            if (!cfg_.imu_frame.empty() && stamped.child_frame_id == cfg_.imu_frame) {
-                rig_from_imu_ = to_transform(stamped.transform);
+            // Skip what this module publishes itself: the transport loops it back, and
+            // odom and map are poses, not mount geometry.
+            if (stamped.header.frame_id == cfg_.map_frame ||
+                stamped.header.frame_id == cfg_.odom_frame) {
                 continue;
             }
-            camera_frames_.push_back(stamped.child_frame_id);
-            rig_from_camera_.push_back(to_transform(stamped.transform));
+            tf_edges_[stamped.child_frame_id] = {stamped.header.frame_id,
+                                                 to_transform(stamped.transform)};
         }
+        resolve_rig();
+    }
+
+    /// parent_frame -> child_frame, composed through the two frames' nearest common
+    /// ancestor. Nothing here is time-aware: the mount tree is rigid, and the moving
+    /// edges are filtered out above.
+    std::optional<Transform> tf_lookup(const std::string& parent_frame,
+                                       const std::string& child_frame) const {
+        std::unordered_map<std::string, Transform> from_child{{child_frame, Transform{}}};
+        std::string frame = child_frame;
+        Transform ancestor_from_child;
+        for (std::size_t step = 0; step < kMaxTfDepth; ++step) {
+            auto edge = tf_edges_.find(frame);
+            if (edge == tf_edges_.end()) {
+                break;  // reached a root
+            }
+            ancestor_from_child = compose(edge->second.second, ancestor_from_child);
+            frame = edge->second.first;
+            from_child[frame] = ancestor_from_child;
+        }
+
+        frame = parent_frame;
+        Transform ancestor_from_parent;
+        for (std::size_t step = 0; step <= kMaxTfDepth; ++step) {
+            auto shared = from_child.find(frame);
+            if (shared != from_child.end()) {
+                return compose(invert(ancestor_from_parent), shared->second);
+            }
+            auto edge = tf_edges_.find(frame);
+            if (edge == tf_edges_.end()) {
+                return std::nullopt;  // the two are not connected
+            }
+            ancestor_from_parent = compose(edge->second.second, ancestor_from_parent);
+            frame = edge->second.first;
+        }
+        return std::nullopt;
+    }
+
+    /// Place every camera against base_frame. Silent until the whole rig resolves,
+    /// because a tracker built on half a rig is a tracker built on the wrong one.
+    void resolve_rig() {
+        if (!camera_frames_.empty()) {
+            return;
+        }
+        std::vector<std::string> frames = cfg_.camera_frames;
+        if (frames.empty()) {
+            for (const auto& [frame, info] : camera_info_) {
+                frames.push_back(frame);
+            }
+            // camera_info_ has no order of its own, and the rig is indexed.
+            std::sort(frames.begin(), frames.end());
+            const std::size_t expected = stereo_ ? 2 : 1;
+            if (frames.size() != expected) {
+                if (frames.size() > expected && !too_many_cameras_warned_) {
+                    too_many_cameras_warned_ = true;
+                    logging::error(
+                        "cuvslam found more cameras on camera_info than camera_mode uses, "
+                        "and they have no discoverable order. Set camera_frames.",
+                        {logging::Field("found", join(frames)),
+                         logging::Field("mode", cfg_.camera_mode)});
+                }
+                return;
+            }
+        }
+
+        std::vector<Transform> placed;
+        for (const std::string& frame : frames) {
+            std::optional<Transform> rig_from_camera = tf_lookup(cfg_.base_frame, frame);
+            if (!rig_from_camera) {
+                return;
+            }
+            placed.push_back(*rig_from_camera);
+        }
+        // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
+        // partner sits at +x -- optical convention, x to the right.
+        if (cfg_.camera_frames.empty() && placed.size() == 2 &&
+            compose(invert(placed[0]), placed[1]).translation[0] < 0.0) {
+            std::swap(frames[0], frames[1]);
+            std::swap(placed[0], placed[1]);
+        }
+
+        camera_frames_ = std::move(frames);
+        rig_from_camera_ = std::move(placed);
         images_.assign(camera_frames_.size(), sensor_msgs::Image{});
         have_image_.assign(camera_frames_.size(), false);
     }
@@ -251,6 +334,9 @@ private:
 
     /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
     void on_imu(const sensor_msgs::Imu& msg) {
+        // Where the IMU sits comes from tf like every camera's does, and the message
+        // says which frame that is, so nothing has to be configured to match.
+        imu_frame_ = msg.header.frame_id;
         if (!tracker_) {
             // The rig, and so the tracker, does not exist yet. Counted rather than
             // dropped silently: this is exactly the window inertial init needs.
@@ -344,13 +430,18 @@ private:
             rig.cameras.push_back(camera);
         }
         if (cfg_.enable_imu) {
-            if (!rig_from_imu_) {
-                logging::warn("cuvslam: enable_imu is on but tf never placed the IMU",
-                              {logging::Field("imu_frame", cfg_.imu_frame)});
+            const std::optional<Transform> rig_from_imu =
+                imu_frame_.empty() ? std::nullopt : tf_lookup(cfg_.base_frame, imu_frame_);
+            if (!rig_from_imu) {
+                if (!imu_warned_) {
+                    imu_warned_ = true;
+                    logging::warn("cuvslam: enable_imu is on but tf does not place the IMU",
+                                  {logging::Field("imu_frame", imu_frame_)});
+                }
                 return;
             }
             cuvslam::ImuCalibration imu{};
-            imu.rig_from_imu = to_pose(*rig_from_imu_);
+            imu.rig_from_imu = to_pose(*rig_from_imu);
             imu.gyroscope_noise_density = static_cast<float>(cfg_.imu_gyro_noise_density);
             imu.gyroscope_random_walk = static_cast<float>(cfg_.imu_gyro_random_walk);
             imu.accelerometer_noise_density = static_cast<float>(cfg_.imu_accel_noise_density);
@@ -648,9 +739,16 @@ private:
     /// The rig, in cuVSLAM's camera order, and each camera's intrinsics by frame_id.
     std::vector<std::string> camera_frames_;
     std::vector<Transform> rig_from_camera_;
-    std::optional<Transform> rig_from_imu_;
     std::unordered_map<std::string, sensor_msgs::CameraInfo> camera_info_;
     std::uint64_t unplaced_images_{0};
+    bool too_many_cameras_warned_{false};
+    bool imu_warned_{false};
+    std::string imu_frame_;
+
+    /// The mount tree: child frame -> (its parent, parent_from_child). One parent per
+    /// frame is what makes a tf tree a tree. The bound is a cycle guard.
+    static constexpr std::size_t kMaxTfDepth = 32;
+    std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
 
     // the frame set being assembled, one slot per rig camera
     std::vector<sensor_msgs::Image> images_;

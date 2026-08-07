@@ -18,31 +18,20 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
-from reactivex.disposable import Disposable
 
 from dimos.constants import CACHE_DIR, CONFIG_DIR
-from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 MODULE_DIR = Path(__file__).resolve().parent
-
-# The rig only has to reach the native half once, but nothing on this side can tell
-# when it has, so it goes out again at this interval for as long as frames arrive.
-RIG_REPUBLISH_SECONDS = 0.5
 
 # The nix binary runs under the nix loader, whose ld.so.cache does not list the
 # host driver, so dlopen("libcuda.so.1") fails and cudart reports the misleading
@@ -169,8 +158,6 @@ class CuvslamConfig(NativeModuleConfig):
     # works for the one that mono and rgbd need and for a single stereo pair; more
     # cameras than that have no discoverable order, so they have to be named here.
     camera_frames: list[str] = Field(default_factory=list)
-    # Which tf frame the IMU reports in, which is what places it on the rig.
-    imu_frame: str | None = None
     rectified: bool = True
     # cuVSLAM's asynchronous bundle adjustment thread races and throws
     # std::out_of_range from that thread, where no caller-side handler can catch it, so
@@ -217,8 +204,6 @@ class CuvslamConfig(NativeModuleConfig):
                 f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
                 "unit's noise model."
             )
-        if self.enable_imu and not self.imu_frame:
-            raise ValueError("enable_imu is on but imu_frame is unset, so tf cannot place it")
         return self
 
     def to_config_dict(self) -> dict[str, Any]:
@@ -231,11 +216,6 @@ class CuvslamConfig(NativeModuleConfig):
         calibration = blob.pop("imu_calibration", None) or dict.fromkeys(
             ImuCalibration.model_fields, 0.0
         )
-        # The rig arrives on a stream, so the native half never reads the frame names.
-        blob.pop("camera_frames", None)
-        # Unset fields are dropped by the base class, but the native struct needs every
-        # key.
-        blob.setdefault("imu_frame", "")
         return blob | {f"imu_{key}": value for key, value in calibration.items()}
 
 
@@ -275,98 +255,5 @@ class CuvslamOdometry(NativeModule):
 
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
-    # The rig, resolved from tf here because only the python half has a tf buffer, and
-    # handed to the native half in cuVSLAM's camera order.
-    rig_transforms: Out[TFMessage]
-    # Published by the native half; read here to place the cameras.
+    # Read for the mount tree the rig is built from, written with the pose.
     tf: IO[TFMessage]
-
-    _rig_from_camera: dict[str, Transform] = {}
-    _rig_from_imu: Transform | None = None
-    _rig_published_at: float = 0.0
-    _unplaced_frames: set[str] = set()
-    _too_many_warned: bool = False
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self._rig_from_camera = {}
-        self._rig_from_imu = None
-        self._rig_published_at = 0.0
-        self._unplaced_frames = set()
-        # Subscribed directly rather than through handle_camera_info: the cameras
-        # publish theirs back to back, and the coalescing that handler gets keeps only
-        # the newest, which can hide a camera for as long as the others keep arriving.
-        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
-
-    def _on_camera_info(self, info: CameraInfo) -> None:
-        """Place each camera on the rig from tf and hand the result to the native half.
-
-        Repeated rather than done once: the mount tree is usually still arriving when
-        the first frames are, and the native half subscribes on its own schedule, so
-        the rig is republished until something else stops it being needed.
-        """
-        self._place(info.frame_id, self._rig_from_camera)
-        if self.config.enable_imu and self._rig_from_imu is None:
-            imu_frame = self.config.imu_frame
-            assert imu_frame is not None  # enforced by the config validator
-            placed: dict[str, Transform] = {}
-            self._place(imu_frame, placed)
-            self._rig_from_imu = placed.get(imu_frame)
-
-        order = self._rig_order()
-        if order is None:
-            return
-        now = time.time()
-        if now - self._rig_published_at < RIG_REPUBLISH_SECONDS:
-            return
-        self._rig_published_at = now
-        transforms = [self._rig_from_camera[frame] for frame in order]
-        if self._rig_from_imu is not None:
-            transforms.append(self._rig_from_imu)
-        self.rig_transforms.publish(TFMessage(*transforms))
-
-    def _place(self, frame_id: str, into: dict[str, Transform]) -> None:
-        if not frame_id or frame_id in into:
-            return
-        transform = self.tfbuffer.get(self.config.base_frame, frame_id)
-        if transform is None:
-            if frame_id not in self._unplaced_frames:
-                self._unplaced_frames.add(frame_id)
-                logger.warning(
-                    "cuvslam: no tf from %s to %s yet, so it cannot join the rig",
-                    self.config.base_frame,
-                    frame_id,
-                )
-            return
-        into[frame_id] = transform
-
-    def _rig_order(self) -> list[str] | None:
-        """The camera frames in cuVSLAM's index order, or None until they are all placed."""
-        if self.config.camera_frames:
-            missing = [f for f in self.config.camera_frames if f not in self._rig_from_camera]
-            return None if missing else list(self.config.camera_frames)
-
-        expected = 2 if self.config.camera_mode == "stereo" else 1
-        frames = list(self._rig_from_camera)
-        if len(frames) < expected:
-            return None
-        if len(frames) > expected:
-            if not self._too_many_warned:
-                self._too_many_warned = True
-                logger.error(
-                    "cuvslam saw %d cameras on camera_info (%s) but camera_mode %s discovers "
-                    "%d. Set camera_frames to name the rig and its order.",
-                    len(frames),
-                    ", ".join(frames),
-                    self.config.camera_mode,
-                    expected,
-                )
-            return None
-        if expected != 2:
-            return frames
-        # cuVSLAM wants camera 0 to be the left of the pair, which is the one whose
-        # partner sits at +x -- optical convention, x to the right.
-        left, right = frames
-        between = self._rig_from_camera[left].inverse() + self._rig_from_camera[right]
-        return [left, right] if between.translation.x > 0 else [right, left]
