@@ -21,9 +21,10 @@ from pathlib import Path
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from reactivex.disposable import Disposable
 
+from dimos.constants import CACHE_DIR, CONFIG_DIR
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -34,14 +35,9 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 MODULE_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = MODULE_DIR.parents[2]
-
-# baseline_m left at this reads the baseline off the right camera_info instead.
-DERIVE_BASELINE_FROM_CAMERA_INFO = 0.0
 
 # The nix binary runs under the nix loader, whose ld.so.cache does not list the
 # host driver, so dlopen("libcuda.so.1") fails and cudart reports the misleading
@@ -82,7 +78,7 @@ _DRIVER_LIBS = (
     "libnvidia-nvvm.so.4",
     "libnvidia-ml.so.1",
 )
-_DRIVER_LINK_DIR = Path.home() / ".cache/dimos/nvidia-driver-libs"
+_DRIVER_LINK_DIR = CACHE_DIR / "nvidia-driver-libs"
 
 
 def driver_library_dir() -> Path | None:
@@ -156,34 +152,29 @@ class ImuCalibration(BaseModel):
 
 def calibration_dir() -> Path:
     """Where per-unit calibration lives, keyed by device serial number."""
-    override = os.environ.get("DIMOS_CALIBRATION_DIR")
-    if override:
-        return Path(override)
-    return Path.home() / ".config/dimos/calibration"
+    return CONFIG_DIR / "dimos" / "calibration"
 
 
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    build_command: str | None = f"nix build '{_REPO_ROOT}?dir=dimos/mapping/cuvslam'"
+    build_command: str | None = "nix build ."
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # Metric scale. Read from the right camera_info's P[3] unless set here, so a
-    # different camera model is a different baseline without touching this file.
-    baseline_m: float = DERIVE_BASELINE_FROM_CAMERA_INFO
+    # Distance between the two imagers, in metres, which is what makes the poses
+    # metric. Left unset it is read off the right camera_info, so a different camera
+    # model is a different baseline without touching this file.
+    stereo_baseline_meters: float | None = None
     rectified: bool = True
-    # Off because the port is ``_landmarks``, which the coordinator does not wire.
-    # Rename it to publish, and expect the bandwidth: every tracked point, every frame.
-    publish_landmarks: bool = False
     # cuVSLAM's asynchronous bundle adjustment thread races and throws
-    # std::out_of_range from that thread, where no caller-side handler can catch it,
-    # so the process aborts. NVIDIA's own launcher already defaults it off. Off also
-    # makes cuVSLAM deterministic; on, ATE varied 0.406-3.418 m across identical runs.
+    # std::out_of_range from that thread, where no caller-side handler can catch it, so
+    # the process aborts. NVIDIA's own launcher defaults it off too. Off is also
+    # deterministic, which on is not.
     async_sba: bool = False
-    # No indoor robot travels this fast, so a step implying it is cuVSLAM
-    # restarting its world frame rather than motion.
-    max_speed_mps: float = 10.0
+    # A step implying the camera moved faster than this is cuVSLAM restarting its
+    # world frame rather than real motion, so the module rebases instead of jumping.
+    implausible_speed_meters_per_second: float = 10.0
 
     map_frame: str = "map"
     odom_frame: str = "odom"
@@ -200,12 +191,22 @@ class CuvslamConfig(NativeModuleConfig):
     slam_sync_mode: bool = True
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
-    # Inertial mode. Off because it lost on every recording measured -- mildly at
-    # walking pace, 4x at jogging pace -- and no gravity, excitation or time-offset
-    # correction recovered it. Turning it on requires imu_calibration: there is no
-    # default, because a camera-to-IMU extrinsic belongs to one physical unit.
+    # Off by default because for non-drone applications it usually hurts. Turning it on
+    # requires imu_calibration: there is no default, because a camera-to-IMU extrinsic
+    # belongs to one physical unit.
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
+
+    @model_validator(mode="after")
+    def _imu_needs_calibration(self) -> CuvslamConfig:
+        if self.enable_imu and self.imu_calibration is None:
+            raise ValueError(
+                "enable_imu is on but imu_calibration is unset. Load it for the camera "
+                "actually plugged in -- ImuCalibration.for_serial(<serial>) reads "
+                f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
+                "unit's extrinsic."
+            )
+        return self
 
     def to_config_dict(self) -> dict[str, Any]:
         """Flatten the calibration, because the native struct is a plain aggregate.
@@ -214,18 +215,13 @@ class CuvslamConfig(NativeModuleConfig):
         stand-in numbers that would look like a calibration to anyone reading a log.
         """
         blob = super().to_config_dict()
-        calibration = blob.pop("imu_calibration", None)
-        if blob.get("enable_imu") and calibration is None:
-            raise ValueError(
-                "enable_imu is on but imu_calibration is unset. Load it for the camera "
-                f"actually plugged in -- ImuCalibration.for_serial(<serial>) reads "
-                f"{calibration_dir()}/imu_<serial>.yaml -- rather than borrowing another "
-                "unit's extrinsic."
-            )
-        empty = dict.fromkeys(ImuCalibration.model_fields, 0.0)
-        for key, value in (calibration or empty).items():
-            blob[f"imu_{key}"] = value
-        return blob
+        calibration = blob.pop("imu_calibration", None) or dict.fromkeys(
+            ImuCalibration.model_fields, 0.0
+        )
+        # An unset baseline is dropped by the base class, but the native struct needs
+        # every key; zero is what it reads as "take it from camera_info".
+        blob.setdefault("stereo_baseline_meters", 0.0)
+        return blob | {f"imu_{key}": value for key, value in calibration.items()}
 
 
 class CuvslamOdometry(NativeModule):
@@ -236,12 +232,6 @@ class CuvslamOdometry(NativeModule):
     the last published pose, so the stream never jumps. A restart costs the motion
     that happened across it, and is reported only on the log.
 
-    ``_landmarks`` are the 3D points cuVSLAM is tracking this frame, carried into
-    the ``odom`` frame. They are a live view rather than an accumulated map, so
-    they carry the odometry's drift; put them through ``map`` -> ``odom`` to get
-    the corrected positions. Underscored, so nothing subscribes and nothing is
-    published unless the port is renamed and ``publish_landmarks`` turned on.
-
     ``camera_info`` is the left imager's, and ``camera_info_right`` the right's.
     Both are required: the left carries the intrinsics, and the right carries the
     baseline in ``P[3]``, which is the only per-unit source of metric scale.
@@ -251,6 +241,10 @@ class CuvslamOdometry(NativeModule):
     onto itself. ``tf`` carries ``odom`` -> ``base_link`` from the odometry and
     ``map`` -> ``odom`` from the correction, so the jump lands on the edge that is
     allowed to jump. With ``enable_slam`` off, ``map`` -> ``odom`` is identity.
+
+    ``cpp_tf_workaround`` carries the ``map`` -> ``odom`` correction back from the
+    native half only because there is no TFMessage in the C++ SDK, so the tracker
+    cannot publish tf itself. Delete it the moment that lands.
 
     The pose is the *left camera's*. Publishing it as ``base_frame`` assumes the
     camera is the body origin; on a real robot either set ``base_frame`` to the
@@ -267,9 +261,8 @@ class CuvslamOdometry(NativeModule):
     imu: In[Imu]
 
     odometry: Out[Odometry]
-    _landmarks: Out[PointCloud2]
     corrected_odometry: Out[Odometry]
-    map_tf: Out[Odometry]
+    cpp_tf_workaround: Out[Odometry]
     tf: Out[TFMessage]
 
     @rpc
@@ -279,7 +272,9 @@ class CuvslamOdometry(NativeModule):
             Disposable(self.odometry.transport.subscribe(self._on_odometry, self.odometry))
         )
         self.register_disposable(
-            Disposable(self.map_tf.transport.subscribe(self._on_map_tf, self.map_tf))
+            Disposable(
+                self.cpp_tf_workaround.transport.subscribe(self._on_map_tf, self.cpp_tf_workaround)
+            )
         )
 
     def _on_map_tf(self, message: Odometry) -> None:

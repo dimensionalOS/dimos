@@ -11,9 +11,8 @@
 // path in ONE frame and never a jump. Resets are logged as debugging output; the
 // motion across one is unmeasured, which is drift the stream cannot account for.
 // The baseline comes off the right camera_info's P[3], so any rectified stereo
-// camera works without a per-model constant; baseline_m overrides it.
+// camera works without a per-model constant; stereo_baseline_meters overrides it.
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -28,8 +27,6 @@
 #include "sensor_msgs/CameraInfo.hpp"
 #include "sensor_msgs/Image.hpp"
 #include "sensor_msgs/Imu.hpp"
-#include "sensor_msgs/PointCloud2.hpp"
-#include "sensor_msgs/PointField.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -119,18 +116,17 @@ Transform to_transform(const cuvslam::Pose& pose) {
 
 struct CuvslamConfig {
     /// Metres, or 0 to read it off the right camera_info's P[3].
-    double baseline_m;
+    double stereo_baseline_meters;
     /// The stereo pair arrives rectified: D all zero, R identity.
     bool rectified;
-    bool publish_landmarks;
     bool async_sba;  ///< off makes a replay reproducible, at some accuracy cost
     /// A step implying more than this is cuVSLAM changing world frames, not motion.
-    double max_speed_mps;
+    double implausible_speed_meters_per_second;
     std::string odom_frame;
     std::string base_frame;
-    /// Unused here. The module's python half publishes map->odom from these, and
-    /// config for one module lives in one struct, so they cross the boundary too.
     std::string map_frame;
+    /// Unused here: the python half acts on it. Config for one module lives in one
+    /// struct, so it crosses the boundary anyway -- parse<T>() requires every key.
     bool publish_map_to_odom;
     /// cuvslam::Slam: pose graph + loop closure on top of the odometry. Without it
     /// there is nothing to pull a revisit back together and the map smears.
@@ -165,23 +161,8 @@ struct CuvslamConfig {
 class CuvslamOdometry : public Module {
 public:
     void build(Builder& builder, Config& config) override {
-        const CuvslamConfig cfg = config.parse<CuvslamConfig>();
-        baseline_m_ = cfg.baseline_m;
-        rectified_ = cfg.rectified;
-        publish_landmarks_ = cfg.publish_landmarks;
-        async_sba_ = cfg.async_sba;
-        max_speed_mps_ = cfg.max_speed_mps;
-        odom_frame_ = cfg.odom_frame;
-        base_frame_ = cfg.base_frame;
-        map_frame_ = cfg.map_frame;
-        enable_slam_ = cfg.enable_slam;
-        slam_sync_mode_ = cfg.slam_sync_mode;
-        slam_max_map_size_ = cfg.slam_max_map_size;
-        slam_throttling_ms_ = cfg.slam_throttling_ms;
-        cfg_ = cfg;
-        if (baseline_m_ < 0.0) {
-            throw std::runtime_error("baseline_m cannot be negative");
-        }
+        cfg_ = config.parse<CuvslamConfig>();
+        baseline_meters_ = cfg_.stereo_baseline_meters;
 
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
                                                this);
@@ -194,11 +175,8 @@ public:
         }
 
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
-        if (publish_landmarks_) {
-            landmarks_ = builder.output<sensor_msgs::PointCloud2>("landmarks");
-        }
         corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
-        map_tf_ = builder.output<nav_msgs::Odometry>("map_tf");
+        cpp_tf_workaround_ = builder.output<nav_msgs::Odometry>("cpp_tf_workaround");
     }
 
     void teardown() override {
@@ -235,8 +213,8 @@ private:
         if (tracker_ || have_baseline_) {
             return;
         }
-        if (cfg_.baseline_m > 0.0) {
-            baseline_m_ = cfg_.baseline_m;
+        if (cfg_.stereo_baseline_meters > 0.0) {
+            baseline_meters_ = cfg_.stereo_baseline_meters;
             have_baseline_ = true;
             return;
         }
@@ -246,14 +224,14 @@ private:
                 logging::warn(
                     "right camera_info carries no baseline (P[3] == 0), so there is no metric "
                     "scale. The camera driver is not publishing the stereo extrinsic; set "
-                    "baseline_m explicitly to override.");
+                    "stereo_baseline_meters explicitly to override.");
             }
             return;
         }
-        baseline_m_ = std::abs(info.P[3] / info.P[0]);
+        baseline_meters_ = std::abs(info.P[3] / info.P[0]);
         have_baseline_ = true;
         logging::info("cuvslam baseline from camera_info",
-                      {logging::Field("baseline_mm", baseline_m_ * 1000.0)});
+                      {logging::Field("baseline_mm", baseline_meters_ * 1000.0)});
     }
 
     /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
@@ -312,7 +290,7 @@ private:
         left.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
 
         cuvslam::Camera right = left;
-        right.rig_from_camera.translation = {static_cast<float>(baseline_m_), 0.0f, 0.0f};
+        right.rig_from_camera.translation = {static_cast<float>(baseline_meters_), 0.0f, 0.0f};
 
         cuvslam::Rig rig;
         rig.cameras = {left, right};
@@ -335,25 +313,25 @@ private:
         cuvslam::Odometry::Config cfg = cuvslam::Odometry::GetDefaultConfig();
         cfg.odometry_mode = cfg_.enable_imu ? cuvslam::Odometry::OdometryMode::Inertial
                                                : cuvslam::Odometry::OdometryMode::Multicamera;
-        cfg.rectified_stereo_camera = rectified_;
-        cfg.enable_landmarks_export = publish_landmarks_ || enable_slam_;
+        cfg.rectified_stereo_camera = cfg_.rectified;
+        cfg.enable_landmarks_export = cfg_.enable_slam;
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
-        cfg.enable_observations_export = enable_slam_;
-        cfg.async_sba = async_sba_;
+        cfg.enable_observations_export = cfg_.enable_slam;
+        cfg.async_sba = cfg_.async_sba;
 
         tracker_.emplace(rig, cfg);
-        if (enable_slam_) {
+        if (cfg_.enable_slam) {
             cuvslam::Slam::Config slam_cfg = cuvslam::Slam::GetDefaultConfig();
-            slam_cfg.sync_mode = slam_sync_mode_;
-            slam_cfg.max_map_size = static_cast<std::uint32_t>(slam_max_map_size_);
-            slam_cfg.throttling_time_ms = static_cast<std::uint32_t>(slam_throttling_ms_);
+            slam_cfg.sync_mode = cfg_.slam_sync_mode;
+            slam_cfg.max_map_size = static_cast<std::uint32_t>(cfg_.slam_max_map_size);
+            slam_cfg.throttling_time_ms = static_cast<std::uint32_t>(cfg_.slam_throttling_ms);
             slam_.emplace(rig, tracker_->GetPrimaryCameras(), slam_cfg);
         }
         logging::info("cuvslam tracker created",
                       {logging::Field("width", static_cast<std::int64_t>(width_)),
                        logging::Field("height", static_cast<std::int64_t>(height_)),
-                       logging::Field("baseline_mm", baseline_m_ * 1000.0)});
+                       logging::Field("baseline_mm", baseline_meters_ * 1000.0)});
     }
 
     void try_track() {
@@ -429,7 +407,7 @@ private:
                 const double d = candidate.translation[axis] - world_from_rig_.translation[axis];
                 moved += d * d;
             }
-            if (dt > 0.0 && std::sqrt(moved) / dt > max_speed_mps_) {
+            if (dt > 0.0 && std::sqrt(moved) / dt > cfg_.implausible_speed_meters_per_second) {
                 ++segment_id_;
                 pending_rebase_ = true;
                 logging::warn("cuvslam world frame restarted",
@@ -447,9 +425,6 @@ private:
         was_tracking_ = true;
         ++tracked_;
         publish(est.timestamp_ns);
-        if (publish_landmarks_) {
-            publish_landmarks(est.timestamp_ns);
-        }
         if (slam_) {
             run_slam(est.timestamp_ns);
         }
@@ -482,13 +457,13 @@ private:
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
-        fill_pose(corrected, to_body_frame(map_from_rig), timestamp_ns, map_frame_, base_frame_);
+        fill_pose(corrected, to_body_frame(map_from_rig), timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
         nav_msgs::Odometry correction{};
-        fill_pose(correction, to_body_frame(map_from_odom_raw), timestamp_ns, map_frame_,
-                  odom_frame_);
-        map_tf_.publish(correction);
+        fill_pose(correction, to_body_frame(map_from_odom_raw), timestamp_ns, cfg_.map_frame,
+                  cfg_.odom_frame);
+        cpp_tf_workaround_.publish(correction);
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
@@ -522,77 +497,21 @@ private:
     /// Resets are debugging output, on the log, not a break in this stream.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
-        fill_pose(msg, to_body_frame(world_from_rig_), timestamp_ns, odom_frame_, base_frame_);
+        fill_pose(msg, to_body_frame(world_from_rig_), timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         odometry_.publish(msg);
-    }
-
-    /// cuVSLAM's landmarks are the map: 3D points it is currently tracking.
-    /// GetLastLandmarks() returns them in the *camera* frame, so they have to be
-    /// carried into the world frame or every frame's points pile up on the origin.
-    void publish_landmarks(std::int64_t timestamp_ns) {
-        const std::vector<cuvslam::Landmark> pts = tracker_->GetLastLandmarks();
-        if (pts.empty()) {
-            return;
-        }
-        sensor_msgs::PointCloud2 msg{};
-        msg.header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
-        msg.header.stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
-        msg.header.frame_id = odom_frame_;
-        msg.height = 1;
-        msg.width = static_cast<std::int32_t>(pts.size());
-        msg.is_bigendian = 0;
-        msg.is_dense = 1;
-        msg.point_step = 3 * static_cast<std::int32_t>(sizeof(float));
-        msg.row_step = msg.point_step * msg.width;
-
-        const char* names[3] = {"x", "y", "z"};
-        msg.fields.resize(3);
-        for (int i = 0; i < 3; ++i) {
-            msg.fields[i].name = names[i];
-            msg.fields[i].offset = i * static_cast<std::int32_t>(sizeof(float));
-            msg.fields[i].datatype = sensor_msgs::PointField::FLOAT32;
-            msg.fields[i].count = 1;
-        }
-        msg.fields_length = static_cast<std::int32_t>(msg.fields.size());
-
-        msg.data.resize(static_cast<std::size_t>(msg.row_step));
-        auto* out = reinterpret_cast<float*>(msg.data.data());
-        // The pose published for `odom` is body-convention, so the points have to be
-        // rotated the same way or the map sits ninety degrees off its own trajectory.
-        const Transform odom_from_rig = compose(kBaseFromRig, world_from_rig_);
-        for (std::size_t i = 0; i < pts.size(); ++i) {
-            const std::array<double, 3> local{pts[i].coords[0], pts[i].coords[1],
-                                              pts[i].coords[2]};
-            const std::array<double, 3> world = quat_rotate(odom_from_rig.rotation, local);
-            for (int axis = 0; axis < 3; ++axis) {
-                out[3 * i + axis] =
-                    static_cast<float>(world[axis] + odom_from_rig.translation[axis]);
-            }
-        }
-        msg.data_length = static_cast<std::int32_t>(msg.data.size());
-        landmarks_.publish(msg);
     }
 
     // config. Every one of these is set from cfg_ in build(), so no initializer
     // here can ever apply; python owns the defaults.
     CuvslamConfig cfg_{};
-    double baseline_m_;
-    bool rectified_;
-    bool publish_landmarks_;
-    bool async_sba_;
-    double max_speed_mps_;
-    std::string odom_frame_;
-    std::string base_frame_;
-    std::string map_frame_;
+    /// The only config value that is not simply cfg_: zero there means "read it off
+    /// the right camera_info", and this is where the reading lands.
+    double baseline_meters_{0.0};
     bool have_baseline_{false};
     bool baseline_warned_{false};
 
     // slam
     std::optional<cuvslam::Slam> slam_;
-    bool enable_slam_;
-    bool slam_sync_mode_;
-    int slam_max_map_size_;
-    int slam_throttling_ms_;
     std::uint64_t imu_samples_{0};
     std::uint64_t imu_dropped_{0};
     bool slam_started_{false};
@@ -629,9 +548,8 @@ private:
     std::uint64_t tracked_{0};
 
     Output<nav_msgs::Odometry> odometry_;
-    Output<sensor_msgs::PointCloud2> landmarks_;
     Output<nav_msgs::Odometry> corrected_odometry_;
-    Output<nav_msgs::Odometry> map_tf_;
+    Output<nav_msgs::Odometry> cpp_tf_workaround_;
 };
 
 int main() {
