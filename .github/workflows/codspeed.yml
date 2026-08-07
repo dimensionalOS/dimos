@@ -1,0 +1,114 @@
+name: codspeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  UV_NO_SYNC: "1"
+  # Walltime benchmarks die without a traceback otherwise (a native-lib crash
+  # on the CodSpeed macro fleet cost several blind CI cycles to diagnose).
+  PYTHONFAULTHANDLER: "1"
+
+jobs:
+  compute-ros-pin:
+    # Same as ci.yml: extracts the ros-dev image digest pinned in
+    # docker/ros-dev-pin/Dockerfile for the `container:` field below.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      digest: ${{ steps.read.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - id: read
+        run: |
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' docker/ros-dev-pin/Dockerfile)
+          if [ -z "$DIGEST" ]; then
+            echo "::error::No sha256 digest found in docker/ros-dev-pin/Dockerfile"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  benchmarks:
+    # Same-repo PRs and pushes only: fork PRs must not run on the self-hosted
+    # runner (mirrors the self-hosted-tests gate in ci.yml). Fork PRs simply
+    # get no benchmark comparison.
+    # Walltime on our own runner rather than `codspeed-macro`: the CodSpeed
+    # macro fleet is AWS a1.metal (Graviton1, ARMv8.0) where ARMv8.2-compiled
+    # wheels (torch et al.) SIGILL at import. One job per runner agent means
+    # the benchmark has the machine to itself while it runs.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: compute-ros-pin
+    timeout-minutes: 30
+    runs-on:
+      - self-hosted
+      - Linux
+      - base
+    container:
+      image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+      # Fleet-standard cap (base runners have 8 GB). If the 10-worker
+      # blueprint doesn't fit, the run dies with a contained cgroup OOM
+      # (exit 137) and this job moves to the `large` host-mode runner.
+      options: --memory=6g --memory-swap=6g
+      volumes:
+        - /var/cache/dimos-nix:/nix
+        - /var/cache/dimos-root-cache:/root/.cache
+    permissions:
+      contents: read
+      id-token: write  # OIDC upload to CodSpeed (tokenless for public repos)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The runner's workspace .git/lfs cache persists between runs, so this
+      # is a local re-smudge after the first pull. Anonymous read from the
+      # .lfsconfig endpoint.
+      - name: Fetch the replay dataset from LFS if not cached
+        run: |
+          if git lfs pointer --check --file data/.lfs/go2_hongkong_office.db.tar.gz; then
+            git lfs pull --include="data/.lfs/go2_hongkong_office.db.tar.gz" --exclude=""
+          else
+            echo "archive already smudged"
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          # /root/.cache is a persisted volume; the GH cache service would be
+          # slower than local disk.
+          enable-cache: false
+      # uv-managed (python-build-standalone) rather than the container python:
+      # it statically bundles a modern sqlite (>=3.45), which reading the
+      # replay DB's JSONB tags requires; jammy's libsqlite3 is 3.37.
+      - name: Setup Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+
+      # Keep the ~2.5 GB extraction (and any download failure) out of the
+      # measured benchmark process.
+      - name: Pre-extract the replay database
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_hongkong_office.db'))"
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v5
+        env:
+          # In this rootful container the runner would otherwise autodetect
+          # elevation and wrap the benchmark in systemd-run, which does not
+          # exist here. No cpuset hooks either, so run unisolated — the job
+          # already has the machine to itself.
+          CODSPEED_ISOLATION: "false"
+          CODSPEED_PROFILER_ENABLED: "false"
+        with:
+          mode: walltime
+          # -m '' overrides the addopts deselection of self_hosted-marked tests.
+          run: uv run pytest --codspeed -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py

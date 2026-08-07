@@ -2004,6 +2004,7 @@ tests = [
     { name = "pygame" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-codspeed" },
     { name = "pytest-cov" },
     { name = "pytest-env" },
     { name = "pytest-error-for-skips" },
@@ -2053,6 +2054,7 @@ tests-self-hosted = [
     { name = "pygame" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-codspeed" },
     { name = "pytest-cov" },
     { name = "pytest-env" },
     { name = "pytest-error-for-skips" },
@@ -2301,6 +2303,7 @@ tests = [
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==0.26.0" },
+    { name = "pytest-codspeed", specifier = "==5.0.3" },
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "pytest-env", specifier = "==1.1.5" },
     { name = "pytest-error-for-skips", specifier = ">=2.0.2" },
@@ -2352,6 +2355,7 @@ tests-self-hosted = [
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==0.26.0" },
+    { name = "pytest-codspeed", specifier = "==5.0.3" },
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "pytest-env", specifier = "==1.1.5" },
     { name = "pytest-error-for-skips", specifier = ">=2.0.2" },
@@ -7468,6 +7472,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8e/c4/453c52c659521066969523e87d85d54139bbd17b78f09532fb8eb8cdb58e/pytest_asyncio-0.26.0.tar.gz", hash = "sha256:c4df2a697648241ff39e7f0e4a73050b03f123f760673956cf0d72a4990e312f", size = 54156, upload-time = "2025-03-25T06:22:28.883Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/7f/338843f449ace853647ace35870874f69a764d251872ed1b4de9f234822c/pytest_asyncio-0.26.0-py3-none-any.whl", hash = "sha256:7b51ed894f4fbea1340262bdae5135797ebbe21d8638978e35d31c6d19f72fb0", size = 19694, upload-time = "2025-03-25T06:22:27.807Z" },
+]
+
+[[package]]
+name = "pytest-codspeed"
+version = "5.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "importlib-metadata" },
+    { name = "pytest" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/b4/cf932fcd1960a2fd6d9b09eb403253a8709aeee975961afa6299239a830e/pytest_codspeed-5.0.3.tar.gz", hash = "sha256:91afef90e6a96b013495e4702ef5d6358614a449e71008cdc194ef668778b92f", size = 324571, upload-time = "2026-05-22T16:20:49.231Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/f5/a8f70147216e4b84046ca406d03ecc8e83e3ea56ba1bdca0bb79cca79fee/pytest_codspeed-5.0.3-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:005348ea52ace3ede2e2f595913912ad2564cca7b124211a88dc78a9cb1fca63", size = 366249, upload-time = "2026-05-22T16:20:39.985Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/bd/7a4dbcf457fcc3ed788c55d402f3af2671e0e342b6098090fd590aa8712e/pytest_codspeed-5.0.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:dbe6a4a00b449b6ba2771f644cbc38bdf55acf5c812e60e5659110e19dd9f510", size = 932229, upload-time = "2026-05-22T16:20:37.283Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/e1/414ea4c66559f24ec06aeb6db62bfc7079582dac1452e648affe1eb5cfb4/pytest_codspeed-5.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7ac4344f34bbcdd17f6f8c30dbac3da2f80d223dd112e568fd7f7c2cd4cbc693", size = 934647, upload-time = "2026-05-22T16:20:31.997Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/ef/32ce60d42a4aa43e728d988e13eb6568fbc7b10a514517b459bafd3f2b94/pytest_codspeed-5.0.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f56d0339cd98d26f6e561987be25bdd2761a5d53d8f73493b1ebe02d0d451093", size = 366253, upload-time = "2026-05-22T16:21:10.013Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/15/c66ef90a793c5d2c039e63a1726a5e55c678be2618b0f5f1660d0f79e25f/pytest_codspeed-5.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4c682f6645d4eb472f3bd95dbda1805e3af4243610572cb7d6bf94a88e8a0b6c", size = 932465, upload-time = "2026-05-22T16:20:34.265Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/7b/d231279301967f05b7909160489e85ee3a1b9da76094ea25343faba1abc2/pytest_codspeed-5.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f852bee785a7a124cb1720b1915670c6742af87747dc4d838f3ffdbd365ce9d9", size = 934925, upload-time = "2026-05-22T16:20:47.63Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/22/456c48160b761d5028c8afa119f085a9fc42855a783a13d73918078969f0/pytest_codspeed-5.0.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:2eeb25fb1ac3f73c4de50e739e78fea396b89782bdb740bf2a7cd2df21f8d4ee", size = 366255, upload-time = "2026-05-22T16:20:56.214Z" },
+    { url = "https://files.pythonhosted.org/packages/74/33/ac7441fa937c9d9f158083a8c46920a5a5c81ed3c5f96240fc8d650db5c2/pytest_codspeed-5.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:73c5c9d98a3372a42611989ccfa437cce3842431ac6d6b9ab42c4f0e59c070f7", size = 932325, upload-time = "2026-05-22T16:21:08.814Z" },
+    { url = "https://files.pythonhosted.org/packages/77/bc/8b994adcb9e9016e7d9a808056a3dd9cca21441e432ef456eae2b697d7fe/pytest_codspeed-5.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a2e0ab65df73e837666d12357280ca50ff6d6ac03ea5266703be518b68170edf", size = 934885, upload-time = "2026-05-22T16:21:01.444Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/b2/1d2a993c532146dce9eca5b5942d51898021c3579ce18b2454f932a915f8/pytest_codspeed-5.0.3-py3-none-any.whl", hash = "sha256:fe2ea83c924c2250675b75686c3ee456b8cf0208d83d552e182a195fdf467378", size = 74033, upload-time = "2026-05-22T16:20:26.814Z" },
 ]
 
 [[package]]

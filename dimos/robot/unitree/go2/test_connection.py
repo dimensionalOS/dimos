@@ -50,6 +50,30 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
     )
 
 
+def test_make_connection_replay_forwards_speed_and_window() -> None:
+    """--replay-speed/--replay-seek/--replay-duration reach ReplayConnection.
+
+    The `replay` property is lazy, so no database is opened here.
+    """
+    cfg = GlobalConfig(
+        replay=True,
+        replay_db="some_db",
+        replay_speed=25.0,
+        replay_seek=3.5,
+        replay_duration=60.0,
+    )
+    conn = go2_conn.make_connection(None, cfg)
+    assert isinstance(conn, go2_conn.ReplayConnection)
+    assert conn.dataset == "some_db"
+    assert (conn._speed, conn._seek, conn._duration) == (25.0, 3.5, 60.0)
+
+
+def test_make_connection_replay_defaults_realtime() -> None:
+    conn = go2_conn.make_connection("replay", GlobalConfig(replay=True))
+    assert isinstance(conn, go2_conn.ReplayConnection)
+    assert (conn._speed, conn._seek, conn._duration) == (1.0, None, None)
+
+
 def test_connection_config_aes_key_defaults_from_global_config() -> None:
     """ConnectionConfig.aes_128_key defaults from GlobalConfig.unitree_aes_128_key."""
     g = GlobalConfig(robot_ip="127.0.0.1", unitree_aes_128_key="dd" * 16)
