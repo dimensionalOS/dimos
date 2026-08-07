@@ -60,6 +60,10 @@ class TeleopRecorder(Recorder):
 
     @rpc
     def start(self) -> None:
+        with self._recorder_stop_lock:
+            self._start_teleop_recorder()
+
+    def _start_teleop_recorder(self) -> None:
         if self.config.g.replay:
             super().start()
             return

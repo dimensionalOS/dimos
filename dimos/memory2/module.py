@@ -19,7 +19,7 @@ import enum
 import inspect
 import os
 from pathlib import Path
-import sqlite3
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -28,7 +28,7 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -56,6 +56,108 @@ logger = setup_logger()
 T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
+
+_RECORDER_DRAIN_TIMEOUT_SECONDS: float = DEFAULT_THREAD_JOIN_TIMEOUT
+_RECORDER_DRAIN_LOG_INTERVAL_SECONDS: float = 0.1
+
+
+class _RecorderDrainError(RuntimeError):
+    pass
+
+
+class _RecorderCallbacks:
+    def __init__(self) -> None:
+        self._state = threading.Condition()
+        self._accepting = True
+        self._active = 0
+        self._subscriptions: list[DisposableBase] = []
+        self._dispatchers: list[DisposableBase] = []
+        self._stopped = False
+
+    def begin(self) -> bool:
+        with self._state:
+            if not self._accepting:
+                return False
+            self._active += 1
+            return True
+
+    def finish(self) -> None:
+        with self._state:
+            self._active -= 1
+            if self._active == 0:
+                self._state.notify_all()
+
+    def register(
+        self,
+        subscription: DisposableBase,
+        dispatcher: DisposableBase | None = None,
+    ) -> None:
+        with self._state:
+            if self._accepting:
+                self._subscriptions.append(subscription)
+                if dispatcher is not None:
+                    self._dispatchers.append(dispatcher)
+                return
+
+        subscription.dispose()
+        if dispatcher is not None:
+            dispatcher.dispose()
+        raise RuntimeError("Recorder is stopping or stopped")
+
+    def stop(self) -> None:
+        with self._state:
+            if self._stopped:
+                return
+            self._accepting = False
+            subscriptions, self._subscriptions = self._subscriptions, []
+            dispatchers = list(self._dispatchers)
+
+        first_error: BaseException | None = None
+        for subscription in subscriptions:
+            try:
+                subscription.dispose()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        started = time.monotonic()
+        deadline = started + _RECORDER_DRAIN_TIMEOUT_SECONDS
+        while True:
+            with self._state:
+                if self._active == 0:
+                    break
+                active = self._active
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _RecorderDrainError(
+                        f"Timed out waiting for {active} recorder callback(s)"
+                    ) from first_error
+                self._state.wait(timeout=min(_RECORDER_DRAIN_LOG_INTERVAL_SECONDS, remaining))
+                if self._active == 0:
+                    break
+
+            try:
+                logger.warning(
+                    "Still waiting for recorder callbacks",
+                    active_callbacks=active,
+                    elapsed_seconds=time.monotonic() - started,
+                )
+            except Exception:
+                pass
+
+        for dispatcher in dispatchers:
+            try:
+                dispatcher.dispose()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_error is not None:
+            raise first_error
+
+        with self._state:
+            self._dispatchers.clear()
+            self._stopped = True
 
 
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
@@ -325,8 +427,51 @@ class Recorder(MemoryModule):
 
     _pose_setters: dict[str, Any] = {}
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._init_recorder_runtime()
+
+    def _init_recorder_runtime(self) -> None:
+        self._recorder_stop_lock = threading.RLock()
+        self._recorder_callbacks = _RecorderCallbacks()
+        self._recorder_teardown_error: BaseException | None = None
+        self.register_disposable(Disposable(self._recorder_callbacks.stop))
+
+    def __getstate__(self) -> dict[str, Any]:
+        # ModuleBase.__getstate__ is untyped.
+        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
+        state.pop("_recorder_stop_lock", None)
+        state.pop("_recorder_callbacks", None)
+        state.pop("_recorder_teardown_error", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self._init_recorder_runtime()
+
+    @rpc
+    def stop(self) -> None:
+        with self._recorder_stop_lock:
+            if self._recorder_teardown_error is not None:
+                raise RuntimeError(
+                    "Recorder teardown previously failed; refusing to close the store"
+                ) from self._recorder_teardown_error
+            # Run the retryable callback barrier before the one-shot composite
+            # teardown. A drain timeout therefore leaves the store registered
+            # and allows a later stop() to finish once callbacks have returned.
+            self._recorder_callbacks.stop()
+            try:
+                super().stop()
+            except BaseException as exc:
+                self._recorder_teardown_error = exc
+                raise
+
     @rpc
     def start(self) -> None:
+        with self._recorder_stop_lock:
+            self._start_recorder()
+
+    def _start_recorder(self) -> None:
         super().start()
 
         if self.config.g.replay:
@@ -387,27 +532,39 @@ class Recorder(MemoryModule):
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Each port is recorded by an async callback dispatched on the module's
-        event loop via :meth:`process_observable`, which serialises invocations
-        and registers the subscription for cleanup on stop().
+        Each port uses a LATEST-coalescing async dispatcher on the module's event
+        loop. The recorder callback barrier owns the subscription and dispatcher
+        so stop() can block new writes, unsubscribe, and drain admitted callbacks
+        before the store closes.
         """
 
         async def on_msg(stamped: tuple[float, Any]) -> None:
-            recv_ts, msg = stamped
-            ts = self._resolve_ts(name, msg)
-            pose = await self._resolve_pose(name, msg, ts)
-            if not pose and name not in self.config.poseless_streams:
-                logger.warning(
-                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                    name,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
-            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
+            if not self._recorder_callbacks.begin():
+                return
+            try:
+                recv_ts, msg = stamped
+                ts = self._resolve_ts(name, msg)
+                pose = await self._resolve_pose(name, msg, ts)
+                if not pose and name not in self.config.poseless_streams:
+                    logger.warning(
+                        "[%s] No pose for time %s (msg ts: %s), storing without pose",
+                        name,
+                        ts,
+                        getattr(msg, "ts", None),
+                    )
+                stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
+            finally:
+                self._recorder_callbacks.finish()
 
         # Stamp arrival time before the coalescing dispatch queue.
         stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
-        self.process_observable(stamped, on_msg)
+        on_next, dispatcher = self._make_async_dispatch(on_msg)
+        try:
+            subscription = stamped.subscribe(on_next)
+        except BaseException:
+            dispatcher.dispose()
+            raise
+        self._recorder_callbacks.register(subscription, dispatcher)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -457,11 +614,12 @@ class Recorder(MemoryModule):
         tf_stream = self.store.stream("tf", TFMessage)
 
         def on_tf(msg: TFMessage) -> None:
+            if not self._recorder_callbacks.begin():
+                return
             try:
                 for transform in msg.transforms:
                     tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
-            except sqlite3.ProgrammingError:
-                # A late LCM callback raced teardown and hit the closed store.
-                pass
+            finally:
+                self._recorder_callbacks.finish()
 
-        self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+        self._recorder_callbacks.register(Disposable(self.tf.subscribe(on_tf)))
