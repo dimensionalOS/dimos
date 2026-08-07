@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.perception.vqa.models import GroundedObject, VqaExample
+from dimos.benchmark.vqa.models import GroundedObject, VqaExample
 
 
 def generate_questions(

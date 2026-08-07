@@ -85,17 +85,6 @@ class VqaExample:
     object_ids: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class VqaEvaluation:
-    """The result of asking an image-only agent one generated question."""
-
-    example_id: str
-    expected_answer: str
-    raw_response: str
-    normalized_response: str | None
-    passed: bool
-
-
 QuestionKind = Literal[
     "presence", "horizontal_direction", "within_distance", "compare_nearest_by_side"
 ]
@@ -153,9 +142,3 @@ class PointObjectSegmenter(Protocol):
     """Creates foreground masks from positive image-point prompts."""
 
     def segment_points(self, points: ImageDetections2D) -> ImageDetections2D: ...
-
-
-class VisualQuestionAnswerer(Protocol):
-    """Answers a question from an image without access to ground truth."""
-
-    def answer(self, image: Image, question: str) -> str: ...

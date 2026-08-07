@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.perception.vqa.models import CalibratedFrame, ProjectedPoints, ProjectionConfig
+from dimos.benchmark.vqa.models import CalibratedFrame, ProjectedPoints, ProjectionConfig
 
 
 def project_visible_points(
