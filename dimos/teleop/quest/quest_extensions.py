@@ -220,6 +220,21 @@ class HandTeleopModule(ArmTeleopModule):
                     self._engage(hand)
             self._primary_was_pressed[hand] = is_pressed
 
+    def _publish_button_state(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        """Keep downstream press-and-hold teleop tasks engaged between pinches."""
+        buttons = Buttons.from_controllers(left, right)
+        buttons.pack_analog_triggers(
+            left=left.trigger if left is not None else 0.0,
+            right=right.trigger if right is not None else 0.0,
+        )
+        buttons.left_primary = self._is_engaged[Hand.LEFT]
+        buttons.right_primary = self._is_engaged[Hand.RIGHT]
+        self.teleop_buttons.publish(buttons)
+
 
 class VideoArmTeleopConfig(ArmTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
