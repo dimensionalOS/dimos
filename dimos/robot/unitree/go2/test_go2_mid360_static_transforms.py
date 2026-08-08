@@ -21,10 +21,16 @@ in FRAMES. These pin the composed result, which is what nav actually uses.
 
 import math
 
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_PITCH_DOWN,
+    POINTLIO_BASE_VIZ_Z_OFFSET,
     mount_transforms,
+    pointlio_odom_to_base_link_pose,
 )
 
 # base_link -> mid360_link, summed down the FRAMES chain.
@@ -62,3 +68,17 @@ def test_camera_optical_hangs_off_base_link() -> None:
     assert optical is not None
     assert abs(optical.translation.x - 0.32715) < 1e-6
     assert abs(optical.translation.z - 0.04297) < 1e-6
+
+
+def test_pointlio_odom_to_base_link_removes_mount_pitch() -> None:
+    """A pure lidar-pitch odom pose should land near level in base_link."""
+    pitched = Quaternion.from_euler(Vector3(0.0, MID360_PITCH_DOWN, 0.0))
+    odom = Odometry(
+        ts=1.0,
+        frame_id="world",
+        child_frame_id="mid360_link",
+        pose=Pose(position=Vector3(1.0, 2.0, 0.5), orientation=pitched),
+    )
+    base = pointlio_odom_to_base_link_pose(odom)
+    assert abs(base.orientation.euler.y) < 1e-6
+    assert abs(base.position.z - (0.5 + POINTLIO_BASE_VIZ_Z_OFFSET)) < 1e-6
