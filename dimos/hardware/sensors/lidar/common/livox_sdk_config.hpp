@@ -9,6 +9,9 @@
 #include <livox_lidar_api.h>
 #include <livox_lidar_def.h>
 
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -45,6 +48,50 @@ struct SdkPorts {
     int host_imu_data   = 56401;
     int host_log_data   = 56501;
 };
+
+// True if `ip` is assigned to a local network interface on this machine.
+inline bool ip_is_local_address(const std::string& ip) {
+    struct ifaddrs* interface_list = nullptr;
+    if (getifaddrs(&interface_list) != 0) {
+        return false;
+    }
+    bool found = false;
+    for (struct ifaddrs* interface = interface_list; interface != nullptr;
+         interface = interface->ifa_next) {
+        if (interface->ifa_addr == nullptr || interface->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        auto* address = reinterpret_cast<struct sockaddr_in*>(interface->ifa_addr);
+        char address_text[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &address->sin_addr, address_text, sizeof(address_text));
+        if (ip == address_text) {
+            found = true;
+            break;
+        }
+    }
+    freeifaddrs(interface_list);
+    return found;
+}
+
+// Default for the SDK's data-socket multicast group.
+//
+// Real Mid-360 hardware multicasts point/IMU data to 224.1.1.5, and the SDK
+// must join that group to receive anything — on every platform.
+//
+// The exception is the virtual_mid360 replayer on macOS: its synthetic lidar
+// IP is a lo0 alias, and a multicast send source-bound to an alias fails
+// ("No route to host"), so the replayer unicasts to host_ip instead. An empty
+// multicast_ip makes the SDK bind its data socket to host_ip so it receives
+// those unicasts. A replayed "lidar" is a local alias while a real lidar's IP
+// is never a local address, so we can tell the two apart automatically.
+inline const char* default_multicast_ip(const std::string& lidar_ip) {
+#if defined(__APPLE__) && defined(__MACH__)
+    return ip_is_local_address(lidar_ip) ? "" : "224.1.1.5";
+#else
+    (void)lidar_ip;
+    return "224.1.1.5";
+#endif
+}
 
 // Write Livox SDK JSON config to an in-memory (or ephemeral) file.
 // Returns {fd, path} — caller must close(fd) after LivoxLidarSdkInit reads it.
@@ -92,17 +139,14 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         return {-1, ""};
     }
 
-    // On macOS the synthetic lidar/host IPs are lo0 aliases, and a multicast send
-    // source-bound to an alias fails ("No route to host"), so the virtual_mid360
-    // replayer unicasts point/IMU to host_ip. An empty multicast_ip makes the SDK
-    // bind its data socket to host_ip (not the multicast group) so it receives
-    // those unicasts. Real hardware on Linux keeps the Livox default multicast.
-#if defined(__APPLE__) && defined(__MACH__)
-    const char* multicast_ip = "";
-#else
-    const char* multicast_ip = "224.1.1.5";
-#endif
+    const char* resolved_multicast_ip = default_multicast_ip(lidar_ip);
 
+    // Listing lidar_ip makes the SDK treat the lidar as a pre-detected "custom"
+    // device: data/command channels are created up front and commands go unicast
+    // to that IP. Without it the SDK only creates channels after its broadcast
+    // discovery (255.255.255.255:56000) gets a reply — a broadcast that on macOS
+    // egresses the default-route interface and never reaches a directly-attached
+    // lidar on a secondary NIC, so no data ever flows.
     fprintf(fp,
         "{\n"
         "  \"MID360\": {\n"
@@ -115,6 +159,7 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         "    },\n"
         "    \"host_net_info\": [\n"
         "      {\n"
+        "        \"lidar_ip\": [\"%s\"],\n"
         "        \"host_ip\": \"%s\",\n"
         "        \"multicast_ip\": \"%s\",\n"
         "        \"cmd_data_port\": %d,\n"
@@ -128,7 +173,7 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         "}\n",
         ports.cmd_data, ports.push_msg, ports.point_data,
         ports.imu_data, ports.log_data,
-        host_ip.c_str(), multicast_ip,
+        lidar_ip.c_str(), host_ip.c_str(), resolved_multicast_ip,
         ports.host_cmd_data, ports.host_push_msg, ports.host_point_data,
         ports.host_imu_data, ports.host_log_data);
     fflush(fp);  // flush but don't fclose — that would close fd
