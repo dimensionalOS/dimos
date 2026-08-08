@@ -63,8 +63,7 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
-CAMERA_NAME = "d455"
-CAMERA_LINK = f"{CAMERA_NAME}_link"
+BASE_LINK = "base_link"
 
 CAMERA_ANGLE_UP = math.radians(10)
 
@@ -79,11 +78,11 @@ LIDAR_ABOVE_BOX_CENTER = 0.017
 # IMU position in point-cloud (lidar) coordinates, from Livox Mid-360 extrinsics.
 IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
-# The rig, hung off camera_link. Everything below it belongs to RealSenseCamera, which
-# reads it off the device.
+# The lidar side of the rig. The camera hangs its own frames off base_link, named for
+# whichever model is plugged in, and reads their geometry off the device.
 FRAMES: list[FrameSpec] = [
-    (CAMERA_LINK, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("box_pitch_frame", CAMERA_LINK, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
+    (BASE_LINK, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("box_pitch_frame", BASE_LINK, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
     ("box_center", "box_pitch_frame", (-BOX_BACK, 0.0, BOX_UP), (0.0, 0.0, 0.0)),
     ("lidar_frame", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
     ("imu_frame", "lidar_frame", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
@@ -115,7 +114,7 @@ class Mid360RealsenseRecorder(PointlioRecorder):
 
 
 mid360_realsense_record = autoconnect(
-    RealSenseCamera.blueprint(camera_name=CAMERA_NAME, base_transform=None).remappings(
+    RealSenseCamera.blueprint().remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "pointcloud", "realsense_pointcloud"),

@@ -20,9 +20,6 @@ from collections import deque
 import math
 from typing import Any
 
-from reactivex.disposable import Disposable
-
-from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -52,12 +49,7 @@ class OdometryPath(Module):
         self._poses: deque[PoseStamped] = deque(maxlen=self.config.max_poses)
         self._last_publish_ts = 0.0
 
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
-
-    def _on_odometry(self, msg: Odometry) -> None:
+    async def handle_odometry(self, msg: Odometry) -> None:
         position = msg.pose.position
         point = (position.x, position.y, position.z)
         if self._poses:
