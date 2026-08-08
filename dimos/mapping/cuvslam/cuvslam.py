@@ -20,6 +20,7 @@ import ctypes
 import os
 from pathlib import Path
 import platform
+import sys
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -110,7 +111,8 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Which of NVIDIA's builds this machine needs. An Orin build does not run on a Thor."""
+    if sys.platform == "darwin":
+        return "metal"
     if platform.machine() == "aarch64":
         compatible = Path("/proc/device-tree/compatible")
         chip = compatible.read_bytes() if compatible.exists() else b""
@@ -126,6 +128,8 @@ def sdk_variant() -> str:
 
 
 def _driver_env() -> dict[str, str]:
+    if sys.platform == "darwin":
+        return {"CUMETAL_USE_METAL_DEVICE_ADDRESSES": "1"}
     parts = [str(_HOST_CUDA_LIB_DIR)] if _HOST_CUDA_LIB_DIR.is_dir() else []
     driver_dir = driver_library_dir()
     if driver_dir is not None:

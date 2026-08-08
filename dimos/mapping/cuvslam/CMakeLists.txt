@@ -51,4 +51,13 @@ target_link_libraries(cuvslam_odometry PRIVATE
   ${CUVSLAM_LIBRARY}
 )
 target_link_directories(cuvslam_odometry PRIVATE ${LCM_LIBRARY_DIRS})
+if(APPLE)
+  # The SDK's install name is @rpath/libcuvslam.dylib, so the directory it was linked
+  # from has to survive into the installed binary.
+  get_filename_component(CUVSLAM_LIBRARY_DIR ${CUVSLAM_LIBRARY} DIRECTORY)
+  set_target_properties(cuvslam_odometry PROPERTIES
+    INSTALL_RPATH ${CUVSLAM_LIBRARY_DIR}
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+endif()
 install(TARGETS cuvslam_odometry RUNTIME DESTINATION bin)

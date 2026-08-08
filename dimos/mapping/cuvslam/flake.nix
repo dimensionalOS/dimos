@@ -24,14 +24,14 @@
   outputs = { self, nixpkgs, flake-utils, lcm-extended, dimos-lcm, pfr, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        # cudaSupport pulls the unfree CUDA runtime that libcuvslam.so links.
+        isDarwin = nixpkgs.lib.hasSuffix "-darwin" system;
         pkgs = import nixpkgs {
           inherit system;
-          config = { allowUnfree = true; cudaSupport = true; };
+          config = { allowUnfree = true; cudaSupport = !isDarwin; };
         };
         lcm = lcm-extended.packages.${system}.lcm;
 
-        # Every C++ build NVIDIA ships for this release. The ubuntu flavour does not
+        # Every C++ build NVIDIA ships for this release. The ubuntu flavor does not
         # matter under autoPatchelf. `cuda` is the matching nixpkgs set: a runtime
         # newer than the SDK's fails inside cuSOLVER.
         sdks = {
@@ -62,37 +62,61 @@
             system = "aarch64-linux";
             cuda = "cudaPackages_13_0";
           };
+          # Ours, since NVIDIA ships no macOS build: the same v17.0.0 sources compiled for
+          # Apple silicon against CuMetal, targeting macOS 13 on apple-m1. It additionally
+          # carries libcumetal.dylib and share/cumetal-cache.
+          metal = {
+            url = "https://github.com/jeff-hykin/cuda-metal/releases/download/cuvslam-v17.0.0-metal.1/cuvslam-cpp-17.0.0-arm64-metal-macos.tar.gz";
+            hash = "sha256-rZI7hD05mGbCQWJThzlNjsmCMITNh/fekgTYBRltCRE=";
+            system = "aarch64-darwin";
+          };
         };
 
         forThisSystem = pkgs.lib.filterAttrs (_: sdk: sdk.system == system) sdks;
-        # What a machine that says nothing about itself gets. CUDA 12 on both arches:
-        # it is what the drivers in the field are, and a 13 driver runs a 12 build.
-        defaultVariant = if system == "aarch64-linux" then "orin" else "x86_64-cuda12";
+        # What a machine that says nothing about itself gets. CUDA 12 on both linux
+        # arches: it is what the drivers in the field are, and a 13 driver runs a 12
+        # build.
+        defaultVariant = {
+          aarch64-darwin = "metal";
+          aarch64-linux = "orin";
+        }.${system} or "x86_64-cuda12";
 
-        cudaLibs = cuda: [ cuda.cuda_cudart cuda.libcublas cuda.libcusolver cuda.libcusparse ];
+        cudaLibs = sdk: pkgs.lib.optionals (sdk ? cuda) (
+          with pkgs.${sdk.cuda}; [ cuda_cudart libcublas libcusolver libcusparse ]
+        );
 
         sdkFor = name: sdk: pkgs.stdenv.mkDerivation {
           pname = "cuvslam-sdk-${name}";
           version = "17.0.0";
           src = pkgs.fetchurl { inherit (sdk) url hash; };
           sourceRoot = ".";
-          nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-          buildInputs = [ pkgs.stdenv.cc.cc.lib ] ++ cudaLibs pkgs.${sdk.cuda};
+          # ELF-only, and none of the CUDA runtime has a darwin build.
+          nativeBuildInputs = pkgs.lib.optionals (!isDarwin) [ pkgs.autoPatchelfHook ];
+          buildInputs = pkgs.lib.optionals (!isDarwin) [ pkgs.stdenv.cc.cc.lib ]
+            ++ cudaLibs sdk;
           installPhase = ''
             runHook preInstall
             mkdir -p $out/lib $out/include $out/bin $out/share/cuvslam
-            cp bin/libcuvslam.so $out/lib/
+            cp bin/libcuvslam.${if isDarwin then "dylib" else "so"} $out/lib/
             cp bin/cuvslam_api_launcher $out/bin/ || true
             cp -r include/cuvslam $out/include/
             # The NVIDIA Community License requires this to travel with the binary.
             cp LICENSE $out/share/cuvslam/
             echo "Licensed by NVIDIA Corporation under the NVIDIA Community License." \
               > $out/share/cuvslam/NOTICE
+            ${pkgs.lib.optionalString isDarwin ''
+              cp bin/libcumetal.dylib $out/lib/
+              cp -r share/cumetal-cache $out/share/
+              # The archive keeps every dylib beside the launcher; splitting them into
+              # lib/ and bin/ moves the launcher one directory away from them.
+              ${pkgs.darwin.cctools}/bin/install_name_tool \
+                -add_rpath "@loader_path/../lib" $out/bin/cuvslam_api_launcher
+            ''}
             runHook postInstall
           '';
           meta.license = pkgs.lib.licenses.unfree;  # NVIDIA Community License
         };
-        moduleFor = name: sdk: pkgs.stdenv.mkDerivation {
+        moduleFor = name: sdk: let sdkPackage = sdkFor name sdk; in pkgs.stdenv.mkDerivation {
           pname = "dimos-cuvslam-native";
           version = "0.1.0";
           # cmake inputs only. Editing cuvslam.py must not rebuild the C++.
@@ -101,9 +125,11 @@
             fileset = pkgs.lib.fileset.unions [ ./CMakeLists.txt ./src ];
           };
 
-          nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config pkgs.autoPatchelfHook ];
-          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json (sdkFor name sdk) ]
-            ++ cudaLibs pkgs.${sdk.cuda};
+          nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ]
+            ++ pkgs.lib.optionals isDarwin [ pkgs.makeWrapper ]
+            ++ pkgs.lib.optionals (!isDarwin) [ pkgs.autoPatchelfHook ];
+          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json sdkPackage ]
+            ++ cudaLibs sdk;
 
           cmakeFlags = [
             # cmake otherwise defaults to no optimisation at all.
@@ -113,8 +139,16 @@
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             # Outside this dir, which a git-tree flake reaches as a path literal.
             "-DDIMOS_NATIVE_CPP_DIR=${../../../native/cpp}"
-            "-DCUVSLAM_SDK_DIR=${sdkFor name sdk}"
+            "-DCUVSLAM_SDK_DIR=${sdkPackage}"
           ];
+
+          # The archive ships every kernel already compiled, but its store path is
+          # read-only so CuMetal cannot use it as the normal cache; this is the read-only
+          # lookup it consults first.
+          postInstall = pkgs.lib.optionalString isDarwin ''
+            wrapProgram $out/bin/cuvslam_odometry \
+              --set-default CUMETAL_PREBUILT_CACHE_DIR ${sdkPackage}/share/cumetal-cache
+          '';
         };
       in {
         # One package per build NVIDIA ships for this arch.
