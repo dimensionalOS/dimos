@@ -15,7 +15,8 @@
 
 from pathlib import Path
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
@@ -36,16 +37,22 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.robot.unitree.go2.blueprints.basic.unitree_mid360_basic import unitree_mid360_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
 
-unitree_go2 = autoconnect(
-    unitree_go2_basic,
-    VoxelGridMapper.blueprint(emit_every=5),
+# Shared navigation stack for the smart Go2 / Mid-360 reloc blueprints.
+_unitree_go2_navigation = autoconnect(
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
+)
+
+unitree_go2 = autoconnect(
+    unitree_go2_basic,
+    VoxelGridMapper.blueprint(emit_every=5),
+    _unitree_go2_navigation,
 ).global_config(n_workers=10, robot_model="unitree_go2")
 
 
@@ -99,11 +106,28 @@ unitree_go2_relocalization = autoconnect(
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11)
 
-# Same stack as unitree_go2_relocalization with Mid-360 presets: 3 cm voxels,
-# relocalization FINE_VOXEL=0.06 / RERANK_DIST=0.12. Override at runtime with
-# ``--lidar-config default`` if needed.
+
+def unitree_go2_mid360_relocalization_base(lidar_config: str) -> Blueprint:
+    """Pick the reloc base stack from ``lidar_config``.
+
+    ``mid360`` → ``unitree_mid360_basic`` (Point-LIO odom preference + Mid-360
+    Rerun / 3 cm voxels) plus the shared nav stack. Anything else → standard
+    ``unitree_go2`` (``unitree_go2_basic`` + voxels + nav).
+
+    CLI/env are applied to ``global_config`` before blueprint import, so
+    ``--lidar-config mid360`` selects the Mid-360 base at composition time.
+    """
+    if lidar_config == "mid360":
+        # mid360_basic already includes VoxelGridMapper at Mid-360 resolution.
+        return autoconnect(unitree_mid360_basic, _unitree_go2_navigation)
+    return unitree_go2
+
+
+# Mid-360 presets (3 cm voxels, reloc FINE_VOXEL=0.06 / RERANK_DIST=0.12).
+# Base stack follows ``--lidar-config``: mid360 → unitree_mid360_basic, else
+# unitree_go2_basic via unitree_go2. Override with ``--lidar-config default``.
 unitree_go2_mid360_relocalization = autoconnect(
-    unitree_go2,
+    unitree_go2_mid360_relocalization_base(global_config.lidar_config),
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11, lidar_config="mid360")
 
