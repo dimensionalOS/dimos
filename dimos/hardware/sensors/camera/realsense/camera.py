@@ -72,7 +72,6 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
-    # Colour is three times the bytes of an IR frame, so leave it off for VIO.
     enable_color: bool = True
     enable_pointcloud: bool = False
     enable_infrared: bool = False
@@ -239,12 +238,12 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     rs.option.emitter_enabled, 1.0 if self.config.emitter_enabled else 0.0
                 )
 
-        # Aligning to colour needs the colour stream to actually be running.
+        # Aligning to color needs the color stream to actually be running.
         if self.config.align_depth_to_color and self.config.enable_depth:
             if self.config.enable_color:
                 self._align = rs.align(rs.stream.color)
             else:
-                logger.info("align_depth_to_color ignored: colour stream is disabled")
+                logger.info("align_depth_to_color ignored: color stream is disabled")
 
         self._build_camera_info()
         self._get_extrinsics()
@@ -554,7 +553,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             frame_id: self._extrinsics_to_body(extrinsics)
             for frame_id, extrinsics in self._frame_extrinsics.items()
         }
-        # With depth off there are no extrinsics, so colour falls back to camera_link.
+        # With depth off there are no extrinsics, so color falls back to camera_link.
         if self.config.enable_color and self._color_frame not in body_frames:
             body_frames[self._color_frame] = (Vector3(0.0, 0.0, 0.0), identity)
 
@@ -595,7 +594,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         """This frame's own timestamp, or None if the stream has not advanced.
 
         wait_for_frames() hands back a frameset assembled from the latest frame of
-        each stream, and under load those streams desync: colour can advance while
+        each stream, and under load those streams desync: color can advance while
         depth and infrared stand still. Stamping every stream from
         ``frames.get_timestamp()`` then gives the stalled streams a fresh-looking
         time, and republishing them stores the same image twice -- byte-identical,
