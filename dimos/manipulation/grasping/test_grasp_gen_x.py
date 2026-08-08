@@ -107,6 +107,18 @@ def test_messages_round_trip_empty_and_score() -> None:
     )
 
 
+def test_candidate_array_lcm_round_trip() -> None:
+    value = GraspCandidateArray(
+        Header(3.0, "camera"), [GraspCandidate(Pose(1, 2, 3), 0.25)], selected_index=1
+    )
+
+    decoded = GraspCandidateArray.lcm_decode(value.lcm_encode())
+
+    assert decoded.header.frame_id == "camera"
+    assert decoded.candidates[0].score == pytest.approx(0.25)
+    assert decoded.selected_index == 1
+
+
 def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
     legacy_signature = inspect.signature(LegacyGraspGenSpec.generate_grasps)
     signature = inspect.signature(GraspGenSpec.propose_grasps)
@@ -168,6 +180,7 @@ def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
         assert len(module.propose_grasps(cloud())) == 1
     finally:
         module.stop()
+    runtime.return_value.stop.assert_called_once_with()
 
 
 def test_start_failure_is_explicit(runtime: Any) -> None:
@@ -277,16 +290,15 @@ def test_inference_failure_is_wrapped(runtime: Any) -> None:
         module.stop()
 
 
-def test_not_started_and_missing_metadata_are_rejected(runtime: Any) -> None:
+def test_lazy_runtime_loading_and_missing_metadata_are_rejected(runtime: Any) -> None:
     module = GraspGenXModule(**module_args())
     missing_frame = cloud()
     missing_frame.frame_id = ""
     missing_timestamp = cloud()
     missing_timestamp.ts = None
     try:
-        with pytest.raises(GraspGenXError, match="not been started"):
-            module.propose_grasps(cloud())
-        module.start()
+        assert len(module.propose_grasps(cloud())) == 1
+        runtime.assert_called_once_with(module.config)
         with pytest.raises(ValueError, match="frame_id"):
             module.propose_grasps(missing_frame)
         with pytest.raises(ValueError, match="timestamp"):

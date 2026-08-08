@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from dimos.manipulation.visualization.layers import VisualizationLayer
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -25,6 +26,7 @@ from dimos.manipulation.visualization.viser.animation import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
+from dimos.manipulation.visualization.viser.layers import ViserLayerManager
 from dimos.manipulation.visualization.viser.runtime import (
     VISER_URDF_INSTALL_HINT,
     ViserRuntime,
@@ -73,6 +75,7 @@ class ViserManipulationVisualizer:
         self._server: ViserServer | None = None
         self._scene: ViserManipulationScene | None = None
         self._gui: ViserPanelGui | None = None
+        self._layer_manager: ViserLayerManager | None = None
         self._session_scene: PlanningSceneInfo | None = None
         self._operator: object | None = None
         self._current_states: dict[str, JointState] = {}
@@ -120,6 +123,7 @@ class ViserManipulationVisualizer:
             self._server = None
             self._scene = None
             self._gui = None
+            self._layer_manager = None
             self._closed = True
             raise
         self._runtime = runtime
@@ -128,6 +132,15 @@ class ViserManipulationVisualizer:
         self._gui = gui
         self._closed = False
         logger.info(f"Viser manipulation visualization: {self.get_visualization_url()}")
+
+    def _ensure_layer_manager(self) -> ViserLayerManager | None:
+        """Create generic layer resources only when a layer is first published."""
+        if self._layer_manager is not None:
+            return self._layer_manager
+        if self._server is None or self._scene is None or self._closed:
+            return None
+        self._layer_manager = ViserLayerManager(self._server, self._scene)
+        return self._layer_manager
 
     def initialize(self, session: VisualizationSession) -> None:
         """Initialize Viser robot visuals from a one-shot visualization session."""
@@ -227,6 +240,37 @@ class ViserManipulationVisualizer:
         if self._scene is not None:
             self._scene.clear_vis_obstacles()
 
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        """Queue one complete display-only layer replacement."""
+        if self._closed:
+            return
+        try:
+            self._ensure_started()
+            manager = self._ensure_layer_manager()
+            if manager is not None:
+                manager.set_layer(layer)
+        except Exception:
+            logger.warning(
+                "Visualization layer submission failed for '%s'",
+                layer.id,
+                exc_info=True,
+            )
+
+    def clear_layer(self, layer_id: str) -> None:
+        """Queue a display-only layer clear while retaining viewer state."""
+        if self._closed:
+            return
+        try:
+            self._ensure_started()
+            if self._layer_manager is not None:
+                self._layer_manager.clear_layer(layer_id)
+        except Exception:
+            logger.warning(
+                "Visualization layer clear failed for '%s'",
+                layer_id,
+                exc_info=True,
+            )
+
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""
         if self._closed:
@@ -322,6 +366,11 @@ class ViserManipulationVisualizer:
         self._closed = True
         errors: list[BaseException] = []
         try:
+            if self._layer_manager is not None:
+                try:
+                    self._layer_manager.close()
+                except Exception as e:
+                    errors.append(e)
             if self._gui is not None:
                 try:
                     self._gui.close()
@@ -342,5 +391,6 @@ class ViserManipulationVisualizer:
             self._server = None
             self._scene = None
             self._gui = None
+            self._layer_manager = None
         if errors:
             raise errors[0]

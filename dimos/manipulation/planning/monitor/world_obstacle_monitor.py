@@ -26,7 +26,10 @@ Example:
 
 from __future__ import annotations
 
-from dataclasses import replace
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +40,8 @@ from dimos.manipulation.planning.spec.models import (
     Obstacle,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -47,6 +52,15 @@ if TYPE_CHECKING:
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
+
+
+@dataclass
+class ObjectObstacleSuppression:
+    """Result of a scoped object-obstacle suppression."""
+
+    object_id: str
+    removed: bool = False
+    cleanup_error: str | None = None
 
 
 class WorldObstacleMonitor:
@@ -72,6 +86,7 @@ class WorldObstacleMonitor:
         parent: WorldMonitor,
         detection_timeout: float = 2.0,
         use_mesh_obstacles: bool = False,
+        obstacle_padding: float = 0.0,
     ) -> None:
         """Create a world obstacle monitor.
 
@@ -84,6 +99,7 @@ class WorldObstacleMonitor:
         self._lock = parent._lock
         self._detection_timeout = detection_timeout
         self._use_mesh_obstacles = use_mesh_obstacles
+        self._obstacle_padding = obstacle_padding
 
         # Track obstacles from different sources
         self._collision_objects: dict[str, str] = {}  # msg_id -> obstacle_id
@@ -95,6 +111,7 @@ class WorldObstacleMonitor:
         self._object_cache: dict[str, tuple[Object, float, float]] = {}
         # object_id -> obstacle_id (objects currently added to Drake world)
         self._object_obstacles: dict[str, str] = {}
+        self._object_suppressions: Counter[str] = Counter()
 
         # Running state
         self._running = False
@@ -123,6 +140,7 @@ class WorldObstacleMonitor:
             self._perception_objects.clear()
             self._perception_timestamps.clear()
             self._object_obstacles.clear()
+            self._object_suppressions.clear()
 
     def on_collision_object(self, msg: CollisionObjectMessage) -> None:
         """Handle explicit collision object message.
@@ -497,6 +515,8 @@ class WorldObstacleMonitor:
             for oid, (obj, first_seen, last_seen) in self._object_cache.items():
                 if not isinstance(obj, Object):
                     continue
+                if self._object_suppressions[oid] > 0:
+                    continue
                 if last_seen - first_seen < min_duration:
                     continue
                 eligible.append((oid, obj))
@@ -517,6 +537,10 @@ class WorldObstacleMonitor:
 
             result: list[dict[str, Any]] = []
             for oid, obj, obstacle in prepared:
+                # Suppression may have started while obstacle geometry was
+                # computed outside the lock.
+                if self._object_suppressions[oid] > 0:
+                    continue
                 assert isinstance(obj, Object)
                 obs_id = self._parent.add_obstacle(obstacle)
                 if not obs_id:
@@ -551,6 +575,58 @@ class WorldObstacleMonitor:
             self._parent.remove_obstacle(obs_id)
             logger.info(f"Removed obstacle for object '{object_id}'")
             return True
+
+    @contextmanager
+    def suppress_object_obstacle(self, object_id: str) -> Iterator[ObjectObstacleSuppression]:
+        """Exclude one cached object obstacle for the lifetime of the context.
+
+        Nested callers share one removal. Live refreshes skip suppressed object
+        IDs, and the outermost exit restores the latest cached geometry.
+        """
+        handle = ObjectObstacleSuppression(object_id=object_id)
+        with self._lock:
+            depth = self._object_suppressions[object_id]
+            self._object_suppressions[object_id] = depth + 1
+            if depth == 0:
+                obstacle_id = self._object_obstacles.get(object_id)
+                if obstacle_id is not None:
+                    if not self._parent.remove_obstacle(obstacle_id):
+                        del self._object_suppressions[object_id]
+                        raise RuntimeError(f"failed to suppress obstacle for object '{object_id}'")
+                    del self._object_obstacles[object_id]
+                    handle.removed = True
+        try:
+            yield handle
+        finally:
+            self._release_object_suppression(handle)
+
+    def _release_object_suppression(self, handle: ObjectObstacleSuppression) -> None:
+        object_id = handle.object_id
+        cached: Object | None = None
+        with self._lock:
+            depth = self._object_suppressions.get(object_id, 0)
+            if depth > 1:
+                self._object_suppressions[object_id] = depth - 1
+                return
+            self._object_suppressions.pop(object_id, None)
+            entry = self._object_cache.get(object_id)
+            if entry is not None:
+                cached = entry[0]
+
+        if cached is None:
+            return
+        obstacle = self._object_to_obstacle(cached)
+        with self._lock:
+            if self._object_suppressions.get(object_id, 0) > 0:
+                return
+            if object_id in self._object_obstacles:
+                return
+            obstacle_id = self._parent.add_obstacle(obstacle)
+            if obstacle_id:
+                self._object_obstacles[object_id] = obstacle_id
+                return
+            handle.cleanup_error = f"failed to restore obstacle for object '{object_id}'"
+            logger.error(handle.cleanup_error)
 
     def clear_perception_obstacles(self) -> int:
         """Remove all object obstacles from the planning world.
@@ -656,11 +732,24 @@ class WorldObstacleMonitor:
             except Exception as e:
                 logger.debug(f"Convex hull failed for {name}, falling back to box: {e}")
 
-        # Default: bounding box
+        # Real perception uses a conservative upright box. Preserve measured
+        # horizontal yaw while discarding noisy roll/pitch from partial views.
+        yaw = obj.pose.orientation.to_euler().z
+        pose = PoseStamped(
+            ts=obj.ts,
+            frame_id=obj.frame_id,
+            position=obj.center,
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        )
+        padding = self._obstacle_padding * 2.0
         return Obstacle(
             name=name,
             obstacle_type=ObstacleType.BOX,
-            pose=obj.pose or PoseStamped(position=obj.center),
-            dimensions=(float(obj.size.x), float(obj.size.y), float(obj.size.z)),
+            pose=pose,
+            dimensions=(
+                float(obj.size.x) + padding,
+                float(obj.size.y) + padding,
+                float(obj.size.z) + padding,
+            ),
             color=(0.2, 0.8, 0.2, 0.6),
         )

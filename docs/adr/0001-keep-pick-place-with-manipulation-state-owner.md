@@ -1,0 +1,3 @@
+# Keep the Pick/Place Transaction with its manipulation state owner
+
+`PickAndPlaceModule` is the sole Pick/Place Transaction owner because it also owns planning, execution, gripper state, and exclusive robot use; perception and grasp generation remain injected modules. The separate `PickNPlaceModule` workflow is removed after its useful behavior moves to the canonical module or its box-filling derivative. A workflow over RPC was rejected because validation, contact motion, recovery, and post-closure handling form one safety-critical transaction: splitting them would require a reservation protocol and a broad interface that exposes manipulation internals. Refactoring the inherited central `ManipulationModule` skill surface is outside this integration.

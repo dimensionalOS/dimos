@@ -30,3 +30,7 @@ class LegacyGraspGenSpec(Spec, Protocol):
 
 class GraspGenSpec(Spec, Protocol):
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
+
+
+class HeuristicGraspSpec(GraspGenSpec, Protocol):
+    """Contract for deterministic grasp proposals from an object point cloud."""

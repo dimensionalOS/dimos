@@ -64,10 +64,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-quest-xarm7",
         "teleop-quest-xarm7-video",
         "unitree-g1-nav-sim",
-        "xarm-perception",
-        "xarm-perception-agent",
-        "xarm-perception-sim",
-        "xarm-perception-sim-agent",
+        "xarm-box-filling",
+        "xarm-grasp-sim-agent",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }

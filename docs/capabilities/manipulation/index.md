@@ -62,7 +62,7 @@ The same nested shorthand applies to blueprints that instantiate
 `PickAndPlaceModule`:
 
 ```bash
-dimos run xarm-perception-sim \
+dimos run xarm-grasp-sim-agent \
   --kinematics.backend=pink
 ```
 
@@ -409,10 +409,8 @@ planner is locked for its whole native call.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
-| `xarm-perception` | XArm7 + RealSense camera for perception |
-| `xarm-perception-agent` | XArm7 perception + LLM agent |
-| `xarm-perception-sim` | XArm7 simulation perception stack |
-| [`xarm-perception-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 simulation perception stack + LLM agent |
+| `xarm-box-filling` | Real XArm6 + wrist RealSense + GraspGenX box-filling agent |
+| [`xarm-grasp-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 MuJoCo + ground-truth objects + GraspGenX agent |
 
 ## Supported Robots
 

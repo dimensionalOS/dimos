@@ -24,8 +24,7 @@ from dimos.robot.manipulators.common.agent_prompts import (
     MANIPULATION_AGENT_SYSTEM_PROMPT,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
-from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
-from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
+from dimos.robot.manipulators.xarm.blueprints.simulation import _xarm_grasp_sim
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
@@ -33,14 +32,8 @@ xarm7_planner_coordinator_agent = autoconnect(
     McpClient.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
-xarm_perception_agent = autoconnect(
-    xarm_perception,
-    McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
-)
-
-xarm_perception_sim_agent = autoconnect(
-    xarm_perception_sim,
+xarm_grasp_sim_agent = autoconnect(
+    _xarm_grasp_sim,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )

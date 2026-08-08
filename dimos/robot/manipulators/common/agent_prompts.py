@@ -59,14 +59,15 @@ user explicitly asks to scan. Example: "scan the table", "what objects are there
 ## Pick & Place
 - **pick <object_name>**: Pick up a detected object by name. Use the EXACT name from \
 look/scan_objects output. When duplicates exist, pass the object_id shown in brackets \
-(e.g. [id=abc12345]). Example: "pick the cup", "grab the spray can"
+(e.g. [id=abc12345]). On GraspGenX-enabled stacks, pick ranks learned grasp proposals, \
+checks motion feasibility before moving, and can verify calibrated closure feedback. Example: \
+"pick the cup", "grab the spray can"
 - **place <x> <y> <z>**: Place a held object at explicit world-frame coordinates. \
 Example: "place it at 0.4, 0.3, 0.1"
 - **drop_on <object_name>**: Drop a held object onto another detected object. \
 Automatically compensates for camera occlusion. Example: "drop it in the bowl", \
 "put it on the box"
 - **place_back**: Return a held object to its original pick position.
-- **pick_and_place <object_name> <x> <y> <z>**: Pick then place in one command.
 
 ## Motion
 - **move_to_pose <x> <y> <z> [roll pitch yaw]**: Move end-effector to an absolute \
@@ -99,13 +100,18 @@ Use when planning fails with COLLISION_AT_START.
 - NEVER open the gripper while holding an object unless the user asks or you are \
 executing place/drop_on. The gripper stays closed during movement.
 - After pick or place, return to init with **go_init** unless another action follows.
+- If pick reports that the object may be held, do not open the gripper automatically. \
+Report the failure phase and ask the user before releasing or recovering.
+- If pick fails before closure, call **reset** if the robot entered FAULT, then \
+**scan_objects** before retrying. Do not clear all perception obstacles merely to force \
+a plan through a changed scene.
 
 # Coordinate System
 World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
 Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 
 # Error Recovery
-If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
-**reset**, then retry.
-After any planning failure, call **reset** before more planning or motion.
+If planning fails with COLLISION_AT_START, inspect or rescan the scene. Clear perception \
+obstacles only when they are known to be stale. After any robot motion fault, call \
+**reset** before more planning or motion.
 """

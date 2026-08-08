@@ -25,13 +25,14 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 import math
 import threading
 import time
 from typing import Any, Literal, TypeAlias
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
@@ -66,9 +67,12 @@ from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
     ManipulationPlannerConfig,
 )
-from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
+from dimos.manipulation.planning.planners.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
@@ -94,6 +98,7 @@ from dimos.manipulation.visualization.config import (
     NoManipulationVisualizationConfig,
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.layers import VisualizationLayer
 from dimos.manipulation.visualization.operator import ManipulationOperator
 from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -105,6 +110,10 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+_UNCHECKED_LINEAR_IK_STEP_SIZE = 0.005
+_UNCHECKED_ANGULAR_IK_STEP_SIZE = 0.02
+_UNCHECKED_MAX_ANGULAR_SPEED = 0.5
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
 RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig]
@@ -138,6 +147,23 @@ class ManipulationState(Enum):
     FAULT = 4
 
 
+@dataclass(frozen=True)
+class ConnectedPoseSequenceResult:
+    """Motion-free result for an ordered sequence of pose plans."""
+
+    failed_index: int | None
+    endpoint: JointState | None
+    paths: tuple[tuple[JointState, ...], ...]
+
+
+class StaticBoxObstacle(BaseModel):
+    """Axis-aligned world-frame box installed when planning starts."""
+
+    name: str
+    center: tuple[float, float, float]
+    size: tuple[float, float, float]
+
+
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
@@ -162,6 +188,7 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    static_box_obstacles: list[StaticBoxObstacle] = Field(default_factory=list)
 
 
 class ManipulationModule(Module):
@@ -283,6 +310,17 @@ class ManipulationModule(Module):
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
+
+        for box in self.config.static_box_obstacles:
+            self._world_monitor.add_obstacle(
+                Obstacle(
+                    name=box.name,
+                    pose=Pose(Vector3(*box.center), Quaternion()),
+                    obstacle_type=ObstacleType.BOX,
+                    dimensions=tuple(box.size),
+                )
+            )
+            logger.info("Static obstacle '%s' added at %s", box.name, box.center)
 
         for _, (robot_id, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -878,6 +916,14 @@ class ManipulationModule(Module):
         return self.plan_to_pose_targets({group_id: pose})
 
     @rpc
+    def set_visualization_layer(self, layer: VisualizationLayer) -> bool:
+        """Replace one display-only layer in the active manipulation visualizer."""
+        if self._world_monitor is None or self._world_monitor.visualization is None:
+            return False
+        self._world_monitor.visualization.set_layer(layer)
+        return True
+
+    @rpc
     def plan_to_pose_targets(
         self,
         pose_targets: Mapping[PlanningGroupID | PlanningGroup, Pose],
@@ -1001,6 +1047,139 @@ class ManipulationModule(Module):
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
         return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
 
+    def _check_connected_pose_sequence(
+        self,
+        poses: Sequence[Pose],
+        robot_name: RobotName,
+        start: JointState | None = None,
+    ) -> tuple[int | None, JointState | None]:
+        """Dry-run a connected pose sequence and return failure index and endpoint.
+
+        The check does not store a plan or change module state. Each IK solve and
+        path plan starts at the preceding path's endpoint. When ``start`` is
+        omitted, the sequence begins at the robot's current authoritative state.
+        """
+        result = self._plan_connected_pose_sequence(poses, robot_name, start)
+        return result.failed_index, result.endpoint
+
+    def _check_pose_ik_sequence(
+        self,
+        poses: Sequence[Pose],
+        robot_name: RobotName,
+        start: JointState | None = None,
+        *,
+        check_collision: bool = True,
+    ) -> tuple[int | None, JointState | None]:
+        """Dry-run sequential pose IK and return the failure index and endpoint."""
+        if not poses:
+            return None, start
+        if self._world_monitor is None or self._kinematics is None:
+            logger.warning("Pose IK sequence checking is unavailable")
+            return 0, None
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(robot_name)
+            selection = self._world_monitor.planning_groups.select((group_id,))
+            if start is None:
+                current = self._world_monitor.current_global_joint_state()
+                start = filter_joint_state_to_selected_joints(current, selection.joint_names)
+            else:
+                start = filter_joint_state_to_selected_joints(start, selection.joint_names)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Failed to initialize pose IK sequence checking: %s", exc)
+            return 0, None
+
+        for index, pose in enumerate(poses):
+            target = PoseStamped(
+                frame_id="world",
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            ik = self.inverse_kinematics(
+                pose_targets={group_id: target},
+                seed=start,
+                check_collision=check_collision,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                return index, None
+            try:
+                start = filter_joint_state_to_selected_joints(ik.joint_state, selection.joint_names)
+            except ValueError:
+                return index, None
+        return None, start
+
+    def _plan_connected_pose_sequence(
+        self,
+        poses: Sequence[Pose],
+        robot_name: RobotName,
+        start: JointState | None = None,
+    ) -> ConnectedPoseSequenceResult:
+        """Dry-run connected pose plans and retain each successful segment path."""
+        if not poses:
+            return ConnectedPoseSequenceResult(None, start, ())
+        if self._world_monitor is None or self._kinematics is None or self._planner is None:
+            logger.warning("Connected pose planning is unavailable")
+            return ConnectedPoseSequenceResult(0, None, ())
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(robot_name)
+            selection = self._world_monitor.planning_groups.select((group_id,))
+            if start is None:
+                current = self._world_monitor.current_global_joint_state()
+                start = filter_joint_state_to_selected_joints(current, selection.joint_names)
+            else:
+                start = filter_joint_state_to_selected_joints(start, selection.joint_names)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Failed to initialize connected pose planning: %s", exc)
+            return ConnectedPoseSequenceResult(0, None, ())
+
+        paths: list[tuple[JointState, ...]] = []
+        for index, pose in enumerate(poses):
+            target = PoseStamped(
+                frame_id="world",
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            ik = self.inverse_kinematics(
+                pose_targets={group_id: target},
+                seed=start,
+                check_collision=True,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                logger.info(
+                    "Connected pose planning failed IK at index %d: %s%s",
+                    index,
+                    ik.status.name,
+                    f": {ik.message}" if ik.message else "",
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            result = self._planner.plan_selected_joint_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                goal=ik.joint_state,
+                timeout=self.config.planning_timeout,
+            )
+            if not result.is_success() or not result.path:
+                logger.info(
+                    "Connected pose planning failed path at index %d: %s%s",
+                    index,
+                    result.status.name,
+                    f": {result.message}" if result.message else "",
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            try:
+                start = filter_joint_state_to_selected_joints(
+                    result.path[-1], selection.joint_names
+                )
+            except ValueError as exc:
+                logger.info(
+                    "Connected pose planning returned an invalid endpoint at index %d: %s",
+                    index,
+                    exc,
+                )
+                return ConnectedPoseSequenceResult(index, None, tuple(paths))
+            paths.append(tuple(result.path))
+        return ConnectedPoseSequenceResult(None, start, tuple(paths))
+
     @rpc
     def plan_cartesian_targets(
         self,
@@ -1010,6 +1189,215 @@ class ManipulationModule(Module):
     ) -> bool:
         """Plan TCP motion through absolute or relative Cartesian waypoints."""
         return self.generate_cartesian_plan(targets, config, auxiliary_groups) is not None
+
+    @rpc
+    def plan_linear(
+        self,
+        target_pose: Pose,
+        robot_name: RobotName | None = None,
+        max_linear_speed: float = 0.03,
+        check_collision: bool = True,
+    ) -> bool:
+        """Plan a straight TCP path to an absolute world-frame pose."""
+        if not math.isfinite(max_linear_speed) or max_linear_speed <= 0.0:
+            return self._record_error("Linear speed must be finite and positive")
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return self._record_error("Robot not found or robot_name is required")
+        selected_robot_name, _, _ = robot
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
+        except ValueError as exc:
+            return self._record_error(str(exc))
+        current_pose = self.get_ee_pose(selected_robot_name)
+        if current_pose is None:
+            return self._record_error("Current TCP pose is unavailable")
+        if not check_collision:
+            logger.warning("Planning linear TCP motion with collision checking disabled")
+            return self._plan_unchecked_linear(
+                current_pose,
+                target_pose,
+                group_id,
+                max_linear_speed,
+            )
+        waypoints = (
+            PoseStamped(
+                frame_id="world",
+                position=current_pose.position,
+                orientation=current_pose.orientation,
+            ),
+            PoseStamped(
+                frame_id="world",
+                position=target_pose.position,
+                orientation=target_pose.orientation,
+            ),
+        )
+        config = RoboPlanCartesianPathConfig(
+            max_linear_speed=max_linear_speed,
+            check_collision=True,
+        )
+        return self.plan_cartesian_targets({group_id: waypoints}, config)
+
+    def _plan_unchecked_linear(
+        self,
+        start_pose: Pose,
+        target_pose: Pose,
+        group_id: PlanningGroupID,
+        max_linear_speed: float,
+    ) -> bool:
+        """Build a straight TCP path from sequential IK without collision queries."""
+        if self._world_monitor is None or self._kinematics is None:
+            return self._record_error("Planning not initialized")
+        planning_epoch = self._begin_group_planning()
+        if planning_epoch is None:
+            return False
+        resolved = self._resolve_group_plan_start((group_id,), planning_epoch)
+        if resolved is None:
+            return False
+        selection, seed = resolved
+
+        dx = target_pose.position.x - start_pose.position.x
+        dy = target_pose.position.y - start_pose.position.y
+        dz = target_pose.position.z - start_pose.position.z
+        distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        start_orientation = start_pose.orientation
+        target_orientation = target_pose.orientation
+        dot = sum(
+            start * target
+            for start, target in zip(
+                (
+                    start_orientation.x,
+                    start_orientation.y,
+                    start_orientation.z,
+                    start_orientation.w,
+                ),
+                (
+                    target_orientation.x,
+                    target_orientation.y,
+                    target_orientation.z,
+                    target_orientation.w,
+                ),
+                strict=True,
+            )
+        )
+        angular_distance = 2.0 * math.acos(min(1.0, abs(dot)))
+        sample_count = max(
+            1,
+            math.ceil(distance / _UNCHECKED_LINEAR_IK_STEP_SIZE - 1e-9),
+            math.ceil(angular_distance / _UNCHECKED_ANGULAR_IK_STEP_SIZE - 1e-9),
+        )
+
+        path = [seed]
+        for sample_index in range(1, sample_count + 1):
+            fraction = sample_index / sample_count
+            orientation = self._interpolate_quaternion(
+                start_orientation,
+                target_orientation,
+                fraction,
+            )
+            pose = Pose(
+                Vector3(
+                    start_pose.position.x + fraction * dx,
+                    start_pose.position.y + fraction * dy,
+                    start_pose.position.z + fraction * dz,
+                ),
+                orientation,
+            )
+            ik = self.inverse_kinematics(
+                {
+                    group_id: PoseStamped(
+                        frame_id="world",
+                        position=pose.position,
+                        orientation=pose.orientation,
+                    )
+                },
+                seed=seed,
+                check_collision=False,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                detail = f": {ik.message}" if ik.message else ""
+                return self._fail_planning_epoch(
+                    planning_epoch,
+                    "Unchecked linear IK failed at sample "
+                    f"{sample_index}/{sample_count}: {ik.status.name}{detail}",
+                )
+            try:
+                seed = filter_joint_state_to_selected_joints(
+                    ik.joint_state,
+                    selection.joint_names,
+                )
+            except ValueError as exc:
+                return self._fail_planning_epoch(
+                    planning_epoch,
+                    f"Unchecked linear IK returned an invalid joint state: {exc}",
+                )
+            path.append(seed)
+
+        result = PlanningResult(
+            status=PlanningStatus.SUCCESS,
+            path=path,
+            planning_time=0.0,
+            message="Unchecked sequential-IK Cartesian path found",
+        )
+        plan = self._store_generated_plan((group_id,), result, planning_epoch)
+        if plan is None:
+            return False
+        minimum_duration = max(
+            distance / max_linear_speed,
+            angular_distance / _UNCHECKED_MAX_ANGULAR_SPEED,
+        )
+        current_duration = plan.trajectory.duration
+        if current_duration > 0.0 and current_duration < minimum_duration:
+            scale = minimum_duration / current_duration
+            for point in plan.trajectory.points:
+                point.time_from_start *= scale
+                point.velocities = [velocity / scale for velocity in point.velocities]
+        return True
+
+    @staticmethod
+    def _interpolate_quaternion(
+        start: Quaternion,
+        target: Quaternion,
+        fraction: float,
+    ) -> Quaternion:
+        """Return a normalized shortest-arc quaternion interpolation."""
+        start_values: tuple[float, ...] = (start.x, start.y, start.z, start.w)
+        target_values: tuple[float, ...] = (target.x, target.y, target.z, target.w)
+        if sum(a * b for a, b in zip(start_values, target_values, strict=True)) < 0.0:
+            target_values = tuple(-value for value in target_values)
+        values = tuple(
+            a + fraction * (b - a) for a, b in zip(start_values, target_values, strict=True)
+        )
+        norm = math.sqrt(sum(value * value for value in values))
+        if norm <= 1e-12:
+            return Quaternion(target.x, target.y, target.z, target.w)
+        return Quaternion(*(value / norm for value in values))
+
+    def _execute_linear_motion(
+        self,
+        target_pose: Pose,
+        robot_name: RobotName | None = None,
+        max_linear_speed: float = 0.03,
+        *,
+        check_collision: bool,
+    ) -> SkillResult[ManipulationSkillError]:
+        """Plan and execute a linear motion with an explicit collision policy."""
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        selected_robot_name, _, _ = robot
+        if not self.plan_linear(
+            target_pose,
+            selected_robot_name,
+            max_linear_speed,
+            check_collision,
+        ):
+            detail = f": {self._error_message}" if self._error_message else ""
+            return SkillResult.fail(
+                "PLANNING_FAILED",
+                f"Linear Cartesian planning failed{detail}",
+            )
+        return self._preview_execute_wait(selected_robot_name)
 
     def generate_cartesian_plan(
         self,
@@ -1422,6 +1810,11 @@ class ManipulationModule(Module):
                         self._error_message = result.message
         return bool(result and result.accepted)
 
+    @rpc
+    def execute_and_wait(self, timeout: float = 60.0) -> bool:
+        """Execute the stored plan and wait for its expected trajectory duration."""
+        return self.execute_plan() and self._wait_for_trajectory_completion(timeout)
+
     @property
     def world_monitor(self) -> WorldMonitor | None:
         """Access the world monitor for advanced obstacle/world operations."""
@@ -1458,6 +1851,41 @@ class ManipulationModule(Module):
             mesh_path=mesh_path,
         )
         return self._world_monitor.add_obstacle(obstacle)
+
+    @skill(uses=["movement"])
+    def set_table_collision(
+        self,
+        center_x: float,
+        center_y: float,
+        tabletop_z: float,
+        width: float,
+        depth: float,
+        safety_margin: float = 0.0,
+        thickness: float = 0.20,
+    ) -> bool:
+        """Install or update a horizontal table collision slab.
+
+        All dimensions are meters. ``tabletop_z`` is the measured physical tabletop height. The default
+        uses no added clearance so a grasp can descend to an object's measured contact pose.
+        """
+        if self._world_monitor is None:
+            return False
+        if width <= 0.0 or depth <= 0.0 or thickness <= 0.0 or safety_margin < 0.0:
+            raise ValueError("table dimensions must be positive and safety_margin non-negative")
+        protected_top = tabletop_z + safety_margin
+        table = Obstacle(
+            name="calibrated-table",
+            obstacle_type=ObstacleType.BOX,
+            pose=PoseStamped(
+                position=Vector3(center_x, center_y, protected_top - thickness / 2),
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ),
+            dimensions=(width, depth, thickness),
+            color=(0.2, 0.5, 0.9, 0.35),
+        )
+        if self._world_monitor.update_obstacle(table):
+            return True
+        return bool(self._world_monitor.add_obstacle(table))
 
     @rpc
     def update_obstacle(
@@ -1591,23 +2019,42 @@ class ManipulationModule(Module):
         time.sleep(wait_time)
         return True
 
+    def _safety_lift_pose(
+        self, robot_name: RobotName | None = None, min_z: float = 0.05
+    ) -> Pose | None:
+        """Return the required safety-lift target, if the end effector is low."""
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        return Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
     ) -> SkillResult[ManipulationSkillError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
-        ee = self.get_ee_pose(robot_name)
-        if ee is None or ee.position.z >= min_z:
+        lift_pose = self._safety_lift_pose(robot_name, min_z)
+        if lift_pose is None:
             return SkillResult.ok()
-
-        lift_z = min_z + 0.05
-        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
-        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
         if not self.plan_to_pose(lift_pose, robot_name):
             return SkillResult.fail(
                 "PLANNING_FAILED",
-                f"Failed to plan lift from z={ee.position.z:.3f}",
+                f"Failed to plan safety lift to z={lift_pose.position.z:.3f}",
             )
         return self._preview_execute_wait(robot_name)
+
+    def _planner_fault_result(self) -> SkillResult[ManipulationSkillError] | None:
+        """Return an actionable failure while the planner requires recovery."""
+        with self._lock:
+            if self._state != ManipulationState.FAULT:
+                return None
+            detail = self._error_message or "unknown planner error"
+        return SkillResult.fail(
+            "INVALID_STATE",
+            f"Planner is FAULT ({detail}). Call reset before issuing another motion command.",
+        )
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
@@ -1687,6 +2134,9 @@ class ManipulationModule(Module):
             yaw: Target yaw in radians (omit to keep current orientation).
             robot_name: Robot to move (only needed for multi-arm setups).
         """
+        if fault := self._planner_fault_result():
+            return fault
+
         logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
         # If no orientation specified, preserve the current EE orientation.
@@ -1744,6 +2194,9 @@ class ManipulationModule(Module):
             joints: Comma-separated joint positions in radians, e.g. "0.1, -0.5, 1.2, 0.0, 0.3, -0.1".
             robot_name: Robot to move (only needed for multi-arm setups).
         """
+        if fault := self._planner_fault_result():
+            return fault
+
         try:
             joint_values = [float(j.strip()) for j in joints.split(",")]
         except ValueError:
@@ -1780,6 +2233,9 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
+        if fault := self._planner_fault_result():
+            return fault
+
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
@@ -1816,6 +2272,9 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
+        if fault := self._planner_fault_result():
+            return fault
+
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")

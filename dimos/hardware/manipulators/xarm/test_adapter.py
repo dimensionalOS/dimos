@@ -82,6 +82,14 @@ class _FakeXArmSdk:
         self.actions.append(("set_servo_angle_j", list(angles), speed, mvacc))
         return 0
 
+    def set_gripper_enable(self, enable: bool) -> int:
+        self.actions.append(("set_gripper_enable", enable))
+        return 0
+
+    def set_gripper_position(self, position: float, *, wait: bool) -> int:
+        self.actions.append(("set_gripper_position", position, wait))
+        return 0
+
 
 @pytest.fixture
 def xarm_adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
@@ -130,3 +138,18 @@ def test_joint_position_commands_use_degrees_for_xarm_sdk(
 
     arm = _FakeXArmSdk.instances[-1]
     assert arm.servo_joint_commands[-1] == pytest.approx([90.0, -45.0, 180.0])
+
+
+def test_deactivate_opens_an_enabled_gripper(xarm_adapter_module: ModuleType) -> None:
+    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=6)
+    assert adapter.connect()
+    assert adapter.write_gripper_position(0.0)
+
+    assert adapter.deactivate()
+
+    arm = _FakeXArmSdk.instances[-1]
+    assert arm.actions[-3:] == [
+        ("set_gripper_position", 850.0, True),
+        ("motion_enable", False),
+        ("set_state", 4),
+    ]

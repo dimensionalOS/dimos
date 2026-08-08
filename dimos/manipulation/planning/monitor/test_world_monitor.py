@@ -35,6 +35,7 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationStateFrame,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.visualization.layers import VisualizationLayer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -219,6 +220,12 @@ class FakeViz:
 
     def clear_vis_obstacles(self) -> None:
         self.calls.append(("clear_vis_obstacles",))
+
+    def set_layer(self, layer: VisualizationLayer) -> None:
+        self.calls.append(("set_layer", layer))
+
+    def clear_layer(self, layer_id: str) -> None:
+        self.calls.append(("clear_layer", layer_id))
 
 
 def _robot_config() -> RobotModelConfig:

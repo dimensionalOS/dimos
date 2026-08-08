@@ -699,6 +699,20 @@ class MujocoSimModule(
         return applied
 
     @rpc
+    def get_body_poses(self, names: list[str]) -> dict[str, list[float]]:
+        """Return world poses [x, y, z, qx, qy, qz, qw] for named bodies."""
+        engine = self._engine
+        if engine is None:
+            return {}
+        poses: dict[str, list[float]] = {}
+        for name in names:
+            pose = engine.get_body_pose(name)
+            if pose is not None:
+                position, orientation = pose
+                poses[name] = [*position.tolist(), *orientation.tolist()]
+        return poses
+
+    @rpc
     def respawn_at(
         self,
         x: float,

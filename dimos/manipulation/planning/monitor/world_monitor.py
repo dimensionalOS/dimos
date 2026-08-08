@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
@@ -29,7 +29,10 @@ from dimos.manipulation.planning.groups.identifiers import (
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selected_joints
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
-from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
+from dimos.manipulation.planning.monitor.world_obstacle_monitor import (
+    ObjectObstacleSuppression,
+    WorldObstacleMonitor,
+)
 from dimos.manipulation.planning.spec.models import (
     PlanningSceneInfo,
     VisualizationSession,
@@ -231,7 +234,11 @@ class WorldMonitor:
             self._state_monitors[robot_id] = monitor
             logger.info(f"State monitor started for '{robot_id}'")
 
-    def start_obstacle_monitor(self) -> None:
+    def start_obstacle_monitor(
+        self,
+        use_mesh_obstacles: bool = False,
+        obstacle_padding: float = 0.0,
+    ) -> None:
         """Start monitoring obstacle updates."""
         with self._lock:
             if self._obstacle_monitor is not None:
@@ -240,6 +247,8 @@ class WorldMonitor:
 
             self._obstacle_monitor = WorldObstacleMonitor(
                 parent=self,
+                use_mesh_obstacles=use_mesh_obstacles,
+                obstacle_padding=obstacle_padding,
             )
             self._obstacle_monitor.start()
             logger.info("Obstacle monitor started")
@@ -312,6 +321,15 @@ class WorldMonitor:
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.remove_object_obstacle(object_id)
         return False
+
+    @contextmanager
+    def suppress_object_obstacle(self, object_id: str) -> Iterator[ObjectObstacleSuppression]:
+        """Temporarily exclude one perception object from collision checking."""
+        if self._obstacle_monitor is None:
+            yield ObjectObstacleSuppression(object_id=object_id)
+            return
+        with self._obstacle_monitor.suppress_object_obstacle(object_id) as suppression:
+            yield suppression
 
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""

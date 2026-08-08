@@ -1,0 +1,3 @@
+# Revalidate Prepared Picks at execution
+
+`select_object` pins the selected object, its cloud, and one ranked proposal set for inspection without moving or reserving the robot. A later completed scan, a configurable timeout measured from completed preparation, or a planning-frame mismatch makes that Prepared Pick stale. `pick_selected` acquires exclusive transaction ownership, rejects stale input, and performs the authoritative feasibility check from fresh robot state and the current planning scene before choosing the first feasible pinned candidate; it never silently rescans or substitutes an uninspected proposal set.

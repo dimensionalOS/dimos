@@ -238,7 +238,7 @@ accepted.
 |-----------|-------------|
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with mock coordinator hardware |
-| `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
+| `xarm-grasp-sim-agent` | XArm7 MuJoCo pick/place with ground-truth object geometry |
 
 ## Directory Structure
 
