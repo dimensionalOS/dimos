@@ -58,7 +58,7 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
 # turn of agent/human conversation, or a one-shot robot action verb.
-_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
+_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "agent_cancel", "command")
 
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:

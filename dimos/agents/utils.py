@@ -51,7 +51,7 @@ def pretty_print_langchain_message(msg: BaseMessage) -> None:
     time_str = f"{GRAY}{timestamp}{RESET}  "
     type_str = f"{type_color}{msg_type:<{TYPE_WIDTH}}{RESET}"
 
-    content = _try_to_remove_url_data(d.get("content", ""))
+    content = _display_message_content(d.get("content", ""))
     tool_calls = d.get("tool_calls", [])
 
     # 12 chars for timestamp + 1 space + TYPE_WIDTH + 1 space
@@ -96,16 +96,14 @@ def _log_message(msg_type: str, content: object, tool_calls: list[dict[str, Any]
     logger.info("Agent message", **kw)
 
 
-def _try_to_remove_url_data(content: Any) -> Any:
+def _display_message_content(content: Any) -> str:
+    """Keep only user-visible text from OpenAI Responses content blocks."""
     if not isinstance(content, list):
-        return content
-
-    ret = []
-
+        return str(content)
+    text_parts: list[str] = []
     for item in content:
-        if isinstance(item, dict) and item.get("type") == "image_url":
-            ret.append({**item, "image_url": "<removed>"})
-        else:
-            ret.append(item)
-
-    return ret
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = item.get("text")
+            if isinstance(text, str):
+                text_parts.append(text)
+    return "\n".join(text_parts)

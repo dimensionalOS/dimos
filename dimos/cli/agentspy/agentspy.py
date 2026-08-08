@@ -31,6 +31,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
+from dimos.agents.utils import _display_message_content
 from dimos.cli import theme
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 
@@ -126,14 +127,14 @@ def format_message_content(msg: AnyMessage) -> str:
         for tc in msg.tool_calls:
             args_str = str(tc.get("args", {}))
             tool_info.append(f"{tc.get('name')}({args_str})")
-        content = msg.content or ""
+        content = _display_message_content(msg.content)
         if content and tool_info:
             return f"{content}\n[Tool Calls: {', '.join(tool_info)}]"
         elif tool_info:
             return f"[Tool Calls: {', '.join(tool_info)}]"
-        return content  # type: ignore[return-value]
+        return content
     else:
-        return str(msg.content) if hasattr(msg, "content") else str(msg)
+        return _display_message_content(msg.content) if hasattr(msg, "content") else str(msg)
 
 
 class AgentSpyApp(App):  # type: ignore[type-arg]
