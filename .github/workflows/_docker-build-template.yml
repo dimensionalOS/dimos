@@ -116,7 +116,7 @@ jobs:
 
           echo -e "post cleanup space:\n $(df -h)"
 
-      - uses: docker/login-action@v4.4.0
+      - uses: docker/login-action@v4.6.0
         if: ${{ inputs.should-run }}
         with:
           registry: ghcr.io
