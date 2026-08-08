@@ -19,6 +19,7 @@ import importlib.metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from dimos.control.components import HardwareComponent
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -40,6 +41,12 @@ class SimulationBinding:
     adapter_address: str | Path
     rerun_config: dict[str, Any] = field(default_factory=dict)
     robot_base_pose: PoseStamped = field(default_factory=PoseStamped)
+    hardware: tuple[HardwareComponent, ...] = ()
+
+    def __post_init__(self) -> None:
+        hardware_ids = tuple(component.hardware_id for component in self.hardware)
+        if len(hardware_ids) != len(set(hardware_ids)):
+            raise ValueError("simulation hardware IDs must be unique")
 
 
 @runtime_checkable

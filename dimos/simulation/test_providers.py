@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.simulation import providers
 from dimos.simulation.providers import SimulationBinding, SimulationRequest
 
@@ -40,3 +42,62 @@ def test_load_external_simulation_provider(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(providers.importlib_metadata, "entry_points", entry_points)
 
     assert isinstance(providers.load_simulation_provider("test"), _Provider)
+
+
+def test_simulation_binding_carries_ordered_composite_hardware() -> None:
+    hardware = (
+        HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=["base/vx", "base/vy", "base/wz"],
+            adapter_type="sim_twist",
+            address="run/robot/base",
+        ),
+        HardwareComponent(
+            hardware_id="left_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=["left_arm/joint1", "left_arm/joint2"],
+            adapter_type="sim_mujoco",
+            address="run/robot/left_arm",
+        ),
+        HardwareComponent(
+            hardware_id="right_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=["right_arm/joint1", "right_arm/joint2"],
+            adapter_type="sim_mujoco",
+            address="run/robot/right_arm",
+        ),
+    )
+
+    binding = SimulationBinding(
+        backend=Blueprint(()),
+        adapter_type="migration-only",
+        adapter_address="migration-only",
+        hardware=hardware,
+    )
+
+    assert tuple(component.hardware_id for component in binding.hardware) == (
+        "base",
+        "left_arm",
+        "right_arm",
+    )
+
+
+def test_simulation_binding_rejects_duplicate_hardware_ids() -> None:
+    hardware = tuple(
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            adapter_type="sim_mujoco",
+            address=f"run/robot/arm-{index}",
+        )
+        for index in range(2)
+    )
+
+    with pytest.raises(ValueError, match="hardware IDs must be unique"):
+        SimulationBinding(
+            backend=Blueprint(()),
+            adapter_type="migration-only",
+            adapter_address="migration-only",
+            hardware=hardware,
+        )
