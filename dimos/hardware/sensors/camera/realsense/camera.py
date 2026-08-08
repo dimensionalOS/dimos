@@ -50,6 +50,11 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
+# librealsense reports distance in metres and time in milliseconds; these two say so at
+# the places that log or stamp in the other unit.
+MILLIMETERS_PER_METER = 1000.0
+MILLISECONDS_PER_SECOND = 1000.0
+
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
@@ -341,8 +346,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # Hardware capture time in ms; a host stamp here would carry callback jitter.
-        ts = motion.get_timestamp() / 1000.0
+        # Hardware capture time; a host stamp here would carry callback jitter.
+        ts = motion.get_timestamp() / MILLISECONDS_PER_SECOND
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
             self._accel_history.append((ts, (data.x, data.y, data.z)))
@@ -441,7 +446,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._infra2_camera_info.P = projection
                 logger.info(
                     "RealSense IR baseline %.2f mm (fx %.2f) -> right P[3] = %.3f",
-                    baseline * 1000.0,
+                    baseline * MILLIMETERS_PER_METER,
                     projection[0],
                     projection[3],
                 )
@@ -550,9 +555,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             logger.info(
                 "RealSense %s at (%.1f, %.1f, %.1f) mm from depth (device calibration)",
                 frame_id,
-                translation[0] * 1000.0,
-                translation[1] * 1000.0,
-                translation[2] * 1000.0,
+                translation[0] * MILLIMETERS_PER_METER,
+                translation[1] * MILLIMETERS_PER_METER,
+                translation[2] * MILLIMETERS_PER_METER,
             )
         self._build_mount_edges()
 
@@ -633,7 +638,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._dropped_frames[key],
             )
         self._last_frame_numbers[key] = number
-        stamp = float(frame.get_timestamp()) / 1000.0
+        stamp = float(frame.get_timestamp()) / MILLISECONDS_PER_SECOND
         self._last_hardware_ts = stamp
         return stamp
 
