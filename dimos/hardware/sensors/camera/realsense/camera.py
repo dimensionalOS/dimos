@@ -50,8 +50,6 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-# librealsense reports distance in metres and time in milliseconds; these two say so at
-# the places that log or stamp in the other unit.
 MILLIMETERS_PER_METER = 1000.0
 MILLISECONDS_PER_SECOND = 1000.0
 
@@ -87,9 +85,9 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     # Dots make depth much better and the IR pair useless for feature tracking.
     emitter_enabled: bool = True
     enable_imu: bool = False
-    # Falls back to the unit's own rates if these are not offered.
-    imu_accel_hz: int = 400
-    imu_gyro_hz: int = 400
+    # One Imu goes out per gyro sample, so this is the output rate. The accelerometer
+    # runs as fast as the device offers, since it is interpolated onto the gyro.
+    imu_hz: int = 400
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
@@ -170,7 +168,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
-        self._imu_rates: dict[str, int] = {}
         self._detected_name = "camera"
         # (parent, child, translation, rotation), everything below camera_link.
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
@@ -181,8 +178,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._infra1_camera_info: CameraInfo | None = None
         self._infra2_camera_info: CameraInfo | None = None
         self._depth_scale: float = 0.001
-        # frame_id -> that imager's extrinsic to depth, filled in at start.
-        self._frame_extrinsics: dict[str, rs.extrinsics] = {}
         # Frame-continuity bookkeeping; see _capture_loop.
         self._last_frame_numbers: dict[str, int] = {}
         self._last_hardware_ts: float | None = None
@@ -264,7 +259,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 logger.info("align_depth_to_color ignored: color stream is disabled")
 
         self._build_camera_info()
-        self._get_extrinsics()
+        self._build_mount_edges()
 
         self._running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -295,48 +290,39 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         faster than the video loop."""
         import pyrealsense2 as rs
 
-        def imu_config(rates: tuple[int, int] | None) -> rs.config:
-            config = rs.config()
-            if self.config.serial_number:
-                config.enable_device(self.config.serial_number)
-            for stream, rate in ((rs.stream.accel, 0), (rs.stream.gyro, 1)):
-                if rates is None:
-                    config.enable_stream(stream)
-                else:
-                    config.enable_stream(stream, rs.format.motion_xyz32f, rates[rate])
-            return config
+        offered = self._stream_rates(rs.stream.gyro)
+        if self.config.imu_hz not in offered:
+            raise ValueError(
+                f"imu_hz={self.config.imu_hz} is not offered by this camera; it has {offered}"
+            )
+        accel_hz = max(self._stream_rates(rs.stream.accel))
+
+        imu_config = rs.config()
+        if self.config.serial_number:
+            imu_config.enable_device(self.config.serial_number)
+        imu_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, accel_hz)
+        imu_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.config.imu_hz)
 
         self._imu_pipeline = rs.pipeline()
-        try:
-            self._imu_pipeline.start(
-                imu_config((self.config.imu_accel_hz, self.config.imu_gyro_hz)),
-                self._on_motion_frame,
-            )
-        except RuntimeError:
-            self._imu_pipeline.start(imu_config(None), self._on_motion_frame)
-        # Starting a pipeline can reset the option.
-        self._require_global_time()
+        self._imu_pipeline.start(imu_config, self._on_motion_frame)
 
-        # What the device agreed to, not what was asked for. cuVSLAM computes expected
-        # samples per frame from the declared rate and stops fusing if it never sees
-        # them, so a substituted rate has to be visible.
-        profile = self._imu_pipeline.get_active_profile()
-        self._imu_rates = {
-            "accel": profile.get_stream(rs.stream.accel).fps(),
-            "gyro": profile.get_stream(rs.stream.gyro).fps(),
+    def _stream_rates(self, stream_type: rs.stream) -> list[int]:
+        """Every rate the device offers for a stream, ascending."""
+        if self._profile is None:
+            return []
+        rates = {
+            profile.fps()
+            for sensor in self._profile.get_device().query_sensors()
+            for profile in sensor.get_stream_profiles()
+            if profile.stream_type() == stream_type
         }
-        if self._imu_rates != {"accel": self.config.imu_accel_hz, "gyro": self.config.imu_gyro_hz}:
-            logger.warning(
-                "RealSense IMU runs at %s, not the accel %d / gyro %d asked for",
-                self._imu_rates,
-                self.config.imu_accel_hz,
-                self.config.imu_gyro_hz,
-            )
+        return sorted(rates)
 
     def _require_global_time(self) -> None:
         """Put every sensor on the host clock rather than its own boot time.
 
-        The imagers and the motion module are separate sensors with separate clocks.
+        The imagers and the motion module are separate sensors with separate clocks, and
+        starting a pipeline does not reset this, so once at open is enough.
         """
         import pyrealsense2 as rs
 
@@ -533,20 +519,17 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     return profile
         return None
 
-    def _get_extrinsics(self) -> None:
-        """Where each imager sits relative to the depth origin, read off the device.
+    def _build_mount_edges(self) -> None:
+        """Place every imager the device knows about, below camera_link.
 
-        Per-unit factory calibration, not a datasheet: the nominal number is wrong for
-        whichever model is actually plugged in.
+        camera_link sits on the depth imager, which is what the device measures the
+        others against, so an extrinsic is already a placement here.
         """
         import pyrealsense2 as rs
 
-        depth_stream = self._device_stream_profile(rs.stream.depth)
-        if depth_stream is None:
-            return
-
-        # The infrared streams need their index; the others are named by type alone.
-        streams: list[tuple[str, rs.stream, int | None]] = []
+        streams: list[tuple[str, rs.stream, int | None]] = [
+            (self._depth_frame, rs.stream.depth, None)
+        ]
         if self.config.enable_color:
             streams.append((self._color_frame, rs.stream.color, None))
         if self.config.enable_infrared:
@@ -555,41 +538,20 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.enable_imu:
             streams.append((self._imu_frame, rs.stream.accel, None))
 
-        self._frame_extrinsics = {}
-        for frame_id, stream_type, index in streams:
-            source = self._device_stream_profile(stream_type, index)
-            if source is None:
-                logger.warning(
-                    "RealSense: no %s stream on the device, %s stays off tf", stream_type, frame_id
-                )
-                continue
-            self._frame_extrinsics[frame_id] = source.get_extrinsics_to(depth_stream)
-            translation = self._frame_extrinsics[frame_id].translation
-            logger.info(
-                "RealSense %s at (%.1f, %.1f, %.1f) mm from depth (device calibration)",
-                frame_id,
-                translation[0] * MILLIMETERS_PER_METER,
-                translation[1] * MILLIMETERS_PER_METER,
-                translation[2] * MILLIMETERS_PER_METER,
-            )
-        self._build_mount_edges()
-
-    def _build_mount_edges(self) -> None:
-        """Everything below camera_link, which is rigid once the device is open.
-
-        camera_link sits on the depth imager by convention, which is the frame the
-        device measures every other imager against, so an extrinsic is already a
-        placement here and depth itself is the origin.
-        """
-        body_frames = {
-            self._depth_frame: (Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
-        } | {
-            frame_id: self._extrinsics_to_body(extrinsics)
-            for frame_id, extrinsics in self._frame_extrinsics.items()
-        }
+        profiles = [
+            (frame_id, self._device_stream_profile(stream_type, index))
+            for frame_id, stream_type, index in streams
+        ]
+        for frame_id, profile in profiles:
+            if profile is None:
+                logger.warning("RealSense has no stream for %s, so it stays off tf", frame_id)
+        origin = profiles[0][1]
 
         self._mount_edges = []
-        for frame_id, (translation, rotation) in body_frames.items():
+        for frame_id, profile in profiles:
+            if profile is None or origin is None:
+                continue
+            translation, rotation = self._extrinsics_to_body(profile.get_extrinsics_to(origin))
             self._mount_edges.append((self._camera_link, frame_id, translation, rotation))
             self._mount_edges.append(
                 (
@@ -853,7 +815,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 dict(self._repeated_frames),
             )
         self._last_frame_numbers = {}
-        self._frame_extrinsics = {}
         self._latest_color_img = None
         self._latest_depth_img = None
         super().stop()
