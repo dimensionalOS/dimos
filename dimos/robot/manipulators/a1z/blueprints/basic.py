@@ -17,10 +17,11 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.a1z.config import (
     A1Z_G1Z_MODEL_PATH,
+    A1Z_G1Z_SIM_MODEL_PATH,
     a1z_hardware,
     make_a1z_model_config,
     make_a1z_sim_hardware,
@@ -42,13 +43,14 @@ def _resolve_a1z_simulation() -> SimulationBinding | None:
     return provider.build(
         SimulationRequest(
             robot_model="galaxea_a1z",
-            model_path=A1Z_G1Z_MODEL_PATH,
+            model_path=A1Z_G1Z_SIM_MODEL_PATH,
             scene_package=global_config.scene_package,
         )
     )
 
 
 _simulation = _resolve_a1z_simulation()
+_a1z_simulation_modules: tuple[Blueprint, ...]
 if _simulation is None:
     _a1z_planner_hw = a1z_hardware("arm")
     _a1z_planner_model = make_a1z_model_config(name="arm")

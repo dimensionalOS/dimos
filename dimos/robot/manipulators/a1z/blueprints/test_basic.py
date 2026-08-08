@@ -23,7 +23,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.a1z.blueprints import basic
 from dimos.robot.manipulators.a1z.config import (
     A1Z_DOF,
-    A1Z_G1Z_MODEL_PATH,
+    A1Z_G1Z_SIM_MODEL_PATH,
     A1Z_GRASP_FRAME_TO_TCP,
     A1Z_PRE_GRASP_DIRECTION,
     A1Z_SIM_GRIPPER_OPEN,
@@ -88,7 +88,7 @@ def test_existing_a1z_blueprint_requests_selected_simulation_provider(
     provider.build.assert_called_once_with(
         SimulationRequest(
             robot_model="galaxea_a1z",
-            model_path=A1Z_G1Z_MODEL_PATH,
+            model_path=A1Z_G1Z_SIM_MODEL_PATH,
             scene_package="tabletop-test",
         )
     )

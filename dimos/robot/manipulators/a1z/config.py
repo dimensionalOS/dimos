@@ -62,6 +62,7 @@ A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 A1Z_G1Z_MODEL_PATH = LfsPath("a1z_description") / "A1Z_G1Z/urdf/A1Z_G1Z.urdf"
 A1Z_FLANGE_MODEL_PATH = LfsPath("a1z_description") / "A1Z_Flange/urdf/A1Z_Flange.urdf"
+A1Z_G1Z_SIM_MODEL_PATH = LfsPath("a1z_description") / "A1Z_G1Z/mujoco/A1Z_G1Z.xml"
 A1Z_FK_MODEL = A1Z_FLANGE_MODEL_PATH
 A1Z_PACKAGE_PATHS: dict[str, Path] = {
     "A1Z_G1Z": LfsPath("a1z_description") / "A1Z_G1Z",
