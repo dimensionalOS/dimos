@@ -32,6 +32,9 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 MODULE_DIR = Path(__file__).resolve().parent
 
@@ -76,21 +79,34 @@ def driver_library_dir() -> Path | None:
     for name in _DRIVER_LIBS:
         source = host / name
         link = _DRIVER_LINK_DIR / name
-        if source.exists() and not link.is_symlink():
+        if not source.exists():
+            continue
+        # Re-point after a driver upgrade; a stale link would dangle forever.
+        if link.is_symlink() and link.resolve() != source.resolve():
+            link.unlink()
+        if not link.is_symlink():
             link.symlink_to(source.resolve())
     return _DRIVER_LINK_DIR
 
 
 def driver_cuda_major() -> int:
     """The CUDA major the installed driver supports, or 0 if there is no driver."""
-    try:
-        driver = ctypes.CDLL("libcuda.so.1")
-    except OSError:
-        return 0
-    version = ctypes.c_int()
-    if driver.cuDriverGetVersion(ctypes.byref(version)) != 0:
-        return 0
-    return version.value // 1000
+    # By absolute path too: a nix-built python ignores ld.so.cache, where the bare
+    # name resolves everywhere else.
+    candidates = ["libcuda.so.1"] + [
+        str(directory / "libcuda.so.1")
+        for directory in (*_DRIVER_ONLY_LIB_DIRS, *_HOST_LIB_DIRS)
+        if (directory / "libcuda.so.1").exists()
+    ]
+    for candidate in candidates:
+        try:
+            driver = ctypes.CDLL(candidate)
+        except OSError:
+            continue
+        version = ctypes.c_int()
+        if driver.cuDriverGetVersion(ctypes.byref(version)) == 0:
+            return version.value // 1000
+    return 0
 
 
 def sdk_variant() -> str:
@@ -99,7 +115,14 @@ def sdk_variant() -> str:
         compatible = Path("/proc/device-tree/compatible")
         chip = compatible.read_bytes() if compatible.exists() else b""
         return "thor" if b"tegra264" in chip else "orin"
-    return "x86_64-cuda13" if driver_cuda_major() >= 13 else "x86_64-cuda12"
+    major = driver_cuda_major()
+    if 0 < major < 12:
+        logger.warning(
+            "This NVIDIA driver supports CUDA %d and cuVSLAM ships nothing older "
+            "than 12; the build will not run until the driver is upgraded.",
+            major,
+        )
+    return "x86_64-cuda13" if major >= 13 else "x86_64-cuda12"
 
 
 def _driver_env() -> dict[str, str]:
