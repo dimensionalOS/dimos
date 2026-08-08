@@ -31,12 +31,9 @@
         };
         lcm = lcm-extended.packages.${system}.lcm;
 
-        # Every C++ build NVIDIA ships for this release. Pinned by hash rather than
-        # vendored: a 111 MB binary does not belong in git. The ubuntu flavour is not a
-        # selector -- autoPatchelf relinks against nix's own glibc either way -- so the
-        # newest is taken where there is a choice. `cuda` is the matching nixpkgs set,
-        # because a runtime newer than the SDK's fails inside cuSOLVER rather than at
-        # load time.
+        # Every C++ build NVIDIA ships for this release. The ubuntu flavour does not
+        # matter under autoPatchelf. `cuda` is the matching nixpkgs set: a runtime
+        # newer than the SDK's fails inside cuSOLVER.
         sdks = {
           x86_64-cuda12 = {
             url = "https://github.com/nvidia-isaac/cuVSLAM/releases/download/v17.0.0/cuvslam-cpp-17.0.0-x86_64-cuda12.6.3-ubuntu24.04.tar.gz";
@@ -98,8 +95,7 @@
         moduleFor = name: sdk: pkgs.stdenv.mkDerivation {
           pname = "dimos-cuvslam-native";
           version = "0.1.0";
-          # Only what cmake reads: the derivation is keyed on its source, so pulling
-          # cuvslam.py in would rebuild the C++ on every python edit.
+          # cmake inputs only. Editing cuvslam.py must not rebuild the C++.
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [ ./CMakeLists.txt ./src ];
@@ -121,8 +117,7 @@
           ];
         };
       in {
-        # One package per build NVIDIA ships for this arch, so the module can ask for
-        # the one that matches the driver it found rather than taking what it is given.
+        # One package per build NVIDIA ships for this arch.
         packages = pkgs.lib.mapAttrs moduleFor forThisSystem
           // pkgs.lib.mapAttrs' (name: sdk: {
                name = "sdk-${name}";

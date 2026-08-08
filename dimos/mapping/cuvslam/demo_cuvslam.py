@@ -16,9 +16,8 @@
 
     dimos run demo-cuvslam --viewer rerun --rerun-host 0.0.0.0
 
-A camera, the tracker and a viewer: enough to tell whether cuVSLAM itself is tracking.
-``world/path`` is the quickest read -- it should retrace the route walked, and a world
-frame restart shows up as a straight jump across it.
+``world/path`` should retrace the route walked; a world frame restart shows up as a
+straight jump across it.
 """
 
 from __future__ import annotations

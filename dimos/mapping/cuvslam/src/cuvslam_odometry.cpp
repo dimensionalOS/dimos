@@ -7,9 +7,8 @@
 //      tf, depth_image, imu
 // out: odometry, corrected_odometry, tf
 //
-// cuVSLAM restarts its world frame after a tracking loss; each restart is rebased onto
-// the last published pose, so odometry never jumps. The motion across one is lost, and
-// only the log says so. The rig is read off the tf tree, so no calibration lives here.
+// A tracking-loss restart is rebased onto the last published pose; odometry never
+// jumps. The rig comes from the tf tree.
 
 #include <algorithm>
 #include <array>
@@ -146,8 +145,7 @@ struct CuvslamConfig {
     /// One tf frame per camera, in cuVSLAM's index order. Empty discovers them off
     /// camera_info.
     std::vector<std::string> camera_frames;
-    /// Asserts the pair arrives rectified -- no distortion, rows already aligned -- so
-    /// cuVSLAM can match along a scanline.
+    /// Images arrive rectified: no distortion, rows aligned.
     bool rectified;
     /// A step implying more than this is cuVSLAM changing world frames, not motion.
     double implausible_speed_meters_per_second;
@@ -221,7 +219,7 @@ public:
                        logging::Field("imu_dropped_before_start",
                                       static_cast<std::int64_t>(imu_dropped_)),
                        logging::Field("skew_rejects", static_cast<std::int64_t>(skew_rejects_)),
-                       logging::Field("images_off_the_rig",
+                       logging::Field("unmatched_images",
                                       static_cast<std::int64_t>(unplaced_images_))});
     }
 
@@ -322,7 +320,7 @@ private:
             cameras.push_back(RigCamera{frame, *rig_from_camera, info->second});
         }
         // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
-        // partner sits at +x -- optical convention, x to the right.
+        // partner sits at +x (optical convention, x to the right).
         if (discovered && cameras.size() == 2 &&
             compose(invert(cameras[0].rig_from_camera), cameras[1].rig_from_camera)
                     .translation[0] < 0.0) {
@@ -349,9 +347,9 @@ private:
         return -1;
     }
 
-    /// Held until the frame they precede: cuVSLAM requires Track() and
-    /// RegisterImuMeasurement() in non-decreasing timestamp order, and the dispatcher
-    /// drains one message per input per round, so images overtake a 400 Hz IMU.
+    /// Buffered. cuVSLAM requires Track() and RegisterImuMeasurement() in
+    /// non-decreasing timestamp order; the round-robin dispatcher lets images
+    /// overtake a 400 Hz IMU.
     void on_imu(const sensor_msgs::Imu& msg) {
         imu_frame_ = msg.header.frame_id;
         if (!tracker_) {
@@ -377,7 +375,7 @@ private:
         if (index < 0) {
             ++unplaced_images_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
-                                "cuvslam is dropping images from a camera that is not on the rig",
+                                "cuvslam dropping image with a frame_id not on the rig",
                                 logging::Field("frame_id", img.header.frame_id),
                                 logging::Field("dropped",
                                                static_cast<std::int64_t>(unplaced_images_)),
@@ -408,7 +406,7 @@ private:
         return cfg_.enable_imu ? OdometryMode::Inertial : OdometryMode::Multicamera;
     }
 
-    /// The rig frame is base_frame, so cuVSLAM's poses are already the body's.
+    /// The rig frame is base_frame; poses come out in body axes.
     void ensure_tracker() {
         if (tracker_) {
             return;

@@ -167,7 +167,7 @@ class CuvslamConfig(NativeModuleConfig):
 
     map_frame: str = "map"
     odom_frame: str = "odom"
-    # Also the rig frame, so the pose cuVSLAM returns is already this frame's.
+    # Also the cuVSLAM rig frame; poses are published relative to it.
     base_frame: str = "base_link"
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
@@ -205,24 +205,15 @@ class CuvslamOdometry(NativeModule):
     """Visual odometry on the GPU, on one to thirty-two cameras.
 
     Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
-    told apart by ``frame_id``, so a rig is a wiring change and not a new pair of ports.
-    ``camera_frames`` fixes which frames are on it and in which order; leaving it empty
-    discovers a single camera or a single pair. ``rgbd`` pairs one camera with
-    ``depth_image``, whose ``frame_id`` says which camera the depth is aligned with.
+    told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
+    in what order. Extrinsics come from tf against ``base_frame``, which is also the
+    rig frame. ``rgbd`` pairs one camera with ``depth_image``, whose ``frame_id`` says
+    which camera the depth is aligned with.
 
-    Where each camera sits is read from tf against ``base_frame``, which is therefore
-    also the rig frame: the pose cuVSLAM returns is already the body's, and a stereo
-    baseline is the distance between two frames rather than a number kept here.
-
-    ``odometry`` is one continuous ``odom`` -> ``base_link`` path. cuVSLAM restarts its
-    world frame after a tracking loss and each restart is rebased onto the last pose
-    published, so the stream never jumps; the motion across a restart is lost, and only
-    the log says so.
-
-    ``corrected_odometry`` is the pose-graph pose, ``map`` -> ``base_link``, and it
-    jumps at a loop closure -- which is the point. ``tf`` carries ``odom`` ->
-    ``base_link`` and ``map`` -> ``odom``, so the jump lands on the edge allowed to
-    jump. With ``enable_slam`` off, ``map`` -> ``odom`` is identity.
+    ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
+    tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
+    the pose-graph ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
+    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
     """
 
     config: CuvslamConfig

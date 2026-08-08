@@ -521,7 +521,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ]
         for frame_id, profile in profiles:
             if profile is None:
-                logger.warning("RealSense has no stream for %s, so it stays off tf", frame_id)
+                logger.warning("RealSense has no stream for %s; not published on tf", frame_id)
         origin = profiles[0][1]
 
         self._mount_edges = []
@@ -558,14 +558,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _fresh(self, key: str, frame: rs.frame | None) -> float | None:
         """This frame's own timestamp, or None if the stream has not advanced.
 
-        wait_for_frames() hands back a frameset assembled from the latest frame of
-        each stream, and under load those streams desync: color can advance while
-        depth and infrared stand still. Stamping every stream from
-        ``frames.get_timestamp()`` then gives the stalled streams a fresh-looking
-        time, and republishing them stores the same image twice -- byte-identical,
-        with a repeated stamp, which is what broke consumers requiring strictly
-        increasing time. Each stream is therefore gated and stamped on its own
-        frame number and its own timestamp.
+        wait_for_frames() returns the latest frame of each stream, and under load they
+        desync, so each stream is gated on its own frame number.
         """
         if frame is None:
             return None
