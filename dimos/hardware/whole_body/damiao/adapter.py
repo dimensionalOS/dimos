@@ -237,6 +237,11 @@ class DamiaoWholeBodyAdapter(ABC):
     def read_motor_states(self) -> list[MotorState]:
         if not self._connected:
             raise RuntimeError("Damiao whole-body adapter is not connected")
+        if not self._active:
+            # The write path pumps the bus once per control cycle while
+            # active; without it feedback would stay frozen at the connect
+            # snapshot, so keep it flowing for read-only sessions.
+            self._refresh()
         states: list[MotorState] = []
         for name, expected_joints in self.arm_joints.items():
             arm = self._arms[name]
@@ -250,6 +255,11 @@ class DamiaoWholeBodyAdapter(ABC):
                 for position, velocity, effort in zip(q, dq, tau, strict=True)
             )
         for name in self.gripper_joints:
+            if not self._active:
+                # Gripper opening calibrates during activation; report a
+                # placeholder so read-only sessions still stream arm state.
+                states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
+                continue
             opening = float(self._grippers[name].opening)
             if not np.isfinite(opening) or not 0.0 <= opening <= 1.0:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")

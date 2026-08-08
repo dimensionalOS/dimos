@@ -39,7 +39,13 @@ from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
+# The e2e harness always passes --simulation (DimosCliCall.simulator), so the
+# blueprint's hardware selection resolves to the in-memory whole-body adapter.
+BLUEPRINT = "openarm-planner-coordinator"
+# Both arms plan as one robot; joint order is left 1..7 then right 1..7.
+ROBOT_NAME = "openarm"
+LEFT_SLICE = slice(0, 7)
+RIGHT_SLICE = slice(7, 14)
 
 
 def _wait_for_robot_info(
@@ -128,21 +134,23 @@ def _prepare_for_planning(client: RPCClient, robot_names: tuple[str, ...]) -> No
     _wait_for_manipulation_state(client, "IDLE")
 
 
-def _planning_group_id(info: dict[str, Any]) -> str:
-    groups = info["planning_groups"]
-    assert len(groups) == 1
-    group = groups[0]
-    if isinstance(group, PlanningGroup):
-        return group.id
-    group_id = group["id"]
-    assert isinstance(group_id, str)
-    return group_id
+def _planning_group_ids(info: dict[str, Any]) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    for group in info["planning_groups"]:
+        if isinstance(group, PlanningGroup):
+            ids[group.group_name] = group.id
+        else:
+            group_id = group["id"]
+            assert isinstance(group_id, str)
+            ids[group["group_name"]] = group_id
+    assert set(ids) == {"left_manipulator", "right_manipulator"}
+    return ids
 
 
-def _offset_target(client: RPCClient, robot_name: str, delta: float) -> JointState:
-    current = client.get_current_joints(robot_name)
+def _offset_target(client: RPCClient, group_slice: slice, delta: float) -> JointState:
+    current = client.get_current_joints(ROBOT_NAME)
     assert current is not None
-    return JointState(position=[position + delta for position in current])
+    return JointState(position=[position + delta for position in current[group_slice]])
 
 
 def _start_openarm_mock_planner(
@@ -163,15 +171,15 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        left_info = _wait_for_robot_info(client, "left_arm")
-        left_id = _planning_group_id(left_info)
+        info = _wait_for_robot_info(client, ROBOT_NAME)
+        left_id = _planning_group_ids(info)["left_manipulator"]
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
-        _prepare_for_planning(client, ("left_arm",))
+        _prepare_for_planning(client, (ROBOT_NAME,))
 
-        planned = client.plan_to_joint_targets({left_id: _offset_target(client, "left_arm", 0.02)})
+        planned = client.plan_to_joint_targets({left_id: _offset_target(client, LEFT_SLICE, 0.02)})
         assert planned, client.get_error()
         assert client.has_planned_path()
         assert client.execute_plan()
@@ -192,20 +200,18 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        left_info = _wait_for_robot_info(client, "left_arm")
-        right_info = _wait_for_robot_info(client, "right_arm")
-        left_id = _planning_group_id(left_info)
-        right_id = _planning_group_id(right_info)
+        info = _wait_for_robot_info(client, ROBOT_NAME)
+        group_ids = _planning_group_ids(info)
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
-        _prepare_for_planning(client, ("left_arm", "right_arm"))
+        _prepare_for_planning(client, (ROBOT_NAME,))
 
         planned = client.plan_to_joint_targets(
             {
-                left_id: _offset_target(client, "left_arm", 0.02),
-                right_id: _offset_target(client, "right_arm", -0.02),
+                group_ids["left_manipulator"]: _offset_target(client, LEFT_SLICE, 0.02),
+                group_ids["right_manipulator"]: _offset_target(client, RIGHT_SLICE, -0.02),
             }
         )
         assert planned, client.get_error()

@@ -16,52 +16,78 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import eef_twist_task
+from dimos.robot.manipulators.common.blueprints import coordinator, planner
+from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 from dimos.robot.manipulators.openarm.config import (
-    LEFT_CAN,
-    openarm_single_hardware,
-    openarm_single_model_config,
+    OPENARM_ARM_JOINTS,
+    OPENARM_DOF,
+    OPENARM_LEFT_MODEL,
+    OPENARM_RIGHT_MODEL,
+    openarm_arm_joints,
+    openarm_bimanual_model_config,
+    openarm_hardware,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_teleop_hw = openarm_single_hardware()
-_openarm_model = openarm_single_model_config()
+# The keyboard publishes twists to one task by name; the right arm's task
+# keeps holding its anchor pose.
+KEYBOARD_EEF_TASK_NAME = "eef_twist_left_arm"
 
-keyboard_teleop_openarm_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(),
+_openarm_keyboard_hw = openarm_hardware()
+
+
+def _eef_twist_task(side: str, *, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=f"eef_twist_{side}_arm",
+        type="eef_twist",
+        joint_names=openarm_arm_joints(side),
+        priority=priority,
+        params={
+            "model_path": OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
+            "ee_joint_id": OPENARM_DOF,
+        },
+    )
+
+
+def _trajectory_task(*, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=DEFAULT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(OPENARM_ARM_JOINTS),
+        priority=priority,
+        params={"start_position_tolerance": 0.05},
+    )
+
+
+keyboard_teleop_openarm = autoconnect(
+    KeyboardTeleopModule.blueprint(task_name=KEYBOARD_EEF_TASK_NAME),
     ControlCoordinator.blueprint(
-        hardware=[_teleop_hw],
+        hardware=[_openarm_keyboard_hw],
         tasks=[
-            eef_twist_task(
-                _teleop_hw,
-                robot_model=_openarm_model,
-            )
+            _eef_twist_task("left"),
+            _eef_twist_task("right"),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
+        robots=[openarm_bimanual_model_config()],
+        visualization={"backend": "viser"},
     ),
 )
 
-_teleop_real_hw = openarm_single_hardware(adapter_type="openarm", address=LEFT_CAN)
+_openarm_keyboard_planner_hw = openarm_hardware()
 
-keyboard_teleop_openarm = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
-        hardware=[_teleop_real_hw],
+keyboard_teleop_openarm_planner = autoconnect(
+    KeyboardTeleopModule.blueprint(task_name=KEYBOARD_EEF_TASK_NAME),
+    planner(robots=[openarm_bimanual_model_config()]),
+    coordinator(
+        hardware=[_openarm_keyboard_planner_hw],
         tasks=[
-            eef_twist_task(
-                _teleop_real_hw,
-                robot_model=_openarm_model,
-            )
+            _eef_twist_task("left", priority=10),
+            _eef_twist_task("right", priority=10),
+            _trajectory_task(priority=20),
         ],
-    ),
-    ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
     ),
 )
