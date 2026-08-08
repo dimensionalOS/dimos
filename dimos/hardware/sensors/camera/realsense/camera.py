@@ -170,6 +170,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
+        self._imu_rates: dict[str, int] = {}
         self._detected_name = "camera"
         # (parent, child, translation, rotation), everything below camera_link.
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
@@ -290,12 +291,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
 
     def _start_imu(self) -> None:
-        """Stream the motion module on its own pipeline, at the configured rates or the
-        unit's own if it does not offer them.
-
-        It runs far faster than the video loop, so it gets a dedicated pipeline with an
-        async frame callback.
-        """
+        """Stream the motion module on its own pipeline and callback, since it runs far
+        faster than the video loop."""
         import pyrealsense2 as rs
 
         def imu_config(rates: tuple[int, int] | None) -> rs.config:
@@ -319,6 +316,22 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._imu_pipeline.start(imu_config(None), self._on_motion_frame)
         # Starting a pipeline can reset the option.
         self._require_global_time()
+
+        # What the device agreed to, not what was asked for. cuVSLAM computes expected
+        # samples per frame from the declared rate and stops fusing if it never sees
+        # them, so a substituted rate has to be visible.
+        profile = self._imu_pipeline.get_active_profile()
+        self._imu_rates = {
+            "accel": profile.get_stream(rs.stream.accel).fps(),
+            "gyro": profile.get_stream(rs.stream.gyro).fps(),
+        }
+        if self._imu_rates != {"accel": self.config.imu_accel_hz, "gyro": self.config.imu_gyro_hz}:
+            logger.warning(
+                "RealSense IMU runs at %s, not the accel %d / gyro %d asked for",
+                self._imu_rates,
+                self.config.imu_accel_hz,
+                self.config.imu_gyro_hz,
+            )
 
     def _require_global_time(self) -> None:
         """Put every sensor on the host clock rather than its own boot time.
