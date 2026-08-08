@@ -69,24 +69,21 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
-    # Prefixes every frame this publishes. Empty it is the model, e.g. "d455".
+    # Empty means the detected model, e.g. "d455".
     camera_name: str = ""
     base_frame_id: str = "base_link"
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
-    # Auto-exposure is allowed to halve the color frame rate to buy a longer exposure.
-    # Off holds the rate and lets the image go dark instead, which is what anything
-    # pairing color with another stream by timestamp wants.
+    # On, auto-exposure halves the color frame rate to lengthen exposure.
     color_auto_exposure_priority: bool = False
     enable_pointcloud: bool = False
     enable_infrared: bool = False
     # Dots make depth much better and the IR pair useless for feature tracking.
     emitter_enabled: bool = True
     enable_imu: bool = False
-    # One Imu goes out per gyro sample, so this is the output rate. The accelerometer
-    # runs as fast as the device offers, since it is interpolated onto the gyro.
+    # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
@@ -156,7 +153,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         # accel and gyro are co-located on the motion module.
         return f"{self._name}_accel_optical_frame"
 
-    # A slow start is normal; a minute of nothing is a real fault.
+    # One second per timeout.
     MAX_CONSECUTIVE_TIMEOUTS = 60
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -164,12 +161,10 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._pipeline: rs.pipeline | None = None
         self._profile: rs.pipeline_profile | None = None
         self._imu_pipeline: rs.pipeline | None = None
-        # Bounded so a stalled accelerometer cannot grow the queue.
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
         self._detected_name = "camera"
-        # (parent, child, translation, rotation), everything below camera_link.
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
         self._thread: threading.Thread | None = None
@@ -178,7 +173,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._infra1_camera_info: CameraInfo | None = None
         self._infra2_camera_info: CameraInfo | None = None
         self._depth_scale: float = 0.001
-        # Frame-continuity bookkeeping; see _capture_loop.
         self._last_frame_numbers: dict[str, int] = {}
         self._last_hardware_ts: float | None = None
         self._dropped_frames: dict[str, int] = {}
@@ -229,7 +223,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
 
         self._profile = self._pipeline.start(config)
-        # "RealSense D455" -> "d455", so frames say which camera they came off.
+        # "RealSense D455" -> "d455"
         self._detected_name = (
             self._profile.get_device().get_info(rs.camera_info.name).split()[-1].lower()
         )
@@ -251,7 +245,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     1.0 if self.config.color_auto_exposure_priority else 0.0,
                 )
 
-        # Aligning to color needs the color stream to actually be running.
         if self.config.align_depth_to_color and self.config.enable_depth:
             if self.config.enable_color:
                 self._align = rs.align(rs.stream.color)
@@ -286,8 +279,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
 
     def _start_imu(self) -> None:
-        """Stream the motion module on its own pipeline and callback, since it runs far
-        faster than the video loop."""
+        """Stream the motion module on its own pipeline and callback."""
         import pyrealsense2 as rs
 
         offered = self._stream_rates(rs.stream.gyro)
@@ -307,7 +299,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._imu_pipeline.start(imu_config, self._on_motion_frame)
 
     def _stream_rates(self, stream_type: rs.stream) -> list[int]:
-        """Every rate the device offers for a stream, ascending."""
+        """Every rate the device offers for a stream."""
         if self._profile is None:
             return []
         rates = {
@@ -319,11 +311,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         return sorted(rates)
 
     def _require_global_time(self) -> None:
-        """Put every sensor on the host clock rather than its own boot time.
-
-        The imagers and the motion module are separate sensors with separate clocks, and
-        starting a pipeline does not reset this, so once at open is enough.
-        """
+        """Put every sensor on the host clock rather than its own boot clock."""
         import pyrealsense2 as rs
 
         if self._profile is None:
@@ -345,7 +333,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if not motion:
             return
         data = motion.get_motion_data()
-        # Hardware capture time; a host stamp here would carry callback jitter.
+        # Hardware capture time, not host time.
         ts = motion.get_timestamp() / MILLISECONDS_PER_SECOND
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
@@ -363,7 +351,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             (start_ts, start), (end_ts, end) = self._accel_history
             ts, angular = self._pending_gyro[0]
             if ts > end_ts:
-                return  # no accelerometer past it yet; waiting beats extrapolating
+                return  # no accelerometer sample past it yet
             self._pending_gyro.popleft()
             span = end_ts - start_ts
             ratio = 0.0 if span <= 0.0 else max(0.0, min(1.0, (ts - start_ts) / span))
@@ -378,9 +366,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
     def _publish_camera_info(self) -> None:
-        # The hardware clock, so camera_info matches the frames it describes.
         ts = self._last_hardware_ts
-        if ts is None:
+        if ts is None or not self._running:
             return
         # with_ts copies; restamping the stored one would rewrite a delivered message.
         for info, stream in (
@@ -421,7 +408,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     depth_intrinsics, self._depth_optical_frame
                 )
 
-        # Infrared stereo pair camera info (raw, per-imager intrinsics).
+        # Infrared stereo pair camera info
         if self.config.enable_infrared:
             infra1_stream = self._profile.get_stream(
                 rs.stream.infrared, 1
@@ -452,9 +439,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     @staticmethod
     def between_cam_distance(serial_number: str | None = None) -> float | None:
-        """Metres between the stereo cameras
-        Ex: a D435 is ~50 mm, a D455 ~95 mm
-        """
+        """Metres between the stereo imagers."""
         try:
             import pyrealsense2 as rs
         except ImportError:
@@ -504,11 +489,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _device_stream_profile(
         self, stream_type: rs.stream, index: int | None = None
     ) -> rs.stream_profile | None:
-        """A profile for one of the device's streams, running or not.
-
-        Extrinsics belong to the device, not the pipeline, so an imager stays placeable
-        on tf with its stream switched off.
-        """
+        """A profile for one of the device's streams, running or not."""
         if self._profile is None:
             return None
         for sensor in self._profile.get_device().query_sensors():
@@ -520,11 +501,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         return None
 
     def _build_mount_edges(self) -> None:
-        """Place every imager the device knows about, below camera_link.
-
-        camera_link sits on the depth imager, which is what the device measures the
-        others against, so an extrinsic is already a placement here.
-        """
+        """Place every imager below camera_link, which sits on the depth imager."""
         import pyrealsense2 as rs
 
         streams: list[tuple[str, rs.stream, int | None]] = [
@@ -564,12 +541,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     @staticmethod
     def _extrinsics_to_body(extrinsics: rs.extrinsics) -> tuple[Vector3, Quaternion]:
-        """Convert a librealsense extrinsic into body (REP-103) axes.
-
-        librealsense measures between optical frames, camera_link and its children are
-        body frames. Conjugating the whole transform, rather than permuting the
-        translation, carries any rotation between the imagers across too.
-        """
+        """Convert a librealsense extrinsic (optical axes) into body (REP-103) axes."""
         body_from_optical = np.eye(4)
         body_from_optical[:3, :3] = Rotation.from_quat(
             [OPTICAL_ROTATION.x, OPTICAL_ROTATION.y, OPTICAL_ROTATION.z, OPTICAL_ROTATION.w]
@@ -603,7 +575,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._repeated_frames[key] = self._repeated_frames.get(key, 0) + 1
             return None
         if previous is not None and number > previous + 1:
-            # The loss is in the driver or on the wire, so it can only be counted here.
             missed = number - previous - 1
             self._dropped_frames[key] = self._dropped_frames.get(key, 0) + missed
             logger.warning(
@@ -629,8 +600,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 # Pipeline went away underneath us.
                 break
             except RuntimeError:
-                # Raised on timeout as well as on a stop, and a slow first frameset is
-                # normal.
+                # Raised for a timeout as well as for a stopped pipeline.
                 if not self._running:
                     break
                 consecutive_timeouts += 1
@@ -644,6 +614,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                         "RealSense: no frames for %d s, giving up on video capture",
                         consecutive_timeouts,
                     )
+                    self._running = False
                     break
                 continue
             consecutive_timeouts = 0
@@ -681,10 +652,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             depth_img = None
             if depth_frame and depth_ts is not None:
                 depth_data = np.asanyarray(depth_frame.get_data())
-                # When aligned, depth is in color optical frame
                 depth_frame_id = (
                     self._color_optical_frame
-                    if self.config.align_depth_to_color
+                    if self._align is not None
                     else self._depth_optical_frame
                 )
                 depth_img = Image(
@@ -720,7 +690,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     self._latest_color_img = color_img
                     self._latest_depth_img = depth_img
 
-            # Publish TF against whichever stream advanced this iteration.
             latest = [t for t in (color_ts, depth_ts, infra1_ts, infra2_ts) if t is not None]
             if latest:
                 self._publish_tf(max(latest))
@@ -735,7 +704,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         """
         transforms = []
 
-        # The mount point, for a camera nothing else places.
         if self.config.base_transform is not None:
             transforms.append(
                 Transform(
@@ -783,7 +751,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def stop(self) -> None:
         self._running = False
 
-        # Stop the motion module pipeline (its callback thread) first.
         if self._imu_pipeline:
             try:
                 self._imu_pipeline.stop()

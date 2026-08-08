@@ -131,11 +131,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._stream_height = self.config.height
         self._sl_camera_info: sl.CameraInformation | None = None
         self._last_image_ts: float | None = None
-        # So a capture slower than the interval does not repeat a cloud.
         self._last_pointcloud_ts: float | None = None
 
     def _publish_camera_info(self) -> None:
-        # The capture clock, so camera_info matches the frames it describes.
         ts = self._last_image_ts
         if ts is None:
             return
@@ -303,8 +301,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            # The SDK's capture stamp: grab() blocks through the depth inference, so a
-            # host stamp here would be late by that much. Same epoch.
+            # grab() blocks through the depth inference, so take the SDK's stamp.
             ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
             self._last_image_ts = ts
 

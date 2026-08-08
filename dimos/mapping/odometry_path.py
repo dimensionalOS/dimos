@@ -35,17 +35,11 @@ class OdometryPathConfig(ModuleConfig):
     frame_id: str = ""
     min_step_meters: float = 0.02
     max_poses: int = 20000
-    # The path is republished whole, so this bounds the serializing cost.
     min_publish_interval_seconds: float = 0.1
 
 
 class OdometryPath(Module):
-    """``odometry`` in, the trail it has drawn out, as a ``nav_msgs/Path``.
-
-    The trail inherits the odometry's drift. A SLAM-corrected pose would make it jump
-    at every loop closure, so prefer the continuous odometry and let the ``map`` ->
-    ``odom`` edge carry the correction.
-    """
+    """``odometry`` in, the trail it has drawn out, as a ``nav_msgs/Path``."""
 
     config: OdometryPathConfig
 

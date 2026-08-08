@@ -68,7 +68,6 @@ std::array<double, 3> cross(const std::array<double, 3>& left,
             left[0] * right[1] - left[1] * right[0]};
 }
 
-/// The usual quaternion sandwich, without building a matrix.
 std::array<double, 3> quat_rotate(const std::array<double, 4>& rotation,
                                   const std::array<double, 3>& vector) {
     const std::array<double, 3> axis{rotation[0], rotation[1], rotation[2]};
@@ -131,7 +130,6 @@ cuvslam::Pose to_pose(const Transform& transform) {
     return pose;
 }
 
-/// One camera of the rig.
 struct RigCamera {
     std::string frame;
     Transform rig_from_camera;
@@ -163,7 +161,7 @@ struct CuvslamConfig {
     /// GetPose() carries no timestamp, so a Slam thread running behind cannot be
     /// matched to the odometry pose it corrects.
     bool slam_sync_mode;
-    /// Poses kept in the graph. 300 is NVIDIA's real-time figure, 0 is unlimited.
+    /// Poses kept in the graph; 0 is unlimited.
     int slam_max_map_size;
     /// Floor on the interval between loop closures, milliseconds.
     int slam_throttling_ms;
@@ -179,7 +177,6 @@ struct CuvslamConfig {
     /// rgbd only: raw depth units per metre. 1000 for sixteen-bit millimetres.
     double depth_units_per_meter;
 
-    /// Called by parse(). Without it an unrecognised mode would quietly behave as mono.
     void validate() const {
         if (camera_mode != "stereo" && camera_mode != "mono" && camera_mode != "rgbd") {
             throw std::runtime_error("camera_mode must be stereo, mono or rgbd, got '" +
@@ -190,7 +187,6 @@ struct CuvslamConfig {
 
 class CuvslamOdometry : public Module {
 public:
-    /// Stereo covers any two or more overlapping cameras.
     enum class Mode { Stereo, Mono, Rgbd };
 
     void build(Builder& builder, Config& config) override {
@@ -265,7 +261,7 @@ private:
         for (std::size_t step = 0; step < kMaxTfDepth; ++step) {
             auto edge = tf_edges_.find(frame);
             if (edge == tf_edges_.end()) {
-                break;  // reached a root
+                break;
             }
             ancestor_from_child = compose(edge->second.second, ancestor_from_child);
             frame = edge->second.first;
@@ -353,33 +349,32 @@ private:
         return -1;
     }
 
-    /// cuVSLAM buffers and orders these itself, so hand them over as they arrive.
+    /// Held until the frame they precede: cuVSLAM requires Track() and
+    /// RegisterImuMeasurement() in non-decreasing timestamp order, and the dispatcher
+    /// drains one message per input per round, so images overtake a 400 Hz IMU.
     void on_imu(const sensor_msgs::Imu& msg) {
-        // Where the IMU sits comes from tf like every camera's does, and the message
-        // says which frame that is, so nothing has to be configured to match.
         imu_frame_ = msg.header.frame_id;
         if (!tracker_) {
-            // The rig, and so the tracker, does not exist yet. Counted rather than
-            // dropped silently: this is exactly the window inertial init needs.
+            // No tracker yet; this is the window inertial init needs.
             ++imu_dropped_;
             return;
         }
         cuvslam::ImuMeasurement measurement{};
         measurement.timestamp_ns = stamp_to_ns(msg.header);
+        // Track() has already consumed everything up to last_ts_ns_.
         measurement.linear_accelerations = {static_cast<float>(msg.linear_acceleration.x),
                                             static_cast<float>(msg.linear_acceleration.y),
                                             static_cast<float>(msg.linear_acceleration.z)};
         measurement.angular_velocities = {static_cast<float>(msg.angular_velocity.x),
                                           static_cast<float>(msg.angular_velocity.y),
                                           static_cast<float>(msg.angular_velocity.z)};
-        tracker_->RegisterImuMeasurement(0, measurement);
+        pending_imu_.push_back(measurement);
         ++imu_samples_;
     }
 
     void on_image(const sensor_msgs::Image& img) {
         const int index = camera_index(img.header.frame_id);
         if (index < 0) {
-            // Both a rig that has not resolved and a camera not on it are silent here.
             ++unplaced_images_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam is dropping images from a camera that is not on the rig",
@@ -482,6 +477,18 @@ private:
                        logging::Field("rig_frames", join(rig_frames()))});
     }
 
+    /// Hand cuVSLAM every sample that precedes the frame about to be tracked.
+    void register_imu_through(std::int64_t timestamp_ns) {
+        auto after = std::find_if(pending_imu_.begin(), pending_imu_.end(),
+                                  [timestamp_ns](const cuvslam::ImuMeasurement& measurement) {
+                                      return measurement.timestamp_ns > timestamp_ns;
+                                  });
+        for (auto it = pending_imu_.begin(); it != after; ++it) {
+            tracker_->RegisterImuMeasurement(0, *it);
+        }
+        pending_imu_.erase(pending_imu_.begin(), after);
+    }
+
     static cuvslam::Image to_cuvslam_image(const sensor_msgs::Image& img,
                                            std::int64_t timestamp_ns, std::uint32_t camera_index) {
         cuvslam::Image out{};
@@ -521,7 +528,6 @@ private:
             return;  // no camera_info yet
         }
 
-        // One frame per camera, all of the same instant.
         std::int64_t oldest = stamp_to_ns(cameras_[0].image.header);
         std::int64_t newest = oldest;
         for (const RigCamera& camera : cameras_) {
@@ -556,6 +562,7 @@ private:
             depths.push_back(depth);
         }
 
+        register_imu_through(newest);
         const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
         ++frames_;
         last_ts_ns_ = newest;
@@ -572,7 +579,6 @@ private:
             return;
         }
         const Transform tracker_from_rig = to_transform(est.world_from_rig->pose);
-        // A restart shows up only as a step no robot could have travelled.
         const Transform candidate = compose(world_from_tracker_, tracker_from_rig);
         if (last_pose_ns_) {
             const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
@@ -604,7 +610,6 @@ private:
         }
     }
 
-    /// Its pose jumps at a loop closure, which is why the jump belongs on map->odom.
     void run_slam(std::int64_t timestamp_ns) {
         cuvslam::Odometry::State state;
         tracker_->GetState(state);
@@ -615,11 +620,8 @@ private:
         if (!slam_started_) {
             return;
         }
-        // GetPose() carries no timestamp, so it can only be differenced against the
-        // frame just tracked. That holds in sync mode.
         const Transform map_from_rig = to_transform(slam_->GetPose());
 
-        // No magnitude guard: the rebase that keeps odom continuous lands here.
         const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
@@ -675,7 +677,6 @@ private:
         tf_.publish(message);
     }
 
-    /// One edge for the whole run: a robot only ever sees a single odom path.
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
         fill_pose(msg, world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
@@ -687,13 +688,13 @@ private:
         }
     }
 
-    // All set from cfg_ in build(); python owns the defaults.
     CuvslamConfig cfg_{};
-    /// camera_mode, parsed once, so an unknown value cannot quietly mean "not stereo".
+    /// camera_mode, parsed once.
     Mode mode_{Mode::Stereo};
 
     // slam
     std::optional<cuvslam::Slam> slam_;
+    std::vector<cuvslam::ImuMeasurement> pending_imu_;
     std::uint64_t imu_samples_{0};
     std::uint64_t imu_dropped_{0};
     bool slam_started_{false};
@@ -704,7 +705,6 @@ private:
 
     /// The rig, in cuVSLAM's camera order.
     std::vector<RigCamera> cameras_;
-    /// Intrinsics by frame_id.
     std::unordered_map<std::string, sensor_msgs::CameraInfo> camera_info_;
     std::uint64_t unplaced_images_{0};
     std::string imu_frame_;

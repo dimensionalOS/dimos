@@ -36,16 +36,15 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 MODULE_DIR = Path(__file__).resolve().parent
 
 # The nix loader ignores ld.so.cache, so dlopen("libcuda.so.1") fails and cudart blames
-# the driver version instead. Directories holding nothing but driver libraries go on the
-# path whole, which Jetson needs: libcuda.so.1 there depends on its siblings.
+# the driver version instead. Jetson needs the whole directory: libcuda.so.1 there
+# depends on its siblings.
 _DRIVER_ONLY_LIB_DIRS = (
     Path("/run/opengl-driver/lib"),
     # Jetson / L4T. Which of the two names exists has varied across releases.
     Path("/usr/lib/aarch64-linux-gnu/nvidia"),
     Path("/usr/lib/aarch64-linux-gnu/tegra"),
 )
-# Directories holding the driver among the system's own libraries: exposing one whole
-# would shadow the binary's libstdc++, so symlinks to the driver stand in.
+# Adding one of these whole would shadow the binary's libstdc++, so symlink the driver.
 _HOST_LIB_DIRS = (
     Path("/usr/lib/x86_64-linux-gnu"),
     Path("/usr/lib/aarch64-linux-gnu"),
@@ -63,7 +62,7 @@ _DRIVER_LINK_DIR = CACHE_DIR / "nvidia-driver-libs"
 
 
 def driver_library_dir() -> Path | None:
-    """Directory the loader needs on LD_LIBRARY_PATH to find the NVIDIA driver."""
+    """Directory to put on LD_LIBRARY_PATH for the NVIDIA driver."""
     dedicated = next(
         (d for d in _DRIVER_ONLY_LIB_DIRS if (d / "libcuda.so.1").exists()),
         None,
@@ -95,12 +94,7 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
-    """Which of NVIDIA's builds this machine needs.
-
-    Jetsons are split by GPU generation rather than CUDA version -- an Orin build does
-    not run on a Thor. Elsewhere the newest build the driver supports is taken, since a
-    driver runs any CUDA older than itself but nothing newer.
-    """
+    """Which of NVIDIA's builds this machine needs. An Orin build does not run on a Thor."""
     if platform.machine() == "aarch64":
         compatible = Path("/proc/device-tree/compatible")
         chip = compatible.read_bytes() if compatible.exists() else b""
@@ -122,12 +116,7 @@ def _driver_env() -> dict[str, str]:
 
 
 class ImuCalibration(BaseModel):
-    """How much one physical IMU lies.
-
-    Where it sits is not here: that comes off tf. There is no default for the rest
-    either, because an Allan-variance run measures one unit and no other unit should
-    silently get its numbers.
-    """
+    """Noise model for one physical IMU, measured per unit. Where it sits comes from tf."""
 
     gyro_noise_density: float
     gyro_random_walk: float
@@ -144,15 +133,11 @@ class CuvslamConfig(NativeModuleConfig):
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
-    # "stereo" is two or more cameras with overlapping views; "mono" is up to scale.
+    # "stereo" is two or more overlapping cameras; "mono" is accurate up to scale.
     camera_mode: Literal["stereo", "mono", "rgbd"] = "stereo"
-    # One tf frame per camera, in the order cuVSLAM indexes them. Empty discovers them
-    # off camera_info, which only has an order for a single camera or one pair.
+    # Empty discovers a single camera or a single pair off camera_info.
     camera_frames: list[str] = Field(default_factory=list)
-    # Asserts the pair arrives rectified -- no distortion, rows already aligned -- so
-    # cuVSLAM can match along a scanline. Claiming it for images that are not costs
-    # tracking quality with nothing to show for it, since the model is fed as pinhole
-    # either way.
+    # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
     # A step implying more than this is cuVSLAM restarting its world frame, not motion.
     implausible_speed_meters_per_second: float = 10.0
@@ -164,12 +149,11 @@ class CuvslamConfig(NativeModuleConfig):
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
 
-    # Pose graph and loop closure. Without it map->odom carries nothing.
+    # Pose graph and loop closure; without it map->odom is identity.
     enable_slam: bool = True
     slam_sync_mode: bool = True
     slam_max_map_size: int = 300
     slam_throttling_ms: int = 0
-    # Off by default because for non-drone applications it usually hurts.
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
@@ -186,11 +170,7 @@ class CuvslamConfig(NativeModuleConfig):
         return self
 
     def to_config_dict(self) -> dict[str, Any]:
-        """Flatten the calibration, because the native struct is a plain aggregate.
-
-        With the IMU off the values are never read, so zeros go across rather than
-        stand-in numbers that would look like a calibration to anyone reading a log.
-        """
+        """Flatten the calibration into imu_* keys; the native struct is a plain aggregate."""
         blob = super().to_config_dict()
         calibration = blob.pop("imu_calibration", None) or dict.fromkeys(
             ImuCalibration.model_fields, 0.0
