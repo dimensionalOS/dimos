@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import socket
 import threading
@@ -31,6 +32,10 @@ zenoh.init_log_from_env_or("warn")
 
 logger = setup_logger()
 
+ZENOH_ROUTER_ENDPOINT_ENV = "DIMOS_ZENOH_ROUTER_ENDPOINT"
+ZENOH_LOCAL_ROUTER_ENDPOINT = "tcp/127.0.0.1:7447"
+ZENOH_LOCAL_ROUTER_LISTEN = "tcp/[::]:7447"
+
 # Robot-side bridges (e.g. go2web) listen here so a remote dimos can dial in
 # when multicast discovery fails. Zenoh's own default port.
 ROBOT_ZENOH_PORT = 7447
@@ -43,14 +48,12 @@ _CONNECT_POLL_INTERVAL = 0.05
 LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 
 
-def _default_connect_endpoints() -> list[str]:
-    """Dial known robots directly instead of trusting multicast scouting.
+def _robot_connect_endpoints() -> list[str]:
+    """Return explicit robot endpoints when multicast scouting is insufficient.
 
     Many APs filter multicast between WiFi clients, so a robot that is
-    perfectly reachable over TCP never answers a scout. When the session is
-    zenoh-transported and a robot IP is configured, it becomes an explicit
-    endpoint; scouting stays on for everything else. An IP carrying its own
-    ``:port`` is used as given.
+    reachable over TCP may never answer a scout. An IP carrying its own port is
+    used as given.
     """
     from dimos.core.global_config import global_config
 
@@ -65,6 +68,17 @@ def _default_connect_endpoints() -> list[str]:
         if endpoint not in out:
             out.append(endpoint)
     return out
+
+
+def _default_mode() -> str:
+    return "client" if os.getenv(ZENOH_ROUTER_ENDPOINT_ENV) else "peer"
+
+
+def _default_connect_endpoints() -> list[str]:
+    router_endpoint = os.getenv(ZENOH_ROUTER_ENDPOINT_ENV)
+    if router_endpoint:
+        return [router_endpoint]
+    return _robot_connect_endpoints()
 
 
 def _default_scouting() -> bool:
@@ -98,10 +112,37 @@ def endpoint_addresses(endpoint: str) -> set[str]:
     return out
 
 
+def _await_connect_endpoints(
+    session: zenoh.Session,
+    endpoints: list[str],
+    timeout: float,
+) -> None:
+    pending = {endpoint: endpoint_addresses(endpoint) for endpoint in endpoints}
+    if not pending or timeout <= 0:
+        return
+
+    deadline = time.monotonic() + timeout
+    while pending:
+        linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
+        for endpoint in [item for item, addresses in pending.items() if addresses & linked]:
+            logger.debug("Zenoh linked", endpoint=endpoint)
+            del pending[endpoint]
+        if not pending:
+            return
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "Zenoh endpoints not linked; continuing",
+                timeout=timeout,
+                endpoints=sorted(pending),
+            )
+            return
+        time.sleep(_CONNECT_POLL_INTERVAL)
+
+
 class ZenohConfig(BaseConfig):
-    mode: str = "peer"
+    mode: str = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
-    listen: list[str] = []
+    listen: list[str] = Field(default_factory=list)
     # Discover peers across the network. Off keeps discovery on loopback.
     scouting: bool = Field(default_factory=_default_scouting)
     # Seconds to block in start() waiting for `connect` endpoints to link.
@@ -156,6 +197,44 @@ class ZenohSessionPool:
 default_session_pool = ZenohSessionPool()
 
 
+class ZenohRouter:
+    def __init__(
+        self,
+        listen: str = ZENOH_LOCAL_ROUTER_LISTEN,
+        connect: list[str] | None = None,
+    ) -> None:
+        self._listen = listen
+        self._connect = _robot_connect_endpoints() if connect is None else list(connect)
+        self._session: zenoh.Session | None = None
+
+    def start(self) -> None:
+        config = zenoh.Config()
+        config.insert_json5("mode", '"router"')
+        config.insert_json5("listen/endpoints", json.dumps([self._listen]))
+        if self._connect:
+            config.insert_json5("connect/endpoints", json.dumps(self._connect))
+        if not _default_scouting():
+            config.insert_json5("scouting/multicast/interface", json.dumps(LOOPBACK_INTERFACE))
+            config.insert_json5("scouting/gossip/enabled", "false")
+        try:
+            self._session = zenoh.open(config)
+            _await_connect_endpoints(
+                self._session,
+                self._connect,
+                _default_connect_timeout(),
+            )
+            logger.info("Local Zenoh router started", endpoint=self._listen)
+        except zenoh.ZError as exc:
+            if "Address already in use" not in str(exc):
+                raise
+            logger.info("Using existing local Zenoh router", endpoint=self._listen)
+
+    def stop(self) -> None:
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+
 class ZenohService(Service):
     config: ZenohConfig
 
@@ -167,6 +246,9 @@ class ZenohService(Service):
         self._session: zenoh.Session | None = None
 
     def start(self) -> None:
+        endpoint = os.getenv(ZENOH_ROUTER_ENDPOINT_ENV)
+        if endpoint and not self.config.model_fields_set:
+            self.config = ZenohConfig(mode="client", connect=[endpoint])
         self._session = self._session_pool.acquire(self.config)
         self._await_connect(self._session)
         super().start()
@@ -182,24 +264,11 @@ class ZenohService(Service):
         Unreachable endpoints are a warning, not an error: one robot being down
         should not stop the rest of the graph from coming up.
         """
-        pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
-        if not pending or self.config.connect_timeout <= 0:
-            return
-        deadline = time.monotonic() + self.config.connect_timeout
-        while pending:
-            linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
-            for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
-                logger.debug(f"Zenoh linked {endpoint}")
-                del pending[endpoint]
-            if not pending:
-                return
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    f"Zenoh endpoints not linked after {self.config.connect_timeout}s: "
-                    f"{sorted(pending)} - continuing, published messages may be dropped"
-                )
-                return
-            time.sleep(_CONNECT_POLL_INTERVAL)
+        _await_connect_endpoints(
+            session,
+            self.config.connect,
+            self.config.connect_timeout,
+        )
 
     @property
     def session(self) -> zenoh.Session:
