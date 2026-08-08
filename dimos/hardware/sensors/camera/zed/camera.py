@@ -18,6 +18,7 @@ import atexit
 import threading
 import time
 
+import numpy as np
 from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
@@ -41,7 +42,10 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+
+logger = setup_logger()
 
 
 def default_base_transform() -> Transform:
@@ -61,6 +65,7 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
+    enable_right_image: bool = False
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
@@ -80,9 +85,11 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
 class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     config: ZEDCameraConfig
     color_image: Out[Image]
+    right_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
+    right_camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
@@ -97,6 +104,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     @property
     def _color_optical_frame(self) -> str:
         return f"{self.config.camera_name}_color_optical_frame"
+
+    @property
+    def _right_frame(self) -> str:
+        return f"{self.config.camera_name}_right_frame"
+
+    @property
+    def _right_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_right_optical_frame"
 
     @property
     def _depth_frame(self) -> str:
@@ -114,28 +129,37 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._running = False
         self._thread: threading.Thread | None = None
         self._color_camera_info: CameraInfo | None = None
+        self._right_camera_info: CameraInfo | None = None
         self._depth_camera_info: CameraInfo | None = None
         self._depth_scale: float = 1.0
         self._camera_link_to_color_extrinsics: sl.Transform
+        self._baseline_meters: float | None = None
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
         self._image_left: sl.Mat | None = None
+        self._image_right: sl.Mat | None = None
         self._depth_map: sl.Mat | None = None
         self._pose: sl.Pose | None = None
         self._tracking_enabled = False
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._sl_camera_info: sl.CameraInformation | None = None
+        self._last_image_ts: float | None = None
+        self._last_pointcloud_ts: float | None = None
 
     def _publish_camera_info(self) -> None:
-        ts = time.time()
-        if self._color_camera_info:
-            self._color_camera_info.ts = ts
-            self.camera_info.publish(self._color_camera_info)
-        if self._depth_camera_info:
-            self._depth_camera_info.ts = ts
-            self.depth_camera_info.publish(self._depth_camera_info)
+        ts = self._last_image_ts
+        if ts is None:
+            return
+        # with_ts copies; restamping the stored one would rewrite a delivered message.
+        for info, stream in (
+            (self._color_camera_info, self.camera_info),
+            (self._right_camera_info, self.right_camera_info),
+            (self._depth_camera_info, self.depth_camera_info),
+        ):
+            if info is not None:
+                stream.publish(info.with_ts(ts))
 
     @rpc
     def start(self) -> None:
@@ -146,7 +170,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         else:
             self._init_params.camera_resolution = sl.RESOLUTION.HD720
         self._init_params.camera_fps = self.config.fps
-        if isinstance(self.config.depth_mode, sl.DEPTH_MODE):
+        if not self.config.enable_depth:
+            # Depth inference runs inside grab() whether or not anything reads it.
+            self._init_params.depth_mode = sl.DEPTH_MODE.NONE
+        elif isinstance(self.config.depth_mode, sl.DEPTH_MODE):
             self._init_params.depth_mode = self.config.depth_mode
         else:
             self._init_params.depth_mode = getattr(sl.DEPTH_MODE, self.config.depth_mode)
@@ -165,6 +192,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
         self._image_left = sl.Mat()
+        if self.config.enable_right_image:
+            self._image_right = sl.Mat()
         self._depth_map = sl.Mat()
         self._pose = sl.Pose()
 
@@ -172,6 +201,12 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self._sl_camera_info is not None:
             self._stream_width = self._sl_camera_info.camera_configuration.resolution.width
             self._stream_height = self._sl_camera_info.camera_configuration.resolution.height
+            # The SDK substitutes a rate it can do rather than failing.
+            delivered_fps = self._sl_camera_info.camera_configuration.fps
+            if delivered_fps != self.config.fps:
+                logger.warning(
+                    "ZED runs at %s fps, not the %s asked for", delivered_fps, self.config.fps
+                )
 
         self._build_camera_info()
         self._get_extrinsics()
@@ -183,7 +218,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: print(f"CameraInfo error: {e}"),
+                on_error=lambda error: logger.error("ZED camera_info: %s", error),
             )
         )
 
@@ -196,7 +231,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: print(f"Pointcloud error: {e}"),
+                    on_error=lambda error: logger.error("ZED pointcloud: %s", error),
                 )
             )
 
@@ -210,6 +245,11 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             left_cam, self._color_optical_frame
         )
 
+        if self.config.enable_right_image:
+            self._right_camera_info = self._intrinsics_to_camera_info(
+                calib.right_cam, self._right_optical_frame
+            )
+
         if self.config.enable_depth:
             depth_frame = (
                 self._color_optical_frame
@@ -221,22 +261,17 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _intrinsics_to_camera_info(
         self, intrinsics: sl.CameraParameters, frame_id: str
     ) -> CameraInfo:
-        fx, fy = intrinsics.fx, intrinsics.fy
-        cx, cy = intrinsics.cx, intrinsics.cy
-
-        K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-        P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
-        D = list(intrinsics.disto)
-
-        return CameraInfo(
-            height=self._stream_height,
-            width=self._stream_width,
-            distortion_model="plumb_bob",
-            D=D,
-            K=K,
-            P=P,
-            frame_id=frame_id,
+        info = CameraInfo.from_intrinsics(
+            intrinsics.fx,
+            intrinsics.fy,
+            intrinsics.cx,
+            intrinsics.cy,
+            self._stream_width,
+            self._stream_height,
+            frame_id,
         )
+        info.D = list(intrinsics.disto)
+        return info
 
     def _get_extrinsics(self) -> None:
         if self._sl_camera_info is None:
@@ -244,6 +279,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         sensors_config = self._sl_camera_info.sensors_configuration
         # camera_imu_transform gives the transform from IMU (body center) to left camera
         self._camera_link_to_color_extrinsics = sensors_config.camera_imu_transform
+
+        calib = self._sl_camera_info.camera_configuration.calibration_parameters
+        self._baseline_meters = calib.get_camera_baseline()
 
     def _extrinsics_to_transform(
         self,
@@ -253,10 +291,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts: float,
     ) -> Transform:
         translation = extrinsics.get_translation().get()
-        quat = extrinsics.get_orientation().get()  # [x, y, z, w]
+        rotation = extrinsics.get_orientation().get()  # [x, y, z, w]
         return Transform(
             translation=Vector3(*translation),
-            rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
+            rotation=Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
             frame_id=frame_id,
             child_frame_id=child_frame_id,
             ts=ts,
@@ -272,14 +310,21 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         tracking_params.set_floor_as_origin = self.config.set_floor_as_origin
         err = self._zed.enable_positional_tracking(tracking_params)
         if err != sl.ERROR_CODE.SUCCESS:
-            print(f"Failed to enable positional tracking: {err}")
+            logger.error("ZED positional tracking did not start: %s", err)
             self._tracking_enabled = False
             return
         self._tracking_enabled = True
 
-    def _capture_loop(self) -> None:
+    def _retrieve_rgb(self, mat: sl.Mat, view: sl.VIEW) -> np.ndarray:
         import cv2
 
+        self._zed.retrieve_image(mat, view)  # type: ignore[union-attr]
+        data = mat.get_data()
+        if data.ndim == 3 and data.shape[2] == 4:
+            data = data[:, :, :3]
+        return cv2.cvtColor(data, cv2.COLOR_BGR2RGB)  # type: ignore[no-any-return]
+
+    def _capture_loop(self) -> None:
         while self._running and self._zed is not None:
             try:
                 err = self._zed.grab(self._runtime_params)
@@ -292,22 +337,29 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            ts = time.time()
+            # grab() blocks through the depth inference, so take the SDK's stamp.
+            ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
+            self._last_image_ts = ts
 
             color_img = None
             if self._image_left is not None:
-                self._zed.retrieve_image(self._image_left, sl.VIEW.LEFT)
-                color_data = self._image_left.get_data()
-                if color_data.ndim == 3 and color_data.shape[2] == 4:
-                    color_data = color_data[:, :, :3]
-                color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
                 color_img = Image(
-                    data=color_data,
+                    data=self._retrieve_rgb(self._image_left, sl.VIEW.LEFT),
                     format=ImageFormat.RGB,
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
                 self.color_image.publish(color_img)
+
+            if self._image_right is not None:
+                self.right_image.publish(
+                    Image(
+                        data=self._retrieve_rgb(self._image_right, sl.VIEW.RIGHT),
+                        format=ImageFormat.RGB,
+                        frame_id=self._right_optical_frame,
+                        ts=ts,
+                    )
+                )
 
             depth_img = None
             if self.config.enable_depth and self._depth_map is not None:
@@ -381,8 +433,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             transforms.append(base_to_camera)
 
-        # camera_imu_transform is IMU -> left_camera (coordinate transform),
-        # we need to invert to get the pose of left camera in camera_link frame
+        # camera_imu_transform is IMU -> left camera, so invert it to place the camera.
         camera_link_to_depth = self._extrinsics_to_transform(
             self._camera_link_to_color_extrinsics,
             self._camera_link,
@@ -421,6 +472,29 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(color_to_color_optical)
 
+        if self._image_right is not None and self._baseline_meters is not None:
+            # VIEW.LEFT and VIEW.RIGHT are rectified, so the eyes differ by the baseline
+            # alone. y points left, putting the right eye at -baseline.
+            color_to_right = Transform(
+                translation=Vector3(0.0, -self._baseline_meters, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            right_tf = color_tf + color_to_right
+            right_tf.frame_id = self._camera_link
+            right_tf.child_frame_id = self._right_frame
+            right_tf.ts = ts
+            transforms.append(right_tf)
+
+            transforms.append(
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=OPTICAL_ROTATION,
+                    frame_id=self._right_frame,
+                    child_frame_id=self._right_optical_frame,
+                    ts=ts,
+                )
+            )
+
         tracking_tf = self._tracking_transform(ts)
         if tracking_tf is not None:
             transforms.append(tracking_tf)
@@ -434,6 +508,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         if color_img is None or depth_img is None or self._color_camera_info is None:
             return
+        if depth_img.ts == self._last_pointcloud_ts:
+            return
+        self._last_pointcloud_ts = depth_img.ts
 
         try:
             pcd = PointCloud2.from_rgbd(
@@ -444,8 +521,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
-        except Exception as e:
-            print(f"Pointcloud generation error: {e}")
+        except Exception as error:
+            logger.error("ZED pointcloud generation failed: %s", error)
 
     @rpc
     def stop(self) -> None:
@@ -469,10 +546,12 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._thread = None
 
         self._color_camera_info = None
+        self._right_camera_info = None
         self._depth_camera_info = None
         self._latest_color_img = None
         self._latest_depth_img = None
         self._image_left = None
+        self._image_right = None
         self._depth_map = None
         self._pose = None
         self._sl_camera_info = None
