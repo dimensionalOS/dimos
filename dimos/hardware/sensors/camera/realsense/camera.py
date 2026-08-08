@@ -73,6 +73,10 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
+    # Auto-exposure is allowed to halve the color frame rate to buy a longer exposure.
+    # Off holds the rate and lets the image go dark instead, which is what anything
+    # pairing color with another stream by timestamp wants.
+    color_auto_exposure_priority: bool = False
     enable_pointcloud: bool = False
     enable_infrared: bool = False
     # Dots make depth much better and the IR pair useless for feature tracking.
@@ -236,6 +240,14 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             if depth_sensor.supports(rs.option.emitter_enabled):
                 depth_sensor.set_option(
                     rs.option.emitter_enabled, 1.0 if self.config.emitter_enabled else 0.0
+                )
+
+        if self.config.enable_color:
+            color_sensor = self._profile.get_device().first_color_sensor()
+            if color_sensor.supports(rs.option.auto_exposure_priority):
+                color_sensor.set_option(
+                    rs.option.auto_exposure_priority,
+                    1.0 if self.config.color_auto_exposure_priority else 0.0,
                 )
 
         # Aligning to color needs the color stream to actually be running.
