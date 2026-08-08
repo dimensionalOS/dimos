@@ -21,9 +21,7 @@ from typing import cast
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import (
     GripperTaskOverrides,
     eef_twist_task,
@@ -166,14 +164,8 @@ _xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
 # gripper toggle only takes effect when VR is disengaged.
 
 
-class _XArm7TeleopCoordinator(ControlCoordinator):
-    arm_joints: Out[JointState]
-
-
 coordinator_teleop_xarm7 = autoconnect(
-    _XArm7TeleopCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        publish_robot_joint_states=True,
+    ControlCoordinator.blueprint(
         hardware=[_xarm7_teleop_hw],
         tasks=[
             teleop_ik_task(
