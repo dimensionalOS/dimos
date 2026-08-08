@@ -562,17 +562,18 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._build_mount_edges()
 
     def _build_mount_edges(self) -> None:
-        """Everything below camera_link, which is rigid once the device is open."""
-        identity = Quaternion(0.0, 0.0, 0.0, 1.0)
-        # camera_link coincides with the depth frame, so an extrinsic to depth already
-        # is a placement here.
-        body_frames = {self._depth_frame: (Vector3(0.0, 0.0, 0.0), identity)} | {
+        """Everything below camera_link, which is rigid once the device is open.
+
+        camera_link sits on the depth imager by convention, which is the frame the
+        device measures every other imager against, so an extrinsic is already a
+        placement here and depth itself is the origin.
+        """
+        body_frames = {
+            self._depth_frame: (Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+        } | {
             frame_id: self._extrinsics_to_body(extrinsics)
             for frame_id, extrinsics in self._frame_extrinsics.items()
         }
-        # With depth off there are no extrinsics, so color falls back to camera_link.
-        if self.config.enable_color and self._color_frame not in body_frames:
-            body_frames[self._color_frame] = (Vector3(0.0, 0.0, 0.0), identity)
 
         self._mount_edges = []
         for frame_id, (translation, rotation) in body_frames.items():
