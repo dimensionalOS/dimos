@@ -40,8 +40,8 @@ def _convert_navigation_costmap(grid: Any) -> Any:
         opacity=0.2,
         background="#484981",
     )
-
-
+    
+    
 def _static_base_link(rr: Any) -> list[Any]:
     return [
         rr.Boxes3D(
