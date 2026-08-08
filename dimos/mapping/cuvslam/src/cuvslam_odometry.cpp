@@ -158,7 +158,7 @@ struct CuvslamConfig {
     bool enable_slam;
     /// GetPose() carries no timestamp, so a Slam thread running behind cannot be
     /// matched to the odometry pose it corrects.
-    bool slam_sync_mode;
+    bool slam_async;
     /// Poses kept in the graph; 0 is unlimited.
     int slam_max_poses;
     /// Floor on the interval between loop closures, milliseconds.
@@ -463,7 +463,7 @@ private:
         tracker_.emplace(rig, odometry_cfg);
         if (cfg_.enable_slam) {
             cuvslam::Slam::Config slam_cfg = cuvslam::Slam::GetDefaultConfig();
-            slam_cfg.sync_mode = cfg_.slam_sync_mode;
+            slam_cfg.sync_mode = !cfg_.slam_async;
             slam_cfg.max_map_size = static_cast<std::uint32_t>(cfg_.slam_max_poses);
             slam_cfg.throttling_time_ms = static_cast<std::uint32_t>(cfg_.slam_throttling_ms);
             slam_.emplace(rig, tracker_->GetPrimaryCameras(), slam_cfg);

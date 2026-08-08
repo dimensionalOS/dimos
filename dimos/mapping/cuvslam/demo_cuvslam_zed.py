@@ -14,7 +14,7 @@
 
 """cuVSLAM on a ZED stereo camera.
 
-dimos run demo-zed-cuvslam --viewer rerun --rerun-host 0.0.0.0
+dimos run demo-cuvslam-zed --viewer rerun --rerun-host 0.0.0.0
 """
 
 from __future__ import annotations
@@ -23,11 +23,14 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.zed.camera import ZEDCamera
 from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
-from dimos.mapping.cuvslam.demo_cuvslam import cuvslam_rerun_blueprint, path_at_true_height
+from dimos.mapping.cuvslam.demo_cuvslam_realsense import (
+    cuvslam_rerun_blueprint,
+    path_at_true_height,
+)
 from dimos.mapping.odometry_path import OdometryPath
 from dimos.visualization.vis_module import vis_module
 
-demo_zed_cuvslam = (
+demo_cuvslam_zed = (
     autoconnect(
         ZEDCamera.blueprint(
             fps=30,

@@ -14,7 +14,7 @@
 
 """cuVSLAM on a RealSense stereo camera and nothing else.
 
-    dimos run demo-cuvslam --viewer rerun --rerun-host 0.0.0.0
+    dimos run demo-cuvslam-realsense --viewer rerun --rerun-host 0.0.0.0
 
 ``world/path`` should retrace the route walked; a world frame restart shows up as a
 straight jump across it.
@@ -64,7 +64,7 @@ def cuvslam_rerun_blueprint() -> Any:
     )
 
 
-demo_cuvslam = (
+demo_cuvslam_realsense = (
     autoconnect(
         RealSenseCamera.blueprint(
             fps=30,

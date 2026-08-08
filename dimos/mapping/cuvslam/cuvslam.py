@@ -178,7 +178,9 @@ class CuvslamConfig(NativeModuleConfig):
 
     # Pose graph and loop closure; without it map->odom is identity.
     enable_slam: bool = True
-    slam_sync_mode: bool = True
+    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
+    # behind cannot be matched to the odometry pose it corrects.
+    slam_async: bool = False
     # Poses in the pose graph, not a distance. 0 is unlimited.
     slam_max_poses: int = 300
     slam_throttling_ms: int = 0
