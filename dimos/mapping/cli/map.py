@@ -18,9 +18,11 @@ from collections.abc import Callable, Iterable
 import math
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import typer
+
+from dimos.mapping.voxels.lidar_defaults import voxel_size_for_lidar
 
 if TYPE_CHECKING:
     from dimos.mapping.loop_closure.pgo import PoseGraph
@@ -38,6 +40,41 @@ MARKER_STEM = 1.0
 
 # Conventional world frames tried in order when --frame isn't given.
 _WORLD_FRAMES = ("world", "map", "odom")
+
+# Default --lidar value. When that stream is missing/empty, try these
+# Point-LIO / Fast-LIO recorder names before failing.
+_DEFAULT_LIDAR_STREAM = "lidar"
+_LIDAR_FALLBACKS = ("pointlio_lidar", "fastlio_lidar")
+
+
+def _resolve_lidar_stream(store: Any, requested: str) -> str:
+    """Pick a non-empty lidar stream; auto-fallback when using the default name.
+
+    ``Store.stream`` creates missing streams, so we must consult
+    ``list_streams`` / counts before opening the reconstruction pipeline —
+    otherwise an empty default ``lidar`` stream yields a late
+    ``LookupError: No matching observation`` from PGO.
+    """
+    available = store.list_streams()
+    candidates: list[str] = [requested]
+    if requested == _DEFAULT_LIDAR_STREAM:
+        candidates.extend(name for name in _LIDAR_FALLBACKS if name not in candidates)
+
+    for name in candidates:
+        if name not in available:
+            continue
+        if store.stream(name).count() == 0:
+            continue
+        if name != requested:
+            print(f"using lidar stream {name!r} (default {requested!r} missing or empty)")
+        return name
+
+    known = ", ".join(sorted(available)) or "(none)"
+    raise typer.BadParameter(
+        f"lidar stream {requested!r} is missing or empty; available streams: {known}. "
+        "Pass --lidar <name> (Point-LIO recordings use --lidar pointlio_lidar).",
+        param_hint="--lidar",
+    )
 
 
 def _detect_world(tf_buf: Any, cloud_frame: str, ts: float) -> str | None:
@@ -304,11 +341,21 @@ def main(
     lidar_stream: str = typer.Option(
         "lidar", "--lidar", help="Lidar point-cloud stream to reconstruct"
     ),
+    lidar_config: Literal["default", "mid360"] = typer.Option(
+        "default",
+        "--lidar-config",
+        help="Lidar preset for default voxel size: 'default'→0.05 m, 'mid360'→0.03 m "
+        "(ignored when --voxel is set)",
+    ),
     seek: float = typer.Option(0.0, "--seek", help="Skip the first N seconds of the recording"),
     duration: float | None = typer.Option(
         None, "--duration", help="Use only N seconds from --seek (default: to the end)"
     ),
-    voxel: float = typer.Option(0.05, "--voxel", help="Voxel size for the rebuild"),
+    voxel: float | None = typer.Option(
+        None,
+        "--voxel",
+        help="Voxel size for the rebuild (m). Default: 0.05, or 0.03 with --lidar-config mid360",
+    ),
     device: str = typer.Option(
         "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
     ),
@@ -438,6 +485,11 @@ def main(
     if export or full_pgo:
         pgo = True
 
+    if voxel is None:
+        voxel = voxel_size_for_lidar(lidar_config)
+    print(f"voxel_size={voxel} (lidar_config={lidar_config!r})")
+
+    lidar_stream = _resolve_lidar_stream(store, lidar_stream)
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())

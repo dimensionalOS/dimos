@@ -125,10 +125,17 @@ def main(
     duration: float | None = typer.Option(
         None, "--duration", help="Use only N seconds from --seek (default: to the end)"
     ),
-    voxel: float = typer.Option(
-        0.05,
+    lidar_config: str = typer.Option(
+        "default",
+        "--lidar-config",
+        help="Lidar preset for default voxel size: 'default'→0.05 m, 'mid360'→0.03 m "
+        "(ignored when --voxel is set)",
+    ),
+    voxel: float | None = typer.Option(
+        None,
         "--voxel",
-        help="Voxel grid resolution (m) for --map/--map-final; rendering follows the same size",
+        help="Voxel grid resolution (m) for --map/--map-final; default 0.05, or 0.03 with "
+        "--lidar-config mid360",
     ),
     point_mode: str = typer.Option(
         "spheres", "--point-mode", help="Render mode: 'spheres', 'boxes', or 'points'"
@@ -176,6 +183,7 @@ def main(
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     import rerun as rr
 
+    from dimos.mapping.voxels.lidar_defaults import voxel_size_for_lidar
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory2.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory2.transform import throttle
@@ -184,6 +192,9 @@ def main(
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
     from dimos.robot.unitree.go2.connection import _camera_info_static
+
+    if voxel is None:
+        voxel = voxel_size_for_lidar(lidar_config)
 
     src_path = resolve_dataset(dataset)
     store = open_store(src_path)

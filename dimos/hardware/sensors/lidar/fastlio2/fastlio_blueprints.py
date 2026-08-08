@@ -16,20 +16,18 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.mapping.voxels.lidar_defaults import MID360_VOXEL_SIZE
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
-
-voxel_size = 0.05
-
 
 mid360_fastlio = autoconnect(
     FastLio2.blueprint(),
     vis_module("rerun"),
-).global_config(n_workers=2, robot_model="mid360_fastlio2")
+).global_config(n_workers=2, robot_model="mid360_fastlio2", lidar_config="mid360")
 
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
+    VoxelGridMapper.blueprint(voxel_size=MID360_VOXEL_SIZE, carve_columns=False),
     vis_module(
         "rerun",
         rerun_config={
@@ -38,7 +36,7 @@ mid360_fastlio_voxels = autoconnect(
             },
         },
     ),
-).global_config(n_workers=3, robot_model="mid360_fastlio2_voxels")
+).global_config(n_workers=3, robot_model="mid360_fastlio2_voxels", lidar_config="mid360")
 
 mid360_fastlio_voxels_native = autoconnect(
     FastLio2.blueprint(),
@@ -50,12 +48,12 @@ mid360_fastlio_voxels_native = autoconnect(
             },
         },
     ),
-).global_config(n_workers=2, robot_model="mid360_fastlio2")
+).global_config(n_workers=2, robot_model="mid360_fastlio2", lidar_config="mid360")
 
 
 mid360_fastlio_ray_trace = autoconnect(
     FastLio2.blueprint(),
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
+    RayTracingVoxelMap.blueprint(voxel_size=MID360_VOXEL_SIZE),
     vis_module(
         "rerun",
         rerun_config={
@@ -64,4 +62,4 @@ mid360_fastlio_ray_trace = autoconnect(
             },
         },
     ),
-).global_config(n_workers=5, robot_model="mid360_fastlio2_ray_trace")
+).global_config(n_workers=5, robot_model="mid360_fastlio2_ray_trace", lidar_config="mid360")

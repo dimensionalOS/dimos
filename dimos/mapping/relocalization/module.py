@@ -22,8 +22,9 @@ from reactivex import Subject, combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
+from dimos.mapping.relocalization.relocalize import relocalize as _relocalize, relocalize_scales
 from dimos.mapping.voxels.grid import VoxelGrid
+from dimos.mapping.voxels.lidar_defaults import LidarConfigName
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -49,6 +50,21 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     fitness_threshold: float = 0.45
     use_carving: bool = True
+    # None → inherit GlobalConfig.lidar_config (``default`` / ``mid360``).
+    lidar_config: LidarConfigName | None = None
+    # None → derive from lidar_config (0.1 / 0.15 default, 0.06 / 0.12 for mid360).
+    fine_voxel: float | None = None
+    rerank_dist: float | None = None
+
+    def resolved_lidar_config(self) -> LidarConfigName:
+        return self.lidar_config if self.lidar_config is not None else self.g.lidar_config
+
+    def resolved_relocalize_scales(self) -> tuple[float, float]:
+        return relocalize_scales(
+            self.resolved_lidar_config(),
+            fine_voxel=self.fine_voxel,
+            rerank_dist=self.rerank_dist,
+        )
 
 
 class RelocalizationModule(Module):
@@ -63,6 +79,8 @@ class RelocalizationModule(Module):
         self._premap: PointCloud2 | None = None
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
+        self._first_reloc_logged = False
+        self._start_mono: float | None = None
 
     @rpc
     def start(self) -> None:
@@ -75,6 +93,7 @@ class RelocalizationModule(Module):
         path = resolve_named_path(self.config.map_file, MAP_SUFFIX)
         self._premap = PointCloud2.lcm_decode(path.read_bytes())
         self._premap.frame_id = FRAME_MAP
+        self._start_mono = time.monotonic()
 
         self.register_disposable(
             backpressure(
@@ -103,9 +122,12 @@ class RelocalizationModule(Module):
             .subscribe(self._publish_periodic)
         )
 
+        fine_voxel, rerank_dist = self.config.resolved_relocalize_scales()
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
-            f"loaded_map.frame_id={self._premap.frame_id!r}"
+            f"loaded_map.frame_id={self._premap.frame_id!r} "
+            f"fine_voxel={fine_voxel} rerank_dist={rerank_dist} "
+            f"(lidar_config={self.config.resolved_lidar_config()!r})"
         )
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
@@ -128,19 +150,44 @@ class RelocalizationModule(Module):
 
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
         assert self._premap is not None
+        n_pts = len(msg)
+        log_first = not self._first_reloc_logged
+        if log_first:
+            self._first_reloc_logged = True
+            elapsed = (
+                time.monotonic() - self._start_mono
+                if self._start_mono is not None
+                else float("nan")
+            )
+            logger.info(
+                f"relocalize first event before ICP: elapsed_s={elapsed:.1f} voxels={n_pts}"
+            )
+
         t0 = time.monotonic()
         try:
-            T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
+            fine_voxel, rerank_dist = self.config.resolved_relocalize_scales()
+            T, fitness, inlier_rmse = _relocalize(
+                self._premap.pointcloud,
+                msg.pointcloud,
+                lidar_config=self.config.resolved_lidar_config(),
+                fine_voxel=fine_voxel,
+                rerank_dist=rerank_dist,
+            )
         except Exception:
             logger.exception("relocalize() failed")
             return None
         dt = time.monotonic() - t0
-        n_pts = len(msg)
+
+        if log_first:
+            logger.info(
+                f"relocalize first event after ICP: fitness={fitness:.6f} "
+                f"inlier_rmse={inlier_rmse:.6f} time_cost={dt:.1f}s n_pts={n_pts}"
+            )
 
         if fitness < self.config.fitness_threshold:
             logger.warning(
                 f"relocalize rejected: fitness={fitness:.3f} < threshold={self.config.fitness_threshold} "
-                f"time_cost={dt:.1f}s n_pts={n_pts}"
+                f"inlier_rmse={inlier_rmse:.6f} time_cost={dt:.1f}s n_pts={n_pts}"
             )
             return None
 
@@ -155,7 +202,8 @@ class RelocalizationModule(Module):
             child_frame_id=FRAME_MAP,
         )
         logger.info(
-            f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
+            f"relocalize: fitness={fitness:.3f} inlier_rmse={inlier_rmse:.6f} "
+            f"time_cost={dt:.1f}s n_pts={n_pts} "
             f"reloc_t={T[:3, 3].round(3).tolist()} "
             f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
             f"published_t={T_inv[:3, 3].round(3).tolist()} "

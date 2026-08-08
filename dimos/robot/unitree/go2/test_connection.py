@@ -27,7 +27,12 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2 import connection as go2_conn
-from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
+from dimos.robot.unitree.go2.connection import (
+    ConnectionConfig,
+    GO2Connection,
+    MID360_REPLAY_ODOM_STREAMS,
+    ReplayConnection,
+)
 
 
 @pytest.fixture
@@ -119,3 +124,62 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+def test_mid360_replay_odom_prefers_pointlio_when_both_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unitree_mid360_basic prefers pointlio_odometry over non-empty go2_odom."""
+    conn = ReplayConnection(
+        dataset="unused",
+        odom_streams=MID360_REPLAY_ODOM_STREAMS,
+    )
+    counts = {"pointlio_odometry": 10, "go2_odom": 5}
+
+    class _FakeReplay:
+        def list_streams(self) -> list[str]:
+            return list(counts)
+
+        def stream(self, name: str) -> SimpleNamespace:
+            return SimpleNamespace(count=lambda: counts[name])
+
+    monkeypatch.setattr(type(conn), "replay", property(lambda self: _FakeReplay()))
+    assert conn._stream_name(*conn._odom_streams) == "pointlio_odometry"
+
+
+def test_default_replay_odom_prefers_go2_when_both_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default GO2Connection still prefers go2_odom when both streams are filled."""
+    conn = ReplayConnection(dataset="unused")
+    counts = {"pointlio_odometry": 10, "go2_odom": 5}
+
+    class _FakeReplay:
+        def list_streams(self) -> list[str]:
+            return list(counts)
+
+        def stream(self, name: str) -> SimpleNamespace:
+            return SimpleNamespace(count=lambda: counts[name])
+
+    monkeypatch.setattr(type(conn), "replay", property(lambda self: _FakeReplay()))
+    assert conn._stream_name(*conn._odom_streams) == "go2_odom"
+
+
+def test_mid360_replay_odom_falls_back_to_go2_when_pointlio_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = ReplayConnection(
+        dataset="unused",
+        odom_streams=MID360_REPLAY_ODOM_STREAMS,
+    )
+    counts = {"pointlio_odometry": 0, "go2_odom": 5}
+
+    class _FakeReplay:
+        def list_streams(self) -> list[str]:
+            return list(counts)
+
+        def stream(self, name: str) -> SimpleNamespace:
+            return SimpleNamespace(count=lambda: counts[name])
+
+    monkeypatch.setattr(type(conn), "replay", property(lambda self: _FakeReplay()))
+    assert conn._stream_name(*conn._odom_streams) == "go2_odom"
