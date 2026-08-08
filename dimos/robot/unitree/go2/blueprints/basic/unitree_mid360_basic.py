@@ -16,9 +16,10 @@
 
 """Basic Go2 + Mid-360 / Point-LIO visualization blueprint.
 
-Same stack as ``unitree_go2_basic``, with Rerun tuned for Point-LIO worlds
-where the floor often sits at Z << 0 (start pose is the origin), plus a
-``VoxelGridMapper`` at Mid-360 resolution (3 cm).
+Same stack as ``unitree_go2_basic``, with a ``VoxelGridMapper`` at Mid-360
+resolution (3 cm).
+
+Replay prefers ``pointlio_odometry`` over Go2 leg odom when both exist.
 """
 
 from typing import Any
@@ -27,7 +28,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.voxels.lidar_defaults import MID360_VOXEL_SIZE
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, MID360_REPLAY_ODOM_STREAMS
 from dimos.visualization.vis_module import vis_module
 
 
@@ -39,9 +40,7 @@ def _convert_camera_info(camera_info: Any) -> Any:
 
 
 def _convert_global_map(grid: Any) -> Any:
-    # No bottom_cutoff: Point-LIO / Mid-360 worlds often have floor Z << 0
-    # (start pose is the origin), so cutting at z=0 hides most of the map.
-    return grid.to_rerun()
+    return grid.to_rerun(bottom_cutoff=0)
 
 
 def _convert_navigation_costmap(grid: Any) -> Any:
@@ -65,6 +64,7 @@ def _static_base_link(rr: Any) -> list[Any]:
 
 def _mid360_rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world view side by side."""
+    import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
@@ -75,14 +75,8 @@ def _mid360_rerun_blueprint() -> Any:
                 origin="world",
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-                # Hide the fixed XY grid: a plane at z≈0.5 sits *above* Point-LIO
-                # floors (often z≪0), which makes the live map look buried.
-                line_grid=rrb.LineGrid3D(visible=False),
-                # Track the Go2 box so reloc / map alignment stays in view as
-                # replay odometry moves base_link through the scene.
-                eye_controls=rrb.EyeControls3D(
-                    kind="Orbital",
-                    tracking_entity="world/tf/base_link",
+                line_grid=rrb.LineGrid3D(
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
                 overrides={
                     "world/lidar": rrb.EntityBehavior(visible=False),
@@ -134,7 +128,7 @@ _with_vis = autoconnect(
 unitree_mid360_basic = (
     autoconnect(
         _with_vis,
-        GO2Connection.blueprint(),
+        GO2Connection.blueprint(replay_odom_streams=MID360_REPLAY_ODOM_STREAMS),
         VoxelGridMapper.blueprint(emit_every=5, voxel_size=MID360_VOXEL_SIZE),
     ).global_config(n_workers=5, robot_model="unitree_go2", lidar_config="mid360")
     # we temporarily disabled sensor timestamps

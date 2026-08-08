@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import pointlio_odom_to_base_link_pose
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -63,6 +64,14 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
+# Default replay stream preference: Go2 onboard first, Point-LIO last.
+# Mid-360 blueprints reverse odom preference via ConnectionConfig.
+DEFAULT_REPLAY_ODOM_STREAMS: tuple[str, ...] = ("go2_odom", "odom", "pointlio_odometry")
+DEFAULT_REPLAY_LIDAR_STREAMS: tuple[str, ...] = ("go2_lidar", "lidar", "pointlio_lidar")
+# Prefer Point-LIO odom for Mid-360 / Point-LIO recordings; fall back to Go2.
+MID360_REPLAY_ODOM_STREAMS: tuple[str, ...] = ("pointlio_odometry", "go2_odom", "odom")
+
+
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
@@ -79,6 +88,9 @@ class ConnectionConfig(ModuleConfig):
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
+    # Replay: first non-empty matching stream wins (see ReplayConnection).
+    replay_odom_streams: tuple[str, ...] = DEFAULT_REPLAY_ODOM_STREAMS
+    replay_lidar_streams: tuple[str, ...] = DEFAULT_REPLAY_LIDAR_STREAMS
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -140,12 +152,18 @@ def make_connection(
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
     velocity_api: bool = False,
+    replay_odom_streams: tuple[str, ...] = DEFAULT_REPLAY_ODOM_STREAMS,
+    replay_lidar_streams: tuple[str, ...] = DEFAULT_REPLAY_LIDAR_STREAMS,
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
         dataset = cfg.replay_db
-        return ReplayConnection(dataset=dataset)
+        return ReplayConnection(
+            dataset=dataset,
+            odom_streams=replay_odom_streams,
+            lidar_streams=replay_lidar_streams,
+        )
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -169,9 +187,13 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
+        odom_streams: tuple[str, ...] = DEFAULT_REPLAY_ODOM_STREAMS,
+        lidar_streams: tuple[str, ...] = DEFAULT_REPLAY_LIDAR_STREAMS,
         **kwargs,
     ) -> None:
         self.dataset = dataset
+        self._odom_streams = odom_streams
+        self._lidar_streams = lidar_streams
         self._loop = kwargs.get("loop", False)
         self._seek = kwargs.get("seek")
         self._duration = kwargs.get("duration")
@@ -224,13 +246,11 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         return True
 
     def _stream_name(self, *names: str) -> str:
-        """Return the first of ``names`` present in the dataset (stream naming
-        changed over time: mid360 Point-LIO uses pointlio_*, mid360 Go2
-        recordings use go2_lidar/go2_odom, older ones lidar/odom).
+        """Return the first of ``names`` present and non-empty in the dataset.
 
-        Prefer a non-empty stream when an older empty table shares the DB
-        (e.g. Mid-360 recordings that create ``go2_lidar`` but only fill
-        ``pointlio_lidar``).
+        Stream naming changed over time (mid360 Point-LIO uses pointlio_*,
+        mid360 Go2 recordings use go2_lidar/go2_odom, older ones lidar/odom).
+        Preference order is caller-supplied (see ConnectionConfig).
         """
         available = self.replay.list_streams()
         present = [name for name in names if name in available]
@@ -243,7 +263,7 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        name = self._stream_name("go2_lidar", "lidar", "pointlio_lidar")
+        name = self._stream_name(*self._lidar_streams)
         stream: ReplayStream[PointCloud2] = self.replay.stream(name)
         if name != "pointlio_lidar":
             return stream.observable()
@@ -276,11 +296,13 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[PoseStamped]:
-        name = self._stream_name("go2_odom", "odom", "pointlio_odometry")
+        name = self._stream_name(*self._odom_streams)
         if name == "pointlio_odometry":
-            # Point-LIO stores nav_msgs/Odometry; navigation ports want PoseStamped.
+            # Point-LIO stores nav_msgs/Odometry in the mid360_link frame;
+            # convert to base_link so GO2Connection's world→base_link TF (and
+            # the Go2 box in Rerun) follows body heading, not lidar pitch.
             odom: ReplayStream[Odometry] = self.replay.stream(name)
-            return odom.observable().pipe(rxops.map(lambda msg: msg.to_pose_stamped()))
+            return odom.observable().pipe(rxops.map(pointlio_odom_to_base_link_pose))
         pose_stream: ReplayStream[PoseStamped] = self.replay.stream(name)
         return pose_stream.observable()
 
@@ -352,6 +374,8 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.config.g,
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
+            replay_odom_streams=self.config.replay_odom_streams,
+            replay_lidar_streams=self.config.replay_lidar_streams,
         )
 
         if hasattr(self.connection, "camera_info_static"):
