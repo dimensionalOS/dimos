@@ -34,7 +34,7 @@ demo_cuvslam_zed = (
     autoconnect(
         ZEDCamera.blueprint(
             fps=30,
-            enable_right_image=True,
+            enable_stereo=True,
             enable_depth=False,
             enable_pointcloud=False,
             # The ZED's own tracker would compete with cuVSLAM for the same job.
@@ -53,8 +53,9 @@ demo_cuvslam_zed = (
     .remappings(
         [
             # Both eyes onto the one stream; the tracker tells them apart by frame_id.
-            (ZEDCamera, "color_image", "image"),
+            (ZEDCamera, "left_image", "image"),
             (ZEDCamera, "right_image", "image"),
+            (ZEDCamera, "left_camera_info", "camera_info"),
             (ZEDCamera, "right_camera_info", "camera_info"),
         ]
     )

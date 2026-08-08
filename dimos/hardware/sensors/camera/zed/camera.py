@@ -65,7 +65,8 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
-    enable_right_image: bool = False
+    # Publishes both eyes on left_image/right_image instead of the single color_image.
+    enable_stereo: bool = False
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
@@ -85,10 +86,12 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
 class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     config: ZEDCameraConfig
     color_image: Out[Image]
+    left_image: Out[Image]
     right_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
+    left_camera_info: Out[CameraInfo]
     right_camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
@@ -99,11 +102,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     @property
     def _color_frame(self) -> str:
-        return f"{self.config.camera_name}_color_frame"
+        name = "left" if self.config.enable_stereo else "color"
+        return f"{self.config.camera_name}_{name}_frame"
 
     @property
     def _color_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_color_optical_frame"
+        name = "left" if self.config.enable_stereo else "color"
+        return f"{self.config.camera_name}_{name}_optical_frame"
 
     @property
     def _right_frame(self) -> str:
@@ -153,8 +158,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if ts is None:
             return
         # with_ts copies; restamping the stored one would rewrite a delivered message.
+        left_stream = self.left_camera_info if self.config.enable_stereo else self.camera_info
         for info, stream in (
-            (self._color_camera_info, self.camera_info),
+            (self._color_camera_info, left_stream),
             (self._right_camera_info, self.right_camera_info),
             (self._depth_camera_info, self.depth_camera_info),
         ):
@@ -192,7 +198,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
         self._image_left = sl.Mat()
-        if self.config.enable_right_image:
+        if self.config.enable_stereo:
             self._image_right = sl.Mat()
         self._depth_map = sl.Mat()
         self._pose = sl.Pose()
@@ -245,7 +251,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             left_cam, self._color_optical_frame
         )
 
-        if self.config.enable_right_image:
+        if self.config.enable_stereo:
             self._right_camera_info = self._intrinsics_to_camera_info(
                 calib.right_cam, self._right_optical_frame
             )
@@ -291,10 +297,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts: float,
     ) -> Transform:
         translation = extrinsics.get_translation().get()
-        rotation = extrinsics.get_orientation().get()  # [x, y, z, w]
+        x, y, z, w = extrinsics.get_orientation().get()
         return Transform(
             translation=Vector3(*translation),
-            rotation=Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+            rotation=Quaternion(x, y, z, w),
             frame_id=frame_id,
             child_frame_id=child_frame_id,
             ts=ts,
@@ -349,7 +355,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
-                self.color_image.publish(color_img)
+                if self.config.enable_stereo:
+                    self.left_image.publish(color_img)
+                else:
+                    self.color_image.publish(color_img)
 
             if self._image_right is not None:
                 self.right_image.publish(
