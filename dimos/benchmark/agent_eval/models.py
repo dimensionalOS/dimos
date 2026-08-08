@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Small tagged contracts for one frozen agent-evaluation case."""
+"""Small tagged contracts for one agent-evaluation case."""
 
 from __future__ import annotations
 
@@ -45,10 +45,22 @@ class FrozenRecordingSource(BaseEvalModel):
         return self
 
 
+class NoEnvironmentSource(BaseEvalModel):
+    # Nothing to materialize: the task alone carries what the agent needs.
+    kind: Literal["none"] = "none"
+
+
 class IntegerQuestionTask(BaseEvalModel):
     kind: Literal["integer_question"] = "integer_question"
     prompt: NonEmpty
     answer_marker: Literal["ANSWER:"] = "ANSWER:"
+
+
+class VerbatimPromptTask(BaseEvalModel):
+    kind: Literal["verbatim_prompt"] = "verbatim_prompt"
+    # Handed to the agent untouched. Deliberately no answer marker: the prompt
+    # already carries whatever answer format its own evaluator expects.
+    prompt: NonEmpty
 
 
 class ExactIntegerValidatorRef(BaseEvalModel):
@@ -64,9 +76,18 @@ class ExactIntegerValidatorRef(BaseEvalModel):
         return self
 
 
-SourceSpec = Annotated[FrozenRecordingSource, Field(discriminator="kind")]
-TaskSpec = Annotated[IntegerQuestionTask, Field(discriminator="kind")]
-ValidatorRef = Annotated[ExactIntegerValidatorRef, Field(discriminator="kind")]
+class ExternalEvaluatorRef(BaseEvalModel):
+    kind: Literal["external_evaluator"] = "external_evaluator"
+    # The upstream suite owns both the scorer and the answer key.
+    benchmark: NonEmpty
+    revision: NonEmpty
+
+
+SourceSpec = Annotated[FrozenRecordingSource | NoEnvironmentSource, Field(discriminator="kind")]
+TaskSpec = Annotated[IntegerQuestionTask | VerbatimPromptTask, Field(discriminator="kind")]
+ValidatorRef = Annotated[
+    ExactIntegerValidatorRef | ExternalEvaluatorRef, Field(discriminator="kind")
+]
 
 
 class EvalCase(BaseEvalModel):
@@ -89,8 +110,9 @@ class EvalRunConfig(BaseEvalModel):
 
 class CompactEvalResult(BaseEvalModel):
     case_id: str
-    recording: str
-    progress: float
+    # Absent when the case ran without a frozen environment.
+    recording: str | None = None
+    progress: float | None = None
     model: str
     thinking_level: str
     final_response: str = ""

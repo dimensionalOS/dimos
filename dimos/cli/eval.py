@@ -90,9 +90,13 @@ def format_result(result: Any, output: Path | None = None) -> str:
         heading = "! Evaluation not evaluated"
     elif result.task_result == "passed":
         heading = "✓ Evaluation passed"
+    elif result.task_result == "not_evaluated":
+        heading = "· Answer recorded for external scoring"
     else:
         heading = "✗ Evaluation failed"
-    source = f"{result.recording} @ {result.progress * 100:g}%"
+    source = result.recording if result.recording is not None else "no environment"
+    if result.progress is not None:
+        source += f" @ {result.progress * 100:g}%"
     answer = str(result.integer_answer) if result.integer_answer is not None else "—"
     rows = (
         ("Case", result.case_id),

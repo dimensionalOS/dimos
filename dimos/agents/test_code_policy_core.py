@@ -19,6 +19,7 @@ from pathlib import Path
 from dimos.agents.code_policy_core import (
     CodePolicySession,
     CodePolicySessionConfig,
+    EmptyEnvironment,
     FrozenMemoryEnvironment,
     LiveDimosEnvironment,
     _kernel_environment,
@@ -90,6 +91,25 @@ def test_frozen_session_exposes_bounded_memory_without_app(tmp_path: Path) -> No
         assert "PermissionError" in session.python_exec("memory.streams.messages.append('blocked')")
     finally:
         session.stop()
+
+
+def test_empty_session_runs_python_without_a_memory_object() -> None:
+    session = CodePolicySession(CodePolicySessionConfig(environment=EmptyEnvironment()))
+    session.start()
+    try:
+        assert "3" in session.python_exec("1 + 2")
+        assert "NameError" in session.python_exec("memory")
+    finally:
+        session.stop()
+
+
+def test_empty_environment_hides_inherited_recording_paths(monkeypatch) -> None:
+    monkeypatch.setenv("DIMOS_CODE_POLICY_RECORDING_PATH", "/host/recording.db")
+    monkeypatch.setenv("DIMOS_CODE_POLICY_MEMORY_CUTOFF", "1.0")
+    result = _kernel_environment(EmptyEnvironment())
+    assert "DIMOS_CODE_POLICY_RECORDING_PATH" not in result
+    assert "DIMOS_CODE_POLICY_MEMORY_CUTOFF" not in result
+    assert result["DIMOS_CODE_POLICY_CONNECT_APP"] == "0"
 
 
 def test_kernel_environment_does_not_forward_credentials(monkeypatch, tmp_path: Path) -> None:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Direct runner for one frozen-memory Pi evaluation case."""
+"""Direct runner for one Pi agent-evaluation case."""
 
 from __future__ import annotations
 
@@ -24,13 +24,27 @@ import re
 import shutil
 import tempfile
 import time
+from typing import Any
 
-from dimos.agents.code_policy_core import CodePolicySessionConfig, FrozenMemoryEnvironment
+from dimos.agents.code_policy_core import (
+    CodePolicyEnvironment,
+    CodePolicySessionConfig,
+    EmptyEnvironment,
+    FrozenMemoryEnvironment,
+)
 from dimos.agents.code_policy_server import CodePolicyMcpServer
-from dimos.benchmark.agent_eval.models import CompactEvalResult, EvalCase, EvalRunConfig
+from dimos.benchmark.agent_eval.models import (
+    CompactEvalResult,
+    EvalCase,
+    EvalRunConfig,
+    ExactIntegerValidatorRef,
+    FrozenRecordingSource,
+    VerbatimPromptTask,
+)
 from dimos.benchmark.agent_eval.pi_process import PiCliRunner, PiRunError
 from dimos.benchmark.agent_eval.progress import ProgressSink, StatusProgress, emit_progress
 from dimos.benchmark.short_horizon_qa.eval import (
+    ExactIntegerOracle,
     load_exact_integer_oracle,
     parse_integer_prediction,
 )
@@ -50,6 +64,14 @@ and compute the answer from the recording. Do not guess. End with exactly one li
 ANSWER: <integer>
 """
 
+# Selected by task kind; a verbatim prompt normally comes with a `none` source.
+VERBATIM_SYSTEM_PROMPT = """You are answering a benchmark question.
+
+You have exactly one tool, `python_exec`. It runs trusted, unsandboxed Python in a
+persistent Jupyter kernel with no preloaded data. Use it when computation helps.
+Answer exactly in the format the question itself asks for.
+"""
+
 
 def execute_single_case(
     case_path: Path,
@@ -64,13 +86,15 @@ def execute_single_case(
     _validate_output(output)
     emit_progress(progress, StatusProgress(channel="eval", message="loading case"))
     case = EvalCase.model_validate_json(path.read_bytes())
-    oracle = load_exact_integer_oracle(case, path.parent)
+    oracle = (
+        load_exact_integer_oracle(case, path.parent)
+        if isinstance(case.validator, ExactIntegerValidatorRef)
+        else None
+    )
     api_key = os.environ.get(config.agent.api_key_env)
     if not api_key:
         raise ValueError(f"API key environment variable {config.agent.api_key_env!r} is unset")
-    bundle = _materialize_frozen_memory(case, progress)
-    _, cutoff, source_path, derived_path = load_bundle(bundle, progress=case.source.progress)
-    emit_progress(progress, StatusProgress(channel="eval", message="memory ready"))
+    environment = _case_environment(case, progress)
     cli, extension = _pi_paths()
     runner = PiCliRunner(
         cli=cli,
@@ -90,20 +114,12 @@ def execute_single_case(
     server: CodePolicyMcpServer | None = None
     try:
         emit_progress(progress, StatusProgress(channel="eval", message="starting agent"))
-        server = CodePolicyMcpServer(
-            CodePolicySessionConfig(
-                environment=FrozenMemoryEnvironment(
-                    recording_path=str(source_path),
-                    derived_recording_path=str(derived_path),
-                    memory_cutoff_timestamp=cutoff.cutoff_timestamp,
-                )
-            )
-        )
+        server = CodePolicyMcpServer(CodePolicySessionConfig(environment=environment))
         try:
             server.start()
             pi_result = runner.run(
                 prompt=_agent_prompt(case),
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=_system_prompt(case),
                 mcp_url=server.mcp_url,
                 api_key=api_key,
                 run_dir=runtime_dir,
@@ -111,20 +127,13 @@ def execute_single_case(
             stderr = pi_result.stderr
             if pi_result.transcript_path is not None:
                 shutil.copy2(pi_result.transcript_path, temporary / "pi-transcript.jsonl")
-            prediction = parse_integer_prediction(pi_result.final_text)
-            passed = (
-                prediction.status == "parsed" and prediction.integer_answer == oracle.expected_count
-            )
             result = CompactEvalResult(
                 case_id=case.case_id,
-                recording=case.source.recording,
-                progress=case.source.progress,
+                **_result_source_fields(case),
                 model=config.agent.model,
                 thinking_level=config.agent.thinking_level,
                 final_response=pi_result.final_text,
-                prediction_status=prediction.status,
-                integer_answer=prediction.integer_answer,
-                passed=passed,
+                **_result_score_fields(oracle, pi_result.final_text),
                 validator_revision=case.validator.revision,
                 tool_call_count=pi_result.tool_call_count,
                 duration_seconds=time.monotonic() - started,
@@ -136,8 +145,7 @@ def execute_single_case(
             stderr = exc.stderr
         result = CompactEvalResult(
             case_id=case.case_id,
-            recording=case.source.recording,
-            progress=case.source.progress,
+            **_result_source_fields(case),
             model=config.agent.model,
             thinking_level=config.agent.thinking_level,
             prediction_status="not_evaluated",
@@ -168,13 +176,30 @@ def _validate_output(output: Path) -> None:
         raise FileExistsError(f"Output must be absent or an empty directory: {output}")
 
 
+def _case_environment(case: EvalCase, progress: ProgressSink | None) -> CodePolicyEnvironment:
+    """Prepare the environment the case asks for; a `none` source asks for none."""
+    if not isinstance(case.source, FrozenRecordingSource):
+        return EmptyEnvironment()
+    bundle = _materialize_frozen_memory(case, progress)
+    _, cutoff, source_path, derived_path = load_bundle(bundle, progress=case.source.progress)
+    emit_progress(progress, StatusProgress(channel="eval", message="memory ready"))
+    return FrozenMemoryEnvironment(
+        recording_path=str(source_path),
+        derived_recording_path=str(derived_path),
+        memory_cutoff_timestamp=cutoff.cutoff_timestamp,
+    )
+
+
 def _materialize_frozen_memory(case: EvalCase, progress: ProgressSink | None) -> Path:
-    source_path = resolve_dataset(case.source.recording).resolve()
+    source = case.source
+    if not isinstance(source, FrozenRecordingSource):
+        raise TypeError("case does not declare a frozen recording")
+    source_path = resolve_dataset(source.recording).resolve()
     stat = source_path.stat()
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", source_path.stem)[:64]
     mapper = MapperSettings()
     raw_key = (
-        f"{stem}-{stat.st_size}-{stat.st_mtime_ns}-p{case.source.progress:.9f}-"
+        f"{stem}-{stat.st_size}-{stat.st_mtime_ns}-p{source.progress:.9f}-"
         f"v{mapper.voxel_size_m}-b{mapper.block_count}-d{mapper.device}-"
         f"c{int(mapper.carve_columns)}-f{mapper.frame_id}-e{mapper.emit_every}"
     )
@@ -186,10 +211,10 @@ def _materialize_frozen_memory(case: EvalCase, progress: ProgressSink | None) ->
         bundle.parent.mkdir(parents=True, exist_ok=True)
         try:
             prepare_bundle(
-                case.source.recording,
+                source.recording,
                 [],
                 bundle,
-                progress=[case.source.progress],
+                progress=[source.progress],
                 mapper=mapper,
                 map_progress=lambda current, total: emit_progress(
                     progress,
@@ -214,8 +239,34 @@ def _pi_paths() -> tuple[Path, Path]:
 
 
 def _agent_prompt(case: EvalCase) -> str:
+    if isinstance(case.task, VerbatimPromptTask):
+        return case.task.prompt
     return (
         f"{case.task.prompt}\n\n"
         "Use python_exec to inspect the read-only recording. "
         f"End with `{case.task.answer_marker} <integer>`."
     )
+
+
+def _system_prompt(case: EvalCase) -> str:
+    return VERBATIM_SYSTEM_PROMPT if isinstance(case.task, VerbatimPromptTask) else SYSTEM_PROMPT
+
+
+def _result_source_fields(case: EvalCase) -> dict[str, Any]:
+    """Echo the recording the answer came from; a `none` source has nothing to echo."""
+    if isinstance(case.source, FrozenRecordingSource):
+        return {"recording": case.source.recording, "progress": case.source.progress}
+    return {}
+
+
+def _result_score_fields(oracle: ExactIntegerOracle | None, final_text: str) -> dict[str, Any]:
+    """Score the answer here; without a local oracle an external evaluator scores it."""
+    if oracle is None:
+        return {"prediction_status": "not_evaluated", "passed": None}
+    prediction = parse_integer_prediction(final_text)
+    passed = prediction.status == "parsed" and prediction.integer_answer == oracle.expected_count
+    return {
+        "prediction_status": prediction.status,
+        "integer_answer": prediction.integer_answer,
+        "passed": passed,
+    }

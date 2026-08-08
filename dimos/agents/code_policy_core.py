@@ -57,7 +57,14 @@ class LiveDimosEnvironment(BaseModel):
     recording_path: str = Field(min_length=1)
 
 
-CodePolicyEnvironment = FrozenMemoryEnvironment | LiveDimosEnvironment
+class EmptyEnvironment(BaseModel):
+    """No recording and no app: the kernel is a bare persistent Python namespace."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["none"] = "none"
+
+
+CodePolicyEnvironment = FrozenMemoryEnvironment | LiveDimosEnvironment | EmptyEnvironment
 
 
 class CodePolicySessionConfig(BaseModel):
@@ -116,7 +123,9 @@ def _load_kernel_manager() -> type[Any]:
     return KernelManager
 
 
-def _bootstrap_source() -> str:
+def _bootstrap_source(environment: CodePolicyEnvironment) -> str:
+    if isinstance(environment, EmptyEnvironment):
+        return "# no environment to open; the namespace starts empty\n"
     return f"""
 import os as _os
 from dimos.memory2.store.sqlite import SqliteStore as _SqliteStore
@@ -154,6 +163,12 @@ def _kernel_environment(environment: CodePolicyEnvironment) -> dict[str, str]:
     result = {
         name: value for name, value in os.environ.items() if not _CREDENTIAL_NAME_RE.search(name)
     }
+    if isinstance(environment, EmptyEnvironment):
+        result[_CONNECT_APP_ENV] = "0"
+        result.pop(_RECORDING_PATH_ENV, None)
+        result.pop(_DERIVED_RECORDING_PATH_ENV, None)
+        result.pop(_MEMORY_CUTOFF_ENV, None)
+        return result
     result[_RECORDING_PATH_ENV] = environment.recording_path
     if isinstance(environment, FrozenMemoryEnvironment):
         result[_CONNECT_APP_ENV] = "0"
@@ -246,7 +261,7 @@ class CodePolicySession:
                 client.start_channels()
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,
@@ -284,7 +299,7 @@ class CodePolicySession:
                 manager.restart_kernel(now=True)
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,
