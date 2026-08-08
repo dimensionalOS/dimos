@@ -54,41 +54,43 @@ struct Transform {
     std::array<double, 3> translation{0.0, 0.0, 0.0};
 };
 
-std::array<double, 4> quat_multiply(const std::array<double, 4>& a,
-                                    const std::array<double, 4>& b) {
-    return {a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-            a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-            a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-            a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]};
+std::array<double, 4> quat_multiply(const std::array<double, 4>& left,
+                                    const std::array<double, 4>& right) {
+    return {left[3] * right[0] + left[0] * right[3] + left[1] * right[2] - left[2] * right[1],
+            left[3] * right[1] - left[0] * right[2] + left[1] * right[3] + left[2] * right[0],
+            left[3] * right[2] + left[0] * right[1] - left[1] * right[0] + left[2] * right[3],
+            left[3] * right[3] - left[0] * right[0] - left[1] * right[1] - left[2] * right[2]};
 }
 
-std::array<double, 3> cross(const std::array<double, 3>& a, const std::array<double, 3>& b) {
-    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+std::array<double, 3> cross(const std::array<double, 3>& left,
+                            const std::array<double, 3>& right) {
+    return {left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2],
+            left[0] * right[1] - left[1] * right[0]};
 }
 
-/// v + 2u x (u x v + wv), the usual quaternion sandwich without building a matrix.
-std::array<double, 3> quat_rotate(const std::array<double, 4>& q,
-                                  const std::array<double, 3>& v) {
-    const std::array<double, 3> u{q[0], q[1], q[2]};
-    std::array<double, 3> inner = cross(u, v);
-    for (int i = 0; i < 3; ++i) {
-        inner[i] += q[3] * v[i];
+/// The usual quaternion sandwich, without building a matrix.
+std::array<double, 3> quat_rotate(const std::array<double, 4>& rotation,
+                                  const std::array<double, 3>& vector) {
+    const std::array<double, 3> axis{rotation[0], rotation[1], rotation[2]};
+    std::array<double, 3> inner = cross(axis, vector);
+    for (int component = 0; component < 3; ++component) {
+        inner[component] += rotation[3] * vector[component];
     }
-    const std::array<double, 3> outer = cross(u, inner);
-    return {v[0] + 2.0 * outer[0], v[1] + 2.0 * outer[1], v[2] + 2.0 * outer[2]};
+    const std::array<double, 3> outer = cross(axis, inner);
+    return {vector[0] + 2.0 * outer[0], vector[1] + 2.0 * outer[1], vector[2] + 2.0 * outer[2]};
 }
 
-Transform compose(const Transform& a, const Transform& b) {
-    const std::array<double, 3> rotated = quat_rotate(a.rotation, b.translation);
-    return Transform{quat_multiply(a.rotation, b.rotation),
-                     {a.translation[0] + rotated[0], a.translation[1] + rotated[1],
-                      a.translation[2] + rotated[2]}};
+Transform compose(const Transform& outer, const Transform& inner) {
+    const std::array<double, 3> rotated = quat_rotate(outer.rotation, inner.translation);
+    return Transform{quat_multiply(outer.rotation, inner.rotation),
+                     {outer.translation[0] + rotated[0], outer.translation[1] + rotated[1],
+                      outer.translation[2] + rotated[2]}};
 }
 
-Transform invert(const Transform& t) {
-    const std::array<double, 4> conjugate{-t.rotation[0], -t.rotation[1], -t.rotation[2],
-                                          t.rotation[3]};
-    const std::array<double, 3> rotated = quat_rotate(conjugate, t.translation);
+Transform invert(const Transform& transform) {
+    const std::array<double, 4> conjugate{-transform.rotation[0], -transform.rotation[1],
+                                          -transform.rotation[2], transform.rotation[3]};
+    const std::array<double, 3> rotated = quat_rotate(conjugate, transform.translation);
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
@@ -104,9 +106,10 @@ Transform to_transform(const cuvslam::Pose& pose) {
                      {pose.translation[0], pose.translation[1], pose.translation[2]}};
 }
 
-Transform to_transform(const geometry_msgs::Transform& t) {
-    return Transform{{t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w},
-                     {t.translation.x, t.translation.y, t.translation.z}};
+Transform to_transform(const geometry_msgs::Transform& message) {
+    return Transform{
+        {message.rotation.x, message.rotation.y, message.rotation.z, message.rotation.w},
+        {message.translation.x, message.translation.y, message.translation.z}};
 }
 
 std::string join(const std::vector<std::string>& parts) {
@@ -117,13 +120,14 @@ std::string join(const std::vector<std::string>& parts) {
     return joined;
 }
 
-cuvslam::Pose to_pose(const Transform& t) {
+cuvslam::Pose to_pose(const Transform& transform) {
     cuvslam::Pose pose{};
-    pose.rotation = {static_cast<float>(t.rotation[0]), static_cast<float>(t.rotation[1]),
-                     static_cast<float>(t.rotation[2]), static_cast<float>(t.rotation[3])};
-    pose.translation = {static_cast<float>(t.translation[0]),
-                        static_cast<float>(t.translation[1]),
-                        static_cast<float>(t.translation[2])};
+    pose.rotation = {
+        static_cast<float>(transform.rotation[0]), static_cast<float>(transform.rotation[1]),
+        static_cast<float>(transform.rotation[2]), static_cast<float>(transform.rotation[3])};
+    pose.translation = {static_cast<float>(transform.translation[0]),
+                        static_cast<float>(transform.translation[1]),
+                        static_cast<float>(transform.translation[2])};
     return pose;
 }
 
@@ -360,15 +364,15 @@ private:
             ++imu_dropped_;
             return;
         }
-        cuvslam::ImuMeasurement m{};
-        m.timestamp_ns = stamp_to_ns(msg.header);
-        m.linear_accelerations = {static_cast<float>(msg.linear_acceleration.x),
-                                  static_cast<float>(msg.linear_acceleration.y),
-                                  static_cast<float>(msg.linear_acceleration.z)};
-        m.angular_velocities = {static_cast<float>(msg.angular_velocity.x),
-                                static_cast<float>(msg.angular_velocity.y),
-                                static_cast<float>(msg.angular_velocity.z)};
-        tracker_->RegisterImuMeasurement(0, m);
+        cuvslam::ImuMeasurement measurement{};
+        measurement.timestamp_ns = stamp_to_ns(msg.header);
+        measurement.linear_accelerations = {static_cast<float>(msg.linear_acceleration.x),
+                                            static_cast<float>(msg.linear_acceleration.y),
+                                            static_cast<float>(msg.linear_acceleration.z)};
+        measurement.angular_velocities = {static_cast<float>(msg.angular_velocity.x),
+                                          static_cast<float>(msg.angular_velocity.y),
+                                          static_cast<float>(msg.angular_velocity.z)};
+        tracker_->RegisterImuMeasurement(0, measurement);
         ++imu_samples_;
     }
 
@@ -546,10 +550,10 @@ private:
         }
         cuvslam::Odometry::ImageSet depths;
         if (mode_ == Mode::Rgbd) {
-            cuvslam::Image d = to_cuvslam_image(depth_, newest, images[0].camera_index);
-            d.encoding = cuvslam::ImageData::Encoding::MONO;
-            d.data_type = cuvslam::ImageData::DataType::UINT16;
-            depths.push_back(d);
+            cuvslam::Image depth = to_cuvslam_image(depth_, newest, images[0].camera_index);
+            depth.encoding = cuvslam::ImageData::Encoding::MONO;
+            depth.data_type = cuvslam::ImageData::DataType::UINT16;
+            depths.push_back(depth);
         }
 
         const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
@@ -574,8 +578,8 @@ private:
             const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
             double moved = 0.0;
             for (int axis = 0; axis < 3; ++axis) {
-                const double d = candidate.translation[axis] - world_from_rig_.translation[axis];
-                moved += d * d;
+                const double step = candidate.translation[axis] - world_from_rig_.translation[axis];
+                moved += step * step;
             }
             if (dt > 0.0 && std::sqrt(moved) / dt > cfg_.implausible_speed_meters_per_second) {
                 ++segment_id_;

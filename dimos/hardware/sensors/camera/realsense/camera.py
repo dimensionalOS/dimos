@@ -272,7 +272,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: logger.error("RealSense pointcloud: %s", e),
+                    on_error=lambda error: logger.error("RealSense pointcloud: %s", error),
                 )
             )
 
@@ -280,7 +280,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error("RealSense camera_info: %s", e),
+                on_error=lambda error: logger.error("RealSense camera_info: %s", error),
             )
         )
 
@@ -599,8 +599,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         optical[:3, 3] = np.array(extrinsics.translation)
 
         body = body_from_optical @ optical @ body_from_optical.T
-        quat = Rotation.from_matrix(body[:3, :3]).as_quat()  # [x, y, z, w]
-        return Vector3(*body[:3, 3]), Quaternion(quat[0], quat[1], quat[2], quat[3])
+        rotation = Rotation.from_matrix(body[:3, :3]).as_quat()  # [x, y, z, w]
+        return Vector3(*body[:3, 3]), Quaternion(*rotation)
 
     def _fresh(self, key: str, frame: rs.frame | None) -> float | None:
         """This frame's own timestamp, or None if the stream has not advanced.
@@ -795,8 +795,8 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
-        except Exception as e:
-            logger.error("RealSense pointcloud generation failed: %s", e)
+        except Exception as error:
+            logger.error("RealSense pointcloud generation failed: %s", error)
 
     @rpc
     def stop(self) -> None:

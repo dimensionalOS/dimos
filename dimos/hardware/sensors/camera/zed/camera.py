@@ -199,7 +199,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error("ZED camera_info: %s", e),
+                on_error=lambda error: logger.error("ZED camera_info: %s", error),
             )
         )
 
@@ -212,7 +212,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: logger.error("ZED pointcloud: %s", e),
+                    on_error=lambda error: logger.error("ZED pointcloud: %s", error),
                 )
             )
 
@@ -264,10 +264,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts: float,
     ) -> Transform:
         translation = extrinsics.get_translation().get()
-        quat = extrinsics.get_orientation().get()  # [x, y, z, w]
+        rotation = extrinsics.get_orientation().get()  # [x, y, z, w]
         return Transform(
             translation=Vector3(*translation),
-            rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
+            rotation=Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
             frame_id=frame_id,
             child_frame_id=child_frame_id,
             ts=ts,
@@ -460,8 +460,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
-        except Exception as e:
-            logger.error("ZED pointcloud generation failed: %s", e)
+        except Exception as error:
+            logger.error("ZED pointcloud generation failed: %s", error)
 
     @rpc
     def stop(self) -> None:
