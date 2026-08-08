@@ -15,6 +15,7 @@
 # limitations under the License.
 
 
+from collections.abc import Sequence
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -28,6 +29,8 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.scene_assets.spec import ScenePackage
+from dimos.simulation.scenes.catalog import resolve_scene_package
 from dimos.utils.data import get_data
 
 
@@ -35,9 +38,12 @@ def _get_data_dir() -> epath.Path:
     return epath.Path(str(get_data("mujoco_sim")))
 
 
-def get_assets() -> dict[str, bytes]:
+def get_assets(extra_asset_dirs: Sequence[Path] = ()) -> dict[str, bytes]:
     data_dir = _get_data_dir()
     assets: dict[str, bytes] = {}
+
+    for asset_dir in extra_asset_dirs:
+        mjx_env.update_assets(assets, epath.Path(str(asset_dir)), "*.obj")
 
     # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47
     # Created by Ryan Cassidy and Coleman Costello
@@ -56,12 +62,15 @@ def get_assets() -> dict[str, bytes]:
 
 
 def load_model(
-    input_device: InputController, robot: str, scene_xml: str
+    input_device: InputController,
+    robot: str,
+    scene_xml: str,
+    extra_asset_dirs: Sequence[Path] = (),
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
-    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
+    model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets(extra_asset_dirs))
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
@@ -143,6 +152,25 @@ def _add_person_object(root: ET.Element) -> None:
         material="person_material",
         euler="1.5708 0 0",
     )
+
+
+def load_scene(config: GlobalConfig) -> tuple[str, ScenePackage | None]:
+    """Resolve the scene XML, preferring a cooked scene package when configured.
+
+    Scene packages (see dimos/simulation/scenes/README.md) are robot-agnostic
+    MJCF wrappers whose hull meshes sit next to the wrapper; pass that
+    directory to ``load_model(extra_asset_dirs=...)`` so the meshes resolve.
+    """
+    if not config.mujoco_room_from_occupancy and config.scene_package:
+        package = resolve_scene_package(config.scene_package)
+        if package is not None:
+            if package.mujoco_scene_path is None:
+                raise ValueError(
+                    f"scene package '{config.scene_package}' has no mujoco scene artifact"
+                )
+            return package.mujoco_scene_path.read_text(), package
+
+    return load_scene_xml(config), None
 
 
 def load_scene_xml(config: GlobalConfig) -> str:

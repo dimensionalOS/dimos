@@ -31,10 +31,14 @@ _ALIASES = {
     "supermarket": "supermarket",
     "dimos-supermarket": "supermarket",
     "dimos_supermarket": "supermarket",
+    "lowpoly_tdm": "lowpoly_tdm",
+    "lowpoly-tdm": "lowpoly_tdm",
+    "tdm": "lowpoly_tdm",
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
     "supermarket": "supermarket",
+    "lowpoly_tdm": "lowpoly_tdm",
 }
 
 
