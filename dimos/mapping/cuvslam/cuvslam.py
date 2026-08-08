@@ -179,7 +179,8 @@ class CuvslamConfig(NativeModuleConfig):
     # Pose graph and loop closure; without it map->odom is identity.
     enable_slam: bool = True
     slam_sync_mode: bool = True
-    slam_max_map_size: int = 300
+    # Poses in the pose graph, not a distance. 0 is unlimited.
+    slam_max_poses: int = 300
     slam_throttling_ms: int = 0
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
