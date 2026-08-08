@@ -31,6 +31,7 @@ ENTRY_POINT_GROUP = "dimos.evaluations"
 LOCAL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 BUILTIN_EVALUATIONS = {
     "frozen-integer-qa": ("dimos.benchmark.short_horizon_qa.evaluation:frozen_integer_qa"),
+    "point-cloud-vqa": ("dimos.benchmark.vqa.evaluation:point_cloud_vqa"),
 }
 
 

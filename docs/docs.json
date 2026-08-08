@@ -124,7 +124,8 @@
           {
             "group": "Perception",
             "pages": [
-              "capabilities/perception/index"
+              "capabilities/perception/index",
+              "vqa-benchmark"
             ]
           },
           {

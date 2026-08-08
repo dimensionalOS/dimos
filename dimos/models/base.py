@@ -28,8 +28,20 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
 
 
+def default_local_model_device() -> str:
+    """Select CUDA only when this Torch build supports the detected GPU."""
+    if not torch.cuda.is_available():
+        return "cpu"
+    try:
+        major, minor = torch.cuda.get_device_capability()
+        capability = f"sm_{major}{minor}"
+        return "cuda" if capability in torch.cuda.get_arch_list() else "cpu"
+    except RuntimeError:
+        return "cpu"
+
+
 class LocalModelConfig(BaseConfig):
-    device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
+    device: DeviceType = default_local_model_device()
     dtype: torch.dtype = torch.float32
     warmup: bool = False
     autostart: bool = False

@@ -83,6 +83,7 @@ class VqaExample:
     expected_answer: str
     answer_type: str
     object_ids: tuple[str, ...]
+    allowed_answers: tuple[str, ...] = ()
 
 
 QuestionKind = Literal[
@@ -118,6 +119,115 @@ class GroundTruthResult:
     reason: str | None
     evidence: tuple[GroundedObject, ...]
     trace: tuple[ToolTrace, ...]
+
+
+@dataclass(frozen=True)
+class BooleanAnswerContract:
+    """A yes/no answer required from a private oracle."""
+
+    kind: Literal["boolean"] = "boolean"
+
+
+@dataclass(frozen=True)
+class ChoiceAnswerContract:
+    """An answer selected exactly from the supplied choices."""
+
+    choices: tuple[str, ...]
+    kind: Literal["choice"] = "choice"
+
+
+AnswerContract = BooleanAnswerContract | ChoiceAnswerContract
+
+
+@dataclass(frozen=True)
+class QuestionProposal:
+    """Public image-only question frozen before private oracle execution."""
+
+    id: str
+    question: str
+    answer_contract: AnswerContract
+    object_queries: tuple[str, ...] = ()
+    tool_hints: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OracleEvidence:
+    """A private evidence item emitted by a registered local tool."""
+
+    id: str
+    version: str
+    object_id: str
+    label: str
+    range_m: float
+    side: str
+    point_count: int
+    measurement: OracleMeasurement | None = None
+
+
+@dataclass(frozen=True)
+class OracleMeasurement:
+    """A private scalar measurement with its uncertainty and provenance."""
+
+    value: float
+    unit: str
+    tolerance: float
+    quality_flags: tuple[str, ...]
+    provenance_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class GroundPlaneEstimate:
+    """A robust ground-plane fit in frozen camera coordinates."""
+
+    normal: tuple[float, float, float]
+    offset_m: float
+    sample_count: int
+    inlier_count: int
+    residual_m: float
+
+
+@dataclass(frozen=True)
+class OracleToolResult:
+    """Structured result and evidence IDs from one local tool invocation."""
+
+    tool: str
+    query: str
+    evidence: tuple[OracleEvidence, ...]
+    version: str = "v1"
+    measurement: OracleMeasurement | None = None
+    choice: str | None = None
+    plane: GroundPlaneEstimate | None = None
+    quality_flags: tuple[str, ...] = ()
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OracleTrace:
+    """Audit record for a private oracle model or tool operation."""
+
+    operation: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class AcceptedOracleResult:
+    """Validated private answer for a frozen public proposal."""
+
+    proposal: QuestionProposal
+    answer: str
+    evidence_ids: tuple[str, ...]
+    tool_results: tuple[OracleToolResult, ...]
+    trace: tuple[OracleTrace, ...]
+
+
+@dataclass(frozen=True)
+class RejectedOracleResult:
+    """Private oracle attempt that cannot be safely exported as a case."""
+
+    proposal: QuestionProposal
+    reason: str
+    tool_results: tuple[OracleToolResult, ...]
+    trace: tuple[OracleTrace, ...]
 
 
 class ObjectDetector(Protocol):
