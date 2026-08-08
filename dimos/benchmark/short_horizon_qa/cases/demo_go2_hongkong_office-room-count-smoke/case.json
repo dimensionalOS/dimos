@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "case_id": "demo-go2-hongkong-office-room-count-smoke",
+  "source": {
+    "schema_version": "1.0",
+    "kind": "frozen_memory",
+    "recording": "go2_hongkong_office",
+    "progress": 1.0
+  },
+  "task": {
+    "schema_version": "1.0",
+    "kind": "integer_question",
+    "prompt": "How many rooms in total?",
+    "answer_marker": "ANSWER:"
+  },
+  "validator": {
+    "schema_version": "1.0",
+    "kind": "exact_integer",
+    "revision": "synthetic-cli-smoke-v1",
+    "private_path": "private/oracle.json"
+  }
+}

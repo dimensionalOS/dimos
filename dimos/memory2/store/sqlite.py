@@ -41,6 +41,7 @@ class SqliteStoreConfig(StoreConfig):
     ] = "memory.db"
     page_size: int = 256
     must_exist: bool = False
+    read_only: bool = False
 
 
 class SqliteStore(Store):
@@ -54,16 +55,22 @@ class SqliteStore(Store):
             raise FileNotFoundError(
                 f"SQLite database not found: {os.path.abspath(self.config.path)}"
             )
-        if not self.config.must_exist:
+        if self.config.read_only and not os.path.exists(self.config.path):
+            raise FileNotFoundError(
+                f"SQLite database not found: {os.path.abspath(self.config.path)}"
+            )
+        if not self.config.must_exist and not self.config.read_only:
             parent = os.path.dirname(self.config.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
-        self._registry = RegistryStore(conn=self._registry_conn)
+        self._registry = RegistryStore(conn=self._registry_conn, read_only=self.config.read_only)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""
-        disposable, connection = open_disposable_sqlite_connection(self.config.path)
+        disposable, connection = open_disposable_sqlite_connection(
+            self.config.path, read_only=self.config.read_only
+        )
         self.register_disposable(disposable)
         return connection
 
@@ -82,23 +89,31 @@ class SqliteStore(Store):
         # Reconstruct components from serialized config
         bs_data = stored.get("blob_store")
         if bs_data is not None:
-            bs_cfg = bs_data.get("config", {})
-            if bs_cfg.get("path") is None and bs_data["class"] == qual(SqliteBlobStore):
-                bs: Any = SqliteBlobStore(conn=backend_conn)
+            bs_cfg = dict(bs_data.get("config", {}))
+            if bs_data["class"] == qual(SqliteBlobStore):
+                if self.config.read_only:
+                    bs_cfg["read_only"] = True
+                if bs_cfg.get("path") is None:
+                    bs_cfg["conn"] = backend_conn
+                bs: Any = SqliteBlobStore(**bs_cfg)
             else:
                 bs = deserialize_component(bs_data)
         else:
-            bs = SqliteBlobStore(conn=backend_conn)
+            bs = SqliteBlobStore(conn=backend_conn, read_only=self.config.read_only)
 
         vs_data = stored.get("vector_store")
         if vs_data is not None:
-            vs_cfg = vs_data.get("config", {})
-            if vs_cfg.get("path") is None and vs_data["class"] == qual(SqliteVectorStore):
-                vs: Any = SqliteVectorStore(conn=backend_conn)
+            vs_cfg = dict(vs_data.get("config", {}))
+            if vs_data["class"] == qual(SqliteVectorStore):
+                if self.config.read_only:
+                    vs_cfg["read_only"] = True
+                if vs_cfg.get("path") is None:
+                    vs_cfg["conn"] = backend_conn
+                vs: Any = SqliteVectorStore(**vs_cfg)
             else:
                 vs = deserialize_component(vs_data)
         else:
-            vs = SqliteVectorStore(conn=backend_conn)
+            vs = SqliteVectorStore(conn=backend_conn, read_only=self.config.read_only)
 
         notifier_data = stored.get("notifier")
         if notifier_data is not None:
@@ -116,6 +131,7 @@ class SqliteStore(Store):
             codec=codec,
             blob_store_conn_match=blob_store_conn_match and eager_blobs,
             page_size=page_size,
+            read_only=self.config.read_only,
         )
         backend: Backend[Any] = Backend(
             metadata_store=metadata_store,
@@ -164,6 +180,9 @@ class SqliteStore(Store):
                     )
             return self._assemble_backend(name, stored)
 
+        if self.config.read_only:
+            raise KeyError(f"Stream {name!r} does not exist in read-only store")
+
         # Create path: inject conn-shared defaults, then delegate to base
         if payload_type is None:
             raise TypeError(f"Stream {name!r} does not exist yet — payload_type is required")
@@ -211,6 +230,8 @@ class SqliteStore(Store):
         return sorted(db_names | set(self._streams.keys()))
 
     def delete_stream(self, name: str) -> None:
+        if self.config.read_only:
+            raise PermissionError("Cannot delete streams from a read-only store")
         super().delete_stream(name)
         self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
         self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')

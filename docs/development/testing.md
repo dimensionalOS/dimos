@@ -69,6 +69,47 @@ When writing or debugging a specific self-hosted test, override `-m` yourself to
 pytest -m self_hosted dimos/path/to/test_something.py
 ```
 
+### Frozen agent evaluation
+
+Install the optional Python dependencies, then build and test the small Pi
+extension:
+
+```bash
+uv sync --extra agents
+npm ci --prefix packages/pi-code-policy-extension
+npm run typecheck --prefix packages/pi-code-policy-extension
+npm run build --prefix packages/pi-code-policy-extension
+npm test --prefix packages/pi-code-policy-extension
+```
+
+Run the focused Python suite with:
+
+```bash
+uv run --extra agents pytest \
+  dimos/memory2/store/test_frozen.py \
+  dimos/agents/test_code_policy_core.py \
+  dimos/agents/test_code_policy_server.py \
+  dimos/benchmark/agent_eval \
+  dimos/benchmark/short_horizon_qa \
+  dimos/cli/test_eval.py
+```
+
+The self-hosted Hong Kong mechanics gate requires the Git LFS
+`go2_hongkong_office` recording. Run its marked test with the mapper on CPU:
+
+```bash
+DIMOS_MAPPER_DEVICE=CPU:0 uv run --extra agents pytest \
+  -m self_hosted \
+  dimos/benchmark/short_horizon_qa/test_hongkong_eval.py
+```
+
+After the mechanics gate, follow the credentialed command in
+[Frozen recording evaluation](/docs/capabilities/agents/evaluation.md). A failed
+private score is expected against the synthetic `0` fixture oracle. Treat the
+smoke as operationally successful only when the attempt completes, evidence
+descriptors validate, no Pi or CodePolicy child remains, and a second run can
+acquire the same output-root lock immediately.
+
 ## Testing on a fresh Ubuntu install
 
 CI tests dimos with pre-built images and cached deps, so it can't catch gaps

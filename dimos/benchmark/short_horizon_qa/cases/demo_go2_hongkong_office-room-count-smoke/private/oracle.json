@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "expected_count": 0,
+  "counting_policy": "Synthetic CLI plumbing sentinel only; this is not the Hong Kong office room-count oracle.",
+  "rooms": [],
+  "reviewed_by": [
+    "synthetic-cli-smoke-fixture"
+  ]
+}

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 class SqliteVectorStoreConfig(VectorStoreConfig):
     conn: sqlite3.Connection | None = Field(default=None, exclude=True)
     path: str | None = None
+    read_only: bool = False
 
     @model_validator(mode="after")
     def _conn_xor_path(self) -> SqliteVectorStoreConfig:
@@ -74,7 +75,9 @@ class SqliteVectorStore(VectorStore):
     def start(self) -> None:
         if self._conn is None:
             assert self._path is not None
-            disposable, self._conn = open_disposable_sqlite_connection(self._path)
+            disposable, self._conn = open_disposable_sqlite_connection(
+                self._path, read_only=self.config.read_only
+            )
             self.register_disposable(disposable)
 
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
