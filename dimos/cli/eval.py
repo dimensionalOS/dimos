@@ -39,6 +39,18 @@ def execute_single_case(*args: Any, **kwargs: Any) -> Any:
     return execute(*args, **kwargs)
 
 
+def run_space_task(*args: Any, **kwargs: Any) -> Any:
+    """Import the SPACE integration only when ``eval space`` executes."""
+    try:
+        from dimos.benchmark.space_qa.run import run_space_task as run
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "SPACE evaluation dependencies are missing; run `uv sync --extra space`"
+        ) from exc
+
+    return run(*args, **kwargs)
+
+
 @app.command("run")
 def run(
     case: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
@@ -82,6 +94,49 @@ def run(
     typer.echo(result.model_dump_json() if json_output else format_result(result, output))
     if result.attempt_status == "failed":
         raise typer.Exit(1)
+
+
+@app.command("space")
+def space(
+    task: str = typer.Option(..., "--task", help="SPACE text task, e.g. SAtt_text"),
+    groups: int = typer.Option(8, "--groups", help="Stimulus groups to sample; each holds 4 rows"),
+    seed: int = typer.Option(
+        ..., "--seed", help="Sampling seed: the same seed draws the same rows"
+    ),
+    workers: int = typer.Option(2, "--workers", help="SPACE worker processes"),
+    output: Path | None = typer.Option(None, "--output", help="Run directory to write"),
+) -> None:
+    """Score a SPACE text task through the evaluation path, with SPACE's own evaluator.
+
+    The first run clones the pinned SPACE source and downloads Apple's 3.6 GB
+    data release into ~/.cache/dimos/space-benchmark/ (set DIMOS_SPACE_SOURCE
+    and DIMOS_SPACE_DATA to reuse copies you already have).
+    """
+    try:
+        summary = run_space_task(
+            task_name=task, groups=groups, seed=seed, workers=workers, output=output
+        )
+    except Exception as exc:
+        typer.echo(f"SPACE evaluation failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(format_space_summary(summary))
+
+
+def format_space_summary(summary: Any) -> str:
+    """Report the upstream score and where the evidence behind it landed."""
+    rows = (
+        ("Task", summary.task),
+        (
+            "Subset",
+            f"{summary.groups} groups · {summary.questions} questions · seed {summary.seed}",
+        ),
+        ("Accuracy", f"{summary.mean_accuracy:.1f}% (scored by SPACE)"),
+        ("Results", str(summary.results_path)),
+        ("Manifest", str(summary.manifest_path)),
+        ("Records", str(summary.records_path)),
+    )
+    body = "\n".join(f"  {label:<10} {value}" for label, value in rows)
+    return f"· SPACE run complete\n\n{body}"
 
 
 def format_result(result: Any, output: Path | None = None) -> str:

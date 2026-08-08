@@ -241,6 +241,26 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
+# Runs the SPACE benchmark (github.com/apple/ml-space-benchmark) through the
+# agent-evaluation path. SPACE itself is not a wheel: it is fetched as a pinned
+# source checkout at run time, so what is listed here is everything `import
+# space` pulls in and dimos does not already carry. torch arrives through
+# space.evaluate_qas importing space/utils/vllm_api.py (dead code under
+# use_vllm=False, but an import-time requirement); Pillow through
+# space.utils.common. Both load even for text-only tasks.
+space = [
+    "dimos[agents]",
+    "anthropic",
+    "fire",
+    "func-timeout",
+    "imageio",
+    "mdutils",
+    "networkx",
+    "Pillow",
+    "torch",
+    "tqdm",
+]
+
 web = [
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
