@@ -85,6 +85,9 @@ def run_space_task(
     task = space_text_task(task_name)
     if workers < 1:
         raise ValueError(f"workers must be at least 1, got {workers}")
+    run_dir = (output or default_run_dir(task.name)).expanduser().resolve()
+    if (run_dir / MANIFEST_NAME).is_file() or (run_dir / SPACE_OUTPUT_DIR_NAME).exists():
+        raise FileExistsError(f"{run_dir} already holds a run; pass a fresh --output directory")
     # libobjc reads this flag when it loads, which happened at interpreter
     # start, so setting it here cannot change this process or its forked
     # workers. It is for the processes those workers exec (the Pi CLI): they
@@ -97,7 +100,6 @@ def run_space_task(
     adapter = SpaceQAAdapter.from_data_root(task, data_root)
     items = adapter.iter_items(SubsetSpec(seed=seed, groups=groups))
 
-    run_dir = (output or default_run_dir(task.name)).expanduser().resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     manifest = prepare_run(
         run_dir,

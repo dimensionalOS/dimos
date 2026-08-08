@@ -30,12 +30,19 @@ import pytest
 
 from dimos.benchmark.agent_eval.models import EvalCase
 from dimos.benchmark.space_qa.adapter import SubsetSpec
-from dimos.benchmark.space_qa.manifest import RECORD_NAME, case_dir, read_manifest, subset_path
+from dimos.benchmark.space_qa.manifest import (
+    MANIFEST_NAME,
+    RECORD_NAME,
+    case_dir,
+    read_manifest,
+    subset_path,
+)
 from dimos.benchmark.space_qa.run import (
     collect_records,
     cross_check_predictions,
     locate_results,
     prepare_run,
+    run_space_task,
 )
 from dimos.benchmark.space_qa.sampling import DEFAULT_GROUP_SIZE
 from dimos.benchmark.space_qa.source import SPACE_REVISION
@@ -236,3 +243,9 @@ def test_the_official_results_file_is_found_under_the_timestamp_space_chose(tmp_
 def test_a_run_that_produced_no_results_file_is_reported(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="expected exactly one results.json"):
         locate_results(tmp_path)
+
+
+def test_an_output_directory_holding_a_run_is_refused_before_any_work(tmp_path) -> None:
+    (tmp_path / MANIFEST_NAME).write_text("{}", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="already holds a run"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path)
