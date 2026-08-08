@@ -61,6 +61,7 @@ all_blueprints = {
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "demo-virtual-mid360-fastlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_fastlio",
     "demo-virtual-mid360-pointlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_pointlio",
+    "demo-zed-cuvslam": "dimos.mapping.cuvslam.demo_zed_cuvslam:demo_zed_cuvslam",
     "desk-marker-tf": "dimos.perception.fiducial.blueprints.desk_marker_tf:desk_marker_tf",
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",

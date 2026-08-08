@@ -33,12 +33,12 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.visualization.vis_module import vis_module
 
 
-def _path_at_true_height(path: Path) -> Any:
+def path_at_true_height(path: Path) -> Any:
     """Draw the trail where it actually is; the default lift clears a costmap we have not got."""
     return path.to_rerun(z_offset=0.0, radii=0.02)
 
 
-def _rerun_blueprint() -> Any:
+def cuvslam_rerun_blueprint() -> Any:
     """The cameras down one side, the 3D world taking the rest.
 
     One view for all of them: rerun names an entity after the topic, which they share.
@@ -80,8 +80,8 @@ demo_cuvslam = (
         vis_module(
             global_config.viewer,
             rerun_config={
-                "blueprint": _rerun_blueprint,
-                "visual_override": {"world/path": _path_at_true_height},
+                "blueprint": cuvslam_rerun_blueprint,
+                "visual_override": {"world/path": path_at_true_height},
             },
         ),
     )

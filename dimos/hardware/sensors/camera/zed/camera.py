@@ -18,6 +18,7 @@ import atexit
 import threading
 import time
 
+import numpy as np
 from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
@@ -64,6 +65,7 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
+    enable_right_image: bool = False
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
@@ -83,9 +85,11 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
 class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     config: ZEDCameraConfig
     color_image: Out[Image]
+    right_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
+    right_camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
@@ -100,6 +104,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     @property
     def _color_optical_frame(self) -> str:
         return f"{self.config.camera_name}_color_optical_frame"
+
+    @property
+    def _right_frame(self) -> str:
+        return f"{self.config.camera_name}_right_frame"
+
+    @property
+    def _right_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_right_optical_frame"
 
     @property
     def _depth_frame(self) -> str:
@@ -117,13 +129,16 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._running = False
         self._thread: threading.Thread | None = None
         self._color_camera_info: CameraInfo | None = None
+        self._right_camera_info: CameraInfo | None = None
         self._depth_camera_info: CameraInfo | None = None
         self._depth_scale: float = 1.0
         self._camera_link_to_color_extrinsics: sl.Transform
+        self._baseline_meters: float | None = None
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
         self._image_left: sl.Mat | None = None
+        self._image_right: sl.Mat | None = None
         self._depth_map: sl.Mat | None = None
         self._pose: sl.Pose | None = None
         self._tracking_enabled = False
@@ -140,6 +155,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         # with_ts copies; restamping the stored one would rewrite a delivered message.
         for info, stream in (
             (self._color_camera_info, self.camera_info),
+            (self._right_camera_info, self.right_camera_info),
             (self._depth_camera_info, self.depth_camera_info),
         ):
             if info is not None:
@@ -154,7 +170,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         else:
             self._init_params.camera_resolution = sl.RESOLUTION.HD720
         self._init_params.camera_fps = self.config.fps
-        if isinstance(self.config.depth_mode, sl.DEPTH_MODE):
+        if not self.config.enable_depth:
+            # Depth inference runs inside grab() whether or not anything reads it.
+            self._init_params.depth_mode = sl.DEPTH_MODE.NONE
+        elif isinstance(self.config.depth_mode, sl.DEPTH_MODE):
             self._init_params.depth_mode = self.config.depth_mode
         else:
             self._init_params.depth_mode = getattr(sl.DEPTH_MODE, self.config.depth_mode)
@@ -173,6 +192,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
         self._image_left = sl.Mat()
+        if self.config.enable_right_image:
+            self._image_right = sl.Mat()
         self._depth_map = sl.Mat()
         self._pose = sl.Pose()
 
@@ -224,6 +245,11 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             left_cam, self._color_optical_frame
         )
 
+        if self.config.enable_right_image:
+            self._right_camera_info = self._intrinsics_to_camera_info(
+                calib.right_cam, self._right_optical_frame
+            )
+
         if self.config.enable_depth:
             depth_frame = (
                 self._color_optical_frame
@@ -253,6 +279,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         sensors_config = self._sl_camera_info.sensors_configuration
         # camera_imu_transform gives the transform from IMU (body center) to left camera
         self._camera_link_to_color_extrinsics = sensors_config.camera_imu_transform
+
+        calib = self._sl_camera_info.camera_configuration.calibration_parameters
+        self._baseline_meters = calib.get_camera_baseline()
 
     def _extrinsics_to_transform(
         self,
@@ -286,9 +315,16 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             return
         self._tracking_enabled = True
 
-    def _capture_loop(self) -> None:
+    def _retrieve_rgb(self, mat: sl.Mat, view: sl.VIEW) -> np.ndarray:
         import cv2
 
+        self._zed.retrieve_image(mat, view)  # type: ignore[union-attr]
+        data = mat.get_data()
+        if data.ndim == 3 and data.shape[2] == 4:
+            data = data[:, :, :3]
+        return cv2.cvtColor(data, cv2.COLOR_BGR2RGB)  # type: ignore[no-any-return]
+
+    def _capture_loop(self) -> None:
         while self._running and self._zed is not None:
             try:
                 err = self._zed.grab(self._runtime_params)
@@ -307,18 +343,23 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
             color_img = None
             if self._image_left is not None:
-                self._zed.retrieve_image(self._image_left, sl.VIEW.LEFT)
-                color_data = self._image_left.get_data()
-                if color_data.ndim == 3 and color_data.shape[2] == 4:
-                    color_data = color_data[:, :, :3]
-                color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
                 color_img = Image(
-                    data=color_data,
+                    data=self._retrieve_rgb(self._image_left, sl.VIEW.LEFT),
                     format=ImageFormat.RGB,
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
                 self.color_image.publish(color_img)
+
+            if self._image_right is not None:
+                self.right_image.publish(
+                    Image(
+                        data=self._retrieve_rgb(self._image_right, sl.VIEW.RIGHT),
+                        format=ImageFormat.RGB,
+                        frame_id=self._right_optical_frame,
+                        ts=ts,
+                    )
+                )
 
             depth_img = None
             if self.config.enable_depth and self._depth_map is not None:
@@ -431,6 +472,29 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(color_to_color_optical)
 
+        if self._image_right is not None and self._baseline_meters is not None:
+            # VIEW.LEFT and VIEW.RIGHT are rectified, so the eyes differ by the baseline
+            # alone. y points left, putting the right eye at -baseline.
+            color_to_right = Transform(
+                translation=Vector3(0.0, -self._baseline_meters, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            right_tf = color_tf + color_to_right
+            right_tf.frame_id = self._camera_link
+            right_tf.child_frame_id = self._right_frame
+            right_tf.ts = ts
+            transforms.append(right_tf)
+
+            transforms.append(
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=OPTICAL_ROTATION,
+                    frame_id=self._right_frame,
+                    child_frame_id=self._right_optical_frame,
+                    ts=ts,
+                )
+            )
+
         tracking_tf = self._tracking_transform(ts)
         if tracking_tf is not None:
             transforms.append(tracking_tf)
@@ -482,10 +546,12 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._thread = None
 
         self._color_camera_info = None
+        self._right_camera_info = None
         self._depth_camera_info = None
         self._latest_color_img = None
         self._latest_depth_img = None
         self._image_left = None
+        self._image_right = None
         self._depth_map = None
         self._pose = None
         self._sl_camera_info = None
