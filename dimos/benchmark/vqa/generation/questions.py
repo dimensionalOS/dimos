@@ -39,6 +39,7 @@ def generate_questions(
                 expected_answer="yes" if nearest is not None else "no",
                 answer_type="boolean",
                 object_ids=(nearest.id,) if nearest is not None else (),
+                allowed_answers=("yes", "no"),
             )
         )
         if nearest is None:
@@ -51,6 +52,7 @@ def generate_questions(
                     expected_answer=nearest.horizontal_direction,
                     answer_type="choice",
                     object_ids=(nearest.id,),
+                    allowed_answers=("left", "center", "right"),
                 ),
                 VqaExample(
                     id=f"{frame_id}-{query}-range",
@@ -58,6 +60,7 @@ def generate_questions(
                     expected_answer="yes" if nearest.range_m <= distance_m else "no",
                     answer_type="boolean",
                     object_ids=(nearest.id,),
+                    allowed_answers=("yes", "no"),
                 ),
             ]
         )

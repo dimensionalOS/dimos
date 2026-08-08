@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-import json
+import os
 from pathlib import Path
+from typing import Any, cast
 
-import cv2
 import typer
 
 from dimos.benchmark.vqa.generation.adapters import (
@@ -16,10 +15,24 @@ from dimos.benchmark.vqa.generation.adapters import (
 )
 from dimos.benchmark.vqa.generation.dataset import write_dataset_manifest, write_frame_record
 from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
-from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
+from dimos.benchmark.vqa.generation.oracle import create_openai_oracle
+from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+from dimos.benchmark.vqa.generation.question_agent import (
+    OpenAIFreeformQuestionAuthor,
+    OpenAIQuestionAgent,
+)
 from dimos.benchmark.vqa.generation.recording import load_go2_frame
-from dimos.benchmark.vqa.models import GroundingConfig, QuestionIntent
+from dimos.benchmark.vqa.models import (
+    AcceptedOracleResult,
+    CalibratedFrame,
+    GroundingConfig,
+    GroundTruthResult,
+    QuestionIntent,
+    QuestionProposal,
+    RejectedOracleResult,
+)
 from dimos.constants import STATE_DIR
+from dimos.models.base import default_local_model_device
 from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.openai import OpenAIVlModel
@@ -34,28 +47,42 @@ def single_frame(
     frame_index: int = typer.Option(0, "--frame-index"),
     query: list[str] = typer.Option([], "--query"),
     propose_questions: bool = typer.Option(False, "--propose-questions"),
+    question_mode: str = typer.Option("constrained", "--question-mode"),
     question_model: str = typer.Option("gpt-4o-mini", "--question-model"),
+    oracle_model: str = typer.Option("gpt-4o-mini", "--oracle-model"),
     min_mask_area_px: int = typer.Option(128, "--min-mask-area-px"),
     min_foreground_points: int = typer.Option(3, "--min-foreground-points"),
     output: Path | None = typer.Option(None, "--output"),
 ) -> None:
-    """Generate and evaluate questions for one Go2 recording frame."""
+    """Generate private-grounded questions for one Go2 recording frame."""
     output = output or (
         STATE_DIR / "datasets" / "vqa" / f"{Path(recording).stem}-frame-{frame_index:06d}"
     )
-    if output.exists() or (not query and not propose_questions):
+    if output.exists():
         raise typer.BadParameter("output must not already exist")
+    _validate_question_mode(question_mode)
+    uses_image_author = _uses_image_question_author(question_mode, query, propose_questions)
+    _require_openai_for_question_author(uses_image_author)
+    _require_edgetam_cuda()
+    typer.echo(f"Loading frame {frame_index} from {recording}")
     frame = load_go2_frame(str(resolve_named_path(recording, ".db")), frame_index)
     model = MoondreamVlModel()
+    typer.echo("Loading private MoonDream model")
     model.start()
     question_agent = OpenAIQuestionAgent(OpenAIVlModel(model_name=question_model))
     try:
-        intents = (
-            question_agent.propose(frame.image)
-            if propose_questions
+        if uses_image_author:
+            typer.echo(f"Proposing questions with {question_model}")
+        intents: list[QuestionIntent] | list[QuestionProposal] = (
+            OpenAIFreeformQuestionAuthor(OpenAIVlModel(model_name=question_model)).propose(
+                frame.image
+            )
+            if question_mode == "agentic"
+            else question_agent.propose(frame.image)
+            if uses_image_author
             else [
                 QuestionIntent(
-                    kind=kind,
+                    kind=cast("Any", kind),
                     object_query=item,
                     threshold_m=3.0 if kind == "within_distance" else None,
                 )
@@ -68,6 +95,7 @@ def single_frame(
                 )
             ]
         )
+        typer.echo(f"Grounding {len(intents)} questions for frame {frame_index}")
         ground_truth = VqaGroundTruthGenerator(
             detector := MoondreamObjectDetector(model),
             segmenter := EdgeTamObjectSegmenter(EdgeTAMImageSegmenter()),
@@ -78,55 +106,44 @@ def single_frame(
                 min_foreground_points=min_foreground_points,
             ),
         )
-        results = [ground_truth.answer(frame, intent) for intent in intents]
-        examples = [result.question for result in results if result.status == "answered"]
+        results: list[GroundTruthResult] | list[AcceptedOracleResult | RejectedOracleResult] = (
+            _answer_agentic(
+                ground_truth, frame, cast("list[QuestionProposal]", intents), oracle_model
+            )
+            if question_mode == "agentic"
+            else _answer_intents(
+                ground_truth, frame, cast("list[QuestionIntent]", intents), f"Frame {frame_index}"
+            )
+        )
+        examples = [
+            result
+            for result in results
+            if isinstance(result, AcceptedOracleResult)
+            or (isinstance(result, GroundTruthResult) and result.status == "answered")
+        ]
     finally:
         model.stop()
-    output.mkdir(parents=True)
-    image_path = output / "image.jpg"
-    if not cv2.imwrite(str(image_path), frame.image.data):
-        raise RuntimeError(f"failed to write {image_path}")
-    original_image_path = output / "original_image.jpg"
-    if frame.original_image is not None and not cv2.imwrite(
-        str(original_image_path), frame.original_image.data
-    ):
-        raise RuntimeError(f"failed to write {original_image_path}")
-    overlay_path = output / "grounding_overlay.jpg"
-    ground_truth.write_overlay(frame, str(overlay_path))
-    (output / "frame.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "1.0",
-                "frame_id": frame.id,
-                "recording": recording,
-                "frame_index": frame_index,
-                "image": image_path.name,
-                "original_image": original_image_path.name
-                if frame.original_image is not None
-                else None,
-                "grounding_overlay": overlay_path.name,
-                "question_count": len(intents),
-                "accepted_question_count": len(examples),
-                "rejected_question_count": len(results) - len(examples),
-                "question_source": "image_agent" if propose_questions else "explicit_queries",
-                "question_model": question_model if propose_questions else None,
-                "grounding": {
-                    "min_mask_area_px": min_mask_area_px,
-                    "min_foreground_points": min_foreground_points,
-                },
+    write_frame_record(
+        output,
+        frame,
+        recording,
+        frame_index,
+        cast("list[QuestionIntent | QuestionProposal]", intents),
+        cast("list[GroundTruthResult | AcceptedOracleResult | RejectedOracleResult]", results),
+        ground_truth,
+        {
+            "question_source": "agentic_image_author"
+            if question_mode == "agentic"
+            else "openai_image_agent"
+            if uses_image_author
+            else "explicit_queries",
+            "question_model": question_model if uses_image_author else None,
+            "oracle_model": oracle_model if question_mode == "agentic" else None,
+            "grounding": {
+                "min_mask_area_px": min_mask_area_px,
+                "min_foreground_points": min_foreground_points,
             },
-            indent=2,
-        )
-        + "\n"
-    )
-    (output / "intents.json").write_text(
-        json.dumps([asdict(item) for item in intents], indent=2) + "\n"
-    )
-    (output / "examples.json").write_text(
-        json.dumps([asdict(item) for item in examples], indent=2) + "\n"
-    )
-    (output / "ground_truth.json").write_text(
-        json.dumps([asdict(item) for item in results], indent=2) + "\n"
+        },
     )
     typer.echo(f"Wrote {len(examples)} examples to {output}")
 
@@ -139,40 +156,54 @@ def generate(
     stride: int = typer.Option(1, "--stride"),
     query: list[str] = typer.Option([], "--query"),
     propose_questions: bool = typer.Option(False, "--propose-questions"),
+    question_mode: str = typer.Option("constrained", "--question-mode"),
     question_model: str = typer.Option("gpt-4o-mini", "--question-model"),
+    oracle_model: str = typer.Option("gpt-4o-mini", "--oracle-model"),
     min_mask_area_px: int = typer.Option(128, "--min-mask-area-px"),
     min_foreground_points: int = typer.Option(3, "--min-foreground-points"),
     output: Path | None = typer.Option(None, "--output"),
 ) -> None:
     """Generate a resumable VQA dataset from sampled Go2 recording frames."""
-    if (
-        start_index < 0
-        or stop_index <= start_index
-        or stride < 1
-        or (not query and not propose_questions)
-    ):
-        raise typer.BadParameter(
-            "provide valid frame bounds and either --query or --propose-questions"
-        )
+    if start_index < 0 or stop_index <= start_index or stride < 1:
+        raise typer.BadParameter("provide valid frame bounds")
     output = output or (STATE_DIR / "datasets" / "vqa" / f"{Path(recording).stem}-frames")
+    _validate_question_mode(question_mode)
+    uses_image_author = _uses_image_question_author(question_mode, query, propose_questions)
+    _require_openai_for_question_author(uses_image_author)
     output.mkdir(parents=True, exist_ok=True)
+    _require_edgetam_cuda()
+    frame_indices = range(start_index, stop_index, stride)
+    typer.echo(f"Generating {len(frame_indices)} sampled frames from {recording} into {output}")
     model = MoondreamVlModel()
+    typer.echo("Loading private MoonDream model")
     model.start()
     try:
         detector = MoondreamObjectDetector(model)
         segmenter = EdgeTamObjectSegmenter(EdgeTAMImageSegmenter())
         question_agent = OpenAIQuestionAgent(OpenAIVlModel(model_name=question_model))
-        for frame_index in range(start_index, stop_index, stride):
+        for frame_number, frame_index in enumerate(frame_indices, start=1):
             frame_output = output / f"frame-{frame_index:06d}"
             if (frame_output / "frame.json").is_file():
+                typer.echo(
+                    f"Skipping completed frame {frame_number}/{len(frame_indices)}: {frame_index}"
+                )
                 continue
+            typer.echo(
+                f"Frame {frame_number}/{len(frame_indices)}: loading recording index {frame_index}"
+            )
             frame = load_go2_frame(str(resolve_named_path(recording, ".db")), frame_index)
-            intents = (
-                question_agent.propose(frame.image)
-                if propose_questions
+            if uses_image_author:
+                typer.echo(f"Frame {frame_index}: proposing questions with {question_model}")
+            intents: list[QuestionIntent] | list[QuestionProposal] = (
+                OpenAIFreeformQuestionAuthor(OpenAIVlModel(model_name=question_model)).propose(
+                    frame.image
+                )
+                if question_mode == "agentic"
+                else question_agent.propose(frame.image)
+                if uses_image_author
                 else [
                     QuestionIntent(
-                        kind=kind,
+                        kind=cast("Any", kind),
                         object_query=item,
                         threshold_m=3.0 if kind == "within_distance" else None,
                     )
@@ -185,6 +216,7 @@ def generate(
                     )
                 ]
             )
+            typer.echo(f"Frame {frame_index}: grounding {len(intents)} questions")
             ground_truth = VqaGroundTruthGenerator(
                 detector,
                 segmenter,
@@ -194,20 +226,36 @@ def generate(
                     min_mask_area_px=min_mask_area_px, min_foreground_points=min_foreground_points
                 ),
             )
-            results = [ground_truth.answer(frame, intent) for intent in intents]
+            results: list[GroundTruthResult] | list[AcceptedOracleResult | RejectedOracleResult] = (
+                _answer_agentic(
+                    ground_truth, frame, cast("list[QuestionProposal]", intents), oracle_model
+                )
+                if question_mode == "agentic"
+                else _answer_intents(
+                    ground_truth,
+                    frame,
+                    cast("list[QuestionIntent]", intents),
+                    f"Frame {frame_index}",
+                )
+            )
             write_frame_record(
                 frame_output,
                 frame,
                 recording,
                 frame_index,
-                intents,
-                results,
+                cast("list[QuestionIntent | QuestionProposal]", intents),
+                cast(
+                    "list[GroundTruthResult | AcceptedOracleResult | RejectedOracleResult]", results
+                ),
                 ground_truth,
                 {
-                    "question_source": "openai_image_agent"
-                    if propose_questions
+                    "question_source": "agentic_image_author"
+                    if question_mode == "agentic"
+                    else "openai_image_agent"
+                    if uses_image_author
                     else "explicit_queries",
-                    "question_model": question_model if propose_questions else None,
+                    "question_model": question_model if uses_image_author else None,
+                    "oracle_model": oracle_model if question_mode == "agentic" else None,
                     "grounding": {
                         "min_mask_area_px": min_mask_area_px,
                         "min_foreground_points": min_foreground_points,
@@ -219,3 +267,64 @@ def generate(
         model.stop()
     summary = write_dataset_manifest(output)
     typer.echo(f"Dataset manifest: {summary}")
+
+
+def _answer_intents(
+    ground_truth: VqaGroundTruthGenerator,
+    frame: CalibratedFrame,
+    intents: list[QuestionIntent],
+    label: str,
+) -> list[GroundTruthResult]:
+    results: list[GroundTruthResult] = []
+    for number, intent in enumerate(intents, start=1):
+        typer.echo(
+            f"{label}: grounding question {number}/{len(intents)}: "
+            f"{intent.kind} ({intent.object_query})"
+        )
+        result = ground_truth.answer(frame, intent)
+        results.append(result)
+        typer.echo(f"{label}: question {number}/{len(intents)} {result.status}")
+    return results
+
+
+def _answer_agentic(
+    ground_truth: VqaGroundTruthGenerator,
+    frame: CalibratedFrame,
+    proposals: list[QuestionProposal],
+    oracle_model: str,
+) -> list[AcceptedOracleResult | RejectedOracleResult]:
+    oracle = create_openai_oracle(oracle_model)
+    results: list[AcceptedOracleResult | RejectedOracleResult] = []
+    for number, proposal in enumerate(proposals, start=1):
+        typer.echo(f"Agentic question {number}/{len(proposals)}: {proposal.question}")
+        result = oracle.answer(proposal, LocalOracleToolRegistry(frame, ground_truth))
+        results.append(result)
+        if isinstance(result, AcceptedOracleResult):
+            typer.echo(f"Agentic question {number}/{len(proposals)} accepted")
+        else:
+            typer.echo(f"Agentic question {number}/{len(proposals)} rejected: {result.reason}")
+    return results
+
+
+def _validate_question_mode(question_mode: str) -> None:
+    if question_mode not in ("constrained", "agentic"):
+        raise typer.BadParameter("question mode must be constrained or agentic")
+
+
+def _require_openai_for_question_author(uses_image_author: bool) -> None:
+    if uses_image_author and not os.environ.get("OPENAI_API_KEY"):
+        raise typer.BadParameter("OPENAI_API_KEY must be set for image-authored question modes")
+
+
+def _uses_image_question_author(
+    question_mode: str, query: list[str], propose_questions: bool
+) -> bool:
+    """Choose authored questions unless constrained mode has explicit queries."""
+    return question_mode == "agentic" or propose_questions or not query
+
+
+def _require_edgetam_cuda() -> None:
+    if default_local_model_device() != "cuda":
+        raise typer.BadParameter(
+            "VQA generation requires an installed PyTorch CUDA build that supports this GPU for EdgeTAM"
+        )

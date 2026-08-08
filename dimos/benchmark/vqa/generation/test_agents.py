@@ -221,7 +221,7 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
     assert result.reason == "missing_grounded_side"
 
 
-def test_ground_truth_agent_overlay_includes_detector_prompts_and_question_legend(
+def test_ground_truth_agent_overlay_contains_only_rectified_mask_view(
     tmp_path: Path,
 ) -> None:
     frame, detection = _frame_and_detection()
@@ -238,5 +238,4 @@ def test_ground_truth_agent_overlay_includes_detector_prompts_and_question_legen
 
     rendered = cv2.imread(str(path))
     assert rendered is not None
-    assert rendered.shape[0] >= frame.image.height
-    assert rendered.shape[1] > frame.image.width
+    assert rendered.shape[:2] == frame.image.data.shape[:2]

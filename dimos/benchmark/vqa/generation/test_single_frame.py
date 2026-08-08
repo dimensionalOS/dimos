@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.benchmark.vqa.evaluation.scoring import evaluate_examples
 from dimos.benchmark.vqa.generation.pipeline import generate_ground_truth
 from dimos.benchmark.vqa.models import CalibratedFrame
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -25,15 +24,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
-
-
-class _Answerer:
-    def __init__(self) -> None:
-        self.calls: list[tuple[Image, str]] = []
-
-    def answer(self, image: Image, question: str) -> str:
-        self.calls.append((image, question))
-        return "Yes."
 
 
 class _Detector:
@@ -51,7 +41,7 @@ class _Segmenter:
         return detections
 
 
-def test_single_frame_ground_truth_and_image_only_evaluation() -> None:
+def test_single_frame_ground_truth_generates_multiple_choice_cases() -> None:
     image = Image.from_numpy(np.zeros((6, 6, 3), dtype=np.uint8))
     frame = CalibratedFrame(
         id="frame-1",
@@ -69,10 +59,6 @@ def test_single_frame_ground_truth_and_image_only_evaluation() -> None:
     examples = generate_ground_truth(
         frame, ["chair", "table"], _Detector(image, detection), _Segmenter()
     )
-    answerer = _Answerer()
-    evaluations = evaluate_examples(frame.image, examples, answerer)
 
     assert {example.expected_answer for example in examples} == {"yes", "no", "center"}
-    assert all(image_arg is image for image_arg, _ in answerer.calls)
-    assert evaluations[0].passed
-    assert not evaluations[1].passed
+    assert all(example.expected_answer in example.allowed_answers for example in examples)
