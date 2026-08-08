@@ -36,7 +36,10 @@ OPENARM_LEFT_ARM_JOINTS = [f"left_arm/joint{i}" for i in range(1, OPENARM_DOF + 
 OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
-OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
+# LOCAL EDIT for first-power bring-up: grippers out of the loop entirely
+# (no enable, no calibration sweep). Restore before commit:
+# OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
+OPENARM_JOINTS = [*OPENARM_ARM_JOINTS]
 
 OPENARM_PKG = LfsPath("openarm_description")
 OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v20_left.urdf"
@@ -48,8 +51,10 @@ OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 # point: with gravity compensation active the PD terms only handle transient
 # tracking, and high kd excites gearbox buzz. Gripper slots bypass MIT
 # control, so their gains are 0.
-_ARM_KP = (100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0)
-_ARM_KD = (1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8)
+# LOCAL EDIT for first-power bring-up: soft gains, restore before commit.
+# Validated v1.0 values: kp (100,100,80,80,60,60,60), kd (1.5,1.5,1,1,.8,.8,.8)
+_ARM_KP = (25.0, 25.0, 20.0, 20.0, 10.0, 10.0, 10.0)
+_ARM_KD = (1.0, 1.0, 0.8, 0.8, 0.5, 0.5, 0.5)
 
 
 def validate_side(side: str) -> None:
@@ -80,9 +85,11 @@ def openarm_hardware() -> HardwareComponent:
         adapter_type=adapter_type,
         auto_enable=True,
         adapter_kwargs=adapter_kwargs,
+        # LOCAL EDIT: 14 wide while grippers are out; restore the two
+        # trailing 0.0 gripper entries together with OPENARM_JOINTS.
         wb_config=WholeBodyConfig(
-            kp=(*_ARM_KP, *_ARM_KP, 0.0, 0.0),
-            kd=(*_ARM_KD, *_ARM_KD, 0.0, 0.0),
+            kp=(*_ARM_KP, *_ARM_KP),
+            kd=(*_ARM_KD, *_ARM_KD),
         ),
     )
 

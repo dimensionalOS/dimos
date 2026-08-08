@@ -53,10 +53,11 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
         "left_arm": tuple(f"left_arm/joint{index}" for index in range(1, 8)),
         "right_arm": tuple(f"right_arm/joint{index}" for index in range(1, 8)),
     }
-    gripper_joints = {
-        "left_gripper": "left_arm/gripper",
-        "right_gripper": "right_arm/gripper",
-    }
+    # LOCAL EDIT for first-power bring-up: grippers removed from the
+    # topology so enable never calibrates them. Restore before commit:
+    # gripper_joints = {"left_gripper": "left_arm/gripper",
+    #                   "right_gripper": "right_arm/gripper"}
+    gripper_joints = {}
     # can0/can1 follow USB enumeration order; remap through
     # DamiaoRuntimeConfig.bus_addresses if the rig comes up swapped.
     bus_defaults = {"left": "can1", "right": "can0"}
@@ -85,19 +86,5 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
             )
             .add_arm("left_arm", bus="left", motors=_arm_motors("left"))
             .add_arm("right_arm", bus="right", motors=_arm_motors("right"))
-            .add_gripper(
-                "left_gripper",
-                bus="left",
-                motor=_gripper_motor("left"),
-                opening_direction="decreasing_position",
-                default_current=0.15,
-            )
-            .add_gripper(
-                "right_gripper",
-                bus="right",
-                motor=_gripper_motor("right"),
-                opening_direction="decreasing_position",
-                default_current=0.15,
-            )
             .build()
         )

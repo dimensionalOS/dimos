@@ -298,6 +298,11 @@ manipulation = [
     "roboplan>=0.5.1",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+]
+
 cpu = [
     # CPU inference backends
     "onnxruntime",
