@@ -50,7 +50,6 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-MILLIMETERS_PER_METER = 1000.0
 MILLISECONDS_PER_SECOND = 1000.0
 
 if TYPE_CHECKING:
@@ -423,45 +422,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 infra2_stream.get_intrinsics(), self._infra2_optical_frame
             )
             # P[3] is -fx * baseline; left at 0 a stereo consumer sees infinite depth.
-            baseline = self.between_cam_distance(self.config.serial_number)
-            if baseline is None:
-                logger.warning("RealSense: no stereo baseline, right P[3] stays 0")
-            else:
-                projection = list(self._infra2_camera_info.P)
-                projection[3] = -projection[0] * baseline
-                self._infra2_camera_info.P = projection
-                logger.info(
-                    "RealSense IR baseline %.2f mm (fx %.2f) -> right P[3] = %.3f",
-                    baseline * MILLIMETERS_PER_METER,
-                    projection[0],
-                    projection[3],
-                )
-
-    @staticmethod
-    def between_cam_distance(serial_number: str | None = None) -> float | None:
-        """Metres between the stereo imagers."""
-        try:
-            import pyrealsense2 as rs
-        except ImportError:
-            return None
-
-        for device in rs.context().query_devices():
-            if serial_number and device.get_info(rs.camera_info.serial_number) != serial_number:
-                continue
-            profiles = [
-                profile
-                for sensor in device.query_sensors()
-                for profile in sensor.get_stream_profiles()
-                if profile.stream_type() == rs.stream.infrared
-            ]
-            # index 1 = left imager, index 2 = right
-            left = next((p for p in profiles if p.stream_index() == 1), None)
-            right = next((p for p in profiles if p.stream_index() == 2), None)
-            if left is None or right is None:
-                continue
             # The pair is rectified, so the whole of their offset is along x.
-            return abs(float(right.get_extrinsics_to(left).translation[0]))
-        return None
+            baseline = abs(float(infra2_stream.get_extrinsics_to(infra1_stream).translation[0]))
+            projection = list(self._infra2_camera_info.P)
+            projection[3] = -projection[0] * baseline
+            self._infra2_camera_info.P = projection
 
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
         import pyrealsense2 as rs
