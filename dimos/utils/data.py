@@ -14,17 +14,21 @@
 
 from datetime import datetime
 from functools import cache
+import json
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from filelock import FileLock
+
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -221,9 +225,89 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
 def _decompress_archive(filename: str | Path) -> Path:
     target_dir = get_data_dir()
     filename_path = Path(filename)
-    with tarfile.open(filename_path, "r:gz") as tar:
-        tar.extractall(target_dir)
-    return target_dir / filename_path.name.replace(".tar.gz", "")
+    extracted_name = filename_path.name.replace(".tar.gz", "")
+    extracted_path = target_dir / extracted_name
+
+    # extract the file to a temp location first, then swap if that worked
+    staging_dir = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{extracted_name}.staging-"))
+    try:
+        with tarfile.open(filename_path, "r:gz") as tar:
+            tar.extractall(staging_dir)
+
+        # validate before touching the old extraction, so a mis-packaged
+        # archive can't delete a good copy and then fail to replace it
+        staged_path = staging_dir / extracted_name
+        if not staged_path.exists():
+            raise RuntimeError(
+                f"Archive '{filename_path.name}' has no top-level '{extracted_name}' member"
+            )
+
+        if extracted_path.is_dir():
+            shutil.rmtree(extracted_path)
+        elif extracted_path.exists():
+            extracted_path.unlink()
+        os.replace(staged_path, extracted_path)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+    return extracted_path
+
+
+def _lfs_archive_path(archive_name: str | Path) -> Path:
+    return _get_lfs_dir() / (str(archive_name) + ".tar.gz")
+
+
+@cache
+def _lfs_extraction_state_dir() -> Path:
+    """Per-checkout directory for extraction stamps and locks."""
+    # Keyed by the data dir's own path so worktrees don't collide.
+    checkout_key = str(get_data_dir().resolve()).replace("/", "_").lstrip("_")
+    return STATE_DIR / "lfs-extractions" / checkout_key
+
+
+def _extraction_stamp_path(archive_name: str | Path) -> Path:
+    return _lfs_extraction_state_dir() / f"{archive_name}.json"
+
+
+def _archive_lock_path(archive_name: str | Path) -> Path:
+    return _lfs_extraction_state_dir() / f"{archive_name}.lock"
+
+
+def _archive_lock(archive_name: str | Path) -> FileLock:
+    _lfs_extraction_state_dir().mkdir(parents=True, exist_ok=True)
+    return FileLock(_archive_lock_path(archive_name))
+
+
+def _archive_identity(archive_path: Path) -> dict[str, int]:
+    stat_result = archive_path.stat()
+    return {"st_size": stat_result.st_size, "st_mtime_ns": stat_result.st_mtime_ns}
+
+
+def _extraction_is_current(archive_name: str | Path) -> bool:
+    """Whether the extracted data still matches its archive.
+
+    No archive behind it means a local recording: always current.
+    """
+    archive_path = _lfs_archive_path(archive_name)
+    if not archive_path.exists():
+        return True
+
+    stamp_path = _extraction_stamp_path(archive_name)
+    if not stamp_path.exists():
+        return False
+
+    try:
+        stamp: dict[str, int] = json.loads(stamp_path.read_text())
+        return stamp == _archive_identity(archive_path)
+    except (json.JSONDecodeError, OSError):
+        # if we can't load the stamp, just treat it as stale
+        return False
+
+
+def _write_extraction_stamp(archive_name: str | Path, archive_path: Path) -> None:
+    stamp_path = _extraction_stamp_path(archive_name)
+    stamp_path.parent.mkdir(parents=True, exist_ok=True)
+    stamp_path.write_text(json.dumps(_archive_identity(archive_path)))
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
@@ -234,7 +318,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     repo_root = get_project_root()
 
     # Construct path to test data file
-    file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")
+    file_path = _lfs_archive_path(filename)
 
     # Check if file exists
     if not file_path.exists():
@@ -291,17 +375,25 @@ def get_data(name: str | Path) -> Path:
     data_dir = get_data_dir()
     file_path = data_dir / name
 
-    # already pulled and decompressed, return it directly
-    if file_path.exists():
-        return file_path
-
     # extract archive root (first path component) and nested path
     path_parts = Path(name).parts
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    def is_ready() -> bool:
+        # already extracted and current
+        return file_path.exists() and _extraction_is_current(archive_name)
+
+    if is_ready():
+        return file_path
+
+    with _archive_lock(archive_name):
+        if not is_ready():
+            archive_tar_path = _pull_lfs_archive(archive_name)
+            archive_path = _decompress_archive(archive_tar_path)
+            _write_extraction_stamp(archive_name, archive_tar_path)
+        else:
+            archive_path = data_dir / archive_name
 
     # return full path including nested components
     if nested_path:
