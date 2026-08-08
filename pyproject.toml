@@ -280,11 +280,14 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
+    "can-motor-control>=0.0.5; sys_platform == 'linux'",
+
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
 
     # Visualization (Optional)
+    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
     "xacro",
@@ -403,6 +406,8 @@ project-deps = [
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
+    # The generic Damiao whole-body adapter imports upstream types directly.
+    "can-motor-control>=0.0.5; sys_platform == 'linux'",
 ]
 
 tests = [
@@ -497,7 +502,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, can-motor-control = false, md-babel-py = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

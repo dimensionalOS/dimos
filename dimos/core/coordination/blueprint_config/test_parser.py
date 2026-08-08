@@ -27,6 +27,11 @@ from dimos.core.coordination.blueprint_config.parser import (
 from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Stream, Transport
+from dimos.manipulation.manipulation_module import (
+    ManipulationModule,
+    ManipulationModuleConfig,
+)
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
 
 class NestedConfig(BaseModel):
@@ -406,6 +411,22 @@ def test_discriminated_union_leaf_override_preserves_default_backend() -> None:
     assert parsed.module_kwargs("unionmodule") == {
         "backend_config": {"backend": "second", "level": 4}
     }
+
+
+def test_parse_nested_viser_host_returns_overridden_config() -> None:
+    parsed = BlueprintConfigParser(ManipulationModule.blueprint()).parse(
+        [
+            "--visualization.backend",
+            "viser",
+            "--visualization.host",
+            "0.0.0.0",
+        ],
+        environ={},
+    )
+
+    config = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
+    assert isinstance(config.visualization, ViserVisualizationConfig)
+    assert config.visualization.host == "0.0.0.0"
 
 
 @pytest.mark.parametrize(

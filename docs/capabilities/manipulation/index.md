@@ -21,9 +21,17 @@ Each blueprint launches the full stack — keyboard UI, mock controller, IK solv
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+OpenYAM is exposed as one whole-body device with six angular arm joints and a
+normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
+for fully open; it does not use meters. Hardware activation calibrates both
+mechanical endpoints, so clear the gripper jaws and workspace before startup.
+The gripper has no default startup target and moves only after joint control has
+an explicit target.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
@@ -293,6 +301,15 @@ CLI example:
 ```bash
 uv run dimos run xarm7-planner-coordinator \
   --visualization.backend=viser
+```
+
+Viser binds to `127.0.0.1` by default. To expose it on the network, opt in
+explicitly with the nested host override:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.host=0.0.0.0
 ```
 
 Blueprint example:

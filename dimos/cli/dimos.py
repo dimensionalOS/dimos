@@ -50,6 +50,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.can import app as can_app
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -61,7 +62,6 @@ from dimos.mapping.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.cli.rename import main as _map_rename_main
 from dimos.mapping.cli.replay import main as _map_replay_main
 from dimos.mapping.cli.replay_marker import main as _map_replay_marker_main
-from dimos.robot.manipulators.piper.cli import app as piper_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.cache import cache_usage_locked
 from dimos.utils.logging_config import setup_logger
@@ -173,9 +173,9 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
-main.add_typer(go2tool_app, name="go2tool")
+hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
-main.add_typer(piper_app, name="piper")
+main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
 
