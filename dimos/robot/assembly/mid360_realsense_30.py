@@ -34,7 +34,7 @@ Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
 Frame sources
 -------------
 The RealSense's own frames come from RealSenseCamera, which reads them off the device;
-this file places its tripod screw and everything on the lidar side.
+this file places the lidar side.
 
 Mid-360 geometry (manual): body is 65 x 65 x 60 mm; the point-cloud origin O lies on the
 central vertical axis, ~47 mm above the base. The IMU chip is *not* on that axis. The
@@ -64,11 +64,11 @@ from dimos.protocol.tf.static_tf_publisher import (
 )
 
 CAMERA_NAME = "d455"
-CAMERA_SCREW_FRAME = f"{CAMERA_NAME}_bottom_screw_frame"
+CAMERA_LINK = f"{CAMERA_NAME}_link"
 
 CAMERA_ANGLE_UP = math.radians(10)
 
-# Mid-360 box: pitched down from the camera's screw, then offset back/up in that frame
+# Mid-360 box: pitched down from camera_link, then offset back/up in that frame
 BOX_PITCH_DOWN = math.radians(26) + CAMERA_ANGLE_UP
 BOX_BACK = 0.085
 BOX_UP = 0.037
@@ -79,11 +79,11 @@ LIDAR_ABOVE_BOX_CENTER = 0.017
 # IMU position in point-cloud (lidar) coordinates, from Livox Mid-360 extrinsics.
 IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
-# The rig, hung off the camera's tripod screw. Everything below that screw belongs to
-# RealSenseCamera, which reads it off the device.
+# The rig, hung off camera_link. Everything below it belongs to RealSenseCamera, which
+# reads it off the device.
 FRAMES: list[FrameSpec] = [
-    (CAMERA_SCREW_FRAME, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("box_pitch_frame", CAMERA_SCREW_FRAME, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
+    (CAMERA_LINK, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("box_pitch_frame", CAMERA_LINK, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
     ("box_center", "box_pitch_frame", (-BOX_BACK, 0.0, BOX_UP), (0.0, 0.0, 0.0)),
     ("lidar_frame", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
     ("imu_frame", "lidar_frame", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
