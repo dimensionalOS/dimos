@@ -22,6 +22,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.mapping.voxels.lidar_defaults import (
+    DEFAULT_FINE_VOXEL,
+    DEFAULT_RERANK_DIST,
+    fine_voxel_for_lidar,
+    rerank_dist_for_lidar,
+)
+
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
 
@@ -33,9 +40,27 @@ SCALE_PLAN: list[tuple[float, int]] = [
     (0.8, 1),
 ]
 RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
-FINE_VOXEL = 0.1  # voxel for the final ICP refinement
-RERANK_DIST = FINE_VOXEL * 1.5  # inlier dist for fine-scale candidate scoring
+FINE_VOXEL = DEFAULT_FINE_VOXEL  # voxel for the final ICP refinement
+RERANK_DIST = DEFAULT_RERANK_DIST  # inlier dist for fine-scale candidate scoring
 GRAVITY_TILT_MAX_DEG = 10.0  # reject candidates whose z-axis tilts more than this
+
+
+def relocalize_scales(
+    lidar_config: str | None = None,
+    *,
+    fine_voxel: float | None = None,
+    rerank_dist: float | None = None,
+) -> tuple[float, float]:
+    """Resolve ICP fine voxel and rerank distance for a lidar-config name.
+
+    ``mid360`` uses 0.06 m / 0.12 m. ``default`` (and ``None``) keep the
+    historical ``FINE_VOXEL`` / ``RERANK_DIST``. Explicit overrides win.
+    """
+    resolved_fine = fine_voxel if fine_voxel is not None else fine_voxel_for_lidar(lidar_config)
+    resolved_rerank = (
+        rerank_dist if rerank_dist is not None else rerank_dist_for_lidar(lidar_config)
+    )
+    return resolved_fine, resolved_rerank
 
 
 def _preprocess(
@@ -131,6 +156,10 @@ def _gravity_tilt_deg(T: np.ndarray) -> float:
 def relocalize(
     global_map: o3d.geometry.PointCloud,
     local_map: o3d.geometry.PointCloud,
+    *,
+    lidar_config: str | None = None,
+    fine_voxel: float | None = None,
+    rerank_dist: float | None = None,
 ) -> tuple[np.ndarray, float, float]:
     """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
 
@@ -139,19 +168,26 @@ def relocalize(
     rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
 
+    ``lidar_config='mid360'`` (or GlobalConfig ``--lidar-config mid360``)
+    tightens the ICP fine voxel to 0.06 m and rerank distance to 0.12 m.
+    Defaults stay ``FINE_VOXEL`` / ``RERANK_DIST``.
+
     Returns:
         ``(T, fitness, inlier_rmse)`` from the final full-cloud ICP.
     """
     import open3d as o3d
 
     _reg = o3d.pipelines.registration
+    fine_voxel, rerank_dist = relocalize_scales(
+        lidar_config, fine_voxel=fine_voxel, rerank_dist=rerank_dist
+    )
 
     # Fine downsample once — used for both candidate scoring and the final ICP.
-    src_fine = local_map.voxel_down_sample(FINE_VOXEL)
+    src_fine = local_map.voxel_down_sample(fine_voxel)
     src_fine.estimate_normals(
-        o3d.geometry.KDTreeSearchParamHybrid(radius=FINE_VOXEL * 2, max_nn=30)
+        o3d.geometry.KDTreeSearchParamHybrid(radius=fine_voxel * 2, max_nn=30)
     )
-    tgt_fine = _global_fine(global_map, FINE_VOXEL)
+    tgt_fine = _global_fine(global_map, fine_voxel)
 
     candidates: list[np.ndarray] = []  # 4x4 transforms
     for vs, n_runs in SCALE_PLAN:
@@ -203,7 +239,7 @@ def relocalize(
 
     # Stage 1: rank all candidates by WALL-only fine-scale fitness.
     def fine_fitness(T: np.ndarray) -> float:
-        r = _reg.evaluate_registration(src_walls, tgt_walls, RERANK_DIST, T)
+        r = _reg.evaluate_registration(src_walls, tgt_walls, rerank_dist, T)
         return float(r.fitness)
 
     top_k = sorted(pool, key=fine_fitness, reverse=True)[:10]
@@ -211,13 +247,13 @@ def relocalize(
     # Stage 2: run a moderate-distance ICP on each top-10 on WALL clouds.
     # Wall correspondences drive yaw and xy; the rerank then picks the
     # candidate whose walls actually align (not the one whose floors agree).
-    tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=RERANK_DIST))
+    tukey = _reg.TransformationEstimationPointToPlane(_reg.TukeyLoss(k=rerank_dist))
     polished: list[tuple[float, np.ndarray]] = []
     for T0 in top_k:
         r = _reg.registration_icp(
             src_walls,
             tgt_walls,
-            RERANK_DIST,
+            rerank_dist,
             T0,
             tukey,
             _reg.ICPConvergenceCriteria(max_iteration=70),
@@ -229,7 +265,7 @@ def relocalize(
     final = _reg.registration_icp(
         src_fine,
         tgt_fine,
-        RERANK_DIST,
+        rerank_dist,
         best_T,
         tukey,
         _reg.ICPConvergenceCriteria(max_iteration=50),

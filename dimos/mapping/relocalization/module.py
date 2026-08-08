@@ -22,8 +22,9 @@ from reactivex import Subject, combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
+from dimos.mapping.relocalization.relocalize import relocalize as _relocalize, relocalize_scales
 from dimos.mapping.voxels.grid import VoxelGrid
+from dimos.mapping.voxels.lidar_defaults import LidarConfigName
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -49,6 +50,21 @@ class Config(ModuleConfig):
     publish_loaded_map: bool = False
     fitness_threshold: float = 0.45
     use_carving: bool = True
+    # None → inherit GlobalConfig.lidar_config (``default`` / ``mid360``).
+    lidar_config: LidarConfigName | None = None
+    # None → derive from lidar_config (0.1 / 0.15 default, 0.06 / 0.12 for mid360).
+    fine_voxel: float | None = None
+    rerank_dist: float | None = None
+
+    def resolved_lidar_config(self) -> LidarConfigName:
+        return self.lidar_config if self.lidar_config is not None else self.g.lidar_config
+
+    def resolved_relocalize_scales(self) -> tuple[float, float]:
+        return relocalize_scales(
+            self.resolved_lidar_config(),
+            fine_voxel=self.fine_voxel,
+            rerank_dist=self.rerank_dist,
+        )
 
 
 class RelocalizationModule(Module):
@@ -106,9 +122,12 @@ class RelocalizationModule(Module):
             .subscribe(self._publish_periodic)
         )
 
+        fine_voxel, rerank_dist = self.config.resolved_relocalize_scales()
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
-            f"loaded_map.frame_id={self._premap.frame_id!r}"
+            f"loaded_map.frame_id={self._premap.frame_id!r} "
+            f"fine_voxel={fine_voxel} rerank_dist={rerank_dist} "
+            f"(lidar_config={self.config.resolved_lidar_config()!r})"
         )
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
@@ -146,7 +165,14 @@ class RelocalizationModule(Module):
 
         t0 = time.monotonic()
         try:
-            T, fitness, inlier_rmse = _relocalize(self._premap.pointcloud, msg.pointcloud)
+            fine_voxel, rerank_dist = self.config.resolved_relocalize_scales()
+            T, fitness, inlier_rmse = _relocalize(
+                self._premap.pointcloud,
+                msg.pointcloud,
+                lidar_config=self.config.resolved_lidar_config(),
+                fine_voxel=fine_voxel,
+                rerank_dist=rerank_dist,
+            )
         except Exception:
             logger.exception("relocalize() failed")
             return None

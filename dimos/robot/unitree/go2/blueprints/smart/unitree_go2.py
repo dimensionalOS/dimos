@@ -99,12 +99,13 @@ unitree_go2_relocalization = autoconnect(
     RelocalizationModule.blueprint(),
 ).global_config(n_workers=11)
 
-# Same stack as unitree_go2_relocalization; Mid-360 3 cm voxels via CLI
-# ``--lidar-config mid360`` (default remains 5 cm).
+# Same stack as unitree_go2_relocalization with Mid-360 presets: 3 cm voxels,
+# relocalization FINE_VOXEL=0.06 / RERANK_DIST=0.12. Override at runtime with
+# ``--lidar-config default`` if needed.
 unitree_go2_mid360_relocalization = autoconnect(
     unitree_go2,
     RelocalizationModule.blueprint(),
-).global_config(n_workers=11)
+).global_config(n_workers=11, lidar_config="mid360")
 
 unitree_go2_memory = autoconnect(
     unitree_go2,
