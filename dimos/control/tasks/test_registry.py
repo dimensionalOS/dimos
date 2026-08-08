@@ -156,8 +156,9 @@ def test_seeded_cards_load_into_registry() -> None:
     )
     teleop = control_task_registry.bindings_for("teleop_ik")
     assert teleop.consumes == (
+        StreamBinding("left_cartesian_command", "on_left_cartesian_command", Routing.BY_TASK_NAME),
         StreamBinding(
-            "coordinator_cartesian_command", "on_cartesian_command", Routing.BY_TASK_NAME
+            "right_cartesian_command", "on_right_cartesian_command", Routing.BY_TASK_NAME
         ),
         StreamBinding("teleop_buttons", "on_teleop_buttons", Routing.BROADCAST),
     )

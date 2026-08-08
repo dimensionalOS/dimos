@@ -1722,7 +1722,8 @@ def test_native_selected_planner_composes_disjoint_groups_within_one_robot(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path
+    assert result.path[-1].name == list(selection.joint_names)
+    assert result.path[-1].position == pytest.approx([0.1, 0.1])
 
 
 def test_overlapping_group_selection_rejected_before_planning(

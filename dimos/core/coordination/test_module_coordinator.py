@@ -167,6 +167,10 @@ class Calculator1(Module):
     def stop(self) -> None: ...
 
 
+class Calculator1Sub(Calculator1):
+    """A subclass deployed in place of its base, e.g. to gate real/mock setup."""
+
+
 class Calculator2(Module):
     @rpc
     def compute1(self, a: int, b: int) -> int:
@@ -490,6 +494,31 @@ def test_module_ref_direct() -> None:
     try:
         mod1 = coordinator.get_instance(Mod1)
         assert mod1 is not None
+        assert mod1.calc.compute1(2, 3) == 5
+        assert mod1.calc.compute2(1.5, 2.5) == 4.0
+    finally:
+        coordinator.stop()
+
+
+def test_module_ref_direct_accepts_subclass_provider() -> None:
+    """A consumer typed against a base class must resolve to a deployed subclass.
+
+    Regression test: OpenArm's teleop blueprint deploys `OpenArmTeleopCoordinator`
+    (a `ControlCoordinator` subclass gating real/mock hardware from CAN flags) where
+    `ManipulationModule` expects a plain `ControlCoordinator`. Exact-class-identity
+    matching left that ref unresolved (silently `None`), crashing plan execution.
+    """
+    coordinator = _build_without_rerun(
+        autoconnect(
+            Calculator1Sub.blueprint(),
+            Mod1.blueprint(),
+        )
+    )
+
+    try:
+        mod1 = coordinator.get_instance(Mod1)
+        assert mod1 is not None
+        assert mod1.calc is not None
         assert mod1.calc.compute1(2, 3) == 5
         assert mod1.calc.compute2(1.5, 2.5) == 4.0
     finally:

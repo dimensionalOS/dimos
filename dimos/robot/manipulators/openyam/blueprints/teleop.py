@@ -45,7 +45,7 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
         type="eef_twist",
         joint_names=list(OPENYAM_ARM_JOINTS),
         priority=priority,
-        params={"control_ik": {"robot_model": _openyam_model}},
+        params={"robot_model": _openyam_model},
     )
 
 
@@ -79,7 +79,7 @@ keyboard_teleop_openyam = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openyam_model],
+        robots=[make_openyam_model_config(name="arm")],
         visualization={"backend": "viser"},
     ),
 )

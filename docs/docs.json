@@ -100,9 +100,12 @@
               "capabilities/manipulation/index",
               "capabilities/manipulation/agentic",
               "capabilities/manipulation/adding_a_custom_arm",
+              "capabilities/manipulation/planning_groups",
+              "capabilities/manipulation/pink_ik_tuning",
+              "capabilities/manipulation/a750",
+              "capabilities/manipulation/a1z",
               "capabilities/manipulation/openarm_integration",
-              "capabilities/manipulation/piper_integration",
-              "capabilities/manipulation/a750"
+              "capabilities/manipulation/piper_integration"
             ]
           },
           {
@@ -416,6 +419,18 @@
     {
       "source": "/docs/capabilities/manipulation/adding_a_custom_arm.md",
       "destination": "/capabilities/manipulation/adding_a_custom_arm"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/planning_groups.md",
+      "destination": "/capabilities/manipulation/planning_groups"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/pink_ik_tuning.md",
+      "destination": "/capabilities/manipulation/pink_ik_tuning"
+    },
+    {
+      "source": "/docs/capabilities/manipulation/a1z.md",
+      "destination": "/capabilities/manipulation/a1z"
     },
     {
       "source": "/docs/capabilities/manipulation/openarm_integration.md",

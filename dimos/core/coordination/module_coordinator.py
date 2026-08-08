@@ -263,7 +263,9 @@ class ModuleCoordinator(Resource):
 
     def _instance_keys_of(self, module: type[ModuleBase]) -> list[str]:
         cls = self._resolve_class(module)
-        return [n for n, c in self._instance_classes.items() if self._resolve_class(c) is cls]
+        return [
+            n for n, c in self._instance_classes.items() if issubclass(self._resolve_class(c), cls)
+        ]
 
     def _resolve_instance_key(self, module: type[ModuleBase] | str) -> str:
         """Resolve a module class or instance name to the deployed instance name."""
@@ -942,7 +944,7 @@ def _resolve_single_ref(
     is_class_ref = is_module_type(spec)
 
     def satisfies(cls: type) -> bool:
-        return cls is spec if is_class_ref else spec_structural_compliance(cls, spec)
+        return issubclass(cls, spec) if is_class_ref else spec_structural_compliance(cls, spec)
 
     def module_of(candidate: Any) -> type[ModuleBase]:
         return candidate.module if isinstance(candidate, BlueprintAtom) else candidate

@@ -211,7 +211,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         planned = client.plan_to_joint_targets(
             {
                 group_ids["left_manipulator"]: _offset_target(client, LEFT_SLICE, 0.02),
-                group_ids["right_manipulator"]: _offset_target(client, RIGHT_SLICE, -0.02),
+                group_ids["right_manipulator"]: _offset_target(client, RIGHT_SLICE, 0.02),
             }
         )
         assert planned, client.get_error()
