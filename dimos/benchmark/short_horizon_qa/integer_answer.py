@@ -12,42 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exact-integer validation for short-horizon frozen-memory questions."""
+"""Integer-answer decoding and private oracle loading for frozen-memory questions."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any, Literal
 
-from pydantic import Field
-
-from dimos.benchmark.agent_eval.models import (
-    BaseEvalModel,
-    EvalCase,
-    ExactIntegerValidatorRef,
+from dimos.benchmark.short_horizon_qa.models import (
+    ExactIntegerOracle,
+    FrozenIntegerQaCase,
+    IntegerPrediction,
 )
 
 _ANSWER_LINE = re.compile(r"(?m)^ANSWER:\s*")
 _TERMINAL_INTEGER = re.compile(r"(?:^|\n)ANSWER:\s*(-?\d+)\s*\Z")
 
 
-class ExactIntegerOracle(BaseEvalModel):
-    expected_count: int = Field(ge=0)
-    counting_policy: str = Field(min_length=1)
-    rooms: tuple[dict[str, Any], ...] = ()
-    reviewed_by: tuple[str, ...] = Field(min_length=1)
-
-
-class IntegerPrediction(BaseEvalModel):
-    status: Literal["parsed", "invalid"]
-    integer_answer: int | None = None
-
-
-def load_exact_integer_oracle(case: EvalCase, case_root: Path) -> ExactIntegerOracle:
+def load_exact_integer_oracle(case: FrozenIntegerQaCase, case_root: Path) -> ExactIntegerOracle:
     reference = case.validator
-    if not isinstance(reference, ExactIntegerValidatorRef):
-        raise TypeError("case does not use exact-integer validation")
     root = case_root.resolve()
     path = (root / reference.private_path).resolve()
     if root not in path.parents:

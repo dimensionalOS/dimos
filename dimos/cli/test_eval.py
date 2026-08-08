@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -23,8 +24,19 @@ from click import unstyle
 import pytest
 from typer.testing import CliRunner
 
-from dimos.benchmark.agent_eval.models import CompactEvalResult
-from dimos.benchmark.agent_eval.progress import (
+from dimos.benchmark.evaluation.models import (
+    CodePolicyAgentConfig,
+    EvaluationIdentity,
+    EvaluationReference,
+    EvaluationReport,
+    EvaluationRun,
+    EvaluationRunError,
+    EvaluationRunSpecification,
+    InlineNativeResult,
+    RuntimeIdentity,
+    SummaryItem,
+)
+from dimos.benchmark.evaluation.progress import (
     AssistantTextProgress,
     StatusProgress,
     ToolEndProgress,
@@ -33,46 +45,81 @@ from dimos.cli.dimos import main
 import dimos.cli.eval as eval_cli
 
 
-def _result(*, passed: bool | None = True) -> CompactEvalResult:
-    return CompactEvalResult(
-        case_id="demo-room-count",
-        recording="go2_hongkong_office",
-        progress=1.0,
-        model="gpt-5.6-luna",
-        thinking_level="medium",
-        final_response="ANSWER: 4" if passed is not None else "",
-        prediction_status="parsed" if passed is not None else "not_evaluated",
-        integer_answer=4 if passed is not None else None,
-        passed=passed,
-        validator_revision="v1",
-        tool_call_count=7,
-        duration_seconds=42.75,
-        infra_error="Pi failed" if passed is None else None,
+def _result(status: str = "completed") -> EvaluationRun:
+    now = datetime.now(timezone.utc)
+    completed = status == "completed"
+    return EvaluationRun(
+        run_id="run-1",
+        specification=EvaluationRunSpecification(
+            evaluation=EvaluationReference(name="fixture", config={}),
+            agent=CodePolicyAgentConfig(),
+        ),
+        evaluation=EvaluationIdentity(name="fixture", provider="tests", version="1"),
+        runtime=RuntimeIdentity(
+            driver_version="test",
+            model="gpt-5.6-luna",
+            thinking_level="medium",
+        ),
+        status=status,
+        started_at=now,
+        finished_at=now,
+        duration_seconds=1.0,
+        report=(
+            EvaluationReport(
+                summary=(SummaryItem(key="native_score", label="Native score", value=0.5),),
+                native_result=InlineNativeResult(value={"score": 0.5}),
+            )
+            if completed
+            else None
+        ),
+        error=(
+            None
+            if completed
+            else EvaluationRunError(
+                stage="evaluation",
+                error_type="RuntimeError",
+                message="agent failed",
+            )
+        ),
     )
 
 
-def _case(tmp_path: Path) -> Path:
-    path = tmp_path / "case.json"
+def _spec(tmp_path: Path) -> Path:
+    path = tmp_path / "spec.json"
     path.write_text("{}")
     return path
 
 
-def test_eval_run_uses_api_key_default_and_separates_progress(tmp_path, monkeypatch) -> None:
+def test_eval_run_uses_operational_api_key_and_renders_native_summary(
+    tmp_path,
+    monkeypatch,
+) -> None:
     captured = {}
 
-    def execute(path, *, config, progress, output):
-        captured.update(path=path, config=config, progress=progress, output=output)
-        progress(StatusProgress(channel="eval", message="loading case"))
+    def execute(path, *, api_key_env, progress, output):
+        captured.update(
+            path=path,
+            api_key_env=api_key_env,
+            progress=progress,
+            output=output,
+        )
+        progress(StatusProgress(channel="eval", message="loading specification"))
         return _result()
 
-    monkeypatch.setattr(eval_cli, "execute_single_case", execute)
+    monkeypatch.setattr(eval_cli, "execute_evaluation", execute)
     output = tmp_path / "run"
-    result = CliRunner().invoke(main, ["eval", "run", str(_case(tmp_path)), f"--output={output}"])
+
+    result = CliRunner().invoke(
+        main,
+        ["eval", "run", str(_spec(tmp_path)), f"--output={output}"],
+    )
+
     assert result.exit_code == 0, result.output
-    assert captured["config"].agent.api_key_env == "OPENAI_API_KEY"
+    assert captured["api_key_env"] == "OPENAI_API_KEY"
     assert captured["output"] == output
-    assert "✓ Evaluation passed" in result.stdout
-    assert "[eval] loading case" in result.stderr
+    assert "✓ Evaluation completed" in result.stdout
+    assert "Native score" in result.stdout
+    assert "[eval] loading specification" in result.stderr
 
 
 def test_eval_run_accepts_named_api_key_env_and_json(tmp_path, monkeypatch) -> None:
@@ -82,54 +129,66 @@ def test_eval_run_accepts_named_api_key_env_and_json(tmp_path, monkeypatch) -> N
         captured.update(kwargs)
         return _result()
 
-    monkeypatch.setattr(eval_cli, "execute_single_case", execute)
+    monkeypatch.setattr(eval_cli, "execute_evaluation", execute)
     output = tmp_path / "run"
     result = CliRunner().invoke(
         main,
         [
             "eval",
             "run",
-            str(_case(tmp_path)),
-            "--agent.api-key-env=MY_OPENAI_KEY",
+            str(_spec(tmp_path)),
+            "--api-key-env=MY_OPENAI_KEY",
             f"--output={output}",
             "--json",
         ],
     )
+
     assert result.exit_code == 0, result.output
-    assert captured["config"].agent.api_key_env == "MY_OPENAI_KEY"
-    assert json.loads(result.stdout)["passed"] is True
+    assert captured["api_key_env"] == "MY_OPENAI_KEY"
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "completed"
+    assert payload["report"]["native_result"]["value"] == {"score": 0.5}
 
 
-def test_eval_exit_codes_distinguish_infra_semantic_and_preflight(tmp_path, monkeypatch) -> None:
-    output = tmp_path / "run"
-    monkeypatch.setattr(eval_cli, "execute_single_case", lambda *a, **k: _result(passed=None))
-    infra = CliRunner().invoke(
-        main, ["eval", "run", str(_case(tmp_path)), f"--output={output}", "--quiet"]
+@pytest.mark.parametrize(("status", "exit_code"), [("failed", 1), ("cancelled", 130)])
+def test_eval_exit_codes_for_noncompleted_runs(
+    status,
+    exit_code,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(eval_cli, "execute_evaluation", lambda *a, **k: _result(status))
+
+    result = CliRunner().invoke(
+        main,
+        ["eval", "run", str(_spec(tmp_path)), f"--output={tmp_path / 'run'}", "--quiet"],
     )
-    monkeypatch.setattr(eval_cli, "execute_single_case", lambda *a, **k: _result(passed=False))
-    semantic = CliRunner().invoke(
-        main, ["eval", "run", str(_case(tmp_path)), f"--output={output}", "--quiet"]
-    )
 
+    assert result.exit_code == exit_code
+
+
+def test_eval_preflight_failure_uses_exit_two(tmp_path, monkeypatch) -> None:
     def preflight(*_args, **_kwargs):
-        raise FileNotFoundError("extension build missing")
+        raise FileNotFoundError("evaluation plugin missing")
 
-    monkeypatch.setattr(eval_cli, "execute_single_case", preflight)
-    preflight_result = CliRunner().invoke(
-        main, ["eval", "run", str(_case(tmp_path)), f"--output={output}"]
+    monkeypatch.setattr(eval_cli, "execute_evaluation", preflight)
+    result = CliRunner().invoke(
+        main,
+        ["eval", "run", str(_spec(tmp_path)), f"--output={tmp_path / 'run'}"],
     )
-    assert infra.exit_code == 1
-    assert semantic.exit_code == 0
-    assert preflight_result.exit_code == 2
+
+    assert result.exit_code == 2
 
 
-def test_eval_help_is_typed_and_output_is_required(tmp_path) -> None:
+def test_eval_help_exposes_thin_operational_settings(tmp_path) -> None:
     runner = CliRunner()
     help_result = runner.invoke(main, ["eval", "run", "--help"], color=True)
-    missing_output = runner.invoke(main, ["eval", "run", str(_case(tmp_path))])
+    missing_output = runner.invoke(main, ["eval", "run", str(_spec(tmp_path))])
+
     assert help_result.exit_code == 0
     help_text = unstyle(help_result.stdout)
-    assert "--agent.api-key-env" in help_text
+    assert "--api-key-env" in help_text
+    assert "--agent.model" not in help_text
     assert "--output" in help_text
     assert missing_output.exit_code == 2
 
@@ -137,14 +196,15 @@ def test_eval_help_is_typed_and_output_is_required(tmp_path) -> None:
 def test_lazy_runtime_import_has_actionable_error(monkeypatch) -> None:
     original_import = builtins.__import__
 
-    def fail_single_case(name, *args, **kwargs):
-        if name == "dimos.benchmark.agent_eval.single_case":
+    def fail_runtime(name, *args, **kwargs):
+        if name == "dimos.benchmark.evaluation.runner":
             raise ModuleNotFoundError("No module named 'mcp'")
         return original_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "__import__", fail_single_case)
+    monkeypatch.setattr(builtins, "__import__", fail_runtime)
+
     with pytest.raises(RuntimeError, match="uv sync --extra agents"):
-        eval_cli.execute_single_case(Path("case.json"), config=None)
+        eval_cli.execute_evaluation(Path("spec.json"), output=Path("output"))
 
 
 def test_base_cli_help_imports_without_eval_runtime() -> None:
@@ -167,8 +227,12 @@ def test_base_cli_help_imports_without_eval_runtime() -> None:
         """
     )
     completed = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 

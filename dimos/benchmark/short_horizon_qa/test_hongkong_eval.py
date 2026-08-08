@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from dimos.benchmark.agent_eval.models import EvalCase
-from dimos.benchmark.short_horizon_qa.models import MapperSettings
+from dimos.benchmark.short_horizon_qa.models import FrozenIntegerQaCase, MapperSettings
 from dimos.benchmark.short_horizon_qa.prepare import prepare_bundle
 from dimos.utils.data import get_data
 
@@ -29,7 +28,7 @@ def test_real_hongkong_recording_prepares_direct_demo_case(tmp_path: Path) -> No
     case_path = (
         Path(__file__).parent / "cases" / "demo_go2_hongkong_office-room-count-smoke" / "case.json"
     )
-    case = EvalCase.model_validate_json(case_path.read_bytes())
+    case = FrozenIntegerQaCase.model_validate_json(case_path.read_bytes())
     map_progress: list[tuple[int, int]] = []
     manifest = prepare_bundle(
         get_data("go2_hongkong_office.db"),

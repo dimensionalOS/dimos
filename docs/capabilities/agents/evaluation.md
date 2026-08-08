@@ -1,79 +1,160 @@
 ---
-title: "Frozen recording evaluation"
+title: "Agent evaluations"
 ---
 
-`dimos eval run` asks Pi one integer question about a frozen Memory2 recording.
-The evaluator prepares the runtime map, exposes read-only `memory` through one
-`python_exec` MCP tool, and checks the final `ANSWER: <integer>` line against a
-private oracle. It does not start a robot, simulation, replay blueprint, or live
-DimOS module.
+DimOS runs complete **Evaluations**. An Evaluation owns its inputs, protocol,
+scoring, aggregation, and native result semantics. The shared framework resolves
+the Evaluation, supplies CodePolicy agent sessions, and records an immutable
+Evaluation Run.
+
+```text
+Evaluation Run Specification
+          |
+          v
+       Evaluation ------ dataset / cases / native harness
+          |
+          v
+ CodePolicy Runtime ----- Pi + one persistent python_exec tool
+          |
+          v
+   Evaluation Run ------- status / native result / artifacts
+```
+
+This is deliberately not a universal scorer. The built-in frozen integer QA
+Evaluation uses OpenEvals internally. A third-party benchmark should instead call
+its own harness and return that harness's native result without rescoring it.
 
 ## Setup
 
-From a source checkout, install the lightweight Python runtime and build the Pi
-extension:
+From a source checkout, install the Python runtime and build the Pi extension:
 
 ```bash
 uv sync --extra agents
 npm ci --prefix packages/pi-code-policy-extension
 npm run build --prefix packages/pi-code-policy-extension
-```
-
-The package pins Pi `0.80.10` and requires Node 22.19.0 or newer. Set the API key
-before running a case:
-
-```bash
 export OPENAI_API_KEY=...
 ```
 
-## Run the direct demo case
+The initial runtime profile is `code-policy-v1`: Pi 0.80.10, model
+`gpt-5.6-luna`, medium thinking, and exactly one `python_exec` MCP tool. Pi is the
+profile's driver, not a user-selectable evaluation runtime.
+
+## Run specification and CLI
+
+An Evaluation Run Specification binds an Evaluation configuration to the agent
+configuration:
+
+```json
+{
+  "schema_version": "1.0",
+  "evaluation": {
+    "name": "frozen-integer-qa",
+    "config": {"case": "case.json"}
+  },
+  "agent": {
+    "profile": "code-policy-v1",
+    "model": "gpt-5.6-luna",
+    "thinking_level": "medium"
+  }
+}
+```
+
+Evaluation-owned relative paths are resolved from the specification directory.
+Run the included smoke specification with:
 
 ```bash
 uv run dimos eval run \
-  dimos/benchmark/short_horizon_qa/cases/demo_go2_hongkong_office-room-count-smoke/case.json \
+  dimos/benchmark/short_horizon_qa/cases/demo_go2_hongkong_office-room-count-smoke/run.json \
   --output=/tmp/dimos-eval-smoke
 ```
 
-The demo fixture uses the synthetic sentinel `0`, not a reviewed Hong Kong office
-room count. A semantic failure can therefore mean the agent and runtime worked but
-the response did not match that plumbing sentinel.
-
-The supported options are deliberately small:
+The operational CLI settings stay thin:
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `--agent.backend` | `pi` | Use the pinned Pi backend. |
-| `--agent.model` | `gpt-5.6-luna` | Use the pinned model. |
-| `--agent.thinking-level` | `medium` | Use the pinned thinking level. |
-| `--agent.api-key-env` | `OPENAI_API_KEY` | Select the environment variable containing the API key. |
-| `--output` | required | Publish this run to the exact directory. |
-| `--json` | off | Print the compact result as JSON. |
-| `--quiet` | off | Suppress status messages on stderr. |
+| `--api-key-env` | `OPENAI_API_KEY` | Name of the environment variable containing the API key. |
+| `--output` | required | Atomically publish the run to this directory. |
+| `--json` | off | Print the complete Evaluation Run as JSON. |
+| `--quiet` | off | Suppress live progress on stderr. |
 
-The API key is passed only to the Pi subprocess. It is not placed in arguments,
-results, or the Jupyter kernel environment.
+The API key is passed only to Pi. It is not written to the specification, run
+record, prompt evidence, subprocess arguments, or Python kernel environment.
 
-## Output and exit status
+## Results, artifacts, and exit status
 
-`--output` must name an absent or empty directory. The evaluator builds the run in
-a temporary sibling and atomically publishes it on completion. It never merges
-with or overwrites a nonempty directory.
+`--output` must be absent or empty. DimOS builds the run in a temporary sibling
+directory and publishes it atomically as:
 
-The directory contains only:
+```text
+run.json
+runtime/session-0001/
+  runtime-system.txt
+  evaluation-protocol.txt
+  task-input.txt
+  assembled-user-message.txt
+  prompt-assembly.json
+  pi-transcript.jsonl       # when Pi emits one
+  stderr.log                # when nonempty
+```
 
-- `result.json`;
-- `pi-transcript.jsonl`, when Pi wrote a native transcript;
-- `stderr.log`, only when nonempty diagnostics are available.
+`run.json` contains only universal infrastructure status—`completed`, `failed`,
+or `cancelled`—plus the Evaluation's summary, opaque native result or artifact
+reference, and artifact metadata. A native score of `false` can still be a
+successfully completed run.
 
-Exit code `0` means evaluation completed, whether the semantic score passed or
-failed. Exit code `1` means a caught runtime or agent infrastructure failure; the
-published `result.json` includes `infra_error`. Exit code `2` means preflight
-failed before a run started.
+| Exit | Meaning |
+| --- | --- |
+| `0` | The Evaluation completed, regardless of native semantic score. |
+| `1` | Evaluation or agent infrastructure failed after execution started. |
+| `2` | Specification, discovery, configuration, credential, or output preflight failed. |
+| `130` | The user cancelled the Evaluation. |
+
+## Implement an Evaluation
+
+An Evaluation is the only public semantic extension point:
+
+```python
+class MyEvaluation:
+    name = "my-evaluation"
+    config_model = MyEvaluationConfig
+
+    def run(self, config, context):
+        with context.agent.open_session(environment) as session:
+            outcome = session.run(
+                evaluation_protocol="Return one answer per benchmark rules.",
+                task_input=sample.question,
+            )
+        native_result = my_existing_harness.score(outcome.final_text)
+        return EvaluationReport(
+            summary=(...),
+            native_result=InlineNativeResult(value=native_result),
+        )
+```
+
+Built-ins are registered lazily inside DimOS. External distributions expose an
+Evaluation object through the `dimos.evaluations` entry-point group:
+
+```toml
+[project.entry-points."dimos.evaluations"]
+my-evaluation = "my_package.evaluation:my_evaluation"
+```
+
+An installed external Evaluation is addressed as
+`<canonical-distribution-name>.my-evaluation`. Keep benchmark datasets, sample
+loops, success checks, and aggregation in the Evaluation or native harness. Do
+not translate them into a universal DimOS case or scorer.
+
+## Prompt ownership
+
+The versioned runtime profile owns system instructions, the `python_exec` tool
+surface, Pi flags, and deterministic assembly. Every Evaluation supplies two
+immutable strings: its Evaluation Protocol and its Task Input. Their owners and
+SHA-256 hashes are recorded separately even though Pi receives them together in
+one user message. There are no prompt-template settings.
 
 ## Trust boundary
 
 CodePolicy executes agent-authored Python in a persistent Jupyter kernel. It is
-trusted and **unsandboxed**. The `memory` object is cutoff-limited and its SQLite
-connections are truly read-only, but Python can still access other host files and
-processes. Run only trusted evaluation agents, or place the whole command in an OS
-sandbox or container.
+trusted and **unsandboxed**. Frozen Memory2 SQLite connections are read-only, but
+Python can still access other host files and processes. Run only trusted agents,
+or place the entire evaluation command in an OS sandbox or container.

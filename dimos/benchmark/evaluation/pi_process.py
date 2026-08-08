@@ -25,7 +25,7 @@ import threading
 import time
 from typing import Any
 
-from dimos.benchmark.agent_eval.progress import (
+from dimos.benchmark.evaluation.progress import (
     AssistantTextProgress,
     FinalResponseProgress,
     ProgressSink,
@@ -106,7 +106,7 @@ class PiCliRunner:
             "--session-dir",
             str(session_dir),
             "--name",
-            "dimos-frozen-eval",
+            "dimos-evaluation",
             "--no-builtin-tools",
             "--tools",
             "python_exec",

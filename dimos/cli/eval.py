@@ -12,25 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dependency-light shell for the immutable single-case evaluation CLI."""
+"""Dependency-light shell for the unified Evaluation CLI."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import threading
-from typing import Any, Literal
+from typing import Any
 
 import typer
 
-app = typer.Typer(help="Run immutable agent evaluation cases", no_args_is_help=True)
+app = typer.Typer(help="Run executable evaluations", no_args_is_help=True)
 
 MAX_RENDERED_TOOL_RESULT_CHARS = 2_000
 
 
-def execute_single_case(*args: Any, **kwargs: Any) -> Any:
+def execute_evaluation(*args: Any, **kwargs: Any) -> Any:
     """Import and dispatch the evaluation runtime only when ``eval run`` executes."""
     try:
-        from dimos.benchmark.agent_eval.single_case import execute_single_case as execute
+        from dimos.benchmark.evaluation.runner import execute_evaluation as execute
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "Evaluation dependencies are missing; run `uv sync --extra agents`"
@@ -41,35 +41,19 @@ def execute_single_case(*args: Any, **kwargs: Any) -> Any:
 
 @app.command("run")
 def run(
-    case: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    agent_backend: Literal["pi"] = typer.Option("pi", "--agent.backend"),
-    agent_model: Literal["gpt-5.6-luna"] = typer.Option("gpt-5.6-luna", "--agent.model"),
-    thinking_level: Literal["medium"] = typer.Option("medium", "--agent.thinking-level"),
-    api_key_env: str = typer.Option("OPENAI_API_KEY", "--agent.api-key-env"),
+    specification: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    api_key_env: str = typer.Option("OPENAI_API_KEY", "--api-key-env"),
     output: Path = typer.Option(..., "--output"),
     json_output: bool = typer.Option(False, "--json", help="Print compact JSON"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress live evaluation progress"),
 ) -> None:
-    """Run one static evaluation case synchronously."""
-    from dimos.benchmark.agent_eval.models import (
-        EvalRunConfig,
-        PiAgentConfig,
-    )
-
-    config = EvalRunConfig(
-        agent=PiAgentConfig(
-            backend=agent_backend,
-            model=agent_model,
-            thinking_level=thinking_level,
-            api_key_env=api_key_env,
-        )
-    )
+    """Run one Evaluation Run Specification synchronously."""
     renderer = None if quiet else ProgressRenderer()
     try:
-        result = execute_single_case(
-            case,
-            config=config,
+        result = execute_evaluation(
+            specification,
             output=output,
+            api_key_env=api_key_env,
             progress=renderer,
         )
     except Exception as exc:
@@ -80,31 +64,36 @@ def run(
     if renderer is not None:
         renderer.finish()
     typer.echo(result.model_dump_json() if json_output else format_result(result, output))
-    if result.attempt_status == "failed":
+    if result.status == "cancelled":
+        raise typer.Exit(130)
+    if result.status == "failed":
         raise typer.Exit(1)
 
 
 def format_result(result: Any, output: Path | None = None) -> str:
-    """Render the compact typed result without exposing private oracle material."""
-    if result.attempt_status == "failed":
-        heading = "! Evaluation not evaluated"
-    elif result.task_result == "passed":
-        heading = "✓ Evaluation passed"
-    else:
-        heading = "✗ Evaluation failed"
-    source = f"{result.recording} @ {result.progress * 100:g}%"
-    answer = str(result.integer_answer) if result.integer_answer is not None else "—"
-    rows = (
-        ("Case", result.case_id),
-        ("Source", source),
-        ("Answer", answer),
-        ("Result", result.task_result),
-        ("Agent", f"Pi · {result.model} · {result.thinking_level}"),
-        ("Tool calls", str(result.tool_call_count)),
-        ("Duration", f"{result.duration_seconds:.1f}s"),
-        ("Output", str((output / "result.json") if output is not None else "result.json")),
-    )
-    body = "\n".join(f"  {label:<10} {value}" for label, value in rows)
+    """Render infrastructure status plus Evaluation-supplied summary rows."""
+    heading = {
+        "completed": "✓ Evaluation completed",
+        "failed": "! Evaluation failed",
+        "cancelled": "! Evaluation cancelled",
+    }[result.status]
+    rows = [
+        ("Evaluation", result.evaluation.name),
+        (
+            "Agent",
+            f"Pi · {result.runtime.model} · {result.runtime.thinking_level}",
+        ),
+    ]
+    if result.report is not None:
+        rows.extend(
+            (item.label, "—" if item.value is None else str(item.value))
+            for item in result.report.summary
+        )
+    if result.error is not None:
+        rows.append(("Error", f"{result.error.error_type}: {result.error.message}"))
+    rows.append(("Output", str((output / "run.json") if output is not None else "run.json")))
+    width = max(len(label) for label, _ in rows)
+    body = "\n".join(f"  {label:<{width}}  {value}" for label, value in rows)
     return f"{heading}\n\n{body}"
 
 

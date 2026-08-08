@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "evaluation": {
+    "name": "frozen-integer-qa",
+    "config": {
+      "case": "case.json"
+    }
+  },
+  "agent": {
+    "profile": "code-policy-v1",
+    "model": "gpt-5.6-luna",
+    "thinking_level": "medium"
+  }
+}

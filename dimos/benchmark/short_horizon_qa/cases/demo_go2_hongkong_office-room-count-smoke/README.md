@@ -10,5 +10,6 @@ failed task score as an agent or mapping regression.
 The authoritative case remains incomplete until a human-authored room inventory,
 counting policy, and independent review establish the expected count.
 
-Use this case to exercise the direct stock-Pi CLI path. Any observed answer is
-experimental until the oracle is replaced with a reviewed room inventory.
+Use `run.json` to exercise the direct stock-Pi CLI path; it references the
+Evaluation-owned `case.json`. Any observed answer is experimental until the
+oracle is replaced with a reviewed room inventory.

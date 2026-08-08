@@ -33,9 +33,8 @@ from dimos.agents.code_policy_core import (
 
 PYTHON_EXEC_DESCRIPTION = """Execute Python in a persistent trusted, unsandboxed session.
 
-The frozen evaluation session exposes read-only `memory`. Imports, functions, and
-variables persist between calls. Use this tool to inspect the recording and compute
-the answer; do not guess from the prompt.
+Imports, functions, and variables persist between calls. The runtime environment
+determines which globals are available.
 """
 
 _NOISY_MCP_TRANSPORT_LOGGERS = (

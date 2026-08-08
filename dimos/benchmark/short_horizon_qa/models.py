@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from pathlib import PurePosixPath
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -70,3 +71,66 @@ class FrozenMemoryManifest(FrozenQaModel):
     derived_path: Literal["derived.db"] = "derived.db"
     mapper: MapperSettings
     cutoffs: tuple[CutoffRecord, ...] = Field(min_length=1)
+
+
+NonEmpty = Annotated[str, Field(min_length=1)]
+
+
+class FrozenRecordingSource(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["frozen_memory"] = "frozen_memory"
+    recording: NonEmpty
+    progress: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def finite_progress(self) -> FrozenRecordingSource:
+        if not math.isfinite(self.progress):
+            raise ValueError("recording progress must be finite")
+        return self
+
+
+class IntegerQuestionTask(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["integer_question"] = "integer_question"
+    prompt: NonEmpty
+    answer_marker: Literal["ANSWER:"] = "ANSWER:"
+
+
+class ExactIntegerValidatorRef(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    kind: Literal["exact_integer"] = "exact_integer"
+    revision: NonEmpty
+    private_path: NonEmpty
+
+    @model_validator(mode="after")
+    def safe_relative_path(self) -> ExactIntegerValidatorRef:
+        path = PurePosixPath(self.private_path)
+        if path.is_absolute() or not path.parts or ".." in path.parts:
+            raise ValueError("validator private_path must be a safe relative path")
+        return self
+
+
+class FrozenIntegerQaCase(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    case_id: NonEmpty
+    source: FrozenRecordingSource
+    task: IntegerQuestionTask
+    validator: ExactIntegerValidatorRef
+
+
+class FrozenIntegerQaConfig(FrozenQaModel):
+    case: NonEmpty
+
+
+class ExactIntegerOracle(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    expected_count: int = Field(ge=0)
+    counting_policy: str = Field(min_length=1)
+    rooms: tuple[dict[str, Any], ...] = ()
+    reviewed_by: tuple[str, ...] = Field(min_length=1)
+
+
+class IntegerPrediction(FrozenQaModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: Literal["parsed", "invalid"]
+    integer_answer: int | None = None

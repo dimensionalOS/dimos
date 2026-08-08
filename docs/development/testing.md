@@ -89,7 +89,7 @@ uv run --extra agents pytest \
   dimos/memory2/store/test_frozen.py \
   dimos/agents/test_code_policy_core.py \
   dimos/agents/test_code_policy_server.py \
-  dimos/benchmark/agent_eval \
+  dimos/benchmark/evaluation \
   dimos/benchmark/short_horizon_qa \
   dimos/cli/test_eval.py
 ```

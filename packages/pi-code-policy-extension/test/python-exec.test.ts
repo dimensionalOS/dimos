@@ -20,7 +20,14 @@ test("registers one tool that calls MCP directly", async () => {
   } as ExtensionAPI;
   const client = {
     async listTools() {
-      return { tools: [{ name: "python_exec" }] };
+      return {
+        tools: [
+          {
+            name: "python_exec",
+            description: "Canonical CodePolicy description",
+          },
+        ],
+      };
     },
     async callTool(params: { name: string; arguments: Record<string, unknown> }) {
       assert.deepEqual(params, {
@@ -36,6 +43,7 @@ test("registers one tool that calls MCP directly", async () => {
 
   await installPythonExec(pi, "http://127.0.0.1:1/mcp", async () => client);
   assert.equal(tool?.name, "python_exec");
+  assert.equal(tool?.description, "Canonical CodePolicy description");
   const result = await tool!.execute("call-1", { code: "1 + 1", timeout_s: 3 }, undefined, undefined, {} as never);
   assert.deepEqual(result.content, [{ type: "text", text: "2" }]);
   await shutdown!();

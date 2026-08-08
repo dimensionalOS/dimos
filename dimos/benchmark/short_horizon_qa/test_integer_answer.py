@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.benchmark.short_horizon_qa.eval import parse_integer_prediction
+from dimos.benchmark.short_horizon_qa.integer_answer import parse_integer_prediction
 
 
 @pytest.mark.parametrize(

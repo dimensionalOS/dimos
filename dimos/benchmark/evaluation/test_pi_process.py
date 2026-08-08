@@ -20,7 +20,7 @@ import threading
 
 import pytest
 
-from dimos.benchmark.agent_eval.pi_process import PiCliRunner, PiRunError, parse_pi_events
+from dimos.benchmark.evaluation.pi_process import PiCliRunner, PiRunError, parse_pi_events
 
 
 def test_parse_stock_pi_events_uses_final_message_and_counts_tools() -> None:
@@ -80,7 +80,7 @@ def test_stock_cli_streams_assistant_tools_and_stderr_while_running(mocker, tmp_
         )
     )
     process.stderr = StringIO("provider secret connected\n")
-    mocker.patch("dimos.benchmark.agent_eval.pi_process.subprocess.Popen", return_value=process)
+    mocker.patch("dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process)
     progress = []
     assistant_seen = threading.Event()
 
@@ -152,7 +152,7 @@ def test_stock_cli_receives_only_api_key_and_evaluator_binding(mocker, tmp_path:
     process.stderr = StringIO()
     process.wait.return_value = 0
     popen = mocker.patch(
-        "dimos.benchmark.agent_eval.pi_process.subprocess.Popen", return_value=process
+        "dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process
     )
     runner = PiCliRunner(
         cli=cli,
@@ -191,7 +191,7 @@ def test_stock_cli_timeout_terminates_the_child(mocker, tmp_path: Path) -> None:
         subprocess.TimeoutExpired("pi", 0.01),
         0,
     ]
-    mocker.patch("dimos.benchmark.agent_eval.pi_process.subprocess.Popen", return_value=process)
+    mocker.patch("dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process)
     runner = PiCliRunner(
         cli=cli,
         extension=extension,

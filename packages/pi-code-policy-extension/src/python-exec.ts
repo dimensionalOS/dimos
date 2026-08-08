@@ -10,7 +10,7 @@ const TOOL_NAME = "python_exec";
 const DEFAULT_TIMEOUT_SECONDS = 110;
 
 interface McpClient {
-  listTools(): Promise<{ tools: Array<{ name: string }> }>;
+  listTools(): Promise<{ tools: Array<{ name: string; description?: string }> }>;
   callTool(
     params: { name: string; arguments: Record<string, unknown> },
     options?: { timeout?: number },
@@ -47,7 +47,8 @@ export async function installPythonExec(
     name: TOOL_NAME,
     label: "Execute Python",
     description:
-      "Execute Python in a persistent trusted, unsandboxed session with read-only memory.",
+      inventory.tools[0].description ??
+      "Execute Python in a persistent trusted, unsandboxed session.",
     parameters: Type.Object(
       {
         code: Type.String({ minLength: 1 }),

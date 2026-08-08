@@ -234,6 +234,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.2,<0.3",
 
     # Audio
     "openai",
@@ -416,6 +417,7 @@ project-deps = [
     "jupyter-client>=8.8.0",
     "mcp==2.0.0",
     "uvicorn>=0.34.0",
+    "openevals>=0.2,<0.3",
 ]
 
 tests = [
