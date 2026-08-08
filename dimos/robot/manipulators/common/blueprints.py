@@ -22,8 +22,11 @@ from typing import Any, TypedDict
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,
@@ -31,6 +34,24 @@ from dimos.robot.manipulators.common.topics import (
     EEF_TWIST_TASK_NAME,
     trajectory_task_name,
 )
+
+
+class _CartesianCommandCoordinator(ControlCoordinator):
+    """Single-arm deployment I/O the cartesian_ik / teleop_ik cards name-match."""
+
+    cartesian_command: In[PoseStamped]
+
+
+class _EEFTwistCommandCoordinator(ControlCoordinator):
+    """Single-arm deployment I/O the eef_twist card name-matches."""
+
+    ee_twist_command: In[TwistStamped]
+
+
+class _TeleopCommandCoordinator(_CartesianCommandCoordinator):
+    """Dual-input arm (VR teleop_ik preempting browser eef_twist)."""
+
+    ee_twist_command: In[TwistStamped]
 
 
 class PinkControlIKOverrides(TypedDict, total=False):
@@ -174,6 +195,7 @@ def teleop_ik_task(
     max_dt: float = 0.05,
     control_ik: PinkControlIKOverrides | None = None,
     params: GripperTaskOverrides | None = None,
+    stream_bind: dict[str, str] | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
@@ -193,6 +215,7 @@ def teleop_ik_task(
         joint_names=hardware.joints,
         priority=priority,
         params=task_params,
+        stream_bind=stream_bind or {},
     )
 
 
