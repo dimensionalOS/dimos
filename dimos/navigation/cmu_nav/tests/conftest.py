@@ -14,10 +14,8 @@
 
 """Shared infrastructure for cmu_nav cross-wall planning E2E tests.
 
-The full stack drives the robot via /clicked_point (PointStamped) goals and
-we verify reach by polling odometry — a different goal-mechanism than the
-shared `follow_points` fixture in dimos/e2e_tests/conftest.py (which uses
-/goal_request + /goal_reached). That's why these tests don't reuse it.
+The full stack drives the robot through ``/clicked_point`` goals and verifies
+reach by polling odometry. This local harness is specific to that goal path.
 """
 
 from __future__ import annotations

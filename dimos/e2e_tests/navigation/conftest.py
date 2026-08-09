@@ -24,6 +24,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.navigation.probe import StreamProbe
 from dimos.e2e_tests.navigation.runtime import (
+    NavigationCapability,
     NavigationProvider,
     NavigationRun,
     resolve_navigation_provider,
@@ -105,8 +106,17 @@ def semantic_navigation_run(
     tmp_path: Path,
 ) -> Iterator[tuple[NavigationRun, SemanticNavigationScenario]]:
     del navigation_transport_runtime
-    if navigation_provider.name != "pimsim":
-        pytest.skip("semantic spatial-memory acceptance is maintained for PimSim")
+    capability = NavigationCapability.SEMANTIC_SPATIAL_MEMORY
+    if not navigation_provider.supports(capability):
+        pytest.skip(
+            f"{navigation_provider.name} does not provide the maintained "
+            f"{capability.value} acceptance workflow"
+        )
+    semantic_global_args = navigation_provider.semantic_global_args
+    if semantic_global_args is None:
+        raise RuntimeError(
+            f"{navigation_provider.name} advertises {capability.value} without scene arguments"
+        )
     if not isinstance(request.param, SemanticNavigationScenario):
         raise TypeError("semantic_navigation_run requires a SemanticNavigationScenario")
     scenario = request.param
@@ -115,7 +125,7 @@ def semantic_navigation_run(
         navigation_provider,
         start_blueprint,
         connect_dimos_modules,
-        global_args=navigation_provider.apartment_global_args,
+        global_args=semantic_global_args,
         model_fixture=model_fixture,
         disabled_modules=("security-module",),
         required_modules=("McpClient", "SpatialMemory"),

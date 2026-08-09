@@ -105,6 +105,66 @@ existing task, add one `EvaluationCase` and one pytest parameter to the existing
 public action body. The `lift-object-second-reset` row is the maintained
 example; it required no PimSim generator, runtime, provider, or robot change.
 
+### Navigation acceptance
+
+Navigation acceptance uses normal DimOS blueprints, public commands and typed
+streams. `DIMOS_E2E_SIMULATOR` selects the scene provider. The transport must
+match the provider.
+
+| Workflow | DimSim with LCM | PimSim with Zenoh |
+|----------|-----------------|-------------------|
+| Walk forward | maintained | maintained |
+| Dynamic replanning | maintained | maintained |
+| Semantic spatial memory | not maintained | maintained |
+
+The semantic workflow preserves the behavior of the former DimSim test, but
+PimSim is its required simulator. It builds spatial memory from ordinary RGB
+and TF, sends natural-language requests through the DimOS agent, waits for
+public navigation completion, and uses private scene semantics only to score
+the final position.
+
+Stop another local DimOS run before starting either command. Run the complete
+PimSim navigation gate with:
+
+```bash
+uv run dimos stop
+DIMOS_TRANSPORT=zenoh DIMOS_E2E_SIMULATOR=pimsim \
+uv run pytest -o addopts='' -m self_hosted_large -q -s --timeout=600 \
+  dimos/e2e_tests/navigation/test_walk_forward.py \
+  dimos/e2e_tests/navigation/test_dynamic_replanning.py \
+  dimos/e2e_tests/navigation/test_semantic_navigation.py
+```
+
+Run the two shared workflows on DimSim with:
+
+```bash
+uv run dimos stop
+DIMOS_TRANSPORT=lcm DIMOS_E2E_SIMULATOR=dimsim \
+uv run pytest -o addopts='' -m self_hosted_large -q -s --timeout=600 \
+  dimos/e2e_tests/navigation/test_walk_forward.py \
+  dimos/e2e_tests/navigation/test_dynamic_replanning.py
+```
+
+To debug one semantic target, select its parameter ID:
+
+```bash
+DIMOS_TRANSPORT=zenoh DIMOS_E2E_SIMULATOR=pimsim \
+uv run pytest -o addopts='' -m self_hosted_large -q -s --timeout=600 \
+  'dimos/e2e_tests/navigation/test_semantic_navigation.py::test_semantic_navigation[bed]'
+```
+
+The provider capability matrix is in
+[`navigation/runtime.py`](/dimos/e2e_tests/navigation/runtime.py). An
+unsupported workflow skips before blueprint startup with an explicit reason.
+Fast provider, probe and scene-control contract tests do not start a simulator:
+
+```bash
+uv run pytest -o addopts='' -q \
+  dimos/e2e_tests/navigation/test_runtime.py \
+  dimos/e2e_tests/navigation/test_probe.py \
+  dimos/simulation/test_scene_controls.py
+```
+
 ## Testing on a fresh Ubuntu install
 
 CI tests dimos with pre-built images and cached deps, so it can't catch gaps

@@ -14,7 +14,10 @@
 
 import pytest
 
-from dimos.e2e_tests.navigation.runtime import resolve_navigation_provider
+from dimos.e2e_tests.navigation.runtime import (
+    NavigationCapability,
+    resolve_navigation_provider,
+)
 
 
 def test_navigation_provider_defaults_to_dimsim() -> None:
@@ -32,6 +35,21 @@ def test_pimsim_provider_maps_to_mujoco_and_zenoh() -> None:
     assert provider.simulator == "mujoco"
     assert provider.transport == "zenoh"
     assert "--simulation-provider" in provider.global_args
+
+
+def test_navigation_provider_capability_matrix_is_explicit() -> None:
+    dimsim = resolve_navigation_provider({"DIMOS_E2E_SIMULATOR": "dimsim"})
+    pimsim = resolve_navigation_provider({"DIMOS_E2E_SIMULATOR": "pimsim"})
+
+    assert dimsim.capabilities == frozenset(
+        {
+            NavigationCapability.WALK_FORWARD,
+            NavigationCapability.DYNAMIC_REPLANNING,
+        }
+    )
+    assert not dimsim.supports(NavigationCapability.SEMANTIC_SPATIAL_MEMORY)
+    assert pimsim.capabilities == frozenset(NavigationCapability)
+    assert pimsim.semantic_global_args is not None
 
 
 def test_navigation_provider_rejects_unknown_name() -> None:

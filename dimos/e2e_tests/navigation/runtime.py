@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 import os
 from types import MappingProxyType
 from typing import Any
@@ -30,6 +31,14 @@ from dimos.porcelain.dimos import Dimos
 from dimos.simulation.scene_controls import NavigationSceneControl
 
 
+class NavigationCapability(StrEnum):
+    """Maintained navigation acceptance workflows for one provider."""
+
+    WALK_FORWARD = "walk-forward"
+    DYNAMIC_REPLANNING = "dynamic-replanning"
+    SEMANTIC_SPATIAL_MEMORY = "semantic-spatial-memory"
+
+
 @dataclass(frozen=True)
 class NavigationProvider:
     """Process configuration for one navigation scene provider."""
@@ -38,7 +47,12 @@ class NavigationProvider:
     simulator: str
     transport: TransportBackend
     global_args: tuple[str, ...]
-    apartment_global_args: tuple[str, ...]
+    capabilities: frozenset[NavigationCapability]
+    semantic_global_args: tuple[str, ...] | None = None
+
+    def supports(self, capability: NavigationCapability) -> bool:
+        """Return whether this provider has a maintained acceptance path."""
+        return capability in self.capabilities
 
 
 PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
@@ -48,13 +62,11 @@ PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
             simulator="dimsim",
             transport="lcm",
             global_args=("--transport", "lcm", "--viewer", "none", "--dimsim-scene", "empty"),
-            apartment_global_args=(
-                "--transport",
-                "lcm",
-                "--viewer",
-                "none",
-                "--dimsim-scene",
-                "apartment",
+            capabilities=frozenset(
+                {
+                    NavigationCapability.WALK_FORWARD,
+                    NavigationCapability.DYNAMIC_REPLANNING,
+                }
             ),
         ),
         "pimsim": NavigationProvider(
@@ -71,7 +83,8 @@ PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
                 "--scene-package",
                 "none",
             ),
-            apartment_global_args=(
+            capabilities=frozenset(NavigationCapability),
+            semantic_global_args=(
                 "--transport",
                 "zenoh",
                 "--viewer",
@@ -120,6 +133,7 @@ class NavigationRun:
 
 __all__ = [
     "PROVIDERS",
+    "NavigationCapability",
     "NavigationProvider",
     "NavigationRun",
     "resolve_navigation_provider",
