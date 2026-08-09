@@ -100,6 +100,22 @@ def test_every_registered_task_still_has_the_row_count_it_is_registered_with(tas
     assert len(load_task_rows(task, resolve_space_data()).rows) == task.expected_rows
 
 
+@pytest.mark.parametrize("task", SPACE_TEXT_TASKS, ids=lambda task: task.name)
+def test_every_stimulus_is_asked_once_per_answer_slot_in_consecutive_rows(task) -> None:
+    """Sampling reads a block of consecutive rows as one stimulus; this is that premise.
+
+    A release that kept the row count but interleaved the variants differently
+    would leave every check downstream of here passing while a subset silently
+    graded some stimuli on a subset of their answer placements.
+    """
+    rows = load_task_rows(task, resolve_space_data()).rows
+    slots = list(range(1, task.group_size + 1))
+
+    for start in range(0, len(rows), task.group_size):
+        group = rows[start : start + task.group_size]
+        assert sorted(row["answer"] for row in group) == slots
+
+
 def test_a_real_subset_becomes_cases_that_ask_the_release_questions_verbatim() -> None:
     from dimos.benchmark.space_qa.adapter import SubsetSpec
 

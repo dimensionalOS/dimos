@@ -87,7 +87,7 @@ failure reason. A run only succeeds if the two agree question by question.
 | `space_revision` | The pinned SPACE commit that scored the run. |
 | `data_sha256` | Digest of the archive the release was unpacked from, **as its provenance record claims**. `null` means no readable record sits beside the release. |
 | `qas_sha256` | Digest of the task's `qas.json` **this run actually read**, computed over the bytes while reading them. |
-| `dimos_revision` | The commit the run executed on, or `null` outside a git checkout. |
+| `dimos_revision` | The commit the run executed on, or `null` when it did not run from a dimos checkout. Uncommitted changes to that checkout are invisible here — unlike the SPACE checkout, which a run refuses outright when its tree is dirty. |
 | `rows` | One entry per question: its index in the subset, its row ordinal upstream, and the SHA-256 of the question text. |
 
 Each row's `question_sha256` is checked again when the records are read back, so
@@ -107,7 +107,13 @@ SPACE asks each stimulus four times with the correct answer in a different slot.
 A subset that split a group would grade that stimulus on only some of its
 variants and inherit the placement bias, so groups are drawn whole: `--groups 8`
 is 8 stimuli and 32 questions. `--seed` fixes which groups are drawn, so the same
-task, seed and group count select the same upstream rows anywhere.
+task, seed and group count select the same upstream rows anywhere — which is what
+makes two runs comparable, and why the flag has no default.
+
+Give `--groups` a task's own stimulus count to run all of it; the seed then only
+orders what was drawn and cannot move the score. Below that, a run reports one
+draw. A different seed asks about different stimuli, and how far the score moves
+between seeds is not something a single run measures.
 
 ## What the score compares to
 

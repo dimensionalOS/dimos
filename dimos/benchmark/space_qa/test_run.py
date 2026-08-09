@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 
 from dimos.benchmark.agent_eval.models import EvalCase, EvalRunConfig
-from dimos.benchmark.space_qa import run as run_module
+from dimos.benchmark.space_qa import manifest as manifest_module, run as run_module
 from dimos.benchmark.space_qa.adapter import BenchmarkItem, ItemScore, SubsetSpec
 from dimos.benchmark.space_qa.data import PROVENANCE_NAME
 from dimos.benchmark.space_qa.manifest import (
@@ -434,8 +434,52 @@ def test_a_release_whose_record_says_nothing_readable_is_reported_as_unverified(
     assert run_module._recorded_release_digest(release) is None
 
 
-def test_ledger_is_published_whole_or_not_at_all(tmp_path) -> None:
-    """It is written with a rename, so a reader never finds a run that stops halfway."""
+def test_the_manifest_names_the_revision_of_the_source_tree_it_ran_from(monkeypatch) -> None:
+    repository = Path(manifest_module.__file__).resolve().parents[3]
+
+    def answer(*_args: Any, **_kwargs: Any) -> Any:
+        return subprocess.CompletedProcess([], 0, f"{repository}\nfeedfacecafe\n", "")
+
+    monkeypatch.setattr(manifest_module.subprocess, "run", answer)
+
+    assert manifest_module.dimos_revision() == "feedfacecafe"
+
+
+def test_the_manifest_names_no_revision_when_git_answers_for_another_repository(
+    tmp_path, monkeypatch
+) -> None:
+    """Installed outside a checkout, git reports whichever repository happens to be above."""
+
+    def answer(*_args: Any, **_kwargs: Any) -> Any:
+        return subprocess.CompletedProcess([], 0, f"{tmp_path}\nfeedfacecafe\n", "")
+
+    monkeypatch.setattr(manifest_module.subprocess, "run", answer)
+
+    assert manifest_module.dimos_revision() is None
+
+
+def test_the_output_directory_is_claimed_before_anything_is_fetched(tmp_path, monkeypatch) -> None:
+    """An --output nothing can create must not surface on the far side of the download."""
+    monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.SPACE_EXTRA_MODULES", ())
+    built = (tmp_path / "cli.js", tmp_path / "python-exec.js")
+    for artifact in built:
+        artifact.write_text("", encoding="utf-8")
+    monkeypatch.setattr("dimos.benchmark.space_qa.run._pi_artifacts", lambda: built)
+
+    def stop_at_the_fetch(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("reached the fetch")
+
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.ensure_space_source", stop_at_the_fetch)
+    run_dir = tmp_path / "run" / "nested"
+
+    with pytest.raises(RuntimeError, match="reached the fetch"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=run_dir)
+
+    assert run_dir.is_dir()
+
+
+def test_a_published_ledger_holds_every_record_and_leaves_nothing_beside_it(tmp_path) -> None:
     records = [{"pred": 1, "ordinal": 4}, {"pred": None, "ordinal": 5}]
 
     path = run_module._write_records(tmp_path, records)
@@ -443,6 +487,22 @@ def test_ledger_is_published_whole_or_not_at_all(tmp_path) -> None:
     assert path == tmp_path / RECORDS_NAME
     assert [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] == records
     assert [entry.name for entry in tmp_path.iterdir()] == [RECORDS_NAME]
+
+
+def test_a_ledger_that_could_not_be_published_leaves_nothing_at_its_name(
+    tmp_path, monkeypatch
+) -> None:
+    """The rename is what makes it all or nothing: half a ledger never gets the name."""
+
+    def refuse(_source: Any, _destination: Any) -> None:
+        raise OSError("[Errno 28] No space left on device")
+
+    monkeypatch.setattr(run_module.os, "replace", refuse)
+
+    with pytest.raises(OSError, match="No space left"):
+        run_module._write_records(tmp_path, [{"pred": 1, "ordinal": 4}])
+
+    assert not (tmp_path / RECORDS_NAME).exists()
 
 
 def test_the_manifest_records_the_digest_of_the_question_file_the_run_read(tmp_path) -> None:

@@ -8,6 +8,11 @@ The evaluator prepares the runtime map, exposes read-only `memory` through one
 private oracle. It does not start a robot, simulation, replay blueprint, or live
 DimOS module.
 
+A case can also declare no environment and no local oracle. The kernel then starts
+empty, the prompt reaches the agent verbatim, and an external suite scores the
+answer; [SPACE benchmark evaluation](/docs/capabilities/agents/space-benchmark.md)
+runs every one of its questions that way.
+
 ## Setup
 
 From a source checkout, install the lightweight Python runtime and build the Pi
@@ -65,15 +70,18 @@ The directory contains only:
 - `pi-transcript.jsonl`, when Pi wrote a native transcript;
 - `stderr.log`, only when nonempty diagnostics are available.
 
-Exit code `0` means evaluation completed, whether the semantic score passed or
-failed. Exit code `1` means a caught runtime or agent infrastructure failure; the
+Exit code `0` means evaluation completed. That covers a semantic pass, a semantic
+failure, and a case with no local oracle, which is published with
+`prediction_status: "not_evaluated"` and `passed: null` for an external scorer to
+grade. Exit code `1` means a caught runtime or agent infrastructure failure; the
 published `result.json` includes `infra_error`. Exit code `2` means preflight
 failed before a run started.
 
 ## Trust boundary
 
 CodePolicy executes agent-authored Python in a persistent Jupyter kernel. It is
-trusted and **unsandboxed**. The `memory` object is cutoff-limited and its SQLite
-connections are truly read-only, but Python can still access other host files and
-processes. Run only trusted evaluation agents, or place the whole command in an OS
+trusted and **unsandboxed**. Where a case carries a frozen recording, the `memory`
+object is cutoff-limited and its SQLite connections are truly read-only; a case
+with no environment has no `memory` object at all. Either way Python can still
+access other host files and processes. Run only trusted evaluation agents, or place the whole command in an OS
 sandbox or container.

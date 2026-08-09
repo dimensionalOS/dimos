@@ -102,6 +102,11 @@ def run_space_task(
     run_dir = (output or _default_run_dir(task.name)).expanduser().resolve()
     _validate_run_dir(run_dir)
     _preflight(task, groups=groups)
+    # Claim the directory here rather than beside the first write: an --output
+    # nothing can create is otherwise found an hour later, on the far side of a
+    # 3.6 GB download. An empty directory is what _validate_run_dir accepts, so
+    # a later failure leaves the retry a directory it still takes.
+    run_dir.mkdir(parents=True, exist_ok=True)
     # libobjc reads this flag when it loads, which happened at interpreter
     # start, so setting it here cannot change this process or its forked
     # workers. It is for the processes those workers exec (the Pi CLI): they
@@ -114,7 +119,6 @@ def run_space_task(
     adapter = SpaceQAAdapter.from_data_root(task, data_root)
     items = adapter.iter_items(SubsetSpec(seed=seed, groups=groups))
 
-    run_dir.mkdir(parents=True, exist_ok=True)
     manifest = _prepare_run(
         run_dir,
         adapter,

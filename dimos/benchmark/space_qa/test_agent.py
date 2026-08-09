@@ -75,7 +75,19 @@ class _StubQAAgent:
         found = re.findall(r"({.*?})", text, re.DOTALL)
         if not found:
             return None
-        return json.loads(found[-1]).get("answer")
+        try:
+            answer = json.loads(found[-1]).get("answer")
+        except ValueError:
+            # The upstream regex stops at the first `}`, so a nested object
+            # leaves it holding a fragment; upstream reads that as no answer.
+            return None
+        # Upstream hands back whatever `int()` accepts as an int, so a quoted
+        # digit and a JSON boolean both arrive as integers. Without the same
+        # coercion this stub would certify answers a real run never produces.
+        try:
+            return int(answer)
+        except (TypeError, ValueError):
+            return answer
 
 
 def _install_space_stub() -> None:
@@ -258,7 +270,6 @@ def test_config_registers_under_the_name_the_run_asks_space_for(agent_module) ->
     [
         ('{"answer": "north-east"}', "north-east"),
         ('{"answer": [3, 4]}', [3, 4]),
-        ('{"answer": true}', True),
     ],
 )
 def test_non_integer_answers_are_recorded_raw_but_not_as_parsed(
@@ -281,6 +292,33 @@ def test_non_integer_answers_are_recorded_raw_but_not_as_parsed(
     record = _record(save_dir)
     assert record["pred"] == pred
     assert record["space_parse_status"] == "invalid"
+
+
+@pytest.mark.parametrize(
+    ("final_text", "pred"),
+    [('{"answer": "3"}', 3), ('{"answer": true}', 1), ('{"answer": 2.0}', 2)],
+)
+def test_answers_the_upstream_parser_coerces_are_recorded_as_the_integer_it_returned(
+    agent_module, tmp_path, monkeypatch, final_text: str, pred: int
+) -> None:
+    """Upstream returns anything `int()` accepts as an int, and SPACE scores that int."""
+    run_dir = tmp_path / "run"
+    save_dir = tmp_path / "space" / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda case_path, **_kwargs: _result(
+            json.loads(case_path.read_bytes())["case_id"], final_text
+        ),
+    )
+
+    prediction = _ready_agent(agent_module, save_dir).get_prediction(question, 3)
+
+    assert prediction == pred
+    record = _record(save_dir)
+    assert record["pred"] == pred
+    assert record["space_parse_status"] == "parsed"
 
 
 def test_record_publish_is_all_or_nothing(agent_module, tmp_path, monkeypatch, capsys) -> None:

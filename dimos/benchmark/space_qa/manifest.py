@@ -150,16 +150,27 @@ def run_dir_from_env() -> Path:
 
 
 def dimos_revision() -> str | None:
-    """The commit a score was produced on, or None outside a checkout."""
+    """The commit a score was produced on, or None outside a checkout.
+
+    ``git`` answers from the nearest repository at or above the directory it is
+    pointed at, so an installed copy sitting under an unrelated checkout would
+    otherwise report that checkout's HEAD. The toplevel it names has to be this
+    source tree, or the manifest says nothing rather than something wrong.
+    """
     repository = Path(__file__).resolve().parents[3]
     try:
         completed = subprocess.run(
-            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            ["git", "-C", str(repository), "rev-parse", "--show-toplevel", "HEAD"],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
-    return completed.stdout.strip() or None if completed.returncode == 0 else None
+    if completed.returncode != 0:
+        return None
+    answered = completed.stdout.split()
+    if len(answered) != 2 or Path(answered[0]).resolve() != repository:
+        return None
+    return answered[1] or None
