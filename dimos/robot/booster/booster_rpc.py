@@ -15,7 +15,7 @@
 """Robot-agnostic transport for Booster robots (gRPC control, WebSocket camera).
 
 Owns the vendor SDK, in the role `unitree_webrtc.py` has for Unitree. Exposes a
-non-blocking velocity sink, a camera stream, and stand/sit mode changes for the
+non-blocking velocity sink, a camera stream, and stand and lie-down mode changes for the
 K1 and T1 connection Modules. Owns no event loop and no threads: `run_sender()`
 and `run_camera()` are coroutines the connection Module spawns on its loop.
 """
@@ -254,7 +254,7 @@ class BoosterRPCConnection:
             logger.warning("Booster get_mode failed: %s", e)
             return None
 
-    def sit(self) -> bool:
+    def liedown(self) -> bool:
         try:
             with self._lock:
                 self._conn.call(RpcApiId.ROBOT_LIE_DOWN)

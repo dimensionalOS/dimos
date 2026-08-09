@@ -15,7 +15,7 @@
 """Booster K1 humanoid connection module (built on the booster-rpc SDK).
 
 Scope: the K1 over booster-rpc exposes a camera (JPEG over WebSocket) and base
-velocity control (+ stand/sit mode changes). It has no world-frame odometry or
+velocity control (+ stand and lie-down mode changes). It has no world-frame odometry or
 lidar, so this connection implements only the `Camera` spec: no `odom`/`lidar`/
 `pointcloud` ports, and therefore no mapping/navigation tier.
 
@@ -37,7 +37,6 @@ import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -84,8 +83,7 @@ class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-def make_connection(ip: str, cfg: GlobalConfig) -> BoosterRPCConnection:
-    # cfg reserved for future sim/replay backends.
+def make_connection(ip: str) -> BoosterRPCConnection:
     return BoosterRPCConnection(ip)
 
 
@@ -123,7 +121,7 @@ class K1Connection(Module, Camera):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._connection = make_connection(self.config.ip, self.config.g)
+        self._connection = make_connection(self.config.ip)
 
     @rpc
     def start(self) -> None:
@@ -178,9 +176,9 @@ class K1Connection(Module, Camera):
         return self._connection.standup()
 
     @rpc
-    def sit(self) -> bool:
+    def liedown(self) -> bool:
         """Make the robot lie down."""
-        return self._connection.sit()
+        return self._connection.liedown()
 
     @skill
     def walk(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
@@ -236,9 +234,9 @@ class K1Connection(Module, Camera):
         return "The stand sequence failed. Check the robot state."
 
     @skill
-    def liedown(self) -> str:
+    def lie_down(self) -> str:
         """Command the robot to lie down."""
-        if self.sit():
+        if self.liedown():
             return "Lie-down command accepted. The robot lowers itself, completion is not reported."
         return "The lie-down command failed."
 

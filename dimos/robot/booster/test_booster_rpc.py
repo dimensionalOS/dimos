@@ -212,9 +212,9 @@ class TestStandup:
         conn._conn.change_mode.side_effect = RuntimeError("OPERATION_FAIL")
         assert conn.standup() is False
 
-    def test_sit_returns_false_on_vendor_failure(self, conn):
+    def test_liedown_returns_false_on_vendor_failure(self, conn):
         conn._conn.call.side_effect = RuntimeError("OPERATION_FAIL")
-        assert conn.sit() is False
+        assert conn.liedown() is False
 
 
 class TestWalkEnvelope:
