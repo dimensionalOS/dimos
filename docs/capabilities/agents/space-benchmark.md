@@ -6,9 +6,9 @@ title: "SPACE benchmark evaluation"
 DimOS agent-evaluation path. SPACE stays in charge: its own `evaluate_qas` loop
 draws the prompt, parses the reply and keeps the answer key, and the only call
 replaced is the one that would reach a chat completion — that runs one
-agent-evaluation case instead. SPACE is not vendored and not a wheel. It is cloned once
-at the pinned revision `564e43932adc84543800dd56b99cee37efaeabd8` and imported
-unmodified.
+agent-evaluation case instead. SPACE is not vendored and not a wheel; it is
+cloned once at the pinned revision `564e43932adc84543800dd56b99cee37efaeabd8`
+and imported unmodified.
 
 ## Setup
 
@@ -34,37 +34,28 @@ uv run dimos eval space \
 ```
 
 The first run fetches two things into `~/.cache/dimos/space-benchmark/`, outside
-the repository, and reuses them afterwards:
+the repository, and reuses them afterwards: the SPACE checkout at the pinned
+revision, and Apple's 3.6 GB data release, hashed as it downloads and refused if
+the digest is not the pinned one. Every later run re-checks the cached release
+against the provenance record written when it was unpacked; a cache whose record
+is missing, unreadable, or names a different digest is refused rather than
+silently used.
 
-- the SPACE checkout, at the pinned revision;
-- Apple's 3.6 GB data release, hashed as it downloads and refused if the digest
-  is not the pinned one.
-
-On every later run the cached release is checked against the provenance record
-written when it was unpacked; a cache whose record is missing, unreadable, or
-names a different digest is refused rather than silently used. That check reads
-the record, not the 3.6 GB beside it — what a run actually read is attested one
-layer down, by `qas_sha256` in the manifest below, which is taken off the bytes
-of the question file as the run opens it.
-
-The text tasks that can be named by `--task` are registered in
+The text tasks `--task` can name are registered in
 [`space_qa/tasks.py`](/dimos/benchmark/space_qa/tasks.py); `--groups` cannot
-exceed the stimulus count recorded there for the task.
+exceed the stimulus count recorded there. `--output` defaults to a timestamped
+directory under the same cache and must name an absent or empty directory: a run
+is read back by path, so the command refuses a used directory rather than
+merging into it.
 
-`--output` defaults to a timestamped directory under the same cache, so a run
-that is not told otherwise writes outside the repository; with `--output` it
-writes wherever that points. Whichever directory it names must not exist yet or
-be empty: a run is read back by path, so anything already sitting on one of those
-paths would be read as this run's, and the command refuses the directory rather
-than merging into it.
-
-A question whose agent never starts — an unbuilt extension, a missing key — is
+A missing API key, a missing dependency of the `space` extra, or an unbuilt Pi
+extension is refused by preflight before anything is fetched. A question that
+fails after its agent starts — a crashed agent process, a turn timeout — is
 recorded with an `infra_error` and reaches SPACE as an empty reply, which SPACE
-scores as a miss. So a `0.0%` whose questions all carry one, counted on the
-summary's `Infra fails` line, is a failed install rather than a result. That line
-counts only questions that never reached an answer: a failure after the reply was
-read — an unwritable transcript, a full disk — is recorded beside the answer the
-run had already paid for, and the question is still scored on that answer.
+scores as a miss; the summary's `Infra fails` line counts those questions, so
+the accuracy is only readable next to it. A failure after the reply was read —
+an unwritable transcript, a full disk — is recorded beside the answer the run
+had already paid for, and the question is still scored on that answer.
 
 ## What a run leaves behind
 
@@ -83,10 +74,9 @@ space/dimos_qa/<timestamp>/
 ```
 
 `results.json` is the score: `mean_metrics.accuracy` is the number the run
-reports, and nothing on this side recomputes it. `cases.jsonl` is the ledger that
-gets a reader from that number back to a question, a transcript and a failure
-reason. A run only succeeds if the two agree question by question — a difference
-in how many questions were scored, or in any single prediction, fails it.
+reports, and nothing on this side recomputes it. `cases.jsonl` is the ledger
+that gets a reader from that number back to a question, a transcript and a
+failure reason. A run only succeeds if the two agree question by question.
 
 `manifest.json` records what the score is a score of:
 
@@ -95,21 +85,21 @@ in how many questions were scored, or in any single prediction, fails it.
 | `benchmark`, `task` | The adapter, and the SPACE task the rows were drawn from. |
 | `seed`, `groups` | The sampling arguments, enough to redraw the same subset. |
 | `space_revision` | The pinned SPACE commit that scored the run. |
-| `data_sha256` | Digest of the archive the release was unpacked from, **as its provenance record claims** — a record repeated, not bytes re-read. `null` means no readable record sits beside the release, so nothing on this side has checked it. |
-| `qas_sha256` | Digest of the task's `qas.json` **this run actually read**, computed over the bytes while reading them. A release edited after it was unpacked keeps its `data_sha256` and changes this one. |
+| `data_sha256` | Digest of the archive the release was unpacked from, **as its provenance record claims**. `null` means no readable record sits beside the release. |
+| `qas_sha256` | Digest of the task's `qas.json` **this run actually read**, computed over the bytes while reading them. |
 | `dimos_revision` | The commit the run executed on, or `null` outside a git checkout. |
 | `rows` | One entry per question: its index in the subset, its row ordinal upstream, and the SHA-256 of the question text. |
 
-Those digests are checked again when the records are read back, so a question
-answered as something other than what the manifest selected fails the run
-instead of being scored.
+Each row's `question_sha256` is checked again when the records are read back, so
+a question answered as something other than what the manifest selected fails the
+run instead of being scored.
 
 ## Reusing local copies
 
 | Variable | Effect |
 | --- | --- |
-| `DIMOS_SPACE_SOURCE` | Score against an existing SPACE checkout instead of the cached clone. Nothing is fetched, but the checkout is still checked: one at another commit is refused, and so is one at the pin whose working tree has been modified or carries untracked files, because it is the code that runs rather than the commit it is named after that grades the replies. |
-| `DIMOS_SPACE_DATA` | Read an already-extracted release root. Nothing is downloaded and nothing is refused; `data_sha256` reports whatever provenance record the root carries, and is `null` when it carries none — the digest follows the record, not the path the release came in by. This is also the explicit way to keep using a cache the check above refused. |
+| `DIMOS_SPACE_SOURCE` | Score against an existing SPACE checkout instead of the cached clone. It must sit at the pin with a clean working tree: it is the code that runs, not the commit it is named after, that grades the replies. |
+| `DIMOS_SPACE_DATA` | Read an already-extracted release root. Nothing is downloaded and nothing is refused; `data_sha256` reports whatever provenance record the root carries, `null` when it carries none. This is also the explicit way to keep using a cache the check above refused. |
 
 ## Sampling
 
@@ -130,16 +120,12 @@ in the paper.
 ## Licensing
 
 SPACE's code is under the Apple Sample Code License and its data release under
-CC BY-NC-ND 4.0. Two consequences are visible in this integration:
-
-- Nothing from the release is redistributed here. No question, answer or
-  transcript is committed, and every fixture beside the integration is generated.
-  A run directory holds the drawn questions verbatim: by default it lands in the
-  cache outside the repository, and `--output` writes wherever it points, which
-  makes that argument a licensing decision rather than a path preference.
-- The release carries a NonCommercial term. What that permits inside this
-  organisation is not settled here; check before using a run's output for
-  anything beyond research.
+CC BY-NC-ND 4.0. Nothing from the release is redistributed here: no question,
+answer or transcript is committed, and every fixture beside the integration is
+generated. A run directory holds the drawn questions verbatim, so where
+`--output` points is a licensing decision rather than a path preference. The
+release also carries a NonCommercial term; check before using a run's output for
+anything beyond research.
 
 ## Platform notes
 
