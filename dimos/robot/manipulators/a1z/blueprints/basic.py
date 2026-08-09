@@ -24,42 +24,45 @@ from dimos.robot.manipulators.a1z.config import (
     A1Z_G1Z_SIM_MODEL_PATH,
     a1z_hardware,
     make_a1z_model_config,
-    make_a1z_sim_hardware,
     make_a1z_sim_robot_config,
 )
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.simulation.providers import (
     SimulationBinding,
+    SimulationFeature,
     SimulationRequest,
-    load_simulation_provider,
+    resolve_robot,
 )
 from dimos.visualization.vis_module import vis_module
 
 
-def _resolve_a1z_simulation() -> SimulationBinding | None:
-    if not global_config.simulation_provider:
-        return None
-    provider = load_simulation_provider(global_config.simulation_provider)
-    return provider.build(
-        SimulationRequest(
+def _resolve_a1z_robot() -> SimulationBinding:
+    return resolve_robot(
+        real_hardware=(a1z_hardware("arm"),),
+        simulation=SimulationRequest(
             robot_model="galaxea_a1z",
             model_path=A1Z_G1Z_SIM_MODEL_PATH,
             scene_package=global_config.scene_package,
-        )
+            features=frozenset(
+                (
+                    SimulationFeature.EPISODE_CONTROL,
+                    SimulationFeature.MANIPULATION_SCENE,
+                )
+            ),
+        ),
     )
 
 
-_simulation = _resolve_a1z_simulation()
+_simulation = _resolve_a1z_robot()
 _a1z_simulation_modules: tuple[Blueprint, ...]
-if _simulation is None:
-    _a1z_planner_hw = a1z_hardware("arm")
+if not global_config.simulation_provider:
+    _a1z_planner_hw = _simulation.hardware[0]
     _a1z_planner_model = make_a1z_model_config(name="arm")
-    _a1z_simulation_modules = ()
+    _a1z_simulation_modules = (_simulation.backend,)
 else:
-    _a1z_planner_hw = make_a1z_sim_hardware(
-        _simulation.adapter_address,
-        adapter_type=_simulation.adapter_type,
-    )
+    if len(_simulation.hardware) != 1:
+        raise ValueError("a1z-planner-coordinator requires one arm hardware component")
+    _a1z_planner_hw = _simulation.hardware[0]
     _a1z_planner_model = make_a1z_sim_robot_config(_simulation.robot_base_pose)
     _a1z_simulation_modules = (
         _simulation.backend,

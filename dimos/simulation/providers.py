@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 import importlib.metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -26,27 +28,43 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 ENTRY_POINT_GROUP = "dimos.simulation.providers"
 
 
+class SimulationFeature(StrEnum):
+    """Optional simulator services requested by an ordinary blueprint."""
+
+    EPISODE_CONTROL = "episode_control"
+    MANIPULATION_SCENE = "manipulation_scene"
+    SENSORS = "sensors"
+
+
 @dataclass(frozen=True)
 class SimulationRequest:
     robot_model: str
     model_path: str | Path | None = None
     mesh_dir: str | Path | None = None
     scene_package: str | Path | None = None
+    features: frozenset[SimulationFeature] = frozenset()
+
+    def __post_init__(self) -> None:
+        features = frozenset(SimulationFeature(feature) for feature in self.features)
+        object.__setattr__(self, "features", features)
 
 
 @dataclass(frozen=True)
 class SimulationBinding:
     backend: Blueprint
-    adapter_type: str
-    adapter_address: str | Path
+    hardware: tuple[HardwareComponent, ...] = ()
     rerun_config: dict[str, Any] = field(default_factory=dict)
     robot_base_pose: PoseStamped = field(default_factory=PoseStamped)
-    hardware: tuple[HardwareComponent, ...] = ()
+    # Temporary compatibility for G1 and Go2. New provider paths use hardware.
+    adapter_type: str | None = None
+    adapter_address: str | Path | None = None
 
     def __post_init__(self) -> None:
         hardware_ids = tuple(component.hardware_id for component in self.hardware)
         if len(hardware_ids) != len(set(hardware_ids)):
             raise ValueError("simulation hardware IDs must be unique")
+        if (self.adapter_type is None) != (self.adapter_address is None):
+            raise ValueError("legacy adapter type and address must be supplied together")
 
 
 @runtime_checkable
@@ -71,3 +89,39 @@ def load_simulation_provider(name: str) -> SimulationProvider:
             f"Simulation provider {name!r} must implement SimulationProvider, got {provider!r}"
         )
     return provider
+
+
+def resolve_robot(
+    *,
+    real_hardware: Sequence[HardwareComponent],
+    simulation: SimulationRequest,
+    default_backend: Blueprint | None = None,
+) -> SimulationBinding:
+    """Select ordinary hardware or a configured external simulation provider."""
+    from dimos.core.global_config import global_config
+
+    provider_name = global_config.simulation_provider
+    if not provider_name:
+        return SimulationBinding(
+            backend=default_backend or Blueprint(()),
+            hardware=tuple(real_hardware),
+        )
+
+    binding = load_simulation_provider(provider_name).build(simulation)
+    if not binding.hardware:
+        raise ValueError(
+            f"simulation provider {provider_name!r} returned no hardware components "
+            f"for {simulation.robot_model!r}"
+        )
+    return binding
+
+
+__all__ = [
+    "ENTRY_POINT_GROUP",
+    "SimulationBinding",
+    "SimulationFeature",
+    "SimulationProvider",
+    "SimulationRequest",
+    "load_simulation_provider",
+    "resolve_robot",
+]

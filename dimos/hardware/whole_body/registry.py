@@ -27,8 +27,8 @@ Adapter packages declare factories in ``_registry.py`` manifests
 Usage:
     from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-    adapter = whole_body_adapter_registry.create("sim_mujoco_g1")
-    print(whole_body_adapter_registry.available())  # ["sim_mujoco_g1", ...]
+    adapter = whole_body_adapter_registry.create("sim_mujoco", dof=29, address="/run/g1")
+    print(whole_body_adapter_registry.available())  # ["sim_mujoco", ...]
 """
 
 from __future__ import annotations

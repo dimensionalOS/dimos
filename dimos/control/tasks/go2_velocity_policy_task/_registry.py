@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "sim_mujoco": ("dimos.simulation.adapters.whole_body.shared_memory:SimMujocoWholeBodyAdapter"),
+TASK_FACTORIES = {
+    "go2_velocity_policy": (
+        "dimos.control.tasks.go2_velocity_policy_task.go2_velocity_policy_task:create_task"
+    ),
+}
+
+TASK_CONSUMES = {
+    "go2_velocity_policy": {"twist_command": ("on_twist_command", "broadcast")},
+}
+
+TASK_EXPOSES = {
+    "go2_velocity_policy": ["reset_runtime_state"],
 }

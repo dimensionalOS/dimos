@@ -64,7 +64,7 @@ EXPECTED_NAMES = {
         "transport_ros",
         "unitree_go2",
     },
-    "whole_body": {"sim_mujoco_g1", "transport_lcm", "transport_ros"},
+    "whole_body": {"sim_mujoco", "transport_lcm", "transport_ros"},
 }
 
 FAMILIES = [
@@ -126,7 +126,7 @@ def test_every_sim_whole_body_module_is_declared() -> None:
     pkg = importlib.import_module("dimos.simulation.adapters.whole_body")
     manifest = importlib.import_module("dimos.simulation.adapters.whole_body._registry")
     names = set(manifest.ADAPTER_FACTORIES)
-    assert "sim_mujoco_g1" in names
+    assert "sim_mujoco" in names
     assert names <= set(whole_body_adapter_registry.available())
     declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
     for root in pkg.__path__:

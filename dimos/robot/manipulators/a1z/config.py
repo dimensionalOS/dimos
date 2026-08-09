@@ -152,26 +152,6 @@ def make_a1z_model_config(
     )
 
 
-def make_a1z_sim_hardware(
-    address: str | Path,
-    *,
-    adapter_type: str = "sim_mujoco",
-) -> HardwareComponent:
-    """Configure the A1Z shared-memory boundary supplied by a simulator provider."""
-    return HardwareComponent(
-        hardware_id="arm",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints("arm", A1Z_DOF),
-        adapter_type=adapter_type,
-        address=address,
-        auto_enable=True,
-        gripper_joints=["arm/gripper"],
-        gripper_open_position=A1Z_SIM_GRIPPER_OPEN,
-        gripper_closed_position=0.0,
-        adapter_kwargs={"initial_positions": A1Z_SIM_HOME},
-    )
-
-
 def make_a1z_sim_robot_config(robot_base_pose: PoseStamped) -> RobotModelConfig:
     """Configure A1Z planning in the same world frame as its simulator binding."""
     return make_a1z_model_config(

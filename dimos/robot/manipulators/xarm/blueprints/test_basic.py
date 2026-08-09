@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.robot.manipulators.piper.blueprints import basic
-from dimos.robot.manipulators.piper.config import (
-    PIPER_ROBOT_MODEL_PATH,
-    piper_hardware,
-)
+from dimos.robot.manipulators.xarm.blueprints import basic
+from dimos.robot.manipulators.xarm.config import XARM7_MODEL_PATH
 from dimos.simulation.providers import (
     SimulationBinding,
     SimulationFeature,
@@ -28,30 +23,27 @@ from dimos.simulation.providers import (
 )
 
 
-def test_existing_piper_blueprint_requests_selected_simulation_provider(
-    monkeypatch: pytest.MonkeyPatch,
+def test_existing_xarm_planner_blueprint_requests_selected_provider(
+    monkeypatch,
     mocker,
 ) -> None:
-    hardware = piper_hardware("arm")
     binding = SimulationBinding(
         backend=Blueprint(blueprints=()),
-        hardware=(hardware,),
+        hardware=(basic._xarm7_hw,),
     )
     resolve_robot = mocker.patch.object(
         basic,
         "resolve_robot",
         return_value=binding,
     )
-    monkeypatch.setattr(global_config, "simulation_provider", "pimsim")
     monkeypatch.setattr(global_config, "scene_package", "tabletop-test")
 
-    assert basic._resolve_piper_robot() is binding
+    assert basic._resolve_xarm7_robot() is binding
     resolve_robot.assert_called_once_with(
-        real_hardware=(hardware,),
-        default_backend=mocker.ANY,
+        real_hardware=mocker.ANY,
         simulation=SimulationRequest(
-            robot_model="agilex_piper",
-            model_path=PIPER_ROBOT_MODEL_PATH,
+            robot_model="xarm7",
+            model_path=XARM7_MODEL_PATH,
             scene_package="tabletop-test",
             features=frozenset((SimulationFeature.EPISODE_CONTROL,)),
         ),

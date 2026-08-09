@@ -17,10 +17,21 @@ from pathlib import Path
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.go2_velocity_policy_task.go2_velocity_policy_task import (
+    GO2_JOINT_SUFFIXES,
+    GO2_POLICY_KD,
+    GO2_POLICY_KP,
+)
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic import go2_platform
-from dimos.simulation.providers import SimulationBinding, SimulationRequest
+from dimos.simulation.providers import (
+    SimulationBinding,
+    SimulationFeature,
+    SimulationRequest,
+)
 
 
 @pytest.fixture
@@ -39,10 +50,18 @@ def test_go2_platform_uses_requested_simulation_provider(
 ) -> None:
     del pimsim_go2_config
     backend = Blueprint(blueprints=())
+    joints = [f"go2/{suffix}" for suffix in GO2_JOINT_SUFFIXES]
     binding = SimulationBinding(
         backend=backend,
-        adapter_type="pimsim_go2",
-        adapter_address=Path("/tmp/pimsim-go2"),
+        hardware=(
+            HardwareComponent(
+                hardware_id="go2",
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=joints,
+                adapter_type="sim_mujoco",
+                address=Path("/tmp/pimsim-go2"),
+            ),
+        ),
         rerun_config={"static": {"world/scene": "scene"}},
     )
     provider = mocker.Mock()
@@ -53,12 +72,26 @@ def test_go2_platform_uses_requested_simulation_provider(
         return_value=provider,
     )
 
-    assert go2_platform.resolve_go2_platform() is backend
+    platform = go2_platform.resolve_go2_platform()
+    coordinator = next(
+        atom for atom in platform.active_blueprints if atom.module is ControlCoordinator
+    )
+    hardware = coordinator.kwargs["hardware"]
+    tasks = coordinator.kwargs["tasks"]
+    assert len(hardware) == 1
+    assert hardware[0].wb_config is not None
+    assert hardware[0].wb_config.kp == GO2_POLICY_KP
+    assert hardware[0].wb_config.kd == GO2_POLICY_KD
+    assert len(tasks) == 1
+    assert tasks[0].type == "go2_velocity_policy"
+    assert tasks[0].joint_names == joints
+    assert platform.remapping_map[("ControlCoordinator", "twist_command")] == "cmd_vel"
     assert go2_platform.resolve_go2_rerun_config() == binding.rerun_config
     load_provider.assert_called_once_with("pimsim")
     provider.build.assert_called_once_with(
         SimulationRequest(
             robot_model="unitree_go2",
             scene_package="dimsim-apartment",
+            features=frozenset({SimulationFeature.SENSORS}),
         )
     )

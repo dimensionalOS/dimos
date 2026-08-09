@@ -46,6 +46,7 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -80,7 +81,11 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
-from dimos.simulation.providers import SimulationRequest, load_simulation_provider
+from dimos.simulation.providers import (
+    SimulationFeature,
+    SimulationRequest,
+    load_simulation_provider,
+)
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -94,7 +99,7 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29dof.xml"
 _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
 
-_adapter_address: str | Path
+_hardware: tuple[HardwareComponent, ...]
 _using_simulation_provider = False
 _provider_rerun_config: dict[str, Any] = {}
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
@@ -277,16 +282,53 @@ if global_config.simulation == "mujoco":
                 model_path=_ROBOT_ONLY_MJCF_PATH,
                 mesh_dir=_ROBOT_MESHDIR,
                 scene_package=global_config.scene_package,
+                features=frozenset(
+                    {
+                        SimulationFeature.SENSORS,
+                        *(
+                            (SimulationFeature.EPISODE_CONTROL,)
+                            if global_config.scene_package is not None
+                            else ()
+                        ),
+                    }
+                ),
             )
         )
+        if len(_binding.hardware) != 1:
+            raise ValueError("G1 simulation provider must return one hardware component")
+        _provider_hardware = _binding.hardware[0]
+        if (
+            _provider_hardware.hardware_id != "g1"
+            or _provider_hardware.hardware_type is not HardwareType.WHOLE_BODY
+        ):
+            raise ValueError("G1 simulation provider returned an invalid hardware component")
         _backend = _binding.backend
-        _adapter_address = _binding.adapter_address
-        _adapter_type = _binding.adapter_type
+        _hardware = (
+            replace(
+                _provider_hardware,
+                wb_config=WholeBodyConfig(
+                    kp=tuple(G1_GROOT_KP),
+                    kd=tuple(G1_GROOT_KD),
+                ),
+            ),
+        )
         _provider_rerun_config = _binding.rerun_config
     else:
         # Legacy in-repo MuJoCo backend.
         _backend, _adapter_address = _scene_mujoco_backend()
-        _adapter_type = "sim_mujoco_g1"
+        _hardware = (
+            HardwareComponent(
+                hardware_id="g1",
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=g1_joints,
+                adapter_type="sim_mujoco",
+                address=_adapter_address,
+                wb_config=WholeBodyConfig(
+                    kp=tuple(G1_GROOT_KP),
+                    kd=tuple(G1_GROOT_KD),
+                ),
+            ),
+        )
 
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for
@@ -323,7 +365,9 @@ if global_config.simulation == "mujoco":
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
+    _remappings: list[tuple[type[Any], str, str]] = [
+        (_G1GrootCoordinator, "twist_command", "cmd_vel")
+    ]
     if not _using_simulation_provider:
         _remappings.insert(0, (VoxelGridMapper, "lidar", "pointcloud"))
 else:
@@ -333,8 +377,19 @@ else:
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
     _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
-    _adapter_type = "transport_lcm"
-    _adapter_address = ""
+    _hardware = (
+        HardwareComponent(
+            hardware_id="g1",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=g1_joints,
+            adapter_type="transport_lcm",
+            address="",
+            wb_config=WholeBodyConfig(
+                kp=tuple(G1_GROOT_KP),
+                kd=tuple(G1_GROOT_KD),
+            ),
+        ),
+    )
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
@@ -521,16 +576,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
     instance_name="ControlCoordinator",
     publish_robot_joint_states=True,
     tick_rate=_tick_rate,
-    hardware=[
-        HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=g1_joints,
-            adapter_type=_adapter_type,
-            address=_adapter_address,
-            wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
-        ),
-    ],
+    hardware=list(_hardware),
     tasks=[
         TaskConfig(
             name="groot_wbc",

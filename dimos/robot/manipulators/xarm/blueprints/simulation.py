@@ -22,29 +22,45 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_MODEL_PATH,
+    XARM7_SIM_HOME,
     XARM7_TABLETOP_SCENE,
-    make_xarm7_sim_hardware,
     make_xarm7_sim_robot_config,
+    make_xarm_hardware,
 )
 from dimos.simulation.providers import (
     SimulationBinding,
+    SimulationFeature,
     SimulationRequest,
-    load_simulation_provider,
+    resolve_robot,
 )
 from dimos.visualization.vis_module import vis_module
 
 
 def _resolve_xarm7_simulation() -> SimulationBinding:
-    binding = load_simulation_provider("pimsim").build(
-        SimulationRequest(
+    return resolve_robot(
+        real_hardware=(
+            make_xarm_hardware(
+                "arm",
+                7,
+                gripper=True,
+                gripper_open_position=0.85,
+                gripper_closed_position=0.0,
+                home_joints=XARM7_SIM_HOME,
+            ),
+        ),
+        simulation=SimulationRequest(
             robot_model="xarm7",
             model_path=XARM7_MODEL_PATH,
             scene_package=global_config.scene_package or XARM7_TABLETOP_SCENE,
-        )
+            features=frozenset(
+                (
+                    SimulationFeature.EPISODE_CONTROL,
+                    SimulationFeature.MANIPULATION_SCENE,
+                    SimulationFeature.SENSORS,
+                )
+            ),
+        ),
     )
-    if binding.adapter_type != "sim_mujoco":
-        raise ValueError("xarm-perception-sim requires a provider using the sim_mujoco adapter")
-    return binding
 
 
 def _require_pimsim() -> str | None:
@@ -56,7 +72,9 @@ def _require_pimsim() -> str | None:
 
 
 _simulation = _resolve_xarm7_simulation()
-_xarm7_sim_hw = make_xarm7_sim_hardware(_simulation.adapter_address)
+if len(_simulation.hardware) != 1:
+    raise ValueError("xarm-perception-sim requires one arm hardware component")
+_xarm7_sim_hw = _simulation.hardware[0]
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(

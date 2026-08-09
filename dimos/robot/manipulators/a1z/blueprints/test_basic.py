@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
@@ -26,27 +24,15 @@ from dimos.robot.manipulators.a1z.config import (
     A1Z_G1Z_SIM_MODEL_PATH,
     A1Z_GRASP_FRAME_TO_TCP,
     A1Z_PRE_GRASP_DIRECTION,
-    A1Z_SIM_GRIPPER_OPEN,
     A1Z_SIM_HOME,
-    make_a1z_sim_hardware,
+    a1z_hardware,
     make_a1z_sim_robot_config,
 )
-from dimos.simulation.providers import SimulationBinding, SimulationRequest
-
-
-def test_a1z_sim_hardware_matches_provider_control_contract() -> None:
-    hardware = make_a1z_sim_hardware(
-        Path("/tmp/pimsim-a1z"),
-        adapter_type="test_adapter",
-    )
-
-    assert hardware.adapter_type == "test_adapter"
-    assert hardware.address == Path("/tmp/pimsim-a1z")
-    assert hardware.joints == [f"arm/joint{index}" for index in range(1, A1Z_DOF + 1)]
-    assert hardware.gripper_joints == ["arm/gripper"]
-    assert hardware.gripper_open_position == A1Z_SIM_GRIPPER_OPEN
-    assert hardware.gripper_closed_position == 0.0
-    assert hardware.adapter_kwargs == {"initial_positions": A1Z_SIM_HOME}
+from dimos.simulation.providers import (
+    SimulationBinding,
+    SimulationFeature,
+    SimulationRequest,
+)
 
 
 def test_a1z_sim_planning_uses_provider_world_pose() -> None:
@@ -68,27 +54,31 @@ def test_existing_a1z_blueprint_requests_selected_simulation_provider(
     monkeypatch: pytest.MonkeyPatch,
     mocker,
 ) -> None:
+    hardware = a1z_hardware("arm")
     binding = SimulationBinding(
         backend=Blueprint(blueprints=()),
-        adapter_type="sim_mujoco",
-        adapter_address=Path("/tmp/pimsim-a1z"),
+        hardware=(hardware,),
     )
-    provider = mocker.Mock()
-    provider.build.return_value = binding
-    load_provider = mocker.patch.object(
+    resolve_robot = mocker.patch.object(
         basic,
-        "load_simulation_provider",
-        return_value=provider,
+        "resolve_robot",
+        return_value=binding,
     )
     monkeypatch.setattr(global_config, "simulation_provider", "pimsim")
     monkeypatch.setattr(global_config, "scene_package", "tabletop-test")
 
-    assert basic._resolve_a1z_simulation() is binding
-    load_provider.assert_called_once_with("pimsim")
-    provider.build.assert_called_once_with(
-        SimulationRequest(
+    assert basic._resolve_a1z_robot() is binding
+    resolve_robot.assert_called_once_with(
+        real_hardware=(hardware,),
+        simulation=SimulationRequest(
             robot_model="galaxea_a1z",
             model_path=A1Z_G1Z_SIM_MODEL_PATH,
             scene_package="tabletop-test",
-        )
+            features=frozenset(
+                (
+                    SimulationFeature.EPISODE_CONTROL,
+                    SimulationFeature.MANIPULATION_SCENE,
+                )
+            ),
+        ),
     )

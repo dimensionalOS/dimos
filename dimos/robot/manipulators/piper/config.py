@@ -162,20 +162,3 @@ def make_piper_model_config(
         gripper_hardware_id=name,
         home_joints=model_home_joints,
     )
-
-
-def make_piper_sim_hardware(
-    address: str | Path,
-    *,
-    adapter_type: str = "sim_mujoco",
-) -> HardwareComponent:
-    """Configure the Piper shared-memory boundary supplied by a simulator provider."""
-    return make_piper_hardware(
-        "arm",
-        adapter_type=adapter_type,
-        address=str(address),
-        gripper=True,
-        gripper_open_position=PIPER_SIM_GRIPPER_OPEN,
-        gripper_closed_position=0.0,
-        home_joints=PIPER_HOME_JOINTS,
-    )

@@ -17,18 +17,29 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
+    XARM7_MODEL_PATH,
     XARM7_SIM_PATH,
+    XARM7_TABLETOP_SCENE,
     make_xarm6_model_config,
     make_xarm7_model_config,
+    make_xarm7_sim_robot_config,
     make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
+from dimos.simulation.providers import (
+    SimulationBinding,
+    SimulationFeature,
+    SimulationRequest,
+    resolve_robot,
+)
+from dimos.visualization.vis_module import vis_module
 
 _mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
 _mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
@@ -47,14 +58,44 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
 )
 
-_xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+
+def _resolve_xarm7_robot() -> SimulationBinding:
+    return resolve_robot(
+        real_hardware=(xarm7_hardware("arm", gripper=True, mock_without_address=True),),
+        simulation=SimulationRequest(
+            robot_model="xarm7",
+            model_path=XARM7_MODEL_PATH,
+            scene_package=global_config.scene_package or XARM7_TABLETOP_SCENE,
+            features=frozenset((SimulationFeature.EPISODE_CONTROL,)),
+        ),
+    )
+
+
+_xarm7_robot = _resolve_xarm7_robot()
+if len(_xarm7_robot.hardware) != 1:
+    raise ValueError("xarm7-planner-coordinator requires one arm hardware component")
+_xarm7_hw = _xarm7_robot.hardware[0]
+_xarm7_modules: tuple[Blueprint, ...]
+if global_config.simulation_provider:
+    _xarm7_model = make_xarm7_sim_robot_config(_xarm7_robot.robot_base_pose)
+    _xarm7_modules = (
+        _xarm7_robot.backend,
+        vis_module(
+            viewer_backend=global_config.viewer,
+            rerun_config=_xarm7_robot.rerun_config,
+        ),
+    )
+else:
+    _xarm7_model = make_xarm7_model_config(name="arm", add_gripper=True)
+    _xarm7_modules = (_xarm7_robot.backend,)
 
 xarm7_planner_coordinator = autoconnect(
-    planner(robots=[make_xarm7_model_config(name="arm", add_gripper=True)]),
+    planner(robots=[_xarm7_model]),
     coordinator(
         hardware=[_xarm7_hw],
         tasks=[trajectory_task(_xarm7_hw)],
     ),
+    *_xarm7_modules,
 )
 
 _coordinator_xarm7_hw = xarm7_hardware("arm")

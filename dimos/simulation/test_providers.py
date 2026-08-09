@@ -18,8 +18,14 @@ import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.simulation import providers
-from dimos.simulation.providers import SimulationBinding, SimulationRequest
+from dimos.simulation.providers import (
+    SimulationBinding,
+    SimulationFeature,
+    SimulationRequest,
+    resolve_robot,
+)
 
 
 class _Provider:
@@ -71,8 +77,6 @@ def test_simulation_binding_carries_ordered_composite_hardware() -> None:
 
     binding = SimulationBinding(
         backend=Blueprint(()),
-        adapter_type="migration-only",
-        adapter_address="migration-only",
         hardware=hardware,
     )
 
@@ -97,7 +101,79 @@ def test_simulation_binding_rejects_duplicate_hardware_ids() -> None:
     with pytest.raises(ValueError, match="hardware IDs must be unique"):
         SimulationBinding(
             backend=Blueprint(()),
-            adapter_type="migration-only",
-            adapter_address="migration-only",
             hardware=hardware,
         )
+
+
+def test_simulation_request_validates_feature_names() -> None:
+    request = SimulationRequest(
+        robot_model="arm",
+        features=frozenset(("episode_control", "sensors")),  # type: ignore[arg-type]
+    )
+
+    assert request.features == frozenset(
+        (SimulationFeature.EPISODE_CONTROL, SimulationFeature.SENSORS)
+    )
+
+    with pytest.raises(ValueError, match="not a valid SimulationFeature"):
+        SimulationRequest(
+            robot_model="arm",
+            features=frozenset(("unknown",)),  # type: ignore[arg-type]
+        )
+
+
+def test_resolve_robot_keeps_real_hardware_without_a_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> None:
+    hardware = HardwareComponent(
+        hardware_id="arm",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=["arm/joint1"],
+        adapter_type="mock",
+    )
+    backend = Blueprint(())
+    load_provider = mocker.patch.object(providers, "load_simulation_provider")
+    monkeypatch.setattr(global_config, "simulation_provider", "")
+
+    binding = resolve_robot(
+        real_hardware=(hardware,),
+        simulation=SimulationRequest(robot_model="arm"),
+        default_backend=backend,
+    )
+
+    assert binding.backend is backend
+    assert binding.hardware == (hardware,)
+    load_provider.assert_not_called()
+
+
+def test_resolve_robot_uses_provider_hardware_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> None:
+    request = SimulationRequest(robot_model="arm")
+    simulated_hardware = HardwareComponent(
+        hardware_id="arm",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=["arm/joint1"],
+        adapter_type="sim_mujoco",
+        address="run/arm",
+    )
+    expected = SimulationBinding(
+        backend=Blueprint(()),
+        hardware=(simulated_hardware,),
+    )
+    provider = mocker.Mock()
+    provider.build.return_value = expected
+    load_provider = mocker.patch.object(
+        providers,
+        "load_simulation_provider",
+        return_value=provider,
+    )
+    monkeypatch.setattr(global_config, "simulation_provider", "pimsim")
+
+    binding = resolve_robot(real_hardware=(), simulation=request)
+
+    assert binding is expected
+    load_provider.assert_called_once_with("pimsim")
+    provider.build.assert_called_once_with(request)

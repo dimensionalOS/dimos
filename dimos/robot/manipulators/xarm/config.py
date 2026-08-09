@@ -88,17 +88,6 @@ def make_xarm7_sim_robot_config(robot_base_pose: PoseStamped) -> RobotModelConfi
     )
 
 
-def make_xarm7_sim_hardware(address: str | Path) -> HardwareComponent:
-    return make_xarm_hardware(
-        "arm",
-        7,
-        adapter_type="sim_mujoco",
-        address=address,
-        gripper=True,
-        home_joints=XARM7_SIM_HOME,
-    )
-
-
 def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
     return {
         "address": address,
