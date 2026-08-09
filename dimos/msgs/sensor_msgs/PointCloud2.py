@@ -408,8 +408,8 @@ class PointCloud2(Timestamped):
             "than cell_m are free space. @y, when present, is the exact mean y "
             "of that interval's points. Horizontal clearance from a query "
             "point (qx,qy) = min over all intervals of hypot(dx,dy), where "
-            "dx = 0 if min<=qx<=max else the distance from qx to the nearer "
-            "endpoint, and dy = qy minus the interval's @y (or minus the row "
+            "dx = max(0, min-qx, qx-max) (zero only when qx lies inside the "
+            "interval), and dy = qy minus the interval's @y (or minus the row "
             "label y if no @y).",
             "cell_m": cell,
             "rows": rows,
