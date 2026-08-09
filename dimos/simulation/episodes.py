@@ -164,6 +164,7 @@ class EpisodeProvider(Protocol):
     """Prepare and privately evaluate episodes for the DimOS E2E runner."""
 
     provider_name: str
+    supported_family_ids: tuple[str, ...]
 
     def prepare(self, case: EvaluationCase, output_dir: Path) -> PreparedEpisode: ...
 

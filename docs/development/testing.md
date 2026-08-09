@@ -96,6 +96,9 @@ installed provider to prepare the case, starts the named blueprint, resets the
 episode, and exposes typed private evaluation. Add an `EvaluationCase` row; do
 not add a test-only blueprint or put task actions in the fixture.
 
+Each episode provider reports `supported_family_ids`. The suite fails if its
+maintained case table does not cover exactly those task families.
+
 `scene_seed` selects the base world. `variation_seed` selects the task reset,
 including the scenario's initial object poses. To add another reset of an
 existing task, add one `EvaluationCase` and one pytest parameter to the existing

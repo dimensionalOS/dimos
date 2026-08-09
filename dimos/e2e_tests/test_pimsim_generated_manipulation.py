@@ -21,7 +21,7 @@ import pytest
 
 from dimos.agents.skill_result import SkillResult
 from dimos.e2e_tests.episode import EpisodeRun
-from dimos.simulation.episodes import EvaluationCase
+from dimos.simulation.episodes import EvaluationCase, load_episode_provider
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.mujoco]
 
@@ -110,6 +110,13 @@ PLACE_CASES = (
     pytest.param(TABLETOP_CASES["object-in-receptacle"], 0.10, id="object-in-receptacle"),
     pytest.param(TABLETOP_CASES["object-on-support"], 0.08, id="object-on-support"),
 )
+
+
+def test_supported_task_families_have_maintained_e2e_cases() -> None:
+    provider = load_episode_provider("pimsim")
+    maintained_family_ids = {case.family_id for case in TABLETOP_CASES.values()}
+
+    assert maintained_family_ids == set(provider.supported_family_ids)
 
 
 @pytest.mark.parametrize(

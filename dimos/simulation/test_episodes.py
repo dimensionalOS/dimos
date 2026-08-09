@@ -42,6 +42,7 @@ def _case() -> EvaluationCase:
 
 class _FakeProvider:
     provider_name = "fake"
+    supported_family_ids = ("object-in-receptacle",)
 
     def __init__(self) -> None:
         self.active = False
@@ -123,7 +124,10 @@ def test_load_episode_provider_uses_installed_factory(
         entry_points,
     )
 
-    assert isinstance(episodes.load_episode_provider("fake"), _FakeProvider)
+    provider = episodes.load_episode_provider("fake")
+
+    assert isinstance(provider, _FakeProvider)
+    assert provider.supported_family_ids == ("object-in-receptacle",)
 
 
 def test_episode_flow_rejects_provider_identity_changes(tmp_path: Path) -> None:
