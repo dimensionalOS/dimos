@@ -45,16 +45,19 @@ single_lidar_frame = PassiveEval(
     tags=frozenset({"example", "encoding", "pointcloud"}),
 )
 
-# A range of 10 image frames from the same replay: seconds 45..61 of the
+# A range of 10 image frames from the same replay: seconds 58..61 of the
 # recording, capped to 10 observations. Image.agent_encode() turns each into an
-# image content block; the person at the table appears near the end.
+# image content block; a person sits at a table in this stretch.
+# Note: `.limit(n)` keeps the *first* n observations of the window — for a
+# spread across a long window, give the runner the whole range and let its
+# context budget downsample evenly instead.
 ten_image_range = PassiveEval(
     id="example_ten_image_range",
     inputs="Is a person visible in any of these images?",
     expected="yes",
     parse=yes_no,
     score=exact,
-    context=(lambda s: s.streams.color_image.range_time(45, 61).limit(10),),
+    context=(lambda s: s.streams.color_image.range_time(58, 61).limit(10),),
     dataset="go2_short",
     tags=frozenset({"example", "encoding", "image"}),
 )
