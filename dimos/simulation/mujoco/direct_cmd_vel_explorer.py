@@ -14,9 +14,10 @@
 
 import math
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -35,15 +36,15 @@ class DirectCmdVelExplorer:
         self.linear_speed = linear_speed
         self.rotation_speed = rotation_speed
         self._dt = 1.0 / publish_rate
-        self._cmd_vel: LCMTransport[Twist] | None = None
-        self._odom: LCMTransport[PoseStamped] | None = None
+        self._cmd_vel: PubSubTransport[Twist] | None = None
+        self._odom: PubSubTransport[PoseStamped] | None = None
         self._pose: PoseStamped | None = None
         self._new_pose = threading.Event()
         self._unsub: Callable[[], None] | None = None
 
     def start(self) -> None:
-        self._cmd_vel = LCMTransport("/cmd_vel", Twist)
-        self._odom = LCMTransport("/odom", PoseStamped)
+        self._cmd_vel = cast("PubSubTransport[Twist]", make_transport("/cmd_vel", Twist))
+        self._odom = cast("PubSubTransport[PoseStamped]", make_transport("/odom", PoseStamped))
         self._pose = None
         self._unsub = self._odom.subscribe(self._on_odom)
 

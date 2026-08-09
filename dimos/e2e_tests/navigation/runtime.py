@@ -25,6 +25,7 @@ from dimos.core.stream import Transport
 from dimos.e2e_tests.navigation.probe import StreamProbe
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.scene_controls import NavigationSceneControl
 
 
@@ -89,6 +90,7 @@ class NavigationRun:
     agent_idle: StreamProbe[bool]
     odom: StreamProbe[PoseStamped]
     global_costmap: StreamProbe[OccupancyGrid]
+    goal_reached: StreamProbe[Bool]
     human_input: Transport[Any]
 
     def send_instruction(self, text: str) -> None:

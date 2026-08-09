@@ -28,6 +28,7 @@ from dimos.e2e_tests.navigation.runtime import (
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.porcelain.dimos import Dimos
 from dimos.protocol.service.zenohservice import (
     ZENOH_LOCAL_ROUTER_ENDPOINT,
@@ -82,7 +83,8 @@ def navigation_run(
     agent_idle = StreamProbe[bool]("agent_idle")
     odom = StreamProbe("odom", PoseStamped)
     global_costmap = StreamProbe("global_costmap", OccupancyGrid)
-    probes = (agent_idle, odom, global_costmap)
+    goal_reached = StreamProbe("goal_reached", Bool)
+    probes = (agent_idle, odom, global_costmap, goal_reached)
     for probe in probes:
         probe.start()
 
@@ -120,12 +122,14 @@ def navigation_run(
             agent_idle=agent_idle,
             odom=odom,
             global_costmap=global_costmap,
+            goal_reached=goal_reached,
             human_input=human_input,
         )
     finally:
         if scene is not None:
             scene.stop()
         human_input.stop()
+        goal_reached.stop()
         global_costmap.stop()
         odom.stop()
         agent_idle.stop()
