@@ -450,9 +450,8 @@ private:
         // Slam reads the tracker's State, which GetState() only fills when the
         // export flags are on; without them it throws instead of returning empty.
         odometry_cfg.enable_observations_export = cfg_.enable_slam;
-        // Not configurable: on, cuVSLAM's bundle adjustment throws from its own
-        // thread, where no caller-side handler can catch it, and the process aborts.
-        // NVIDIA's own launcher leaves it off too.
+        // On, cuVSLAM's bundle adjustment throws from its own thread, where no
+        // caller-side handler can catch it, and the process aborts.
         odometry_cfg.async_sba = false;
         odometry_cfg.rgbd_settings.depth_scale_factor =
             static_cast<float>(cfg_.depth_units_per_meter);

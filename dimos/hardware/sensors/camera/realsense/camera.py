@@ -68,8 +68,7 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
-    # Empty means the detected model, e.g. "d455".
-    camera_name: str = ""
+    camera_name: str = "camera"
     base_frame_id: str = "base_link"
     base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
@@ -104,56 +103,49 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     tf: Out[TFMessage]
 
     @property
-    def _name(self) -> str:
-        return self.config.camera_name or self._detected_name
-
-    @property
     def _camera_link(self) -> str:
-        return f"{self._name}_link"
+        return f"{self.config.camera_name}_link"
 
     @property
     def _color_frame(self) -> str:
-        return f"{self._name}_color_frame"
+        return f"{self.config.camera_name}_color_frame"
 
     @property
     def _color_optical_frame(self) -> str:
-        return f"{self._name}_color_optical_frame"
+        return f"{self.config.camera_name}_color_optical_frame"
 
     @property
     def _depth_frame(self) -> str:
-        return f"{self._name}_depth_frame"
+        return f"{self.config.camera_name}_depth_frame"
 
     @property
     def _depth_optical_frame(self) -> str:
-        return f"{self._name}_depth_optical_frame"
+        return f"{self.config.camera_name}_depth_optical_frame"
 
     @property
     def _infra1_frame(self) -> str:
-        return f"{self._name}_infra1_frame"
+        return f"{self.config.camera_name}_infra1_frame"
 
     @property
     def _infra1_optical_frame(self) -> str:
-        return f"{self._name}_infra1_optical_frame"
+        return f"{self.config.camera_name}_infra1_optical_frame"
 
     @property
     def _infra2_frame(self) -> str:
-        return f"{self._name}_infra2_frame"
+        return f"{self.config.camera_name}_infra2_frame"
 
     @property
     def _infra2_optical_frame(self) -> str:
-        return f"{self._name}_infra2_optical_frame"
+        return f"{self.config.camera_name}_infra2_optical_frame"
 
     @property
     def _imu_frame(self) -> str:
-        return f"{self._name}_accel_frame"
+        return f"{self.config.camera_name}_accel_frame"
 
     @property
     def _imu_optical_frame(self) -> str:
         # accel and gyro are co-located on the motion module.
-        return f"{self._name}_accel_optical_frame"
-
-    # One second per timeout.
-    MAX_CONSECUTIVE_TIMEOUTS = 60
+        return f"{self.config.camera_name}_accel_optical_frame"
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -163,7 +155,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._accel_history: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=2)
         self._pending_gyro: deque[tuple[float, tuple[float, float, float]]] = deque(maxlen=16)
         self._align: rs.align | None = None
-        self._detected_name = "camera"
         self._mount_edges: list[tuple[str, str, Vector3, Quaternion]] = []
         self._running = False
         self._thread: threading.Thread | None = None
@@ -222,12 +213,9 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
 
         self._profile = self._pipeline.start(config)
-        # "RealSense D455" -> "d455"
-        self._detected_name = (
-            self._profile.get_device().get_info(rs.camera_info.name).split()[-1].lower()
-        )
         self._require_global_time()
 
+        # The IR imagers are the depth sensor, and it owns the emitter option.
         if self.config.enable_depth or self.config.enable_infrared:
             depth_sensor = self._profile.get_device().first_depth_sensor()
             self._depth_scale = depth_sensor.get_depth_scale()
@@ -368,7 +356,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_hardware_ts
         if ts is None or not self._running:
             return
-        # with_ts copies; restamping the stored one would rewrite a delivered message.
         for info, stream in (
             (self._color_camera_info, self.camera_info),
             (self._depth_camera_info, self.depth_camera_info),
@@ -480,18 +467,16 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         if self.config.enable_imu:
             streams.append((self._imu_frame, rs.stream.accel, None))
 
-        profiles = [
-            (frame_id, self._device_stream_profile(stream_type, index))
-            for frame_id, stream_type, index in streams
-        ]
-        for frame_id, profile in profiles:
-            if profile is None:
-                logger.warning("RealSense has no stream for %s; not published on tf", frame_id)
-        origin = profiles[0][1]
+        origin = self._device_stream_profile(rs.stream.depth, None)
+        if origin is None:
+            logger.warning("RealSense has no depth stream; publishing no camera frames on tf")
+            return
 
         self._mount_edges = []
-        for frame_id, profile in profiles:
-            if profile is None or origin is None:
+        for frame_id, stream_type, index in streams:
+            profile = self._device_stream_profile(stream_type, index)
+            if profile is None:
+                logger.warning("RealSense has no stream for %s; not published on tf", frame_id)
                 continue
             translation, rotation = self._extrinsics_to_body(profile.get_extrinsics_to(origin))
             self._mount_edges.append((self._camera_link, frame_id, translation, rotation))
@@ -551,32 +536,12 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     def _capture_loop(self) -> None:
         import cv2
 
-        consecutive_timeouts = 0
         while self._running and self._pipeline is not None:
             try:
                 frames = self._pipeline.wait_for_frames(timeout_ms=1000)
-            except AttributeError:
-                # Pipeline went away underneath us.
+            except (RuntimeError, AttributeError):
+                # Pipeline stopped or None - exit loop
                 break
-            except RuntimeError:
-                # Raised for a timeout as well as for a stopped pipeline.
-                if not self._running:
-                    break
-                consecutive_timeouts += 1
-                if consecutive_timeouts == 1 or consecutive_timeouts % 5 == 0:
-                    logger.warning(
-                        "RealSense: no frameset for %d s (waiting for the video stream)",
-                        consecutive_timeouts,
-                    )
-                if consecutive_timeouts >= self.MAX_CONSECUTIVE_TIMEOUTS:
-                    logger.error(
-                        "RealSense: no frames for %d s, giving up on video capture",
-                        consecutive_timeouts,
-                    )
-                    self._running = False
-                    break
-                continue
-            consecutive_timeouts = 0
 
             # Grab the infrared stereo pair from the raw frameset before align()
             # (align rebuilds the frameset around depth+color and drops IR).
@@ -649,18 +614,13 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     self._latest_color_img = color_img
                     self._latest_depth_img = depth_img
 
-            latest = [t for t in (color_ts, depth_ts, infra1_ts, infra2_ts) if t is not None]
+            latest = [
+                stamp for stamp in (color_ts, depth_ts, infra1_ts, infra2_ts) if stamp is not None
+            ]
             if latest:
                 self._publish_tf(max(latest))
 
     def _publish_tf(self, ts: float) -> None:
-        """Publish everything below camera_link, read off the device.
-
-        This module owns the camera's internals, because it is the only thing that can
-        read the per-unit factory calibration. Whatever describes the mount owns
-        camera_link upward and must not also publish these edges: a frame with two
-        parents makes tf pick whichever arrived last.
-        """
         transforms = []
 
         if self.config.base_transform is not None:
