@@ -613,6 +613,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
     "pink",
     "pink.*",
