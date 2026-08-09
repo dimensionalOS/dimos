@@ -318,9 +318,10 @@ class PointCloud2(Timestamped):
         """Compact, spatially structured encoding for LLM consumption.
 
         World-frame meters throughout. Carries the cloud's horizontal centroid
-        (so consecutive frames reveal motion of the mapped region) and an
-        ASCII occupancy grid of the body-height slice with labeled world
-        coordinates (so clearance around a given world position is readable).
+        (so consecutive frames reveal motion of the mapped region) and a
+        per-row interval map of the body-height slice with exact world-meter
+        x endpoints (so clearance around a given world position is readable
+        at sub-cell precision).
         """
         pts = self.points_f32()
         n = int(pts.shape[0])
@@ -336,7 +337,7 @@ class PointCloud2(Timestamped):
         floor_cells = np.unique(np.floor(xy / 0.2).astype(np.int64), axis=0)
         out["exact_stats"] = {
             "note": "exact full-cloud values in meters; for numeric extent/span/area "
-            "answers use these, not the quantized grid below",
+            "answers use these, not the body-height interval map below",
             "x_range": [round(float(mins[0]), 2), round(float(maxs[0]), 2)],
             "y_range": [round(float(mins[1]), 2), round(float(maxs[1]), 2)],
             "z_range": [round(float(mins[2]), 2), round(float(maxs[2]), 2)],
@@ -365,10 +366,10 @@ class PointCloud2(Timestamped):
 
     @staticmethod
     def _body_height_occupancy(xy: np.ndarray, max_cells: int = 28) -> dict[str, object] | None:
-        """ASCII occupancy grid of body-height points, world-coordinate labeled.
+        """Per-row occupied x-intervals of body-height points, world meters.
 
-        ponytail: binary occupancy, coarsening cell size until the grid fits
-        max_cells per axis; per-cell counts/heights if richer detail pays off.
+        ponytail: y binned into rows, x kept exact via interval endpoints;
+        coarsens row height until the row count fits max_cells.
         """
         if xy.shape[0] == 0:
             return None
@@ -376,22 +377,41 @@ class PointCloud2(Timestamped):
         hi = xy.max(axis=0)
         span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
         cell = next((c for c in (0.25, 0.4, 0.8, 1.6, 3.2) if span / c < max_cells), 6.4)
-        ix = np.floor((xy[:, 0] - lo[0]) / cell).astype(int)
         iy = np.floor((xy[:, 1] - lo[1]) / cell).astype(int)
-        occ = np.zeros((int(iy.max()) + 1, int(ix.max()) + 1), dtype=bool)
-        occ[iy, ix] = True
-        ncols = occ.shape[1]
-        rows = [
-            f"y={lo[1] + (r + 1 / 2) * cell:+.2f}|" + "".join("#" if v else "." for v in occ[r])
-            for r in range(occ.shape[0] - 1, -1, -1)
-        ]
+        rows = []
+        for r in range(int(iy.max()), -1, -1):
+            sel = xy[iy == r]
+            yc = lo[1] + (r + 1 / 2) * cell
+            label = f"y={yc:.2f}|"
+            if sel.shape[0] == 0:
+                rows.append(label)
+                continue
+            sel = sel[np.argsort(sel[:, 0])]
+            rx = sel[:, 0]
+            breaks = np.flatnonzero(np.diff(rx) > cell)
+            starts = np.concatenate(([0], breaks + 1))
+            ends = np.concatenate((breaks, [rx.size - 1]))
+            parts = []
+            for s, e in zip(starts, ends, strict=False):
+                a, b = f"{rx[s]:.2f}", f"{rx[e]:.2f}"
+                run = a if a == b else f"{a}:{b}"
+                ym = float(sel[s : e + 1, 1].mean())
+                if abs(ym - yc) > cell / 4:
+                    run += f"@{ym:.2f}"
+                parts.append(run)
+            rows.append(label + ",".join(parts))
         return {
-            "desc": "'#'=occupied at body height (z 0.15..1.0 m), world frame. "
-            f"Col k of {ncols} center x=x0_m+k*cell_m (+x east); row label = "
-            "cell-center y (+y north), top=northmost. A '#' cell's points may "
-            "lie anywhere within that cell.",
+            "desc": "Occupied x-intervals at body height (z 0.15..1.0 m), world "
+            "frame, one row per cell_m-tall band of y (label = band-center y, "
+            "+y north, top=northmost). Interval min:max = exact x (m, +x east) "
+            "of points in that band (a lone x = a thin obstacle); gaps wider "
+            "than cell_m are free space. @y, when present, is the exact mean y "
+            "of that interval's points. Horizontal clearance from a query "
+            "point (qx,qy) = min over all intervals of hypot(dx,dy), where "
+            "dx = 0 if min<=qx<=max else the distance from qx to the nearer "
+            "endpoint, and dy = qy minus the interval's @y (or minus the row "
+            "label y if no @y).",
             "cell_m": cell,
-            "x0_m": round(float(lo[0] + cell / 2), 2),
             "rows": rows,
         }
 
