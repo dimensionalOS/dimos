@@ -5,6 +5,8 @@ LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometr
 
 For offline agent QA over immutable recordings, see [Frozen recording evaluation](/docs/capabilities/agents/evaluation.md).
 
+For scoring a published spatial-reasoning benchmark through that same path, see [SPACE benchmark evaluation](/docs/capabilities/agents/space-benchmark.md).
+
 ## Architecture
 
 ```
