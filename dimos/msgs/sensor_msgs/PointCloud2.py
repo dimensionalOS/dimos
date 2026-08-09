@@ -314,6 +314,62 @@ class PointCloud2(Timestamped):
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
+    def agent_encode(self) -> dict[str, object]:
+        """Compact, spatially structured encoding for LLM consumption.
+
+        World-frame meters throughout. Carries the cloud's horizontal centroid
+        (so consecutive frames reveal motion of the mapped region) and an
+        ASCII occupancy grid of the body-height slice with labeled world
+        coordinates (so clearance around a given world position is readable).
+        """
+        pts = self.points_f32()
+        n = int(pts.shape[0])
+        out: dict[str, object] = {"frame_id": self.frame_id, "num_points": n}
+        if n == 0:
+            return out
+        xy = pts[:, :2]
+        cx, cy = xy.mean(axis=0)
+        out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        z = pts[:, 2]
+        band = xy[(z >= 0.15) & (z <= 1.0)]
+        grid = self._body_height_occupancy(band)
+        if grid is not None:
+            out["body_height_occupancy"] = grid
+        return out
+
+    @staticmethod
+    def _body_height_occupancy(xy: np.ndarray, max_cells: int = 28) -> dict[str, object] | None:
+        """ASCII occupancy grid of body-height points, world-coordinate labeled.
+
+        ponytail: binary occupancy, coarsening cell size until the grid fits
+        max_cells per axis; per-cell counts/heights if richer detail pays off.
+        """
+        if xy.shape[0] == 0:
+            return None
+        lo = xy.min(axis=0)
+        hi = xy.max(axis=0)
+        span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
+        cell = next((c for c in (0.25, 0.4, 0.8, 1.6, 3.2) if span / c < max_cells), 6.4)
+        ix = np.floor((xy[:, 0] - lo[0]) / cell).astype(int)
+        iy = np.floor((xy[:, 1] - lo[1]) / cell).astype(int)
+        occ = np.zeros((int(iy.max()) + 1, int(ix.max()) + 1), dtype=bool)
+        occ[iy, ix] = True
+        ncols = occ.shape[1]
+        rows = [
+            f"y={lo[1] + (r + 1 / 2) * cell:+.2f}|" + "".join("#" if v else "." for v in occ[r])
+            for r in range(occ.shape[0] - 1, -1, -1)
+        ]
+        return {
+            "desc": "'#'=cells containing points at body height (z 0.15..1.0 m), "
+            "world frame. Col k center: x = x0_m + k*cell_m (+x east, k=0.."
+            f"{ncols - 1}). Row label = cell-center y (+y north); top row is "
+            "northmost. True nearest point in a '#' cell can be up to half a "
+            "cell nearer than that cell's center.",
+            "cell_m": cell,
+            "x0_m": round(float(lo[0] + cell / 2), 2),
+            "rows": rows,
+        }
+
     @functools.cached_property
     def center(self) -> Vector3:
         """Calculate the center of the pointcloud in world frame."""
