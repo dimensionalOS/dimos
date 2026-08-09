@@ -101,14 +101,12 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         return f"{self.config.camera_name}_link"
 
     @property
-    def _color_frame(self) -> str:
-        name = "left" if self.config.enable_stereo else "color"
-        return f"{self.config.camera_name}_{name}_frame"
+    def _left_frame(self) -> str:
+        return f"{self.config.camera_name}_left_frame"
 
     @property
-    def _color_optical_frame(self) -> str:
-        name = "left" if self.config.enable_stereo else "color"
-        return f"{self.config.camera_name}_{name}_optical_frame"
+    def _left_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_left_optical_frame"
 
     @property
     def _right_frame(self) -> str:
@@ -157,7 +155,6 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ts = self._last_image_ts
         if ts is None:
             return
-        # with_ts copies; restamping the stored one would rewrite a delivered message.
         left_stream = self.left_camera_info if self.config.enable_stereo else self.camera_info
         for info, stream in (
             (self._color_camera_info, left_stream),
@@ -248,7 +245,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         left_cam = calib.left_cam
 
         self._color_camera_info = self._intrinsics_to_camera_info(
-            left_cam, self._color_optical_frame
+            left_cam, self._left_optical_frame
         )
 
         if self.config.enable_stereo:
@@ -258,7 +255,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         if self.config.enable_depth:
             depth_frame = (
-                self._color_optical_frame
+                self._left_optical_frame
                 if self.config.align_depth_to_color
                 else self._depth_optical_frame
             )
@@ -347,20 +344,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             ts = self._zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_nanoseconds() / 1e9
             self._last_image_ts = ts
 
-            color_img = None
-            if self._image_left is not None:
-                color_img = Image(
-                    data=self._retrieve_rgb(self._image_left, sl.VIEW.LEFT),
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
-                )
-                if self.config.enable_stereo:
-                    self.left_image.publish(color_img)
-                else:
-                    self.color_image.publish(color_img)
-
-            if self._image_right is not None:
+            color_img = Image(
+                data=self._retrieve_rgb(self._image_left, sl.VIEW.LEFT),
+                format=ImageFormat.RGB,
+                frame_id=self._left_optical_frame,
+                ts=ts,
+            )
+            if self.config.enable_stereo:
+                self.left_image.publish(color_img)
                 self.right_image.publish(
                     Image(
                         data=self._retrieve_rgb(self._image_right, sl.VIEW.RIGHT),
@@ -369,6 +360,8 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                         ts=ts,
                     )
                 )
+            else:
+                self.color_image.publish(color_img)
 
             depth_img = None
             if self.config.enable_depth and self._depth_map is not None:
@@ -377,7 +370,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 if depth_data.ndim == 3:
                     depth_data = depth_data[:, :, 0]
                 depth_frame_id = (
-                    self._color_optical_frame
+                    self._left_optical_frame
                     if self.config.align_depth_to_color
                     else self._depth_optical_frame
                 )
@@ -389,7 +382,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
                 self.depth_image.publish(depth_img)
 
-            if self.config.enable_pointcloud and color_img is not None and depth_img is not None:
+            if self.config.enable_pointcloud and depth_img is not None:
                 with self._pointcloud_lock:
                     self._latest_color_img = color_img
                     self._latest_depth_img = depth_img
@@ -462,33 +455,33 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
         transforms.append(depth_to_depth_optical)
 
-        color_tf = self._extrinsics_to_transform(
+        left_tf = self._extrinsics_to_transform(
             self._camera_link_to_color_extrinsics,
             self._camera_link,
-            self._color_frame,
+            self._left_frame,
             ts,
         ).inverse()
-        color_tf.frame_id = self._camera_link
-        color_tf.child_frame_id = self._color_frame
-        transforms.append(color_tf)
+        left_tf.frame_id = self._camera_link
+        left_tf.child_frame_id = self._left_frame
+        transforms.append(left_tf)
 
-        color_to_color_optical = Transform(
+        left_to_left_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=OPTICAL_ROTATION,
-            frame_id=self._color_frame,
-            child_frame_id=self._color_optical_frame,
+            frame_id=self._left_frame,
+            child_frame_id=self._left_optical_frame,
             ts=ts,
         )
-        transforms.append(color_to_color_optical)
+        transforms.append(left_to_left_optical)
 
-        if self._image_right is not None and self._baseline_meters is not None:
+        if self.config.enable_stereo and self._baseline_meters is not None:
             # VIEW.LEFT and VIEW.RIGHT are rectified, so the eyes differ by the baseline
             # alone. y points left, putting the right eye at -baseline.
-            color_to_right = Transform(
+            left_to_right = Transform(
                 translation=Vector3(0.0, -self._baseline_meters, 0.0),
                 rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             )
-            right_tf = color_tf + color_to_right
+            right_tf = left_tf + left_to_right
             right_tf.frame_id = self._camera_link
             right_tf.child_frame_id = self._right_frame
             right_tf.ts = ts

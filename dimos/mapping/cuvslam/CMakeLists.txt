@@ -27,8 +27,6 @@ if(NOT DEFINED DIMOS_NATIVE_CPP_DIR)
 endif()
 add_subdirectory(${DIMOS_NATIVE_CPP_DIR} ${CMAKE_BINARY_DIR}/dimos_native)
 
-# NVIDIA's prebuilt cuVSLAM C++ SDK, packaged by the nix flake. No fallback to a
-# hand-written header: guessing at the ABI compiles and then fails at runtime.
 if(NOT DEFINED CUVSLAM_SDK_DIR)
   message(FATAL_ERROR
     "CUVSLAM_SDK_DIR is not set. Build via `nix build` (which packages NVIDIA's "
