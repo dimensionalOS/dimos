@@ -94,3 +94,10 @@ yolo11n*.pt
 # Generic ignore patterns
 *.ignore
 *.ignore.*
+.evo/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
+build/
