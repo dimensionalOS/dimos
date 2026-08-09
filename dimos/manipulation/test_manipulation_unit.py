@@ -472,6 +472,7 @@ class TestPlanningInitialization:
     ) -> None:
         module = ManipulationModule()
         module.coordinator_joint_state = None
+        module.odom = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 

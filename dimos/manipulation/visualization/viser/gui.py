@@ -257,6 +257,16 @@ class ViserPanelGui:
     def reset(self) -> bool:
         return self.operator.reset()
 
+    def latch_base_pose(self) -> bool:
+        return self.operator.latch_base_pose()
+
+    def base_pose_summary(self) -> str:
+        try:
+            return self.operator.base_pose_summary()
+        except Exception:
+            logger.warning("Could not read manipulation base pose", exc_info=True)
+            return ""
+
     def evaluate_joint_target_set(
         self, group_ids: Sequence[PlanningGroupID], targets: Mapping[PlanningGroupID, JointState]
     ) -> TargetEvaluationResult:
@@ -427,6 +437,13 @@ class ViserPanelGui:
         reset_button = gui.add_button("Reset manipulation")
         reset_button.on_click(lambda _: self._submit_reset())
         self._handles["reset"] = reset_button
+        latch_button = gui.add_button(
+            "Latch base here",
+            hint="Rebuild the planning world around where the robot now stands. "
+            "Takes a few seconds; do it stopped, after moving.",
+        )
+        latch_button.on_click(lambda _: self._submit_latch_base())
+        self._handles["latch_base"] = latch_button
         joint_controls = gui.add_folder("Joint Control", expand_by_default=False)
         self._handles["joint_control_folder"] = joint_controls
         self._build_joint_sliders()
@@ -1155,6 +1172,8 @@ class ViserPanelGui:
         if self.state.selected_group_ids:
             stale_detail = "False" if not stale_robots else f"True ({', '.join(stale_robots)})"
             status.append(f"State stale: `{stale_detail}`")
+        if base_summary := self.base_pose_summary():
+            status.append(base_summary)
         if current is not None:
             status.append(f"Current joints: `{[round(v, 3) for v in current]}`")
         if self.state.last_result:
@@ -1448,6 +1467,31 @@ class ViserPanelGui:
 
         self._operation_worker.submit(
             operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
+
+    def _submit_latch_base(self) -> None:
+        if self._closed:
+            return
+        operation_id = self._next_operation_id()
+
+        def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
+            self.state.action_status = ActionStatus.RUNNING
+            self.refresh()
+            ok = self.latch_base_pose()
+            if not self._operation_is_current(operation_id):
+                return
+            if ok:
+                self.state.plan_state = PanelPlanState()
+            else:
+                self.state.error = self.get_error() or "Base latch failed"
+            self._finish_operation(f"latch_base={ok}", clear_error=ok, operation_id=operation_id)
+
+        self._operation_worker.submit(
+            operation,
+            timeout_seconds=self.config.latch_request_timeout,
+            on_error=lambda message: self._set_operation_error(message, operation_id),
         )
 
     def _submit_reset(self) -> None:

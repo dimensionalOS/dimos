@@ -128,6 +128,19 @@ _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
 }
 
 
+def _copy_pose(pose: PoseStamped) -> PoseStamped:
+    """Copy a stamped pose. The PoseStamped copy constructor drops frame_id."""
+    copied = PoseStamped(pose)
+    copied.frame_id = pose.frame_id
+    return copied
+
+
+_FLOOR_OBSTACLE_NAME = "floor"
+_FLOOR_DIMENSIONS = (0.6, 1.2, 0.2)
+# In front of the base, in the base's ground frame.
+_FLOOR_BASE_OFFSET = (0.7, 0.0)
+
+
 class ManipulationState(Enum):
     """State machine for manipulation module."""
 
@@ -160,8 +173,16 @@ class ManipulationModuleConfig(ModuleConfig):
     kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
-    # Set to None to disable.
+    # Set to None to disable. The slab tracks the latched base in x/y/yaw but
+    # stays at this world height, so it stays in front of a robot that walks.
     floor_z: float | None = None
+    # Robot whose base the ``odom`` port describes. Defaults to the only
+    # configured robot; required when several robots are configured.
+    odom_robot_name: RobotName | None = None
+    # A base that has drifted further than this from the latched placement
+    # makes world-frame targets wrong; planning warns past either bound.
+    base_drift_position_warn: float = 0.02
+    base_drift_orientation_warn_deg: float = 2.0
 
 
 class ManipulationModule(Module):
@@ -178,6 +199,9 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
+    # Input: world-frame pose of the robot's base link. Sim publishes ground
+    # truth; hardware will publish lidar odometry. Only read when latching.
+    odom: In[PoseStamped]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -209,6 +233,11 @@ class ManipulationModule(Module):
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
 
+        # Latest base pose from the odom port, and the floor slab's offset from
+        # the base it was authored against (both used by latch_base_pose).
+        self._latest_odom: PoseStamped | None = None
+        self._floor_base_offset: tuple[float, float] | None = None
+
         # TF publishing thread
         self._tf_stop_event = threading.Event()
         self._tf_thread: threading.Thread | None = None
@@ -228,6 +257,10 @@ class ManipulationModule(Module):
         if self.coordinator_joint_state is not None:
             self.coordinator_joint_state.subscribe(self._on_joint_state)
             logger.info("Subscribed to coordinator_joint_state port")
+
+        if self.odom is not None:
+            self.odom.subscribe(self._on_odom)
+            logger.info("Subscribed to odom port for base latching")
 
         logger.info("ManipulationModule started")
 
@@ -269,20 +302,15 @@ class ManipulationModule(Module):
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
-            fz = self.config.floor_z
-            thickness = 0.2
-            floor_pose = Pose(
-                Vector3(0.7, 0.0, fz - thickness / 2),
-                Quaternion(0.0, 0.0, 0.0, 1.0),
-            )
+            self._floor_base_offset = _FLOOR_BASE_OFFSET
             floor_obs = Obstacle(
-                name="floor",
-                pose=floor_pose,
+                name=_FLOOR_OBSTACLE_NAME,
+                pose=self._floor_pose(),
                 obstacle_type=ObstacleType.BOX,
-                dimensions=(0.6, 1.2, thickness),
+                dimensions=_FLOOR_DIMENSIONS,
             )
             self._world_monitor.add_obstacle(floor_obs)
-            logger.info(f"Floor obstacle added at z={fz:.3f}")
+            logger.info(f"Floor obstacle added at z={self.config.floor_z:.3f}")
 
         for _, (robot_id, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -383,6 +411,179 @@ class ManipulationModule(Module):
             import traceback
 
             logger.error(traceback.format_exc())
+
+    def _on_odom(self, msg: PoseStamped) -> None:
+        """Cache the base pose; latching and the drift guard read it on demand."""
+        self._latest_odom = _copy_pose(msg)
+
+    def _latch_robot(self) -> tuple[RobotName, WorldRobotID, RobotModelConfig] | None:
+        """Resolve the robot the odom port describes."""
+        if self.config.odom_robot_name is not None:
+            return self._get_robot(self.config.odom_robot_name)
+        if len(self._robots) != 1:
+            return None
+        return self._get_robot(None)
+
+    def _floor_pose(self) -> Pose:
+        """Floor slab placement: in front of the base, at the configured height."""
+        assert self.config.floor_z is not None
+        offset = self._floor_base_offset or (0.0, 0.0)
+        x, y, yaw = 0.0, 0.0, 0.0
+        robot = self._latch_robot()
+        if robot is not None:
+            base = robot[2].base_pose
+            x, y = float(base.position.x), float(base.position.y)
+            yaw = float(base.orientation.to_euler().z)
+        return Pose(
+            Vector3(
+                x + offset[0] * math.cos(yaw) - offset[1] * math.sin(yaw),
+                y + offset[0] * math.sin(yaw) + offset[1] * math.cos(yaw),
+                self.config.floor_z - _FLOOR_DIMENSIONS[2] / 2,
+            ),
+            Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        )
+
+    @rpc
+    def get_base_pose(self, robot_name: RobotName | None = None) -> PoseStamped | None:
+        """Return the world placement the planner currently assumes for a robot."""
+        robot = self._get_robot(robot_name)
+        return None if robot is None else _copy_pose(robot[2].base_pose)
+
+    @rpc
+    def get_odom_pose(self) -> PoseStamped | None:
+        """Return the latest base pose received on the odom port."""
+        odom = self._latest_odom
+        return None if odom is None else _copy_pose(odom)
+
+    @rpc
+    def latch_base_pose(
+        self, pose: PoseStamped | None = None, robot_name: RobotName | None = None
+    ) -> bool:
+        """Adopt the robot's current pose as the planning base.
+
+        World-frame targets are interpreted against the base placement baked
+        into the planning scene, so a robot that walks needs the scene rebuilt
+        around where it now stands. Call this with the robot stopped: the
+        rebuild takes seconds and any stored plan is discarded.
+
+        Args:
+            pose: Base placement in the world frame. Defaults to the latest
+                odom pose.
+            robot_name: Robot to re-place. Defaults to ``odom_robot_name``, or
+                the only configured robot.
+        """
+        if self._world_monitor is None:
+            return self._record_error("Planning not initialized")
+        robot = self._get_robot(robot_name) if robot_name is not None else self._latch_robot()
+        if robot is None:
+            return self._record_error(
+                "Cannot resolve the robot to latch; set odom_robot_name or pass robot_name"
+            )
+        latch_name, robot_id, _ = robot
+
+        source = pose if pose is not None else self._latest_odom
+        if source is None:
+            return self._record_error("No base pose available — odom port has published nothing")
+        if source.frame_id not in ("", "world"):
+            return self._record_error(f"Base pose must be world-framed, got '{source.frame_id}'")
+        if not all(math.isfinite(float(v)) for v in (*source.position, *source.orientation)):
+            return self._record_error("Base pose contains non-finite values")
+        latched = _copy_pose(source)
+        latched.frame_id = "world"
+
+        with self._lock:
+            if self._state in (ManipulationState.PLANNING, ManipulationState.EXECUTING):
+                return self._record_error(f"Cannot latch base while state is {self._state.name}")
+            self._planning_epoch += 1
+            self._last_plan = None
+
+        position = latched.position
+        euler = latched.orientation.to_euler()
+        try:
+            elapsed = self._world_monitor.set_robot_base_pose(robot_id, latched)
+        except Exception as exc:
+            logger.exception("Base latch failed for '%s'", latch_name)
+            return self._record_error(f"Base latch failed: {exc}")
+
+        # The world rebuilt its config rather than mutating it, so re-point the
+        # registry before anything reads the placement back.
+        self._robots[latch_name] = (robot_id, self._world_monitor.get_robot_config(robot_id))
+        if self.config.floor_z is not None:
+            self._world_monitor.update_obstacle_pose(
+                _FLOOR_OBSTACLE_NAME,
+                PoseStamped(self._floor_pose()),
+            )
+        logger.info(
+            "Latched '%s' base to (%.3f, %.3f, %.3f) rpy (%.1f, %.1f, %.1f) deg "
+            "— planning world rebuilt in %.2f s",
+            latch_name,
+            position.x,
+            position.y,
+            position.z,
+            math.degrees(euler.x),
+            math.degrees(euler.y),
+            math.degrees(euler.z),
+            elapsed,
+        )
+        with self._lock:
+            self._error_message = ""
+        return True
+
+    @rpc
+    def describe_base_pose(self) -> str:
+        """One-line description of the latched base and any drift from it."""
+        robot = self._latch_robot()
+        if robot is None:
+            return "Base: not latchable (no odom robot resolved)"
+        base = robot[2].base_pose
+        summary = (
+            f"Base: ({base.position.x:.2f}, {base.position.y:.2f}, {base.position.z:.2f}) "
+            f"yaw {math.degrees(base.orientation.to_euler().z):.0f}°"
+        )
+        drift = self._base_drift()
+        if drift is None:
+            return f"{summary} · odom: none"
+        distance, angle = drift
+        state = "STALE — re-latch" if self._base_has_drifted() else "current"
+        return f"{summary} · drift {distance:.3f} m / {math.degrees(angle):.1f}° ({state})"
+
+    def _base_drift(self) -> tuple[float, float] | None:
+        """Position (m) and orientation (rad) gap between odom and the latch."""
+        odom = self._latest_odom
+        robot = self._latch_robot()
+        if odom is None or robot is None:
+            return None
+        base = robot[2].base_pose
+        distance = math.dist(
+            (float(odom.position.x), float(odom.position.y), float(odom.position.z)),
+            (float(base.position.x), float(base.position.y), float(base.position.z)),
+        )
+        return distance, abs(float(odom.orientation.angle_to(base.orientation)))
+
+    def _base_has_drifted(self) -> bool:
+        """Whether odom has moved past either warning bound from the latched base."""
+        drift = self._base_drift()
+        if drift is None:
+            return False
+        distance, angle = drift
+        return distance > self.config.base_drift_position_warn or angle > math.radians(
+            self.config.base_drift_orientation_warn_deg
+        )
+
+    def _warn_if_base_drifted(self) -> bool:
+        """Warn when the robot has moved away from the base the planner assumes."""
+        drift = self._base_drift()
+        if drift is None or not self._base_has_drifted():
+            return False
+        distance, angle = drift
+        logger.warning(
+            "Robot base has moved %.3f m / %.1f deg from the latched planning base — "
+            "world-frame targets are offset by that much. Latch the base again "
+            "before planning.",
+            distance,
+            math.degrees(angle),
+        )
+        return True
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
@@ -534,6 +735,21 @@ class ManipulationModule(Module):
         return None
 
     @rpc
+    def get_group_ee_pose(self, group_id: PlanningGroupID) -> PoseStamped | None:
+        """Get a planning group's current tip pose in the world frame.
+
+        ``get_ee_pose`` cannot serve a robot with several pose-targetable
+        groups, such as a humanoid with two arms.
+        """
+        if self._world_monitor is None:
+            return None
+        try:
+            return self._world_monitor.get_group_ee_pose(group_id)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Group end-effector pose unavailable: %s", exc)
+            return None
+
+    @rpc
     def is_collision_free(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
         """Check if joint configuration is collision-free.
 
@@ -561,6 +777,7 @@ class ManipulationModule(Module):
         if (robot := self._get_robot(robot_name)) is None:
             self._record_error("Robot not found or robot_name is required")
             return None
+        self._warn_if_base_drifted()
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 self._record_error(f"Cannot plan while state is {self._state.name}")
@@ -575,6 +792,7 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             logger.error("Planning not initialized")
             return None
+        self._warn_if_base_drifted()
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")

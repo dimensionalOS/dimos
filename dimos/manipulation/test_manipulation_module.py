@@ -140,6 +140,7 @@ def module(xarm7_config):
     )
     mod._control_coordinator = coordinator
     mod.coordinator_joint_state = None
+    mod.odom = None
     mod.objects = None
     mod.start()
     yield mod

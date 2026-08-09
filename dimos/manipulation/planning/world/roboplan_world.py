@@ -21,6 +21,7 @@ the optional dependency installed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -100,6 +101,7 @@ class RoboPlanWorld:
         self._authoritative_robot_ids: set[WorldRobotID] = set()
         self._robot_counter = 0
         self._finalized = False
+        self._model_epoch = 0
         self._usable = True
         self._live_context = RoboPlanContext()
         self._state_lock = RLock()
@@ -244,22 +246,75 @@ class RoboPlanWorld:
             self._scene = model.scene
             try:
                 for robot in self._robots.values():
-                    group = self._legacy_group(robot.config.name)
-                    lower, upper = self._extract_joint_limits(robot.config, group)
+                    group = self._legacy_group_of(model, robot.config.name)
+                    lower, upper = self._extract_joint_limits(robot.config, group, model.scene)
                     robot.lower_limits = lower
                     robot.upper_limits = upper
                 for obstacle_id, obstacle in self._obstacles.items():
-                    self._add_obstacle_to_scene(obstacle, obstacle_id)
+                    self._add_obstacle_to_scene(obstacle, obstacle_id, model.scene)
             except BaseException:
                 self._scene = None
                 self._model = None
                 raise
             self._finalized = True
+            self._model_epoch += 1
+
+    def rebuild_with_base_poses(self, base_poses: Mapping[WorldRobotID, PoseStamped]) -> None:
+        """Re-place robots by rebuilding the composed scene.
+
+        RoboPlan bakes ``base_pose`` into a fixed joint when the scene is
+        composed, so moving a robot means composing a new scene. The new scene
+        is built and fully populated before anything is swapped in, so a failure
+        anywhere leaves the previous scene serving queries unchanged.
+        """
+        with self._lock:
+            self._require_finalized()
+            if not base_poses:
+                return
+            replacements: dict[WorldRobotID, RobotModelConfig] = {}
+            for robot_id, pose in base_poses.items():
+                robot = self._get_robot(robot_id)
+                placement = deepcopy(pose)
+                if not np.isfinite(pose_to_matrix(placement)).all():
+                    raise ValueError("Base pose must contain only finite values")
+                config = robot.config.model_copy(update={"base_pose": placement})
+                self._validate_robot_config(config)
+                replacements[robot_id] = config
+            candidates = [
+                _RoboPlanRobotData(
+                    robot_id=robot_id,
+                    config=replacements.get(robot_id, data.config),
+                )
+                for robot_id, data in self._robots.items()
+            ]
+            model = build_roboplan_model(candidates, self._planning_groups, roboplan_core.Scene)
+            limits = {
+                data.robot_id: self._extract_joint_limits(
+                    data.config,
+                    self._legacy_group_of(model, data.config.name),
+                    model.scene,
+                )
+                for data in candidates
+            }
+            for obstacle_id, obstacle in self._obstacles.items():
+                self._add_obstacle_to_scene(obstacle, obstacle_id, model.scene)
+            self._model = model
+            self._scene = model.scene
+            for data in candidates:
+                robot = self._robots[data.robot_id]
+                robot.config = data.config
+                robot.lower_limits, robot.upper_limits = limits[data.robot_id]
+            self._model_epoch += 1
 
     @property
     def is_finalized(self) -> bool:
         """Check whether the scene is finalized."""
         return self._finalized
+
+    @property
+    def model_epoch(self) -> int:
+        """Generation counter; consumers key scene-bound caches on this."""
+        return self._model_epoch
 
     # Context Management
 
@@ -440,13 +495,13 @@ class RoboPlanWorld:
             raise ValueError("RoboPlanWorld base_pose frame_id must be empty or 'world'")
 
     def _extract_joint_limits(
-        self, config: RobotModelConfig, group: RoboPlanGroup
+        self, config: RobotModelConfig, group: RoboPlanGroup, scene: Any
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
             lower = np.asarray(config.joint_limits_lower, dtype=np.float64)
             upper = np.asarray(config.joint_limits_upper, dtype=np.float64)
         else:
-            lower, upper = self._require_scene().getPositionLimitVectors(group.name, False)
+            lower, upper = scene.getPositionLimitVectors(group.name, False)
             lower = np.asarray(lower, dtype=np.float64)
             upper = np.asarray(upper, dtype=np.float64)
             by_name = dict(zip(group.public_names, zip(lower, upper, strict=True), strict=True))
@@ -589,8 +644,10 @@ class RoboPlanWorld:
                 )
             )
 
-    def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
-        scene = self._require_scene()
+    def _add_obstacle_to_scene(
+        self, obstacle: Obstacle, obstacle_id: str, scene: Any | None = None
+    ) -> None:
+        scene = self._require_scene() if scene is None else scene
         matrix = pose_to_matrix(obstacle.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
@@ -648,9 +705,11 @@ class RoboPlanWorld:
             )
 
     def _legacy_group(self, robot_name: RobotName) -> RoboPlanGroup:
-        model = self._require_model()
-        group_id = model.legacy_group_ids[robot_name]
-        return model.groups[frozenset((group_id,))]
+        return self._legacy_group_of(self._require_model(), robot_name)
+
+    @staticmethod
+    def _legacy_group_of(model: RoboPlanModel, robot_name: RobotName) -> RoboPlanGroup:
+        return model.groups[frozenset((model.legacy_group_ids[robot_name],))]
 
     def _is_ready(self) -> bool:
         with self._state_lock:

@@ -54,6 +54,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
     ) -> None:
         self._config = config
         self._groups: dict[frozenset[str], _GroupParametrizer] = {}
+        self._groups_epoch = -1
 
     def _parametrize_path(
         self,
@@ -66,6 +67,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             raise TrajectoryParametrizationError("RoboPlan TOPP-RA requires RoboPlanWorld")
         try:
             with world.parametrization_model() as model:
+                self._discard_stale_groups(world.model_epoch)
                 resolved = self._resolve_group(model, selection)
                 native_path = self._native_path(resolved.group, selection, path)
                 native_trajectory = resolved.native.generate(
@@ -82,6 +84,12 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             raise TrajectoryParametrizationError(
                 f"RoboPlan TOPP-RA parametrization failed: {exc}"
             ) from exc
+
+    def _discard_stale_groups(self, model_epoch: int) -> None:
+        """Drop parametrizers bound to a scene the world has since replaced."""
+        if model_epoch != self._groups_epoch:
+            self._groups.clear()
+            self._groups_epoch = model_epoch
 
     def _resolve_group(
         self,

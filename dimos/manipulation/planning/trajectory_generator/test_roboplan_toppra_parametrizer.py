@@ -63,6 +63,7 @@ class _Scene:
 class _World(RoboPlanWorld):
     def __init__(self, model: RoboPlanModel) -> None:
         self.model = model
+        self._model_epoch = 0
 
     @contextmanager
     def parametrization_model(self):

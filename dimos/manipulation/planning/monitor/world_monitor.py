@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from contextlib import contextmanager
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -35,7 +36,12 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationSession,
     VisualizationStateFrame,
 )
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
+from dimos.manipulation.planning.spec.protocols import (
+    ReplaceableBaseVisualization,
+    ReplaceableBaseWorld,
+    VisualizationSpec,
+    WorldSpec,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -101,6 +107,44 @@ class WorldMonitor:
             self._planning_groups.add_robot(config)
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
         return robot_id
+
+    def set_robot_base_pose(self, robot_id: WorldRobotID, pose: PoseStamped) -> float:
+        """Re-place a robot in the planning world. Returns rebuild seconds.
+
+        The world rebuilds its scene, so this blocks planning for as long as the
+        rebuild takes. Obstacles and joint state survive; the visualization is
+        moved to match.
+        """
+        if not isinstance(self._world, ReplaceableBaseWorld):
+            raise RuntimeError(
+                f"{type(self._world).__name__} cannot re-place robots after the world is built"
+            )
+        with self._lock:
+            started = time.perf_counter()
+            self._world.rebuild_with_base_poses({robot_id: pose})
+            elapsed = time.perf_counter() - started
+            self._robot_configs[robot_id] = self._world.get_robot_config(robot_id)
+            self._resync_live_state()
+        if isinstance(self._visualization, ReplaceableBaseVisualization):
+            try:
+                self._visualization.set_vis_robot_base_pose(robot_id, pose)
+            except Exception:
+                logger.exception("Base pose visualization update failed for '%s'", robot_id)
+        return elapsed
+
+    def _resync_live_state(self) -> None:
+        """Push each monitor's latest joint state back into the world."""
+        for robot_id, monitor in self._state_monitors.items():
+            positions = monitor.get_current_positions()
+            if positions is None:
+                continue
+            self._world.sync_from_joint_state(
+                robot_id,
+                JointState(
+                    name=self._robot_joints.get(robot_id, []),
+                    position=positions.tolist(),
+                ),
+            )
 
     @property
     def planning_groups(self) -> PlanningGroupRegistry:

@@ -215,6 +215,14 @@ class ManipulationOperator:
         result = self._module.reset()
         return result.is_success()
 
+    def latch_base_pose(self) -> bool:
+        """Adopt the robot's current pose as the planning base."""
+        return self._module.latch_base_pose()
+
+    def base_pose_summary(self) -> str:
+        """One-line description of the latched base and any drift from it."""
+        return self._module.describe_base_pose()
+
     def _validate_joint_request(
         self, request: JointTargetRequest
     ) -> tuple[tuple[PlanningGroup, ...] | None, TargetEvaluationResult | None]:

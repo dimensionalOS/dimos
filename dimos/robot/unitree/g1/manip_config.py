@@ -33,8 +33,9 @@ from dimos.utils.data import LfsPath
 _G1_URDF = LfsPath("g1_urdf/g1.urdf")
 _G1_PACKAGE_DIR = LfsPath("g1_urdf")
 # Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd, so
-# world-frame targets line up with the sim/hardware ground frame while the
-# base stays at the origin.
+# world-frame targets line up with the ground frame at spawn. This is only the
+# startup placement: once the robot walks, ManipulationModule.latch_base_pose()
+# replaces it with the measured pelvis pose.
 _G1_NOMINAL_PELVIS_Z = 0.74
 
 _ARM_JOINT_STEMS = (

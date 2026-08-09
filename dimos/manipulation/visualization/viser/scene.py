@@ -898,6 +898,36 @@ class ViserManipulationScene:
         self._ensure_base_pose_frame(robot_id, kind, config)
         return f"{root_node_name}/base_pose/urdf"
 
+    def set_base_pose(self, robot_id: str, pose: Pose) -> None:
+        """Move a robot's rendered placement to match a re-placed planning base.
+
+        Only robots registered with a non-identity base pose have the frame this
+        moves; an identity-based robot is parented straight to the scene root.
+        """
+        moved = False
+        for kind in ("current", "target", "preview"):
+            frame = self._root_frames.get(f"{robot_id}:{kind}:base_pose")
+            if frame is None:
+                continue
+            frame.position = (
+                float(pose.position.x),
+                float(pose.position.y),
+                float(pose.position.z),
+            )
+            frame.wxyz = (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            )
+            moved = True
+        if not moved:
+            logger.warning(
+                "Robot '%s' was registered at an identity base pose, so its rendered "
+                "placement cannot follow the latched base",
+                robot_id,
+            )
+
     def _ensure_base_pose_frame(self, robot_id: str, kind: str, config: RobotModelConfig) -> None:
         key = f"{robot_id}:{kind}:base_pose"
         if key in self._root_frames:

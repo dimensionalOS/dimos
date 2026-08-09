@@ -47,6 +47,8 @@ except ImportError as e:
         raise
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
@@ -55,7 +57,6 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -226,6 +227,15 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is not None:
             self._scene.clear_vis_obstacles()
+
+    def set_vis_robot_base_pose(self, robot_id: str, pose: PoseStamped) -> None:
+        """Move a robot's rendered base after the planning world re-placed it."""
+        if self._closed:
+            return
+        self._ensure_started()
+        if self._scene is None:
+            return
+        self._scene.set_base_pose(str(robot_id), pose)
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""

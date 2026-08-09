@@ -518,6 +518,7 @@ def test_panel_contract_group_order_defaults_and_controls(
         "Cancel",
         "Clear plan",
         "Reset manipulation",
+        "Latch base here",
     ]
     assert "robot" not in gui._handles
     assert (
@@ -1029,6 +1030,7 @@ def test_panel_action_controls_are_present_in_source_order(
         "Cancel",
         "Clear plan",
         "Reset manipulation",
+        "Latch base here",
     ]
     assert [folder.label for folder in server.gui.folders] == [
         "Manipulation Panel",

@@ -191,6 +191,34 @@ class WorldSpec(Protocol):
 
 
 @runtime_checkable
+class ReplaceableBaseWorld(Protocol):
+    """World that can re-place robots after its scene has been built.
+
+    Backends bake ``base_pose`` into the scene at build time, so this is a
+    rebuild rather than a mutation. Kept separate from :class:`WorldSpec`
+    because not every backend supports it.
+    """
+
+    def rebuild_with_base_poses(self, base_poses: Mapping[WorldRobotID, PoseStamped]) -> None:
+        """Rebuild the scene with new robot placements, atomically."""
+        ...
+
+    @property
+    def model_epoch(self) -> int:
+        """Generation counter; consumers key scene-bound caches on this."""
+        ...
+
+
+@runtime_checkable
+class ReplaceableBaseVisualization(Protocol):
+    """Visualization that can move a robot's rendered base placement."""
+
+    def set_vis_robot_base_pose(self, robot_id: WorldRobotID, pose: PoseStamped) -> None:
+        """Move a robot's rendered base to a new world placement."""
+        ...
+
+
+@runtime_checkable
 class VisualizationSpec(Protocol):
     """Protocol for optional manipulation planning visualization.
 

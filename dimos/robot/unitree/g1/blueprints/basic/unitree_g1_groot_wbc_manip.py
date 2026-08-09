@@ -65,6 +65,10 @@ unitree_g1_groot_wbc_manip = (
                 position_tolerance=0.01, orientation_cost=0.3, orientation_tolerance=0.35
             ),
             visualization=ViserVisualizationConfig(),
+            # The pelvis pose the planning base is latched to. autoconnect
+            # binds this to the sim's ``odom``; on hardware the same port
+            # takes lidar odometry.
+            odom_robot_name="g1",
         ),
         _viewer(),
     )

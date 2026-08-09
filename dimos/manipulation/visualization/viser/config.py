@@ -54,6 +54,12 @@ class ViserVisualizationConfig(BaseModel):
         default=0.02,
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),
     )
+    # Latching rebuilds the planning scene from the robot model, which takes
+    # seconds on a full-body humanoid.
+    latch_request_timeout: float = Field(
+        default=60.0,
+        validation_alias=AliasChoices("latch_request_timeout", "viser_latch_request_timeout"),
+    )
 
     @property
     def requires_world_visualization(self) -> bool:
