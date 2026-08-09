@@ -106,14 +106,19 @@ run instead of being scored.
 SPACE asks each stimulus four times with the correct answer in a different slot.
 A subset that split a group would grade that stimulus on only some of its
 variants and inherit the placement bias, so groups are drawn whole: `--groups 8`
-is 8 stimuli and 32 questions. `--seed` fixes which groups are drawn, so the same
-task, seed and group count select the same upstream rows anywhere — which is what
-makes two runs comparable, and why the flag has no default.
+is 8 stimuli and 32 questions.
+
+Without `--seed` the groups are drawn at random; the seed that was drawn is
+printed and written to the manifest, so the run stays reproducible after the
+fact. Pass the seed back to draw the same rows again — the same task, seed and
+group count select the same upstream rows anywhere. That is what makes two runs
+a comparison rather than two samples, so anything holding one variable against
+another should pin it.
 
 Give `--groups` a task's own stimulus count to run all of it; the seed then only
 orders what was drawn and cannot move the score. Below that, a run reports one
-draw. A different seed asks about different stimuli, and how far the score moves
-between seeds is not something a single run measures.
+draw of a few stimuli out of a task's many, and how far the score moves between
+draws is not something a single run measures.
 
 ## What the score compares to
 

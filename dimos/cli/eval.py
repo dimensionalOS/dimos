@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import secrets
 import threading
 from typing import Any, Literal
 
@@ -95,36 +96,42 @@ def run(
 def space(
     task: str = typer.Option(..., "--task", help="SPACE text task, e.g. SAtt_text"),
     groups: int = typer.Option(8, "--groups", help="Stimulus groups to sample; each holds 4 rows"),
-    seed: int = typer.Option(
-        ..., "--seed", help="Sampling seed: the same seed draws the same rows"
+    seed: int | None = typer.Option(
+        None, "--seed", help="Sampling seed; drawn at random and reported when not given"
     ),
     workers: int = typer.Option(2, "--workers", help="SPACE worker processes"),
     output: Path | None = typer.Option(None, "--output", help="Run directory to write"),
 ) -> None:
     """Score a SPACE text task through the evaluation path, with SPACE's own evaluator.
 
+    Without --seed the subset is drawn at random, so repeated runs ask about
+    different stimuli; the seed is printed and written to the manifest, and
+    passing it back reproduces the run. Pass one to hold the questions fixed,
+    which is what makes two runs a comparison rather than two samples.
+
     The first run clones the pinned SPACE source and downloads Apple's 3.6 GB
     data release into ~/.cache/dimos/space-benchmark/ (set DIMOS_SPACE_SOURCE
     and DIMOS_SPACE_DATA to reuse copies you already have).
     """
+    drawn = seed is None
+    # Randomness at the edge: the run itself takes a seed and stays reproducible.
+    sampling_seed = secrets.randbelow(2**31) if drawn else seed
     try:
         summary = run_space_task(
-            task_name=task, groups=groups, seed=seed, workers=workers, output=output
+            task_name=task, groups=groups, seed=sampling_seed, workers=workers, output=output
         )
     except Exception as exc:
         typer.echo(f"SPACE evaluation failed: {type(exc).__name__}: {exc}", err=True)
         raise typer.Exit(2) from exc
-    typer.echo(format_space_summary(summary))
+    typer.echo(format_space_summary(summary, drawn_seed=drawn))
 
 
-def format_space_summary(summary: Any) -> str:
+def format_space_summary(summary: Any, *, drawn_seed: bool = False) -> str:
     """Report the upstream score and where the evidence behind it landed."""
+    seed = f"seed {summary.seed}{' (drawn)' if drawn_seed else ''}"
     rows = (
         ("Task", summary.task),
-        (
-            "Subset",
-            f"{summary.groups} groups · {summary.questions} questions · seed {summary.seed}",
-        ),
+        ("Subset", f"{summary.groups} groups · {summary.questions} questions · {seed}"),
         ("Accuracy", f"{summary.mean_accuracy:.1f}% (scored by SPACE)"),
         # Beside the accuracy on purpose: these questions are in its denominator.
         ("Infra fails", f"{summary.infra_failures} of {summary.questions} (scored as wrong)"),

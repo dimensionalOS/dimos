@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import builtins
+import dataclasses
 import json
 from pathlib import Path
 import subprocess
@@ -240,6 +241,25 @@ def test_eval_space_passes_the_subset_and_worker_count_to_the_runner(tmp_path, m
     }
     assert "62.5% (scored by SPACE)" in result.stdout
     assert "results.json" in result.stdout
+    # A seed the caller chose is theirs; nothing was drawn on their behalf.
+    assert "(drawn)" not in result.stdout
+
+
+def test_eval_space_draws_and_reports_a_seed_when_one_is_not_given(tmp_path, monkeypatch) -> None:
+    """Without a seed each run asks about different stimuli, and has to say which."""
+    captured = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return dataclasses.replace(_space_summary(tmp_path), seed=kwargs["seed"])
+
+    monkeypatch.setattr(eval_cli, "run_space_task", run)
+    result = CliRunner().invoke(main, ["eval", "space", "--task=SAtt_text", f"--output={tmp_path}"])
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(captured["seed"], int)
+    # Printed, and written to the manifest by the run, so the draw is reproducible.
+    assert f"seed {captured['seed']} (drawn)" in result.stdout
 
 
 def test_eval_space_failure_exits_two_and_says_why(tmp_path, monkeypatch) -> None:
