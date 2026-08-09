@@ -330,6 +330,17 @@ class PointCloud2(Timestamped):
         xy = pts[:, :2]
         cx, cy = xy.mean(axis=0)
         out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        out["compass"] = (
+            "motion bearing_deg=atan2(dy,dx)*180/pi; round to NEAREST 45: 0=east "
+            "45=northeast 90=north 135=northwest 180=west -135=southwest -90=south "
+            "-45=southeast"
+        )
+        fx = np.floor(xy / 0.25).astype(np.int64)
+        out["xy_footprint"] = {
+            "cell_m": 0.25,
+            "occupied_cells": int(np.unique(fx[:, 0] * (2**31) + fx[:, 1]).size),
+            "note": "all z; area_m2~=occupied_cells*cell_m^2",
+        }
         z = pts[:, 2]
         band = xy[(z >= 0.15) & (z <= 1.0)]
         grid = self._body_height_occupancy(band)
@@ -360,11 +371,10 @@ class PointCloud2(Timestamped):
             for r in range(occ.shape[0] - 1, -1, -1)
         ]
         return {
-            "desc": "'#'=cells containing points at body height (z 0.15..1.0 m), "
-            "world frame. Col k center: x = x0_m + k*cell_m (+x east, k=0.."
-            f"{ncols - 1}). Row label = cell-center y (+y north); top row is "
-            "northmost. True nearest point in a '#' cell can be up to half a "
-            "cell nearer than that cell's center.",
+            "desc": "'#'=occupied at body height (z 0.15..1.0 m), world frame. "
+            f"Col k of {ncols} center x=x0_m+k*cell_m (+x east); row label = "
+            "cell-center y (+y north), top=northmost. Nearest point in a '#' "
+            "cell may be up to half a cell nearer than the cell center.",
             "cell_m": cell,
             "x0_m": round(float(lo[0] + cell / 2), 2),
             "rows": rows,
