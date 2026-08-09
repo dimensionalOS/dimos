@@ -17,11 +17,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.agents.code_policy_core import (
+    CodeExecutionRecord,
     CodePolicySession,
     CodePolicySessionConfig,
     FrozenMemoryEnvironment,
     LiveDimosEnvironment,
     _kernel_environment,
+    latest_policy_source,
+    validate_policy_source,
 )
 from dimos.memory2.store.sqlite import SqliteStore
 
@@ -117,3 +120,117 @@ def test_timeout_interrupts_kernel_and_keeps_session_usable(mocker, tmp_path: Pa
         assert "2" in session.python_exec("1 + 1")
     finally:
         session.stop()
+
+
+def test_latest_policy_source_selects_newest_successful_zero_argument_definition() -> None:
+    records = [
+        CodeExecutionRecord("def policy():\n    return 1", "completed", "", 0.1),
+        CodeExecutionRecord("def policy(value):\n    return value", "completed", "", 0.1),
+        CodeExecutionRecord("async def policy():\n    return 2", "completed", "", 0.1),
+        CodeExecutionRecord("def policy():\n    return 3", "failed", "", 0.1),
+        CodeExecutionRecord(
+            "import math\n\ndef helper():\n    return math.floor(4.5)\n\n"
+            "def policy():\n    return helper()",
+            "completed",
+            "",
+            0.1,
+        ),
+    ]
+
+    source = latest_policy_source(records)
+
+    assert source == records[-1].source
+
+
+def test_latest_policy_source_returns_none_without_conforming_definition() -> None:
+    records = [
+        CodeExecutionRecord("value = 1", "completed", "", 0.1),
+        CodeExecutionRecord("def policy(value):\n    return value", "completed", "", 0.1),
+    ]
+
+    assert latest_policy_source(records) is None
+
+
+def test_validate_policy_source_replays_with_frozen_memory(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.db"
+    derived_path = tmp_path / "derived.db"
+    with SqliteStore(path=str(source_path)) as source:
+        source.stream("messages", int).append(7, ts=1.0)
+    with SqliteStore(path=str(derived_path)):
+        pass
+    config = CodePolicySessionConfig(
+        environment=FrozenMemoryEnvironment(
+            recording_path=str(source_path),
+            derived_recording_path=str(derived_path),
+            memory_cutoff_timestamp=2.0,
+        )
+    )
+
+    result = validate_policy_source(
+        config,
+        "def policy():\n    return memory.streams.messages.last().data",
+    )
+
+    assert result.valid is True
+    assert result.result == 7
+    assert result.error is None
+
+
+def test_validate_policy_source_reports_missing_authoring_state(mocker, tmp_path: Path) -> None:
+    mocker.patch("dimos.agents.code_policy_core._bootstrap_source", return_value="pass")
+    config = CodePolicySessionConfig(
+        environment=LiveDimosEnvironment(recording_path=str(tmp_path / "unused.db"))
+    )
+
+    result = validate_policy_source(config, "def policy():\n    return earlier_value")
+
+    assert result.valid is False
+    assert result.error is not None
+    assert "NameError" in result.error
+
+
+def test_validate_policy_source_reports_non_json_result(mocker, tmp_path: Path) -> None:
+    mocker.patch("dimos.agents.code_policy_core._bootstrap_source", return_value="pass")
+    config = CodePolicySessionConfig(
+        environment=LiveDimosEnvironment(recording_path=str(tmp_path / "unused.db"))
+    )
+
+    result = validate_policy_source(config, "def policy():\n    return object()")
+
+    assert result.valid is False
+    assert result.error is not None
+    assert "JSON serializable" in result.error
+
+
+def test_validate_policy_source_reports_policy_exception(mocker, tmp_path: Path) -> None:
+    mocker.patch("dimos.agents.code_policy_core._bootstrap_source", return_value="pass")
+    config = CodePolicySessionConfig(
+        environment=LiveDimosEnvironment(recording_path=str(tmp_path / "unused.db"))
+    )
+
+    result = validate_policy_source(
+        config,
+        "def policy():\n    raise RuntimeError('broken policy')",
+    )
+
+    assert result.valid is False
+    assert result.error is not None
+    assert "RuntimeError" in result.error
+    assert "broken policy" in result.error
+
+
+def test_validate_policy_source_reports_timeout(mocker, tmp_path: Path) -> None:
+    mocker.patch("dimos.agents.code_policy_core._bootstrap_source", return_value="pass")
+    config = CodePolicySessionConfig(
+        environment=LiveDimosEnvironment(recording_path=str(tmp_path / "unused.db"))
+    )
+
+    result = validate_policy_source(
+        config,
+        "def policy():\n    while True:\n        pass",
+        timeout_s=0.1,
+    )
+
+    assert result.valid is False
+    assert result.error is not None
+    assert "timed out" in result.error

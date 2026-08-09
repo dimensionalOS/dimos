@@ -48,7 +48,7 @@ class NativeHarnessEvaluation:
         predictions = []
         for sample in config.samples:
             with context.agent.open_session(Environment(sample=sample)) as session:
-                outcome = session.run(
+                outcome = session.answer(
                     evaluation_protocol="Return the native benchmark answer.",
                     task_input=str(sample),
                 )
@@ -82,7 +82,7 @@ class FakeSession:
     def __exit__(self, *_args):
         return None
 
-    def run(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome:
+    def answer(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome:
         assert evaluation_protocol == "Return the native benchmark answer."
         assert task_input == str(self.sample)
         return AgentOutcome(str(self.sample * 2), 1, 0.01)

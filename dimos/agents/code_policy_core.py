@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import ast
+from dataclasses import dataclass
+import json
 import os
 import queue
 import re
@@ -33,6 +36,7 @@ _MEMORY_CUTOFF_ENV = "DIMOS_CODE_POLICY_MEMORY_CUTOFF"
 _CONNECT_APP_ENV = "DIMOS_CODE_POLICY_CONNECT_APP"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _TRUNCATION_MARKER = "\n... [output truncated]"
+_POLICY_RESULT_MARKER = "__DIMOS_POLICY_RESULT__="
 _CREDENTIAL_NAME_RE = re.compile(
     r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|OPENAI|ANTHROPIC|AWS_|AZURE_)",
     re.IGNORECASE,
@@ -58,6 +62,22 @@ class LiveDimosEnvironment(BaseModel):
 
 
 CodePolicyEnvironment = FrozenMemoryEnvironment | LiveDimosEnvironment
+
+
+@dataclass(frozen=True)
+class CodeExecutionRecord:
+    source: str
+    status: Literal["completed", "failed"]
+    output: str
+    duration_seconds: float
+
+
+@dataclass(frozen=True)
+class PolicyExecutionResult:
+    valid: bool
+    result: Any = None
+    error: str | None = None
+    duration_seconds: float = 0.0
 
 
 class CodePolicySessionConfig(BaseModel):
@@ -173,6 +193,7 @@ class CodePolicySession:
         self.config = config
         self.execution_count = 0
         self.execution_duration_s = 0.0
+        self.execution_records: list[CodeExecutionRecord] = []
         self._execution_lock = threading.Lock()
         self._kernel_lock = threading.RLock()
         self._manager: Any = None
@@ -193,11 +214,14 @@ class CodePolicySession:
             return "CodePolicy session is busy"
         started = time.monotonic()
         self.execution_count += 1
+        status: Literal["completed", "failed"] = "failed"
+        response = "CodePolicy execution failed"
         try:
             try:
                 client = self._ensure_kernel()
             except Exception as exc:
-                return f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                response = f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                return response
             output = _BoundedOutput(self.config.output_limit)
             try:
                 reply = client.execute_interactive(
@@ -209,24 +233,40 @@ class CodePolicySession:
                 )
             except (TimeoutError, queue.Empty):
                 if self._interrupt_and_recover():
-                    return f"Execution timed out after {timeout_s:.1f}s and was interrupted"
-                return (
+                    response = f"Execution timed out after {timeout_s:.1f}s and was interrupted"
+                    return response
+                response = (
                     f"Execution timed out after {timeout_s:.1f}s; "
                     "the kernel was restarted and its namespace was reset"
                 )
+                return response
             except Exception as exc:
                 self._shutdown_kernel()
-                return f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
+                response = f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
+                return response
             content = reply.get("content", {})
             body = output.text().rstrip()
             if not body and content.get("status") != "ok":
                 body = f"{content.get('ename', 'Error')}: {content.get('evalue', '')}"
             if not body:
                 body = "(completed)"
-            state = "completed" if content.get("status") == "ok" else "failed"
-            return f"In [{content.get('execution_count', '?')}] {state}\n\n{body}"
+            if content.get("status") == "ok":
+                status = "completed"
+            else:
+                status = "failed"
+            response = f"In [{content.get('execution_count', '?')}] {status}\n\n{body}"
+            return response
         finally:
-            self.execution_duration_s += time.monotonic() - started
+            duration = time.monotonic() - started
+            self.execution_duration_s += duration
+            self.execution_records.append(
+                CodeExecutionRecord(
+                    source=code,
+                    status=status,
+                    output=response,
+                    duration_seconds=duration,
+                )
+            )
             self._execution_lock.release()
 
     def stop(self) -> None:
@@ -309,3 +349,92 @@ class CodePolicySession:
                 pass
         if client is not None:
             client.stop_channels()
+
+
+def latest_policy_source(records: list[CodeExecutionRecord]) -> str | None:
+    """Return the newest successful cell defining a conforming policy."""
+    for record in reversed(records):
+        if record.status == "completed" and _defines_policy(record.source):
+            return record.source
+    return None
+
+
+def validate_policy_source(
+    config: CodePolicySessionConfig,
+    source: str,
+    *,
+    timeout_s: float = MAX_EXECUTION_TIMEOUT_S,
+) -> PolicyExecutionResult:
+    """Replay policy source in a clean kernel and return its JSON result."""
+    started = time.monotonic()
+    session = CodePolicySession(config)
+    session.start()
+    try:
+        replay = session.python_exec(source, timeout_s=timeout_s)
+        if session.execution_records[-1].status != "completed":
+            return PolicyExecutionResult(
+                valid=False,
+                error=_bounded_error(replay),
+                duration_seconds=time.monotonic() - started,
+            )
+        invocation = session.python_exec(
+            "import json as _dimos_json\n"
+            f"print({_POLICY_RESULT_MARKER!r} + "
+            "_dimos_json.dumps(policy(), allow_nan=False, separators=(',', ':')))",
+            timeout_s=timeout_s,
+        )
+        if session.execution_records[-1].status != "completed":
+            return PolicyExecutionResult(
+                valid=False,
+                error=_bounded_error(invocation),
+                duration_seconds=time.monotonic() - started,
+            )
+        marker_index = invocation.rfind(_POLICY_RESULT_MARKER)
+        if marker_index < 0:
+            return PolicyExecutionResult(
+                valid=False,
+                error="policy() did not produce a JSON result",
+                duration_seconds=time.monotonic() - started,
+            )
+        encoded = invocation[marker_index + len(_POLICY_RESULT_MARKER) :].splitlines()[0]
+        try:
+            result = json.loads(encoded)
+        except json.JSONDecodeError as exc:
+            return PolicyExecutionResult(
+                valid=False,
+                error=f"policy() result is not valid JSON: {exc}",
+                duration_seconds=time.monotonic() - started,
+            )
+        return PolicyExecutionResult(
+            valid=True,
+            result=result,
+            duration_seconds=time.monotonic() - started,
+        )
+    finally:
+        session.stop()
+
+
+def _defines_policy(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name != "policy":
+            continue
+        arguments = node.args
+        if not (
+            arguments.posonlyargs
+            or arguments.args
+            or arguments.kwonlyargs
+            or arguments.vararg
+            or arguments.kwarg
+        ):
+            return True
+    return False
+
+
+def _bounded_error(error: str, limit: int = 4_000) -> str:
+    if len(error) <= limit:
+        return error
+    return error[: limit - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER

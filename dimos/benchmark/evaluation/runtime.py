@@ -20,6 +20,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -28,6 +29,8 @@ from dimos.agents.code_policy_core import (
     CodePolicySessionConfig,
     FrozenMemoryEnvironment,
     LiveDimosEnvironment,
+    latest_policy_source,
+    validate_policy_source,
 )
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.models import (
@@ -35,9 +38,18 @@ from dimos.benchmark.evaluation.models import (
     CodePolicyAgentConfig,
     RuntimeIdentity,
 )
-from dimos.benchmark.evaluation.pi_process import PI_VERSION, PiCliRunner, PiRunError
+from dimos.benchmark.evaluation.pi_process import (
+    PI_VERSION,
+    PiCliRunner,
+    PiRunError,
+    PiRunResult,
+)
 from dimos.benchmark.evaluation.progress import ProgressSink
-from dimos.benchmark.evaluation.protocol import AgentOutcome
+from dimos.benchmark.evaluation.protocol import (
+    AgentOutcome,
+    PolicyOutcome,
+    PolicyValidation,
+)
 
 CODE_POLICY_PROFILE = "code-policy-v1"
 TURN_TIMEOUT_SECONDS = 600.0
@@ -47,6 +59,16 @@ Use the single `python_exec` tool to solve the supplied task. Python executes in
 persistent trusted, unsandboxed environment, so imports, variables, and functions
 persist between tool calls. Follow the evaluation protocol exactly.
 """
+POLICY_SYSTEM_INSTRUCTIONS = (
+    SYSTEM_INSTRUCTIONS
+    + """
+Author the requested result as one self-contained Python cell containing a
+module-level synchronous `def policy()` with no parameters. The cell must include
+all imports, constants, and helper functions it needs. You may redefine and test
+`policy()` freely; the latest successful conforming cell is the submitted policy.
+The policy return value must be JSON-serializable.
+"""
+)
 
 
 class CodePolicyRuntimeFactory:
@@ -133,20 +155,130 @@ class CodePolicyRuntimeSession:
             self.server = None
         shutil.rmtree(self.path / "working", ignore_errors=True)
 
-    def run(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome:
+    def answer(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome:
+        self._consume(evaluation_protocol, task_input)
+        user_message = _assemble_user_message(evaluation_protocol, task_input)
+        evidence = self._write_prompt_evidence(
+            evaluation_protocol,
+            task_input,
+            user_message,
+            SYSTEM_INSTRUCTIONS,
+        )
+        self.factory._record_prompt_evidence(evidence)
+        result = self._run_pi_round(
+            prompt=user_message,
+            system_prompt=SYSTEM_INSTRUCTIONS,
+            round_number=1,
+            policy_mode=False,
+        )
+        return AgentOutcome(
+            final_text=result.final_text,
+            tool_call_count=result.tool_call_count,
+            duration_seconds=result.duration_seconds,
+        )
+
+    def author_policy(
+        self,
+        *,
+        evaluation_protocol: str,
+        task_input: str,
+        max_rounds: int,
+    ) -> PolicyOutcome:
+        if max_rounds < 1:
+            raise ValueError("max_rounds must be positive")
+        self._consume(evaluation_protocol, task_input)
+        user_message = _assemble_user_message(evaluation_protocol, task_input)
+        evidence = self._write_prompt_evidence(
+            evaluation_protocol,
+            task_input,
+            user_message,
+            POLICY_SYSTEM_INSTRUCTIONS,
+        )
+        self.factory._record_prompt_evidence(evidence)
+
+        assert self.server is not None
+        validations: list[PolicyValidation] = []
+        source: str | None = None
+        result_value = None
+        final_text = ""
+        tool_call_count = 0
+        duration_seconds = 0.0
+        prompt = user_message
+        for round_number in range(1, max_rounds + 1):
+            result = self._run_pi_round(
+                prompt=prompt,
+                system_prompt=POLICY_SYSTEM_INSTRUCTIONS,
+                round_number=round_number,
+                policy_mode=True,
+            )
+            final_text = result.final_text
+            tool_call_count += result.tool_call_count
+            duration_seconds += result.duration_seconds
+            source = latest_policy_source(self.server.session.execution_records)
+            if source is None:
+                validation = PolicyValidation(
+                    round_number=round_number,
+                    valid=False,
+                    candidate_found=False,
+                    error="Define a module-level synchronous zero-argument policy() function.",
+                    duration_seconds=0.0,
+                )
+            else:
+                executed = validate_policy_source(self.server.session.config, source)
+                duration_seconds += executed.duration_seconds
+                validation = PolicyValidation(
+                    round_number=round_number,
+                    valid=executed.valid,
+                    candidate_found=True,
+                    error=executed.error,
+                    duration_seconds=executed.duration_seconds,
+                )
+                if executed.valid:
+                    result_value = executed.result
+            validations.append(validation)
+            if validation.valid:
+                break
+            if round_number < max_rounds:
+                assert validation.error is not None
+                prompt = _assemble_repair_message(
+                    evaluation_protocol=evaluation_protocol,
+                    task_input=task_input,
+                    source=source,
+                    error=validation.error,
+                )
+
+        status: Literal["valid", "invalid"] = "valid" if validations[-1].valid else "invalid"
+        self._write_policy_artifacts(source, validations, status, result_value)
+        return PolicyOutcome(
+            status=status,
+            source=source,
+            result=result_value,
+            validations=tuple(validations),
+            final_text=final_text,
+            tool_call_count=tool_call_count,
+            duration_seconds=duration_seconds,
+        )
+
+    def _consume(self, evaluation_protocol: str, task_input: str) -> None:
         if self.server is None:
-            raise RuntimeError("CodePolicy session must be entered before run()")
+            raise RuntimeError("CodePolicy session must be entered before use")
         if self._ran:
-            raise RuntimeError("code-policy-v1 sessions accept exactly one initial turn")
+            raise RuntimeError("code-policy-v1 sessions accept exactly one top-level operation")
         if not evaluation_protocol.strip() or not task_input.strip():
             raise ValueError("evaluation protocol and task input must be non-empty")
         self._ran = True
 
-        user_message = _assemble_user_message(evaluation_protocol, task_input)
-        evidence = self._write_prompt_evidence(evaluation_protocol, task_input, user_message)
-        self.factory._record_prompt_evidence(evidence)
-        working = self.path / "working"
-        working.mkdir()
+    def _run_pi_round(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+        round_number: int,
+        policy_mode: bool,
+    ) -> PiRunResult:
+        assert self.server is not None
+        working = self.path / "working" / f"round-{round_number:04d}"
+        working.mkdir(parents=True)
         cli, extension = _pi_paths()
         runner = PiCliRunner(
             cli=cli,
@@ -158,33 +290,35 @@ class CodePolicyRuntimeSession:
         )
         try:
             result = runner.run(
-                prompt=user_message,
-                system_prompt=SYSTEM_INSTRUCTIONS,
+                prompt=prompt,
+                system_prompt=system_prompt,
                 mcp_url=self.server.mcp_url,
                 api_key=self.factory.api_key,
                 run_dir=working,
             )
         except PiRunError as exc:
-            self._record_stderr(exc.stderr)
+            self._record_stderr(exc.stderr, round_number if policy_mode else None)
             raise
         if result.transcript_path is not None:
-            target = self.path / "pi-transcript.jsonl"
+            filename = (
+                f"pi-transcript-round-{round_number:04d}.jsonl"
+                if policy_mode
+                else "pi-transcript.jsonl"
+            )
+            target = self.path / filename
             shutil.copy2(result.transcript_path, target)
             self.factory._record_runtime_artifact(
                 self._artifact(target, "Pi transcript", "application/x-ndjson")
             )
         if result.stderr:
-            self._record_stderr(result.stderr)
-        return AgentOutcome(
-            final_text=result.final_text,
-            tool_call_count=result.tool_call_count,
-            duration_seconds=result.duration_seconds,
-        )
+            self._record_stderr(result.stderr, round_number if policy_mode else None)
+        return result
 
-    def _record_stderr(self, stderr: str) -> None:
+    def _record_stderr(self, stderr: str, round_number: int | None = None) -> None:
         if not stderr:
             return
-        target = self.path / "stderr.log"
+        filename = "stderr.log" if round_number is None else f"stderr-round-{round_number:04d}.log"
+        target = self.path / filename
         target.write_text(stderr, encoding="utf-8")
         self.factory._record_runtime_artifact(self._artifact(target, "Pi stderr", "text/plain"))
 
@@ -193,9 +327,10 @@ class CodePolicyRuntimeSession:
         evaluation_protocol: str,
         task_input: str,
         user_message: str,
+        system_instructions: str,
     ) -> list[ArtifactReference]:
         components = (
-            ("runtime-system.txt", "runtime", SYSTEM_INSTRUCTIONS),
+            ("runtime-system.txt", "runtime", system_instructions),
             ("evaluation-protocol.txt", "evaluation", evaluation_protocol),
             ("task-input.txt", "evaluation", task_input),
             ("assembled-user-message.txt", "runtime", user_message),
@@ -230,6 +365,50 @@ class CodePolicyRuntimeSession:
         references.append(self._artifact(manifest, "Prompt assembly", "application/json"))
         return references
 
+    def _write_policy_artifacts(
+        self,
+        source: str | None,
+        validations: list[PolicyValidation],
+        status: str,
+        result: object,
+    ) -> None:
+        if source is not None:
+            policy = self.path / "policy.py"
+            policy.write_text(source.rstrip() + "\n", encoding="utf-8")
+            self.factory._record_runtime_artifact(
+                self._artifact(policy, "Policy source", "text/x-python")
+            )
+        history = self.path / "policy-validation.json"
+        history.write_text(
+            json.dumps(
+                [
+                    {
+                        "round": item.round_number,
+                        "valid": item.valid,
+                        "candidate_found": item.candidate_found,
+                        "error": item.error,
+                        "duration_seconds": item.duration_seconds,
+                    }
+                    for item in validations
+                ],
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.factory._record_runtime_artifact(
+            self._artifact(history, "Policy validation history", "application/json")
+        )
+        if status == "valid":
+            result_path = self.path / "policy-result.json"
+            result_path.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            self.factory._record_runtime_artifact(
+                self._artifact(result_path, "Policy result", "application/json")
+            )
+
     def _artifact(self, path: Path, label: str, media_type: str) -> ArtifactReference:
         return ArtifactReference(
             path=path.relative_to(self.factory.workspace).as_posix(),
@@ -244,6 +423,24 @@ def _assemble_user_message(evaluation_protocol: str, task_input: str) -> str:
         f"{evaluation_protocol.strip()}\n\n"
         "# Task input\n\n"
         f"{task_input.strip()}\n"
+    )
+
+
+def _assemble_repair_message(
+    *,
+    evaluation_protocol: str,
+    task_input: str,
+    source: str | None,
+    error: str,
+) -> str:
+    candidate = source if source is not None else "(no conforming policy candidate was found)"
+    return (
+        _assemble_user_message(evaluation_protocol, task_input)
+        + "\n# Mechanical validation failure\n\n"
+        + f"```text\n{error}\n```\n\n"
+        + "# Current candidate\n\n"
+        + f"```python\n{candidate}\n```\n\n"
+        + "Redefine policy() in one self-contained cell and finish when it is ready.\n"
     )
 
 

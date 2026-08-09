@@ -15,7 +15,13 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos.benchmark.evaluation.protocol import AgentOutcome, EvaluationContext
+import pytest
+
+from dimos.benchmark.evaluation.protocol import (
+    EvaluationContext,
+    PolicyOutcome,
+    PolicyValidation,
+)
 import dimos.benchmark.short_horizon_qa.evaluation as evaluation
 from dimos.benchmark.short_horizon_qa.models import (
     ExactIntegerValidatorRef,
@@ -36,9 +42,19 @@ class FakeSession:
     def __exit__(self, *_args):
         return None
 
-    def run(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome:
-        self.captured.update(protocol=evaluation_protocol, task=task_input)
-        return AgentOutcome("Checked\nANSWER: 2", 3, 1.0)
+    def author_policy(
+        self,
+        *,
+        evaluation_protocol: str,
+        task_input: str,
+        max_rounds: int,
+    ) -> PolicyOutcome:
+        self.captured.update(
+            protocol=evaluation_protocol,
+            task=task_input,
+            max_rounds=max_rounds,
+        )
+        return self.captured["outcome"]
 
 
 class FakeAgent:
@@ -72,14 +88,37 @@ def _case(tmp_path: Path) -> Path:
     return path
 
 
-def test_frozen_evaluation_owns_protocol_decoder_and_openevals(
+@pytest.mark.parametrize(
+    ("status", "result", "prediction", "score"),
+    [
+        ("valid", 2, {"status": "parsed", "integer_answer": 2}, True),
+        ("valid", 3, {"status": "parsed", "integer_answer": 3}, False),
+        ("valid", "2", {"status": "invalid", "integer_answer": None}, False),
+        ("invalid", None, {"status": "invalid", "integer_answer": None}, False),
+    ],
+)
+def test_frozen_evaluation_scores_policy_result_once(
     monkeypatch,
     tmp_path: Path,
+    status: str,
+    result: object,
+    prediction: dict,
+    score: bool,
 ) -> None:
     case_path = _case(tmp_path)
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    captured = {}
+    captured = {
+        "outcome": PolicyOutcome(
+            status=status,
+            source="def policy():\n    return 2",
+            result=result,
+            validations=(PolicyValidation(1, status == "valid", True, None, 0.1),),
+            final_text="Policy ready",
+            tool_call_count=3,
+            duration_seconds=1.0,
+        )
+    }
     monkeypatch.setattr(evaluation, "_materialize_frozen_memory", lambda *_args: bundle)
     monkeypatch.setattr(
         evaluation,
@@ -94,7 +133,7 @@ def test_frozen_evaluation_owns_protocol_decoder_and_openevals(
 
     def exact_match(*, outputs, reference_outputs):
         captured.update(outputs=outputs, reference_outputs=reference_outputs)
-        return {"key": "exact_match", "score": True, "comment": None}
+        return {"key": "exact_match", "score": score, "comment": None}
 
     monkeypatch.setattr(evaluation, "exact_match", exact_match)
     context = EvaluationContext(
@@ -111,15 +150,17 @@ def test_frozen_evaluation_owns_protocol_decoder_and_openevals(
     )
 
     assert captured["task"] == "How many rooms?"
-    assert "ANSWER: <integer>" in captured["protocol"]
-    assert captured["outputs"] == {"status": "parsed", "integer_answer": 2}
+    assert "zero-argument `policy()`" in captured["protocol"]
+    assert "ANSWER:" not in captured["protocol"]
+    assert captured["max_rounds"] == 3
+    assert captured["outputs"] == prediction
     assert captured["reference_outputs"] == {
         "status": "parsed",
         "integer_answer": 2,
     }
     assert report.native_result.value == {
         "key": "exact_match",
-        "score": True,
+        "score": score,
         "comment": None,
     }
     assert [item.key for item in report.summary] == [
@@ -127,6 +168,8 @@ def test_frozen_evaluation_owns_protocol_decoder_and_openevals(
         "recording",
         "answer",
         "exact_match",
+        "policy_status",
+        "authoring_rounds",
         "tool_calls",
         "duration",
     ]

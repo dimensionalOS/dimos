@@ -36,13 +36,11 @@ from dimos.benchmark.evaluation.progress import (
     emit_progress,
 )
 from dimos.benchmark.evaluation.protocol import EvaluationContext
-from dimos.benchmark.short_horizon_qa.integer_answer import (
-    load_exact_integer_oracle,
-    parse_integer_prediction,
-)
+from dimos.benchmark.short_horizon_qa.integer_answer import load_exact_integer_oracle
 from dimos.benchmark.short_horizon_qa.models import (
     FrozenIntegerQaCase,
     FrozenIntegerQaConfig,
+    IntegerPrediction,
     MapperSettings,
 )
 from dimos.benchmark.short_horizon_qa.prepare import prepare_bundle
@@ -52,9 +50,10 @@ from dimos.memory2.cli.dataset import resolve_dataset
 
 EVALUATION_PROTOCOL = """Use `python_exec` to inspect the read-only `memory` object
 for the frozen robot recording. Compute the requested integer from the recording;
-do not guess. End with exactly one line in this form:
-
-ANSWER: <integer>
+do not guess. Define a module-level synchronous zero-argument `policy()` function
+that returns the integer. Submit the function and all of its imports, constants,
+and helpers together in one self-contained cell. The policy result must be a JSON
+integer. Do not return the answer only as prose.
 """
 
 
@@ -97,11 +96,15 @@ class FrozenIntegerQaEvaluation:
                 memory_cutoff_timestamp=cutoff.cutoff_timestamp,
             )
         ) as session:
-            outcome = session.run(
+            outcome = session.author_policy(
                 evaluation_protocol=EVALUATION_PROTOCOL,
                 task_input=case.task.prompt,
+                max_rounds=3,
             )
-        prediction = parse_integer_prediction(outcome.final_text)
+        if outcome.status == "valid" and type(outcome.result) is int:
+            prediction = IntegerPrediction(status="parsed", integer_answer=outcome.result)
+        else:
+            prediction = IntegerPrediction(status="invalid")
         native_result = exact_match(
             outputs={
                 "status": prediction.status,
@@ -129,6 +132,16 @@ class FrozenIntegerQaEvaluation:
                     key="exact_match",
                     label="Exact match",
                     value=bool(native_result["score"]),
+                ),
+                SummaryItem(
+                    key="policy_status",
+                    label="Policy status",
+                    value=outcome.status,
+                ),
+                SummaryItem(
+                    key="authoring_rounds",
+                    label="Authoring rounds",
+                    value=len(outcome.validations),
                 ),
                 SummaryItem(
                     key="tool_calls",

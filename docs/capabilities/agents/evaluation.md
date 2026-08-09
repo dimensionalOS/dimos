@@ -14,7 +14,8 @@ Evaluation Run Specification
        Evaluation ------ dataset / cases / native harness
           |
           v
- CodePolicy Runtime ----- Pi + one persistent python_exec tool
+CodePolicy Runtime ----- Pi + one persistent python_exec tool
+          |              answer() or author_policy()
           |
           v
    Evaluation Run ------- status / native result / artifacts
@@ -38,6 +39,13 @@ export OPENAI_API_KEY=...
 The initial runtime profile is `code-policy-v1`: Pi 0.80.10, model
 `gpt-5.6-luna`, medium thinking, and exactly one `python_exec` MCP tool. Pi is the
 profile's driver, not a user-selectable evaluation runtime.
+
+The runtime session exposes two explicit schemes:
+
+| Operation | Evaluated product | Authoring behavior |
+| --- | --- | --- |
+| `answer()` | Pi's final text | One Pi invocation with any number of `python_exec` calls. |
+| `author_policy()` | A zero-argument `policy()` and its JSON result | Bounded Pi invocations with clean replay and mechanical repair. |
 
 ## Run specification and CLI
 
@@ -93,7 +101,11 @@ runtime/session-0001/
   task-input.txt
   assembled-user-message.txt
   prompt-assembly.json
-  pi-transcript.jsonl       # when Pi emits one
+  pi-transcript.jsonl       # direct-answer transcript, when emitted
+  pi-transcript-round-*.jsonl # policy-authoring transcripts
+  policy.py                 # selected policy cell
+  policy-validation.json   # clean replay attempts
+  policy-result.json       # valid JSON policy result
   stderr.log                # when nonempty
 ```
 
@@ -120,7 +132,7 @@ class MyEvaluation:
 
     def run(self, config, context):
         with context.agent.open_session(environment) as session:
-            outcome = session.run(
+            outcome = session.answer(
                 evaluation_protocol="Return one answer per benchmark rules.",
                 task_input=sample.question,
             )
@@ -130,6 +142,50 @@ class MyEvaluation:
             native_result=InlineNativeResult(value=native_result),
         )
 ```
+
+An Evaluation that scores executable code selects policy authoring instead:
+
+```python
+with context.agent.open_session(environment) as session:
+    outcome = session.author_policy(
+        evaluation_protocol="Define policy() and return the requested integer.",
+        task_input=sample.question,
+        max_rounds=3,
+    )
+
+native_result = harness.score(outcome.result if outcome.status == "valid" else None)
+```
+
+The agent authors in one persistent REPL and may freely redefine `policy()`.
+After each Pi invocation, the runtime selects the newest successful cell with a
+module-level synchronous zero-argument `policy()`. The whole cell must contain
+its imports, constants, and helpers. The runtime then replays that cell in a
+clean kernel with the same environment, calls `policy()`, and JSON-serializes the
+result.
+
+```text
+persistent authoring kernel
+          |
+          v
+latest self-contained policy cell
+          |
+          v
+clean kernel replay -- mechanical failure --> bounded repair round
+          |
+          v
+one frozen JSON result --> Evaluation-owned native scorer
+```
+
+Only mechanical failures such as a missing policy, replay exception, timeout, or
+non-JSON result are returned to the agent. Native benchmark correctness remains
+hidden, and the scorer sees only the first mechanically valid frozen policy.
+Exhausting the repair budget produces an invalid policy outcome, not an
+infrastructure failure.
+
+Frozen integer QA is the first policy-authoring consumer: `policy()` reads the
+injected read-only `memory` and returns one integer for one frozen case. Live
+simulation, reset semantics, SimConnection, containers, and third-party
+benchmark lifecycles are outside this scheme and remain future integration work.
 
 Built-ins are registered lazily inside DimOS. External distributions expose an
 Evaluation object through the `dimos.evaluations` entry-point group:

@@ -15,10 +15,15 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from dimos.agents.code_policy_core import FrozenMemoryEnvironment
+from dimos.agents.code_policy_core import (
+    CodeExecutionRecord,
+    FrozenMemoryEnvironment,
+    PolicyExecutionResult,
+)
 from dimos.benchmark.evaluation.models import CodePolicyAgentConfig
 from dimos.benchmark.evaluation.pi_process import PiRunError, PiRunResult
 import dimos.benchmark.evaluation.runtime as runtime
@@ -26,10 +31,13 @@ import dimos.benchmark.evaluation.runtime as runtime
 
 class FakeServer:
     mcp_url = "http://127.0.0.1:1234/mcp"
+    current = None
 
     def __init__(self, config) -> None:
         self.config = config
+        self.session = SimpleNamespace(config=config, execution_records=[])
         self.started = False
+        FakeServer.current = self
 
     def start(self) -> None:
         self.started = True
@@ -53,6 +61,20 @@ class FailingRunner(FakeRunner):
         raise PiRunError("Pi failed", stderr="diagnostic")
 
 
+class PolicyRunner(FakeRunner):
+    sources: list[str] = []
+    prompts: list[str] = []
+
+    def run(self, *, prompt: str, **kwargs):
+        self.prompts.append(prompt)
+        source = self.sources.pop(0)
+        assert FakeServer.current is not None
+        FakeServer.current.session.execution_records.append(
+            CodeExecutionRecord(source, "completed", "(completed)", 0.01)
+        )
+        return super().run(prompt=prompt, **kwargs)
+
+
 def test_runtime_records_separate_prompt_components(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(runtime, "CodePolicyMcpServer", FakeServer)
     monkeypatch.setattr(runtime, "PiCliRunner", FakeRunner)
@@ -71,7 +93,7 @@ def test_runtime_records_separate_prompt_components(monkeypatch, tmp_path: Path)
     )
 
     with factory.open_session(environment) as session:
-        outcome = session.run(
+        outcome = session.answer(
             evaluation_protocol="End with ANSWER: <integer>.",
             task_input="How many rooms?",
         )
@@ -111,7 +133,116 @@ def test_runtime_retains_pi_stderr_on_failure(monkeypatch, tmp_path: Path) -> No
 
     with pytest.raises(PiRunError, match="Pi failed"):
         with factory.open_session(environment) as session:
-            session.run(evaluation_protocol="Use memory.", task_input="Question")
+            session.answer(evaluation_protocol="Use memory.", task_input="Question")
 
     assert (tmp_path / "runtime/session-0001/stderr.log").read_text() == "diagnostic"
     assert factory.runtime_artifacts[-1].path == "runtime/session-0001/stderr.log"
+
+
+def test_policy_authoring_repairs_mechanical_failure_and_records_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(runtime, "CodePolicyMcpServer", FakeServer)
+    monkeypatch.setattr(runtime, "PiCliRunner", PolicyRunner)
+    marker = tmp_path / "exists"
+    marker.touch()
+    monkeypatch.setattr(runtime, "_pi_paths", lambda: (marker, marker))
+    PolicyRunner.sources = [
+        "def policy():\n    return missing",
+        "def policy():\n    return 2",
+    ]
+    PolicyRunner.prompts = []
+    validations = iter(
+        [
+            PolicyExecutionResult(valid=False, error="NameError: missing", duration_seconds=0.1),
+            PolicyExecutionResult(valid=True, result=2, duration_seconds=0.1),
+        ]
+    )
+    monkeypatch.setattr(runtime, "validate_policy_source", lambda *_args: next(validations))
+    factory = runtime.CodePolicyRuntimeFactory(
+        config=CodePolicyAgentConfig(),
+        api_key="secret",
+        workspace=tmp_path,
+    )
+    environment = FrozenMemoryEnvironment(
+        recording_path="source.db",
+        derived_recording_path="derived.db",
+        memory_cutoff_timestamp=1.0,
+    )
+
+    with factory.open_session(environment) as session:
+        outcome = session.author_policy(
+            evaluation_protocol="Return an integer from policy().",
+            task_input="How many rooms?",
+            max_rounds=3,
+        )
+
+    assert outcome.status == "valid"
+    assert outcome.result == 2
+    assert len(outcome.validations) == 2
+    assert "NameError: missing" in PolicyRunner.prompts[1]
+    session_path = tmp_path / "runtime/session-0001"
+    assert (session_path / "policy.py").read_text() == "def policy():\n    return 2\n"
+    assert json.loads((session_path / "policy-result.json").read_text()) == 2
+    assert len(json.loads((session_path / "policy-validation.json").read_text())) == 2
+
+
+def test_policy_authoring_exhaustion_is_invalid_and_session_cannot_be_reused(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(runtime, "CodePolicyMcpServer", FakeServer)
+    monkeypatch.setattr(runtime, "PiCliRunner", PolicyRunner)
+    marker = tmp_path / "exists"
+    marker.touch()
+    monkeypatch.setattr(runtime, "_pi_paths", lambda: (marker, marker))
+    PolicyRunner.sources = ["def policy():\n    return missing"]
+    PolicyRunner.prompts = []
+    monkeypatch.setattr(
+        runtime,
+        "validate_policy_source",
+        lambda *_args: PolicyExecutionResult(valid=False, error="NameError", duration_seconds=0.1),
+    )
+    factory = runtime.CodePolicyRuntimeFactory(
+        config=CodePolicyAgentConfig(),
+        api_key="secret",
+        workspace=tmp_path,
+    )
+    environment = FrozenMemoryEnvironment(
+        recording_path="source.db",
+        derived_recording_path="derived.db",
+        memory_cutoff_timestamp=1.0,
+    )
+
+    with factory.open_session(environment) as session:
+        outcome = session.author_policy(
+            evaluation_protocol="Return an integer from policy().",
+            task_input="Question",
+            max_rounds=1,
+        )
+        with pytest.raises(RuntimeError, match="one top-level operation"):
+            session.answer(evaluation_protocol="Answer.", task_input="Question")
+
+    assert outcome.status == "invalid"
+    assert outcome.result is None
+
+
+def test_policy_authoring_requires_positive_round_limit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(runtime, "CodePolicyMcpServer", FakeServer)
+    factory = runtime.CodePolicyRuntimeFactory(
+        config=CodePolicyAgentConfig(), api_key="secret", workspace=tmp_path
+    )
+    environment = FrozenMemoryEnvironment(
+        recording_path="source.db",
+        derived_recording_path="derived.db",
+        memory_cutoff_timestamp=1.0,
+    )
+
+    with factory.open_session(environment) as session:
+        with pytest.raises(ValueError, match="max_rounds must be positive"):
+            session.author_policy(
+                evaluation_protocol="Protocol",
+                task_input="Question",
+                max_rounds=0,
+            )

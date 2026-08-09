@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -39,11 +39,39 @@ class CodePolicySessionHandle(Protocol):
 
     def __exit__(self, *args: object) -> None: ...
 
-    def run(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome: ...
+    def answer(self, *, evaluation_protocol: str, task_input: str) -> AgentOutcome: ...
+
+    def author_policy(
+        self,
+        *,
+        evaluation_protocol: str,
+        task_input: str,
+        max_rounds: int,
+    ) -> PolicyOutcome: ...
 
 
 @dataclass(frozen=True)
 class AgentOutcome:
+    final_text: str
+    tool_call_count: int
+    duration_seconds: float
+
+
+@dataclass(frozen=True)
+class PolicyValidation:
+    round_number: int
+    valid: bool
+    candidate_found: bool
+    error: str | None
+    duration_seconds: float
+
+
+@dataclass(frozen=True)
+class PolicyOutcome:
+    status: Literal["valid", "invalid"]
+    source: str | None
+    result: Any
+    validations: tuple[PolicyValidation, ...]
     final_text: str
     tool_call_count: int
     duration_seconds: float
