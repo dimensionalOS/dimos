@@ -22,7 +22,7 @@ from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
-    XARM6_SIM_PATH,
+    XARM6_MODEL_PATH,
     XARM7_MODEL_PATH,
     XARM7_SIM_PATH,
     XARM7_TABLETOP_SCENE,
@@ -108,14 +108,41 @@ coordinator_xarm7 = autoconnect(
     *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
 )
 
-_coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
+
+def _resolve_xarm6_robot() -> SimulationBinding:
+    return resolve_robot(
+        real_hardware=(xarm6_hardware("arm", gripper=True),),
+        simulation=SimulationRequest(
+            robot_model="xarm6",
+            model_path=XARM6_MODEL_PATH,
+            scene_package=global_config.scene_package or XARM7_TABLETOP_SCENE,
+            features=frozenset((SimulationFeature.EPISODE_CONTROL,)),
+        ),
+    )
+
+
+_xarm6_robot = _resolve_xarm6_robot()
+if len(_xarm6_robot.hardware) != 1:
+    raise ValueError("coordinator-xarm6 requires one arm hardware component")
+_coordinator_xarm6_hw = _xarm6_robot.hardware[0]
+_xarm6_modules: tuple[Blueprint, ...]
+if global_config.simulation_provider:
+    _xarm6_modules = (
+        _xarm6_robot.backend,
+        vis_module(
+            viewer_backend=global_config.viewer,
+            rerun_config=_xarm6_robot.rerun_config,
+        ),
+    )
+else:
+    _xarm6_modules = (_xarm6_robot.backend,)
 
 coordinator_xarm6 = autoconnect(
     coordinator(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw)],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
+    *_xarm6_modules,
 )
 
 _xarm7_left = xarm7_hardware("left_arm")

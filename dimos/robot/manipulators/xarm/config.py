@@ -61,6 +61,7 @@ XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_descrip
 XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
+XARM6_MODEL_PATH = LfsPath("xarm6/xarm6.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_MODEL_PATH = LfsPath("xarm7/xarm7.xml")
 XARM7_TABLETOP_SCENE = "xarm-tabletop-v1"

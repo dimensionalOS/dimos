@@ -15,7 +15,7 @@
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.xarm.blueprints import basic
-from dimos.robot.manipulators.xarm.config import XARM7_MODEL_PATH
+from dimos.robot.manipulators.xarm.config import XARM6_MODEL_PATH, XARM7_MODEL_PATH
 from dimos.simulation.providers import (
     SimulationBinding,
     SimulationFeature,
@@ -44,6 +44,33 @@ def test_existing_xarm_planner_blueprint_requests_selected_provider(
         simulation=SimulationRequest(
             robot_model="xarm7",
             model_path=XARM7_MODEL_PATH,
+            scene_package="tabletop-test",
+            features=frozenset((SimulationFeature.EPISODE_CONTROL,)),
+        ),
+    )
+
+
+def test_existing_xarm6_coordinator_blueprint_requests_selected_provider(
+    monkeypatch,
+    mocker,
+) -> None:
+    binding = SimulationBinding(
+        backend=Blueprint(blueprints=()),
+        hardware=(basic._coordinator_xarm6_hw,),
+    )
+    resolve_robot = mocker.patch.object(
+        basic,
+        "resolve_robot",
+        return_value=binding,
+    )
+    monkeypatch.setattr(global_config, "scene_package", "tabletop-test")
+
+    assert basic._resolve_xarm6_robot() is binding
+    resolve_robot.assert_called_once_with(
+        real_hardware=mocker.ANY,
+        simulation=SimulationRequest(
+            robot_model="xarm6",
+            model_path=XARM6_MODEL_PATH,
             scene_package="tabletop-test",
             features=frozenset((SimulationFeature.EPISODE_CONTROL,)),
         ),
