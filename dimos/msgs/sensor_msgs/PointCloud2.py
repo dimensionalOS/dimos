@@ -352,7 +352,9 @@ class PointCloud2(Timestamped):
             "8-way direction of motion (dx,dy = last minus first): if |dx|>2.41*|dy| "
             "then east (dx>0) or west (dx<0); if |dy|>2.41*|dx| then north (dy>0) or "
             "south (dy<0); otherwise diagonal by signs (northeast, northwest, "
-            "southeast, southwest)"
+            "southeast, southwest). For any question about which direction the map "
+            "moved or gained coverage, take dx,dy from centroid_xy_m of the last "
+            "minus the first frame; range edges are too noisy for direction"
         )
         z = pts[:, 2]
         band = xy[(z >= 0.15) & (z <= 1.0)]
