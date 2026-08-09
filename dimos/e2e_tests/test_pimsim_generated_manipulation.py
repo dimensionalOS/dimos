@@ -14,57 +14,95 @@
 
 from __future__ import annotations
 
+import time
+from typing import Protocol, cast
+
 import pytest
 
-from dimos.e2e_tests.pimsim_case import PimSimCaseRun, PimSimTabletopCase
+from dimos.agents.skill_result import SkillResult
+from dimos.e2e_tests.episode import EpisodeRun
+from dimos.simulation.episodes import EvaluationCase
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.mujoco]
 
 
+class _PickAndPlaceActions(Protocol):
+    def look(self) -> SkillResult: ...
+
+    def pick(self, target: str) -> SkillResult: ...
+
+    def drop_on(self, target: str, *, z_offset: float) -> SkillResult: ...
+
+
 TABLETOP_CASES = {
-    "lift-object": PimSimTabletopCase(
-        case_id="lift-object/alphabet-soup/scene-296/variation-3",
+    "lift-object": EvaluationCase(
+        case_id="lift-object/alphabet-soup/scene-290/variation-3",
         family_id="lift-object",
-        scene_seed=296,
+        scene_seed=290,
         variation_seed=3,
-        semantic_roles={"object": "alphabet-soup"},
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={"object": "alphabet-soup"},
+        required_modules=("PickAndPlaceModule",),
     ),
-    "object-in-receptacle": PimSimTabletopCase(
+    "lift-object-second-reset": EvaluationCase(
+        case_id="lift-object/alphabet-soup/scene-290/variation-65",
+        family_id="lift-object",
+        scene_seed=290,
+        variation_seed=65,
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={"object": "alphabet-soup"},
+        required_modules=("PickAndPlaceModule",),
+    ),
+    "object-in-receptacle": EvaluationCase(
         case_id="object-in-receptacle/alphabet-soup/wooden-tray/scene-296/variation-3",
         family_id="object-in-receptacle",
         scene_seed=296,
         variation_seed=3,
-        semantic_roles={"object": "alphabet-soup", "target": "wooden-tray"},
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={"object": "alphabet-soup", "target": "wooden-tray"},
+        required_modules=("PickAndPlaceModule",),
     ),
-    "object-on-support": PimSimTabletopCase(
+    "object-on-support": EvaluationCase(
         case_id="object-on-support/tomato-sauce/plate/scene-296/variation-3",
         family_id="object-on-support",
         scene_seed=296,
         variation_seed=3,
-        semantic_roles={"object": "tomato-sauce", "target": "plate"},
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={"object": "tomato-sauce", "target": "plate"},
+        required_modules=("PickAndPlaceModule",),
     ),
-    "collect-objects-in-receptacle": PimSimTabletopCase(
+    "collect-objects-in-receptacle": EvaluationCase(
         case_id=("collect-objects-in-receptacle/soup-and-cheese/wooden-tray/scene-296/variation-3"),
         family_id="collect-objects-in-receptacle",
         scene_seed=296,
         variation_seed=3,
-        semantic_roles={
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={
             "first_object": "alphabet-soup",
             "second_object": "cream-cheese",
             "target": "wooden-tray",
         },
+        required_modules=("PickAndPlaceModule",),
     ),
-    "rearrange-objects": PimSimTabletopCase(
+    "rearrange-objects": EvaluationCase(
         case_id="rearrange-objects/soup-in-tray/sauce-on-plate/scene-296/variation-3",
         family_id="rearrange-objects",
         scene_seed=296,
         variation_seed=3,
-        semantic_roles={
+        robot_model="xarm7",
+        blueprint_name="xarm-perception-sim",
+        role_constraints={
             "first_object": "alphabet-soup",
             "second_object": "tomato-sauce",
             "containment_target": "wooden-tray",
             "support_target": "plate",
         },
+        required_modules=("PickAndPlaceModule",),
     ),
 }
 
@@ -75,92 +113,120 @@ PLACE_CASES = (
 
 
 @pytest.mark.parametrize(
-    "pimsim_case",
-    [pytest.param(TABLETOP_CASES["lift-object"], id="lift-object")],
+    "evaluation_episode",
+    [
+        pytest.param(TABLETOP_CASES["lift-object"], id="scene-290"),
+        pytest.param(TABLETOP_CASES["lift-object-second-reset"], id="variation-65"),
+    ],
     indirect=True,
 )
-def test_lift_object(pimsim_case: PimSimCaseRun) -> None:
-    observation = pimsim_case.wait_for_role("object")
+def test_lift_object(evaluation_episode: EpisodeRun) -> None:
+    actions = _actions(evaluation_episode)
+    observation = _wait_for_role(evaluation_episode, actions, "object")
     assert observation.success, observation
 
-    result = pimsim_case.pick_and_place.pick(pimsim_case.role("object"))
-    evaluation = pimsim_case.wait_for_goal()
+    result = actions.pick(evaluation_episode.role("object"))
+    evaluation = evaluation_episode.wait_for_goal()
 
     assert result.success, f"{result}; private evaluation: {evaluation}"
-    assert evaluation["passed"] is True
+    assert evaluation.passed is True
 
 
 @pytest.mark.parametrize(
-    ("pimsim_case", "z_offset"),
+    ("evaluation_episode", "z_offset"),
     PLACE_CASES,
-    indirect=("pimsim_case",),
+    indirect=("evaluation_episode",),
 )
 def test_place_object(
-    pimsim_case: PimSimCaseRun,
+    evaluation_episode: EpisodeRun,
     z_offset: float,
 ) -> None:
-    observation = pimsim_case.wait_for_role("object")
+    actions = _actions(evaluation_episode)
+    observation = _wait_for_role(evaluation_episode, actions, "object")
     assert observation.success, observation
-    assert pimsim_case.role("target") in observation.message, observation
+    assert evaluation_episode.role("target") in observation.message, observation
 
-    pick_result = pimsim_case.pick_and_place.pick(pimsim_case.role("object"))
+    pick_result = actions.pick(evaluation_episode.role("object"))
     assert pick_result.success, pick_result
-    place_result = pimsim_case.pick_and_place.drop_on(
-        pimsim_case.role("target"),
+    place_result = actions.drop_on(
+        evaluation_episode.role("target"),
         z_offset=z_offset,
     )
-    evaluation = pimsim_case.wait_for_goal()
+    evaluation = evaluation_episode.wait_for_goal()
 
     assert place_result.success, f"{place_result}; private evaluation: {evaluation}"
-    assert evaluation["passed"] is True
+    assert evaluation.passed is True
 
 
 @pytest.mark.parametrize(
-    "pimsim_case",
+    "evaluation_episode",
     [pytest.param(TABLETOP_CASES["collect-objects-in-receptacle"], id="collect-objects")],
     indirect=True,
 )
-def test_collect_objects(pimsim_case: PimSimCaseRun) -> None:
+def test_collect_objects(evaluation_episode: EpisodeRun) -> None:
+    actions = _actions(evaluation_episode)
     for role_id in ("first_object", "second_object"):
-        observation = pimsim_case.wait_for_role(role_id)
+        observation = _wait_for_role(evaluation_episode, actions, role_id)
         assert observation.success, observation
-        pick_result = pimsim_case.pick_and_place.pick(pimsim_case.role(role_id))
+        pick_result = actions.pick(evaluation_episode.role(role_id))
         assert pick_result.success, pick_result
-        place_result = pimsim_case.pick_and_place.drop_on(
-            pimsim_case.role("target"),
+        place_result = actions.drop_on(
+            evaluation_episode.role("target"),
             z_offset=0.10,
         )
         assert place_result.success, place_result
 
-    evaluation = pimsim_case.wait_for_goal()
-    assert evaluation["passed"] is True, evaluation
+    evaluation = evaluation_episode.wait_for_goal()
+    assert evaluation.passed is True, evaluation
 
 
 @pytest.mark.parametrize(
-    "pimsim_case",
+    "evaluation_episode",
     [pytest.param(TABLETOP_CASES["rearrange-objects"], id="rearrange-objects")],
     indirect=True,
 )
-def test_rearrange_objects(pimsim_case: PimSimCaseRun) -> None:
-    observation = pimsim_case.wait_for_role("first_object")
+def test_rearrange_objects(evaluation_episode: EpisodeRun) -> None:
+    actions = _actions(evaluation_episode)
+    observation = _wait_for_role(evaluation_episode, actions, "first_object")
     assert observation.success, observation
-    first_pick = pimsim_case.pick_and_place.pick(pimsim_case.role("first_object"))
+    first_pick = actions.pick(evaluation_episode.role("first_object"))
     assert first_pick.success, first_pick
-    first_place = pimsim_case.pick_and_place.drop_on(
-        pimsim_case.role("containment_target"),
+    first_place = actions.drop_on(
+        evaluation_episode.role("containment_target"),
         z_offset=0.10,
     )
     assert first_place.success, first_place
 
-    observation = pimsim_case.wait_for_role("second_object")
+    observation = _wait_for_role(evaluation_episode, actions, "second_object")
     assert observation.success, observation
-    second_pick = pimsim_case.pick_and_place.pick(pimsim_case.role("second_object"))
+    second_pick = actions.pick(evaluation_episode.role("second_object"))
     assert second_pick.success, second_pick
-    second_place = pimsim_case.pick_and_place.drop_on(
-        pimsim_case.role("support_target"),
+    second_place = actions.drop_on(
+        evaluation_episode.role("support_target"),
         z_offset=0.08,
     )
-    evaluation = pimsim_case.wait_for_goal()
+    evaluation = evaluation_episode.wait_for_goal()
 
     assert second_place.success, f"{second_place}; private evaluation: {evaluation}"
-    assert evaluation["passed"] is True
+    assert evaluation.passed is True
+
+
+def _wait_for_role(
+    episode: EpisodeRun,
+    actions: _PickAndPlaceActions,
+    role_id: str,
+    timeout: float = 20.0,
+) -> SkillResult:
+    name = episode.role(role_id)
+    deadline = time.monotonic() + timeout
+    last_observation = None
+    while time.monotonic() < deadline:
+        last_observation = actions.look()
+        if name in last_observation.message:
+            return last_observation
+        time.sleep(0.25)
+    pytest.fail(f"role {role_id!r} ({name!r}) was not observed: {last_observation}")
+
+
+def _actions(episode: EpisodeRun) -> _PickAndPlaceActions:
+    return cast("_PickAndPlaceActions", episode.app.get_module("PickAndPlaceModule"))

@@ -82,18 +82,25 @@ uv run pytest -o addopts='' -m self_hosted_large -vv -s --timeout=1500 \
   dimos/e2e_tests/test_pimsim_generated_manipulation.py
 ```
 
-On first use, `pimsim_case` resolves `pimsim_libero_non_robot` through
-`get_data()`. DimOS pulls that archive from Git LFS and extracts it under
-`data/`. Set `PIMSIM_ASSET_BUNDLE` only to test a local replacement bundle.
-Stop any active DimOS application first because concurrent local runs use the
-same RPC names.
+On first use, the installed PimSim episode provider resolves
+`pimsim_libero_non_robot` through `get_data()`. DimOS pulls that archive from
+Git LFS and extracts it under `data/`. Set `PIMSIM_ASSET_BUNDLE` only to test a
+local replacement bundle. Stop any active DimOS application first because
+concurrent local runs use the same RPC names.
 
 The case matrix and skill calls are in
 [`test_pimsim_generated_manipulation.py`](/dimos/e2e_tests/test_pimsim_generated_manipulation.py).
-[`pimsim_case`](../../dimos/e2e_tests/conftest.py) materializes the selected family,
-starts the blueprint, resets the scenario, resolves semantic roles, and exposes
-the private evaluator. Add a `PimSimTabletopCase` row; do not add a test-only
-blueprint or put task actions in the fixture.
+The provider-neutral
+[`evaluation_episode`](../../dimos/e2e_tests/conftest.py) fixture asks the
+installed provider to prepare the case, starts the named blueprint, resets the
+episode, and exposes typed private evaluation. Add an `EvaluationCase` row; do
+not add a test-only blueprint or put task actions in the fixture.
+
+`scene_seed` selects the base world. `variation_seed` selects the task reset,
+including the scenario's initial object poses. To add another reset of an
+existing task, add one `EvaluationCase` and one pytest parameter to the existing
+public action body. The `lift-object-second-reset` row is the maintained
+example; it required no PimSim generator, runtime, provider, or robot change.
 
 ## Testing on a fresh Ubuntu install
 

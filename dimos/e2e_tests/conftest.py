@@ -17,7 +17,6 @@ import os
 from pathlib import Path
 import threading
 import time
-from typing import Any, cast
 
 import pytest
 
@@ -25,18 +24,19 @@ from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.episode import EpisodeRun, prepare_episode, reset_episode
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.e2e_tests.pimsim_case import (
-    PimSimCaseRun,
-    PimSimTabletopCase,
-    semantic_role_names,
-)
-from dimos.e2e_tests.scene_control import EpisodeSceneControl, load_episode_scene_control
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.porcelain.dimos import Dimos
+from dimos.simulation.episodes import (
+    EpisodeProvider,
+    EpisodeUnavailableError,
+    EvaluationCase,
+    load_episode_provider,
+)
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
@@ -136,91 +136,50 @@ def connect_dimos_modules() -> Iterator[Callable[[DimosCliCall, tuple[str, ...],
 
 
 @pytest.fixture
-def episode_scene_control() -> Iterator[EpisodeSceneControl]:
-    provider = os.environ.get("DIMOS_E2E_SIMULATOR", "pimsim")
-    control = load_episode_scene_control(provider)
-    yield control
-    control.stop()
+def episode_provider() -> EpisodeProvider:
+    provider_name = os.environ.get("DIMOS_E2E_EPISODE_PROVIDER", "pimsim")
+    return load_episode_provider(provider_name)
 
 
 @pytest.fixture
-def pimsim_case(
+def evaluation_episode(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     start_blueprint: Callable[..., DimosCliCall],
     connect_dimos_modules: Callable[..., Dimos],
-    episode_scene_control: EpisodeSceneControl,
-) -> PimSimCaseRun:
-    """Materialize and start one explicit PimSim tabletop case."""
+    episode_provider: EpisodeProvider,
+) -> Iterator[EpisodeRun]:
+    """Prepare and run one case without importing its simulator provider."""
 
-    if not isinstance(request.param, PimSimTabletopCase):
-        raise TypeError("pimsim_case must be parameterized with PimSimTabletopCase")
+    if not isinstance(request.param, EvaluationCase):
+        raise TypeError("evaluation_episode must be parameterized with EvaluationCase")
     case = request.param
-    asset_model = pytest.importorskip("pimsim.assets.model")
-    task_model = pytest.importorskip("pimsim.tasks.model")
-    tabletop = pytest.importorskip("pimsim.episodes.tabletop")
-    asset_bundle = _pimsim_asset_bundle()
-    scenario_request = case.to_scenario_request(task_model, asset_model)
-    episode = tabletop.materialize_robot_tabletop_case(
-        tmp_path / "episode",
-        robot_model="xarm7",
-        asset_bundle=asset_bundle,
-        request=scenario_request,
-        object_count=case.object_count,
-    )
-    show_viewer = os.environ.get("PIMSIM_TEST_VIEWER") == "1"
-    call = start_blueprint(
-        "xarm-perception-sim",
-        simulator="mujoco",
-        global_args=(
-            "--simulation-provider",
-            "pimsim",
-            "--scene-package",
-            str(episode.scene_package),
-            "--transport",
-            "zenoh",
-            "--viewer",
-            "rerun" if show_viewer else "none",
-        ),
-        extra_env={"PIMSIM_MUJOCO_VIEWER": "1" if show_viewer else "0"},
-    )
-    app = connect_dimos_modules(call, ("PickAndPlaceModule", "PimSimEpisodeControl"))
-    episode_scene_control.start()
-    reset = episode_scene_control.reset_scenario(str(episode.scenario))
-    if reset["scenario_id"] != case.case_id:
-        pytest.fail(f"PimSim reset case {reset['scenario_id']!r}; expected {case.case_id!r}")
-    initial_conditions = cast("list[dict[str, Any]]", reset["initial_conditions"])
-    failed_conditions = [condition for condition in initial_conditions if not condition["passed"]]
-    if failed_conditions:
-        pytest.fail(f"PimSim case has invalid initial conditions: {failed_conditions}")
-    return PimSimCaseRun(
-        case=case,
-        scene_package=episode.scene_package,
-        scenario=episode.scenario,
-        reset=reset,
-        pick_and_place=app.get_module("PickAndPlaceModule"),
-        scene_control=episode_scene_control,
-        role_names=semantic_role_names(episode.scene_package, episode.scenario),
-    )
-
-
-def _pimsim_asset_bundle() -> Path:
-    configured = os.environ.get("PIMSIM_ASSET_BUNDLE") or os.environ.get("PIMSIM_LIBERO_BUNDLE")
-    if configured is not None:
-        path = Path(configured).expanduser().resolve()
-        if not path.exists():
-            pytest.fail(f"PimSim asset bundle does not exist: {path}")
-        return path
-
-    from dimos.utils.data import get_data
+    try:
+        episode = prepare_episode(episode_provider, case, tmp_path / "episode")
+    except EpisodeUnavailableError as error:
+        pytest.skip(str(error))
 
     try:
-        return get_data("pimsim_libero_non_robot")
-    except (FileNotFoundError, RuntimeError) as error:
-        pytest.skip(
-            "PimSim native assets are not installed; set PIMSIM_ASSET_BUNDLE "
-            f"or install pimsim_libero_non_robot from DimOS LFS ({error})"
+        call = start_blueprint(
+            episode.blueprint_name,
+            simulator=episode.simulator,
+            global_args=episode.global_args,
+            extra_env=episode.extra_env,
         )
+        app = connect_dimos_modules(call, episode.required_modules)
+        episode_provider.start(episode)
+        reset = reset_episode(episode_provider, episode)
+        if not reset.initial_conditions_passed:
+            pytest.fail(f"episode has invalid initial conditions: {list(reset.failed_conditions)}")
+        yield EpisodeRun(
+            case=case,
+            episode=episode,
+            reset=reset,
+            app=app,
+            provider=episode_provider,
+        )
+    finally:
+        episode_provider.stop()
 
 
 @pytest.fixture

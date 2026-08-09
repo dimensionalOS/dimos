@@ -41,14 +41,6 @@ class NavigationSceneControl(SceneControl, Protocol):
     def semantic_object_bounds(self, query: str) -> PlanarBounds: ...
 
 
-class EpisodeSceneControl(SceneControl, Protocol):
-    """Controls required by deterministic episode E2E tests."""
-
-    def reset_scenario(self, scenario_path: str) -> dict[str, object]: ...
-
-    def evaluate_goal(self) -> dict[str, object]: ...
-
-
 def load_scene_control(simulator: str) -> SceneControl:
     if simulator == "dimsim":
         return DimSimClient()
@@ -64,15 +56,9 @@ def load_scene_control(simulator: str) -> SceneControl:
     return cast("SceneControl", matches[0].load()())
 
 
-def load_episode_scene_control(simulator: str) -> EpisodeSceneControl:
-    return cast("EpisodeSceneControl", load_scene_control(simulator))
-
-
 __all__ = [
-    "EpisodeSceneControl",
     "NavigationSceneControl",
     "PlanarBounds",
     "SceneControl",
-    "load_episode_scene_control",
     "load_scene_control",
 ]
