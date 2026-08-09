@@ -123,12 +123,12 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
         # this run's to keep, whatever else goes wrong afterwards.
         answered = False
         try:
+            question = _text_question(question_content)
+            record["question_sha256"] = hashlib.sha256(question.encode("utf-8")).hexdigest()
             if self._reset_error is not None:
                 raise RuntimeError(
                     f"this question's working directory could not be prepared: {self._reset_error}"
                 )
-            question = _text_question(question_content)
-            record["question_sha256"] = hashlib.sha256(question.encode("utf-8")).hexdigest()
             question_content = self.preprocess_question(question_content)
             self.dialog.add_user_message(content=question_content)
 

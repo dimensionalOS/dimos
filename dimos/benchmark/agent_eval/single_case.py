@@ -183,6 +183,8 @@ def _case_environment(
     """Prepare the environment the case asks for; a `none` source asks for none."""
     if not isinstance(case.source, FrozenRecordingSource):
         return EmptyEnvironment(hidden_env=hidden_env)
+    if hidden_env:
+        raise ValueError("hidden_env is only supported for cases without an environment source")
     bundle = _materialize_frozen_memory(case, progress)
     _, cutoff, source_path, derived_path = load_bundle(bundle, progress=case.source.progress)
     emit_progress(progress, StatusProgress(channel="eval", message="memory ready"))

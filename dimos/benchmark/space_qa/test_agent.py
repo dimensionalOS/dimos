@@ -21,6 +21,7 @@ and the module is imported against that, then handed a question the way
 Apple's release; the one call that would reach an agent is captured instead.
 """
 
+import hashlib
 import importlib
 import json
 import os
@@ -439,6 +440,9 @@ def test_unpreparable_directory_does_not_take_the_worker_down(
     record = _record(save_dir)
     assert record["pred"] is None
     assert "could not be prepared" in record["infra_error"]
+    # The record still names its question, so collection reports one failed
+    # question instead of refusing the whole run over a missing digest.
+    assert record["question_sha256"] == hashlib.sha256(question.encode("utf-8")).hexdigest()
     # `evaluate_on_qa` multiplies these out in `get_eval_cost` as soon as this
     # returns, and upstream's reset is what would have set them.
     assert (agent.prompt_tokens, agent.completion_tokens) == (0, 0)

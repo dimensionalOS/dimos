@@ -373,6 +373,7 @@ def test_a_missing_dependency_of_the_space_extra_is_named_before_the_download(
 def test_a_missing_pi_build_is_reported_before_the_download(tmp_path, monkeypatch) -> None:
     _refuse_to_fetch(monkeypatch)
     monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.SPACE_EXTRA_MODULES", ())
     monkeypatch.setattr(
         "dimos.benchmark.space_qa.run._pi_artifacts",
         lambda: (tmp_path / "cli.js", tmp_path / "python-exec.js"),

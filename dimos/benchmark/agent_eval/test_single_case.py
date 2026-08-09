@@ -143,6 +143,17 @@ def test_direct_run_publishes_only_compact_result_and_native_transcript(
     }
 
 
+def test_hidden_env_on_a_frozen_case_is_refused() -> None:
+    case = EvalCase(
+        case_id="demo",
+        source=FrozenRecordingSource(recording="recording", progress=1.0),
+        task=IntegerQuestionTask(prompt="How many rooms?"),
+        validator=ExactIntegerValidatorRef(revision="v1", private_path="private/oracle.json"),
+    )
+    with pytest.raises(ValueError, match="hidden_env"):
+        single_case._case_environment(case, None, ("DIMOS_SPACE_RUN_DIR",))
+
+
 def test_nonempty_output_is_rejected_before_execution(tmp_path: Path) -> None:
     output = tmp_path / "output"
     output.mkdir()
