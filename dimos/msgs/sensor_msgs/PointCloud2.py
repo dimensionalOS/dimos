@@ -331,9 +331,10 @@ class PointCloud2(Timestamped):
         cx, cy = xy.mean(axis=0)
         out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
         out["compass"] = (
-            "motion bearing_deg=atan2(dy,dx)*180/pi; round to NEAREST 45: 0=east "
-            "45=northeast 90=north 135=northwest 180=west -135=southwest -90=south "
-            "-45=southeast"
+            "8-way direction of motion (dx,dy = last minus first): if |dx|>2.41*|dy| "
+            "then east (dx>0) or west (dx<0); if |dy|>2.41*|dx| then north (dy>0) or "
+            "south (dy<0); otherwise diagonal by signs (northeast, northwest, "
+            "southeast, southwest)"
         )
         fx = np.floor(xy / 0.25).astype(np.int64)
         out["xy_footprint"] = {
@@ -373,8 +374,8 @@ class PointCloud2(Timestamped):
         return {
             "desc": "'#'=occupied at body height (z 0.15..1.0 m), world frame. "
             f"Col k of {ncols} center x=x0_m+k*cell_m (+x east); row label = "
-            "cell-center y (+y north), top=northmost. Nearest point in a '#' "
-            "cell may be up to half a cell nearer than the cell center.",
+            "cell-center y (+y north), top=northmost. A '#' cell's points may "
+            "lie anywhere within that cell.",
             "cell_m": cell,
             "x0_m": round(float(lo[0] + cell / 2), 2),
             "rows": rows,
