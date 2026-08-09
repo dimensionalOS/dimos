@@ -55,16 +55,11 @@ class SimulationBinding:
     hardware: tuple[HardwareComponent, ...] = ()
     rerun_config: dict[str, Any] = field(default_factory=dict)
     robot_base_pose: PoseStamped = field(default_factory=PoseStamped)
-    # Temporary compatibility for G1 and Go2. New provider paths use hardware.
-    adapter_type: str | None = None
-    adapter_address: str | Path | None = None
 
     def __post_init__(self) -> None:
         hardware_ids = tuple(component.hardware_id for component in self.hardware)
         if len(hardware_ids) != len(set(hardware_ids)):
             raise ValueError("simulation hardware IDs must be unique")
-        if (self.adapter_type is None) != (self.adapter_address is None):
-            raise ValueError("legacy adapter type and address must be supplied together")
 
 
 @runtime_checkable
