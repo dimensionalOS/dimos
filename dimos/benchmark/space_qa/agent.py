@@ -12,25 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SPACE's own QA agent, answering through the DimOS agent-evaluation path.
-
-SPACE stays in charge: it drives the loop, formats the question, parses the
-reply and keeps the answer key. ``get_prediction`` follows the upstream method
-with its model call replaced — what would reach a chat completion runs a static
-evaluation case instead — and drops the image-batching branch this text-only
-agent cannot take. Everything that reads the reply (``postprocess_response``,
-``parse_answer_from_response``) is inherited, so every judgement about the
-answer is still made by upstream code.
-
-Two things about this module are load-bearing:
-
-* Importing it registers ``DimosQAAgent`` and the ``dimos_qa`` config in
-  SPACE's global registries. ``register_config`` asserts that a name is
-  registered once, so it must be imported under its own dotted name and never
-  run as a script, which would register it a second time as ``__main__``.
-* Importing it needs a SPACE checkout on ``sys.path``. ``run_space_task`` puts
-  the pinned one there first; nothing else in this package imports it.
-"""
+"""SPACE's own QA agent, answering through the DimOS agent-evaluation path."""
 
 from __future__ import annotations
 
@@ -108,15 +90,7 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
         self._reset_error: str | None = None
 
     def reset(self) -> None:
-        """The upstream method, with the one failure it cannot survive caught.
-
-        ``evaluate_on_qa`` calls this before every question and outside any
-        ``try``. Upstream makes the question's directory and opens a markdown
-        transcript in it; a full disk or a directory that cannot be created
-        raises from there, through ``pool.imap``, and takes the whole round down
-        over one question. The failure is one question's, so it is remembered
-        here and reported by ``get_prediction`` as that question's.
-        """
+        """The upstream method, with the one failure it cannot survive caught."""
         self._reset_error = None
         # `get_eval_cost` reads both whatever happens, and upstream leaves them
         # None until the reset that fails here would have set them.
@@ -128,16 +102,7 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             self._reset_error = f"{type(exc).__name__}: {exc}"
 
     def get_prediction(self, question_content: list[Any] | str, answer: Any) -> Any:
-        """The upstream method with its model call replaced.
-
-        Gone with it is the image-batching branch upstream takes for list
-        question content: this agent answers text tasks and refuses anything
-        else. Everything that reads the reply is still inherited.
-
-        Nothing raises out of here. A worker that dies takes its pool slot and
-        the rest of the round with it, so an unrunnable question returns None
-        — which SPACE scores as a miss — and says why in its own record.
-        """
+        """The upstream method with its model call replaced."""
         started = time.monotonic()
         record: dict[str, Any] = {
             "case_id": None,
@@ -183,7 +148,7 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             answered = True
             record["pred"] = prediction
             # The upstream parser can return a non-integer answer; narrow it the
-            # way `cross_check_scores` and `parse_official_answer` already do.
+            # way `_cross_check_scores` and `parse_official_answer` already do.
             record["space_parse_status"] = (
                 "invalid"
                 if isinstance(prediction, bool) or not isinstance(prediction, int)
@@ -198,11 +163,6 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             self.dialog.log_writer.write(
                 f"\n\nGround-truth answer: {answer}, prediction: {prediction}"
             )
-            # Where upstream adds the tokens the model call billed. This path
-            # bought none, so the counters stay at the zeros `reset` set and
-            # `get_eval_cost` still reports the shape SPACE expects.
-            self.completion_tokens += 0
-            self.prompt_tokens += 0
             self.dialog.log_token_usage(self.prompt_tokens, self.completion_tokens, 0.0)
             self.dialog.log_response_time(time.monotonic() - started)
             self.dialog.delete_last_message()
@@ -296,14 +256,7 @@ def _subset_index(save_dir: str) -> int:
 
 
 def _write_record(save_dir: str | None, record: dict[str, Any]) -> None:
-    """One record per question, beside SPACE's own transcript for the same question.
-
-    This runs in the ``finally`` of ``get_prediction``, so it raises nothing: an
-    unwritable directory would otherwise kill the pool worker holding it and
-    take the rest of the round down with it. A record that could not be written
-    says so on stderr, and ``collect_records`` fails the run over the file that
-    is not there — one question's problem, reported as one question's problem.
-    """
+    """One record per question, beside SPACE's own transcript for the same question."""
     if not save_dir:
         return
     try:

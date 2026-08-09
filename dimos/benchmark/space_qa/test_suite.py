@@ -130,7 +130,7 @@ def test_the_subset_file_keeps_the_upstream_rows_whole() -> None:
     assert adapter.upstream_rows(items) == [rows[item.ordinal] for item in items]
 
 
-def test_a_row_count_the_registry_does_not_recognise_is_refused() -> None:
+def test_unregistered_row_count_is_refused() -> None:
     with pytest.raises(ValueError, match=f"expects {TASK.expected_rows} rows"):
         SpaceQAAdapter(TASK, _rows(TASK.expected_rows - 1))
 

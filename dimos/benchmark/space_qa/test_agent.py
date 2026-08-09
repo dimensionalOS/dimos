@@ -174,7 +174,7 @@ def _prepared_run(run_dir: Path, monkeypatch) -> str:
     """Write the run a worker would find, and point the environment at it."""
     adapter = SpaceQAAdapter(TASK, _rows())
     items = adapter.iter_items(SubsetSpec(seed=SEED, groups=1))
-    run_module.prepare_run(
+    run_module._prepare_run(
         run_dir,
         adapter,
         items,
@@ -382,7 +382,7 @@ def test_a_paid_answer_survives_a_failure_in_the_bookkeeping_after_it(
 ) -> None:
     """Everything after the parse is bookkeeping; losing the answer to it would fail the run.
 
-    ``cross_check_scores`` re-reads the same reply and gets the same integer, so
+    ``_cross_check_scores`` re-reads the same reply and gets the same integer, so
     a record that dropped the prediction here would read as a disagreement and
     refuse a run every question of which was answered and paid for.
     """
@@ -412,7 +412,7 @@ def test_a_paid_answer_survives_a_failure_in_the_bookkeeping_after_it(
     assert "No space left on device" in record["infra_error"]
 
 
-def test_a_directory_that_could_not_be_prepared_does_not_take_the_worker_down(
+def test_unpreparable_directory_does_not_take_the_worker_down(
     agent_module, tmp_path, monkeypatch
 ) -> None:
     """Upstream calls `reset` before every question and outside any try of its own."""
@@ -459,7 +459,7 @@ def test_a_directory_that_could_be_prepared_leaves_the_agent_as_upstream_does(
     assert (agent.prompt_tokens, agent.completion_tokens) == (0, 0)
 
 
-def test_a_record_that_cannot_be_written_does_not_take_the_worker_down(
+def test_unwritable_record_does_not_take_the_worker_down(
     agent_module, tmp_path, monkeypatch
 ) -> None:
     """`_write_record` runs in a finally: raising there would end the whole round."""

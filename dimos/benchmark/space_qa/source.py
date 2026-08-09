@@ -67,7 +67,7 @@ def ensure_space_source() -> Path:
             # Reached after the pin moves, or if someone worked in the cache.
             _git("-C", str(checkout), "fetch", "--quiet", "origin")
             _git("-C", str(checkout), "checkout", "--quiet", SPACE_REVISION)
-        _refuse_a_dirty_checkout(checkout, _CACHE_DIRTY_ADVICE)
+        _require_a_clean_checkout(checkout, _CACHE_DIRTY_ADVICE)
         return checkout
     _clone(checkout)
     return checkout
@@ -90,11 +90,11 @@ def _use_override(override: str) -> Path:
             f"{SPACE_SOURCE_ENV}={override} is at {head}, but this integration grades "
             f"against {SPACE_REVISION}; check out the pin or unset {SPACE_SOURCE_ENV}"
         )
-    _refuse_a_dirty_checkout(path, _OVERRIDE_DIRTY_ADVICE)
+    _require_a_clean_checkout(path, _OVERRIDE_DIRTY_ADVICE)
     return path.resolve()
 
 
-def _refuse_a_dirty_checkout(checkout: Path, advice: str) -> None:
+def _require_a_clean_checkout(checkout: Path, advice: str) -> None:
     """A checkout sitting at the pin can still not be the pinned scorer.
 
     ``HEAD`` names a commit, not the files that will be imported: an edited

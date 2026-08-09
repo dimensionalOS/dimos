@@ -382,7 +382,7 @@ def test_a_stalled_download_fails_rather_than_hanging(tmp_path, monkeypatch) -> 
     assert _staging_left_behind(tmp_path) == []
 
 
-def test_the_record_is_published_before_the_release_it_describes(tmp_path, monkeypatch) -> None:
+def test_provenance_record_is_published_before_the_release(tmp_path, monkeypatch) -> None:
     """Interrupted the other way round, a cache is unusable forever; this way it heals itself."""
     body = _archive(_rows())
     digest = _pin(monkeypatch, body)

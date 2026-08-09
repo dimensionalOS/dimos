@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The official SPACE data release: fetched from Apple, never redistributed.
-
-The release is a 3.6 GB tarball under Apple's own terms. It is downloaded once
-into the user cache, verified against a pinned digest, and read from there. No
-question, answer or transcript from it belongs in this repository, so every
-fixture in the tests beside this module is generated.
-"""
+"""The official SPACE data release: fetched from Apple, never redistributed."""
 
 from __future__ import annotations
 
@@ -62,14 +56,7 @@ SpaceRow = dict[str, Any]
 
 @dataclass(frozen=True, kw_only=True)
 class TaskQuestions:
-    """A task's questions, and the digest of the bytes this run read them from.
-
-    The two attest to different things and are not interchangeable. The release
-    digest says which archive the cache was unpacked from, on the word of the
-    record written beside it; ``sha256`` here is computed over the file that was
-    actually opened, so it holds whatever a run really asked its questions from
-    — including a release edited after it was unpacked.
-    """
+    """A task's questions, and the digest of the bytes this run read them from."""
 
     rows: tuple[SpaceRow, ...]
     sha256: str
@@ -95,14 +82,7 @@ def resolve_space_data() -> Path:
 
 
 def release_sha256(release: Path) -> str | None:
-    """The digest recorded in the ``provenance.json`` beside a release, if there is one.
-
-    This reports the release's own claim about which archive it came from; it
-    reads none of the release. A release this side unpacked has that record and
-    reports it wherever it is reached from; one extracted by hand and pointed at
-    with ``DIMOS_SPACE_DATA`` has none, and returns None rather than borrowing
-    the pinned digest.
-    """
+    """The digest recorded in the ``provenance.json`` beside a release, if there is one."""
     provenance = release.parent / PROVENANCE_NAME
     if not provenance.is_file():
         return None
@@ -150,17 +130,7 @@ def download_release(target: Path) -> Path:
 
 
 def load_task_rows(task: SpaceTextTask, data_root: Path) -> TaskQuestions:
-    """Read a task's questions, refusing a file that no longer has the shape we sampled.
-
-    Row position is the only address SPACE gives a question, so a file that
-    gained or lost rows would silently re-point every sampled index at a
-    different question. That is a failed run, not a smaller one.
-
-    The bytes are hashed on the way past, and the digest travels to the manifest.
-    A release is only ever checked against what its provenance record claims, so
-    this is the one place a run can say what it read rather than what it was told
-    it would read.
-    """
+    """Read a task's questions, refusing a file that no longer has the shape we sampled."""
     path = data_root / task.qas_relative_path
     if not path.is_file():
         raise FileNotFoundError(f"{task.name} has no questions at {path}")
@@ -179,15 +149,7 @@ def load_task_rows(task: SpaceTextTask, data_root: Path) -> TaskQuestions:
 
 
 def _verify_cached_release(release: Path) -> None:
-    """Re-check the cache's claim against the pin, every run, not just the one that filled it.
-
-    The bytes are hashed once, while downloading, and never again: rehashing
-    3.6 GB before every run buys little against a 32-byte record it would be
-    reading anyway. What outlives that run is the cache — the pin moves, a
-    directory gets edited by hand, an older copy is restored — so the claim is
-    re-read rather than assumed. What a run actually read is attested one layer
-    down, by the digest ``load_task_rows`` takes of the question file itself.
-    """
+    """Re-check the cache's claim against the pin, every run, not just the one that filled it."""
     try:
         recorded = release_sha256(release)
     except ValueError:

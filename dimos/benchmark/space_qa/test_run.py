@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from dimos.benchmark.agent_eval.models import EvalCase, EvalRunConfig
+from dimos.benchmark.space_qa import run as run_module
 from dimos.benchmark.space_qa.adapter import BenchmarkItem, ItemScore, SubsetSpec
 from dimos.benchmark.space_qa.data import PROVENANCE_NAME
 from dimos.benchmark.space_qa.manifest import (
@@ -40,20 +41,7 @@ from dimos.benchmark.space_qa.manifest import (
     read_manifest,
     subset_path,
 )
-from dimos.benchmark.space_qa.run import (
-    RECORDS_NAME,
-    collect_records,
-    cross_check_predictions,
-    cross_check_scores,
-    default_run_dir,
-    locate_results,
-    pi_artifacts,
-    prepare_run,
-    recorded_release_digest,
-    refuse_an_unanswered_run,
-    run_space_task,
-    write_records,
-)
+from dimos.benchmark.space_qa.run import RECORDS_NAME, run_space_task
 from dimos.benchmark.space_qa.sampling import DEFAULT_GROUP_SIZE
 from dimos.benchmark.space_qa.source import SPACE_REVISION
 from dimos.benchmark.space_qa.suite import SpaceQAAdapter
@@ -86,7 +74,7 @@ def _release(root: Path, rows: list[dict[str, Any]]) -> Path:
 def _prepared(run_dir: Path) -> tuple[SpaceQAAdapter, Any]:
     adapter = SpaceQAAdapter(TASK, _rows())
     items = adapter.iter_items(SubsetSpec(seed=SEED, groups=GROUPS))
-    manifest = prepare_run(
+    manifest = run_module._prepare_run(
         run_dir,
         adapter,
         items,
@@ -170,7 +158,7 @@ def test_importing_the_run_path_does_not_import_space() -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_the_subset_file_holds_the_drawn_rows_in_the_order_the_workers_see_them(tmp_path) -> None:
+def test_subset_file_holds_the_drawn_rows_in_worker_order(tmp_path) -> None:
     adapter, manifest = _prepared(tmp_path)
     written = json.loads(subset_path(tmp_path).read_text(encoding="utf-8"))
     rows = _rows()
@@ -178,7 +166,7 @@ def test_the_subset_file_holds_the_drawn_rows_in_the_order_the_workers_see_them(
     assert written == [rows[row.ordinal] for row in manifest.rows]
 
 
-def test_the_subset_file_is_ascii_because_space_opens_it_without_an_encoding(tmp_path) -> None:
+def test_subset_file_is_written_as_ascii(tmp_path) -> None:
     _prepared(tmp_path)
 
     subset_path(tmp_path).read_bytes().decode("ascii")
@@ -196,7 +184,7 @@ def test_every_drawn_question_gets_a_case_the_contract_accepts(tmp_path) -> None
         assert case.task.prompt == f"Where is marker {row.ordinal}?"
 
 
-def test_the_manifest_records_what_a_score_would_have_to_be_reproduced_from(tmp_path) -> None:
+def test_manifest_records_the_inputs_a_score_is_reproduced_from(tmp_path) -> None:
     _adapter, manifest = _prepared(tmp_path)
     reread = read_manifest(tmp_path)
 
@@ -214,7 +202,7 @@ def test_the_manifest_records_what_a_score_would_have_to_be_reproduced_from(tmp_
 
 def test_a_run_with_no_questions_is_refused(tmp_path) -> None:
     with pytest.raises(ValueError, match="at least one question"):
-        prepare_run(
+        run_module._prepare_run(
             tmp_path,
             SpaceQAAdapter(TASK, _rows()),
             [],
@@ -230,18 +218,18 @@ def test_records_come_back_in_subset_order(tmp_path) -> None:
     results = tmp_path / "results"
     _write_records(results, manifest)
 
-    records = collect_records(results, manifest)
+    records = run_module._collect_records(results, manifest)
 
     assert [record["ordinal"] for record in records] == [row.ordinal for row in manifest.rows]
 
 
-def test_a_record_for_a_question_we_did_not_draw_fails_the_run(tmp_path) -> None:
+def test_record_for_an_undrawn_question_fails_the_run(tmp_path) -> None:
     _adapter, manifest = _prepared(tmp_path)
     results = tmp_path / "results"
     _write_records(results, manifest, question_sha256="f" * 64)
 
     with pytest.raises(ValueError, match="but the manifest selected"):
-        collect_records(results, manifest)
+        run_module._collect_records(results, manifest)
 
 
 def test_a_question_that_left_no_record_fails_the_run(tmp_path) -> None:
@@ -251,7 +239,7 @@ def test_a_question_that_left_no_record_fails_the_run(tmp_path) -> None:
     (results / "qa_00003" / RECORD_NAME).unlink()
 
     with pytest.raises(FileNotFoundError, match="left no record"):
-        collect_records(results, manifest)
+        run_module._collect_records(results, manifest)
 
 
 @pytest.mark.parametrize("payload", [b"{ truncated", b"\xff\xfe not a record"])
@@ -264,45 +252,45 @@ def test_unreadable_records_name_their_file_rather_than_a_bare_parse_error(
     (results / "qa_00000" / RECORD_NAME).write_bytes(payload)
 
     with pytest.raises(ValueError, match="left an unreadable record") as raised:
-        collect_records(results, manifest)
+        run_module._collect_records(results, manifest)
     assert str(results / "qa_00000" / RECORD_NAME) in str(raised.value)
 
 
 def test_matching_records_and_official_predictions_pass() -> None:
     records = [{"pred": 1}, {"pred": None}, {"pred": 4}]
 
-    cross_check_predictions(records, {"all_predictions": [1, None, 4]})
+    run_module._cross_check_predictions(records, {"all_predictions": [1, None, 4]})
 
 
 def test_a_prediction_the_two_sides_disagree_on_fails_the_run() -> None:
     records = [{"pred": 1}, {"pred": 2}]
 
     with pytest.raises(ValueError, match="question 1 was recorded as 2 but scored as 3"):
-        cross_check_predictions(records, {"all_predictions": [1, 3]})
+        run_module._cross_check_predictions(records, {"all_predictions": [1, 3]})
 
 
-def test_an_answer_that_is_not_equal_to_itself_is_not_a_disagreement() -> None:
+def test_nan_recorded_on_both_sides_is_not_a_disagreement() -> None:
     """`json.loads` reads a bare NaN, so both sides can hold one — and NaN != NaN."""
     records = [{"pred": float("nan")}, {"pred": 2}]
 
-    cross_check_predictions(records, {"all_predictions": [float("nan"), 2]})
+    run_module._cross_check_predictions(records, {"all_predictions": [float("nan"), 2]})
 
 
 def test_an_answer_recorded_as_nan_and_scored_as_a_number_still_fails_the_run() -> None:
     records = [{"pred": float("nan")}]
 
     with pytest.raises(ValueError, match="question 0 was recorded as nan but scored as 2"):
-        cross_check_predictions(records, {"all_predictions": [2]})
+        run_module._cross_check_predictions(records, {"all_predictions": [2]})
 
 
 def test_a_results_file_that_scored_a_different_number_of_questions_fails_the_run() -> None:
     with pytest.raises(ValueError, match="scored 1 questions, but 2 were recorded"):
-        cross_check_predictions([{"pred": 1}, {"pred": 2}], {"all_predictions": [1]})
+        run_module._cross_check_predictions([{"pred": 1}, {"pred": 2}], {"all_predictions": [1]})
 
 
 def test_a_results_file_without_predictions_fails_the_run() -> None:
     with pytest.raises(ValueError, match="no all_predictions list"):
-        cross_check_predictions([{"pred": 1}], {"mean_metrics": {"accuracy": 100.0}})
+        run_module._cross_check_predictions([{"pred": 1}], {"mean_metrics": {"accuracy": 100.0}})
 
 
 def test_the_official_results_file_is_found_under_the_timestamp_space_chose(tmp_path) -> None:
@@ -310,12 +298,12 @@ def test_the_official_results_file_is_found_under_the_timestamp_space_chose(tmp_
     results.parent.mkdir(parents=True)
     results.write_text("{}", encoding="utf-8")
 
-    assert locate_results(tmp_path) == results
+    assert run_module._locate_results(tmp_path) == results
 
 
 def test_a_run_that_produced_no_results_file_is_reported(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="expected exactly one results.json"):
-        locate_results(tmp_path)
+        run_module._locate_results(tmp_path)
 
 
 def test_an_output_directory_holding_a_run_is_refused_before_any_work(tmp_path) -> None:
@@ -325,7 +313,7 @@ def test_an_output_directory_holding_a_run_is_refused_before_any_work(tmp_path) 
 
 
 @pytest.mark.parametrize("existing", ["notes.txt", "subset/qas.json"])
-def test_an_output_directory_holding_anything_at_all_is_refused_before_any_fetch(
+def test_nonempty_output_directory_is_refused_before_any_fetch(
     tmp_path, monkeypatch, existing: str
 ) -> None:
     """A run is read back by path, so a file already sitting on one of them would be believed."""
@@ -386,7 +374,7 @@ def test_a_missing_pi_build_is_reported_before_the_download(tmp_path, monkeypatc
     _refuse_to_fetch(monkeypatch)
     monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
     monkeypatch.setattr(
-        "dimos.benchmark.space_qa.run.pi_artifacts",
+        "dimos.benchmark.space_qa.run._pi_artifacts",
         lambda: (tmp_path / "cli.js", tmp_path / "python-exec.js"),
     )
 
@@ -398,21 +386,21 @@ def test_the_preflight_looks_for_the_pi_build_the_runner_will_actually_execute()
     """The paths are copied from a private runner helper; this is what keeps the copy honest."""
     from dimos.benchmark.agent_eval.single_case import _pi_paths
 
-    assert pi_artifacts() == _pi_paths()
+    assert run_module._pi_artifacts() == _pi_paths()
 
 
 def test_two_runs_started_in_the_same_second_do_not_claim_one_default_directory() -> None:
-    assert default_run_dir("SAtt_text").name.endswith(f"_{os.getpid()}")
+    assert run_module._default_run_dir("SAtt_text").name.endswith(f"_{os.getpid()}")
 
 
-def test_a_run_where_nothing_was_ever_answered_is_refused_rather_than_scored(tmp_path) -> None:
+def test_fully_unanswered_run_is_refused_rather_than_scored(tmp_path) -> None:
     records = [
         {"pred": None, "infra_error": "RuntimeError: no API key"},
         {"pred": None, "infra_error": "PiRunError: cli.js missing"},
     ]
 
     with pytest.raises(RuntimeError, match="all 2 questions failed before they were answered"):
-        refuse_an_unanswered_run(records, tmp_path)
+        run_module._require_an_answered_run(records, tmp_path)
 
 
 def test_a_run_that_answered_something_reports_how_much_it_could_not(tmp_path) -> None:
@@ -421,14 +409,14 @@ def test_a_run_that_answered_something_reports_how_much_it_could_not(tmp_path) -
         {"pred": None, "infra_error": "PiRunError: transport closed"},
     ]
 
-    assert refuse_an_unanswered_run(records, tmp_path) == 1
+    assert run_module._require_an_answered_run(records, tmp_path) == 1
 
 
 def test_a_question_that_was_answered_before_it_failed_is_not_an_unanswered_one(tmp_path) -> None:
     """The agent keeps a parsed answer through a bookkeeping failure; it was asked and answered."""
     records = [{"pred": 3, "infra_error": "OSError: [Errno 28] No space left on device"}]
 
-    assert refuse_an_unanswered_run(records, tmp_path) == 0
+    assert run_module._require_an_answered_run(records, tmp_path) == 0
 
 
 @pytest.mark.parametrize(
@@ -442,14 +430,14 @@ def test_a_release_whose_record_says_nothing_readable_is_reported_as_unverified(
     release.mkdir()
     (tmp_path / PROVENANCE_NAME).write_bytes(record)
 
-    assert recorded_release_digest(release) is None
+    assert run_module._recorded_release_digest(release) is None
 
 
-def test_the_ledger_is_published_whole_or_not_at_all(tmp_path) -> None:
+def test_ledger_is_published_whole_or_not_at_all(tmp_path) -> None:
     """It is written with a rename, so a reader never finds a run that stops halfway."""
     records = [{"pred": 1, "ordinal": 4}, {"pred": None, "ordinal": 5}]
 
-    path = write_records(tmp_path, records)
+    path = run_module._write_records(tmp_path, records)
 
     assert path == tmp_path / RECORDS_NAME
     assert [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] == records
@@ -461,7 +449,7 @@ def test_the_manifest_records_the_digest_of_the_question_file_the_run_read(tmp_p
     release = _release(tmp_path / "release", _rows())
     adapter = SpaceQAAdapter.from_data_root(TASK, release)
 
-    prepare_run(
+    run_module._prepare_run(
         tmp_path / "run",
         adapter,
         adapter.iter_items(SubsetSpec(seed=SEED, groups=GROUPS)),
@@ -492,7 +480,7 @@ def test_records_and_a_second_reading_of_their_replies_agree() -> None:
     items = (BenchmarkItem(ordinal=7, question="Where is marker 7?"),)
     records = [{"pred": 3, "final_text": '{"answer": 3}'}]
 
-    cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
+    run_module._cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
 
 
 def test_a_prediction_that_no_longer_follows_from_its_reply_fails_the_run() -> None:
@@ -500,7 +488,7 @@ def test_a_prediction_that_no_longer_follows_from_its_reply_fails_the_run() -> N
     records = [{"pred": 2, "final_text": '{"answer": 3}'}]
 
     with pytest.raises(ValueError, match="question 7 was recorded as 2"):
-        cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
+        run_module._cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
 
 
 def test_a_non_integer_answer_is_unparsed_on_both_sides_rather_than_a_disagreement() -> None:
@@ -508,4 +496,6 @@ def test_a_non_integer_answer_is_unparsed_on_both_sides_rather_than_a_disagreeme
     items = (BenchmarkItem(ordinal=3, question="Where is marker 3?"),)
     records = [{"pred": "north-east", "final_text": '{"answer": "north-east"}'}]
 
-    cross_check_scores(_ReplayingAdapter({'{"answer": "north-east"}': None}), items, records)
+    run_module._cross_check_scores(
+        _ReplayingAdapter({'{"answer": "north-east"}': None}), items, records
+    )

@@ -40,14 +40,7 @@ def execute_single_case(*args: Any, **kwargs: Any) -> Any:
 
 
 def run_space_task(*args: Any, **kwargs: Any) -> Any:
-    """Import the SPACE integration only when ``eval space`` executes.
-
-    No missing-dependency handler here. Nothing the SPACE extra installs is
-    imported by this line: those libraries load deep inside the run, where its
-    own preflight names the missing ones before anything is downloaded. A
-    ``ModuleNotFoundError`` raised here would mean a broken install, and
-    answering it with `uv sync --extra space` would send the reader the wrong way.
-    """
+    """Import the SPACE integration only when ``eval space`` executes."""
     from dimos.benchmark.space_qa.run import run_space_task as run
 
     return run(*args, **kwargs)

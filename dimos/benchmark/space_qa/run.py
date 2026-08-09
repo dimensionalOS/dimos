@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run one SPACE text task end to end and keep the two records of it in agreement.
-
-The order here is the design. Everything a run is judged on — which questions,
-which release, which scorer, which build — is written to disk before a single
-worker starts, and the run only succeeds if SPACE's own ``results.json`` and
-the per-question records this side wrote say the same thing about every answer.
-"""
+"""Run one SPACE text task end to end and keep the two records of it in agreement."""
 
 from __future__ import annotations
 
@@ -105,13 +99,13 @@ def run_space_task(
     task = space_text_task(task_name)
     if workers < 1:
         raise ValueError(f"workers must be at least 1, got {workers}")
-    run_dir = (output or default_run_dir(task.name)).expanduser().resolve()
-    refuse_a_used_output(run_dir)
-    preflight(task, groups=groups)
+    run_dir = (output or _default_run_dir(task.name)).expanduser().resolve()
+    _validate_run_dir(run_dir)
+    _preflight(task, groups=groups)
     # libobjc reads this flag when it loads, which happened at interpreter
     # start, so setting it here cannot change this process or its forked
     # workers. It is for the processes those workers exec (the Pi CLI): they
-    # inherit the environment and their fresh libobjc honours it. If the fork
+    # inherit the environment and their fresh libobjc honors it. If the fork
     # itself hits an Objective-C abort, export the flag in the shell instead.
     os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
@@ -121,14 +115,14 @@ def run_space_task(
     items = adapter.iter_items(SubsetSpec(seed=seed, groups=groups))
 
     run_dir.mkdir(parents=True, exist_ok=True)
-    manifest = prepare_run(
+    manifest = _prepare_run(
         run_dir,
         adapter,
         items,
         task_name=task.name,
         seed=seed,
         groups=groups,
-        data_sha256=recorded_release_digest(data_root),
+        data_sha256=_recorded_release_digest(data_root),
     )
 
     # Fork, not spawn: the SPACE registries live only in this process's memory,
@@ -149,13 +143,13 @@ def run_space_task(
         n_workers=workers,
     )
 
-    results_path = locate_results(space_output)
+    results_path = _locate_results(space_output)
     results = json.loads(results_path.read_text(encoding="utf-8"))
-    records = collect_records(results_path.parent, manifest)
-    infra_failures = refuse_an_unanswered_run(records, run_dir)
-    cross_check_predictions(records, results)
-    cross_check_scores(adapter, items, records)
-    records_path = write_records(run_dir, records)
+    records = _collect_records(results_path.parent, manifest)
+    infra_failures = _require_an_answered_run(records, run_dir)
+    _cross_check_predictions(records, results)
+    _cross_check_scores(adapter, items, records)
+    records_path = _write_records(run_dir, records)
     return SpaceRunSummary(
         task=task.name,
         seed=seed,
@@ -170,15 +164,8 @@ def run_space_task(
     )
 
 
-def refuse_a_used_output(run_dir: Path) -> None:
-    """A run owns its directory, or nothing read out of it afterwards means anything.
-
-    Every path a run is read back through — ``manifest.json``, ``subset/qas.json``,
-    ``cases/qa_00000/case.json`` — is addressed by name, so a directory that
-    already holds files can hand this run one of them and be believed. Refusing
-    anything but an empty directory costs a fresh ``--output`` and settles it;
-    the check runs before the release is fetched, so it costs nothing else.
-    """
+def _validate_run_dir(run_dir: Path) -> None:
+    """A run owns its directory, or nothing read out of it afterwards means anything."""
     if not run_dir.exists():
         return
     if not run_dir.is_dir():
@@ -193,31 +180,16 @@ def refuse_a_used_output(run_dir: Path) -> None:
     raise FileExistsError(f"{run_dir} {complaint}; pass a fresh --output directory")
 
 
-def recorded_release_digest(release: Path) -> str | None:
-    """What the release says it was unpacked from, or None when it says nothing readable.
-
-    A cached release has been through ``_verify_cached_release`` and its record
-    parses. An overridden one is whatever the user pointed at, including a
-    directory whose ``provenance.json`` is truncated or holds something that is
-    not a record at all. Neither is a reason to fail a run: the manifest carries
-    ``null``, which already means nothing on this side checked this release.
-    """
+def _recorded_release_digest(release: Path) -> str | None:
+    """What the release says it was unpacked from, or None when it says nothing readable."""
     try:
         return release_sha256(release)
     except ValueError:
         return None
 
 
-def preflight(task: SpaceTextTask, *, groups: int) -> None:
-    """Refuse a run that could never have produced a score, before it fetches anything.
-
-    Each of these fails the same way if it is left to the run: every worker
-    raises, every question is recorded as unanswered, and SPACE scores each one
-    wrong — so the run ends with a ``results.json`` reading 0.0%, which is
-    indistinguishable from an agent that answered everything wrong. Checking
-    here costs nothing; discovering it during a run costs a 3.6 GB download and
-    a full pool.
-    """
+def _preflight(task: SpaceTextTask, *, groups: int) -> None:
+    """Refuse a run that could never have produced a score, before it fetches anything."""
     if not 1 <= groups <= task.groups:
         raise ValueError(f"{task.name} holds {task.groups} stimulus groups; cannot draw {groups}")
     key_env = EvalRunConfig().agent.api_key_env
@@ -232,7 +204,7 @@ def preflight(task: SpaceTextTask, *, groups: int) -> None:
             f"importing SPACE needs {', '.join(missing)}, which "
             f"{'are' if len(missing) > 1 else 'is'} not installed; run `uv sync --extra space`"
         )
-    for artifact in pi_artifacts():
+    for artifact in _pi_artifacts():
         if not artifact.is_file():
             raise FileNotFoundError(
                 f"the Pi agent build is missing {artifact}; build "
@@ -240,27 +212,22 @@ def preflight(task: SpaceTextTask, *, groups: int) -> None:
             )
 
 
-def pi_artifacts() -> tuple[Path, Path]:
-    """The Pi CLI and extension bundles every case in the run will execute.
-
-    A copy of ``agent_eval.single_case._pi_paths``, which is private to the
-    runner this package only ever calls. ``test_run`` holds the two against
-    each other so this one cannot come to name different files.
-    """
+def _pi_artifacts() -> tuple[Path, Path]:
+    """The Pi CLI and extension bundles every case in the run will execute."""
     package = Path(__file__).resolve().parents[3] / "packages" / "pi-code-policy-extension"
     cli = package / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
     extension = package / "dist" / "python-exec.js"
     return cli, extension
 
 
-def default_run_dir(task_name: str) -> Path:
+def _default_run_dir(task_name: str) -> Path:
     # The pid keeps two runs started inside the same second apart; without it
     # the second one is refused for landing in a directory that holds a run.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return space_cache_root() / "runs" / task_name / f"{stamp}_{os.getpid()}"
 
 
-def prepare_run(
+def _prepare_run(
     run_dir: Path,
     adapter: SpaceQAAdapter,
     items: Sequence[BenchmarkItem],
@@ -300,14 +267,8 @@ def prepare_run(
     return manifest
 
 
-def write_records(run_dir: Path, records: Sequence[Mapping[str, Any]]) -> Path:
-    """Publish the ledger with a rename, so nothing ever reads half of it.
-
-    This is the last thing a run writes, and the file a reader goes to when the
-    score surprises them. A crash partway through a direct write leaves a ledger
-    that is shorter than the run and says so nowhere; the rename makes the file
-    either the whole run or absent.
-    """
+def _write_records(run_dir: Path, records: Sequence[Mapping[str, Any]]) -> Path:
+    """Publish the ledger with a rename, so nothing ever reads half of it."""
     path = run_dir / RECORDS_NAME
     written = path.with_name(f".{RECORDS_NAME}.partial")
     written.write_text(
@@ -320,7 +281,7 @@ def write_records(run_dir: Path, records: Sequence[Mapping[str, Any]]) -> Path:
     return path
 
 
-def locate_results(space_output: Path) -> Path:
+def _locate_results(space_output: Path) -> Path:
     """Find the ``results.json`` SPACE wrote under the timestamp it chose for itself."""
     found = sorted(space_output.glob(f"{CONFIG_NAME}/*/results.json"))
     if len(found) != 1:
@@ -330,7 +291,7 @@ def locate_results(space_output: Path) -> Path:
     return found[0]
 
 
-def collect_records(results_dir: Path, manifest: RunManifest) -> list[dict[str, Any]]:
+def _collect_records(results_dir: Path, manifest: RunManifest) -> list[dict[str, Any]]:
     """Read back the per-question record each worker wrote, in subset order."""
     records = []
     for row in sorted(manifest.rows, key=lambda selected: selected.subset_index):
@@ -353,19 +314,8 @@ def collect_records(results_dir: Path, manifest: RunManifest) -> list[dict[str, 
     return records
 
 
-def refuse_an_unanswered_run(records: Sequence[Mapping[str, Any]], run_dir: Path) -> int:
-    """Count the questions that never reached an answer; refuse a run made of nothing else.
-
-    A question whose infrastructure failed before it was answered is recorded
-    with no prediction, and SPACE scores that as wrong. When it happens to every
-    question the run still produces a ``results.json`` reading 0.0% — a number
-    that says the agent was wrong about everything, when it was in fact never
-    asked anything.
-
-    A record can carry an ``infra_error`` and a prediction both: the agent keeps
-    an answer it has already parsed even if the bookkeeping after it fails. That
-    question was answered and scored on its answer, so it is not counted here.
-    """
+def _require_an_answered_run(records: Sequence[Mapping[str, Any]], run_dir: Path) -> int:
+    """Count the questions that never reached an answer; refuse a run made of nothing else."""
     failures = [
         record for record in records if record.get("infra_error") and record.get("pred") is None
     ]
@@ -378,20 +328,12 @@ def refuse_an_unanswered_run(records: Sequence[Mapping[str, Any]], run_dir: Path
     return len(failures)
 
 
-def cross_check_scores(
+def _cross_check_scores(
     adapter: BenchmarkAdapter,
     items: Sequence[BenchmarkItem],
     records: Sequence[Mapping[str, Any]],
 ) -> None:
-    """Re-read every reply on the adapter seam, and refuse a run that reads it differently.
-
-    The prediction in a record was parsed inside SPACE's loop, by the agent.
-    This runs the same upstream parser over the same reply text again, this
-    time through ``adapter.score`` — the seam any benchmark reaches this path
-    through. It is an alignment check on that seam, not a second opinion: both
-    sides call the same upstream code, so agreement means the record, the
-    official predictions and the adapter all describe one run.
-    """
+    """Re-read every reply on the adapter seam, and refuse a run that reads it differently."""
     for item, record in zip(items, records, strict=True):
         recorded = record.get("pred")
         # The upstream parser can return a non-integer answer, which SPACE
@@ -406,15 +348,10 @@ def cross_check_scores(
             )
 
 
-def cross_check_predictions(
+def _cross_check_predictions(
     records: Sequence[Mapping[str, Any]], results: Mapping[str, Any]
 ) -> None:
-    """Refuse a run whose two records of the same answers disagree.
-
-    SPACE's ``results.json`` is the score. These records are how a reader gets
-    from that number back to a question, a transcript and a failure reason, and
-    they are only worth reading if they describe the same run.
-    """
+    """Refuse a run whose two records of the same answers disagree."""
     predictions = results.get("all_predictions")
     if not isinstance(predictions, list):
         raise ValueError("the official results.json carries no all_predictions list")
@@ -432,14 +369,7 @@ def cross_check_predictions(
 
 
 def _one_answer(recorded: Any, scored: Any) -> bool:
-    """Whether two records of one answer are the same answer, NaN included.
-
-    ``parse_answer_from_response`` returns whatever ``json.loads`` made of the
-    reply, and ``json.loads`` accepts a bare ``NaN``. Both sides then write that
-    float out and read it back, so a run can reach here holding the same value
-    twice — and ``NaN != NaN``, which would fail a run that agreed with itself
-    perfectly. This is a check for disagreement, not for equality.
-    """
+    """Whether two records of one answer are the same answer, NaN included."""
     if isinstance(recorded, float) and isinstance(scored, float):
         if math.isnan(recorded) and math.isnan(scored):
             return True
