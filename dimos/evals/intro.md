@@ -33,11 +33,17 @@ Build a tiny recording (any memory2 store works — this is the same API the
 robot's Recorder uses; see `dimos/memory2/intro.md` for the full Stream API):
 
 ```python session=evals ansi=false no-result
+import os
+from pathlib import Path
+
+os.environ["DIMOS_LOG_LEVEL"] = "WARNING"  # keep doc output stable
+
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 
+Path("/tmp/evals_intro.db").unlink(missing_ok=True)
 store = SqliteStore(path="/tmp/evals_intro.db")
 odom = store.stream("odom", PoseStamped)
 for i in range(20):
@@ -52,8 +58,7 @@ for i in range(20):
 print(odom.summary())
 ```
 
-<!--Result:-->
-```
+```results
 Stream("odom"): 20 items, 1970-01-01 00:16:40 — 1970-01-01 00:16:59 (19.0s, 1.00 Hz, 1.68 KiB)
 ```
 
@@ -89,13 +94,13 @@ from dimos.evals.runner import EvalRunner, summarize
 runner = EvalRunner(chat_model=FakeListChatModel(responses=["about 19 meters"]))
 result = runner.run([case])[0]
 print(f"score={result.score} passed={result.passed} outputs={result.outputs!r}")
-print(summarize([result]))
+s = summarize([result])
+print(f"n={s.n} mean={s.mean_score} pass_rate={s.pass_rate} errors={s.errors}")
 ```
 
-<!--Result:-->
-```
+```results
 score=1.0 passed=True outputs='about 19 meters'
-RunSummary(n=1, mean_score=1.0, pass_rate=1.0, errors=0, duration_s=0.31)
+n=1 mean=1.0 pass_rate=1.0 errors=0
 ```
 
 That's the whole loop: dataset -> context streams -> encoded prompt -> model
@@ -114,8 +119,7 @@ print(exact("yes", "yes"), within(2.0)(10.0, 11.0), ramp(1.0, band=2.0))
 print(first_number("around 12.5 m"), yes_no("Yes, clearly."), choice(" Chairs. "))
 ```
 
-<!--Result:-->
-```
+```results
 1.0 0.5 0.5
 12.5 yes chairs
 ```
@@ -139,8 +143,7 @@ from dimos.evals.scorers import final, floor, mean
 print(final([0.2, 0.9]), floor([0.4, 0.2, 0.8]), mean([0.0, 1.0]))
 ```
 
-<!--Result:-->
-```
+```results
 0.9 0.2 0.5
 ```
 
