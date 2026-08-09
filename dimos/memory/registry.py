@@ -63,7 +63,10 @@ class RegistryStore(Configurable):
         row = self._conn.execute("SELECT config FROM _streams WHERE name = ?", (name,)).fetchone()
         if row is None:
             return None
-        return json.loads(row[0])  # type: ignore[no-any-return]
+        # Recordings written before the memory2 -> memory rename persist the old
+        # module paths. The classes are otherwise unchanged, so remap on read —
+        # callers compare these strings against qual() as well as import them.
+        return json.loads(row[0].replace("dimos.memory2.", "dimos.memory."))  # type: ignore[no-any-return]
 
     def put(self, name: str, config: dict[str, Any]) -> None:
         self._conn.execute(

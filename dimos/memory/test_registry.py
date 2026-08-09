@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
@@ -152,6 +154,24 @@ class TestComponentSerialization:
         data = store.serialize()
         restored = deserialize_component(data)
         assert isinstance(restored, FileBlobStore)
+
+    def test_reopen_recording_with_legacy_memory2_paths(self, tmp_path) -> None:
+        """Recordings predating the memory2 -> memory rename still open."""
+        db = str(tmp_path / "legacy.db")
+        with SqliteStore(path=db) as store:
+            store.stream("data", str).append("hello", ts=1.0)
+
+        conn = sqlite3.connect(db)
+        for name, cfg in conn.execute("SELECT name, config FROM _streams").fetchall():
+            conn.execute(
+                "UPDATE _streams SET config = ? WHERE name = ?",
+                (cfg.replace("dimos.memory.", "dimos.memory2."), name),
+            )
+        conn.commit()
+        conn.close()
+
+        with SqliteStore(path=db) as store2:
+            assert store2.stream("data").first().data == "hello"
 
 
 class TestBackendSerialization:
