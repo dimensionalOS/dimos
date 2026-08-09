@@ -61,6 +61,7 @@ class _StreamingTestPinkIK(PinkIK):
     def __init__(self, config: PinkIKConfig) -> None:
         super().__init__(config)
         self.feedback_limit_tolerance = 1e-3
+        self.feedback_clamp_margin = 0.05
         self.command_limit_margin = 1e-4
 
     def step_frame_targets(
@@ -84,6 +85,7 @@ class _StreamingTestPinkIK(PinkIK):
             measured_state=measured_state,
             max_command_tracking_error_rad=max_command_tracking_error_rad,
             feedback_limit_tolerance=self.feedback_limit_tolerance,
+            feedback_clamp_margin=self.feedback_clamp_margin,
             command_limit_margin=self.command_limit_margin,
             dt=dt,
             max_joint_velocity_rad_s=max_joint_velocity_rad_s,
@@ -896,9 +898,10 @@ def test_step_frame_targets_normalizes_feedback_and_saturates_commands(
     assert result.position == pytest.approx([-0.9999, 0.1, _TRACKING_ERROR_RAD])
 
 
-def test_step_frame_targets_rejects_feedback_beyond_tolerance(
+def test_step_frame_targets_rejects_feedback_beyond_clamp_margin(
     mocker: MockerFixture,
 ) -> None:
+    """A genuine fault (deviation beyond the clamp margin) still stalls the task."""
     ik = _pink_ik(mocker)
     mocker.patch.object(
         ik,
@@ -912,12 +915,37 @@ def test_step_frame_targets_rejects_feedback_beyond_tolerance(
             robot_model=_robot_config(),
             frame_targets={"tool": PoseStamped()},
             controlled_joints=["joint_a"],
-            command_state=JointState(name=["joint_a"], position=[0.0]),
-            measured_state=JointState(name=["joint_a"], position=[-1.0011]),
+            command_state=JointState(name=["joint_a"], position=[-1.0]),
+            measured_state=JointState(name=["joint_a"], position=[-1.2]),
             max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         )
 
     step.assert_not_called()
+
+
+def test_step_frame_targets_clamps_small_feedback_overshoot(
+    mocker: MockerFixture,
+) -> None:
+    """A small overshoot within the clamp margin is pulled back onto the limit."""
+    ik = _pink_ik(mocker)
+    mocker.patch.object(
+        ik,
+        "_get_control_context",
+        return_value=_combined_control_context(("tool",), ["joint_a"]),
+    )
+    step = mocker.patch.object(ik, "_step_configuration")
+
+    result = ik.step_frame_targets(
+        robot_model=_robot_config(),
+        frame_targets={"tool": PoseStamped()},
+        controlled_joints=["joint_a"],
+        command_state=JointState(name=["joint_a"], position=[-0.9995]),
+        measured_state=JointState(name=["joint_a"], position=[-1.0011]),
+        max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
+    )
+
+    step.assert_called_once()
+    assert result.position[0] == pytest.approx(-0.9995, abs=1e-3)
 
 
 def test_step_frame_targets_velocity_limits_unbounded_position_joint(

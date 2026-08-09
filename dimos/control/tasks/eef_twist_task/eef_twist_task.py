@@ -212,6 +212,7 @@ class EEFTwistTaskParams(BaseConfig):
     joint_command_filter_cutoff_hz: float | None = 5.0
     max_command_tracking_error_deg: float = 10.0
     feedback_limit_tolerance: float = 1e-3
+    feedback_clamp_margin: float = 0.05
     command_limit_margin: float = 1e-4
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -235,6 +236,7 @@ def create_task(cfg: Any, hardware: Any) -> EEFTwistTask:
             joint_command_filter_cutoff_hz=params.joint_command_filter_cutoff_hz,
             max_command_tracking_error_deg=params.max_command_tracking_error_deg,
             feedback_limit_tolerance=params.feedback_limit_tolerance,
+            feedback_clamp_margin=params.feedback_clamp_margin,
             command_limit_margin=params.command_limit_margin,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,

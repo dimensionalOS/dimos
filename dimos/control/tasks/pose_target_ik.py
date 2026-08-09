@@ -124,11 +124,11 @@ def _nonnegative_finite(
     value: float,
 ) -> None:
     if not math.isfinite(value) or value < 0.0:
-        label = (
-            "feedback tolerance"
-            if attribute.name == "feedback_limit_tolerance"
-            else "command limit margin"
-        )
+        labels = {
+            "feedback_limit_tolerance": "feedback tolerance",
+            "feedback_clamp_margin": "feedback clamp margin",
+        }
+        label = labels.get(attribute.name, "command limit margin")
         raise ValueError(f"PoseTargetIKTask requires a non-negative finite {label}")
 
 
@@ -172,6 +172,11 @@ class PoseTargetIKTaskConfig:
     )
     feedback_limit_tolerance: float = attrs.field(
         default=1e-3,
+        converter=float,
+        validator=_nonnegative_finite,
+    )
+    feedback_clamp_margin: float = attrs.field(
+        default=0.05,
         converter=float,
         validator=_nonnegative_finite,
     )
@@ -227,6 +232,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
                 np.deg2rad(self._control_config.max_command_tracking_error_deg)
             ),
             feedback_limit_tolerance=self._control_config.feedback_limit_tolerance,
+            feedback_clamp_margin=self._control_config.feedback_clamp_margin,
             command_limit_margin=self._control_config.command_limit_margin,
             dt=dt,
             max_joint_velocity_rad_s=self._control_config.max_joint_velocity_rad_s,

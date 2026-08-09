@@ -158,6 +158,7 @@ class _PinkSolverCore:
         max_joint_velocity_rad_s: float = 5.0,
         joint_velocity_limits_rad_s: Mapping[str, float] | None = None,
         joint_command_filter_cutoff_hz: float | None = None,
+        feedback_clamp_margin: float = 0.05,
     ) -> JointState:
         """Perform one bounded Pink update for one robot's frame targets.
 
@@ -188,6 +189,14 @@ class _PinkSolverCore:
             raise ValueError("Pink streaming timestep must be positive and finite")
         if not np.isfinite(max_joint_velocity_rad_s) or max_joint_velocity_rad_s <= 0.0:
             raise ValueError("Pink streaming joint velocity limit must be positive and finite")
+        if (
+            not np.isfinite(feedback_clamp_margin)
+            or feedback_clamp_margin < feedback_limit_tolerance
+        ):
+            raise ValueError(
+                "Pink streaming feedback clamp margin must be finite and at least the "
+                "feedback limit tolerance"
+            )
         if joint_command_filter_cutoff_hz is not None and (
             not np.isfinite(joint_command_filter_cutoff_hz) or joint_command_filter_cutoff_hz <= 0.0
         ):
@@ -198,7 +207,10 @@ class _PinkSolverCore:
         measured_positions = _seed_positions_for_mapping(measured_state, robot_context.mapping)
         raw_command_q = self._q_from_dimos_positions(robot_context, previous_positions)
         measured_q = self._q_from_dimos_positions(robot_context, measured_positions)
-        self._validate_streaming_feedback(robot_context, measured_q, feedback_limit_tolerance)
+        measured_q = self._clamp_streaming_feedback(
+            robot_context, measured_q, feedback_limit_tolerance, feedback_clamp_margin
+        )
+        measured_positions = self._q_to_dimos_positions(robot_context, measured_q)
         command_q = self._clamp_streaming_configuration(
             robot_context, raw_command_q, command_limit_margin
         )
@@ -887,22 +899,30 @@ class _PinkSolverCore:
     ) -> NDArray[np.float64]:
         return np.array([q[idx_q] for idx_q in context.mapping.idx_q], dtype=np.float64)
 
-    def _validate_streaming_feedback(
+    def _clamp_streaming_feedback(
         self,
         context: _PinkRobotContext,
         measured_q: NDArray[np.float64],
         tolerance: float,
-    ) -> None:
+        clamp_margin: float,
+    ) -> NDArray[np.float64]:
+        """Clamp feedback within ``clamp_margin`` of a limit; raise beyond it."""
+        clamped = measured_q.copy()
         for joint_name, q_index, lower, upper in _bounded_controlled_joint_limits(context):
             value = float(measured_q[q_index])
-            if value < lower - tolerance or value > upper + tolerance:
+            if value < lower - clamp_margin or value > upper + clamp_margin:
                 raise PinkJointLimitError(
                     joint_name=joint_name,
                     value=value,
                     lower=lower,
                     upper=upper,
-                    tolerance=tolerance,
+                    tolerance=clamp_margin,
                 )
+            if value < lower - tolerance:
+                clamped[q_index] = lower
+            elif value > upper + tolerance:
+                clamped[q_index] = upper
+        return clamped
 
     def _clamp_streaming_configuration(
         self,
