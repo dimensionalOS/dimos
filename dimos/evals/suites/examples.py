@@ -20,7 +20,7 @@ Run them::
 
 Or from pytest / a notebook::
 
-    from dimos.evals import EvalRunner
+    from dimos.evals.runner import EvalRunner
     from dimos.evals.suites.examples import SUITE
 
     results = EvalRunner().run(SUITE)
