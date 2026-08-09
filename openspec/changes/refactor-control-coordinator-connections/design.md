@@ -243,6 +243,86 @@ The namespace is not inferred from random modules at runtime, and the coordinato
 
 **Alternatives rejected:** `robot_id`, hardware-ID prefixes, local/global joint-name pairs, semantic mapping tables, and collision detection across unnamespaced modules.
 
+### Joint-Name Mapping Deep Dive: One Name from Model to Wire
+
+The canonical namespace removes a chain of identity conversions, not merely one prefix operation. Today, a joint can acquire a model-local name, robot-qualified name, world-robot association, execution mapping, hardware association, adapter position, and special gripper name before a command reaches the driver. Each layer must know how to translate to the next and, for state feedback, invert the translation correctly.
+
+Conceptually, the current path resembles this:
+
+```text
+caller
+  (robot_name, local_joint_name)
+          |
+          v
+planning group
+  (robot_name, local_joint_names[])
+          |
+          v
+manipulation global name  <---- RobotModelConfig.joint_name_mapping
+          |
+          v
+world/backend
+  (WorldRobotID, backend-local joint)
+          |
+          v
+execution target
+  split by robot + invert name mapping
+          |
+          v
+coordinator
+  group by hardware_id
+          |
+          v
+adapter
+  name -> ordered array index -> driver-native joint
+```
+
+The proposed path carries one public name through every layer:
+
+```text
+prepared model       planning group      trajectory
+  left/j1       --->   left/j1      --->   left/j1
+                                               |
+                                               v
+task claim          coordinator key       connection description
+  left/j1/position -> left/j1/position --> owner: left
+                                               |
+                                               v
+                                      private driver boundary
+                                      left/j1 -> index 0
+```
+
+State follows the same path in reverse. The connection labels driver index `0` as `left/j1/position`; the coordinator caches that exact key; manipulation and visualization consume `left/j1` without reconstructing a robot prefix or consulting another mapping table.
+
+| Concern | Current design | Proposed design |
+|---|---|---|
+| Distinguish two arms | Robot/model IDs plus name prefixes | Prepared model and connection config both declare `left/...` and `right/...` |
+| Select planner joints | Robot name plus model-local joint names | Planning group lists canonical joint names |
+| Load a planning backend | Robot ID mapped to a backend model instance and native names | One model; optional private name encoding inside the loader |
+| Execute a trajectory | Split by robot, map names, then invert mappings for results | Submit one trajectory with canonical names |
+| Route a command | Derive hardware ID, group values, then order adapter arrays | Description identifies the connection that owns each exact interface key |
+| Read state | Poll hardware-keyed adapters and rebuild global names | Connection publishes canonical keys directly |
+| Address a gripper | Special hardware suffix, task name, and cached range | Ordinary canonical joint such as `left/gripper` |
+| Visualize state | Per-robot joint-state maps | One canonical joint-state set for one model |
+
+This change removes several classes of error:
+
+- forward and inverse mappings that disagree;
+- state and command paths that spell the same joint differently;
+- joint lookup that requires both robot identity and hardware identity;
+- trajectories that lose or duplicate joints while splitting and merging;
+- gripper behavior that depends on parsing `/gripper` or deriving a task name;
+- configuration changes that update a model mapping but not an execution or adapter mapping.
+
+The design does not claim that all translation disappears. Two translations may remain, each at a narrow private boundary:
+
+1. A model loader may reversibly encode canonical names if its backend rejects `/`.
+2. A connection maps canonical names to fixed driver indices and converts canonical SI values to native units.
+
+Neither translation creates a second domain identity. The backend returns canonical names before data leaves the loader, and the connection publishes canonical names before state leaves the device boundary. No intermediate module can observe or depend on the encoded name or native index.
+
+Startup validation makes the simplification enforceable. Prepared-model joints, planning-group references, and connection-described joint resources must agree exactly. Missing joints, duplicate ownership, and undeclared interfaces fail before arming. This turns name alignment from a runtime convention into a checked system invariant.
+
 ### Decision 3: Control state and commands share one scalar payload shape
 
 `ControlValues` is a concrete encodable message used on two separate streams. Its conceptual fields are:
