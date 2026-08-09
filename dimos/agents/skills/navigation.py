@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 from typing import Any
 
@@ -76,6 +77,46 @@ class NavigationSkillContainer(Module):
 
     def _on_odom(self, odom: PoseStamped) -> None:
         self._latest_odom = odom
+
+    @skill(uses=[CAP_MOVEMENT])
+    def relative_move(
+        self,
+        forward: float = 0.0,
+        left: float = 0.0,
+        degrees: float = 0.0,
+    ) -> str:
+        """Move relative to the current robot pose.
+
+        Args:
+            forward: Forward distance in meters. Use a negative value to move backward.
+            left: Left distance in meters. Use a negative value to move right.
+            degrees: Final yaw change in degrees. Use a negative value to turn right.
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+        if self._latest_odom is None:
+            return "No odometry data received yet, cannot move relative to the current pose."
+
+        goal = _relative_goal(
+            self._latest_odom,
+            forward=float(forward),
+            left=float(left),
+            degrees=float(degrees),
+        )
+        self._navigation.set_goal(goal)
+
+        time.sleep(1.0)
+        start_time = time.monotonic()
+        timeout = 100.0
+        while self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
+            if time.monotonic() - start_time > timeout:
+                return "Navigation timed out"
+            time.sleep(0.1)
+
+        time.sleep(1.0)
+        if not self._navigation.is_goal_reached():
+            return "Navigation was cancelled or failed"
+        return "Navigation goal reached"
 
     @skill
     def tag_location(self, location_name: str) -> str:
@@ -285,3 +326,25 @@ class NavigationSkillContainer(Module):
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
+
+
+def _relative_goal(
+    current_pose: PoseStamped,
+    *,
+    forward: float,
+    left: float,
+    degrees: float,
+) -> PoseStamped:
+    local_offset = Vector3(forward, left, 0.0)
+    global_offset = current_pose.orientation.rotate_vector(local_offset)
+    goal_position = current_pose.position + global_offset
+
+    current_euler = current_pose.orientation.to_euler()
+    goal_orientation = Quaternion.from_euler(
+        Vector3(current_euler.roll, current_euler.pitch, current_euler.yaw + math.radians(degrees))
+    )
+    return PoseStamped(
+        position=goal_position,
+        orientation=goal_orientation,
+        frame_id=current_pose.frame_id,
+    )

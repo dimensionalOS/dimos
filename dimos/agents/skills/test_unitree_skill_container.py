@@ -70,3 +70,11 @@ def test_did_you_mean() -> None:
     suggestions = difflib.get_close_matches("Pounce", _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6)
     assert "FrontPounce" in suggestions
     assert "Pose" in suggestions
+
+
+def test_unitree_connection_is_optional_for_simulation_runtimes() -> None:
+    atom = UnitreeSkillContainer.blueprint().active_blueprints[0]
+
+    connection_ref = next(ref for ref in atom.module_refs if ref.name == "_connection")
+
+    assert connection_ref.optional

@@ -1,0 +1,23 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "relative_move",
+          "args": {
+            "forward": 3.0,
+            "left": 0.0,
+            "degrees": 0.0
+          },
+          "id": "call_navigation_walk_forward",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "The robot moved forward three meters.",
+      "tool_calls": []
+    }
+  ]
+}

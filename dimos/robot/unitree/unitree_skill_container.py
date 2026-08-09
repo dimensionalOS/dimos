@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import datetime
 import difflib
-import math
 import time
 
 from unitree_webrtc_connect.constants import RTC_TOPIC
@@ -24,13 +23,6 @@ from unitree_webrtc_connect.constants import RTC_TOPIC
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.base import NavigationState
-from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -196,75 +188,11 @@ _UNITREE_COMMANDS = {
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    _navigation: NavigationInterfaceSpec
-    _connection: GO2ConnectionSpec
-
-    tf: In[TFMessage]
+    _connection: GO2ConnectionSpec | None = None
 
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    @skill
-    def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
-        """Move the robot relative to its current position.
-
-        The `degrees` arguments refers to the rotation the robot should be at the end, relative to its current rotation.
-
-        Example calls:
-
-            # Move to a point that's 2 meters forward and 1 to the right.
-            relative_move(forward=2, left=-1, degrees=0)
-
-            # Move back 1 meter, while still facing the same direction.
-            relative_move(forward=-1, left=0, degrees=0)
-
-            # Rotate 90 degrees to the right (in place)
-            relative_move(forward=0, left=0, degrees=-90)
-
-            # Move 3 meters left, and face that direction
-            relative_move(forward=0, left=3, degrees=90)
-        """
-        forward, left, degrees = float(forward), float(left), float(degrees)
-
-        tf = self.tfbuffer.get("world", "base_link")
-        if tf is None:
-            return "Failed to get the position of the robot."
-
-        # TODO: Improve this. This is not a nice way to do it. I should
-        # subscribe to arrival/cancellation events instead.
-
-        self._navigation.set_goal(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
-
-        time.sleep(1.0)
-
-        start_time = time.monotonic()
-        timeout = 100.0
-        while self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
-            if time.monotonic() - start_time > timeout:
-                return "Navigation timed out"
-            time.sleep(0.1)
-
-        time.sleep(1.0)
-
-        if not self._navigation.is_goal_reached():
-            return "Navigation was cancelled or failed"
-        else:
-            return "Navigation goal reached"
-
-    def _generate_new_goal(
-        self, current_pose: PoseStamped, forward: float, left: float, degrees: float
-    ) -> PoseStamped:
-        local_offset = Vector3(forward, left, 0)
-        global_offset = current_pose.orientation.rotate_vector(local_offset)
-        goal_position = current_pose.position + global_offset
-
-        current_euler = current_pose.orientation.to_euler()
-        goal_yaw = current_euler.yaw + math.radians(degrees)
-        goal_euler = Vector3(current_euler.roll, current_euler.pitch, goal_yaw)
-        goal_orientation = Quaternion.from_euler(goal_euler)
-
-        return PoseStamped(position=goal_position, orientation=goal_orientation)
 
     @skill
     def wait(self, seconds: float) -> str:
@@ -283,6 +211,9 @@ class UnitreeSkillContainer(Module):
 
     @skill
     def execute_sport_command(self, command_name: str) -> str:
+        """Execute a Unitree sport command when the robot connection supports it."""
+        if self._connection is None:
+            return "This robot runtime does not support Unitree sport commands."
         if command_name not in _UNITREE_COMMANDS:
             suggestions = difflib.get_close_matches(
                 command_name, _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6
