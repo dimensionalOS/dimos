@@ -926,3 +926,34 @@ const p = agent.group.position;
 return { x: p.x, y: p.y, z: p.z };
 """
         return cast("dict[str, Any]", self.exec(code))
+
+    def get_semantic_object_bounds(self, query: str) -> dict[str, Any]:
+        """Return the live Three.js world bounds for one semantic object."""
+        if not query.strip():
+            raise ValueError("semantic object query must not be empty")
+        code = f"""
+const normalize = (value) => String(value || "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+const needle = normalize({json.dumps(query)});
+const entry = assets.find((asset) =>
+  normalize(`${{asset.title || ""}} ${{asset.id || ""}}`).includes(needle)
+);
+if (!entry) return null;
+const object = assetsGroup.getObjectByName(`asset:${{entry.id}}`);
+if (!object) return null;
+object.updateMatrixWorld(true);
+const bounds = new THREE.Box3().setFromObject(object);
+if (bounds.isEmpty()) return null;
+return {{
+  id: entry.id,
+  title: entry.title || null,
+  min: {{ x: bounds.min.x, y: bounds.min.y, z: bounds.min.z }},
+  max: {{ x: bounds.max.x, y: bounds.max.y, z: bounds.max.z }},
+}};
+"""
+        result = self.exec(code)
+        if not isinstance(result, dict):
+            raise LookupError(f"semantic object not found in DimSim scene: {query!r}")
+        return result

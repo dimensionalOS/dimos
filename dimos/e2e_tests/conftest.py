@@ -22,7 +22,6 @@ import pytest
 
 from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
-from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.episode import EpisodeRun, prepare_episode, reset_episode
 from dimos.e2e_tests.lcm_spy import LcmSpy
@@ -31,6 +30,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.porcelain.dimos import Dimos
+from dimos.simulation.dimsim.control import DimSimSceneControl
 from dimos.simulation.episodes import (
     EpisodeProvider,
     EpisodeUnavailableError,
@@ -259,14 +259,14 @@ def explore_office(
 
 @pytest.fixture
 def dim_sim():
-    client = DimSimClient()
+    client = DimSimSceneControl()
     client.start()
     yield client
     client.stop()
 
 
 @pytest.fixture
-def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
+def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimSceneControl):
     """Spawn a dim_sim wall when the robot's /odom comes within `threshold` metres of `point`."""
     odom_topic = "/odom#geometry_msgs.PoseStamped"
     stop_event = threading.Event()
