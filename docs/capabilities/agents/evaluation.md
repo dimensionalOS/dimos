@@ -83,5 +83,5 @@ CodePolicy executes agent-authored Python in a persistent Jupyter kernel. It is
 trusted and **unsandboxed**. Where a case carries a frozen recording, the `memory`
 object is cutoff-limited and its SQLite connections are truly read-only; a case
 with no environment has no `memory` object at all. Either way Python can still
-access other host files and processes. Run only trusted evaluation agents, or place the whole command in an OS
-sandbox or container.
+access other host files and processes. Run only trusted evaluation agents, or
+place the whole command in an OS sandbox or container.

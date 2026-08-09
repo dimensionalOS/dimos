@@ -170,7 +170,7 @@ def dimos_revision() -> str | None:
         return None
     if completed.returncode != 0:
         return None
-    answered = completed.stdout.split()
+    answered = completed.stdout.splitlines()
     if len(answered) != 2 or Path(answered[0]).resolve() != repository:
         return None
     return answered[1] or None

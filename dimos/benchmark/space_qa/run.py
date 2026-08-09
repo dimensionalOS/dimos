@@ -105,8 +105,12 @@ def run_space_task(
     # Claim the directory here rather than beside the first write: an --output
     # nothing can create is otherwise found an hour later, on the far side of a
     # 3.6 GB download. An empty directory is what _validate_run_dir accepts, so
-    # a later failure leaves the retry a directory it still takes.
+    # a later failure leaves the retry a directory it still takes. mkdir proves
+    # nothing about a directory that already exists, so claim it with a write.
     run_dir.mkdir(parents=True, exist_ok=True)
+    probe = run_dir / ".output-probe"
+    probe.touch()
+    probe.unlink()
     # libobjc reads this flag when it loads, which happened at interpreter
     # start, so setting it here cannot change this process or its forked
     # workers. It is for the processes those workers exec (the Pi CLI): they

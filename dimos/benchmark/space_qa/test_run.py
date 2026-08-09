@@ -458,6 +458,17 @@ def test_the_manifest_names_no_revision_when_git_answers_for_another_repository(
     assert manifest_module.dimos_revision() is None
 
 
+def test_the_manifest_names_no_revision_when_git_hangs(monkeypatch) -> None:
+    """A git that never answers must cost the manifest one field, not the run."""
+
+    def hang(*_args: Any, **_kwargs: Any) -> Any:
+        raise subprocess.TimeoutExpired(cmd="git", timeout=30)
+
+    monkeypatch.setattr(manifest_module.subprocess, "run", hang)
+
+    assert manifest_module.dimos_revision() is None
+
+
 def test_the_output_directory_is_claimed_before_anything_is_fetched(tmp_path, monkeypatch) -> None:
     """An --output nothing can create must not surface on the far side of the download."""
     monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
