@@ -16,10 +16,15 @@
 
 What this class scores is bookkeeping, not the verdict. A run's score is the
 ``results.json`` that ``space.evaluate_qas.main`` writes: SPACE drives its own
-loop, applies its own parser and keeps its own answer key. This adapter grades
-the same replies a second time — through that same upstream parser, never a
-local reimplementation — so ``run_space_task`` can hold the two records against
-each other and fail the run when they disagree.
+loop, applies its own parser and keeps its own answer key.
+
+``score`` runs that same upstream parser over the same reply a second time,
+never a local reimplementation, on the seam an external benchmark reaches the
+evaluation path through. So it is not an independent second opinion — both
+readings come from upstream code — but an alignment check, and a rehearsal of
+the seam: ``run_space_task`` holds its answers against the ones the agent
+recorded and the ones SPACE officially scored, and fails the run if the three
+do not describe the same replies.
 """
 
 from __future__ import annotations

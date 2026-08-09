@@ -43,7 +43,9 @@ class SyntheticGridAdapter:
     name: str = "synthetic-grid"
     revision: str = "synthetic-v1"
 
-    def __init__(self, *, seed: int = 0, total_groups: int = DEFAULT_TOTAL_GROUPS) -> None:
+    def __init__(self, *, seed: int = 1, total_groups: int = DEFAULT_TOTAL_GROUPS) -> None:
+        # Smallest seed whose default suite moves the answer slot between groups in every
+        # ordinal residue class; under seed 0 every fourth row answered slot 3.
         if total_groups < 1:
             raise ValueError(f"total_groups must be at least 1, got {total_groups}")
         rng = random.Random(seed)

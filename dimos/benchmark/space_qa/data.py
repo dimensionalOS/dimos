@@ -30,7 +30,8 @@ import shutil
 import tarfile
 import tempfile
 from typing import Any
-import urllib.request
+
+import requests
 
 from dimos.benchmark.space_qa.source import space_cache_root
 from dimos.benchmark.space_qa.tasks import SpaceTextTask
@@ -46,6 +47,13 @@ SPACE_DATA_ENV = "DIMOS_SPACE_DATA"
 RELEASE_DIR_NAME = "SPACE_data_release"
 PROVENANCE_NAME = "provenance.json"
 DOWNLOAD_CHUNK_BYTES = 1 << 22
+# Both bound a single blocking socket operation, not the transfer: 3.6 GB over
+# a slow link legitimately streams for an hour, and neither timeout cuts that
+# short. What they end is a host that never completes the handshake, and a
+# connection that stops delivering bytes — a download that will never finish,
+# which without a deadline waits forever instead of failing.
+DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 30.0
+DOWNLOAD_READ_TIMEOUT_SECONDS = 120.0
 
 SpaceRow = dict[str, Any]
 
@@ -64,15 +72,17 @@ def resolve_space_data() -> Path:
         return path.resolve()
     release = space_data_dir() / RELEASE_DIR_NAME
     if release.is_dir():
+        _verify_cached_release(release)
         return release
     return download_release(space_data_dir())
 
 
 def release_sha256(release: Path) -> str | None:
-    """The digest of the archive a cached release was unpacked from, if we unpacked it.
+    """The digest recorded in the ``provenance.json`` beside a release, if there is one.
 
-    A release reached through ``DIMOS_SPACE_DATA`` was never verified here, and
-    says so by returning None rather than borrowing the pinned digest.
+    A release this side unpacked has that record and reports it wherever it is
+    reached from; one extracted by hand and pointed at with ``DIMOS_SPACE_DATA``
+    has none, and returns None rather than borrowing the pinned digest.
     """
     provenance = release.parent / PROVENANCE_NAME
     if not provenance.is_file():
@@ -103,9 +113,13 @@ def download_release(target: Path) -> Path:
         if not release.is_dir():
             raise RuntimeError(f"the release archive holds no {RELEASE_DIR_NAME}/ directory")
         published = target / RELEASE_DIR_NAME
+        # The record goes down first. Losing the machine between the two leaves
+        # a record with no release, which the next run cannot even see: it finds
+        # no release directory, downloads again and overwrites the record. The
+        # other order leaves a release with no record, which no run may read.
+        _write_provenance(staging, target, digest)
         shutil.rmtree(published, ignore_errors=True)
         os.replace(release, published)
-        _write_provenance(target, digest)
         return published
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -134,6 +148,33 @@ def load_task_rows(task: SpaceTextTask, data_root: Path) -> list[SpaceRow]:
     return rows
 
 
+def _verify_cached_release(release: Path) -> None:
+    """Re-check the cache against the pin, every run, not just the one that filled it.
+
+    The digest is checked once while downloading, but the cache outlives that
+    run: the pin moves, a directory gets edited by hand, an older copy is
+    restored. A score is only comparable if it came from the pinned release, so
+    the claim is re-read rather than assumed.
+    """
+    try:
+        recorded = release_sha256(release)
+    except json.JSONDecodeError:
+        # A record that will not parse names no release either.
+        recorded = None
+    if recorded == SPACE_DATA_SHA256:
+        return
+    complaint = (
+        f"was unpacked from {recorded}, not the pinned {SPACE_DATA_SHA256}"
+        if recorded is not None
+        else f"has no readable {PROVENANCE_NAME} beside it, so nothing says which release it is"
+    )
+    raise RuntimeError(
+        f"the cached release at {release} {complaint}; delete {release.parent} and let the "
+        f"next run fetch it again, or set {SPACE_DATA_ENV}={release} to read it as it is, "
+        "unverified"
+    )
+
+
 def _validate_row(path: Path, ordinal: int, row: object) -> None:
     if not isinstance(row, dict):
         raise ValueError(f"{path} row {ordinal} is a {type(row).__name__}, expected an object")
@@ -146,16 +187,23 @@ def _validate_row(path: Path, ordinal: int, row: object) -> None:
 
 
 def _download(url: str, destination: Path) -> str:
+    """Stream the archive to disk, hashing it on the way past."""
     digest = hashlib.sha256()
-    with urllib.request.urlopen(url) as response, destination.open("wb") as sink:
-        while chunk := response.read(DOWNLOAD_CHUNK_BYTES):
-            digest.update(chunk)
-            sink.write(chunk)
+    timeout = (DOWNLOAD_CONNECT_TIMEOUT_SECONDS, DOWNLOAD_READ_TIMEOUT_SECONDS)
+    with requests.get(url, stream=True, timeout=timeout) as response:
+        response.raise_for_status()
+        with destination.open("wb") as sink:
+            for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
+                digest.update(chunk)
+                sink.write(chunk)
     return digest.hexdigest()
 
 
-def _write_provenance(target: Path, digest: str) -> None:
-    (target / PROVENANCE_NAME).write_text(
+def _write_provenance(staging: Path, target: Path, digest: str) -> None:
+    """Publish the record with a rename, so it is never read half-written."""
+    written = staging / PROVENANCE_NAME
+    written.write_text(
         json.dumps({"url": SPACE_DATA_URL, "sha256": digest}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    os.replace(written, target / PROVENANCE_NAME)

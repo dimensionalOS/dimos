@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.agents.code_policy_core import (
+    _ANSWER_KEY_PATH_ENVS,
     CodePolicySession,
     CodePolicySessionConfig,
     EmptyEnvironment,
@@ -110,6 +111,18 @@ def test_empty_environment_hides_inherited_recording_paths(monkeypatch) -> None:
     assert "DIMOS_CODE_POLICY_RECORDING_PATH" not in result
     assert "DIMOS_CODE_POLICY_MEMORY_CUTOFF" not in result
     assert result["DIMOS_CODE_POLICY_CONNECT_APP"] == "0"
+
+
+def test_empty_environment_hides_the_benchmark_answer_key_locations(monkeypatch) -> None:
+    """A benchmark case must not be able to read where its own answers are kept."""
+    monkeypatch.setenv("DIMOS_SPACE_RUN_DIR", "/runs/SAtt_text/20260809")
+    monkeypatch.setenv("DIMOS_SPACE_DATA", "/data/SPACE_data_release")
+
+    result = _kernel_environment(EmptyEnvironment())
+
+    assert _ANSWER_KEY_PATH_ENVS == ("DIMOS_SPACE_RUN_DIR", "DIMOS_SPACE_DATA")
+    assert "DIMOS_SPACE_RUN_DIR" not in result
+    assert "DIMOS_SPACE_DATA" not in result
 
 
 def test_kernel_environment_does_not_forward_credentials(monkeypatch, tmp_path: Path) -> None:

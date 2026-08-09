@@ -20,6 +20,7 @@ after the last one finishes.
 """
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,8 +29,8 @@ from typing import Any
 
 import pytest
 
-from dimos.benchmark.agent_eval.models import EvalCase
-from dimos.benchmark.space_qa.adapter import SubsetSpec
+from dimos.benchmark.agent_eval.models import EvalCase, EvalRunConfig
+from dimos.benchmark.space_qa.adapter import BenchmarkItem, ItemScore, SubsetSpec
 from dimos.benchmark.space_qa.manifest import (
     MANIFEST_NAME,
     RECORD_NAME,
@@ -40,8 +41,12 @@ from dimos.benchmark.space_qa.manifest import (
 from dimos.benchmark.space_qa.run import (
     collect_records,
     cross_check_predictions,
+    cross_check_scores,
+    default_run_dir,
     locate_results,
+    pi_artifacts,
     prepare_run,
+    refuse_an_unanswered_run,
     run_space_task,
 )
 from dimos.benchmark.space_qa.sampling import DEFAULT_GROUP_SIZE
@@ -96,6 +101,33 @@ def _record(manifest: Any, subset_index: int, **overrides: Any) -> dict[str, Any
         "final_text": '{"answer": 1}',
         **overrides,
     }
+
+
+class _ReplayingAdapter:
+    """Re-reads a reply exactly as the caller says the upstream parser would.
+
+    Standing in for ``SpaceQAAdapter.score``, which cannot run here: it reaches
+    the real parser, and importing SPACE is what these tests refuse to do.
+    """
+
+    def __init__(self, parsed: dict[str, int | None]) -> None:
+        self._parsed = parsed
+
+    def score(self, item: BenchmarkItem, raw_final_text: str) -> ItemScore:
+        answer = self._parsed[raw_final_text]
+        if answer is None:
+            return ItemScore(ordinal=item.ordinal)
+        return ItemScore(ordinal=item.ordinal, parsed_answer=answer, correct=True)
+
+
+def _refuse_to_fetch(monkeypatch) -> None:
+    """Fail loudly if a preflight test ever reaches the clone or the 3.6 GB download."""
+
+    def unreachable(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("the preflight must refuse the run before anything is fetched")
+
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.ensure_space_source", unreachable)
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.resolve_space_data", unreachable)
 
 
 def _write_records(results_dir: Path, manifest: Any, **overrides: Any) -> None:
@@ -249,3 +281,99 @@ def test_an_output_directory_holding_a_run_is_refused_before_any_work(tmp_path) 
     (tmp_path / MANIFEST_NAME).write_text("{}", encoding="utf-8")
     with pytest.raises(FileExistsError, match="already holds a run"):
         run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path)
+
+
+def test_a_subset_larger_than_the_task_is_refused_before_anything_is_fetched(
+    tmp_path, monkeypatch
+) -> None:
+    _refuse_to_fetch(monkeypatch)
+
+    with pytest.raises(ValueError, match="holds 100 stimulus groups; cannot draw 101"):
+        run_space_task(task_name="SAtt_text", groups=101, seed=1, output=tmp_path / "run")
+
+
+def test_a_run_without_the_agent_api_key_is_refused_rather_than_scored_as_zero(
+    tmp_path, monkeypatch
+) -> None:
+    """Every question would fail inside its worker, and SPACE would report 0% accuracy."""
+    _refuse_to_fetch(monkeypatch)
+    monkeypatch.delenv(EvalRunConfig().agent.api_key_env, raising=False)
+
+    with pytest.raises(ValueError, match="would report 0% accuracy"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path / "run")
+
+
+def test_a_missing_dependency_of_the_space_extra_is_named_before_the_download(
+    tmp_path, monkeypatch
+) -> None:
+    _refuse_to_fetch(monkeypatch)
+    monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
+    monkeypatch.setattr("dimos.benchmark.space_qa.run.SPACE_EXTRA_MODULES", ("mdutils_not_here",))
+
+    with pytest.raises(RuntimeError, match="mdutils_not_here.*uv sync --extra space"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path / "run")
+
+
+def test_a_missing_pi_build_is_reported_before_the_download(tmp_path, monkeypatch) -> None:
+    _refuse_to_fetch(monkeypatch)
+    monkeypatch.setenv(EvalRunConfig().agent.api_key_env, "unused-by-this-test")
+    monkeypatch.setattr(
+        "dimos.benchmark.space_qa.run.pi_artifacts",
+        lambda: (tmp_path / "cli.js", tmp_path / "python-exec.js"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="the Pi agent build is missing"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path / "run")
+
+
+def test_the_preflight_looks_for_the_pi_build_the_runner_will_actually_execute() -> None:
+    """The paths are copied from a private runner helper; this is what keeps the copy honest."""
+    from dimos.benchmark.agent_eval.single_case import _pi_paths
+
+    assert pi_artifacts() == _pi_paths()
+
+
+def test_two_runs_started_in_the_same_second_do_not_claim_one_default_directory() -> None:
+    assert default_run_dir("SAtt_text").name.endswith(f"_{os.getpid()}")
+
+
+def test_a_run_where_nothing_was_ever_answered_is_refused_rather_than_scored(tmp_path) -> None:
+    records = [
+        {"pred": None, "infra_error": "RuntimeError: no API key"},
+        {"pred": None, "infra_error": "PiRunError: cli.js missing"},
+    ]
+
+    with pytest.raises(RuntimeError, match="all 2 questions failed before they were answered"):
+        refuse_an_unanswered_run(records, tmp_path)
+
+
+def test_a_run_that_answered_something_reports_how_much_it_could_not(tmp_path) -> None:
+    records = [
+        {"pred": 1, "infra_error": None},
+        {"pred": None, "infra_error": "PiRunError: transport closed"},
+    ]
+
+    assert refuse_an_unanswered_run(records, tmp_path) == 1
+
+
+def test_records_and_a_second_reading_of_their_replies_agree() -> None:
+    items = (BenchmarkItem(ordinal=7, question="Where is marker 7?"),)
+    records = [{"pred": 3, "final_text": '{"answer": 3}'}]
+
+    cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
+
+
+def test_a_prediction_that_no_longer_follows_from_its_reply_fails_the_run() -> None:
+    items = (BenchmarkItem(ordinal=7, question="Where is marker 7?"),)
+    records = [{"pred": 2, "final_text": '{"answer": 3}'}]
+
+    with pytest.raises(ValueError, match="question 7 was recorded as 2"):
+        cross_check_scores(_ReplayingAdapter({'{"answer": 3}': 3}), items, records)
+
+
+def test_a_non_integer_answer_is_unparsed_on_both_sides_rather_than_a_disagreement() -> None:
+    """SPACE scores a non-integer answer as a miss, and the adapter reports it unparsed."""
+    items = (BenchmarkItem(ordinal=3, question="Where is marker 3?"),)
+    records = [{"pred": "north-east", "final_text": '{"answer": "north-east"}'}]
+
+    cross_check_scores(_ReplayingAdapter({'{"answer": "north-east"}': None}), items, records)

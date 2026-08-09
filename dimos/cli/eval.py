@@ -40,13 +40,15 @@ def execute_single_case(*args: Any, **kwargs: Any) -> Any:
 
 
 def run_space_task(*args: Any, **kwargs: Any) -> Any:
-    """Import the SPACE integration only when ``eval space`` executes."""
-    try:
-        from dimos.benchmark.space_qa.run import run_space_task as run
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "SPACE evaluation dependencies are missing; run `uv sync --extra space`"
-        ) from exc
+    """Import the SPACE integration only when ``eval space`` executes.
+
+    No missing-dependency handler here. Nothing the SPACE extra installs is
+    imported by this line: those libraries load deep inside the run, where its
+    own preflight names the missing ones before anything is downloaded. A
+    ``ModuleNotFoundError`` raised here would mean a broken install, and
+    answering it with `uv sync --extra space` would send the reader the wrong way.
+    """
+    from dimos.benchmark.space_qa.run import run_space_task as run
 
     return run(*args, **kwargs)
 
@@ -131,11 +133,13 @@ def format_space_summary(summary: Any) -> str:
             f"{summary.groups} groups · {summary.questions} questions · seed {summary.seed}",
         ),
         ("Accuracy", f"{summary.mean_accuracy:.1f}% (scored by SPACE)"),
+        # Beside the accuracy on purpose: these questions are in its denominator.
+        ("Infra fails", f"{summary.infra_failures} of {summary.questions} (scored as wrong)"),
         ("Results", str(summary.results_path)),
         ("Manifest", str(summary.manifest_path)),
         ("Records", str(summary.records_path)),
     )
-    body = "\n".join(f"  {label:<10} {value}" for label, value in rows)
+    body = "\n".join(f"  {label:<12} {value}" for label, value in rows)
     return f"· SPACE run complete\n\n{body}"
 
 

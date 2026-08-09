@@ -39,8 +39,10 @@ class BenchmarkModel(BaseModel):
 class BenchmarkItem(BenchmarkModel):
     """One upstream question, addressed by its row position in the upstream file.
 
-    Deliberately carries no answer: everything here is allowed to reach the
-    agent, so the answer key stays inside the adapter that owns it.
+    Deliberately carries no answer field: every field here is allowed to reach
+    the agent verbatim, so the grading key must not travel on this record. That
+    is the whole guarantee — keeping the key out of the process the agent runs
+    in is the execution path's business, not this type's.
     """
 
     ordinal: int = Field(ge=0)

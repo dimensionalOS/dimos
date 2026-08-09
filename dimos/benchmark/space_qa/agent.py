@@ -15,10 +15,12 @@
 """SPACE's own QA agent, answering through the DimOS agent-evaluation path.
 
 SPACE stays in charge: it drives the loop, formats the question, parses the
-reply and keeps the answer key. ``get_prediction`` keeps the upstream method
-line for line with one call replaced — what would reach a chat completion runs
-a static evaluation case instead — so every judgement about the answer is
-still made by inherited code.
+reply and keeps the answer key. ``get_prediction`` follows the upstream method
+with its model call replaced — what would reach a chat completion runs a static
+evaluation case instead — and drops the image-batching branch this text-only
+agent cannot take. Everything that reads the reply (``postprocess_response``,
+``parse_answer_from_response``) is inherited, so every judgement about the
+answer is still made by upstream code.
 
 Two things about this module are load-bearing:
 
@@ -37,7 +39,9 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 import time
+import traceback
 from typing import Any
 
 from space.agents.qa_agent import QA_Agent  # type: ignore[import-not-found]
@@ -74,8 +78,11 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
         max_images_per_query: int = -1,
         **kwargs: Any,
     ) -> None:
-        # Deliberately not calling super().__init__(): it asserts an API key and
-        # builds a live chat client, and this agent never calls a model itself.
+        # Deliberately not calling super().__init__(): it builds a live chat
+        # client, and this agent never calls a model itself. For this
+        # model_name that client would be an OpenAI one aimed at a vLLM server
+        # nobody started; the API-key assertion beside it is reached only by a
+        # `gpt-` or `claude-` name, which the config is registered not to use.
         self.model_name = model_name
         self.host_port = host_port
         self.save_dir = save_dir
@@ -114,6 +121,7 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             "space_parse_status": "invalid",
             "prediction_status": None,
             "infra_error": None,
+            "infra_traceback": None,
             "tool_call_count": 0,
             "duration_seconds": 0.0,
             "final_text": "",
@@ -141,6 +149,9 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             self.dialog.log_writer.write(
                 f"\n\nGround-truth answer: {answer}, prediction: {prediction}"
             )
+            # Where upstream adds the tokens the model call billed. This path
+            # bought none, so the counters stay at the zeros `reset` set and
+            # `get_eval_cost` still reports the shape SPACE expects.
             self.completion_tokens += 0
             self.prompt_tokens += 0
             self.dialog.log_token_usage(self.prompt_tokens, self.completion_tokens, 0.0)
@@ -155,6 +166,10 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             record["pred"] = None
             record["space_parse_status"] = "invalid"
             record["infra_error"] = f"{type(exc).__name__}: {exc}"
+            # The one line above names the failure; this is what makes it
+            # debuggable from the run directory alone. It never leaves that
+            # directory: no summary and no repository file carries it.
+            record["infra_traceback"] = traceback.format_exc()
         finally:
             record["duration_seconds"] = round(time.monotonic() - started, 3)
             _write_record(self.save_dir, record)
@@ -224,12 +239,25 @@ def _subset_index(save_dir: str) -> int:
 
 
 def _write_record(save_dir: str | None, record: dict[str, Any]) -> None:
-    """One record per question, beside SPACE's own transcript for the same question."""
+    """One record per question, beside SPACE's own transcript for the same question.
+
+    This runs in the ``finally`` of ``get_prediction``, so it raises nothing: an
+    unwritable directory would otherwise kill the pool worker holding it and
+    take the rest of the round down with it. A record that could not be written
+    says so on stderr, and ``collect_records`` fails the run over the file that
+    is not there — one question's problem, reported as one question's problem.
+    """
     if not save_dir:
         return
-    destination = Path(save_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    (destination / RECORD_NAME).write_text(
-        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        destination = Path(save_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / RECORD_NAME).write_text(
+            json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(
+            f"could not write {RECORD_NAME} under {save_dir}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )

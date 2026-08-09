@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import importlib
+import importlib.util
 import json
 import multiprocessing as mp
 import os
@@ -33,7 +34,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from dimos.benchmark.space_qa.adapter import BenchmarkItem, SubsetSpec
+from dimos.benchmark.agent_eval.models import EvalRunConfig
+from dimos.benchmark.space_qa.adapter import BenchmarkAdapter, BenchmarkItem, SubsetSpec
 from dimos.benchmark.space_qa.data import release_sha256, resolve_space_data
 from dimos.benchmark.space_qa.manifest import (
     MANIFEST_NAME,
@@ -48,13 +50,27 @@ from dimos.benchmark.space_qa.manifest import (
 )
 from dimos.benchmark.space_qa.source import SPACE_REVISION, ensure_space_source, space_cache_root
 from dimos.benchmark.space_qa.suite import SpaceQAAdapter
-from dimos.benchmark.space_qa.tasks import space_text_task
+from dimos.benchmark.space_qa.tasks import SpaceTextTask, space_text_task
 
 AGENT_MODULE = "dimos.benchmark.space_qa.agent"
 CONFIG_NAME = "dimos_qa"
 DEFAULT_WORKERS = 2
 RECORDS_NAME = "cases.jsonl"
 SPACE_OUTPUT_DIR_NAME = "space"
+# Import names of the `space` extra in pyproject.toml: what `import space`
+# pulls in and dimos does not already carry. Every one of them loads while
+# ``evaluate_qas`` is being imported, long after the release was downloaded.
+SPACE_EXTRA_MODULES = (
+    "anthropic",
+    "fire",
+    "func_timeout",
+    "imageio",
+    "mdutils",
+    "networkx",
+    "PIL",
+    "torch",
+    "tqdm",
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -67,6 +83,9 @@ class SpaceRunSummary:
     questions: int
     # SPACE reports accuracy as a percentage over the questions it scored.
     mean_accuracy: float
+    # Questions that never reached an answer. SPACE counts them as wrong, so
+    # the accuracy above is only readable next to this number.
+    infra_failures: int = 0
     run_dir: Path
     manifest_path: Path
     results_path: Path
@@ -88,6 +107,7 @@ def run_space_task(
     run_dir = (output or default_run_dir(task.name)).expanduser().resolve()
     if (run_dir / MANIFEST_NAME).is_file() or (run_dir / SPACE_OUTPUT_DIR_NAME).exists():
         raise FileExistsError(f"{run_dir} already holds a run; pass a fresh --output directory")
+    preflight(task, groups=groups)
     # libobjc reads this flag when it loads, which happened at interpreter
     # start, so setting it here cannot change this process or its forked
     # workers. It is for the processes those workers exec (the Pi CLI): they
@@ -132,7 +152,9 @@ def run_space_task(
     results_path = locate_results(space_output)
     results = json.loads(results_path.read_text(encoding="utf-8"))
     records = collect_records(results_path.parent, manifest)
+    infra_failures = refuse_an_unanswered_run(records, run_dir)
     cross_check_predictions(records, results)
+    cross_check_scores(adapter, items, records)
     records_path = run_dir / RECORDS_NAME
     records_path.write_text(
         "".join(
@@ -146,6 +168,7 @@ def run_space_task(
         groups=groups,
         questions=len(records),
         mean_accuracy=float(results["mean_metrics"]["accuracy"]),
+        infra_failures=infra_failures,
         run_dir=run_dir,
         manifest_path=run_dir / MANIFEST_NAME,
         results_path=results_path,
@@ -153,9 +176,56 @@ def run_space_task(
     )
 
 
+def preflight(task: SpaceTextTask, *, groups: int) -> None:
+    """Refuse a run that could never have produced a score, before it fetches anything.
+
+    Each of these fails the same way if it is left to the run: every worker
+    raises, every question is recorded as unanswered, and SPACE scores each one
+    wrong — so the run ends with a ``results.json`` reading 0.0%, which is
+    indistinguishable from an agent that answered everything wrong. Checking
+    here costs nothing; discovering it during a run costs a 3.6 GB download and
+    a full pool.
+    """
+    if not 1 <= groups <= task.groups:
+        raise ValueError(f"{task.name} holds {task.groups} stimulus groups; cannot draw {groups}")
+    key_env = EvalRunConfig().agent.api_key_env
+    if not os.environ.get(key_env):
+        raise ValueError(
+            f"{key_env} is unset, so every question would fail its preflight inside the "
+            "worker that runs it and be scored as wrong; the run would report 0% accuracy"
+        )
+    missing = [name for name in SPACE_EXTRA_MODULES if importlib.util.find_spec(name) is None]
+    if missing:
+        raise RuntimeError(
+            f"importing SPACE needs {', '.join(missing)}, which "
+            f"{'are' if len(missing) > 1 else 'is'} not installed; run `uv sync --extra space`"
+        )
+    for artifact in pi_artifacts():
+        if not artifact.is_file():
+            raise FileNotFoundError(
+                f"the Pi agent build is missing {artifact}; build "
+                "packages/pi-code-policy-extension before running a benchmark"
+            )
+
+
+def pi_artifacts() -> tuple[Path, Path]:
+    """The Pi CLI and extension bundles every case in the run will execute.
+
+    A copy of ``agent_eval.single_case._pi_paths``, which is private to the
+    runner this package only ever calls. ``test_run`` holds the two against
+    each other so this one cannot come to name different files.
+    """
+    package = Path(__file__).resolve().parents[3] / "packages" / "pi-code-policy-extension"
+    cli = package / "node_modules" / "@earendil-works" / "pi-coding-agent" / "dist" / "cli.js"
+    extension = package / "dist" / "python-exec.js"
+    return cli, extension
+
+
 def default_run_dir(task_name: str) -> Path:
+    # The pid keeps two runs started inside the same second apart; without it
+    # the second one is refused for landing in a directory that holds a run.
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return space_cache_root() / "runs" / task_name / stamp
+    return space_cache_root() / "runs" / task_name / f"{stamp}_{os.getpid()}"
 
 
 def prepare_run(
@@ -223,6 +293,52 @@ def collect_records(results_dir: Path, manifest: RunManifest) -> list[dict[str, 
             )
         records.append(record)
     return records
+
+
+def refuse_an_unanswered_run(records: Sequence[Mapping[str, Any]], run_dir: Path) -> int:
+    """Count the questions that never reached an answer; refuse a run made of nothing else.
+
+    A question whose infrastructure failed is recorded with no prediction, and
+    SPACE scores that as wrong. When it happens to every question the run still
+    produces a ``results.json`` reading 0.0% — a number that says the agent was
+    wrong about everything, when it was in fact never asked anything.
+    """
+    failures = [record for record in records if record.get("infra_error")]
+    if failures and len(failures) == len(records):
+        raise RuntimeError(
+            f"all {len(records)} questions failed before they were answered, so the 0% "
+            f"SPACE reports is not a score; the first failure was "
+            f"{failures[0]['infra_error']!r}, and the per-question records are under {run_dir}"
+        )
+    return len(failures)
+
+
+def cross_check_scores(
+    adapter: BenchmarkAdapter,
+    items: Sequence[BenchmarkItem],
+    records: Sequence[Mapping[str, Any]],
+) -> None:
+    """Re-read every reply on the adapter seam, and refuse a run that reads it differently.
+
+    The prediction in a record was parsed inside SPACE's loop, by the agent.
+    This runs the same upstream parser over the same reply text again, this
+    time through ``adapter.score`` — the seam any benchmark reaches this path
+    through. It is an alignment check on that seam, not a second opinion: both
+    sides call the same upstream code, so agreement means the record, the
+    official predictions and the adapter all describe one run.
+    """
+    for item, record in zip(items, records, strict=True):
+        recorded = record.get("pred")
+        # The upstream parser can return a non-integer answer, which SPACE
+        # scores as a miss and ``score`` reports as unparsed. Narrow the
+        # recorded value the same way, or every such reply looks like drift.
+        narrowed = None if isinstance(recorded, bool) or not isinstance(recorded, int) else recorded
+        parsed = adapter.score(item, str(record.get("final_text", ""))).parsed_answer
+        if parsed != narrowed:
+            raise ValueError(
+                f"the answer to question {item.ordinal} was recorded as {recorded!r}, but "
+                f"re-reading its reply through the upstream parser gives {parsed!r}"
+            )
 
 
 def cross_check_predictions(

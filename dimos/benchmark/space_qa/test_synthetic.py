@@ -36,6 +36,7 @@ from dimos.benchmark.space_qa.synthetic import (
 
 CASE_ID = re.compile(r"^synthetic-grid-\d{5}-[0-9a-f]{8}$")
 SLOTS = range(1, DEFAULT_GROUP_SIZE + 1)
+MANY_GROUPS = 24
 
 
 def _one_group(adapter: SyntheticGridAdapter) -> tuple[BenchmarkItem, ...]:
@@ -51,6 +52,15 @@ def _correct_slot(adapter: SyntheticGridAdapter, item: BenchmarkItem) -> int:
 
 def _options(question: str) -> list[str]:
     return [line.split(". ", 1)[1] for line in question.splitlines() if re.match(r"^\d+\. ", line)]
+
+
+def _slots_in_ordinal_order(adapter: SyntheticGridAdapter, total_groups: int) -> list[int]:
+    """Every answer slot the suite holds, indexed by the row order the ordinals give."""
+    items = sorted(
+        adapter.iter_items(SubsetSpec(seed=1, groups=total_groups)),
+        key=lambda item: item.ordinal,
+    )
+    return [_correct_slot(adapter, item) for item in items]
 
 
 def test_the_adapter_satisfies_the_protocol_at_runtime() -> None:
@@ -125,15 +135,38 @@ def test_cases_from_one_group_differ_only_in_the_question_they_ask() -> None:
     assert len(shapes) == 1
 
 
-def test_the_answer_slot_is_not_a_function_of_the_ordinal() -> None:
-    """The ordinal is public (it sits in the case_id), so it must not encode the answer."""
-    adapter = SyntheticGridAdapter()
-    items = sorted(
-        adapter.iter_items(SubsetSpec(seed=1, groups=DEFAULT_TOTAL_GROUPS)),
-        key=lambda item: item.ordinal,
-    )
-    slots = [_correct_slot(adapter, item) for item in items]
-    assert slots != [item.ordinal % DEFAULT_GROUP_SIZE + 1 for item in items]
+@pytest.mark.parametrize(
+    ("adapter", "total_groups"),
+    [
+        (SyntheticGridAdapter(), DEFAULT_TOTAL_GROUPS),
+        (SyntheticGridAdapter(total_groups=MANY_GROUPS), MANY_GROUPS),
+    ],
+    ids=["shipped default", "many groups"],
+)
+def test_the_answer_slot_is_not_a_function_of_the_ordinal(
+    adapter: SyntheticGridAdapter, total_groups: int
+) -> None:
+    """The ordinal is public (it sits in the case_id), so it must not encode the answer.
+
+    An ordinal fixes the position a row holds inside its group, so the property
+    to hold is that each position answers differently in different groups. It is
+    asserted directly rather than by ruling out one arithmetic guess, and the
+    default construction is covered because that is the suite callers get.
+    """
+    slots = _slots_in_ordinal_order(adapter, total_groups)
+    for position in range(DEFAULT_GROUP_SIZE):
+        observed = set(slots[position::DEFAULT_GROUP_SIZE])
+        assert len(observed) > 1, f"rows at position {position} always answer {observed}"
+
+
+def test_no_single_layout_places_the_answer_for_every_group() -> None:
+    """A generator reusing one shuffled layout would leak just as much, so groups differ."""
+    slots = _slots_in_ordinal_order(SyntheticGridAdapter(), DEFAULT_TOTAL_GROUPS)
+    layouts = {
+        tuple(slots[start : start + DEFAULT_GROUP_SIZE])
+        for start in range(0, len(slots), DEFAULT_GROUP_SIZE)
+    }
+    assert len(layouts) > 1
 
 
 def test_the_same_seed_regenerates_the_same_suite() -> None:

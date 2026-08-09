@@ -257,6 +257,10 @@ space = [
     "mdutils",
     "networkx",
     "Pillow",
+    # The release downloader in space_qa/data.py, not `import space`, needs this
+    # (AGENTS.md: requests, not urllib); it reaches every install transitively
+    # today, and this line is what makes that an interface rather than luck.
+    "requests",
     "torch",
     "tqdm",
 ]
