@@ -37,7 +37,6 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _backend,
-    _G1GrootCoordinator,
     _n_workers,
     _nav_stack,
     _remappings,
@@ -52,13 +51,6 @@ _ARM_TRAJECTORY_TASK = TaskConfig(
     joint_names=list(g1_arms),
     priority=30,
 )
-
-# Module-ref resolution matches provider classes exactly, so the coordinator
-# subclass must be remapped onto ManipulationModule's ControlCoordinator ref.
-_manip_remappings = [
-    *_remappings,
-    (ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
-]
 
 unitree_g1_groot_wbc_manip = (
     autoconnect(
@@ -76,6 +68,6 @@ unitree_g1_groot_wbc_manip = (
         ),
         _viewer(),
     )
-    .remappings(cast("Any", _manip_remappings))
+    .remappings(cast("Any", _remappings))
     .global_config(robot_model="unitree_g1", n_workers=_n_workers + 1)
 )

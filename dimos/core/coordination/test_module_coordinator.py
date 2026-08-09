@@ -209,6 +209,11 @@ class Mod2(Module):
     def stop(self) -> None: ...
 
 
+# How a deployment specializes a provider: extra I/O, same RPC surface.
+class Calculator1WithPort(Calculator1):
+    extra_in: In[Image]
+
+
 def _build_without_rerun(blueprint: Blueprint) -> ModuleCoordinator:
     """Build with a parsed viewer override so tests never spawn Rerun."""
     parsed = BlueprintConfigParser(blueprint).parse(
@@ -492,6 +497,26 @@ def test_module_ref_direct() -> None:
         assert mod1 is not None
         assert mod1.calc.compute1(2, 3) == 5
         assert mod1.calc.compute2(1.5, 2.5) == 4.0
+    finally:
+        coordinator.stop()
+
+
+def test_module_ref_direct_accepts_a_subclass_provider() -> None:
+    # A deployment may swap in a subclass to add per-instance ports. Matching
+    # the ref by exact class identity would leave Mod1.calc set to None, with
+    # no error at wiring time and an AttributeError at first use.
+    coordinator = _build_without_rerun(
+        autoconnect(
+            Calculator1WithPort.blueprint(),
+            Mod1.blueprint(),
+        )
+    )
+
+    try:
+        mod1 = coordinator.get_instance(Mod1)
+        assert mod1 is not None
+        assert mod1.calc is not None
+        assert mod1.calc.compute1(2, 3) == 5
     finally:
         coordinator.stop()
 
