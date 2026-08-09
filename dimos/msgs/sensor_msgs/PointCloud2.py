@@ -330,18 +330,30 @@ class PointCloud2(Timestamped):
         xy = pts[:, :2]
         cx, cy = xy.mean(axis=0)
         out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        mins = pts.min(axis=0)
+        maxs = pts.max(axis=0)
+        # Distinct occupied 0.2 m x-y cells of THIS frame's cloud alone.
+        floor_cells = np.unique(np.floor(xy / 0.2).astype(np.int64), axis=0)
+        out["exact_stats"] = {
+            "note": "exact full-cloud values in meters; for numeric extent/span/area "
+            "answers use these, not the quantized grid below",
+            "x_range": [round(float(mins[0]), 2), round(float(maxs[0]), 2)],
+            "y_range": [round(float(mins[1]), 2), round(float(maxs[1]), 2)],
+            "z_range": [round(float(mins[2]), 2), round(float(maxs[2]), 2)],
+            "horizontal_extent_m": round(float(max(maxs[0] - mins[0], maxs[1] - mins[1])), 2),
+            "vertical_span_m": round(float(maxs[2] - mins[2]), 2),
+            "occupied_floor_footprint_m2": round(float(floor_cells.shape[0]) * 0.2 * 0.2, 1),
+            "footprint_note": "mapped floor area of this frame's cloud only (distinct "
+            "occupied 0.2 m x-y cells); use it, not bbox area, for floor coverage. For "
+            "area trends compare each frame's own footprint value across frames -- it "
+            "can decrease as well as increase; do not accumulate coverage over frames",
+        }
         out["compass"] = (
             "8-way direction of motion (dx,dy = last minus first): if |dx|>2.41*|dy| "
             "then east (dx>0) or west (dx<0); if |dy|>2.41*|dx| then north (dy>0) or "
             "south (dy<0); otherwise diagonal by signs (northeast, northwest, "
             "southeast, southwest)"
         )
-        fx = np.floor(xy / 0.25).astype(np.int64)
-        out["xy_footprint"] = {
-            "cell_m": 0.25,
-            "occupied_cells": int(np.unique(fx[:, 0] * (2**31) + fx[:, 1]).size),
-            "note": "all z; area_m2~=occupied_cells*cell_m^2",
-        }
         z = pts[:, 2]
         band = xy[(z >= 0.15) & (z <= 1.0)]
         grid = self._body_height_occupancy(band)
