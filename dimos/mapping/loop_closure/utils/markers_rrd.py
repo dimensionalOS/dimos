@@ -32,10 +32,10 @@ from pathlib import Path
 
 import typer
 
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.transform import QualityWindow, SpeedLimit
-from dimos.memory2.vis.color import Color
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.stream import Stream
+from dimos.memory.transform import QualityWindow, SpeedLimit
+from dimos.memory.vis.color import Color
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
