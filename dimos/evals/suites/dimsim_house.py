@@ -64,7 +64,21 @@ _HOUSE_TOUR = [
 
 
 def _explore_house(sim: DimSimClient) -> None:
+    import time
+
+    from dimos.core.transport import LCMTransport
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
+
+    # dimsim spawns the robot well after MCP is up — wait for odom before driving
+    seen: list[PoseStamped] = []
+    probe: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
+    probe.subscribe(lambda msg, *args: seen.append(msg))
+    deadline = time.time() + 180.0
+    while not seen and time.time() < deadline:
+        time.sleep(1.0)
+    if not seen:
+        raise TimeoutError("no /odom within 180s — robot never spawned")
 
     explorer = DirectCmdVelExplorer()
     explorer.linear_speed = 0.5
