@@ -65,6 +65,119 @@ def compass_of(v: np.ndarray) -> str:
     return names[int(np.round(angle / (np.pi / 4))) % 8]
 
 
+def bigoffice_rows() -> list[dict[str, object]]:
+    """go2_bigoffice: 292 s exploration run; lidar is a rolling ~6 m local
+    window in world coordinates (not an accumulated map), robot path 162 m.
+    Families quiz reading world coordinates off the moving local map."""
+    dataset = "go2_bigoffice"
+    store = open_dataset(dataset)
+    rows: list[dict[str, object]] = []
+    try:
+        lidar = store.streams.lidar
+        t0 = lidar.first().ts
+
+        for t in [10.0, 80.0, 150.0, 220.0, 285.0]:
+            obs = lidar.range_time(0, t).to_list()[-1]
+            ts_rel = obs.ts - t0
+            pts = obs.data.points_f32()
+            ctx_window = [round(ts_rel - 0.05, 2), round(ts_rel + 0.05, 2)]
+
+            odom = store.streams.odom.range_time(0, t).to_list()[-1]
+            pos = np.array([odom.data.position.x, odom.data.position.y, odom.data.position.z])
+            band_pts = pts[(pts[:, 2] >= OBSTACLE_Z[0]) & (pts[:, 2] <= OBSTACLE_Z[1])]
+            d = np.hypot(band_pts[:, 0] - pos[0], band_pts[:, 1] - pos[1])
+            d = d[d > 0.15]
+            c = round(float(d.min()), 2)
+            rows.append(
+                {
+                    "id": f"bo_nearest_t{t:g}",
+                    "family": "nearest",
+                    "type": "numeric",
+                    "q": "You are the robot; your current pose is the odom observation "
+                    "shown. Using the mapped point cloud, how far away is the "
+                    "nearest obstacle point at body height (z between 0.15 and "
+                    "1.0 m), horizontal distance in meters?",
+                    "a": c,
+                    "band": round(max(0.25, 0.30 * c), 2),
+                    "ctx": "lidar+odom",
+                    "window": ctx_window,
+                    "odom_window": [round(max(0.0, t - 0.5), 2), round(t + 0.1, 2)],
+                }
+            )
+
+            area = round(len(voxels2d(pts)) * VOXEL * VOXEL, 1)
+            rows.append(
+                {
+                    "id": f"bo_area_t{t:g}",
+                    "family": "area",
+                    "type": "numeric",
+                    "q": "Consider the local map point cloud shown. Roughly how many "
+                    "square meters of floor plan does it cover (footprint of the "
+                    "mapped points projected onto the x-y plane)?",
+                    "a": area,
+                    "band": round(max(3.0, 0.25 * area), 1),
+                    "ctx": "lidar",
+                    "window": ctx_window,
+                }
+            )
+
+        for w0, w1 in [(0.0, 60.0), (60.0, 150.0), (150.0, 240.0), (200.0, 291.0), (0.0, 291.0)]:
+            frames = lidar.range_time(w0, w1).to_list()
+            fp, lp = frames[0].data.points_f32(), frames[-1].data.points_f32()
+            wid = f"{w0:g}_{w1:g}"
+            shift = lp[:, :2].mean(axis=0) - fp[:, :2].mean(axis=0)
+
+            s = round(float(np.hypot(*shift)), 1)
+            rows.append(
+                {
+                    "id": f"bo_shift_{wid}",
+                    "family": "shift",
+                    "type": "numeric",
+                    "q": "You are shown a sequence of local map point clouds over "
+                    "time (world coordinates). The local map follows the robot. "
+                    "Roughly how far did the center of the mapped region move "
+                    "from the first shown cloud to the last, in meters?",
+                    "a": s,
+                    "band": round(max(1.0, 0.30 * s), 1),
+                    "ctx": "lidar",
+                    "window": [w0, w1],
+                }
+            )
+
+            if np.hypot(*shift) >= 1.0:
+                rows.append(
+                    {
+                        "id": f"bo_direction_{wid}",
+                        "family": "direction",
+                        "type": "mcq",
+                        "q": "You are shown a sequence of local map point clouds over "
+                        "time (world frame: +x is east, +y is north). The local map "
+                        "follows the robot. In which compass direction did the "
+                        "mapped region's center move overall? Answer with exactly "
+                        "one of: east, northeast, north, northwest, west, "
+                        "southwest, south, southeast.",
+                        "a": compass_of(shift),
+                        "choices": [
+                            "east",
+                            "northeast",
+                            "north",
+                            "northwest",
+                            "west",
+                            "southwest",
+                            "south",
+                            "southeast",
+                        ],
+                        "ctx": "lidar",
+                        "window": [w0, w1],
+                    }
+                )
+    finally:
+        store.stop()
+    for row in rows:
+        row["dataset"] = dataset
+    return rows
+
+
 def main() -> None:
     store = open_dataset(DATASET)
     rows: list[dict[str, object]] = []
@@ -196,6 +309,7 @@ def main() -> None:
 
     for row in rows:
         row["dataset"] = DATASET
+    rows.extend(bigoffice_rows())
     out = Path(__file__).parent / "rows.json"
     out.write_text(json.dumps(rows, indent=2) + "\n")
     print(f"wrote {len(rows)} rows -> {out}")
