@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -49,15 +50,17 @@ from space.registry import register_agent, register_config  # type: ignore[impor
 
 from dimos.benchmark.agent_eval.models import CompactEvalResult, EvalCase, EvalRunConfig
 from dimos.benchmark.agent_eval.single_case import execute_single_case
+from dimos.benchmark.space_qa.data import SPACE_DATA_ENV
 from dimos.benchmark.space_qa.manifest import (
+    CONFIG_NAME,
     RECORD_NAME,
+    RUN_DIR_ENV,
     SelectedRow,
     case_dir,
     read_manifest,
     run_dir_from_env,
 )
 
-CONFIG_NAME = "dimos_qa"
 SAVE_DIR_PATTERN = re.compile(r"qa_(\d+)")
 
 
@@ -99,6 +102,30 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
         self.completion_tokens: Any = None
         self.prompt_tokens: Any = None
         self.client: Any = None
+        # Set by `reset` when it could not prepare this question's directory,
+        # and read by `get_prediction`, which is the only place that can report
+        # a failure without ending the round.
+        self._reset_error: str | None = None
+
+    def reset(self) -> None:
+        """The upstream method, with the one failure it cannot survive caught.
+
+        ``evaluate_on_qa`` calls this before every question and outside any
+        ``try``. Upstream makes the question's directory and opens a markdown
+        transcript in it; a full disk or a directory that cannot be created
+        raises from there, through ``pool.imap``, and takes the whole round down
+        over one question. The failure is one question's, so it is remembered
+        here and reported by ``get_prediction`` as that question's.
+        """
+        self._reset_error = None
+        # `get_eval_cost` reads both whatever happens, and upstream leaves them
+        # None until the reset that fails here would have set them.
+        self.completion_tokens = 0
+        self.prompt_tokens = 0
+        try:
+            super().reset()
+        except Exception as exc:
+            self._reset_error = f"{type(exc).__name__}: {exc}"
 
     def get_prediction(self, question_content: list[Any] | str, answer: Any) -> Any:
         """The upstream method with its model call replaced.
@@ -127,7 +154,14 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             "final_text": "",
         }
         prediction: Any = None
+        # Once this is set, the question has been answered and the answer is
+        # this run's to keep, whatever else goes wrong afterwards.
+        answered = False
         try:
+            if self._reset_error is not None:
+                raise RuntimeError(
+                    f"this question's working directory could not be prepared: {self._reset_error}"
+                )
             question = _text_question(question_content)
             record["question_sha256"] = hashlib.sha256(question.encode("utf-8")).hexdigest()
             question_content = self.preprocess_question(question_content)
@@ -146,6 +180,21 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             response_txt = self.postprocess_response(result.final_response)
             self.dialog.add_assistant_message(content=response_txt)
             prediction = self.parse_answer_from_response(response_txt)
+            answered = True
+            record["pred"] = prediction
+            # The upstream parser can return a non-integer answer; narrow it the
+            # way `cross_check_scores` and `parse_official_answer` already do.
+            record["space_parse_status"] = (
+                "invalid"
+                if isinstance(prediction, bool) or not isinstance(prediction, int)
+                else "parsed"
+            )
+
+            # Everything below is bookkeeping about an answer the run has already
+            # paid for: a transcript line, two counters, a dialog rewind. It is
+            # written after the prediction is in the record on purpose — losing
+            # a paid answer to an unwritable transcript would put the record and
+            # SPACE's own predictions into a disagreement that fails the run.
             self.dialog.log_writer.write(
                 f"\n\nGround-truth answer: {answer}, prediction: {prediction}"
             )
@@ -158,15 +207,20 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
             self.dialog.log_response_time(time.monotonic() - started)
             self.dialog.delete_last_message()
             self.dialog.delete_last_message()
-
-            record["pred"] = prediction
-            record["space_parse_status"] = "invalid" if prediction is None else "parsed"
         except Exception as exc:
-            prediction = None
-            record["pred"] = None
-            record["space_parse_status"] = "invalid"
-            record["infra_error"] = f"{type(exc).__name__}: {exc}"
-            # The one line above names the failure; this is what makes it
+            if not answered:
+                prediction = None
+                record["pred"] = None
+                record["space_parse_status"] = "invalid"
+            failure = f"{type(exc).__name__}: {exc}"
+            # Keep the first cause: a bookkeeping failure after the case ran
+            # must not overwrite the reason the case itself gave.
+            record["infra_error"] = (
+                failure
+                if record["infra_error"] is None
+                else f"{record['infra_error']}; then {failure}"
+            )
+            # The line above names the failure; this is what makes it
             # debuggable from the run directory alone. It never leaves that
             # directory: no summary and no repository file carries it.
             record["infra_traceback"] = traceback.format_exc()
@@ -193,7 +247,10 @@ class DimosQAAgent(QA_Agent):  # type: ignore[misc]
                 f"subset index {subset_index}; the run directory and the subset disagree"
             )
         result = execute_single_case(
-            case_path, config=EvalRunConfig(), output=Path(self.save_dir) / "dimos"
+            case_path,
+            config=EvalRunConfig(),
+            output=Path(self.save_dir) / "dimos",
+            hidden_env=(RUN_DIR_ENV, SPACE_DATA_ENV),
         )
         return result, case, row
 
@@ -252,10 +309,12 @@ def _write_record(save_dir: str | None, record: dict[str, Any]) -> None:
     try:
         destination = Path(save_dir)
         destination.mkdir(parents=True, exist_ok=True)
-        (destination / RECORD_NAME).write_text(
+        written = destination / f".{RECORD_NAME}.partial"
+        written.write_text(
             json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        os.replace(written, destination / RECORD_NAME)
     except Exception as exc:
         print(
             f"could not write {RECORD_NAME} under {save_dir}: {type(exc).__name__}: {exc}",

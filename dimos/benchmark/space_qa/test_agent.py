@@ -23,6 +23,7 @@ Apple's release; the one call that would reach an agent is captured instead.
 
 import importlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -32,27 +33,36 @@ from typing import Any
 import pytest
 
 from dimos.benchmark.agent_eval.models import CompactEvalResult
+from dimos.benchmark.space_qa import run as run_module
 from dimos.benchmark.space_qa.adapter import SubsetSpec
-from dimos.benchmark.space_qa.manifest import RECORD_NAME, RUN_DIR_ENV, case_dir
-from dimos.benchmark.space_qa.run import prepare_run
+from dimos.benchmark.space_qa.data import SPACE_DATA_ENV
+from dimos.benchmark.space_qa.manifest import CONFIG_NAME, RECORD_NAME, RUN_DIR_ENV, case_dir
 from dimos.benchmark.space_qa.sampling import DEFAULT_GROUP_SIZE
 from dimos.benchmark.space_qa.source import SPACE_REVISION
 from dimos.benchmark.space_qa.suite import SpaceQAAdapter
 from dimos.benchmark.space_qa.tasks import SpaceTextTask
 
-AGENT_MODULE = "dimos.benchmark.space_qa.agent"
+AGENT_MODULE = run_module.AGENT_MODULE
 MODEL_NAME = "dimos-pi-gpt-5.6-luna"
 TASK = SpaceTextTask(name="FAKE_text", groups=6)
 SEED = 20260809
 
 
 class _StubQAAgent:
-    """Upstream's three reply-reading methods, in the shape ``get_prediction`` calls them.
+    """Upstream's reply-reading methods and its ``reset``, as ``DimosQAAgent`` calls them.
 
     ``parse_answer_from_response`` follows the upstream one closely enough to
     tell a parsed answer from an unparsed one. What upstream's parser actually
     does is settled against the real checkout in ``test_upstream``, not here.
     """
+
+    def reset(self) -> None:
+        """Upstream's: a directory, a transcript writer and a dialog, outside any try."""
+        os.makedirs(self.save_dir, exist_ok=True)  # type: ignore[attr-defined]
+        self.writer = object()
+        self.dialog = _Dialog()
+        self.completion_tokens = 0
+        self.prompt_tokens = 0
 
     def preprocess_question(self, question_content: Any) -> Any:
         return question_content
@@ -75,8 +85,17 @@ def _install_space_stub() -> None:
     qa_agent = ModuleType("space.agents.qa_agent")
     registry = ModuleType("space.registry")
     qa_agent.QA_Agent = _StubQAAgent  # type: ignore[attr-defined]
+    registry.registered_configs = {}  # type: ignore[attr-defined]
+
+    def register_config(name: str) -> Any:
+        def register(cls: type) -> type:
+            registry.registered_configs[name] = cls  # type: ignore[attr-defined]
+            return cls
+
+        return register
+
     registry.register_agent = lambda cls: cls  # type: ignore[attr-defined]
-    registry.register_config = lambda _name: (lambda cls: cls)  # type: ignore[attr-defined]
+    registry.register_config = register_config  # type: ignore[attr-defined]
     sys.modules.update(
         {
             "space": space,
@@ -155,7 +174,7 @@ def _prepared_run(run_dir: Path, monkeypatch) -> str:
     """Write the run a worker would find, and point the environment at it."""
     adapter = SpaceQAAdapter(TASK, _rows())
     items = adapter.iter_items(SubsetSpec(seed=SEED, groups=1))
-    prepare_run(
+    run_module.prepare_run(
         run_dir,
         adapter,
         items,
@@ -177,7 +196,7 @@ def _ready_agent(agent_module, save_dir: Path):
     return agent
 
 
-def _result(case_id: str, final_text: str) -> CompactEvalResult:
+def _result(case_id: str, final_text: str, *, infra_error: str | None = None) -> CompactEvalResult:
     return CompactEvalResult(
         case_id=case_id,
         model="gpt-5.6-luna",
@@ -187,6 +206,7 @@ def _result(case_id: str, final_text: str) -> CompactEvalResult:
         validator_revision=SPACE_REVISION,
         tool_call_count=4,
         duration_seconds=1.25,
+        infra_error=infra_error,
     )
 
 
@@ -202,8 +222,8 @@ def test_a_question_is_answered_by_running_the_case_it_was_drawn_as(
     question = _prepared_run(run_dir, monkeypatch)
     captured: dict[str, Any] = {}
 
-    def execute(case_path, *, config, output):
-        captured.update(case_path=case_path, config=config, output=output)
+    def execute(case_path, *, config, output, hidden_env):
+        captured.update(case_path=case_path, config=config, output=output, hidden_env=hidden_env)
         return _result(json.loads(case_path.read_bytes())["case_id"], '{"answer": 3}')
 
     monkeypatch.setattr(agent_module, "execute_single_case", execute)
@@ -213,6 +233,8 @@ def test_a_question_is_answered_by_running_the_case_it_was_drawn_as(
     assert prediction == 3
     assert captured["case_path"] == case_dir(run_dir, 0) / "case.json"
     assert captured["output"] == save_dir / "dimos"
+    # The kernel the case runs in must not inherit where the answers are kept.
+    assert captured["hidden_env"] == (RUN_DIR_ENV, SPACE_DATA_ENV)
     record = _record(save_dir)
     assert (record["pred"], record["space_parse_status"], record["infra_error"]) == (
         3,
@@ -220,6 +242,98 @@ def test_a_question_is_answered_by_running_the_case_it_was_drawn_as(
         None,
     )
     assert record["tool_call_count"] == 4
+    assert sorted(entry.name for entry in save_dir.iterdir()) == [RECORD_NAME]
+
+
+def test_config_registers_under_the_name_the_run_asks_space_for(agent_module) -> None:
+    registered = sys.modules["space.registry"].registered_configs  # type: ignore[attr-defined]
+
+    assert registered[run_module.CONFIG_NAME] is agent_module.DimosQAConfig
+    assert run_module.CONFIG_NAME == CONFIG_NAME
+
+
+@pytest.mark.parametrize(
+    ("final_text", "pred"),
+    [
+        ('{"answer": "north-east"}', "north-east"),
+        ('{"answer": [3, 4]}', [3, 4]),
+        ('{"answer": true}', True),
+    ],
+)
+def test_non_integer_answers_are_recorded_raw_but_not_as_parsed(
+    agent_module, tmp_path, monkeypatch, final_text: str, pred: Any
+) -> None:
+    run_dir = tmp_path / "run"
+    save_dir = tmp_path / "space" / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda case_path, **_kwargs: _result(
+            json.loads(case_path.read_bytes())["case_id"], final_text
+        ),
+    )
+
+    prediction = _ready_agent(agent_module, save_dir).get_prediction(question, 3)
+
+    assert prediction == pred
+    record = _record(save_dir)
+    assert record["pred"] == pred
+    assert record["space_parse_status"] == "invalid"
+
+
+def test_record_publish_is_all_or_nothing(agent_module, tmp_path, monkeypatch, capsys) -> None:
+    run_dir = tmp_path / "run"
+    save_dir = tmp_path / "space" / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda case_path, **_kwargs: _result(
+            json.loads(case_path.read_bytes())["case_id"], '{"answer": 3}'
+        ),
+    )
+
+    def refuse(_source: Any, _destination: Any) -> None:
+        raise OSError("[Errno 28] No space left on device")
+
+    monkeypatch.setattr(agent_module.os, "replace", refuse)
+
+    prediction = _ready_agent(agent_module, save_dir).get_prediction(question, 3)
+
+    assert prediction == 3
+    assert not (save_dir / RECORD_NAME).exists()
+    assert RECORD_NAME in capsys.readouterr().err
+
+
+def test_first_infra_cause_survives_a_later_bookkeeping_failure(
+    agent_module, tmp_path, monkeypatch
+) -> None:
+    run_dir = tmp_path / "run"
+    save_dir = tmp_path / "space" / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda case_path, **_kwargs: _result(
+            json.loads(case_path.read_bytes())["case_id"],
+            "",
+            infra_error="PiRunError: transport closed",
+        ),
+    )
+    agent = _ready_agent(agent_module, save_dir)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("[Errno 28] No space left on device")
+
+    monkeypatch.setattr(agent.dialog.log_writer, "write", refuse)
+
+    prediction = agent.get_prediction(question, 3)
+
+    assert prediction is None
+    record = _record(save_dir)
+    assert record["infra_error"].startswith("PiRunError: transport closed")
+    assert "No space left on device" in record["infra_error"]
 
 
 def test_a_question_that_could_not_be_run_is_recorded_rather_than_raised(
@@ -261,6 +375,88 @@ def test_a_question_the_run_directory_does_not_hold_is_refused_before_the_agent_
 
     assert prediction is None
     assert "was built for a different question" in _record(save_dir)["infra_error"]
+
+
+def test_a_paid_answer_survives_a_failure_in_the_bookkeeping_after_it(
+    agent_module, tmp_path, monkeypatch
+) -> None:
+    """Everything after the parse is bookkeeping; losing the answer to it would fail the run.
+
+    ``cross_check_scores`` re-reads the same reply and gets the same integer, so
+    a record that dropped the prediction here would read as a disagreement and
+    refuse a run every question of which was answered and paid for.
+    """
+    run_dir = tmp_path / "run"
+    save_dir = tmp_path / "space" / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda case_path, **_kwargs: _result(
+            json.loads(case_path.read_bytes())["case_id"], '{"answer": 3}'
+        ),
+    )
+    agent = _ready_agent(agent_module, save_dir)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("[Errno 28] No space left on device")
+
+    monkeypatch.setattr(agent.dialog.log_writer, "write", refuse)
+
+    prediction = agent.get_prediction(question, 3)
+
+    assert prediction == 3
+    record = _record(save_dir)
+    assert (record["pred"], record["space_parse_status"]) == (3, "parsed")
+    # The failure is still reported; what it no longer does is erase the answer.
+    assert "No space left on device" in record["infra_error"]
+
+
+def test_a_directory_that_could_not_be_prepared_does_not_take_the_worker_down(
+    agent_module, tmp_path, monkeypatch
+) -> None:
+    """Upstream calls `reset` before every question and outside any try of its own."""
+    run_dir = tmp_path / "run"
+    parent = tmp_path / "space"
+    save_dir = parent / "qa_00000"
+    question = _prepared_run(run_dir, monkeypatch)
+    monkeypatch.setattr(
+        agent_module,
+        "execute_single_case",
+        lambda *a, **k: pytest.fail("a question with no directory must never reach the agent"),
+    )
+    parent.mkdir()
+    parent.chmod(0o500)
+    agent = agent_module.DimosQAAgent(model_name=MODEL_NAME, save_dir=str(save_dir))
+
+    agent.reset()
+
+    # The disk that was full while the directory was made has room for the record.
+    parent.chmod(0o700)
+    prediction = agent.get_prediction(question, 3)
+
+    assert prediction is None
+    record = _record(save_dir)
+    assert record["pred"] is None
+    assert "could not be prepared" in record["infra_error"]
+    # `evaluate_on_qa` multiplies these out in `get_eval_cost` as soon as this
+    # returns, and upstream's reset is what would have set them.
+    assert (agent.prompt_tokens, agent.completion_tokens) == (0, 0)
+
+
+def test_a_directory_that_could_be_prepared_leaves_the_agent_as_upstream_does(
+    agent_module, tmp_path
+) -> None:
+    """The override is a `try` around upstream's reset, not a replacement for it."""
+    save_dir = tmp_path / "space" / "qa_00000"
+    agent = agent_module.DimosQAAgent(model_name=MODEL_NAME, save_dir=str(save_dir))
+
+    agent.reset()
+
+    assert save_dir.is_dir()
+    assert agent.writer is not None
+    assert agent.dialog is not None
+    assert (agent.prompt_tokens, agent.completion_tokens) == (0, 0)
 
 
 def test_a_record_that_cannot_be_written_does_not_take_the_worker_down(

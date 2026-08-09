@@ -23,6 +23,7 @@ and the environment check keeps them from cloning a repository or downloading
     pytest dimos/benchmark/space_qa/test_upstream.py -m self_hosted
 """
 
+import inspect
 import os
 import sys
 
@@ -63,14 +64,18 @@ def test_the_agent_inherits_the_upstream_parser_rather_than_reimplementing_it(
     assert DimosQAAgent.parse_answer_from_response is QA_Agent.parse_answer_from_response
     assert DimosQAAgent.postprocess_response is QA_Agent.postprocess_response
     assert DimosQAAgent.preprocess_question is QA_Agent.preprocess_question
-    assert DimosQAAgent.reset is QA_Agent.reset
+    # `reset` is the one inherited method this side overrides, and only to catch
+    # what upstream raises through the pool; the work is still upstream's.
+    assert DimosQAAgent.reset is not QA_Agent.reset
+    assert "super().reset()" in inspect.getsource(DimosQAAgent.reset)
 
 
 def test_the_agent_and_its_config_reach_the_upstream_registries(space_on_path) -> None:
     from space import get_config
     from space.registry import AGENTS_REGISTRY
 
-    from dimos.benchmark.space_qa.agent import CONFIG_NAME, DimosQAAgent
+    from dimos.benchmark.space_qa.agent import DimosQAAgent
+    from dimos.benchmark.space_qa.manifest import CONFIG_NAME
 
     config = get_config(CONFIG_NAME)
 
@@ -92,7 +97,7 @@ def test_this_side_grades_a_reply_the_way_the_official_scorer_does(space_on_path
 @pytest.mark.parametrize("task", SPACE_TEXT_TASKS, ids=lambda task: task.name)
 def test_every_registered_task_still_has_the_row_count_it_is_registered_with(task) -> None:
     """The registry is what turns a row index into a question; it has to match the release."""
-    assert len(load_task_rows(task, resolve_space_data())) == task.expected_rows
+    assert len(load_task_rows(task, resolve_space_data()).rows) == task.expected_rows
 
 
 def test_a_real_subset_becomes_cases_that_ask_the_release_questions_verbatim() -> None:

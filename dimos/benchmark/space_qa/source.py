@@ -39,6 +39,17 @@ SPACE_SOURCE_ENV = "DIMOS_SPACE_SOURCE"
 
 GIT_TIMEOUT_SECONDS = 900.0
 
+# What to do about a dirty tree depends on whose tree it is: the cached clone
+# is disposable, an override is the user's own checkout.
+_CACHE_DIRTY_ADVICE = (
+    "restore it with `git checkout -- .` and remove what is untracked, or delete the "
+    "checkout and let the next run clone it again"
+)
+_OVERRIDE_DIRTY_ADVICE = (
+    "restore the tracked files with `git checkout -- .`, move the untracked ones out of "
+    f"the checkout, or unset {SPACE_SOURCE_ENV} to score against the cached clone instead"
+)
+
 
 def space_cache_root() -> Path:
     """Everything SPACE brings with it lands here, outside the repository."""
@@ -56,6 +67,7 @@ def ensure_space_source() -> Path:
             # Reached after the pin moves, or if someone worked in the cache.
             _git("-C", str(checkout), "fetch", "--quiet", "origin")
             _git("-C", str(checkout), "checkout", "--quiet", SPACE_REVISION)
+        _refuse_a_dirty_checkout(checkout, _CACHE_DIRTY_ADVICE)
         return checkout
     _clone(checkout)
     return checkout
@@ -78,7 +90,26 @@ def _use_override(override: str) -> Path:
             f"{SPACE_SOURCE_ENV}={override} is at {head}, but this integration grades "
             f"against {SPACE_REVISION}; check out the pin or unset {SPACE_SOURCE_ENV}"
         )
+    _refuse_a_dirty_checkout(path, _OVERRIDE_DIRTY_ADVICE)
     return path.resolve()
+
+
+def _refuse_a_dirty_checkout(checkout: Path, advice: str) -> None:
+    """A checkout sitting at the pin can still not be the pinned scorer.
+
+    ``HEAD`` names a commit, not the files that will be imported: an edited
+    ``qa_agent.py`` or a stray module dropped beside it leaves the revision
+    check untouched and still changes how every reply is read. The pin is what
+    makes a score comparable, so anything the working tree adds to it is refused
+    rather than quietly graded against.
+    """
+    changes = _git("-C", str(checkout), "status", "--porcelain")
+    if not changes:
+        return
+    raise RuntimeError(
+        f"the SPACE checkout at {checkout} is at {SPACE_REVISION} but its working tree has "
+        f"been changed, so it is no longer the scorer that pin names:\n{changes}\n{advice}"
+    )
 
 
 def _clone(checkout: Path) -> None:

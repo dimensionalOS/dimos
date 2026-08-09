@@ -37,12 +37,6 @@ _CREDENTIAL_NAME_RE = re.compile(
     r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|OPENAI|ANTHROPIC|AWS_|AZURE_)",
     re.IGNORECASE,
 )
-# Exported by the SPACE benchmark integration before it forks its workers, and
-# so inherited by any kernel a worker starts. One points at the run directory,
-# whose subset/qas.json carries the answer key for the questions being asked;
-# the other at the release the whole answer key lives in. Named literally
-# rather than imported, to keep this module free of a benchmark dependency.
-_ANSWER_KEY_PATH_ENVS = ("DIMOS_SPACE_RUN_DIR", "DIMOS_SPACE_DATA")
 
 
 class FrozenMemoryEnvironment(BaseModel):
@@ -68,6 +62,9 @@ class EmptyEnvironment(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["none"] = "none"
+    # Environment variables the kernel must not inherit, named by the caller —
+    # e.g. where a benchmark run keeps its answer key.
+    hidden_env: tuple[str, ...] = ()
 
 
 CodePolicyEnvironment = FrozenMemoryEnvironment | LiveDimosEnvironment | EmptyEnvironment
@@ -174,10 +171,7 @@ def _kernel_environment(environment: CodePolicyEnvironment) -> dict[str, str]:
         result.pop(_RECORDING_PATH_ENV, None)
         result.pop(_DERIVED_RECORDING_PATH_ENV, None)
         result.pop(_MEMORY_CUTOFF_ENV, None)
-        # A benchmark case runs in an empty environment, and a benchmark run
-        # advertises where its answers live. Defence in depth, not an incident
-        # response: no agent has been observed reading either name.
-        for name in _ANSWER_KEY_PATH_ENVS:
+        for name in environment.hidden_env:
             result.pop(name, None)
         return result
     result[_RECORDING_PATH_ENV] = environment.recording_path

@@ -202,11 +202,14 @@ def test_case_without_an_environment_runs_the_prompt_verbatim_and_defers_scoring
     monkeypatch.setattr(single_case, "CodePolicyMcpServer", _fake_server(environments))
     monkeypatch.setattr(single_case, "PiCliRunner", Runner)
     output = tmp_path / "output"
-    result = execute_single_case(case_path, config=EvalRunConfig(), output=output)
+    result = execute_single_case(
+        case_path, config=EvalRunConfig(), output=output, hidden_env=("DIMOS_TEST_ANSWER_DIR",)
+    )
 
     assert turns["prompt"] == VERBATIM_PROMPT
     assert turns["system_prompt"] == VERBATIM_SYSTEM_PROMPT
     assert isinstance(environments[0], EmptyEnvironment)
+    assert environments[0].hidden_env == ("DIMOS_TEST_ANSWER_DIR",)
     assert result.final_response == "Kitchen"
     assert result.prediction_status == "not_evaluated"
     assert result.integer_answer is None

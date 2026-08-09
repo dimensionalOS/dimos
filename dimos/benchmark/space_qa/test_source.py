@@ -73,6 +73,39 @@ def test_an_override_off_the_pin_names_both_revisions(tmp_path, monkeypatch) -> 
     assert ABSENT_REVISION in str(raised.value)
 
 
+def test_an_override_at_the_pin_with_an_edited_file_is_refused(tmp_path, monkeypatch) -> None:
+    """`git checkout` moves HEAD and leaves edits alone, so the pin alone proves nothing."""
+    checkout = tmp_path / "ml-space-benchmark"
+    monkeypatch.setattr(source_module, "SPACE_REVISION", _checkout(checkout))
+    monkeypatch.setenv(SPACE_SOURCE_ENV, str(checkout))
+    (checkout / "README.md").write_text("space, edited", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as raised:
+        ensure_space_source()
+    message = str(raised.value)
+    assert "README.md" in message
+    assert "working tree has been changed" in message
+    # The override is the user's own checkout: never advise deleting it.
+    assert f"unset {SPACE_SOURCE_ENV}" in message
+    assert "delete the checkout" not in message
+
+
+def test_a_cached_checkout_with_an_untracked_file_is_refused(tmp_path, monkeypatch) -> None:
+    """A module dropped beside the scorer changes what imports, and edits nothing tracked."""
+    cached = tmp_path / "cache" / "src" / "ml-space-benchmark"
+    monkeypatch.setattr(source_module, "SPACE_REVISION", _checkout(cached))
+    monkeypatch.setattr(source_module, "space_cache_root", lambda: tmp_path / "cache")
+    monkeypatch.delenv(SPACE_SOURCE_ENV, raising=False)
+    (cached / "space_patch.py").write_text("# not upstream's\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as raised:
+        ensure_space_source()
+    message = str(raised.value)
+    assert "space_patch.py" in message
+    # The cached clone is disposable, so recloning is safe advice here.
+    assert "delete the checkout and let the next run clone it again" in message
+
+
 def test_an_override_that_is_not_a_checkout_is_refused(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv(SPACE_SOURCE_ENV, str(tmp_path / "nowhere"))
 

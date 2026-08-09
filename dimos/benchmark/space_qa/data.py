@@ -22,11 +22,13 @@ fixture in the tests beside this module is generated.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tarfile
 import tempfile
 from typing import Any
@@ -58,6 +60,21 @@ DOWNLOAD_READ_TIMEOUT_SECONDS = 120.0
 SpaceRow = dict[str, Any]
 
 
+@dataclass(frozen=True, kw_only=True)
+class TaskQuestions:
+    """A task's questions, and the digest of the bytes this run read them from.
+
+    The two attest to different things and are not interchangeable. The release
+    digest says which archive the cache was unpacked from, on the word of the
+    record written beside it; ``sha256`` here is computed over the file that was
+    actually opened, so it holds whatever a run really asked its questions from
+    — including a release edited after it was unpacked.
+    """
+
+    rows: tuple[SpaceRow, ...]
+    sha256: str
+
+
 def space_data_dir() -> Path:
     return space_cache_root() / "data"
 
@@ -80,20 +97,27 @@ def resolve_space_data() -> Path:
 def release_sha256(release: Path) -> str | None:
     """The digest recorded in the ``provenance.json`` beside a release, if there is one.
 
-    A release this side unpacked has that record and reports it wherever it is
-    reached from; one extracted by hand and pointed at with ``DIMOS_SPACE_DATA``
-    has none, and returns None rather than borrowing the pinned digest.
+    This reports the release's own claim about which archive it came from; it
+    reads none of the release. A release this side unpacked has that record and
+    reports it wherever it is reached from; one extracted by hand and pointed at
+    with ``DIMOS_SPACE_DATA`` has none, and returns None rather than borrowing
+    the pinned digest.
     """
     provenance = release.parent / PROVENANCE_NAME
     if not provenance.is_file():
         return None
     recorded = json.loads(provenance.read_text(encoding="utf-8"))
+    # Valid JSON that is no record at all — `null`, a list, a bare number — says
+    # as little about the release as a truncated one, and is read the same way.
+    if not isinstance(recorded, dict):
+        return None
     digest = recorded.get("sha256")
     return digest if isinstance(digest, str) else None
 
 
 def download_release(target: Path) -> Path:
     """Fetch the 3.6 GB release, verify it, and unpack it into ``target``."""
+    _require_extraction_filtering()
     target.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".space-data-", dir=target))
     try:
@@ -125,17 +149,23 @@ def download_release(target: Path) -> Path:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def load_task_rows(task: SpaceTextTask, data_root: Path) -> list[SpaceRow]:
+def load_task_rows(task: SpaceTextTask, data_root: Path) -> TaskQuestions:
     """Read a task's questions, refusing a file that no longer has the shape we sampled.
 
     Row position is the only address SPACE gives a question, so a file that
     gained or lost rows would silently re-point every sampled index at a
     different question. That is a failed run, not a smaller one.
+
+    The bytes are hashed on the way past, and the digest travels to the manifest.
+    A release is only ever checked against what its provenance record claims, so
+    this is the one place a run can say what it read rather than what it was told
+    it would read.
     """
     path = data_root / task.qas_relative_path
     if not path.is_file():
         raise FileNotFoundError(f"{task.name} has no questions at {path}")
-    rows = json.loads(path.read_text(encoding="utf-8"))
+    payload = path.read_bytes()
+    rows = json.loads(payload.decode("utf-8"))
     if not isinstance(rows, list):
         raise ValueError(f"{path} holds a {type(rows).__name__}, expected a list of rows")
     if len(rows) != task.expected_rows:
@@ -145,21 +175,23 @@ def load_task_rows(task: SpaceTextTask, data_root: Path) -> list[SpaceRow]:
         )
     for ordinal, row in enumerate(rows):
         _validate_row(path, ordinal, row)
-    return rows
+    return TaskQuestions(rows=tuple(rows), sha256=hashlib.sha256(payload).hexdigest())
 
 
 def _verify_cached_release(release: Path) -> None:
-    """Re-check the cache against the pin, every run, not just the one that filled it.
+    """Re-check the cache's claim against the pin, every run, not just the one that filled it.
 
-    The digest is checked once while downloading, but the cache outlives that
-    run: the pin moves, a directory gets edited by hand, an older copy is
-    restored. A score is only comparable if it came from the pinned release, so
-    the claim is re-read rather than assumed.
+    The bytes are hashed once, while downloading, and never again: rehashing
+    3.6 GB before every run buys little against a 32-byte record it would be
+    reading anyway. What outlives that run is the cache — the pin moves, a
+    directory gets edited by hand, an older copy is restored — so the claim is
+    re-read rather than assumed. What a run actually read is attested one layer
+    down, by the digest ``load_task_rows`` takes of the question file itself.
     """
     try:
         recorded = release_sha256(release)
-    except json.JSONDecodeError:
-        # A record that will not parse names no release either.
+    except ValueError:
+        # A record that will not decode or parse names no release either.
         recorded = None
     if recorded == SPACE_DATA_SHA256:
         return
@@ -184,6 +216,16 @@ def _validate_row(path: Path, ordinal: int, row: object) -> None:
     answer = row.get("answer")
     if isinstance(answer, bool) or not isinstance(answer, int):
         raise ValueError(f"{path} row {ordinal} has a non-integer answer: {answer!r}")
+
+
+def _require_extraction_filtering() -> None:
+    """Refuse to fetch an archive this interpreter could not unpack safely."""
+    if not hasattr(tarfile, "data_filter"):
+        raise RuntimeError(
+            f"Python {sys.version.split()[0]} cannot filter tar extraction, so unpacking "
+            "the release would follow escaping paths; upgrade to a patch release with "
+            "extraction filters (3.10.12+ or 3.11.4+)"
+        )
 
 
 def _download(url: str, destination: Path) -> str:

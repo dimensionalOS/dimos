@@ -44,19 +44,25 @@ from dimos.benchmark.space_qa.tasks import SpaceTextTask
 class SpaceQAAdapter:
     """One SPACE text task, addressed by row position in its own ``qas.json``."""
 
-    def __init__(self, task: SpaceTextTask, rows: Sequence[SpaceRow]) -> None:
+    def __init__(
+        self, task: SpaceTextTask, rows: Sequence[SpaceRow], *, qas_sha256: str | None = None
+    ) -> None:
         if len(rows) != task.expected_rows:
             raise ValueError(
                 f"{task.name} expects {task.expected_rows} rows, got {len(rows)}",
             )
         self.name = f"space-{task.name}"
         self.revision = SPACE_REVISION
+        # Digest of the question file these rows were read from, when they came
+        # from one. None for rows built in a test, which no manifest attests to.
+        self.qas_sha256 = qas_sha256
         self._task = task
         self._rows = tuple(rows)
 
     @classmethod
     def from_data_root(cls, task: SpaceTextTask, data_root: Path) -> SpaceQAAdapter:
-        return cls(task, load_task_rows(task, data_root))
+        questions = load_task_rows(task, data_root)
+        return cls(task, questions.rows, qas_sha256=questions.sha256)
 
     def iter_items(self, subset: SubsetSpec) -> tuple[BenchmarkItem, ...]:
         ordinals = sample_group_rows(

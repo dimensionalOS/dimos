@@ -40,6 +40,9 @@ MANIFEST_NAME = "manifest.json"
 CASES_DIR_NAME = "cases"
 SUBSET_DIR_NAME = "subset"
 RECORD_NAME = "dimos_case.json"
+# Registered with SPACE by the agent and asked for by name by the run; SPACE
+# connects the two only by equality.
+CONFIG_NAME = "dimos_qa"
 
 SHA256_LENGTH = 64
 
@@ -58,8 +61,14 @@ class RunManifest(BenchmarkModel):
     seed: int
     groups: int = Field(ge=1)
     space_revision: str = Field(min_length=1)
-    # None when the release was reached through an override and never verified here.
+    # Digest of the archive the release was unpacked from, on the word of the
+    # provenance record beside it. None when the release was reached through an
+    # override and carries no such record.
     data_sha256: str | None = None
+    # Digest of the bytes of the task's qas.json this run actually read, taken
+    # while reading it. Where data_sha256 repeats a claim about the release,
+    # this one is evidence about the file the questions came out of.
+    qas_sha256: str | None = None
     # None when this is not running from a git checkout.
     dimos_revision: str | None = None
     rows: tuple[SelectedRow, ...]
@@ -79,6 +88,7 @@ def build_manifest(
     groups: int,
     space_revision: str,
     data_sha256: str | None,
+    qas_sha256: str | None,
     items: Iterable[BenchmarkItem],
 ) -> RunManifest:
     return RunManifest(
@@ -88,6 +98,7 @@ def build_manifest(
         groups=groups,
         space_revision=space_revision,
         data_sha256=data_sha256,
+        qas_sha256=qas_sha256,
         dimos_revision=dimos_revision(),
         rows=tuple(
             SelectedRow(

@@ -19,6 +19,7 @@ test is what gets written before the first worker starts and what gets checked
 after the last one finishes.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,7 @@ import pytest
 
 from dimos.benchmark.agent_eval.models import EvalCase, EvalRunConfig
 from dimos.benchmark.space_qa.adapter import BenchmarkItem, ItemScore, SubsetSpec
+from dimos.benchmark.space_qa.data import PROVENANCE_NAME
 from dimos.benchmark.space_qa.manifest import (
     MANIFEST_NAME,
     RECORD_NAME,
@@ -39,6 +41,7 @@ from dimos.benchmark.space_qa.manifest import (
     subset_path,
 )
 from dimos.benchmark.space_qa.run import (
+    RECORDS_NAME,
     collect_records,
     cross_check_predictions,
     cross_check_scores,
@@ -46,8 +49,10 @@ from dimos.benchmark.space_qa.run import (
     locate_results,
     pi_artifacts,
     prepare_run,
+    recorded_release_digest,
     refuse_an_unanswered_run,
     run_space_task,
+    write_records,
 )
 from dimos.benchmark.space_qa.sampling import DEFAULT_GROUP_SIZE
 from dimos.benchmark.space_qa.source import SPACE_REVISION
@@ -68,6 +73,14 @@ def _rows() -> list[dict[str, Any]]:
         }
         for ordinal in range(TASK.expected_rows)
     ]
+
+
+def _release(root: Path, rows: list[dict[str, Any]]) -> Path:
+    """A release root holding one task's questions, in the layout a run reads."""
+    path = root / TASK.qas_relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    return root
 
 
 def _prepared(run_dir: Path) -> tuple[SpaceQAAdapter, Any]:
@@ -241,6 +254,20 @@ def test_a_question_that_left_no_record_fails_the_run(tmp_path) -> None:
         collect_records(results, manifest)
 
 
+@pytest.mark.parametrize("payload", [b"{ truncated", b"\xff\xfe not a record"])
+def test_unreadable_records_name_their_file_rather_than_a_bare_parse_error(
+    tmp_path, payload: bytes
+) -> None:
+    _adapter, manifest = _prepared(tmp_path)
+    results = tmp_path / "results"
+    _write_records(results, manifest)
+    (results / "qa_00000" / RECORD_NAME).write_bytes(payload)
+
+    with pytest.raises(ValueError, match="left an unreadable record") as raised:
+        collect_records(results, manifest)
+    assert str(results / "qa_00000" / RECORD_NAME) in str(raised.value)
+
+
 def test_matching_records_and_official_predictions_pass() -> None:
     records = [{"pred": 1}, {"pred": None}, {"pred": 4}]
 
@@ -252,6 +279,20 @@ def test_a_prediction_the_two_sides_disagree_on_fails_the_run() -> None:
 
     with pytest.raises(ValueError, match="question 1 was recorded as 2 but scored as 3"):
         cross_check_predictions(records, {"all_predictions": [1, 3]})
+
+
+def test_an_answer_that_is_not_equal_to_itself_is_not_a_disagreement() -> None:
+    """`json.loads` reads a bare NaN, so both sides can hold one — and NaN != NaN."""
+    records = [{"pred": float("nan")}, {"pred": 2}]
+
+    cross_check_predictions(records, {"all_predictions": [float("nan"), 2]})
+
+
+def test_an_answer_recorded_as_nan_and_scored_as_a_number_still_fails_the_run() -> None:
+    records = [{"pred": float("nan")}]
+
+    with pytest.raises(ValueError, match="question 0 was recorded as nan but scored as 2"):
+        cross_check_predictions(records, {"all_predictions": [2]})
 
 
 def test_a_results_file_that_scored_a_different_number_of_questions_fails_the_run() -> None:
@@ -281,6 +322,33 @@ def test_an_output_directory_holding_a_run_is_refused_before_any_work(tmp_path) 
     (tmp_path / MANIFEST_NAME).write_text("{}", encoding="utf-8")
     with pytest.raises(FileExistsError, match="already holds a run"):
         run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path)
+
+
+@pytest.mark.parametrize("existing", ["notes.txt", "subset/qas.json"])
+def test_an_output_directory_holding_anything_at_all_is_refused_before_any_fetch(
+    tmp_path, monkeypatch, existing: str
+) -> None:
+    """A run is read back by path, so a file already sitting on one of them would be believed."""
+    _refuse_to_fetch(monkeypatch)
+    path = tmp_path / "run" / existing
+    path.parent.mkdir(parents=True)
+    path.write_text("not this run's\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="is not empty"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path / "run")
+
+    assert path.read_text(encoding="utf-8") == "not this run's\n"
+
+
+def test_an_empty_output_directory_is_not_mistaken_for_a_used_one(tmp_path, monkeypatch) -> None:
+    """The guard has to let the ordinary case through: mkdir -p, then run into it."""
+    _refuse_to_fetch(monkeypatch)
+    (tmp_path / "run").mkdir()
+    monkeypatch.delenv(EvalRunConfig().agent.api_key_env, raising=False)
+
+    # Past the output guard, and stopped by the next check rather than by it.
+    with pytest.raises(ValueError, match="would report 0% accuracy"):
+        run_space_task(task_name="SAtt_text", groups=1, seed=1, output=tmp_path / "run")
 
 
 def test_a_subset_larger_than_the_task_is_refused_before_anything_is_fetched(
@@ -354,6 +422,70 @@ def test_a_run_that_answered_something_reports_how_much_it_could_not(tmp_path) -
     ]
 
     assert refuse_an_unanswered_run(records, tmp_path) == 1
+
+
+def test_a_question_that_was_answered_before_it_failed_is_not_an_unanswered_one(tmp_path) -> None:
+    """The agent keeps a parsed answer through a bookkeeping failure; it was asked and answered."""
+    records = [{"pred": 3, "infra_error": "OSError: [Errno 28] No space left on device"}]
+
+    assert refuse_an_unanswered_run(records, tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    "record", [b"null", b"[]", b'"fd4cc896"', b"3", b"{ truncated", b"\xff\xfe not utf-8"]
+)
+def test_a_release_whose_record_says_nothing_readable_is_reported_as_unverified(
+    tmp_path, record: bytes
+) -> None:
+    """An overridden release is whatever it was pointed at; `null` in the manifest already says so."""
+    release = tmp_path / "SPACE_data_release"
+    release.mkdir()
+    (tmp_path / PROVENANCE_NAME).write_bytes(record)
+
+    assert recorded_release_digest(release) is None
+
+
+def test_the_ledger_is_published_whole_or_not_at_all(tmp_path) -> None:
+    """It is written with a rename, so a reader never finds a run that stops halfway."""
+    records = [{"pred": 1, "ordinal": 4}, {"pred": None, "ordinal": 5}]
+
+    path = write_records(tmp_path, records)
+
+    assert path == tmp_path / RECORDS_NAME
+    assert [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] == records
+    assert [entry.name for entry in tmp_path.iterdir()] == [RECORDS_NAME]
+
+
+def test_the_manifest_records_the_digest_of_the_question_file_the_run_read(tmp_path) -> None:
+    """`data_sha256` repeats the release's own claim; this one is taken off the bytes read."""
+    release = _release(tmp_path / "release", _rows())
+    adapter = SpaceQAAdapter.from_data_root(TASK, release)
+
+    prepare_run(
+        tmp_path / "run",
+        adapter,
+        adapter.iter_items(SubsetSpec(seed=SEED, groups=GROUPS)),
+        task_name=TASK.name,
+        seed=SEED,
+        groups=GROUPS,
+        data_sha256=None,
+    )
+
+    digest = hashlib.sha256((release / TASK.qas_relative_path).read_bytes()).hexdigest()
+    assert read_manifest(tmp_path / "run").qas_sha256 == digest
+
+
+def test_a_question_file_tampered_with_is_attested_as_the_file_that_was_read(tmp_path) -> None:
+    """The manifest cannot refuse the edit, but it must not report the release's claim over it."""
+    rows = _rows()
+    rows[2]["question"] = "Where is the marker, really?"
+    release = _release(tmp_path / "release", rows)
+
+    tampered = SpaceQAAdapter.from_data_root(TASK, release).qas_sha256
+    untouched = SpaceQAAdapter.from_data_root(TASK, _release(tmp_path / "clean", _rows()))
+
+    assert tampered != untouched.qas_sha256
+    assert tampered == hashlib.sha256((release / TASK.qas_relative_path).read_bytes()).hexdigest()
 
 
 def test_records_and_a_second_reading_of_their_replies_agree() -> None:

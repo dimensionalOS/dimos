@@ -121,12 +121,14 @@ def _pin(monkeypatch, body: bytes) -> str:
     return digest
 
 
-def _cache(root: Path, monkeypatch, record: str | None) -> Path:
+def _cache(root: Path, monkeypatch, record: str | bytes | None) -> Path:
     """A cache directory as a run would find it: a release, and what it claims to be."""
     release = root / "data" / RELEASE_DIR_NAME
     release.mkdir(parents=True)
     if record is not None:
-        (root / "data" / PROVENANCE_NAME).write_text(record, encoding="utf-8")
+        (root / "data" / PROVENANCE_NAME).write_bytes(
+            record.encode("utf-8") if isinstance(record, str) else record
+        )
     monkeypatch.delenv(SPACE_DATA_ENV, raising=False)
     monkeypatch.setattr(data_module, "space_cache_root", lambda: root)
     monkeypatch.setattr(
@@ -142,7 +144,29 @@ def _staging_left_behind(target: Path) -> list[Path]:
 def test_a_task_reads_back_every_row_in_upstream_order(tmp_path) -> None:
     rows = _rows()
 
-    assert load_task_rows(TASK, _release(tmp_path, rows)) == rows
+    assert load_task_rows(TASK, _release(tmp_path, rows)).rows == tuple(rows)
+
+
+def test_a_task_hashes_the_bytes_it_read_its_questions_from(tmp_path) -> None:
+    """The release digest repeats a claim; this one is taken off the file itself."""
+    root = _release(tmp_path, _rows())
+    path = root / TASK.qas_relative_path
+
+    assert load_task_rows(TASK, root).sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_a_question_file_edited_after_it_was_unpacked_hashes_differently(tmp_path) -> None:
+    """Nothing here refuses the edit; what it cannot do is report the digest of the file it lost."""
+    root = _release(tmp_path, _rows())
+    before = load_task_rows(TASK, root).sha256
+    tampered = _rows()
+    tampered[3]["question"] = "Where is the marker, really?"
+    _release(root, tampered)
+
+    after = load_task_rows(TASK, root)
+
+    assert after.sha256 != before
+    assert after.sha256 == hashlib.sha256((root / TASK.qas_relative_path).read_bytes()).hexdigest()
 
 
 def test_a_file_that_changed_length_fails_the_run(tmp_path) -> None:
@@ -245,11 +269,47 @@ def test_a_cache_with_no_record_of_what_it_is_is_refused(tmp_path, monkeypatch) 
         resolve_space_data()
 
 
-def test_a_cache_whose_record_will_not_parse_is_refused(tmp_path, monkeypatch) -> None:
-    _cache(tmp_path, monkeypatch, "{ truncated")
+@pytest.mark.parametrize("record", ["{ truncated", b"\xff\xfe not utf-8"])
+def test_a_cache_whose_record_will_not_parse_is_refused(
+    tmp_path, monkeypatch, record: str | bytes
+) -> None:
+    _cache(tmp_path, monkeypatch, record)
 
     with pytest.raises(RuntimeError, match=PROVENANCE_NAME):
         resolve_space_data()
+
+
+@pytest.mark.parametrize("record", ["null", "[]", '"fd4cc896"', "3"])
+def test_a_record_that_parses_but_is_no_record_is_refused_with_the_same_guidance(
+    tmp_path, monkeypatch, record: str
+) -> None:
+    """Valid JSON that is not an object says as little as a truncated file, and has to read so."""
+    release = _cache(tmp_path, monkeypatch, record)
+
+    with pytest.raises(RuntimeError) as raised:
+        resolve_space_data()
+
+    complaint = str(raised.value)
+    assert PROVENANCE_NAME in complaint
+    assert str(release.parent) in complaint
+    assert f"{SPACE_DATA_ENV}={release}" in complaint
+
+
+def test_download_is_refused_when_the_interpreter_cannot_filter_extraction(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        data_module.requests, "get", lambda *_a, **_k: pytest.fail("fetched before the refusal")
+    )
+    monkeypatch.delattr(data_module.tarfile, "data_filter")
+
+    with pytest.raises(RuntimeError) as raised:
+        download_release(tmp_path)
+
+    message = str(raised.value)
+    assert "3.10.12" in message
+    assert "3.11.4" in message
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_download_is_verified_unpacked_and_published(tmp_path, monkeypatch) -> None:
@@ -261,7 +321,7 @@ def test_a_download_is_verified_unpacked_and_published(tmp_path, monkeypatch) ->
     release = download_release(tmp_path)
 
     assert release == tmp_path / RELEASE_DIR_NAME
-    assert load_task_rows(TASK, release) == rows
+    assert load_task_rows(TASK, release).rows == tuple(rows)
     assert release_sha256(release) == digest
     assert _staging_left_behind(tmp_path) == []
     # Streamed, and bounded at both ends: a hung handshake and a stalled body

@@ -42,7 +42,10 @@ the repository, and reuses them afterwards:
 
 On every later run the cached release is checked against the provenance record
 written when it was unpacked; a cache whose record is missing, unreadable, or
-names a different digest is refused rather than silently used.
+names a different digest is refused rather than silently used. That check reads
+the record, not the 3.6 GB beside it — what a run actually read is attested one
+layer down, by `qas_sha256` in the manifest below, which is taken off the bytes
+of the question file as the run opens it.
 
 The text tasks that can be named by `--task` are registered in
 [`space_qa/tasks.py`](/dimos/benchmark/space_qa/tasks.py); `--groups` cannot
@@ -50,14 +53,18 @@ exceed the stimulus count recorded there for the task.
 
 `--output` defaults to a timestamped directory under the same cache, so a run
 that is not told otherwise writes outside the repository; with `--output` it
-writes wherever that points. Whichever directory it names must be free of an
-earlier run: the command refuses one that already holds a `manifest.json` or a
-`space/` directory rather than merging into it.
+writes wherever that points. Whichever directory it names must not exist yet or
+be empty: a run is read back by path, so anything already sitting on one of those
+paths would be read as this run's, and the command refuses the directory rather
+than merging into it.
 
 A question whose agent never starts — an unbuilt extension, a missing key — is
 recorded with an `infra_error` and reaches SPACE as an empty reply, which SPACE
 scores as a miss. So a `0.0%` whose questions all carry one, counted on the
-summary's `Infra fails` line, is a failed install rather than a result.
+summary's `Infra fails` line, is a failed install rather than a result. That line
+counts only questions that never reached an answer: a failure after the reply was
+read — an unwritable transcript, a full disk — is recorded beside the answer the
+run had already paid for, and the question is still scored on that answer.
 
 ## What a run leaves behind
 
@@ -88,7 +95,8 @@ in how many questions were scored, or in any single prediction, fails it.
 | `benchmark`, `task` | The adapter, and the SPACE task the rows were drawn from. |
 | `seed`, `groups` | The sampling arguments, enough to redraw the same subset. |
 | `space_revision` | The pinned SPACE commit that scored the run. |
-| `data_sha256` | Digest of the archive the cached release was unpacked from, read from the provenance record written beside it. `null` means no such record sits beside the release, so nothing on this side has checked it. |
+| `data_sha256` | Digest of the archive the release was unpacked from, **as its provenance record claims** — a record repeated, not bytes re-read. `null` means no readable record sits beside the release, so nothing on this side has checked it. |
+| `qas_sha256` | Digest of the task's `qas.json` **this run actually read**, computed over the bytes while reading them. A release edited after it was unpacked keeps its `data_sha256` and changes this one. |
 | `dimos_revision` | The commit the run executed on, or `null` outside a git checkout. |
 | `rows` | One entry per question: its index in the subset, its row ordinal upstream, and the SHA-256 of the question text. |
 
@@ -100,7 +108,7 @@ instead of being scored.
 
 | Variable | Effect |
 | --- | --- |
-| `DIMOS_SPACE_SOURCE` | Score against an existing SPACE checkout instead of the cached clone. Nothing is fetched, but the revision is still checked: a checkout at another commit is refused, because the pin rather than the path is what makes a score comparable. |
+| `DIMOS_SPACE_SOURCE` | Score against an existing SPACE checkout instead of the cached clone. Nothing is fetched, but the checkout is still checked: one at another commit is refused, and so is one at the pin whose working tree has been modified or carries untracked files, because it is the code that runs rather than the commit it is named after that grades the replies. |
 | `DIMOS_SPACE_DATA` | Read an already-extracted release root. Nothing is downloaded and nothing is refused; `data_sha256` reports whatever provenance record the root carries, and is `null` when it carries none — the digest follows the record, not the path the release came in by. This is also the explicit way to keep using a cache the check above refused. |
 
 ## Sampling

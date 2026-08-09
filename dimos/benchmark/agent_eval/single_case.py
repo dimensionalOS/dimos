@@ -79,6 +79,7 @@ def execute_single_case(
     config: EvalRunConfig,
     output: Path,
     progress: ProgressSink | None = None,
+    hidden_env: tuple[str, ...] = (),
 ) -> CompactEvalResult:
     """Preflight, run, and atomically publish exactly one result directory."""
     path = case_path.expanduser().resolve()
@@ -94,7 +95,7 @@ def execute_single_case(
     api_key = os.environ.get(config.agent.api_key_env)
     if not api_key:
         raise ValueError(f"API key environment variable {config.agent.api_key_env!r} is unset")
-    environment = _case_environment(case, progress)
+    environment = _case_environment(case, progress, hidden_env)
     cli, extension = _pi_paths()
     runner = PiCliRunner(
         cli=cli,
@@ -176,10 +177,12 @@ def _validate_output(output: Path) -> None:
         raise FileExistsError(f"Output must be absent or an empty directory: {output}")
 
 
-def _case_environment(case: EvalCase, progress: ProgressSink | None) -> CodePolicyEnvironment:
+def _case_environment(
+    case: EvalCase, progress: ProgressSink | None, hidden_env: tuple[str, ...]
+) -> CodePolicyEnvironment:
     """Prepare the environment the case asks for; a `none` source asks for none."""
     if not isinstance(case.source, FrozenRecordingSource):
-        return EmptyEnvironment()
+        return EmptyEnvironment(hidden_env=hidden_env)
     bundle = _materialize_frozen_memory(case, progress)
     _, cutoff, source_path, derived_path = load_bundle(bundle, progress=case.source.progress)
     emit_progress(progress, StatusProgress(channel="eval", message="memory ready"))
