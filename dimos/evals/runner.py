@@ -59,7 +59,7 @@ BLIND_BLOCK: dict[str, str] = {
 class EvalRunnerConfig(BaseConfig):
     model: str = "gpt-5.6-luna"  # mirrors McpClientConfig.model
     # House convention (StoreConfig): pass an instance to inject, e.g. a fake
-    # chat model in tests. None -> built from `model` via init_model().
+    # chat model in tests. None -> built from `model` like McpClient does.
     chat_model: Any | None = None
     mcp_url: str = "http://localhost:9990/mcp"
     live_db: str = "recording.db"  # store the Recorder writes (interactive)
@@ -252,9 +252,11 @@ class EvalRunner(Configurable, CompositeResource):
         if self.config.chat_model is not None:
             return self.config.chat_model  # type: ignore[no-any-return]
         if self._model is None:
-            from dimos.agents.model import init_model
+            # Same construction as the production agent (Responses-API branch
+            # for gpt-5.x) so evals measure the deployed model config.
+            from dimos.agents.mcp.mcp_client import _init_model
 
-            self._model = init_model(self.config.model)
+            self._model = _init_model(self.config.model)
         return self._model
 
     def call_skill(self, name: str, args: Mapping[str, object]) -> str:
