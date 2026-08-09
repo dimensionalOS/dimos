@@ -558,7 +558,9 @@ class RoboPlanPlanner:
                 )
                 result = self._shortcut_native_path(group, result)
             path = self._path_from_native(group, result)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
+            # Native RRT raises RuntimeError e.g. when the start configuration
+            # is in collision; letting it escape strands the module in PLANNING.
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - started,

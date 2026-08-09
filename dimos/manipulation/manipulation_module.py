@@ -674,7 +674,8 @@ class ManipulationModule(Module):
 
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
-        self._record_error(msg)
+        logger.warning(f"{msg} — entering FAULT, call reset() to recover")
+        self._error_message = msg
         with self._lock:
             self._state = ManipulationState.FAULT
         return False
@@ -685,7 +686,7 @@ class ManipulationModule(Module):
             if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
                 logger.info("Discarding cancelled planning result")
                 return False
-            logger.warning(msg)
+            logger.warning(f"{msg} — entering FAULT, call reset() to recover")
             self._last_plan = None
             self._state = ManipulationState.FAULT
             self._error_message = msg
@@ -1434,6 +1435,9 @@ class ManipulationModule(Module):
                         self._state = previous_state
                         self._error_message = result.message
                     case ExecutionOutcome.UNCERTAIN:
+                        logger.warning(
+                            f"{result.message} — entering FAULT, call reset() to recover"
+                        )
                         self._state = ManipulationState.FAULT
                         self._error_message = result.message
         return bool(result and result.accepted)

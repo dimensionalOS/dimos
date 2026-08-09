@@ -517,6 +517,7 @@ def test_panel_contract_group_order_defaults_and_controls(
         "Execute",
         "Cancel",
         "Clear plan",
+        "Reset manipulation",
     ]
     assert "robot" not in gui._handles
     assert (
@@ -645,6 +646,43 @@ def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
     assert auxiliary_ids == (auxiliary_group.id,)
     assert gui.state.plan_state.status == PlanStatus.FRESH
     assert gui.state.last_result == "plan_cartesian_space=True"
+
+
+def test_reset_button_recovers_planning_from_fault(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    module_state = ["FAULT"]
+    module.get_state = lambda: module_state[0]
+    module.error = "Planning failed: NO_SOLUTION"
+
+    def do_reset() -> SimpleNamespace:
+        module_state[0] = "IDLE"
+        module.error = ""
+        return SimpleNamespace(is_success=lambda: True)
+
+    module.reset = do_reset
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.refresh()
+    assert not gui.state.can_plan()
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+
+    reset_button = next(
+        button for button in server.gui.buttons if button.label == "Reset manipulation"
+    )
+    reset_button.callback(SimpleNamespace())
+
+    assert gui.state.manipulation_state == "IDLE"
+    assert gui.state.last_result == "reset=True"
+    assert gui.state.error == ""
+    assert gui.state.can_plan()
 
 
 def test_changing_planning_mode_marks_existing_plan_stale(
@@ -990,6 +1028,7 @@ def test_panel_action_controls_are_present_in_source_order(
         "Execute",
         "Cancel",
         "Clear plan",
+        "Reset manipulation",
     ]
     assert [folder.label for folder in server.gui.folders] == [
         "Manipulation Panel",

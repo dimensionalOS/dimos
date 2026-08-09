@@ -424,6 +424,9 @@ class ViserPanelGui:
         clear_button = gui.add_button("Clear plan")
         clear_button.on_click(lambda _: self._submit_clear())
         self._handles["clear"] = clear_button
+        reset_button = gui.add_button("Reset manipulation")
+        reset_button.on_click(lambda _: self._submit_reset())
+        self._handles["reset"] = reset_button
         joint_controls = gui.add_folder("Joint Control", expand_by_default=False)
         self._handles["joint_control_folder"] = joint_controls
         self._build_joint_sliders()
@@ -1442,6 +1445,30 @@ class ViserPanelGui:
                 return
             self.state.plan_state = PanelPlanState()
             self._finish_operation(f"clear={ok}", operation_id=operation_id)
+
+        self._operation_worker.submit(
+            operation, on_error=lambda message: self._set_operation_error(message, operation_id)
+        )
+
+    def _submit_reset(self) -> None:
+        if self._closed:
+            return
+        operation_id = self._next_operation_id()
+
+        def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
+            before = self.get_module_state()
+            ok = self.reset()
+            after = self.get_module_state()
+            logger.info("Manipulation reset requested: %s -> %s (ok=%s)", before, after, ok)
+            if not self._operation_is_current(operation_id):
+                return
+            if ok:
+                self.state.plan_state = PanelPlanState()
+            else:
+                self.state.error = self.get_error() or "Reset failed"
+            self._finish_operation(f"reset={ok}", clear_error=ok, operation_id=operation_id)
 
         self._operation_worker.submit(
             operation, on_error=lambda message: self._set_operation_error(message, operation_id)
