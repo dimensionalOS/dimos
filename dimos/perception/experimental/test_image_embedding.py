@@ -28,6 +28,38 @@ from dimos.perception.experimental.image_embedding import ImageEmbeddingProvider
 from dimos.stream.video_provider import VideoProvider
 
 
+def test_onnx_inference_retries_failed_accelerator_on_cpu(mocker) -> None:
+    provider = object.__new__(ImageEmbeddingProvider)
+    provider.model_path = "/tmp/clip.onnx"
+    provider._cpu_model = None
+    provider.model = mocker.Mock()
+    provider.model.get_providers.return_value = [
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+    provider.model.run.side_effect = RuntimeError("accelerator failed")
+    cpu_model = mocker.Mock()
+    expected = [np.ones((1, 512), dtype=np.float32)]
+    cpu_model.run.return_value = expected
+    session = mocker.patch(
+        "dimos.perception.experimental.image_embedding.ort.InferenceSession",
+        return_value=cpu_model,
+    )
+
+    actual = provider._run_onnx({"pixel_values": np.zeros((1, 3, 224, 224), dtype=np.float32)})
+
+    assert actual is expected
+    session.assert_called_once_with(
+        "/tmp/clip.onnx",
+        providers=["CPUExecutionProvider"],
+    )
+
+    second = provider._run_onnx({"pixel_values": np.zeros((1, 3, 224, 224), dtype=np.float32)})
+    assert second is expected
+    assert provider.model.run.call_count == 1
+    assert cpu_model.run.call_count == 2
+
+
 @pytest.mark.self_hosted
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""

@@ -26,6 +26,7 @@ from dimos.e2e_tests.navigation.probe import StreamProbe
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.porcelain.dimos import Dimos
 from dimos.simulation.scene_controls import NavigationSceneControl
 
 
@@ -37,6 +38,7 @@ class NavigationProvider:
     simulator: str
     transport: TransportBackend
     global_args: tuple[str, ...]
+    apartment_global_args: tuple[str, ...]
 
 
 PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
@@ -46,6 +48,14 @@ PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
             simulator="dimsim",
             transport="lcm",
             global_args=("--transport", "lcm", "--viewer", "none", "--dimsim-scene", "empty"),
+            apartment_global_args=(
+                "--transport",
+                "lcm",
+                "--viewer",
+                "none",
+                "--dimsim-scene",
+                "apartment",
+            ),
         ),
         "pimsim": NavigationProvider(
             name="pimsim",
@@ -60,6 +70,16 @@ PROVIDERS: Mapping[str, NavigationProvider] = MappingProxyType(
                 "pimsim",
                 "--scene-package",
                 "none",
+            ),
+            apartment_global_args=(
+                "--transport",
+                "zenoh",
+                "--viewer",
+                "none",
+                "--simulation-provider",
+                "pimsim",
+                "--scene-package",
+                "dimsim-apartment",
             ),
         ),
     }
@@ -86,6 +106,7 @@ class NavigationRun:
     """Live public streams plus the test-only scene-control boundary."""
 
     provider: NavigationProvider
+    app: Dimos
     scene: NavigationSceneControl
     agent_idle: StreamProbe[bool]
     odom: StreamProbe[PoseStamped]

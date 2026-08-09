@@ -74,6 +74,19 @@ class NavigationSceneControl(SceneControl, Protocol):
     def semantic_object_bounds(self, query: str) -> PlanarBounds: ...
 
 
+@runtime_checkable
+class AgentPoseSceneControl(NavigationSceneControl, Protocol):
+    """Optional navigation control that can set position and heading."""
+
+    def set_agent_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+    ) -> None: ...
+
+
 def load_scene_control(name: str) -> SceneControl:
     """Load one built-in or installed simulator-control adapter."""
     if name == "dimsim":
@@ -113,6 +126,7 @@ def load_scene_control(name: str) -> SceneControl:
 
 __all__ = [
     "ENTRY_POINT_GROUP",
+    "AgentPoseSceneControl",
     "NavigationSceneControl",
     "PlanarBounds",
     "SceneControl",

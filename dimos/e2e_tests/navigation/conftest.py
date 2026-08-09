@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,7 @@ from dimos.e2e_tests.navigation.runtime import (
     NavigationRun,
     resolve_navigation_provider,
 )
+from dimos.e2e_tests.navigation.scenarios import SemanticNavigationScenario
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.std_msgs.Bool import Bool
@@ -80,6 +83,57 @@ def navigation_run(
 ) -> Iterator[NavigationRun]:
     del navigation_transport_runtime
 
+    with _running_navigation_stack(
+        navigation_provider,
+        start_blueprint,
+        connect_dimos_modules,
+        global_args=navigation_provider.global_args,
+        model_fixture=_MODEL_FIXTURE,
+        disabled_modules=("spatial-memory", "security-module"),
+        required_modules=("McpClient",),
+    ) as run:
+        yield run
+
+
+@pytest.fixture
+def semantic_navigation_run(
+    request: pytest.FixtureRequest,
+    navigation_transport_runtime: None,
+    navigation_provider: NavigationProvider,
+    start_blueprint: Callable[..., DimosCliCall],
+    connect_dimos_modules: Callable[[DimosCliCall, tuple[str, ...], float], Dimos],
+    tmp_path: Path,
+) -> Iterator[tuple[NavigationRun, SemanticNavigationScenario]]:
+    del navigation_transport_runtime
+    if navigation_provider.name != "pimsim":
+        pytest.skip("semantic spatial-memory acceptance is maintained for PimSim")
+    if not isinstance(request.param, SemanticNavigationScenario):
+        raise TypeError("semantic_navigation_run requires a SemanticNavigationScenario")
+    scenario = request.param
+    model_fixture = _write_semantic_model_fixture(tmp_path, scenario)
+    with _running_navigation_stack(
+        navigation_provider,
+        start_blueprint,
+        connect_dimos_modules,
+        global_args=navigation_provider.apartment_global_args,
+        model_fixture=model_fixture,
+        disabled_modules=("security-module",),
+        required_modules=("McpClient", "SpatialMemory"),
+    ) as run:
+        yield run, scenario
+
+
+@contextmanager
+def _running_navigation_stack(
+    provider: NavigationProvider,
+    start_blueprint: Callable[..., DimosCliCall],
+    connect_dimos_modules: Callable[[DimosCliCall, tuple[str, ...], float], Dimos],
+    *,
+    global_args: tuple[str, ...],
+    model_fixture: Path,
+    disabled_modules: tuple[str, ...],
+    required_modules: tuple[str, ...],
+) -> Iterator[NavigationRun]:
     agent_idle = StreamProbe[bool]("agent_idle")
     odom = StreamProbe("odom", PoseStamped)
     global_costmap = StreamProbe("global_costmap", OccupancyGrid)
@@ -91,33 +145,34 @@ def navigation_run(
     human_input = make_transport("human_input")
     scene: NavigationSceneControl | None = None
     try:
+        disable_args = tuple(
+            argument for module in disabled_modules for argument in ("--disable", module)
+        )
         call = start_blueprint(
             "run",
-            "--disable",
-            "spatial-memory",
-            "--disable",
-            "security-module",
+            *disable_args,
             "unitree-go2-agentic",
-            simulator=navigation_provider.simulator,
-            global_args=navigation_provider.global_args,
-            extra_env={"MCPCLIENT__MODEL_FIXTURE": str(_MODEL_FIXTURE)},
+            simulator=provider.simulator,
+            global_args=global_args,
+            extra_env={"MCPCLIENT__MODEL_FIXTURE": str(model_fixture)},
         )
-        connect_dimos_modules(call, ("McpClient",), 300.0)
+        app = connect_dimos_modules(call, required_modules, 300.0)
         agent_idle.wait_for(
             bool,
             timeout=120.0,
             failure_message="The agent did not publish its initial ready state.",
         )
 
-        loaded_scene = load_scene_control(navigation_provider.name)
+        loaded_scene = load_scene_control(provider.name)
         if not isinstance(loaded_scene, NavigationSceneControl):
-            raise TypeError(f"{navigation_provider.name} does not implement NavigationSceneControl")
+            raise TypeError(f"{provider.name} does not implement NavigationSceneControl")
         scene = loaded_scene
         scene.start()
         human_input.start()
 
         yield NavigationRun(
-            provider=navigation_provider,
+            provider=provider,
+            app=app,
             scene=scene,
             agent_idle=agent_idle,
             odom=odom,
@@ -133,3 +188,31 @@ def navigation_run(
         global_costmap.stop()
         odom.stop()
         agent_idle.stop()
+
+
+def _write_semantic_model_fixture(
+    output_dir: Path,
+    scenario: SemanticNavigationScenario,
+) -> Path:
+    path = output_dir / f"semantic-{scenario.scenario_id}.json"
+    payload = {
+        "responses": [
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "name": "navigate_with_text",
+                        "args": {"query": scenario.memory_query},
+                        "id": f"call_semantic_{scenario.scenario_id}",
+                        "type": "tool_call",
+                    }
+                ],
+            },
+            {
+                "content": f"Navigation started for {scenario.memory_query}.",
+                "tool_calls": [],
+            },
+        ]
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path

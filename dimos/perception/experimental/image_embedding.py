@@ -23,6 +23,7 @@ import base64
 import io
 import os
 import sys
+from typing import Any, cast
 
 import numpy as np
 import onnxruntime as ort
@@ -55,6 +56,7 @@ class ImageEmbeddingProvider:
         self.model_name = model_name
         self.dimensions = dimensions
         self.model: ort.InferenceSession | PreTrainedModel | None = None
+        self._cpu_model: ort.InferenceSession | None = None
         self.processor: ProcessorMixin | None = None
         self.model_path: str | None = None
 
@@ -147,7 +149,7 @@ class ImageEmbeddingProvider:
                         ort_inputs["attention_mask"] = np.ones((batch_size, 1), dtype=np.int64)
 
                     # Run inference
-                    ort_outputs = self.model.run(None, ort_inputs)
+                    ort_outputs = self._run_onnx(ort_inputs)
 
                     # Look up correct output name
                     output_names = [o.name for o in self.model.get_outputs()]
@@ -226,7 +228,7 @@ class ImageEmbeddingProvider:
                     )
 
                 # Run inference
-                ort_outputs = self.model.run(None, ort_inputs)
+                ort_outputs = self._run_onnx(ort_inputs)
 
                 # Determine correct output (usually 'last_hidden_state' or 'text_embeds')
                 output_names = [o.name for o in self.model.get_outputs()]
@@ -249,6 +251,29 @@ class ImageEmbeddingProvider:
         except Exception as e:
             logger.error(f"Error generating text embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
+
+    def _run_onnx(self, inputs: dict[str, np.ndarray]) -> list[Any]:
+        """Run the fused model and retry provider failures on the CPU."""
+        if self._cpu_model is not None:
+            return self._cpu_model.run(None, inputs)
+        model = cast("ort.InferenceSession", self.model)
+        try:
+            return model.run(None, inputs)
+        except Exception:
+            providers = model.get_providers()
+            if providers == ["CPUExecutionProvider"] or self.model_path is None:
+                raise
+            logger.warning(
+                "ONNX inference failed on the preferred provider; retrying on CPU",
+                providers=providers,
+                exc_info=True,
+            )
+            if self._cpu_model is None:
+                self._cpu_model = ort.InferenceSession(
+                    self.model_path,
+                    providers=["CPUExecutionProvider"],
+                )
+            return self._cpu_model.run(None, inputs)
 
     def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
         """
