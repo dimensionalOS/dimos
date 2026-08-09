@@ -20,16 +20,15 @@ from typing import Any
 import uuid
 
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
-from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
 
 from dimos.agents.mcp import tool_stream
+from dimos.agents.model import init_model
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -41,20 +40,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
-
-_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
-
-
-def _init_model(model_name: str) -> Any:
-    """Initialize a model while preserving LangChain provider resolution."""
-    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
-        return init_chat_model(model=model_name)
-
-    return ChatOpenAI(
-        model=model_name,
-        use_responses_api=True,
-        reasoning={"effort": "medium", "summary": "auto"},
-    )
 
 
 class McpClientConfig(ModuleConfig):
@@ -233,7 +218,7 @@ class McpClient(Module):
 
             model = MockModel(json_path=self.config.model_fixture)
         else:
-            model = _init_model(self.config.model)
+            model = init_model(self.config.model)
 
         with self._lock:
             self._state_graph = create_agent(

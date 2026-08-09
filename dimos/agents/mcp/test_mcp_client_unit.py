@@ -260,7 +260,7 @@ def test_on_system_modules_resolves_non_reasoning_models(
 
     with (
         patch("dimos.agents.mcp.mcp_client.create_agent"),
-        patch("dimos.agents.mcp.mcp_client.init_chat_model", return_value=resolved_model) as init,
+        patch("dimos.agents.model.init_chat_model", return_value=resolved_model) as init,
     ):
         configured_mcp_client.on_system_modules([])
 
