@@ -19,17 +19,19 @@ from __future__ import annotations
 import math
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.pick_and_place import PickAndPlaceModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.manipulators.xarm.blueprints.perception import XARM_PERCEPTION_CAMERA_TRANSFORM
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 from dimos.robot.manipulators.xarm.grasp_config import make_xarm_graspgenx_config
 
 _graspgenx_config = make_xarm_graspgenx_config()
 
 xarm_graspgenx = autoconnect(
-    xarm_perception,
-    PickAndPlaceModule.blueprint(
+    ManipulationModule.blueprint(
         robots=[
             make_xarm7_model_config(
                 name="arm",
@@ -39,22 +41,17 @@ xarm_graspgenx = autoconnect(
             )
         ],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
         floor_z=-0.02,
-        heuristic_grasp_fallback=False,
-        planning_frame="world",
-        grasp_approach_vector=(0.0, 0.0, -1.0),
-        grasp_verification={
-            # Enable only after completing the hardware calibration recorded
-            # in the grasp-pipeline OpenSpec change.
-            "enabled": False,
-            "open_position": 0.85,
-            "closed_position": 0.0,
-            "held_threshold": 0.02,
-            "timeout": 2.0,
-            "poll_interval": 0.05,
-        },
     ),
+    PickAndPlaceModule.blueprint(
+        instance_name="pick_and_place",
+        grasp="graspgenx",
+    ),
+    RealSenseCamera.blueprint(
+        base_frame_id="link7",
+        base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
+    ),
+    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     GraspGenXModule.blueprint(
         **_graspgenx_config.model_dump(exclude={"rpc_transport", "tf_transport", "g"})
     ),

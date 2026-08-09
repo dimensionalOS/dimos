@@ -52,11 +52,11 @@ def test_filter_skills_respects_allowlist() -> None:
 
 def test_select_module_skills_retains_deployed_remote_name() -> None:
     schema = json.dumps({"type": "object", "properties": {}})
-    skill = SkillInfo(class_name="PickNPlaceModule", func_name="scan", args_schema=schema)
+    skill = SkillInfo(class_name="PickAndPlaceModule", func_name="scan_objects", args_schema=schema)
     module = MagicMock(remote_name="pnp")
     module.get_skills.return_value = [skill]
 
-    assert _select_module_skills([module], ["scan"]) == [(module, skill)]
+    assert _select_module_skills([module], ["scan_objects"]) == [(module, skill)]
 
 
 def test_mcp_module_request_flow() -> None:

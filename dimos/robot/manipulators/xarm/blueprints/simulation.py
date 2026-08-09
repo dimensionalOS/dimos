@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.pick_and_place import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -27,22 +29,20 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_robot_config,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
-    PickAndPlaceModule.blueprint(
+    ManipulationModule.blueprint(
         robots=[make_xarm7_sim_robot_config()],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
-        heuristic_grasp_fallback=True,
     ),
+    PickAndPlaceModule.blueprint(instance_name="pick_and_place"),
+    HeuristicGraspModule.blueprint(instance_name="heuristic_grasp"),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[trajectory_task(_xarm7_sim_hw)],
     ),
-    RerunBridgeModule.blueprint(),
 )

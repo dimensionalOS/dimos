@@ -18,8 +18,8 @@ Base module providing core manipulation infrastructure:
 - @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
 - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
 
-Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integration
-(scan_objects, get_scene_info) and long-horizon skills (pick, place, pick_and_place).
+The standalone PickAndPlaceModule composes this module's execution capability with
+perception and grasp-provider capabilities for high-level workflows.
 """
 
 from __future__ import annotations
@@ -172,7 +172,7 @@ class ManipulationModule(Module):
     - @rpc: Low-level building blocks (plan, execute, gripper)
     - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
 
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
+    PickAndPlaceModule composes this module with perception and grasp capabilities.
     """
 
     config: ManipulationModuleConfig
