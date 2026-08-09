@@ -86,7 +86,9 @@ def _decode_data_uri(uri: str) -> np.ndarray[Any, Any]:
 
     payload = uri.split(",", 1)[1]
     buffer = np.frombuffer(base64.b64decode(payload), dtype=np.uint8)
-    frame: np.ndarray[Any, Any] = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    frame = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("undecodable image data URI")
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
