@@ -131,7 +131,7 @@ def test_go2_replay_drain_walltime(benchmark: BenchmarkFixture) -> None:
         db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
         expected = _expected_counts(db_path)
         assert all(count > 0 for count in expected.values()), f"empty window: {expected}"
-        floors = {name: int(count * FLOOR_FRACTION[name]) for name, count in expected.items()}
+        floors = {name: int(expected[name] * fraction) for name, fraction in FLOOR_FRACTION.items()}
 
         blueprint = get_blueprint_by_name("unitree-go2")
 
