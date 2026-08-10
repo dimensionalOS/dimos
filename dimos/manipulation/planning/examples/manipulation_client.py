@@ -37,8 +37,7 @@ Available functions:
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
     url()                 Get Meshcat visualization URL
-    robots()              List configured robots
-    info(robot)           Get robot config details
+    info()                Get model configuration details
     gripper(pos)          Set gripper position (0.0=closed, 0.85=open)
     add_box(name,x,y,z)   Add box obstacle
     add_sphere(name,x,y,z) Add sphere obstacle

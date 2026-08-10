@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import importlib
 from pathlib import Path
 from types import ModuleType
@@ -104,7 +104,7 @@ class PinkIK:
         config_values.update(overrides)
         self.config = PinkKinematicsConfig(**config_values)
         self._modules = _load_optional_dependencies(self.config.solver)
-        self._model_contexts: dict[str, _PinkRobotContext] = {}
+        self._model_context: _PinkRobotContext | None = None
 
     def solve(
         self,
@@ -452,11 +452,15 @@ class PinkIK:
         )
 
     def _get_model_context(self, world: WorldSpec, frame_name: str) -> _PinkRobotContext:
-        if frame_name not in self._model_contexts:
-            self._model_contexts[frame_name] = self._build_robot_context(
-                world.get_model_config(), frame_name
-            )
-        return self._model_contexts[frame_name]
+        if self._model_context is None:
+            self._model_context = self._build_robot_context(world.get_model_config(), frame_name)
+        if self._model_context.frame_name == frame_name:
+            return self._model_context
+        return replace(
+            self._model_context,
+            frame_id=_get_frame_id(self._model_context.model, frame_name),
+            frame_name=frame_name,
+        )
 
     def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio

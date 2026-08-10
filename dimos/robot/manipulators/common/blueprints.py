@@ -88,8 +88,8 @@ def _resolve_control_ik(
     robot_model: RobotModelConfig,
     control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, Any]:
-    if len(hardware.joints) != len(robot_model.joint_names):
-        raise ValueError("hardware and RobotModelConfig must have the same joint count")
+    if list(hardware.joints) != list(robot_model.joint_names):
+        raise ValueError("hardware and RobotModelConfig joints must match exactly")
     payload = dict(control_ik or {})
     payload["robot_model"] = robot_model
     return payload

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -38,6 +38,8 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+    from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
 try:
     from pydrake.math import RigidTransform, RotationMatrix
@@ -268,16 +270,14 @@ class DrakeOptimizationIK:
         target_frame_name: str,
         locked_joint_positions: Mapping[int, float] | None = None,
     ) -> IKResult:
-        # Get robot data from world internals (Drake-specific access)
-        robot_data = world._require_model()  # type: ignore[attr-defined]
-        plant = world.plant  # type: ignore[attr-defined]
+        drake_world = cast("DrakeWorld", world)
+        plant = drake_world.plant
+        joint_indices = drake_world.get_model_joint_indices()
 
         # Create IK problem
         ik = InverseKinematics(plant)
 
-        target_frame = plant.GetBodyByName(
-            target_frame_name, robot_data.model_instance
-        ).body_frame()
+        target_frame = drake_world.get_body_frame(target_frame_name)
 
         # Add position constraint
         ik.AddPositionConstraint(
@@ -302,12 +302,12 @@ class DrakeOptimizationIK:
         q = ik.q()
 
         for local_index, value in (locked_joint_positions or {}).items():
-            joint_idx = robot_data.joint_indices[local_index]
+            joint_idx = joint_indices[local_index]
             prog.AddBoundingBoxConstraint(value, value, q[joint_idx])
 
         # Set initial guess (full positions vector)
         full_seed = np.zeros(plant.num_positions())
-        for i, joint_idx in enumerate(robot_data.joint_indices):
+        for i, joint_idx in enumerate(joint_indices):
             full_seed[joint_idx] = seed[i]
         prog.SetInitialGuess(q, full_seed)
 
@@ -322,7 +322,7 @@ class DrakeOptimizationIK:
 
         # Extract solution for this robot's joints
         full_solution = result.GetSolution(q)
-        joint_solution = np.array([full_solution[idx] for idx in robot_data.joint_indices])
+        joint_solution = np.array([full_solution[idx] for idx in joint_indices])
 
         # Clip to limits
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)

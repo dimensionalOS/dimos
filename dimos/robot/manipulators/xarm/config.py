@@ -271,6 +271,7 @@ def xarm6_hardware(
 def make_xarm_model_config(
     dof: int,
     *,
+    prefix: str = "",
     add_gripper: bool = True,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
@@ -282,6 +283,7 @@ def make_xarm_model_config(
 ) -> RobotModelConfig:
     xacro_args = {
         "dof": str(dof),
+        "prefix": prefix,
         "limited": "true",
         "attach_xyz": "0 0 0",
         "attach_rpy": "0 0 0",
@@ -289,27 +291,30 @@ def make_xarm_model_config(
     if add_gripper:
         xacro_args["add_gripper"] = "true"
 
-    model_joint_names = joint_names(dof)
-    tip_link = "link_tcp" if add_gripper else f"link{dof}"
+    model_joint_names = joint_names(dof, prefix=f"{prefix}joint")
+    tip_link = f"{prefix}link_tcp" if add_gripper else f"{prefix}link{dof}"
+    collision_exclusions = [
+        (f"{prefix}{left}", f"{prefix}{right}") for left, right in XARM_GRIPPER_COLLISION_EXCLUSIONS
+    ]
     return RobotModelConfig(
         model_path=XARM_MODEL_PATH,
         base_pose=base_pose(x_offset, y_offset, z_offset, pitch),
         joint_names=model_joint_names,
-        base_link="link_base",
+        base_link=f"{prefix}link_base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
                 joint_names=tuple(model_joint_names),
-                base_link="link_base",
+                base_link=f"{prefix}link_base",
                 tip_link=tip_link,
             )
         ],
         package_paths=XARM_PACKAGE_PATHS,
         xacro_args=xacro_args,
         auto_convert_meshes=True,
-        collision_exclusion_pairs=(XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else []),
+        collision_exclusion_pairs=collision_exclusions if add_gripper else [],
         gripper_hardware_id="arm" if add_gripper else None,
-        tf_extra_links=tf_extra_links or [],
+        tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,
     )

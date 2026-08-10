@@ -96,12 +96,10 @@ class RobotStateMonitor:
     def start(self) -> None:
         """Start the state monitor."""
         self._running = True
-        logger.info("World state monitor started")
 
     def stop(self) -> None:
         """Stop the state monitor."""
         self._running = False
-        logger.info("World state monitor stopped")
 
     def is_running(self) -> bool:
         """Check if monitor is running."""

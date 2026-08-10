@@ -374,7 +374,7 @@ def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
 def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._model_contexts = {"tool": context}
+    ik._model_context = context
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
@@ -393,7 +393,7 @@ def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
 def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._model_contexts = {"tool": context}
+    ik._model_context = context
     calls = 0
 
     def fake_solve_single(**_: object) -> IKResult:
@@ -432,7 +432,9 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     assert result.status == IKStatus.SUCCESS
 
 
-def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_path: Path) -> None:
+def test_robot_context_is_built_once_and_reused_for_every_tip_frame(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
     modules = _fake_modules()
     modules.pinocchio.buildModelFromUrdf = lambda path: _FakeModel()  # type: ignore[attr-defined]
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
@@ -442,12 +444,15 @@ def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_p
     world = _FakeWorld()
     world.config.model_path = model_path
     ik = PinkIK(PinkIKConfig(max_iterations=1))
+    build_context = mocker.spy(ik, "_build_robot_context")
 
     first = ik._get_model_context(cast("Any", world), "tool")
     second = ik._get_model_context(cast("Any", world), "base")
 
     assert first is not second
-    assert set(ik._model_contexts) == {"tool", "base"}
+    assert first.model is second.model
+    assert first.data is second.data
+    build_context.assert_called_once_with(world.config, "tool")
 
 
 def test_build_robot_context_rejects_base_link_not_model_root(

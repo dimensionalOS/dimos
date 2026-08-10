@@ -170,9 +170,9 @@ class CartesianIKTask(BaseControlTask):
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
         self._num_joints = len(config.joint_names)
-        model_joint_count = len(config.control_ik.robot_model.joint_names)
-        if len(config.joint_names) != model_joint_count:
-            raise ValueError(f"CartesianIKTask {name}: task and model joint counts must match")
+        model_joint_names = list(config.control_ik.robot_model.joint_names)
+        if list(config.joint_names) != model_joint_names:
+            raise ValueError(f"CartesianIKTask {name}: task joints must match model joints exactly")
 
         # Create IK solver from model
         self._ik: PinkControlIK = create_pink_control_ik(config.control_ik)

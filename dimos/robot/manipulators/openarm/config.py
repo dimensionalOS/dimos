@@ -34,6 +34,7 @@ OPENARM_PKG = LfsPath("openarm_description")
 OPENARM_LEFT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
 OPENARM_RIGHT_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
 OPENARM_V10_FK_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_single.urdf"
+OPENARM_V10_BIMANUAL_MODEL = OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
 OPENARM_PACKAGE_PATHS: dict[str, Path] = {"openarm_description": OPENARM_PKG}
 
 # Linux assigns can0/can1 in USB enumeration order, which is not guaranteed stable.
@@ -145,7 +146,7 @@ def openarm_dual_model_config() -> RobotModelConfig:
     right_joints = openarm_joints("right")
     all_joints = [*left_joints, *right_joints]
     return RobotModelConfig(
-        model_path=OPENARM_V10_FK_MODEL,
+        model_path=OPENARM_V10_BIMANUAL_MODEL,
         base_pose=base_pose(),
         joint_names=all_joints,
         base_link="openarm_body_link0",

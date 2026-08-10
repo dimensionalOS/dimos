@@ -134,6 +134,26 @@ def test_factory_rejects_invalid_default_pink_configuration() -> None:
         control_task_registry.create("cartesian_ik", config, hardware={})
 
 
+def test_cartesian_task_rejects_task_joints_that_do_not_match_model_order(
+    tmp_path: Path, mocker
+) -> None:
+    backend = _FakeControlIK()
+    mocker.patch(
+        "dimos.control.tasks.cartesian_ik_task.cartesian_ik_task.create_pink_control_ik",
+        return_value=backend,
+    )
+    model = _robot(tmp_path / "unused.urdf")
+
+    with pytest.raises(ValueError, match="task joints must match model joints exactly"):
+        CartesianIKTask(
+            "cartesian",
+            CartesianIKTaskConfig(
+                joint_names=["different_joint"],
+                control_ik=PinkControlIKConfig(robot_model=model),
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     "module_name",
     [

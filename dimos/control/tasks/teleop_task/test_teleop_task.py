@@ -296,5 +296,17 @@ def test_factory_requires_pink_configuration_and_matching_model_dof(tmp_path: Pa
             "hand": "right",
         },
     )
-    with pytest.raises(ValueError, match="joint counts must match"):
+    with pytest.raises(ValueError, match="task joints must match model joints exactly"):
         create_task(mismatched, {})
+
+    wrong_names = TaskConfig(
+        name="teleop",
+        type="teleop_ik",
+        joint_names=["other1", "other2"],
+        params={
+            "control_ik": {"robot_model": _robot(tmp_path / "unused.urdf")},
+            "hand": "right",
+        },
+    )
+    with pytest.raises(ValueError, match="task joints must match model joints exactly"):
+        create_task(wrong_names, {})

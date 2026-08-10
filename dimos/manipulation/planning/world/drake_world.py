@@ -180,8 +180,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             self._builder, time_step=time_step
         )
         self._parser = Parser(self._plant)
-        # Enable auto-renaming to avoid conflicts when adding multiple robots
-        # with the same URDF (e.g., 4 XArm6 arms all have model name "UF_ROBOT")
+        # The visualization preview loads a second copy of the configured model.
+        # Auto-renaming prevents its internal model name from colliding with the live copy.
         self._parser.SetAutoRenaming(True)
 
         # Visualization — wrapped to enforce Drake's thread affinity
@@ -251,7 +251,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 base_frame=base_frame,
                 preview_model_instance=preview_model_instance,
             )
-            logger.info("Loaded manipulation model")
 
     def _load_model(self, config: RobotModelConfig) -> Any:
         """Load robot model (URDF/xacro/MJCF) and return model instance."""
@@ -279,7 +278,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             else:
                 self._parser.package_map().Add("robot_description", prepared_path_obj.parent)
 
-        logger.info(f"Using prepared model: {prepared_path_obj}")
+        logger.info("Using prepared model", model_path=str(prepared_path_obj))
 
         model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
@@ -361,6 +360,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def get_model_config(self) -> RobotModelConfig:
         """Get the logical robot model configuration."""
         return self._require_model().config
+
+    def get_body_frame(self, link_name: str) -> Any:
+        """Return a configured model link frame for Drake-native planning backends."""
+        robot_data = self._require_model()
+        return self._plant.GetBodyByName(link_name, robot_data.model_instance).body_frame()
+
+    def get_model_joint_indices(self) -> list[int]:
+        """Return Drake position indices in canonical model-joint order."""
+        return list(self._require_model().joint_indices)
 
     def _require_model(self) -> _RobotData:
         if self._model is None:
@@ -453,7 +461,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             # Check for duplicate in our tracking
             if obstacle_id in self._obstacles:
-                logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
+                logger.debug("Obstacle already exists", obstacle_id=obstacle_id)
                 return None
 
             snapshot = deepcopy(obstacle)
@@ -465,12 +473,16 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     geometry_id=geometry_id,
                     source_id=self._obstacle_source_id,
                 )
-                logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
+                logger.debug(
+                    "Added obstacle",
+                    obstacle_id=obstacle_id,
+                    obstacle_type=obstacle.obstacle_type.value,
+                )
             except RuntimeError as e:
                 # Handle case where geometry name already exists in SceneGraph
                 # (can happen with concurrent access)
                 if "already been used" in str(e):
-                    logger.debug(f"Obstacle '{obstacle_id}' already in SceneGraph, skipping")
+                    logger.debug("Obstacle already in SceneGraph", obstacle_id=obstacle_id)
                     return None
                 else:
                     raise
@@ -634,7 +646,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             obstacle_data = self._obstacles[obstacle_id]
             self._remove_obstacle_geometry(obstacle_data)
             del self._obstacles[obstacle_id]
-            logger.debug(f"Removed obstacle '{obstacle_id}'")
+            logger.debug("Removed obstacle", obstacle_id=obstacle_id)
             return True
 
     def update_obstacle(self, obstacle: Obstacle) -> bool:
@@ -731,7 +743,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     num_positions = joint.num_positions()
                     joint_indices.extend(range(start_idx, start_idx + num_positions))
                 robot_data.joint_indices = joint_indices
-                logger.debug("Model joint indices: %s", joint_indices)
+                logger.debug("Computed model joint indices", joint_indices=joint_indices)
 
                 # Compute preview joint indices
                 if robot_data.preview_model_instance is not None:
@@ -744,7 +756,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                         num_positions = joint.num_positions()
                         preview_indices.extend(range(start_idx, start_idx + num_positions))
                     robot_data.preview_joint_indices = preview_indices
-                    logger.debug("Preview joint indices: %s", preview_indices)
+                    logger.debug("Computed preview joint indices", joint_indices=preview_indices)
 
             # Setup collision filters
             self._setup_collision_filters()
@@ -787,7 +799,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 self._set_positions_internal(self._plant_context, home)
 
             self._finalized = True
-            logger.info("World finalized with one model")
 
             # Initial visualization publish (routed to Meshcat thread)
             if self._meshcat_visualizer is not None:
@@ -827,7 +838,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     body2 = self._plant.GetBodyByName(name2, robot_data.model_instance)
                     self._exclude_body_pair(body1, body2)
                 except RuntimeError:
-                    logger.warning(f"Collision exclusion: link not found: {name1} or {name2}")
+                    logger.warning(
+                        "Collision exclusion link not found", first_link=name1, second_link=name2
+                    )
 
         logger.info("Collision filters applied")
 

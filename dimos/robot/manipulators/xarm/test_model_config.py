@@ -15,7 +15,10 @@
 """xArm prepared-model configuration tests."""
 
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.manipulators.xarm.config import make_dual_xarm6_model_config
+from dimos.robot.manipulators.xarm.config import (
+    make_dual_xarm6_model_config,
+    make_xarm6_model_config,
+)
 
 
 def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
@@ -32,3 +35,13 @@ def test_dual_xarm6_is_one_prepared_model_with_canonical_groups() -> None:
     ]
     assert config.planning_groups[0].joint_names == tuple(config.joint_names[:6])
     assert config.planning_groups[1].joint_names == tuple(config.joint_names[6:])
+
+
+def test_prefixed_xarm_model_uses_coordinator_facing_names_in_asset() -> None:
+    config = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
+
+    model = validate_robot_model_config(config)
+
+    assert model.actuated_joint_names == config.joint_names
+    assert config.joint_names == [f"xarm_arm/joint{i}" for i in range(1, 7)]
+    assert config.planning_groups[0].tip_link == "xarm_arm/link6"

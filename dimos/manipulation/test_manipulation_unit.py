@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, MagicMock, call
 
 import pytest
 from pytest_mock import MockerFixture
@@ -103,6 +103,20 @@ def _one_joint_config() -> RobotModelConfig:
                 name="manipulator", joint_names=("j0",), base_link="base_link", tip_link="ee"
             )
         ],
+    )
+
+
+def _bimanual_config() -> RobotModelConfig:
+    return RobotModelConfig(
+        model_path=Path("/path/to/bimanual.urdf"),
+        joint_names=["left/j1", "right/j1"],
+        base_link="base",
+        planning_groups=[
+            PlanningGroupDefinition("left_arm", ("left/j1",), "base", "left/tool"),
+            PlanningGroupDefinition("right_arm", ("right/j1",), "base", "right/tool"),
+            PlanningGroupDefinition("both_arms", ("left/j1", "right/j1"), "base"),
+        ],
+        home_joints=[0.0, 0.0],
     )
 
 
@@ -781,6 +795,66 @@ class TestPlanningGroupApis:
         assert [point.time_from_start for point in payload.points] == [0.0, 2.5]
         assert [point.positions for point in payload.points] == [[0.0, 1.0], [0.5, 1.5]]
         assert [point.velocities for point in payload.points] == [[0.0, 0.0], [0.2, 0.4]]
+
+    def test_go_init_uses_selected_group_for_safe_waypoint_fk(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module._init_joints = JointState(name=model.joint_names, position=[0.1, -0.1])
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
+            position=Vector3(0.4, 0.2, 0.3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        )
+        module._world_monitor.get_ee_pose.side_effect = AssertionError(
+            "bimanual init must not use model-wide end-effector lookup"
+        )
+        mocker.patch.object(module, "_lift_if_low", return_value=MagicMock(is_success=lambda: True))
+        mocker.patch.object(
+            module, "_preview_execute_wait", return_value=MagicMock(is_success=lambda: True)
+        )
+        plan_to_pose = mocker.patch.object(module, "plan_to_pose", return_value=True)
+        plan_to_joints = mocker.patch.object(module, "plan_to_joints", return_value=True)
+
+        result = module.go_init("left_arm")
+
+        assert result.is_success()
+        module._world_monitor.get_group_ee_pose.assert_called_once_with(
+            "left_arm", module._init_joints
+        )
+        plan_to_pose.assert_called_once()
+        plan_to_joints.assert_called_once()
+
+    def test_tf_loop_publishes_every_pose_group_for_bimanual_model(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.get_group_ee_pose.side_effect = [
+            PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
+            PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
+        ]
+        publish = mocker.patch.object(module.tf, "publish")
+
+        def stop_after_first_iteration(_period: float) -> bool:
+            module._tf_stop_event.set()
+            return True
+
+        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
+        module._tf_stop_event.clear()
+
+        module._tf_publish_loop()
+
+        assert module._world_monitor.get_group_ee_pose.call_args_list == [
+            call("left_arm"),
+            call("right_arm"),
+        ]
+        publish.assert_called_once()
 
     def test_pose_wrappers_fail_safely_without_unique_pose_group(
         self, robot_config, module_factory

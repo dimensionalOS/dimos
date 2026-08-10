@@ -42,9 +42,8 @@ JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
 BLUEPRINT = "openarm-mock-planner-coordinator"
 
 
-def _wait_for_robot_info(
+def _wait_for_model_info(
     client: RPCClient,
-    robot_name: str,
     *,
     timeout: float = 120.0,
 ) -> dict[str, Any]:
@@ -52,13 +51,13 @@ def _wait_for_robot_info(
     last_error: BaseException | None = None
     while time.time() < deadline:
         try:
-            info = client.get_robot_info(robot_name)
+            info = client.get_model_info()
             if info and info.get("planning_groups"):
                 return cast("dict[str, Any]", info)
         except Exception as exc:
             last_error = exc
         time.sleep(0.5)
-    raise TimeoutError(f"Timed out waiting for {robot_name!r} robot info") from last_error
+    raise TimeoutError("Timed out waiting for model info") from last_error
 
 
 def _wait_for_trajectory_completion(
@@ -94,55 +93,54 @@ def _wait_for_manipulation_state(
 
 def _wait_for_current_joints(
     client: RPCClient,
-    robot_names: tuple[str, ...],
     *,
     timeout: float = 10.0,
 ) -> None:
     deadline = time.time() + timeout
-    missing = robot_names
     while time.time() < deadline:
         try:
-            missing = tuple(
-                robot_name
-                for robot_name in robot_names
-                if client.get_current_joints(robot_name) is None
-            )
+            if client.get_current_joints() is not None:
+                return
         except Exception:
-            # Robot metadata becomes visible while the planning world is still
+            # Model metadata becomes visible while the planning world is still
             # finalizing. Treat that readiness race like a missing joint state.
-            missing = robot_names
-        if not missing:
-            return
+            pass
         time.sleep(0.1)
-    raise TimeoutError(f"Timed out waiting for current joints from {missing}")
+    raise TimeoutError("Timed out waiting for current model joints")
 
 
-def _prepare_for_planning(client: RPCClient, robot_names: tuple[str, ...]) -> None:
+def _prepare_for_planning(client: RPCClient) -> None:
     client.reset()
     _wait_for_manipulation_state(client, "IDLE")
-    _wait_for_current_joints(client, robot_names)
-    # Robot info and joint-state topics can become available just before the
+    _wait_for_current_joints(client)
+    # Model info and joint-state topics can become available just before the
     # manipulation module finishes finalizing world monitors. Require a stable
     # ready state after joint state is flowing to avoid command-readiness flakes.
     time.sleep(0.25)
     _wait_for_manipulation_state(client, "IDLE")
 
 
-def _planning_group_id(info: dict[str, Any]) -> str:
-    groups = info["planning_groups"]
-    assert len(groups) == 1
-    group = groups[0]
+def _planning_group(info: dict[str, Any], group_id: str) -> PlanningGroup:
+    group = next(
+        group
+        for group in info["planning_groups"]
+        if (group.id if isinstance(group, PlanningGroup) else group["id"]) == group_id
+    )
     if isinstance(group, PlanningGroup):
-        return group.id
-    group_id = group["id"]
-    assert isinstance(group_id, str)
-    return group_id
+        return group
+    return PlanningGroup(**group)
 
 
-def _offset_target(client: RPCClient, robot_name: str, delta: float) -> JointState:
-    current = client.get_current_joints(robot_name)
+def _offset_target(
+    client: RPCClient, info: dict[str, Any], group: PlanningGroup, delta: float
+) -> JointState:
+    current = client.get_current_joints()
     assert current is not None
-    return JointState(position=[position + delta for position in current])
+    positions = dict(zip(info["joint_names"], current, strict=True))
+    return JointState(
+        name=list(group.joint_names),
+        position=[positions[name] + delta for name in group.joint_names],
+    )
 
 
 def _start_openarm_mock_planner(
@@ -163,15 +161,17 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        left_info = _wait_for_robot_info(client, "left_arm")
-        left_id = _planning_group_id(left_info)
+        info = _wait_for_model_info(client)
+        left_group = _planning_group(info, "left_arm")
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
-        _prepare_for_planning(client, ("left_arm",))
+        _prepare_for_planning(client)
 
-        planned = client.plan_to_joint_targets({left_id: _offset_target(client, "left_arm", 0.02)})
+        planned = client.plan_to_joint_targets(
+            {left_group.id: _offset_target(client, info, left_group, 0.02)}
+        )
         assert planned, client.get_error()
         assert client.has_planned_path()
         assert client.execute_plan()
@@ -192,20 +192,19 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        left_info = _wait_for_robot_info(client, "left_arm")
-        right_info = _wait_for_robot_info(client, "right_arm")
-        left_id = _planning_group_id(left_info)
-        right_id = _planning_group_id(right_info)
+        info = _wait_for_model_info(client)
+        left_group = _planning_group(info, "left_arm")
+        right_group = _planning_group(info, "right_arm")
 
         tasks = coordinator_client.list_tasks()
         assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
-        _prepare_for_planning(client, ("left_arm", "right_arm"))
+        _prepare_for_planning(client)
 
         planned = client.plan_to_joint_targets(
             {
-                left_id: _offset_target(client, "left_arm", 0.02),
-                right_id: _offset_target(client, "right_arm", -0.02),
+                left_group.id: _offset_target(client, info, left_group, 0.02),
+                right_group.id: _offset_target(client, info, right_group, -0.02),
             }
         )
         assert planned, client.get_error()

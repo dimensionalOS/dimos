@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-# Licensed under the Apache License, Version 2.0
-
 """Shared helpers for planning-group-scoped kinematics backends."""
 
 from collections.abc import Mapping, Sequence

@@ -169,9 +169,9 @@ class RRTConnectPlanner:
     ) -> PlanningResult:
         """Plan over an explicit planning-group selection.
 
-        The search space is the selected global-joint order. Collision checks project
-        candidates into full per-robot states, holding unselected joints at the world
-        current state.
+        The search space uses the selected canonical-joint order. Collision checks
+        project candidates into the full model state while holding unselected joints
+        at their current values.
         """
         start_time = time.time()
         if not world.is_finalized:

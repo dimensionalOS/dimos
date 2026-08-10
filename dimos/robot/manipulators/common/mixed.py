@@ -66,9 +66,8 @@ _piper_teleop_hw = make_piper_hardware(
     adapter_type="piper",
     address=global_config.can_port or "can0",
     gripper=True,
-    canonical_joint_names=[f"piper_arm/joint{i}" for i in range(1, 7)],
 )
-_xarm6_teleop_model = make_xarm6_model_config(add_gripper=False)
+_xarm6_teleop_model = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
 _piper_teleop_model = make_piper_model_config()
 
 coordinator_teleop_dual = ControlCoordinator.blueprint(

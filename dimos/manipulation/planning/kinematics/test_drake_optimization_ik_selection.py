@@ -189,12 +189,14 @@ class FakeSolveResult:
 class FakeDrakeWorld:
     def __init__(self) -> None:
         self.plant = FakePlant()
-        self._model = _FakeRobotData()
         self.link_pose_calls: list[str] = []
         self.set_joint_state_calls: list[JointState] = []
 
-    def _require_model(self) -> _FakeRobotData:
-        return self._model
+    def get_body_frame(self, link_name: str) -> str:
+        return self.plant.GetBodyByName(link_name, "model-instance").body_frame()
+
+    def get_model_joint_indices(self) -> list[int]:
+        return [1, 3, 4]
 
     @contextmanager
     def scratch_context(self):
@@ -206,11 +208,6 @@ class FakeDrakeWorld:
     def get_link_pose(self, ctx: str, target_frame_name: str) -> np.ndarray:
         self.link_pose_calls.append(target_frame_name)
         return np.eye(4)
-
-
-class _FakeRobotData:
-    model_instance = "model-instance"
-    joint_indices = [1, 3, 4]
 
 
 def test_solve_single_uses_target_frame_for_constraints_error_and_joint_locks(monkeypatch) -> None:
