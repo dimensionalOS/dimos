@@ -166,13 +166,20 @@ class CuvslamConfig(NativeModuleConfig):
     camera_frames: list[str] = Field(default_factory=list)
     # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
-    # A step implying more than this is cuVSLAM restarting its world frame, not motion.
-    implausible_speed_meters_per_second: float = 10.0
+    # Frames dropped before the first Track(), as cuVSLAM's realsense examples do with 60.
+    # Off by default: measured on sf_office1_3 the effect is a lottery, not a correction --
+    # 15 and 60 frames scored well, 30 scored far worse than tracking from frame 0, and the
+    # auto-exposure ramp everyone assumes it fixes is over by frame 10.
+    warmup_frames: int = 0
 
     map_frame: str = "map"
     odom_frame: str = "odom"
-    # Also the cuVSLAM rig frame; poses are published relative to it.
+    # Poses are published relative to this.
     base_frame: str = "base_link"
+    # Frame the cuVSLAM rig is built in. Empty means base_frame. Pointing it at a camera's
+    # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
+    # on base_frame either way, the two differing by a fixed transform.
+    rig_frame: str = ""
     # Only read when Slam is off, where map->odom can only be identity.
     publish_map_to_odom: bool = True
 
