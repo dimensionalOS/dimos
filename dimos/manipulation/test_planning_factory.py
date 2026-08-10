@@ -39,13 +39,10 @@ from dimos.manipulation.planning.kinematics.config import (
     PinkKinematicsConfig,
 )
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
-from dimos.manipulation.planning.planners.config import (
-    RoboPlanPlannerConfig,
-    RRTConnectPlannerConfig,
-)
+from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.protocols import PlannerSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -126,28 +123,68 @@ def test_validate_backend_combination_rejects_invalid_combinations() -> None:
         validate_backend_combination(world_backend="roboplan", kinematics_name="drake_optimization")
 
 
-def test_create_planner_uses_roboplan_world_as_native_planner(mocker: MockerFixture) -> None:
-    world = mocker.MagicMock(spec=PlannerSpec)
-    roboplan_world_module = ModuleType("dimos.manipulation.planning.world.roboplan_world")
-    roboplan_world_module.RoboPlanWorld = type(world)  # type: ignore[attr-defined]
-
-    mocker.patch.dict(
+def test_create_planner_binds_distinct_roboplan_planner_to_world(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = mocker.MagicMock()
+    planner = mocker.MagicMock()
+    planner_type = mocker.MagicMock(return_value=planner)
+    roboplan_planner_module = ModuleType("dimos.manipulation.planning.planners.roboplan_planner")
+    roboplan_planner_module.RoboPlanPlanner = planner_type  # type: ignore[attr-defined]
+    monkeypatch.setitem(
         sys.modules,
-        {
-            "dimos.manipulation.planning.world.roboplan_world": roboplan_world_module,
-        },
+        "dimos.manipulation.planning.planners.roboplan_planner",
+        roboplan_planner_module,
     )
-    assert (
+    config = RoboPlanPlannerConfig()
+
+    result = create_planner(
+        config=config,
+        world=world,
+        world_backend="roboplan",
+    )
+
+    assert result is planner
+    assert result is not world
+    planner_type.assert_called_once_with(world, config)
+
+
+def test_create_planner_rejects_non_roboplan_world(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RejectingRoboPlanPlanner:
+        def __init__(self, world: Any, config: RoboPlanPlannerConfig) -> None:
+            raise TypeError("RoboPlanPlanner requires a RoboPlanWorld")
+
+    roboplan_planner_module = ModuleType("dimos.manipulation.planning.planners.roboplan_planner")
+    roboplan_planner_module.RoboPlanPlanner = RejectingRoboPlanPlanner  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.manipulation.planning.planners.roboplan_planner",
+        roboplan_planner_module,
+    )
+
+    with pytest.raises(TypeError, match="requires a RoboPlanWorld"):
         create_planner(
             config=RoboPlanPlannerConfig(),
-            world=world,
+            world=mocker.MagicMock(),
             world_backend="roboplan",
         )
-        is world
+
+
+def test_create_planner_rejects_roboplan_without_importing_optional_backend(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(
+        sys.modules,
+        "dimos.manipulation.planning.world.roboplan_world",
+        raising=False,
     )
+    monkeypatch.setitem(sys.modules, "roboplan", None)
 
-
-def test_create_planner_rejects_roboplan_without_roboplan_world(mocker: MockerFixture) -> None:
     with pytest.raises(
         ValueError, match='planner.backend="roboplan" requires world_backend="roboplan"'
     ):

@@ -116,10 +116,27 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+RoboPlan shortens native joint-space RRT paths by default. Configure or disable
+the backend's best-effort shortcutting pass with nested planner options:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  --planner.path-shortcutting.enabled true \
+  --planner.path-shortcutting.max-iters 100 \
+  --planner.path-shortcutting.max-step-size 0.05
+```
+
+Existing RoboPlan deployments may therefore receive paths with fewer waypoints.
+Shortcutting configuration is copied when the RoboPlan planner is constructed.
+
+The remaining options mirror RoboPlan's native path shortcutter:
+`seed`, `max_convergence_iters`, and `redundant_removal_iters`. If shortcutting
+fails, planning returns the valid raw RRT path and logs a warning.
+
 RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
-from dimos.manipulation.planning.planners.config import (
+from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
@@ -150,6 +167,45 @@ the planning start, and begins at the current TCP pose or identity transform.
 RoboPlan plans all target groups simultaneously. The Viser panel constructs a
 two-waypoint absolute path for interactive planning. There is no skill, MCP
 tool, or CLI motion command yet.
+
+### Cartesian control IK
+
+Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
+direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
+package paths, Xacro arguments, the named end-effector frame, and
+coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
+startup; teleop configuration does not use a separate model path or numeric
+end-effector joint ID.
+
+Each control tick starts from measured joints, applies model position and
+velocity limits, and holds the measured position when a solve cannot produce a
+safe command. This local control path is separate from manipulation planning and
+does not use `WorldSpec` or provide world-obstacle avoidance.
+
+For a custom robot, pass the typed model configuration to the helper:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import cartesian_ik_task, teleop_ik_task
+
+task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
+```
+
+Teleop pose commands are deltas from an end-effector pose captured from measured
+joints at engagement. Disengage, timeout, stop, clear, or E-STOP discards that
+baseline; commands received during E-STOP are rejected rather than replayed
+after clear.
+
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
 
 Install the manipulation dependencies:
 
@@ -271,7 +327,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
   (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   TwistStamped           EEFTwistTask             RRT planner
-  spatial EEF twist      (Pinocchio FK/IK)        JacobianIK
+  spatial EEF twist      (control IK)             JacobianIK
                                │                   DrakeWorld
                           JointState ────────────→ (visualization)
 ```
@@ -339,4 +395,6 @@ planner is locked for its whole native call.
 | [`robot/manipulators/xarm/blueprints/perception.py`](/dimos/robot/manipulators/xarm/blueprints/perception.py) | XArm perception blueprint |
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |
 | [`planning/world/drake_world.py`](/dimos/manipulation/planning/world/drake_world.py) | Drake physics backend |
+| [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |
+| [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |

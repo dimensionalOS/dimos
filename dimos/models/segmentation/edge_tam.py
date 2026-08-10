@@ -28,6 +28,7 @@ import torch
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.utils.data import get_data
@@ -46,6 +47,92 @@ class SAM2InferenceState(TypedDict):
     cached_features: dict[int, Any]
 
 
+def _build_model() -> "SAM2VideoPredictor":
+    """Build the EdgeTAM SAM2 model from the local config + checkpoint."""
+    local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
+
+    if not local_config_path.exists():
+        raise FileNotFoundError(f"EdgeTAM config not found at {local_config_path}")
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("EdgeTAM requires a CUDA-capable GPU")
+
+    cfg = OmegaConf.load(local_config_path)
+
+    overrides = {
+        "model.sam_mask_decoder_extra_args.dynamic_multimask_via_stability": True,
+        "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_delta": 0.05,
+        "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_thresh": 0.98,
+        "model.binarize_mask_from_pts_for_mem_enc": True,
+        "model.fill_hole_area": 8,
+    }
+
+    for key, value in overrides.items():
+        OmegaConf.update(cfg, key, value)
+
+    if cfg.model._target_ != "sam2.sam2_video_predictor.SAM2VideoPredictor":
+        logger.warning(f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor")
+        cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
+
+    predictor: SAM2VideoPredictor = instantiate(cfg.model, _recursive_=True)
+
+    # Suppress the per-frame "propagate in video" tqdm bar from sam2
+    import sam2.sam2_video_predictor as _svp
+
+    _svp.tqdm = lambda iterable, *a, **kw: iterable
+
+    ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
+
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
+    missing_keys, unexpected_keys = predictor.load_state_dict(sd)
+    if missing_keys:
+        raise RuntimeError("Missing keys in checkpoint")
+    if unexpected_keys:
+        raise RuntimeError("Unexpected keys in checkpoint")
+
+    predictor = predictor.to("cuda")
+    predictor.eval()
+    return predictor
+
+
+class EdgeTAMImageSegmenter:
+    """Box-prompted single-image segmentation using the EdgeTAM checkpoint."""
+
+    def __init__(self) -> None:
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+        self._predictor = SAM2ImagePredictor(_build_model())
+
+    def segment(self, detections: ImageDetections2D) -> ImageDetections2D:
+        """Refine box detections into mask detections (Detection2DSeg)."""
+        import cv2
+
+        if not len(detections):
+            return detections
+
+        image = detections.image
+        rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
+
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            self._predictor.set_image(rgb)
+            boxes = np.array([det.bbox for det in detections], dtype=np.float32)
+            masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)
+
+        masks = masks.reshape(-1, *masks.shape[-2:])  # (N, H, W) regardless of batch dim
+        segmented: list[Detection2DBBox] = [
+            Detection2DSeg.from_sam2_result(
+                mask,
+                det.track_id,
+                image,
+                class_id=det.class_id,
+                name=det.name,
+                confidence=det.confidence,
+            )
+            for det, mask in zip(detections, masks, strict=False)
+        ]
+        return ImageDetections2D(image, segmented)
+
+
 class EdgeTAMProcessor(Detector):
     _predictor: "SAM2VideoPredictor"
     _inference_state: SAM2InferenceState | None
@@ -56,50 +143,7 @@ class EdgeTAMProcessor(Detector):
     def __init__(
         self,
     ) -> None:
-        local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
-
-        if not local_config_path.exists():
-            raise FileNotFoundError(f"EdgeTAM config not found at {local_config_path}")
-
-        if not torch.cuda.is_available():
-            raise RuntimeError("EdgeTAM requires a CUDA-capable GPU")
-
-        cfg = OmegaConf.load(local_config_path)
-
-        overrides = {
-            "model.sam_mask_decoder_extra_args.dynamic_multimask_via_stability": True,
-            "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_delta": 0.05,
-            "model.sam_mask_decoder_extra_args.dynamic_multimask_stability_thresh": 0.98,
-            "model.binarize_mask_from_pts_for_mem_enc": True,
-            "model.fill_hole_area": 8,
-        }
-
-        for key, value in overrides.items():
-            OmegaConf.update(cfg, key, value)
-
-        if cfg.model._target_ != "sam2.sam2_video_predictor.SAM2VideoPredictor":
-            logger.warning(f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor")
-            cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
-
-        self._predictor = instantiate(cfg.model, _recursive_=True)
-
-        # Suppress the per-frame "propagate in video" tqdm bar from sam2
-        import sam2.sam2_video_predictor as _svp
-
-        _svp.tqdm = lambda iterable, *a, **kw: iterable
-
-        ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
-
-        sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)["model"]
-        missing_keys, unexpected_keys = self._predictor.load_state_dict(sd)
-        if missing_keys:
-            raise RuntimeError("Missing keys in checkpoint")
-        if unexpected_keys:
-            raise RuntimeError("Unexpected keys in checkpoint")
-
-        self._predictor = self._predictor.to("cuda")
-        self._predictor.eval()
-
+        self._predictor = _build_model()
         self._inference_state = None
         self._frame_count = 0
         self._is_tracking = False

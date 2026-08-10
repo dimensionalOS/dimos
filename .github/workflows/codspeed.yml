@@ -115,11 +115,6 @@ jobs:
           # exist here. No cpuset hooks either, so run unisolated — the job
           # already has the machine to itself.
           CODSPEED_ISOLATION: "false"
-          # The runner hosts set kernel.perf_event_paranoid=4, so samply can't
-          # start in the container and the runner treats that as fatal. The
-          # profiler only adds flamegraphs; walltime measurement is unaffected.
-          # To get flamegraphs back: paranoid<=1 on the hosts (or CAP_PERFMON
-          # on the container) and drop this.
           CODSPEED_PROFILER_ENABLED: "false"
         with:
           mode: walltime

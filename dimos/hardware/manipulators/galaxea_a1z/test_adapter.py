@@ -79,8 +79,8 @@ class _FakeArmRobot:
         self._running = False
         self._estopped = False
         self._bus = _FakeBus()
-        self._default_kp = np.array([30.0, 30.0, 30.0, 20.0, 5.0, 5.0])
-        self._default_kd = np.array([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])
+        self._default_kp = np.asarray(factory_kwargs["default_kp"], dtype=float)
+        self._default_kd = np.asarray(factory_kwargs["default_kd"], dtype=float)
         self.actions: list[Any] = []
         self.gravity_factor_history: list[float] = []
         self.gravity_comp_factor = float(factory_kwargs["gravity_comp_factor"])
@@ -250,6 +250,8 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArm
     config = A1ZConfig(
         gravity_comp_factor=kwargs.pop("gravity_comp_factor", 1.0),
         urdf_path=kwargs.pop("urdf_path", None),
+        default_kp=kwargs.pop("default_kp", (80.0, 80.0, 80.0, 50.0, 20.0, 20.0)),
+        default_kd=kwargs.pop("default_kd", (3.0, 3.0, 3.0, 0.7, 0.4, 0.4)),
         gripper=gripper,
         teaching=teaching,
     )
@@ -267,6 +269,18 @@ def test_connect_opens_bus_without_powering_motors(
     assert adapter.is_connected()
     assert "start" not in robot.actions
     assert not adapter.read_enabled()
+
+
+def test_connect_forwards_configured_arm_gains_to_sdk(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    kp = (70.0, 70.0, 70.0, 40.0, 15.0, 15.0)
+    kd = (2.5, 2.5, 2.5, 0.6, 0.3, 0.3)
+
+    _, robot = _connected_adapter(a1z_adapter_module, default_kp=kp, default_kd=kd)
+
+    assert robot.factory_kwargs["default_kp"] == pytest.approx(kp)
+    assert robot.factory_kwargs["default_kd"] == pytest.approx(kd)
 
 
 def test_safe_start_stages_measured_hold_before_gravity_feedforward(
@@ -505,6 +519,15 @@ def test_gripper_round_trips_meters_to_normalized(
     # Out-of-range commands clamp to the physical stroke
     assert adapter.write_gripper_position(1.0)
     assert robot.gripper_fraction == pytest.approx(1.0)
+
+
+def test_connect_applies_configured_gripper_force(
+    a1z_adapter_module: ModuleType,
+) -> None:
+    adapter, robot = _connected_adapter(a1z_adapter_module, gripper=True)
+
+    assert adapter.is_connected()
+    assert robot.factory_kwargs["gripper_max_torque"] == pytest.approx(0.5)
 
 
 def test_configured_gripper_free_drive_tracks_adapter_lifecycle(

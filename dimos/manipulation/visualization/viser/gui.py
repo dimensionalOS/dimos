@@ -18,7 +18,7 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TypeAlias, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo, RobotName
 from dimos.manipulation.visualization.operator import (

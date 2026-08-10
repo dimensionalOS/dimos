@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pure-Python tests for the optional RoboPlan world adapter."""
+"""Pure-Python tests for the optional RoboPlan world and planner adapters."""
 
 from __future__ import annotations
 
@@ -35,7 +35,11 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPathShortcuttingConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -351,8 +355,31 @@ class FakeRRT:
         )
 
 
+class FakePathShortcuttingOptions:
+    def __init__(self) -> None:
+        self.group_name = ""
+        self.max_step_size = 0.05
+        self.max_iters = 100
+        self.seed = 0
+        self.max_convergence_iters = 20
+        self.redundant_removal_iters = 20
+
+
+class FakePathShortcutter:
+    instances: ClassVar[list[FakePathShortcutter]] = []
+
+    def __init__(self, scene: FakeScene, options: FakePathShortcuttingOptions) -> None:
+        self.scene = scene
+        self.options = options
+        type(self).instances.append(self)
+
+    def shortcut(self, path: FakeJointPath) -> FakeJointPath:
+        return path
+
+
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeCartesianPathPlanner.instances.clear()
+    FakePathShortcutter.instances.clear()
     roboplan_pkg = ModuleType("roboplan")
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
@@ -361,6 +388,8 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core.JointPath = FakeJointPath  # type: ignore[attr-defined]
     core.JointTrajectory = FakeJointTrajectory  # type: ignore[attr-defined]
     core.CartesianPath = FakeCartesianPath  # type: ignore[attr-defined]
+    core.PathShortcuttingOptions = FakePathShortcuttingOptions  # type: ignore[attr-defined]
+    core.PathShortcutter = FakePathShortcutter  # type: ignore[attr-defined]
     core.Box = FakeBox  # type: ignore[attr-defined]
     core.Sphere = FakeSphere  # type: ignore[attr-defined]
     core.Cylinder = FakeCylinder  # type: ignore[attr-defined]
@@ -453,7 +482,11 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
 
 
-def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[Any, str]:
+def _make_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    planner_config: RoboPlanPlannerConfig | None = None,
+) -> tuple[Any, str]:
     module = _import_roboplan_world(fake_roboplan)
 
     world = module.RoboPlanWorld()
@@ -465,6 +498,11 @@ def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[An
             name=list(robot_config.joint_names),
             position=[0.0] * len(robot_config.joint_names),
         ),
+    )
+    planner_module = _import_roboplan_planner(fake_roboplan)
+    _PLANNERS_BY_WORLD[world] = planner_module.RoboPlanPlanner(
+        world,
+        planner_config or RoboPlanPlannerConfig(),
     )
     return world, robot_id
 
@@ -529,12 +567,40 @@ def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
     return importlib.import_module(module_name)
 
 
-def test_roboplan_bindings_are_imported_at_module_load(fake_roboplan: None) -> None:
-    module = _import_roboplan_world(fake_roboplan)
+def _import_roboplan_planner(fake_roboplan: None) -> ModuleType:
+    module_name = "dimos.manipulation.planning.planners.roboplan_planner"
+    if module_name in sys.modules:
+        return importlib.reload(sys.modules[module_name])
+    return importlib.import_module(module_name)
 
-    assert module.roboplan_core.Scene is FakeScene
-    assert module.roboplan_rrt.RRT is FakeRRT
-    assert module.roboplan_cartesian.CartesianPathPlanner is FakeCartesianPathPlanner
+
+_PLANNERS_BY_WORLD: dict[Any, Any] = {}
+
+
+def _planner_for(world: Any) -> Any:
+    if world not in _PLANNERS_BY_WORLD:
+        planner_module = _import_roboplan_planner(None)
+        _PLANNERS_BY_WORLD[world] = planner_module.RoboPlanPlanner(
+            world,
+            RoboPlanPlannerConfig(),
+        )
+    return _PLANNERS_BY_WORLD[world]
+
+
+def test_roboplan_bindings_are_imported_at_module_load(fake_roboplan: None) -> None:
+    world_module = _import_roboplan_world(fake_roboplan)
+    planner_module = _import_roboplan_planner(fake_roboplan)
+
+    assert world_module.roboplan_core.Scene is FakeScene
+    assert planner_module.roboplan_rrt.RRT is FakeRRT
+    assert planner_module.roboplan_cartesian.CartesianPathPlanner is FakeCartesianPathPlanner
+
+
+def test_roboplan_planner_rejects_non_roboplan_world(fake_roboplan: None) -> None:
+    planner_module = _import_roboplan_planner(fake_roboplan)
+
+    with pytest.raises(TypeError, match="requires a RoboPlanWorld"):
+        planner_module.RoboPlanPlanner(object(), RoboPlanPlannerConfig())
 
 
 def test_robot_registration_finalization_and_joint_limits(
@@ -1288,11 +1354,212 @@ def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotMo
 
     start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
     goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+    result = _planner_for(world).plan_joint_path(world, robot_id, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
+
+
+def test_native_planner_shortcuts_path_with_configured_options(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    shortcutting = RoboPlanPathShortcuttingConfig(
+        max_step_size=0.02,
+        max_iters=40,
+        seed=7,
+        max_convergence_iters=8,
+        redundant_removal_iters=5,
+    )
+    world, robot_id = _make_world(
+        fake_roboplan,
+        robot_config,
+        RoboPlanPlannerConfig(path_shortcutting=shortcutting),
+    )
+
+    def endpoints_only(shortcutter: FakePathShortcutter, path: FakeJointPath) -> FakeJointPath:
+        return FakeJointPath(path.joint_names, [path.positions[0], path.positions[-1]])
+
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=endpoints_only,
+    )
+
+    result = _planner_for(world).plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.4, 0.2]]
+    options = FakePathShortcutter.instances[-1].options
+    assert options.group_name == "arm"
+    assert options.max_step_size == 0.02
+    assert options.max_iters == 40
+    assert options.seed == 7
+    assert options.max_convergence_iters == 8
+    assert options.redundant_removal_iters == 5
+
+
+def test_native_planner_can_disable_path_shortcutting(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(
+        fake_roboplan,
+        robot_config,
+        RoboPlanPlannerConfig(path_shortcutting=RoboPlanPathShortcuttingConfig(enabled=False)),
+    )
+
+    shortcut = mocker.patch.object(FakePathShortcutter, "shortcut", autospec=True)
+
+    result = _planner_for(world).plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    shortcut.assert_not_called()
+
+
+def test_native_planner_uses_raw_path_when_shortcutting_fails(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=RuntimeError("shortcut failed"),
+    )
+
+    result = _planner_for(world).plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_native_planner_surfaces_unexpected_shortcutting_error(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=TypeError("unexpected shortcut integration error"),
+    )
+
+    with pytest.raises(TypeError, match="unexpected shortcut integration error"):
+        _planner_for(world).plan_joint_path(
+            world,
+            robot_id,
+            JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+            JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+            timeout=1.0,
+        )
+
+
+@pytest.mark.parametrize("endpoint_index", [0, -1], ids=["start", "goal"])
+def test_native_planner_uses_raw_path_when_shortcutting_changes_endpoint(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+    endpoint_index: int,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+
+    def changed_endpoint(shortcutter: FakePathShortcutter, path: FakeJointPath) -> FakeJointPath:
+        positions = [*path.positions]
+        positions[endpoint_index] = np.asarray(positions[endpoint_index]) + 0.1
+        return FakeJointPath(path.joint_names, positions)
+
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        side_effect=changed_endpoint,
+    )
+
+    result = _planner_for(world).plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_native_planner_uses_raw_path_when_shortcutting_returns_empty_path(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    mocker.patch.object(
+        FakePathShortcutter,
+        "shortcut",
+        autospec=True,
+        return_value=FakeJointPath(["joint1", "joint2"], []),
+    )
+
+    result = _planner_for(world).plan_joint_path(
+        world,
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
+        JointState(name=["joint1", "joint2"], position=[0.4, 0.2]),
+        timeout=1.0,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+
+
+def test_roboplan_planner_is_distinct_and_bound_to_world(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+    planner = _planner_for(world)
+
+    assert planner is not world
+    assert planner._world is world
+    assert not hasattr(world, "plan_joint_path")
+
+
+def test_roboplan_planner_copies_configuration(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+) -> None:
+    config = RoboPlanPlannerConfig(path_shortcutting=RoboPlanPathShortcuttingConfig(enabled=False))
+    world, _ = _make_world(fake_roboplan, robot_config, config)
+
+    config.path_shortcutting.enabled = True
+
+    assert not _planner_for(world)._config.path_shortcutting.enabled
 
 
 def test_native_planning_blocks_obstacle_replacement(
@@ -1326,7 +1593,9 @@ def test_native_planning_blocks_obstacle_replacement(
     start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
     goal = JointState(name=["joint1", "joint2"], position=[0.2, 0.1])
     planning_thread = threading.Thread(
-        target=lambda: world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+        target=lambda: _planner_for(world).plan_joint_path(
+            world, robot_id, start, goal, timeout=1.0
+        )
     )
     planning_thread.start()
     assert planning_started.wait(1.0)
@@ -1351,7 +1620,7 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
 
     start = JointState(name=[], position=[0.0, 0.0])
     goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+    result = _planner_for(world).plan_joint_path(world, robot_id, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
@@ -1363,7 +1632,7 @@ def test_native_selected_planner_returns_global_selected_joint_names(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=["arm/joint1", "arm/joint2"], position=[0.0, 0.0]),
@@ -1382,7 +1651,7 @@ def test_native_selected_planner_accepts_local_joint_names(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=["joint2", "joint1"], position=[0.0, 0.0]),
@@ -1408,7 +1677,7 @@ def test_native_selected_planner_rejects_multi_group_selection(
     world, _ = _make_world(fake_roboplan, config)
     selection = _selection((config,), "arm/left", "arm/right")
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1429,7 +1698,7 @@ def test_native_planner_coordinates_groups_across_two_robots(
         "arm/manipulator",
     )
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0, 0.0, 0.0]),
@@ -1473,7 +1742,7 @@ def test_cartesian_planner_returns_timed_global_joint_states_and_options(
         "max_attempts_per_step": 8,
     }
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1522,7 +1791,7 @@ def test_cartesian_zero_rotation_preserves_start_orientation(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1552,7 +1821,7 @@ def test_cartesian_supports_mixed_targets_and_shared_multi_group_timing(
         "arm/manipulator",
     )
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
@@ -1588,7 +1857,7 @@ def test_cartesian_allows_auxiliary_groups(
         "right/manipulator",
     )
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
@@ -1648,7 +1917,7 @@ def test_cartesian_rejects_invalid_requests(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1668,7 +1937,7 @@ def test_cartesian_rejects_start_that_differs_from_scene(
     world, _ = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.1, 0.0]),
@@ -1694,7 +1963,7 @@ def test_cartesian_rejects_official_planner_failure(
         side_effect=ValueError("tracking failed"),
     )
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1729,7 +1998,7 @@ def test_cartesian_postvalidation_checks_combined_multi_robot_state(
         side_effect=collides_only_when_both_arms_advance,
     )
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0] * 4),
@@ -1785,7 +2054,7 @@ def test_cartesian_postvalidation_checks_between_waypoints(
         side_effect=collides_only_mid_edge,
     )
 
-    result = world.plan_cartesian_path(
+    result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1828,7 +2097,7 @@ def test_native_planner_preserves_other_robot_and_auxiliary_joint_state(
 
     mocker.patch.object(FakeRRT, "plan", autospec=True, side_effect=capture_scene_state)
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1857,7 +2126,7 @@ def test_native_planner_waits_for_every_robot_state(
     )
     selection = _selection((robot_config, second_config), "arm/manipulator")
 
-    result = world.plan_selected_joint_path(
+    result = _planner_for(world).plan_selected_joint_path(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
@@ -1882,7 +2151,7 @@ def test_native_planner_rejects_empty_path(
 
     start = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
     goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
-    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+    result = _planner_for(world).plan_joint_path(world, robot_id, start, goal, timeout=1.0)
 
     assert result.status == PlanningStatus.NO_SOLUTION
     assert result.path == []

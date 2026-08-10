@@ -94,16 +94,20 @@ stopping DimOS. Disabling the motors makes the arm fall.
 dimos run keyboard-teleop-a1z
 ```
 
-This launches keyboard teleoperation, the control coordinator, trajectory
-execution, and `ManipulationModule`. Startup waits for feedback from all six arm
+This launches keyboard teleoperation with mock hardware, the control coordinator,
+trajectory execution, and `ManipulationModule`. Select a CAN interface explicitly
+to use the real arm. Real-hardware startup waits for feedback from all six arm
 motors, validates the measured state, holds the measured pose, and then ramps
-gravity compensation.
-
-On Linux, the blueprint uses `a1zcan` by default. If you configured another
-verified SocketCAN interface, pass it explicitly:
+gravity compensation:
 
 ```bash
-dimos run keyboard-teleop-a1z --can-port can0
+dimos --can-port a1zcan run keyboard-teleop-a1z
+```
+
+On Linux, pass another verified SocketCAN interface instead if needed:
+
+```bash
+dimos --can-port can0 run keyboard-teleop-a1z
 ```
 
 On macOS, the adapter selects the userspace USB transport automatically; omit

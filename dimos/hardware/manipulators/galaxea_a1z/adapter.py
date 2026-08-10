@@ -191,6 +191,8 @@ class GalaxeaA1ZAdapter:
             zero_gravity_mode=self._config.teaching is not None,
             control_freq_hz=_SDK_CONTROL_FREQ_HZ,
             urdf_path=self._config.urdf_path,
+            default_kp=np.asarray(self._config.default_kp, dtype=float),
+            default_kd=np.asarray(self._config.default_kd, dtype=float),
             with_gripper=gripper is not None,
             gripper_max_torque=gripper.max_torque if gripper else 0.5,
         )
