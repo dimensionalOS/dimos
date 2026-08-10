@@ -21,6 +21,8 @@ shared CameraInfo streams onto each camera's image entity so every frustum
 anchors to its optical frame.
 
 Usage:
+    # the shared recording, pulled from LFS on first run:
+    dimos run spot-replay --db-path=spot_small_loop.db
     # newest *.db under ~/datasets/spot:
     dimos run spot-replay
     # a specific recording:

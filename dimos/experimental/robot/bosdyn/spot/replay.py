@@ -36,6 +36,7 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_STREAM_SUFFIXES,
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
+from dimos.memory2.replay import resolve_db_path
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -69,7 +70,8 @@ _OPTICAL_FRAME_ROLL_TURNS = {
 class SpotReplayConfig(ModuleConfig):
     """Where to read the recording from and how to play it back."""
 
-    # Explicit recording path. Empty -> newest ``*.db`` in ``dataset_dir``.
+    # An on-disk path, or the name of a dataset to pull from LFS (e.g.
+    # ``spot_small_loop.db``). Empty -> newest ``*.db`` in ``dataset_dir``.
     db_path: str = ""
     dataset_dir: str = "~/datasets/spot"
 
@@ -110,7 +112,7 @@ class SpotReplay(Module):
 
     def _resolve_db_path(self) -> Path:
         if self.config.db_path:
-            return Path(self.config.db_path).expanduser()
+            return resolve_db_path(Path(self.config.db_path).expanduser())
         directory = Path(self.config.dataset_dir).expanduser()
         recordings = sorted(directory.glob("*.db"), key=lambda path: path.stat().st_mtime)
         if not recordings:
