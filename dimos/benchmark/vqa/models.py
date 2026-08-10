@@ -136,7 +136,16 @@ class ChoiceAnswerContract:
     kind: Literal["choice"] = "choice"
 
 
-AnswerContract = BooleanAnswerContract | ChoiceAnswerContract
+@dataclass(frozen=True)
+class DeferredHeightChoiceContract:
+    """A height question whose public choices follow a private measurement."""
+
+    strategy: Literal["height-window-v1"] = "height-window-v1"
+    kind: Literal["deferred_height_choice"] = "deferred_height_choice"
+
+
+AnswerContract = BooleanAnswerContract | ChoiceAnswerContract | DeferredHeightChoiceContract
+ResolvedAnswerContract = BooleanAnswerContract | ChoiceAnswerContract
 
 
 @dataclass(frozen=True)
@@ -196,6 +205,7 @@ class OracleToolResult:
     version: str = "v1"
     measurement: OracleMeasurement | None = None
     choice: str | None = None
+    choices: tuple[str, ...] = ()
     plane: GroundPlaneEstimate | None = None
     quality_flags: tuple[str, ...] = ()
     rejection_reason: str | None = None
@@ -215,6 +225,7 @@ class AcceptedOracleResult:
 
     proposal: QuestionProposal
     answer: str
+    answer_contract: ResolvedAnswerContract
     evidence_ids: tuple[str, ...]
     tool_results: tuple[OracleToolResult, ...]
     trace: tuple[OracleTrace, ...]

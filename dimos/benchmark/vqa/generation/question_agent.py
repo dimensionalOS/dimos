@@ -11,6 +11,7 @@ from dimos.benchmark.vqa.models import (
     AnswerContract,
     BooleanAnswerContract,
     ChoiceAnswerContract,
+    DeferredHeightChoiceContract,
     QuestionIntent,
     QuestionProposal,
 )
@@ -26,14 +27,15 @@ or information not visible in the image."""
 AGENTIC_QUESTION_PROMPT = """Author up to 5 challenging, visually answerable single-frame VQA questions.
 Inspect only this image. Do not use or infer depth, point clouds, calibration, metadata, or answers.
 Return JSON only: an array of objects with question, answer_contract, optional object_queries,
-and optional tool_hints. answer_contract is {"kind":"boolean"} or {"kind":"choice","choices":[...]}.
+and optional tool_hints. answer_contract is {"kind":"boolean"}, {"kind":"choice","choices":[...]},
+or {"kind":"deferred_height_choice","strategy":"height-window-v1"}.
 Prioritize questions that a private point-cloud oracle can validate. For the height of one upright
-object resting on visible ground, use exactly these choices: ["under 0.5 m", "0.5-1.0 m",
-"1.0-1.5 m", "over 1.5 m"] and tool_hints ["measure_object_height_bucket"]. Also prefer which of
+object resting on visible ground, use deferred_height_choice. Its choices are generated privately
+from a successful height measurement. Also prefer which of
 two named objects is closer (choice, with those object names as choices), object count, left/right
 spatial relation, and distance-threshold questions. Use object_queries for every referenced object
-and tool_hints from "measure_object_height_bucket", "measure_object_height", "estimate_ground_plane",
-or "ground_semantic_object" when applicable.
+and tool_hints from "detect_objects", "segment_detections", "ground_masks", "fit_ground_plane",
+"select_nearest_object", "measure_height", or "bucket_measurement" when applicable.
 Use visibility/presence questions only when no stronger geometric question is available. Do not ask
 about color, material, text, intent, full physical size, hidden parts, or terrain. Use only visible
 objects. Do not include answers, explanations, Markdown, or background surfaces."""
@@ -132,6 +134,8 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
         if len(choices) < 2:
             raise ValueError("choice contract requires at least two choices")
         answer_contract = ChoiceAnswerContract(choices)
+    elif kind == "deferred_height_choice" and contract.get("strategy") == "height-window-v1":
+        answer_contract = DeferredHeightChoiceContract()
     else:
         raise ValueError("unsupported answer contract")
     return QuestionProposal(identifier, question, answer_contract, queries, hints)

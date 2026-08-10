@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import cast
 
-import cv2
 import numpy as np
 
 from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
@@ -219,23 +217,3 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
 
     assert result.status == "rejected"
     assert result.reason == "missing_grounded_side"
-
-
-def test_ground_truth_agent_overlay_contains_only_rectified_mask_view(
-    tmp_path: Path,
-) -> None:
-    frame, detection = _frame_and_detection()
-    agent = VqaGroundTruthGenerator(
-        _Detector(frame.image, detection), _Segmenter(), config=GroundingConfig(min_mask_area_px=1)
-    )
-    agent.answer(frame, QuestionIntent(kind="presence", object_query="chair"))
-    agent.answer(
-        frame, QuestionIntent(kind="within_distance", object_query="chair", threshold_m=3.0)
-    )
-    path = tmp_path / "overlay.jpg"
-
-    agent.write_overlay(frame, str(path))
-
-    rendered = cv2.imread(str(path))
-    assert rendered is not None
-    assert rendered.shape[:2] == frame.image.data.shape[:2]

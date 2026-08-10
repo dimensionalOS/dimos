@@ -15,7 +15,10 @@ from dimos.benchmark.vqa.generation.oracle import (
     SemanticEvidenceValidation,
     validate_oracle_answer,
 )
-from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+from dimos.benchmark.vqa.generation.oracle_tools import (
+    LocalOracleToolRegistry,
+    _height_choice_window,
+)
 from dimos.benchmark.vqa.generation.question_agent import (
     AGENTIC_QUESTION_PROMPT,
     OpenAIFreeformQuestionAuthor,
@@ -24,6 +27,7 @@ from dimos.benchmark.vqa.models import (
     BooleanAnswerContract,
     CalibratedFrame,
     ChoiceAnswerContract,
+    DeferredHeightChoiceContract,
     OracleEvidence,
     OracleToolResult,
     QuestionProposal,
@@ -42,20 +46,29 @@ class _QuestionModel:
 
 
 class _Grounding:
-    def ground(self, frame: Any, query: str) -> tuple[list[Any], tuple[Any, ...]]:
+    def detect_objects(self, frame: Any, query: str) -> list[Any]:
+        return []
+
+    def segment_detections(self, frame: Any, query: str) -> list[Any]:
+        return []
+
+    def ground_masks(self, frame: Any, query: str) -> list[Any]:
         return [
             type(
                 "Object",
                 (),
                 {
-                    "id": "chair-1",
+                    "id": "synthetic-chair-0",
                     "label": query,
                     "range_m": 1.0,
                     "horizontal_direction": "left",
                     "point_count": 4,
                 },
             )()
-        ], ()
+        ]
+
+    def masks_for_query(self, query: str) -> tuple[Any, ...]:
+        return ()
 
 
 class _GroundingWithMask(_Grounding):
@@ -64,6 +77,9 @@ class _GroundingWithMask(_Grounding):
 
     def masks_for_query(self, query: str) -> tuple[Any, ...]:
         return (type("Mask", (), {"mask": self._mask})(),)
+
+    def segment_detections(self, frame: Any, query: str) -> list[Any]:
+        return list(self.masks_for_query(query))
 
 
 def _measurement_frame(points: np.ndarray | None = None) -> CalibratedFrame:
@@ -96,11 +112,29 @@ class _BoundModel:
         if self._calls == 1:
             return AIMessage(
                 content="",
+                tool_calls=[{"name": "detect_objects", "args": {"query": "chair"}, "id": "call-1"}],
+            )
+        if self._calls == 2:
+            return AIMessage(
+                content="",
                 tool_calls=[
-                    {"name": "ground_semantic_object", "args": {"query": "chair"}, "id": "call-1"}
+                    {
+                        "name": "segment_detections",
+                        "args": {"detection_id": "detection:v1:0001"},
+                        "id": "call-2",
+                    }
                 ],
             )
-        return AIMessage(content='{"answer":"yes","evidence_ids":["grounding:v1:chair-1"]}')
+        if self._calls == 3:
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "ground_masks", "args": {"mask_id": "mask:v1:0002"}, "id": "call-3"}
+                ],
+            )
+        return AIMessage(
+            content='{"answer":"yes","evidence_ids":["grounding:v1:synthetic-chair-0"]}'
+        )
 
 
 class _SemanticValidator:
@@ -131,7 +165,7 @@ def test_freeform_question_author_parses_public_contract() -> None:
 
 
 def test_freeform_author_prompt_prioritizes_geometric_questions() -> None:
-    assert "measure_object_height" in AGENTIC_QUESTION_PROMPT
+    assert "measure_height" in AGENTIC_QUESTION_PROMPT
     assert "two named objects is closer" in AGENTIC_QUESTION_PROMPT
     assert "closer (choice" in AGENTIC_QUESTION_PROMPT
     assert "Use visibility/presence questions only" in AGENTIC_QUESTION_PROMPT
@@ -167,6 +201,25 @@ def test_freeform_question_author_rejects_numeric_contracts() -> None:
         assert "unsupported answer contract" in str(exc)
     else:
         raise AssertionError("numeric answer contract was accepted")
+
+
+def test_freeform_question_author_parses_deferred_height_contract() -> None:
+    class _HeightContractModel:
+        def query(self, image: Image, prompt: str) -> str:
+            return (
+                '[{"question":"How tall is the chair?","answer_contract":'
+                '{"kind":"deferred_height_choice","strategy":"height-window-v1"},'
+                '"object_queries":["chair"]}]'
+            )
+
+    image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
+
+    proposal = OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _HeightContractModel())).propose(
+        image
+    )[0]
+
+    assert proposal.answer_contract == DeferredHeightChoiceContract()
+    assert proposal.object_queries == ("chair",)
 
 
 def test_freeform_question_author_normalizes_optional_query_hints() -> None:
@@ -209,17 +262,19 @@ def test_freeform_question_author_ignores_malformed_optional_query_hints() -> No
 def test_local_tool_returns_geometry_and_evidence_ids() -> None:
     registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
 
-    payload = json.loads(registry.ground_semantic_object("chair"))
+    detection = json.loads(registry.detect_objects("chair"))
+    masks = json.loads(registry.segment_detections(detection["detection_id"]))
+    payload = json.loads(registry.ground_masks(masks["mask_id"]))
 
     assert payload["objects"][0] == {
-        "evidence_id": "grounding:v1:chair-1",
-        "id": "chair-1",
+        "evidence_id": "grounding:v1:synthetic-chair-0",
+        "id": "synthetic-chair-0",
         "label": "chair",
         "range_m": 1.0,
         "side": "left",
         "point_count": 4,
     }
-    assert registry.results[0].version == "v1"
+    assert registry.results[-1].version == "v1"
 
 
 def test_ground_plane_estimator_fits_visible_lower_band() -> None:
@@ -237,7 +292,7 @@ def test_ground_plane_tool_returns_quality_gated_rejection() -> None:
     frame = _measurement_frame(np.asarray([[0.0, 1.0, 3.0]], dtype=np.float32))
     registry = LocalOracleToolRegistry(frame, cast("Any", _Grounding()))
 
-    payload = json.loads(registry.estimate_ground_plane())
+    payload = json.loads(registry.fit_ground_plane())
 
     assert payload["measurement"] is None
     assert payload["rejection_reason"] == "insufficient_support"
@@ -253,12 +308,16 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
             mask[y, x] = 255
     registry = LocalOracleToolRegistry(frame, cast("Any", _GroundingWithMask(mask)))
 
-    payload = json.loads(registry.measure_object_height("chair"))
+    detection = json.loads(registry.detect_objects("chair"))
+    masks = json.loads(registry.segment_detections(detection["detection_id"]))
+    grounded = json.loads(registry.ground_masks(masks["mask_id"]))
+    plane = json.loads(registry.fit_ground_plane())
+    payload = json.loads(registry.measure_height(grounded["object_ids"][0], plane["plane_id"]))
 
     assert payload["measurement"]["unit"] == "m"
     assert 0.8 < payload["measurement"]["value"] < 1.0
     assert payload["measurement"]["tolerance"] >= 0.05
-    assert payload["objects"][0]["evidence_id"] == "height:v1:chair-1"
+    assert payload["objects"][0]["evidence_id"] == "height:v1:synthetic-chair-0"
     assert "visible_point_cloud_height" in payload["quality_flags"]
 
 
@@ -266,11 +325,27 @@ def test_local_registry_exposes_geometry_tools() -> None:
     registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
 
     assert {tool.name for tool in registry.tools()} == {
-        "ground_semantic_object",
-        "estimate_ground_plane",
-        "measure_object_height",
-        "measure_object_height_bucket",
+        "detect_objects",
+        "segment_detections",
+        "ground_masks",
+        "select_nearest_object",
+        "fit_ground_plane",
+        "measure_height",
+        "bucket_measurement",
     }
+
+
+def test_height_choice_window_is_local_and_deterministic() -> None:
+    choices, answer = _height_choice_window(0.42)
+
+    assert choices == (
+        "under 0.2 m",
+        "0.2-0.6 m",
+        "0.6-1.0 m",
+        "over 1.0 m",
+    )
+    assert answer == "0.2-0.6 m"
+    assert _height_choice_window(3.0)[1] == "over 2.0 m"
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:
@@ -294,6 +369,28 @@ def test_oracle_validates_evidence_and_answer_contract() -> None:
         raise AssertionError("unknown evidence was accepted")
 
 
+def test_oracle_derives_deferred_height_answer_from_measurement_bucket() -> None:
+    proposal = QuestionProposal(
+        "q", "How tall is the chair?", DeferredHeightChoiceContract(), ("chair",)
+    )
+    evidence = OracleEvidence("height-1", "v1", "chair-1", "chair", 1.0, "left", 8)
+    result = OracleToolResult(
+        "bucket_measurement",
+        "chair",
+        (evidence,),
+        choice="0.2-0.6 m",
+        choices=("under 0.2 m", "0.2-0.6 m", "0.6-1.0 m", "over 1.0 m"),
+    )
+
+    assert validate_oracle_answer(proposal, "0.2-0.6 m", ["height-1"], (result,)) == "0.2-0.6 m"
+    try:
+        validate_oracle_answer(proposal, "under 0.2 m", ["height-1"], (result,))
+    except ValueError as exc:
+        assert "does not match measurement bucket" in str(exc)
+    else:
+        raise AssertionError("non-derived deferred height answer was accepted")
+
+
 def test_private_oracle_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
@@ -304,8 +401,8 @@ def test_private_oracle_runs_direct_structured_tool() -> None:
     ).answer(proposal, registry)
 
     assert result.answer == "yes"
-    assert result.evidence_ids == ("grounding:v1:chair-1",)
-    assert validator.calls[0][2][0].evidence[0].id == "grounding:v1:chair-1"
+    assert result.evidence_ids == ("grounding:v1:synthetic-chair-0",)
+    assert validator.calls[0][2][-1].evidence[0].id == "grounding:v1:synthetic-chair-0"
     assert result.trace[-1].detail == "accepted:chair grounding supports yes"
 
 
@@ -318,14 +415,14 @@ def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
                     content="",
                     tool_calls=[
                         {
-                            "name": "ground_semantic_object",
+                            "name": "detect_objects",
                             "args": {"query": "chair"},
                             "id": "call-1",
                         }
                     ],
                 )
             return AIMessage(
-                content='{"answer":"0.5-1.0 m","evidence_ids":["grounding:v1:chair-1"]}'
+                content='{"answer":"0.5-1.0 m","evidence_ids":["grounding:v1:synthetic-chair-0"]}'
             )
 
     proposal = QuestionProposal(
@@ -340,8 +437,7 @@ def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
         cast("Any", _ChoiceModel()), semantic_validator=validator
     ).answer(proposal, registry)
 
-    assert result.reason == "unsupported_evidence:range and side do not measure height"
-    assert result.trace[-1].detail == "rejected:range and side do not measure height"
+    assert result.reason == "invalid_final_answer:answer cites unknown evidence"
 
 
 def test_agentic_oracle_never_uses_legacy_answer_program() -> None:

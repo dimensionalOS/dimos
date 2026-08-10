@@ -4,7 +4,16 @@ import json
 from pathlib import Path
 
 from dimos.benchmark.vqa.generation.dataset import _evaluation_rows, write_dataset_manifest
-from dimos.benchmark.vqa.models import GroundTruthResult, QuestionIntent, ToolTrace, VqaExample
+from dimos.benchmark.vqa.models import (
+    AcceptedOracleResult,
+    ChoiceAnswerContract,
+    DeferredHeightChoiceContract,
+    GroundTruthResult,
+    QuestionIntent,
+    QuestionProposal,
+    ToolTrace,
+    VqaExample,
+)
 
 
 def test_constrained_results_export_simple_multiple_choice_rows() -> None:
@@ -36,6 +45,23 @@ def test_constrained_results_export_simple_multiple_choice_rows() -> None:
         }
     ]
     assert labels == [{"id": "frame-chair-presence", "answer": "yes"}]
+
+
+def test_deferred_height_result_exports_resolved_public_choices() -> None:
+    choices = ("under 0.2 m", "0.2-0.6 m", "0.6-1.0 m", "over 1.0 m")
+    result = AcceptedOracleResult(
+        QuestionProposal("chair-height", "How tall is the chair?", DeferredHeightChoiceContract()),
+        "0.2-0.6 m",
+        ChoiceAnswerContract(choices),
+        ("height-1",),
+        (),
+        (),
+    )
+
+    cases, labels = _evaluation_rows("frame", [result])
+
+    assert cases[0]["choices"] == choices
+    assert labels == [{"id": "frame-chair-height", "answer": "0.2-0.6 m"}]
 
 
 def test_dataset_manifest_exports_public_cases_and_private_labels(tmp_path: Path) -> None:
@@ -74,3 +100,5 @@ def test_dataset_manifest_exports_public_cases_and_private_labels(tmp_path: Path
         "choices": ["yes", "no"],
     }
     assert json.loads((tmp_path / "labels.jsonl").read_text()) == {"id": "case-1", "answer": "yes"}
+    assert not (tmp_path / "frames.jsonl").exists()
+    assert not (tmp_path / "manifest.json").exists()

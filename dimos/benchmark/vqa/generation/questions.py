@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.benchmark.vqa.generation.selection import select_nearest_object
 from dimos.benchmark.vqa.models import GroundedObject, VqaExample
 
 
@@ -28,10 +29,7 @@ def generate_questions(
 
     examples: list[VqaExample] = []
     for query in queries:
-        matches = sorted(
-            (item for item in objects if item.label == query), key=lambda item: item.range_m
-        )
-        nearest = matches[0] if matches else None
+        nearest = select_nearest_object([item for item in objects if item.label == query])
         examples.append(
             VqaExample(
                 id=f"{frame_id}-{query}-presence",

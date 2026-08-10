@@ -10,7 +10,6 @@ from typing import Any
 
 import cv2
 
-from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
 from dimos.benchmark.vqa.models import (
     AcceptedOracleResult,
     BooleanAnswerContract,
@@ -29,7 +28,6 @@ def write_frame_record(
     frame_index: int,
     intents: list[QuestionIntent | QuestionProposal],
     results: list[GroundTruthResult | AcceptedOracleResult | RejectedOracleResult],
-    ground_truth: VqaGroundTruthGenerator,
     metadata: dict[str, Any],
 ) -> None:
     """Write one frame's public cases alongside its private generation audit record."""
@@ -37,13 +35,6 @@ def write_frame_record(
     image_path = output / "image.jpg"
     if not cv2.imwrite(str(image_path), frame.image.data):
         raise RuntimeError(f"failed to write {image_path}")
-    original_image_path = output / "original_image.jpg"
-    if frame.original_image is not None and not cv2.imwrite(
-        str(original_image_path), frame.original_image.data
-    ):
-        raise RuntimeError(f"failed to write {original_image_path}")
-    overlay_path = output / "grounding_overlay.jpg"
-    ground_truth.write_overlay(frame, str(overlay_path))
     accepted = [result for result in results if _is_accepted(result)]
     cases, labels = _evaluation_rows(frame.id, accepted)
     _write_json(
@@ -54,18 +45,12 @@ def write_frame_record(
             "recording": recording,
             "frame_index": frame_index,
             "image": image_path.name,
-            "original_image": original_image_path.name
-            if frame.original_image is not None
-            else None,
-            "grounding_overlay": overlay_path.name,
             "question_count": len(intents),
             "accepted_question_count": len(accepted),
             "rejected_question_count": len(results) - len(accepted),
             **metadata,
         },
     )
-    _write_json(output / "intents.json", [asdict(item) for item in intents])
-    _write_json(output / "examples.json", [_public_example(item, frame.id) for item in accepted])
     _write_json(output / "ground_truth.json", [_private_result(item) for item in results])
     _write_json(output / "cases.json", cases)
     _write_json(output / "labels.json", labels)
@@ -74,14 +59,12 @@ def write_frame_record(
 def write_dataset_manifest(output: Path) -> dict[str, int]:
     """Build aggregate public cases and private labels from completed frame records."""
     frames = sorted(path for path in output.glob("frame-*") if (path / "frame.json").is_file())
-    frame_rows: list[dict[str, Any]] = []
     case_rows: list[dict[str, Any]] = []
     label_rows: list[dict[str, Any]] = []
     accepted = 0
     rejected = 0
     for path in frames:
         frame = json.loads((path / "frame.json").read_text())
-        frame_rows.append(frame)
         case_rows.extend(
             {**case, "image": f"{path.name}/{case['image']}"}
             for case in json.loads((path / "cases.json").read_text())
@@ -89,17 +72,8 @@ def write_dataset_manifest(output: Path) -> dict[str, int]:
         label_rows.extend(json.loads((path / "labels.json").read_text()))
         accepted += frame["accepted_question_count"]
         rejected += frame["rejected_question_count"]
-    _write_jsonl(output / "frames.jsonl", frame_rows)
     _write_jsonl(output / "cases.jsonl", case_rows)
     _write_jsonl(output / "labels.jsonl", label_rows)
-    _write_json(
-        output / "manifest.json",
-        {
-            "frame_count": len(frames),
-            "accepted_question_count": accepted,
-            "rejected_question_count": rejected,
-        },
-    )
     return {
         "frame_count": len(frames),
         "accepted_question_count": accepted,
@@ -122,7 +96,7 @@ def _evaluation_rows(
         if isinstance(result, RejectedOracleResult):
             continue
         if isinstance(result, AcceptedOracleResult):
-            contract = result.proposal.answer_contract
+            contract = result.answer_contract
             choices = (
                 ("yes", "no") if isinstance(contract, BooleanAnswerContract) else contract.choices
             )
@@ -143,19 +117,6 @@ def _evaluation_rows(
     return cases, labels
 
 
-def _public_example(
-    result: GroundTruthResult | AcceptedOracleResult, frame_id: str
-) -> dict[str, Any]:
-    if isinstance(result, AcceptedOracleResult):
-        return {
-            "case_id": f"{frame_id}-{result.proposal.id}",
-            "question": result.proposal.question,
-            "answer_contract": asdict(result.proposal.answer_contract),
-            "object_queries": result.proposal.object_queries,
-        }
-    return asdict(result.question)
-
-
 def _private_result(
     result: GroundTruthResult | AcceptedOracleResult | RejectedOracleResult,
 ) -> dict[str, Any]:
@@ -164,6 +125,7 @@ def _private_result(
             "status": "answered",
             "answer": result.answer,
             "proposal": asdict(result.proposal),
+            "answer_contract": asdict(result.answer_contract),
             "evidence_ids": result.evidence_ids,
             "tool_results": [asdict(item) for item in result.tool_results],
             "trace": [asdict(item) for item in result.trace],
