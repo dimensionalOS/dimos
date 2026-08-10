@@ -1,0 +1,869 @@
+[
+  {
+    "id": "sm_presence_bed",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Did the robot's semantic object map record at least one bed anywhere in the mapped area? Answer with exactly one word: yes or no.",
+    "a": "yes",
+    "ctx": "objects",
+    "choices": [
+      "yes",
+      "no"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_refrigerator",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Did the robot's semantic object map record at least one refrigerator anywhere in the mapped area? Answer with exactly one word: yes or no.",
+    "a": "yes",
+    "ctx": "objects",
+    "choices": [
+      "yes",
+      "no"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_teddy_bear",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Did the robot's semantic object map record at least one teddy bear anywhere in the mapped area? Answer with exactly one word: yes or no.",
+    "a": "yes",
+    "ctx": "objects",
+    "choices": [
+      "yes",
+      "no"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_couch",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Did the robot's semantic object map record at least one couch anywhere in the mapped area? Answer with exactly one word: yes or no.",
+    "a": "no",
+    "ctx": "objects",
+    "choices": [
+      "yes",
+      "no"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_sink",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Did the robot's semantic object map record at least one sink anywhere in the mapped area? Answer with exactly one word: yes or no.",
+    "a": "no",
+    "ctx": "objects",
+    "choices": [
+      "yes",
+      "no"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_which_teddy_bear",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Exactly one of these object classes was actually recorded in the robot's semantic object map: mouse, teddy bear, dining table, cell phone. Which one? Answer with exactly one of: mouse, teddy bear, dining table, cell phone.",
+    "a": "teddy bear",
+    "ctx": "objects",
+    "choices": [
+      "mouse",
+      "teddy bear",
+      "dining table",
+      "cell phone"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_presence_which_bed",
+    "family": "presence",
+    "type": "mcq",
+    "q": "Exactly one of these object classes was actually recorded in the robot's semantic object map: clock, oven, bed, scissors. Which one? Answer with exactly one of: clock, oven, bed, scissors.",
+    "a": "bed",
+    "ctx": "objects",
+    "choices": [
+      "clock",
+      "oven",
+      "bed",
+      "scissors"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_count_chair",
+    "family": "count",
+    "type": "numeric",
+    "q": "Based on the semantic object map shown, how many distinct chair objects are in the mapped area? Answer with a single number.",
+    "a": 6,
+    "ctx": "objects",
+    "band": 1,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_zonecount_northeast_chair",
+    "family": "zonecount",
+    "type": "numeric",
+    "q": "The map is divided into four zones at the point (x=-7.5, y=2.4), with +x east and +y north: the northwest area (x<-7.5, y>=2.4), northeast area (x>=-7.5, y>=2.4), southwest area (x<-7.5, y<2.4), and southeast area (x>=-7.5, y<2.4). How many distinct chair objects are in the northeast area? Answer with a single number.",
+    "a": 4,
+    "ctx": "objects",
+    "band": 1.0,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_zonecount_southwest_tv",
+    "family": "zonecount",
+    "type": "numeric",
+    "q": "The map is divided into four zones at the point (x=-7.5, y=2.4), with +x east and +y north: the northwest area (x<-7.5, y>=2.4), northeast area (x>=-7.5, y>=2.4), southwest area (x<-7.5, y<2.4), and southeast area (x>=-7.5, y<2.4). How many distinct tv objects are in the southwest area? Answer with a single number.",
+    "a": 1,
+    "ctx": "objects",
+    "band": 1.0,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_zonecount_southeast_bottle",
+    "family": "zonecount",
+    "type": "numeric",
+    "q": "The map is divided into four zones at the point (x=-7.5, y=2.4), with +x east and +y north: the northwest area (x<-7.5, y>=2.4), northeast area (x>=-7.5, y>=2.4), southwest area (x<-7.5, y<2.4), and southeast area (x>=-7.5, y<2.4). How many distinct bottle objects are in the southeast area? Answer with a single number.",
+    "a": 3,
+    "ctx": "objects",
+    "band": 1.0,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nearest_t29.16",
+    "family": "nearest",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, which object class is horizontally nearest to you? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "chair",
+    "ctx": "objects+odom",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "odom_window": [
+      28.66,
+      29.16
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nearest_t103.25",
+    "family": "nearest",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, which object class is horizontally nearest to you? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "tv",
+    "ctx": "objects+odom",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "odom_window": [
+      102.75,
+      103.25
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nearest_t204.44",
+    "family": "nearest",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, which object class is horizontally nearest to you? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "teddy bear",
+    "ctx": "objects+odom",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "odom_window": [
+      203.94,
+      204.44
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nearest_t241.33",
+    "family": "nearest",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, which object class is horizontally nearest to you? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "potted plant",
+    "ctx": "objects+odom",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "odom_window": [
+      240.83,
+      241.33
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nearest_t279.98",
+    "family": "nearest",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, which object class is horizontally nearest to you? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "tv",
+    "ctx": "objects+odom",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "odom_window": [
+      279.48,
+      279.98
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t43.92_potted_plant",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the potted plant ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "behind",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      43.42,
+      43.92
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t85_book",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the book ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "behind",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      84.5,
+      85.0
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t128.2_laptop",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the laptop ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "left",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      127.7,
+      128.2
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t170.01_potted_plant",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the potted plant ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "left",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      169.51,
+      170.01
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t204.44_refrigerator",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the refrigerator ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "right",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      203.94,
+      204.44
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_egoside_t255.03_teddy_bear",
+    "family": "egoside",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the last odom observation shown, and you face your direction of heading (the odom yaw). Based on the semantic object map, is the teddy bear ahead of you, behind you, on your left, or on your right? Answer with exactly one word: ahead, behind, left, or right.",
+    "a": "behind",
+    "ctx": "objects+odom",
+    "choices": [
+      "ahead",
+      "behind",
+      "left",
+      "right"
+    ],
+    "odom_window": [
+      254.53,
+      255.03
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_compass_bed_book",
+    "family": "compass",
+    "type": "mcq",
+    "q": "Based on the semantic object map (world frame, +x east, +y north), in which compass direction is the bed from the book? Answer with exactly one word: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "northwest",
+    "ctx": "objects",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_compass_bed_potted_plant",
+    "family": "compass",
+    "type": "mcq",
+    "q": "Based on the semantic object map (world frame, +x east, +y north), in which compass direction is the bed from the potted plant? Answer with exactly one word: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "west",
+    "ctx": "objects",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_compass_bed_refrigerator",
+    "family": "compass",
+    "type": "mcq",
+    "q": "Based on the semantic object map (world frame, +x east, +y north), in which compass direction is the bed from the refrigerator? Answer with exactly one word: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "northwest",
+    "ctx": "objects",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_compass_bed_teddy_bear",
+    "family": "compass",
+    "type": "mcq",
+    "q": "Based on the semantic object map (world frame, +x east, +y north), in which compass direction is the bed from the teddy bear? Answer with exactly one word: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "northwest",
+    "ctx": "objects",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_compass_book_laptop",
+    "family": "compass",
+    "type": "mcq",
+    "q": "Based on the semantic object map (world frame, +x east, +y north), in which compass direction is the book from the laptop? Answer with exactly one word: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "south",
+    "ctx": "objects",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_bed_book",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the bed and the book, in meters? Answer with a single number.",
+    "a": 15.8,
+    "ctx": "objects",
+    "band": 3.95,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_bed_potted_plant",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the bed and the potted plant, in meters? Answer with a single number.",
+    "a": 8.5,
+    "ctx": "objects",
+    "band": 2.12,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_bed_refrigerator",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the bed and the refrigerator, in meters? Answer with a single number.",
+    "a": 15.07,
+    "ctx": "objects",
+    "band": 3.77,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_bed_teddy_bear",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the bed and the teddy bear, in meters? Answer with a single number.",
+    "a": 9.6,
+    "ctx": "objects",
+    "band": 2.4,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_robotdist_t57.62_bed",
+    "family": "robotdist",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, how far are you horizontally from the bed, in meters? Answer with a single number.",
+    "a": 15.26,
+    "ctx": "objects+odom",
+    "band": 3.82,
+    "odom_window": [
+      57.12,
+      57.62
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_robotdist_t133.82_book",
+    "family": "robotdist",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, how far are you horizontally from the book, in meters? Answer with a single number.",
+    "a": 5.52,
+    "ctx": "objects+odom",
+    "band": 1.38,
+    "odom_window": [
+      133.32,
+      133.82
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_robotdist_t241.33_laptop",
+    "family": "robotdist",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the last odom observation shown. Based on the semantic object map, how far are you horizontally from the laptop, in meters? Answer with a single number.",
+    "a": 9.69,
+    "ctx": "objects+odom",
+    "band": 2.42,
+    "odom_window": [
+      240.83,
+      241.33
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_book_laptop",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the book and the laptop, in meters? Answer with a single number.",
+    "a": 15.13,
+    "ctx": "objects",
+    "band": 3.78,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_laptop_potted_plant",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the laptop and the potted plant, in meters? Answer with a single number.",
+    "a": 7.66,
+    "ctx": "objects",
+    "band": 1.91,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_potted_plant_book",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the potted plant and the book, in meters? Answer with a single number.",
+    "a": 13.32,
+    "ctx": "objects",
+    "band": 3.33,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_objdist_refrigerator_book",
+    "family": "objdist",
+    "type": "numeric",
+    "q": "Based on the semantic object map, how far apart horizontally are the refrigerator and the book, in meters? Answer with a single number.",
+    "a": 4.74,
+    "ctx": "objects",
+    "band": 1.18,
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_recall_all",
+    "family": "recall",
+    "type": "set",
+    "q": "List every distinct object class recorded in the robot's semantic object map. Answer with a comma-separated list of class names.",
+    "a": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "ctx": "objects",
+    "vocab": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv",
+      "backpack",
+      "cell phone",
+      "clock",
+      "couch",
+      "dining table",
+      "handbag",
+      "mouse",
+      "oven",
+      "remote",
+      "scissors",
+      "sink",
+      "toaster",
+      "umbrella",
+      "wine glass"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_recall_northwest",
+    "family": "recall",
+    "type": "set",
+    "q": "The map is divided into four zones at the point (x=-7.5, y=2.4), with +x east and +y north: the northwest area (x<-7.5, y>=2.4), northeast area (x>=-7.5, y>=2.4), southwest area (x<-7.5, y<2.4), and southeast area (x>=-7.5, y<2.4). List every distinct object class recorded in the northwest area. Answer with a comma-separated list of class names.",
+    "a": [
+      "bed",
+      "laptop"
+    ],
+    "ctx": "objects",
+    "vocab": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv",
+      "backpack",
+      "cell phone",
+      "clock",
+      "couch",
+      "dining table",
+      "handbag",
+      "mouse",
+      "oven",
+      "remote",
+      "scissors",
+      "sink",
+      "toaster",
+      "umbrella",
+      "wine glass"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_recall_northeast",
+    "family": "recall",
+    "type": "set",
+    "q": "The map is divided into four zones at the point (x=-7.5, y=2.4), with +x east and +y north: the northwest area (x<-7.5, y>=2.4), northeast area (x>=-7.5, y>=2.4), southwest area (x<-7.5, y<2.4), and southeast area (x>=-7.5, y<2.4). List every distinct object class recorded in the northeast area. Answer with a comma-separated list of class names.",
+    "a": [
+      "chair",
+      "potted plant",
+      "teddy bear",
+      "tv"
+    ],
+    "ctx": "objects",
+    "vocab": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv",
+      "backpack",
+      "cell phone",
+      "clock",
+      "couch",
+      "dining table",
+      "handbag",
+      "mouse",
+      "oven",
+      "remote",
+      "scissors",
+      "sink",
+      "toaster",
+      "umbrella",
+      "wine glass"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_within_bed_3m",
+    "family": "within",
+    "type": "set",
+    "q": "Based on the semantic object map, list every object class other than bed with at least one instance within 3 meters horizontally of the bed. Answer with a comma-separated list of class names.",
+    "a": [
+      "laptop"
+    ],
+    "ctx": "objects",
+    "vocab": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv",
+      "backpack",
+      "cell phone",
+      "clock",
+      "couch",
+      "dining table",
+      "handbag",
+      "mouse",
+      "oven",
+      "remote",
+      "scissors",
+      "sink",
+      "toaster",
+      "umbrella",
+      "wine glass"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_within_laptop_3m",
+    "family": "within",
+    "type": "set",
+    "q": "Based on the semantic object map, list every object class other than laptop with at least one instance within 3 meters horizontally of the laptop. Answer with a comma-separated list of class names.",
+    "a": [
+      "bed"
+    ],
+    "ctx": "objects",
+    "vocab": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv",
+      "backpack",
+      "cell phone",
+      "clock",
+      "couch",
+      "dining table",
+      "handbag",
+      "mouse",
+      "oven",
+      "remote",
+      "scissors",
+      "sink",
+      "toaster",
+      "umbrella",
+      "wine glass"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nextto_bed",
+    "family": "nextto",
+    "type": "mcq",
+    "q": "Based on the semantic object map, which object class is horizontally nearest to the bed (other than bed itself)? Answer with exactly one of: book, bottle, chair, cup, laptop, potted plant, refrigerator, teddy bear, tv.",
+    "a": "laptop",
+    "ctx": "objects",
+    "choices": [
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_nextto_laptop",
+    "family": "nextto",
+    "type": "mcq",
+    "q": "Based on the semantic object map, which object class is horizontally nearest to the laptop (other than laptop itself)? Answer with exactly one of: bed, book, bottle, chair, cup, potted plant, refrigerator, teddy bear, tv.",
+    "a": "bed",
+    "ctx": "objects",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "potted plant",
+      "refrigerator",
+      "teddy bear",
+      "tv"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_between_laptop_teddy_bear",
+    "family": "between",
+    "type": "mcq",
+    "q": "Based on the semantic object map, which single object class lies between the laptop and the teddy bear? Answer with exactly one of: bed, book, bottle, chair, cup, potted plant, refrigerator, tv.",
+    "a": "chair",
+    "ctx": "objects",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "potted plant",
+      "refrigerator",
+      "tv"
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "sm_between_potted_plant_teddy_bear",
+    "family": "between",
+    "type": "mcq",
+    "q": "Based on the semantic object map, which single object class lies between the potted plant and the teddy bear? Answer with exactly one of: bed, book, bottle, chair, cup, laptop, refrigerator, tv.",
+    "a": "chair",
+    "ctx": "objects",
+    "choices": [
+      "bed",
+      "book",
+      "bottle",
+      "chair",
+      "cup",
+      "laptop",
+      "refrigerator",
+      "tv"
+    ],
+    "dataset": "go2_bigoffice"
+  }
+]
