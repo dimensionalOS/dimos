@@ -167,7 +167,6 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
         model_path=Path("/tmp/fake.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         joint_names=["joint_a", "joint_b", "joint_c"],
@@ -210,119 +209,47 @@ class _FakeWorld:
         self.collision_free = collision_free
         self.joint_state_calls = 0
         self.groups = {
-            "arm/manipulator": PlanningGroup(
-                id="arm/manipulator",
-                robot_name="arm",
-                group_name="manipulator",
-                joint_names=("arm/joint_a", "arm/joint_b"),
-                local_joint_names=("joint_a", "joint_b"),
+            "manipulator": PlanningGroup(
+                id="manipulator",
+                joint_names=("joint_a", "joint_b"),
                 base_link="base",
                 tip_link="tool",
             ),
-            "arm/no_tip": PlanningGroup(
-                id="arm/no_tip",
-                robot_name="arm",
-                group_name="no_tip",
-                joint_names=("arm/joint_c",),
-                local_joint_names=("joint_c",),
+            "no_tip": PlanningGroup(
+                id="no_tip",
+                joint_names=("joint_c",),
                 base_link="base",
                 tip_link=None,
             ),
-            "arm/wrist": PlanningGroup(
-                id="arm/wrist",
-                robot_name="arm",
-                group_name="wrist",
-                joint_names=("arm/joint_c",),
-                local_joint_names=("joint_c",),
+            "wrist": PlanningGroup(
+                id="wrist",
+                joint_names=("joint_c",),
                 base_link="base",
                 tip_link="base",
             ),
         }
 
-    def get_robot_ids(self) -> list[str]:
-        return ["robot"]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+    def get_model_config(self) -> RobotModelConfig:
         return self.config
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
 
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
+    def get_joint_state(self, ctx: object) -> JointState:
         self.joint_state_calls += 1
         return JointState({"name": ["joint_b", "joint_c", "joint_a"], "position": [0.0, 0.0, 0.0]})
 
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
 
-    def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         return self.collision_free
 
-    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+    def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
         self.joint_state = joint_state
 
-    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+    def is_collision_free(self, ctx: object) -> bool:
         return self.collision_free
-
-
-class _MultiRobotCollisionWorld:
-    is_finalized = True
-
-    def __init__(self) -> None:
-        left_config = _robot_config()
-        left_config.name = "left"
-        right_config = _robot_config()
-        right_config.name = "right"
-        self.configs = {"left-id": left_config, "right-id": right_config}
-        self.groups = {
-            "left/manipulator": PlanningGroup(
-                id="left/manipulator",
-                robot_name="left",
-                group_name="manipulator",
-                joint_names=("left/joint_a", "left/joint_b"),
-                local_joint_names=("joint_a", "joint_b"),
-                base_link="base",
-                tip_link="tool",
-            ),
-            "right/manipulator": PlanningGroup(
-                id="right/manipulator",
-                robot_name="right",
-                group_name="manipulator",
-                joint_names=("right/joint_a", "right/joint_b"),
-                local_joint_names=("joint_a", "joint_b"),
-                base_link="base",
-                tip_link="tool",
-            ),
-        }
-        self.config_collision_checks = 0
-        self.context_collision_checks = 0
-        self.context_states: dict[str, JointState] = {}
-
-    def get_robot_ids(self) -> list[str]:
-        return ["left-id", "right-id"]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
-        return self.configs[robot_id]
-
-    def scratch_context(self) -> nullcontext[None]:
-        return nullcontext(None)
-
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
-        return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]})
-
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
-        return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
-
-    def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
-        self.config_collision_checks += 1
-        return True
-
-    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
-        self.context_states[robot_id] = joint_state
-
-    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
-        self.context_collision_checks += 1
-        return len(self.context_states) < 2
 
 
 def test_create_kinematics_pink_missing_dependency_is_actionable(
@@ -447,11 +374,10 @@ def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
 def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._robot_contexts = {("robot", "tool"): context}
+    ik._model_contexts = {"tool": context}
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
-        robot_id="robot",
         target_pose=PoseStamped(
             position=Vector3(0.1, 0.0, 0.0),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -467,7 +393,7 @@ def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
 def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._robot_contexts = {("robot", "tool"): context}
+    ik._model_contexts = {"tool": context}
     calls = 0
 
     def fake_solve_single(**_: object) -> IKResult:
@@ -494,7 +420,6 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=True)),
-        robot_id="robot",
         target_pose=PoseStamped(
             position=Vector3(0.1, 0.0, 0.0),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -518,11 +443,11 @@ def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_p
     world.config.model_path = model_path
     ik = PinkIK(PinkIKConfig(max_iterations=1))
 
-    first = ik._get_robot_context(cast("Any", world), "robot", "tool")
-    second = ik._get_robot_context(cast("Any", world), "robot", "base")
+    first = ik._get_model_context(cast("Any", world), "tool")
+    second = ik._get_model_context(cast("Any", world), "base")
 
     assert first is not second
-    assert set(ik._robot_contexts) == {("robot", "tool"), ("robot", "base")}
+    assert set(ik._model_contexts) == {"tool", "base"}
 
 
 def test_build_robot_context_rejects_base_link_not_model_root(
@@ -548,7 +473,7 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
 ) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    get_context = mocker.patch.object(ik, "_get_robot_context", return_value=context)
+    get_context = mocker.patch.object(ik, "_get_model_context", return_value=context)
     mocker.patch.object(
         ik,
         "_solve_single",
@@ -564,22 +489,20 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["arm/manipulator"]: PoseStamped(
+            world.groups["manipulator"]: PoseStamped(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             )
         },
-        seed=JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.0, 0.0, 0.0]}
-        ),
+        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]}),
         max_attempts=1,
     )
 
-    get_context.assert_called_once_with(cast("Any", world), "robot", "tool")
+    get_context.assert_called_once_with(cast("Any", world), "tool")
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
-    assert result.joint_state.name == ["arm/joint_a", "arm/joint_b"]
+    assert result.joint_state.name == ["joint_a", "joint_b"]
     assert result.joint_state.position == [0.1, 0.2]
-    assert world.joint_state_calls == 0
+    assert world.joint_state_calls == 1
 
 
 def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> None:
@@ -589,7 +512,7 @@ def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> 
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["arm/no_tip"]: PoseStamped(
+            world.groups["no_tip"]: PoseStamped(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             )
         },
@@ -601,7 +524,7 @@ def test_solve_pose_targets_rejects_group_without_tip(mocker: MockerFixture) -> 
 
 def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker)
-    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    mocker.patch.object(ik, "_get_model_context", return_value=_context())
     mocker.patch.object(
         ik,
         "_solve_single",
@@ -617,11 +540,11 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["arm/manipulator"]: PoseStamped(
+            world.groups["manipulator"]: PoseStamped(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             )
         },
-        seed=JointState({"name": ["arm/joint_a"], "position": [0.0]}),
+        seed=JointState({"name": ["joint_a"], "position": [0.0]}),
         max_attempts=1,
     )
 
@@ -632,7 +555,7 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
 def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker)
     world = _FakeWorld()
-    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    mocker.patch.object(ik, "_get_model_context", return_value=_context())
     solve_multi = mocker.patch.object(
         ik,
         "_solve_multi",
@@ -649,82 +572,22 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={
-            world.groups["arm/manipulator"]: PoseStamped(
+            world.groups["manipulator"]: PoseStamped(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             ),
-            world.groups["arm/wrist"]: PoseStamped(
+            world.groups["wrist"]: PoseStamped(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             ),
         },
-        seed=JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.0, 0.0, 0.0]}
-        ),
+        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]}),
         max_attempts=1,
     )
 
     solve_multi.assert_called_once()
     assert len(solve_multi.call_args.kwargs["targets"]) == 2
     assert result.joint_state is not None
-    assert result.joint_state.name == ["arm/joint_a", "arm/joint_b", "arm/joint_c"]
+    assert result.joint_state.name == ["joint_a", "joint_b", "joint_c"]
     assert result.joint_state.position == [0.1, 0.2, 0.3]
-
-
-def test_solve_pose_targets_checks_multi_robot_solution_together(
-    mocker: MockerFixture,
-) -> None:
-    ik = _pink_ik(mocker)
-    world = _MultiRobotCollisionWorld()
-    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
-    solve_single = mocker.patch.object(
-        ik,
-        "_solve_single",
-        side_effect=[
-            IKResult(
-                status=IKStatus.SUCCESS,
-                joint_state=JointState(
-                    {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
-                ),
-            ),
-            IKResult(
-                status=IKStatus.SUCCESS,
-                joint_state=JointState(
-                    {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.4, 0.5, 0.6]}
-                ),
-            ),
-        ],
-    )
-
-    result = ik.solve_pose_targets(
-        world=cast("Any", world),
-        pose_targets={
-            world.groups["left/manipulator"]: PoseStamped(
-                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
-            ),
-            world.groups["right/manipulator"]: PoseStamped(
-                position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
-            ),
-        },
-        seed=JointState(
-            {
-                "name": [
-                    "left/joint_a",
-                    "left/joint_b",
-                    "left/joint_c",
-                    "right/joint_a",
-                    "right/joint_b",
-                    "right/joint_c",
-                ],
-                "position": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            }
-        ),
-        max_attempts=1,
-    )
-
-    assert solve_single.call_count == 2
-    assert result.status == IKStatus.COLLISION
-    assert world.config_collision_checks == 0
-    assert world.context_collision_checks == 1
-    assert set(world.context_states) == {"left-id", "right-id"}
 
 
 def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
@@ -736,14 +599,12 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
     result = ik.solve_pose_targets(
         world=cast("Any", world),
         pose_targets={},
-        auxiliary_groups=[world.groups["arm/no_tip"], world.groups["arm/manipulator"]],
-        seed=JointState(
-            {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.1, 0.2, 0.3]}
-        ),
+        auxiliary_groups=[world.groups["no_tip"], world.groups["manipulator"]],
+        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}),
     )
 
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
-    assert result.joint_state.name == ["arm/joint_c", "arm/joint_a", "arm/joint_b"]
+    assert result.joint_state.name == ["joint_c", "joint_a", "joint_b"]
     assert result.joint_state.position == [0.3, 0.1, 0.2]
-    assert world.joint_state_calls == 0
+    assert world.joint_state_calls == 1

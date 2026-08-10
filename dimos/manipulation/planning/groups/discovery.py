@@ -35,7 +35,6 @@ class PlanningGroupDiscoveryError(ValueError):
 
 def discover_planning_group_definitions(
     *,
-    robot_name: str,
     model_path: Path,
     model: ModelDescription,
     controllable_joint_names: list[str],
@@ -57,7 +56,7 @@ def discover_planning_group_definitions(
             return groups
         logger.warning(
             f"No supported planning groups found in SRDF {resolved_srdf_path} "
-            f"for robot {robot_name}; trying fallback generation"
+            "for the configured model; trying fallback generation"
         )
 
     return [

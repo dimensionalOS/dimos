@@ -79,20 +79,18 @@ def openarm_hardware(
     )
 
 
-def openarm_model_config(side: str, name: str | None = None) -> RobotModelConfig:
+def openarm_model_config(side: str) -> RobotModelConfig:
     validate_side(side)
-    resolved_name = name or f"{side}_arm"
-    local_joint_names = openarm_joints(side)
+    model_joint_names = openarm_joints(side)
     return RobotModelConfig(
-        name=resolved_name,
         model_path=OPENARM_LEFT_MODEL if side == "left" else OPENARM_RIGHT_MODEL,
         base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=model_joint_names,
         base_link="openarm_body_link0",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
+                joint_names=tuple(model_joint_names),
                 base_link="openarm_body_link0",
                 tip_link=f"openarm_{side}_link7",
             )
@@ -113,24 +111,22 @@ def openarm_single_hardware(
 ) -> HardwareComponent:
     return openarm_hardware(
         "left",
-        name="arm",
         adapter_type=adapter_type,
         address=address,
     )
 
 
 def openarm_single_model_config() -> RobotModelConfig:
-    local_joint_names = openarm_joints("left")
+    model_joint_names = openarm_joints("left")
     return RobotModelConfig(
-        name="arm",
         model_path=OPENARM_V10_FK_MODEL,
         base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=model_joint_names,
         base_link="openarm_body_link0",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
+                joint_names=tuple(model_joint_names),
                 base_link="openarm_body_link0",
                 tip_link="openarm_left_link7",
             )
@@ -140,4 +136,41 @@ def openarm_single_model_config() -> RobotModelConfig:
         max_velocity=0.5,
         max_acceleration=1.0,
         home_joints=[0.0] * 7,
+    )
+
+
+def openarm_dual_model_config() -> RobotModelConfig:
+    """Return the canonical two-arm OpenArm model and its planning groups."""
+    left_joints = openarm_joints("left")
+    right_joints = openarm_joints("right")
+    all_joints = [*left_joints, *right_joints]
+    return RobotModelConfig(
+        model_path=OPENARM_V10_FK_MODEL,
+        base_pose=base_pose(),
+        joint_names=all_joints,
+        base_link="openarm_body_link0",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=tuple(left_joints),
+                base_link="openarm_body_link0",
+                tip_link="openarm_left_link7",
+            ),
+            PlanningGroupDefinition(
+                name="right_arm",
+                joint_names=tuple(right_joints),
+                base_link="openarm_body_link0",
+                tip_link="openarm_right_link7",
+            ),
+            PlanningGroupDefinition(
+                name="both_arms",
+                joint_names=tuple(all_joints),
+                base_link="openarm_body_link0",
+            ),
+        ],
+        package_paths=OPENARM_PACKAGE_PATHS,
+        auto_convert_meshes=True,
+        max_velocity=0.5,
+        max_acceleration=1.0,
+        home_joints=[0.0] * 14,
     )

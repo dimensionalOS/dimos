@@ -68,7 +68,7 @@ keyboard_teleop_piper = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_piper_model],
+        model=_piper_model,
         visualization={"backend": "viser"},
     ),
 )
@@ -111,7 +111,7 @@ coordinator_teleop_piper = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_piper_model],
+        model=_piper_model,
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),

@@ -44,7 +44,7 @@ keyboard_teleop_a750 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a750_model],
+        model=_a750_model,
         visualization={"backend": "meshcat"},
     ),
 )

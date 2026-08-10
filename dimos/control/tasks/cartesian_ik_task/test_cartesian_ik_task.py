@@ -40,7 +40,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 def _robot(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        name="tiny",
         model_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1"],

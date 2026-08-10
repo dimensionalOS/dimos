@@ -42,7 +42,7 @@ keyboard_teleop_openarm_mock = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openarm_model],
+        model=_openarm_model,
         visualization={"backend": "meshcat"},
     ),
 )
@@ -61,7 +61,7 @@ keyboard_teleop_openarm = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openarm_model],
+        model=_openarm_model,
         visualization={"backend": "meshcat"},
     ),
 )

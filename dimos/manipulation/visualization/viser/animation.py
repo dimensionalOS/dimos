@@ -21,26 +21,18 @@ from itertools import pairwise
 
 @dataclass(frozen=True)
 class PreviewFrame:
-    """One timestamped local robot preview frame."""
+    """One timestamped model preview frame."""
 
     time_from_start: float
     positions: tuple[float, ...]
 
 
 @dataclass(frozen=True)
-class PreviewTrack:
-    """One fixed-baseline local robot track in a group-native preview."""
+class PreviewAnimation:
+    """One fixed-baseline canonical model preview."""
 
-    robot_id: str
     joint_names: tuple[str, ...]
     frames: tuple[PreviewFrame, ...]
-
-
-@dataclass(frozen=True)
-class GroupPreviewAnimation:
-    """Validated collection of robot tracks sharing one preview transaction."""
-
-    tracks: tuple[PreviewTrack, ...]
 
 
 def scaled_frame_delays(frames: Sequence[PreviewFrame], duration: float) -> tuple[float, ...]:
@@ -55,8 +47,6 @@ def scaled_frame_delays(frames: Sequence[PreviewFrame], duration: float) -> tupl
     )
 
 
-def preview_tick_times(preview: GroupPreviewAnimation) -> tuple[float, ...]:
-    """Union all stored track timestamps without synthesizing extra samples."""
-    return tuple(
-        sorted({float(frame.time_from_start) for track in preview.tracks for frame in track.frames})
-    )
+def preview_tick_times(preview: PreviewAnimation) -> tuple[float, ...]:
+    """Return stored preview timestamps without synthesizing extra samples."""
+    return tuple(float(frame.time_from_start) for frame in preview.frames)

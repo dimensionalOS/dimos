@@ -207,7 +207,7 @@ class _PinkControlIKBuilder:
         if len(tip_links) != 1:
             raise ValueError(
                 f"Pink control requires exactly one pose-targetable planning group; "
-                f"robot '{robot.name}' has {len(tip_links)}"
+                f"model has {len(tip_links)}"
             )
         return tip_links[0]
 
@@ -216,7 +216,7 @@ class _PinkControlIKBuilder:
         model: pinocchio.Model,
         robot: RobotModelConfig,
     ) -> _CoordinateMapping:
-        joint_names = tuple(robot.get_coordinator_joint_names())
+        joint_names = tuple(robot.joint_names)
         if not joint_names or len(set(joint_names)) != len(joint_names):
             raise ValueError("control task joints must be unique and non-empty")
 
@@ -224,15 +224,15 @@ class _PinkControlIKBuilder:
         v_indices: list[int] = []
         q_widths: list[int] = []
         joint_ids: set[int] = set()
-        for urdf_name in (robot.get_urdf_joint_name(name) for name in joint_names):
-            if not model.existJointName(urdf_name):
-                raise ValueError(f"control joint mapping references unknown joint: {urdf_name}")
-            joint_id = int(model.getJointId(urdf_name))
+        for joint_name in joint_names:
+            if not model.existJointName(joint_name):
+                raise ValueError(f"control model references unknown joint: {joint_name}")
+            joint_id = int(model.getJointId(joint_name))
             if joint_id <= 0 or joint_id >= len(model.joints):
-                raise ValueError(f"invalid control joint index for {urdf_name}")
+                raise ValueError(f"invalid control joint index for {joint_name}")
             joint = model.joints[joint_id]
             if int(joint.nv) != 1 or int(joint.nq) not in (1, 2):
-                raise ValueError(f"control joint must be one-DoF: {urdf_name}")
+                raise ValueError(f"control joint must be one-DoF: {joint_name}")
             q_indices.append(int(joint.idx_q))
             v_indices.append(int(joint.idx_v))
             q_widths.append(int(joint.nq))

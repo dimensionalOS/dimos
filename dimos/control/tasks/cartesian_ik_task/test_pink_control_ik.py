@@ -84,7 +84,6 @@ def _robot(
     joint_names = joints or ["joint1", "joint2"]
     joint_count = len(joint_names)
     return RobotModelConfig(
-        name="tiny",
         model_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joint_names,
@@ -184,7 +183,7 @@ def test_pink_prepares_xacro_with_package_paths_and_arguments(
     }
 
 
-def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> None:
+def test_pink_validates_named_frame_and_exact_model_joints(tmp_path: Path) -> None:
     model_path = _write_urdf(tmp_path)
 
     with pytest.raises(ValueError, match="end-effector frame"):
@@ -192,9 +191,7 @@ def test_pink_validates_named_frame_and_exact_joint_mapping(tmp_path: Path) -> N
             PinkControlIKConfig(robot_model=_robot(model_path, frame="missing")),
         )
 
-    mismatched = _robot(model_path).model_copy(
-        update={"joint_name_mapping": {"joint1": "missing", "joint2": "joint2"}}
-    )
+    mismatched = _robot(model_path).model_copy(update={"joint_names": ["missing", "joint2"]})
     with pytest.raises(ValueError, match="unknown joint"):
         create_pink_control_ik(
             PinkControlIKConfig(robot_model=mismatched),

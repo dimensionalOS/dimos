@@ -27,7 +27,7 @@ from dimos.robot.manipulators.openyam.config import (
 _openyam_planner_hw = make_openyam_hardware("arm")
 
 openyam_planner_coordinator = autoconnect(
-    planner(robots=[make_openyam_model_config(name="arm")]),
+    planner(model=make_openyam_model_config()),
     coordinator(
         hardware=[_openyam_planner_hw],
         tasks=[trajectory_task(_openyam_planner_hw)],

@@ -61,7 +61,6 @@ def _write_slash_model(path: Path) -> None:
 
 def _config(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        name="robot",
         model_path=path,
         joint_names=["left/j1", "right/j1"],
         base_link="world",

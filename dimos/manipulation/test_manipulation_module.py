@@ -67,7 +67,6 @@ def _get_xarm7_config() -> RobotModelConfig:
     """Create XArm7 robot config for testing."""
     desc_path = get_data("xarm_description")
     return RobotModelConfig(
-        name="test_arm",
         model_path=desc_path / "urdf/xarm_device.urdf.xacro",
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
@@ -85,15 +84,6 @@ def _get_xarm7_config() -> RobotModelConfig:
         auto_convert_meshes=True,
         max_velocity=1.0,
         max_acceleration=2.0,
-        joint_name_mapping={
-            "arm/joint1": "joint1",
-            "arm/joint2": "joint2",
-            "arm/joint3": "joint3",
-            "arm/joint4": "joint4",
-            "arm/joint5": "joint5",
-            "arm/joint6": "joint6",
-            "arm/joint7": "joint7",
-        },
     )
 
 
@@ -107,13 +97,13 @@ def joint_state_zeros():
     """Create a JointState message with zeros for XArm7."""
     return JointState(
         name=[
-            "arm/joint1",
-            "arm/joint2",
-            "arm/joint3",
-            "arm/joint4",
-            "arm/joint5",
-            "arm/joint6",
-            "arm/joint7",
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "joint7",
         ],
         position=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         velocity=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -132,7 +122,7 @@ def module(xarm7_config):
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
     mod = ManipulationModule(
-        robots=[xarm7_config],
+        model=xarm7_config,
         planning_timeout=10.0,
         world_backend="drake",
         planner=RRTConnectPlannerConfig(),
@@ -157,7 +147,7 @@ class TestManipulationModuleIntegration:
         assert module._world_monitor is not None
         assert module._planner is not None
         assert module._kinematics is not None
-        assert "test_arm" in module._robots
+        assert module.get_model_config() == module.config.model
 
     def test_joint_state_sync(self, module, joint_state_zeros):
         """Test joint state synchronization to Drake world."""
@@ -189,20 +179,18 @@ class TestManipulationModuleIntegration:
         assert module._last_plan is not None
         assert len(module._last_plan.trajectory.points) > 1
         assert module._last_plan.trajectory.duration > 0
-        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+        assert module._last_plan.group_ids == ("manipulator",)
 
     def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):
         """Test planning to an explicit planning-group joint target."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joint_targets(
-            {"test_arm/manipulator": JointState(position=[0.05] * 7)}
-        )
+        success = module.plan_to_joint_targets({"manipulator": JointState(position=[0.05] * 7)})
 
         assert success is True
         assert module._state == ManipulationState.COMPLETED
         assert module._last_plan is not None
-        assert module._last_plan.group_ids == ("test_arm/manipulator",)
+        assert module._last_plan.group_ids == ("manipulator",)
         assert module.has_planned_path() is True
         assert module._last_plan.trajectory.points
 
@@ -222,21 +210,18 @@ class TestManipulationModuleIntegration:
         removed = module.remove_obstacle(obstacle_id)
         assert removed is True
 
-    def test_robot_info(self, module):
-        """Test getting robot information."""
-        info = module.get_robot_info()
+    def test_model_info(self, module):
+        """Test getting model information."""
+        info = module.get_model_info()
 
-        assert info is not None
-        assert info["name"] == "test_arm"
         assert len(info["joint_names"]) == 7
         assert info["end_effector_link"] == "link7"
-        assert info["has_joint_name_mapping"] is True
         groups = info["planning_groups"]
         assert len(groups) == 1
-        assert groups[0].id == "test_arm/manipulator"
+        assert groups[0].id == "manipulator"
 
         all_groups = module.list_planning_groups()
-        assert [group.id for group in all_groups] == ["test_arm/manipulator"]
+        assert [group.id for group in all_groups] == ["manipulator"]
 
     def test_ee_pose(self, module, joint_state_zeros):
         """Test getting end-effector pose."""
@@ -249,19 +234,18 @@ class TestManipulationModuleIntegration:
         assert hasattr(pose, "y")
         assert hasattr(pose, "z")
 
-    def test_trajectory_name_translation(self, module, joint_state_zeros):
-        """Test that trajectory joint names are translated for coordinator."""
+    def test_trajectory_uses_canonical_names(self, module, joint_state_zeros):
+        """Test that execution preserves canonical model joint names."""
         module._on_joint_state(joint_state_zeros)
 
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
         assert module._last_plan is not None
-        robot_config = module._robots["test_arm"][1]
         assert module.execute() is True
         trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
-        assert trajectory.joint_names == list(robot_config.joint_name_mapping.keys())
+        assert trajectory.joint_names == module.config.model.joint_names
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -286,9 +270,7 @@ class TestCoordinatorIntegration:
         trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
         assert len(trajectory.points) > 1
-        # Joint names should be translated
-        robot_config = module._robots["test_arm"][1]
-        assert trajectory.joint_names == list(robot_config.joint_name_mapping.keys())
+        assert trajectory.joint_names == module.config.model.joint_names
 
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""

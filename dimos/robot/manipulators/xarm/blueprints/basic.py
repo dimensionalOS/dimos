@@ -23,22 +23,24 @@ from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
-    make_xarm6_model_config,
+    make_dual_xarm6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
 
-_mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
-_mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
+_dual_xarm6_model = make_dual_xarm6_model_config()
+_mock_left_xarm6_hw = make_xarm_hardware(
+    "left_arm", 6, canonical_joint_names=list(_dual_xarm6_model.planning_groups[0].joint_names)
+)
+_mock_right_xarm6_hw = make_xarm_hardware(
+    "right_arm", 6, canonical_joint_names=list(_dual_xarm6_model.planning_groups[1].joint_names)
+)
 
 dual_xarm6_planner_coordinator = autoconnect(
     planner(
-        robots=[
-            make_xarm6_model_config(name="left_arm", y_offset=0.5),
-            make_xarm6_model_config(name="right_arm", y_offset=-0.5),
-        ],
+        model=_dual_xarm6_model,
         visualization={"backend": "viser"},
     ),
     coordinator(
@@ -50,7 +52,7 @@ dual_xarm6_planner_coordinator = autoconnect(
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
 
 xarm7_planner_coordinator = autoconnect(
-    planner(robots=[make_xarm7_model_config(name="arm", add_gripper=True)]),
+    planner(model=make_xarm7_model_config(add_gripper=True)),
     coordinator(
         hardware=[_xarm7_hw],
         tasks=[trajectory_task(_xarm7_hw)],
@@ -77,8 +79,12 @@ coordinator_xarm6 = autoconnect(
     *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
 )
 
-_xarm7_left = xarm7_hardware("left_arm")
-_xarm6_right = xarm6_hardware("right_arm")
+_xarm7_left = xarm7_hardware(
+    "left_arm", canonical_joint_names=[f"left_arm/joint{i}" for i in range(1, 8)]
+)
+_xarm6_right = xarm6_hardware(
+    "right_arm", canonical_joint_names=[f"right_arm/joint{i}" for i in range(1, 7)]
+)
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],

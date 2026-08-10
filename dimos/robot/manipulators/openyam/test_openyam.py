@@ -38,13 +38,10 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     return _module_kwargs(blueprint, ControlCoordinator)
 
 
-def test_openyam_model_config_has_expected_links_and_mapping() -> None:
-    config = make_openyam_model_config(name="arm")
+def test_openyam_model_config_has_expected_links_and_canonical_joints() -> None:
+    config = make_openyam_model_config()
 
     assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.joint_name_mapping == {
-        f"arm/joint{i}": f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)
-    }
     assert config.base_link == "yam_base_link"
     assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
@@ -55,7 +52,7 @@ def test_openyam_mock_hardware_has_gripper() -> None:
     hardware = make_openyam_hardware("arm")
 
     assert hardware.adapter_type == "mock"
-    assert hardware.joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert hardware.joints == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert hardware.gripper_joints == ["arm/gripper"]
 
 
@@ -74,15 +71,14 @@ def test_openyam_mock_adapter_set_get_behavior() -> None:
 def test_openyam_planner_blueprint_preserves_model_config() -> None:
     blueprint = openyam_planner_coordinator
     kwargs = _module_kwargs(blueprint, ManipulationModule)
-    config = ManipulationModuleConfig(**kwargs).robots[0]
+    config = ManipulationModuleConfig(**kwargs).model
 
-    assert config.name == "arm"
     assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
     assert config.planning_groups[0].tip_link == "yam_hand_tcp"
     assert config.gripper_hardware_id == "arm"
     task = _coordinator_kwargs(blueprint)["tasks"][0]
     assert task.type == "trajectory"
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert task.joint_names == config.joint_names
 
 
 def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:

@@ -27,18 +27,18 @@ The numbered sections are review and merge units. PR4a–PR4c may proceed in par
 
 ## 2. PR2 — Single-Robot Manipulation Cutover
 
-- [ ] 2.1 Change manipulation configuration from a robot list/registry to exactly one prepared model configuration.
-- [ ] 2.2 Remove `RobotName`, `WorldRobotID`, public robot selectors, and manipulation robot lookup/list APIs.
-- [ ] 2.3 Remove local/global joint-name types, robot-prefix parse/make helpers, and mapping inversion from planning and execution.
-- [ ] 2.4 Change world state, collision, FK, and model access APIs to operate on the one logical model without a robot-ID parameter.
-- [ ] 2.5 Change planning-group selection to select canonical joint subsets and group-specific frames without robot membership.
-- [ ] 2.6 Simplify Pink and other multi-target solvers to solve several groups within one model rather than grouping by robot.
-- [ ] 2.7 Replace per-robot initialization state, trajectory splitting, and execution targets with one canonical joint-state and trajectory flow.
-- [ ] 2.8 Replace visualization and world-monitor maps keyed by robot ID with one logical model state.
-- [ ] 2.9 Remove robot selectors from semantic manipulation RPCs, DimOS `Spec` Protocols, skills, MCP schemas, and callers.
-- [ ] 2.10 Convert the dual-xArm mock and authored bimanual blueprints to the static prepared model and planning groups.
-- [ ] 2.11 Delete obsolete multi-robot code paths and compatibility properties exposed by the migrated manipulation surfaces.
-- [ ] 2.12 Run focused manipulation, planning, collision, FK, execution, visualization, skill-schema, and blueprint-build tests.
+- [x] 2.1 Change manipulation configuration from a robot list/registry to exactly one prepared model configuration.
+- [x] 2.2 Remove `RobotName`, `WorldRobotID`, public robot selectors, and manipulation robot lookup/list APIs.
+- [x] 2.3 Remove local/global joint-name types, robot-prefix parse/make helpers, and mapping inversion from planning and execution.
+- [x] 2.4 Change world state, collision, FK, and model access APIs to operate on the one logical model without a robot-ID parameter.
+- [x] 2.5 Change planning-group selection to select canonical joint subsets and group-specific frames without robot membership.
+- [x] 2.6 Simplify Pink and other multi-target solvers to solve several groups within one model rather than grouping by robot.
+- [x] 2.7 Replace per-robot initialization state, trajectory splitting, and execution targets with one canonical joint-state and trajectory flow.
+- [x] 2.8 Replace visualization and world-monitor maps keyed by robot ID with one logical model state.
+- [x] 2.9 Remove robot selectors from semantic manipulation RPCs, DimOS `Spec` Protocols, skills, MCP schemas, and callers.
+- [x] 2.10 Convert the dual-xArm mock and authored bimanual blueprints to the static prepared model and planning groups.
+- [x] 2.11 Delete obsolete multi-robot code paths and compatibility properties exposed by the migrated manipulation surfaces.
+- [x] 2.12 Run focused manipulation, planning, collision, FK, execution, visualization, skill-schema, and blueprint-build tests.
 
 ## 3. PR3 — Scalar Control and Lifecycle Contracts
 

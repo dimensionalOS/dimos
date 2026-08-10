@@ -19,13 +19,12 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -70,7 +69,7 @@ def make_a750_hardware(
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    joints = make_joints(hw_id, 6)
+    joints = joint_names(6)
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -96,23 +95,18 @@ def a750_hardware(hw_id: str = "arm", *, mock_without_address: bool = False) -> 
     )
 
 
-def make_a750_model_config(
-    name: str = "arm",
-    *,
-    joint_prefix: str | None = None,
-) -> RobotModelConfig:
+def make_a750_model_config() -> RobotModelConfig:
     dof = 6
-    local_joint_names = joint_names(dof)
+    model_joint_names = joint_names(dof)
     return RobotModelConfig(
-        name=name,
         model_path=A750_MODEL_PATH,
         base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
+                joint_names=tuple(model_joint_names),
                 base_link="base_link",
                 tip_link="gripper_base",
             )
@@ -120,11 +114,6 @@ def make_a750_model_config(
         package_paths=A750_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
-        gripper_hardware_id=name,
+        gripper_hardware_id="arm",
         home_joints=A750_HOME_JOINTS,
     )

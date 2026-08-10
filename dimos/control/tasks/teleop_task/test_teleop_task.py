@@ -72,7 +72,6 @@ class _FakePinkIK:
 
 def _robot(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
         model_path=path,
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=["joint1", "joint2"],
@@ -84,7 +83,6 @@ def _robot(path: Path) -> RobotModelConfig:
                 tip_link="tool",
             )
         ],
-        joint_name_mapping={"arm/joint1": "joint1", "arm/joint2": "joint2"},
         home_joints=[0.0, 0.0],
     )
 
@@ -102,7 +100,7 @@ def _state(
     return CoordinatorState(
         joints=JointStateSnapshot(
             joint_positions={
-                f"arm/joint{index + 1}": position for index, position in enumerate(positions)
+                f"joint{index + 1}": position for index, position in enumerate(positions)
             }
         ),
         t_now=t_now,
@@ -146,7 +144,7 @@ def task(tmp_path: Path, fake_ik: _FakePinkIK) -> TeleopIKTask:
     return TeleopIKTask(
         "teleop_arm",
         TeleopIKTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2"],
+            joint_names=["joint1", "joint2"],
             control_ik=_pink_config(tmp_path / "unused.urdf"),
             hand="right",
             min_dt=0.02,
@@ -161,7 +159,7 @@ def gripper_task(tmp_path: Path, fake_ik: _FakePinkIK) -> TeleopIKTask:
     return TeleopIKTask(
         "teleop_arm",
         TeleopIKTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2"],
+            joint_names=["joint1", "joint2"],
             control_ik=_pink_config(tmp_path / "unused.urdf"),
             hand="right",
             gripper_joint="arm/gripper",
@@ -263,9 +261,9 @@ def test_gripper_claim_interpolation_and_hold_output(
 
     output = gripper_task.compute(_state(1.01, (0.4, 0.5)))
 
-    assert gripper_task.claim().joints == frozenset({"arm/joint1", "arm/joint2", "arm/gripper"})
+    assert gripper_task.claim().joints == frozenset({"joint1", "joint2", "arm/gripper"})
     assert output is not None
-    assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/gripper"]
+    assert output.joint_names == ["joint1", "joint2", "arm/gripper"]
     assert output.positions == pytest.approx([0.4, 0.5, 0.6])
 
 
@@ -279,11 +277,11 @@ def test_pose_is_rejected_before_engage_and_after_release(task: TeleopIKTask) ->
     assert not task.on_cartesian_command(_delta(), 2.3)
 
 
-def test_factory_requires_pink_configuration_and_matching_model(tmp_path: Path) -> None:
+def test_factory_requires_pink_configuration_and_matching_model_dof(tmp_path: Path) -> None:
     legacy = TaskConfig(
         name="teleop",
         type="teleop_ik",
-        joint_names=["arm/joint1", "arm/joint2"],
+        joint_names=["joint1", "joint2"],
         params={"model_path": "legacy.xml", "ee_joint_id": 2, "hand": "right"},
     )
     with pytest.raises(ValueError, match="control_ik"):
@@ -292,11 +290,11 @@ def test_factory_requires_pink_configuration_and_matching_model(tmp_path: Path) 
     mismatched = TaskConfig(
         name="teleop",
         type="teleop_ik",
-        joint_names=["wrong/joint1", "wrong/joint2"],
+        joint_names=["joint1"],
         params={
             "control_ik": {"robot_model": _robot(tmp_path / "unused.urdf")},
             "hand": "right",
         },
     )
-    with pytest.raises(ValueError, match="task joints must match"):
+    with pytest.raises(ValueError, match="joint counts must match"):
         create_task(mismatched, {})

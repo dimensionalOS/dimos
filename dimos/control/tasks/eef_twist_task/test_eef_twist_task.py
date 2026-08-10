@@ -81,7 +81,6 @@ def fake_ik(mocker) -> FakeIK:
 def _fake_robot_model() -> RobotModelConfig:
     local_joints = ["joint1", "joint2", "joint3"]
     return RobotModelConfig(
-        name="fake",
         model_path="fake.urdf",
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=local_joints,
@@ -93,10 +92,6 @@ def _fake_robot_model() -> RobotModelConfig:
                 tip_link="tool",
             )
         ],
-        joint_name_mapping={
-            f"arm/joint{index}": joint_name
-            for index, joint_name in enumerate(local_joints, start=1)
-        },
         home_joints=[0.0, 0.0, 0.0],
     )
 
@@ -106,7 +101,7 @@ def task(fake_ik: FakeIK) -> EEFTwistTask:
     return EEFTwistTask(
         "eef",
         EEFTwistTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            joint_names=["joint1", "joint2", "joint3"],
             control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
             timeout=0.3,
             max_joint_delta_deg=15.0,
@@ -122,7 +117,7 @@ def _state(
     values = [0.0, 0.0, 0.0] if positions is None else positions
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={f"arm/joint{i + 1}": value for i, value in enumerate(values)},
+            joint_positions={f"joint{i + 1}": value for i, value in enumerate(values)},
         ),
         t_now=t_now,
         dt=dt,
@@ -143,7 +138,7 @@ def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_positio
 
     assert output is not None
     assert output.mode == ControlMode.SERVO_POSITION
-    assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/joint3"]
+    assert output.joint_names == ["joint1", "joint2", "joint3"]
     assert output.positions == [0.01, 0.02, 0.03]
     assert fake_ik.solve_calls[0].translation[0] > 0.0
 
@@ -264,7 +259,7 @@ def test_preemption_discards_last_commanded_solve_seed(task: EEFTwistTask, fake_
     assert task.on_ee_twist_command(_twist(), t_now=1.0)
     assert task.compute(_state(1.01)) is not None
 
-    task.on_preempted("higher_priority", frozenset(["arm/joint1"]))
+    task.on_preempted("higher_priority", frozenset(["joint1"]))
     output = task.compute(_state(1.02, positions=[0.5, 0.0, 0.0]))
 
     assert output is not None
@@ -277,7 +272,7 @@ def gripper_task(fake_ik: FakeIK) -> EEFTwistTask:
     return EEFTwistTask(
         "eef",
         EEFTwistTaskConfig(
-            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            joint_names=["joint1", "joint2", "joint3"],
             control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
             timeout=0.0,
             max_joint_delta_deg=15.0,
