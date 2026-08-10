@@ -69,7 +69,15 @@ _ARM_IK_PARAMS = {
 }
 _ARM_CONTROL_IK = {
     "max_velocity": 2.0,
-    "orientation_cost": 1.0,
+    # Softened from 1.0 per the upstream Pink tuning guidance: a stiff
+    # orientation objective makes translation stiff or unreachable near
+    # awkward poses. Kept above the guidance floor because the 0.17 m
+    # grasp-center lever otherwise lets the wrist swing the tool.
+    "orientation_cost": 0.5,
+    # The joint-centering task targets joint-range centers — for these
+    # arms that is the raised-elbow guard pose — so a stronger weight is
+    # a standing null-space bias away from wraps and limit corners.
+    "joint_centering_cost": 1e-2,
     "seed_limit_tolerance": 0.05,
 }
 

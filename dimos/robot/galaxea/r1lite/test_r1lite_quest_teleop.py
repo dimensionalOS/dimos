@@ -259,7 +259,8 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             # The controlled point is the grasp-center URDF frame
             # (formerly the task-level tool_offset_m).
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
-            assert control_ik["orientation_cost"] == 1.0
+            assert control_ik["orientation_cost"] == 0.5
+            assert control_ik["joint_centering_cost"] == 1e-2
             assert control_ik["max_velocity"] == 2.0
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.
