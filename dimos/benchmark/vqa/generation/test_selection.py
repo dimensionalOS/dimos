@@ -1,6 +1,6 @@
 # Copyright 2026 Dimensional Inc.
 
-from dimos.benchmark.vqa.generation.selection import select_nearest_object
+from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import GroundedObject
 
 

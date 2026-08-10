@@ -17,6 +17,7 @@ from dimos.benchmark.vqa.generation.dataset import write_dataset_manifest, write
 from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
 from dimos.benchmark.vqa.generation.oracle import create_openai_oracle
 from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.question_agent import (
     OpenAIFreeformQuestionAuthor,
     OpenAIQuestionAgent,
@@ -77,7 +78,8 @@ def single_frame(
             else question_agent.propose(frame.image)
         )
         typer.echo(f"Grounding {len(intents)} questions for frame {frame_index}")
-        ground_truth = VqaGroundTruthGenerator(
+        primitives = FramePerceptionPrimitives(
+            frame,
             detector := MoondreamObjectDetector(model),
             segmenter := EdgeTamObjectSegmenter(EdgeTAMImageSegmenter()),
             localizer=detector,
@@ -87,6 +89,7 @@ def single_frame(
                 min_foreground_points=min_foreground_points,
             ),
         )
+        ground_truth = VqaGroundTruthGenerator(primitives)
         results: list[GroundTruthResult] | list[AcceptedOracleResult | RejectedOracleResult] = (
             _answer_agentic(ground_truth, frame, cast("list[QuestionProposal]", intents))
             if question_mode == "agentic"
@@ -172,7 +175,8 @@ def generate(
                 else question_agent.propose(frame.image)
             )
             typer.echo(f"Frame {frame_index}: grounding {len(intents)} questions")
-            ground_truth = VqaGroundTruthGenerator(
+            primitives = FramePerceptionPrimitives(
+                frame,
                 detector,
                 segmenter,
                 localizer=detector,
@@ -181,6 +185,7 @@ def generate(
                     min_mask_area_px=min_mask_area_px, min_foreground_points=min_foreground_points
                 ),
             )
+            ground_truth = VqaGroundTruthGenerator(primitives)
             results: list[GroundTruthResult] | list[AcceptedOracleResult | RejectedOracleResult] = (
                 _answer_agentic(ground_truth, frame, cast("list[QuestionProposal]", intents))
                 if question_mode == "agentic"
@@ -246,7 +251,7 @@ def _answer_agentic(
     results: list[AcceptedOracleResult | RejectedOracleResult] = []
     for number, proposal in enumerate(proposals, start=1):
         typer.echo(f"Agentic question {number}/{len(proposals)}: {proposal.question}")
-        result = oracle.answer(proposal, LocalOracleToolRegistry(frame, ground_truth))
+        result = oracle.answer(proposal, LocalOracleToolRegistry(ground_truth.primitives))
         results.append(result)
         if isinstance(result, AcceptedOracleResult):
             typer.echo(f"Agentic question {number}/{len(proposals)} accepted")

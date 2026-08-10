@@ -1,5 +1,4 @@
-# Copyright 2026 Dimensional Inc.
-"""Shared deterministic selection over grounded object evidence."""
+"""Deterministic selection over grounded object evidence."""
 
 from __future__ import annotations
 

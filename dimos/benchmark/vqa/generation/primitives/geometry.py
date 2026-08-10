@@ -1,5 +1,4 @@
-# Copyright 2026 Dimensional Inc.
-"""Deterministic point-cloud measurements for private VQA oracle tools."""
+"""Deterministic point-cloud geometry helpers for private VQA primitives."""
 
 from __future__ import annotations
 
@@ -35,8 +34,6 @@ def estimate_ground_plane(frame: CalibratedFrame) -> PlaneFitResult:
     if len(candidates) < min_points:
         return PlaneFitResult(None, ("insufficient_ground_band_points",), "insufficient_support")
 
-    # Open3D owns the randomized consensus search; seed its process-global RNG
-    # so repeated generation runs are stable for a fixed Open3D release.
     import open3d as o3d
 
     o3d.utility.random.seed(0)
@@ -54,7 +51,6 @@ def estimate_ground_plane(frame: CalibratedFrame) -> PlaneFitResult:
     _, _, right = np.linalg.svd(inlier_points - center, full_matrices=False)
     normal = right[-1]
     offset = -float(normal @ center)
-    # The camera is normally above the support plane; this fixes signed heights.
     if offset < 0:
         normal, offset = -normal, -offset
     residuals = np.abs(candidates @ normal + offset)
