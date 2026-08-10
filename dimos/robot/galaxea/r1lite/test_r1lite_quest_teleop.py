@@ -261,9 +261,9 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
             assert control_ik["orientation_cost"] == 1.0
             assert control_ik["max_velocity"] == 2.0
-            # Hand-local deltas from the module must compose locally in
-            # the task; a world/local mismatch is the drift bug.
-            assert task.params["rotation_frame"] == "local"
+            # A1Z parity: world-frame deltas, world composition (the
+            # default); a world/local mismatch is the drift bug.
+            assert task.params.get("rotation_frame", "world") == "world"
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.
             assert control_ik["seed_limit_tolerance"] >= 0.04
@@ -312,9 +312,10 @@ def test_module_rotation_pairing_and_no_default_recording() -> None:
         kwargs = next(
             atom.kwargs for atom in blueprint.blueprints if atom.module is R1LiteQuestTeleopModule
         )
-        # Hand-local deltas (the natural VR mapping), paired with the
-        # task-side local composition.
-        assert kwargs["local_rotation"] is True
+        # A1Z parity: world-frame deltas + raw 1:1 position mapping.
+        assert kwargs["local_rotation"] is False
+        assert kwargs["motion_gain"] == 1.0
+        assert kwargs["position_deadband_m"] == 0.0
         # Recording is opt-in per session, never a blueprint default.
         assert kwargs.get("record_path", "") == ""  # recording stays opt-in
 

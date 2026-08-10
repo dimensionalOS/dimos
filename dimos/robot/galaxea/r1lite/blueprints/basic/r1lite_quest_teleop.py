@@ -66,7 +66,6 @@ _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while 
 _ARM_IK_PARAMS = {
     "timeout": 1.5,
     # Ride through pose-stream gaps instead of cycling engage state.
-    "rotation_frame": "local",
 }
 _ARM_CONTROL_IK = {
     "max_velocity": 2.0,
@@ -139,12 +138,14 @@ r1lite_quest_teleop = autoconnect(
             if os.environ.get("QUEST_RECORD", "") == "1"
             else os.environ.get("QUEST_RECORD", "")
         ),
-        motion_gain=1.3,
-        # Hand-local rotation deltas — the natural VR mapping and the
-        # dev.12 feel — paired with rotation_frame="local" in the task
-        # so they compose in the right frame (the actual drift fix).
-        local_rotation=True,
-        position_deadband_m=0.02,
+        # Exact A1Z-parity mapping (the hardware-proven smooth recipe):
+        # raw 1:1 position — no gain, no deadband — and world-frame
+        # rotation deltas matching the task's world composition. Our
+        # v2-era gain/deadband/local-rotation customizations were the
+        # full deviation set from that recipe.
+        motion_gain=1.0,
+        local_rotation=False,
+        position_deadband_m=0.0,
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows
     # each target at this rate); cameras off keeps decode off the control
@@ -222,7 +223,12 @@ def _sim_trajectory_tasks() -> list[TaskConfig]:
 
 
 r1lite_quest_teleop_sim = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=True),
+    R1LiteQuestTeleopModule.blueprint(
+        task_names=_TASK_NAMES,
+        motion_gain=1.0,
+        local_rotation=False,
+        position_deadband_m=0.0,
+    ),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
         tasks=[*r1lite_standard_tasks(), *_teleop_tasks(), *_sim_trajectory_tasks()],
