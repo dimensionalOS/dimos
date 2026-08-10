@@ -61,7 +61,9 @@ from dimos.manipulation.visualization.viser.scene import (
     ViserManipulationScene,
 )
 from dimos.manipulation.visualization.viser.state import (
+    ActionStatus,
     PanelPlanState,
+    PlanningMode,
     PlanStatus,
     TargetEvaluationRequest,
     TargetStatus,
@@ -180,7 +182,6 @@ class Config:
     max_velocity: float = 1.0
     max_acceleration: float = 1.0
     joint_name_mapping: dict[str, str] | None = None
-    coordinator_task_name: str | None = None
     pre_grasp_offset: float = 0.0
 
     def __post_init__(self) -> None:
@@ -210,10 +211,15 @@ class Module:
             for robot_name in robots
         }
         self.plans: list[tuple[tuple[str, ...], dict[str, JointState]]] = []
+        self.cartesian_plans: list[tuple[dict[str, PoseStamped], object, tuple[str, ...]]] = []
+        self.cartesian_plan_success = True
+        self.error = ""
         self.executions = 0
         self.cancelled = 0
         self.cleared = 0
         self.last_plan: GeneratedPlan | None = None
+        self.motion_speed = 1.0
+        self.motion_speed_updates: list[float] = []
 
     def make_plan(self, group_ids: tuple[str, ...]) -> GeneratedPlan:
         names = [
@@ -258,7 +264,15 @@ class Module:
         return "IDLE"
 
     def get_error(self) -> str:
-        return ""
+        return self.error
+
+    def get_motion_speed(self) -> float:
+        return self.motion_speed
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        self.motion_speed = float(speed_scale)
+        self.motion_speed_updates.append(float(speed_scale))
+        return True
 
     def reset(self) -> SimpleNamespace:
         return SimpleNamespace(is_success=lambda: True)
@@ -317,6 +331,12 @@ class Operator:
             error=self.module.get_error(),
             has_plan=True,
         )
+
+    def get_motion_speed(self) -> float:
+        return self.module.get_motion_speed()
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        return self.module.set_motion_speed(speed_scale)
 
     def get_init_joints(self, robot_name: str) -> JointState | None:
         return self.module.get_init_joints(robot_name)
@@ -378,6 +398,22 @@ class Operator:
 
     def plan_to_pose(self, request: object) -> GeneratedPlan:
         return self.module.make_plan(tuple(request.pose_targets))  # type: ignore[attr-defined]
+
+    def plan_cartesian(self, request: object) -> GeneratedPlan | None:
+        self.module.cartesian_plans.append(
+            (
+                dict(request.pose_targets),  # type: ignore[attr-defined]
+                request.config,  # type: ignore[attr-defined]
+                tuple(request.auxiliary_group_ids),  # type: ignore[attr-defined]
+            )
+        )
+        group_ids = tuple(
+            (
+                *request.pose_targets.keys(),  # type: ignore[attr-defined]
+                *request.auxiliary_group_ids,  # type: ignore[attr-defined]
+            )
+        )
+        return self.module.make_plan(group_ids) if self.module.cartesian_plan_success else None
 
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
         return self.module.preview_plan()
@@ -493,12 +529,19 @@ def test_panel_contract_group_order_defaults_and_controls(
     ]
     assert gui.state.selected_group_ids == ("arm/manipulator",)
     assert server.gui.dropdowns[0].options == ["Select preset...", "Init", "Current", "Home"]
+    assert server.gui.dropdowns[1].options == ["Joint space", "Cartesian space"]
     assert [
-        (slider.label, slider.min, slider.max, slider.value) for slider in server.gui.sliders
+        (slider.label, slider.min, slider.max, slider.value)
+        for slider in server.gui.sliders
+        if slider.label != "Next plan speed"
     ] == [("arm/manipulator/j1", -1.0, 1.0, 0.1)]
     server.gui.buttons[1].callback(SimpleNamespace())
     assert gui.state.selected_group_ids == ("arm/manipulator", "arm/gripper")
-    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+    assert [
+        slider.label
+        for slider in server.gui.sliders
+        if not slider.removed and slider.label != "Next plan speed"
+    ] == [
         "arm/manipulator/j1",
         "arm/gripper/j2",
     ]
@@ -572,6 +615,78 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     assert module.executions == 1
 
 
+def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pose_group = group("arm", "manipulator", ("j1",), pose=True)
+    auxiliary_group = group("arm", "gripper", ("j2",))
+    gui, module, server = panel([pose_group, auxiliary_group], states("arm"))
+    gui._toggle_group_selected(auxiliary_group.id)
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+    gui._submit_plan()
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert len(module.cartesian_plans) == 1
+    targets, config, auxiliary_ids = module.cartesian_plans[0]
+    assert tuple(targets) == (pose_group.id,)
+    assert targets[pose_group.id].frame_id == "world"
+    assert config.speed_mode == "time_optimal"  # type: ignore[attr-defined]
+    assert config.dt == 0.05  # type: ignore[attr-defined]
+    assert auxiliary_ids == (auxiliary_group.id,)
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+    assert gui.state.last_result == "plan_cartesian_space=True"
+
+
+def test_changing_planning_mode_marks_existing_plan_stale(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    gui.state.plan_state.status = PlanStatus.FRESH
+
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    assert gui.state.planning_mode == PlanningMode.CARTESIAN_SPACE
+    assert gui.state.plan_state.status == PlanStatus.STALE
+
+
+def test_cartesian_failure_surfaces_backend_error_without_fallback(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    module.cartesian_plan_success = False
+    module.error = "Cartesian planning failed: UNSUPPORTED"
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui._operation_worker.stop()
+    monkeypatch.setattr(
+        gui,
+        "_operation_worker",
+        SimpleNamespace(submit=lambda operation, **_: operation(), stop=lambda **_: None),
+    )
+    server.gui.dropdowns[1].value = "Cartesian space"
+    server.gui.dropdowns[1].callback(SimpleNamespace(target=server.gui.dropdowns[1]))
+
+    gui._submit_plan()
+
+    assert len(module.cartesian_plans) == 1
+    assert module.plans == []
+    assert gui.state.plan_state.status == PlanStatus.FAILED
+    assert gui.state.error == "Cartesian planning failed: UNSUPPORTED"
+
+
 def test_initialization_waits_for_complete_fresh_telemetry(
     panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
 ) -> None:
@@ -613,13 +728,19 @@ def test_valid_init_preset_builds_sliders_after_incomplete_initial_telemetry(
     )
 
     assert gui.state.group_joint_targets == {}
-    assert server.gui.sliders == []
+    assert [
+        slider.label for slider in server.gui.sliders if slider.label != "Next plan speed"
+    ] == []
 
     module.configs["arm"].home_joints = [-0.5, -1.0]
     gui._apply_preset("Init")
 
     assert gui.state.group_joint_targets[selected.id].position == [-0.5, -1.0]
-    assert [slider.label for slider in server.gui.sliders if not slider.removed] == [
+    assert [
+        slider.label
+        for slider in server.gui.sliders
+        if not slider.removed and slider.label != "Next plan speed"
+    ] == [
         "arm/manipulator/j1",
         "arm/manipulator/j2",
     ]
@@ -803,6 +924,7 @@ def test_panel_preset_defaults_and_joint_slider_limits(
     assert [
         (slider.label, slider.min, slider.max, slider.step, slider.value)
         for slider in server.gui.sliders
+        if slider.label != "Next plan speed"
     ] == [
         ("arm/manipulator/j1", -1.0, 1.0, 0.001, 0.1),
         ("arm/manipulator/j2", -2.0, 2.0, 0.001, 0.2),
@@ -873,6 +995,42 @@ def test_panel_action_controls_are_present_in_source_order(
         "Manipulation Panel",
         "Joint Control",
     ]
+
+
+def test_next_plan_speed_slider_updates_future_speed_without_staling_plan(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, module, server = panel([selected], states("arm"))
+    accepted = module.make_plan((selected.id,))
+    gui.state.plan_state = PanelPlanState(status=PlanStatus.FRESH, plan=accepted)
+    speed_slider = next(
+        slider for slider in server.gui.sliders if slider.label == "Next plan speed"
+    )
+    speed_slider.value = 0.5
+    assert speed_slider.callback is not None
+
+    speed_slider.callback(SimpleNamespace(target=speed_slider))
+
+    assert module.motion_speed_updates == [0.5]
+    assert module.last_plan is accepted
+    assert gui.state.plan_state.plan is accepted
+    assert gui.state.plan_state.status == PlanStatus.FRESH
+
+
+def test_next_plan_speed_slider_is_disabled_during_panel_operation(
+    panel: Callable[..., tuple[ViserPanelGui, Module, Server]],
+) -> None:
+    selected = group("arm", "manipulator", ("j1",), pose=True)
+    gui, _module, server = panel([selected], states("arm"))
+    speed_slider = next(
+        slider for slider in server.gui.sliders if slider.label == "Next plan speed"
+    )
+
+    gui.state.action_status = ActionStatus.RUNNING
+    gui.refresh()
+
+    assert speed_slider.disabled is True
 
 
 def test_target_callbacks_require_current_target_identity(

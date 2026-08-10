@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.utils.logging_config import setup_logger
 
@@ -39,6 +38,8 @@ def load_voxelized_mesh(
     planner's frame. ``recenter`` translates so the XY bbox is centered on
     the origin and the floor (minimum z) sits at z=0.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     mesh = o3d.io.read_triangle_mesh(str(path))
     if len(mesh.vertices) == 0:
         raise ValueError(f"Mesh {path!r} has no vertices")

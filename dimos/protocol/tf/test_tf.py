@@ -20,6 +20,7 @@ import time
 
 import pytest
 
+from dimos.core.transport_factory import make_transport
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.tf import StreamTF
@@ -60,7 +61,7 @@ def test_tf_ros_example() -> None:
     assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
     assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
-    tf.stop()
+    tf.dispose()
 
 
 def test_tf_main() -> None:
@@ -70,8 +71,10 @@ def test_tf_main() -> None:
     # here we create broadcasting and receiving TF instance.
     # this is to verify that comms work multiprocess, normally
     # you'd use only one instance in your module
-    broadcaster = TF()
-    querier = TF()
+    broadcaster_transport = make_transport("/tf", TFMessage)
+    querier_transport = make_transport("/tf", TFMessage)
+    broadcaster = TF(broadcaster_transport)
+    querier = TF(querier_transport)
 
     # Create a transform from world to robot
     current_time = time.time()
@@ -190,8 +193,10 @@ def test_tf_main() -> None:
     assert abs(robot_to_charger.translation.z - (-3.0)) < 0.001
 
     # Stop services (they were autostarted but don't know how to autostop)
-    broadcaster.stop()
-    querier.stop()
+    broadcaster.dispose()
+    querier.dispose()
+    broadcaster_transport.stop()
+    querier_transport.stop()
 
 
 class TestTBuffer:

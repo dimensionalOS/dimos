@@ -21,42 +21,37 @@ the optional dependency installed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 try:
     import roboplan.core as roboplan_core
-    import roboplan.rrt as roboplan_rrt
 except ImportError as exc:
     raise ImportError(
         "RoboPlanWorld requires the optional roboplan dependency. "
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
-from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     Obstacle,
     PlanningGroupID,
-    PlanningResult,
     RobotName,
     WorldRobotID,
 )
 from dimos.manipulation.planning.spec.validation import validate_obstacle
-from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.manipulation.planning.world.roboplan_model import (
+    ROBOPLAN_WORLD_FRAME,
     RoboPlanGroup,
     RoboPlanModel,
     build_roboplan_model,
@@ -71,11 +66,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
-
 logger = setup_logger()
-
-_WORLD_FRAME = "dimos_world"
 
 
 @dataclass
@@ -111,6 +102,7 @@ class RoboPlanWorld:
         self._finalized = False
         self._usable = True
         self._live_context = RoboPlanContext()
+        self._state_lock = RLock()
         self._lock = RLock()
 
     # Robot Management
@@ -212,7 +204,7 @@ class RoboPlanWorld:
                 return False
             scene = self._require_scene()
             try:
-                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, matrix)
+                scene.updateGeometryPlacement(obstacle_id, ROBOPLAN_WORLD_FRAME, matrix)
             except Exception:
                 self._usable = False
                 raise
@@ -279,18 +271,23 @@ class RoboPlanWorld:
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._state_lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(
+                q_by_robot={
+                    robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()
+                }
+            )
         yield ctx
 
     def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
-        self._authoritative_robot_ids.add(robot_id)
+        q = self._joint_state_to_q(robot_id, joint_state)
+        with self._state_lock:
+            self._live_context.q_by_robot[robot_id] = q
+            self._authoritative_robot_ids.add(robot_id)
 
     # State Operations
 
@@ -436,112 +433,6 @@ class RoboPlanWorld:
 
     # PlannerSpec for native RoboPlan planning
 
-    def plan_joint_path(
-        self,
-        world: WorldSpec,
-        robot_id: WorldRobotID,
-        start: JointState,
-        goal: JointState,
-        timeout: float = 10.0,
-    ) -> PlanningResult:
-        """Plan using the legacy robot-scoped local-name contract."""
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        try:
-            q_start = self._joint_state_to_q(robot_id, start)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        try:
-            q_goal = self._joint_state_to_q(robot_id, goal)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._is_ready():
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
-            )
-        robot = self._get_robot(robot_id)
-        current = self._live_context.q_by_robot[robot_id]
-        if not np.allclose(q_start, current, atol=1e-6, rtol=0.0):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
-        group = self._legacy_group(robot.config.name)
-        return self._plan_group(
-            group,
-            dict(zip(robot.config.joint_names, q_start, strict=True)),
-            dict(zip(robot.config.joint_names, q_goal, strict=True)),
-            timeout,
-            5000,
-        )
-
-    def plan_selected_joint_path(
-        self,
-        world: WorldSpec,
-        selection: PlanningGroupSelection,
-        start: JointState,
-        goal: JointState,
-        timeout: float = 10.0,
-        max_iterations: int = 5000,
-    ) -> PlanningResult:
-        """Plan one or more non-overlapping groups through RoboPlan RRT."""
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        if not selection.groups:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="No planning groups selected",
-            )
-        group = self._require_model().groups.get(frozenset(selection.group_ids))
-        if group is None:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan has no generated group for this selection",
-            )
-        try:
-            normalized_start = normalize_selection_target(selection, start, "start")
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        try:
-            normalized_goal = normalize_selection_target(selection, goal, "goal")
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._is_ready():
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
-            )
-        start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
-        current_by_name = self._current_global_positions()
-        if any(
-            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
-            for name in selection.joint_names
-        ):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
-        return self._plan_group(
-            group,
-            start_by_name,
-            dict(zip(normalized_goal.name, normalized_goal.position, strict=True)),
-            timeout,
-            max_iterations,
-        )
-
-    def get_name(self) -> str:
-        """Get planner name."""
-        return "RoboPlan"
-
-    # Internals
-
     def _validate_robot_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
@@ -622,6 +513,12 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
 
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,
@@ -701,7 +598,7 @@ class RoboPlanWorld:
             width, height, depth = obstacle.dimensions
             scene.addBoxGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Box(width, height, depth),
                 matrix,
                 color,
@@ -711,7 +608,7 @@ class RoboPlanWorld:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
             scene.addSphereGeometry(
-                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+                obstacle_id, ROBOPLAN_WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
             )
             return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
@@ -719,7 +616,7 @@ class RoboPlanWorld:
             radius, length = obstacle.dimensions
             scene.addCylinderGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Cylinder(radius, length),
                 matrix,
                 color,
@@ -730,7 +627,7 @@ class RoboPlanWorld:
                 raise ValueError("MESH obstacle requires mesh_path")
             scene.addMeshGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Mesh(obstacle.mesh_path),
                 matrix,
                 color,
@@ -756,100 +653,5 @@ class RoboPlanWorld:
         return model.groups[frozenset((group_id,))]
 
     def _is_ready(self) -> bool:
-        return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)
-
-    def _plan_group(
-        self,
-        group: RoboPlanGroup,
-        start_by_name: Mapping[str, float],
-        goal_by_name: Mapping[str, float],
-        timeout: float,
-        max_iterations: int,
-    ) -> PlanningResult:
-        started = time.time()
-        try:
-            q_start = np.asarray(
-                [start_by_name[name] for name in group.public_names],
-                dtype=np.float64,
-            )
-            q_goal = np.asarray(
-                [goal_by_name[name] for name in group.public_names],
-                dtype=np.float64,
-            )
-        except KeyError as exc:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message=f"Joint target is missing '{exc.args[0]}'",
-            )
-        try:
-            with self._lock:
-                scene = self._require_scene()
-                scene.setJointPositions(self._full_scene_q(self._live_context))
-                result = self._run_native_rrt(
-                    group,
-                    q_start,
-                    q_goal,
-                    timeout,
-                    max_iterations,
-                )
-            path = self._path_from_native(group, result)
-        except ValueError as exc:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message=f"RoboPlan-native planning failed: {exc}",
-            )
-        if not path:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message="RoboPlan-native planning failed: returned an empty path",
-            )
-        return PlanningResult(
-            status=PlanningStatus.SUCCESS,
-            path=path,
-            planning_time=time.time() - started,
-            path_length=compute_path_length(path),
-            message="RoboPlan path found",
-        )
-
-    def _run_native_rrt(
-        self,
-        group: RoboPlanGroup,
-        q_start: NDArray[np.float64],
-        q_goal: NDArray[np.float64],
-        timeout: float,
-        max_iterations: int,
-    ) -> Any:
-        options: Any = roboplan_rrt.RRTOptions()
-        options.group_name = group.name
-        options.max_planning_time = timeout
-        options.max_nodes = max_iterations
-        options.collision_check_use_bisection = True
-        planner = roboplan_rrt.RRT(self._require_scene(), options)
-        start = roboplan_core.JointConfiguration(list(group.native_names), q_start)
-        goal = roboplan_core.JointConfiguration(list(group.native_names), q_goal)
-        result = planner.plan(start, goal)
-        if result is None:
-            raise ValueError("RoboPlan RRT returned no path")
-        return result
-
-    def _path_from_native(self, group: RoboPlanGroup, result: Any) -> list[JointState]:
-        result_names = tuple(getattr(result, "joint_names", ()) or group.native_names)
-        if set(result_names) != set(group.native_names):
-            raise ValueError("RoboPlan path joint names do not match the selected group")
-        public_by_native = dict(zip(group.native_names, group.public_names, strict=True))
-        source_names = tuple(public_by_native[name] for name in result_names)
-        path: list[JointState] = []
-        for waypoint in result.positions:
-            values = np.asarray(waypoint, dtype=np.float64)
-            if len(values) != len(source_names):
-                raise ValueError("RoboPlan path waypoint length does not match its names")
-            positions = dict(zip(source_names, values, strict=True))
-            path.append(
-                JointState(
-                    name=list(group.output_names),
-                    position=[float(positions[name]) for name in group.output_names],
-                )
-            )
-        return path
+        with self._state_lock:
+            return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)

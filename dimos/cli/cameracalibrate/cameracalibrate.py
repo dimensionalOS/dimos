@@ -30,7 +30,6 @@ import warnings
 # Use setdefault so an explicit OPENCV_OPENCL_RUNTIME from the environment still wins.
 os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
 
-import cv2
 import numpy as np
 import typer
 import yaml
@@ -103,8 +102,7 @@ def write_camera_info_yaml(
 ) -> None:
     """Write ROS-style CameraInfo YAML loadable by dimos CameraInfo helpers.
 
-    The emitted schema is accepted by ``CameraInfo.from_yaml``,
-    ``load_camera_info``, and ``load_camera_info_opencv``.
+    The emitted schema is accepted by ``CameraInfo.from_yaml``.
     """
     k = np.asarray(K, dtype=np.float64).reshape(3, 3)
     d = np.asarray(D, dtype=np.float64).ravel()
@@ -147,6 +145,8 @@ def load_frames_from_folder(path: str) -> list[np.ndarray]:
     Files are ordered by filename (lexicographic sort of basenames). Raises if the path
     is not a directory or if any matching file fails to decode with ``cv2.imread``.
     """
+    import cv2
+
     root = Path(path)
     if not root.is_dir():
         raise ValueError(f"Not a directory: {path}")
@@ -210,6 +210,8 @@ def _pattern_candidates(cols: int, rows: int) -> list[tuple[int, int, str]]:
 
 
 def _as_grayscale_uint8(gray: np.ndarray) -> np.ndarray:
+    import cv2
+
     g = np.asarray(gray)
     if g.ndim == 3:
         g = cv2.cvtColor(g, cv2.COLOR_BGR2GRAY)
@@ -221,6 +223,8 @@ def _as_grayscale_uint8(gray: np.ndarray) -> np.ndarray:
 
 
 def _configure_opencv_calibration_runtime() -> None:
+    import cv2
+
     global _OPENCV_CALIBRATION_RUNTIME_CONFIGURED
     if _OPENCV_CALIBRATION_RUNTIME_CONFIGURED:
         return
@@ -243,6 +247,8 @@ def _find_chessboard_corners_sb(
     *,
     exhaustive: bool,
 ) -> np.ndarray | None:
+    import cv2
+
     _configure_opencv_calibration_runtime()
     find_sb = getattr(cv2, "findChessboardCornersSB", None)
     if find_sb is None:
@@ -271,6 +277,8 @@ def _find_chessboard_corners_realtime(
     rows: int,
 ) -> np.ndarray | None:
     # Preview path: SB without exhaustive flags so most misses stay cheap (latency budget).
+    import cv2
+
     corners = _find_chessboard_corners_sb(gray, cols, rows, exhaustive=False)
     if corners is not None:
         return corners
@@ -282,6 +290,8 @@ def _find_chessboard_corners_realtime(
 
 
 def _find_chessboard_corners_exact(gray: np.ndarray, cols: int, rows: int) -> np.ndarray | None:
+    import cv2
+
     g = _as_grayscale_uint8(gray)
     pattern_size = (cols, rows)
     flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE
@@ -321,6 +331,8 @@ def _draw_capture_status(
     accepted_count: int,
     target_count: int,
 ) -> None:
+    import cv2
+
     status = f"Accepted {accepted_count}/{target_count}"
     if detection is None:
         detail = "No chessboard detected - SPACE ignored"
@@ -349,6 +361,8 @@ def _interactive_capture(
     any wait-on-no-frame or fail-fast policy. ``no_display`` skips ``imshow``
     and window teardown; ``cv2.waitKey`` is still called so tests can inject keys.
     """
+    import cv2
+
     if target_count < 1:
         raise ValueError("target_count must be >= 1")
 
@@ -463,6 +477,8 @@ def _capture_frames_from_webcam(
     ``no_display`` mirrors the CLI ``--no-display`` flag: no ``cv2.imshow`` or window
     teardown; ``cv2.waitKey`` is still used so automated tests can inject key codes.
     """
+    import cv2
+
     if target_count < 1:
         raise ValueError("target_count must be >= 1")
 
@@ -655,6 +671,8 @@ def _calibrate_pinhole(
     image_size: tuple[int, int],
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """Run ``cv2.calibrateCamera`` (plumb-bob)."""
+    import cv2
+
     _calibrate = cast("Callable[..., Any]", cv2.calibrateCamera)
     rms, camera_matrix, dist_coeffs, _rvecs, _tvecs = _calibrate(
         objpoints,
@@ -678,6 +696,8 @@ def _calibrate_fisheye(
     ``objpoints`` must be a list of ``(N, 1, 3)`` arrays and ``imgpoints`` a list of
     ``(N, 1, 2)`` arrays (the fisheye solver is strict about the extra middle axis).
     """
+    import cv2
+
     K = np.zeros((3, 3), dtype=np.float64)
     D = np.zeros((4, 1), dtype=np.float64)
     n_views = len(objpoints)
@@ -725,6 +745,8 @@ def calibrate_from_frames(
         ``rms`` reprojection RMSE from OpenCV, ``image_size`` ``(width, height)``, and
         ``n_used`` the number of frames that yielded detections.
     """
+    import cv2
+
     if not frames:
         raise ValueError("frames must be non-empty")
 
@@ -804,6 +826,8 @@ def write_preview_overlay_png(
     path: Path,
 ) -> Path:
     """Write a preview PNG with detected chessboard corners drawn on one input frame."""
+    import cv2
+
     for frame in frames:
         f = np.asarray(frame)
         gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) if f.ndim == 3 else f
