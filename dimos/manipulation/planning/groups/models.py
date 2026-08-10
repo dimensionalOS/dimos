@@ -20,10 +20,8 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 from dimos.manipulation.planning.spec.models import (
-    GlobalJointName,
-    LocalModelJointName,
+    JointName,
     PlanningGroupID,
-    RobotName,
 )
 
 PlanningGroupSource: TypeAlias = Literal["srdf", "fallback"]
@@ -38,7 +36,7 @@ class PlanningGroupDefinition:
     """
 
     name: str
-    joint_names: tuple[LocalModelJointName, ...]
+    joint_names: tuple[JointName, ...]
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "srdf"
@@ -53,15 +51,11 @@ class PlanningGroupDefinition:
 class PlanningGroup:
     """Public backend-independent planning group.
 
-    A planning group exposes stable public IDs and global joint names for
-    planning APIs. It intentionally does not include backend runtime robot IDs.
+    A planning group exposes one stable name and canonical model joint names.
     """
 
     id: PlanningGroupID
-    robot_name: RobotName
-    group_name: str
-    joint_names: tuple[GlobalJointName, ...]
-    local_joint_names: tuple[LocalModelJointName, ...]
+    joint_names: tuple[JointName, ...]
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "srdf"
@@ -82,23 +76,19 @@ class PlanningGroupSelection:
 
     groups: tuple[PlanningGroup, ...]
     group_ids: tuple[PlanningGroupID, ...]
-    joint_names: tuple[GlobalJointName, ...]
-    robot_names: tuple[RobotName, ...]
+    joint_names: tuple[JointName, ...]
 
     @classmethod
     def from_groups(cls, groups: tuple[PlanningGroup, ...]) -> PlanningGroupSelection:
-        """Build a selection, rejecting overlapping selected global joints."""
-        seen_joints: dict[GlobalJointName, PlanningGroupID] = {}
-        joint_names: list[GlobalJointName] = []
-        robot_names: list[RobotName] = []
+        """Build a selection, rejecting overlapping selected joints."""
+        seen_joints: dict[JointName, PlanningGroupID] = {}
+        joint_names: list[JointName] = []
         for group in groups:
-            if group.robot_name not in robot_names:
-                robot_names.append(group.robot_name)
             for joint_name in group.joint_names:
                 previous_group_id = seen_joints.get(joint_name)
                 if previous_group_id is not None:
                     raise ValueError(
-                        "Selected planning groups overlap on global joint "
+                        "Selected planning groups overlap on joint "
                         f"{joint_name}: {previous_group_id} and {group.id}"
                     )
                 seen_joints[joint_name] = group.id
@@ -108,5 +98,4 @@ class PlanningGroupSelection:
             groups=groups,
             group_ids=tuple(group.id for group in groups),
             joint_names=tuple(joint_names),
-            robot_names=tuple(robot_names),
         )

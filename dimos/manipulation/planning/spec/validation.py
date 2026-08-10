@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.robot.assets.model import LoadedRobotModel
+from dimos.robot.model_parser import ModelDescription, parse_model
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -39,97 +39,79 @@ _EXPECTED_DIMENSIONS = {
 }
 
 
-def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
+def validate_robot_model_config(config: RobotModelConfig) -> ModelDescription:
     """Validate one prepared robot model and its canonical planning groups."""
     if not config.joint_names:
-        raise ValueError(f"RobotModelConfig '{config.name}' contains no controllable joints")
+        raise ValueError("RobotModelConfig contains no controllable joints")
     try:
-        model = config.model.load()
-        root = ET.fromstring(model.xml)
-        model_joints = model.joints
+        model = parse_model(
+            config.model_path,
+            package_paths=config.package_paths,
+            xacro_args=config.xacro_args,
+        )
     except (ET.ParseError, OSError, ValueError) as exc:
-        raise ValueError(
-            f"RobotModelConfig '{config.name}' has an invalid model asset: {exc}"
-        ) from exc
+        raise ValueError(f"RobotModelConfig has an invalid model asset: {exc}") from exc
 
     if config.srdf_path is not None:
-        _validate_srdf(config.name, config.srdf_path)
+        _validate_srdf(config.srdf_path)
 
-    duplicate_model_joints = _duplicates(joint.name for joint in model_joints)
+    duplicate_model_joints = _duplicates(joint.name for joint in model.joints)
     if duplicate_model_joints:
         raise ValueError(
-            f"RobotModelConfig '{config.name}' model contains duplicate joint names: "
-            f"{duplicate_model_joints}"
+            f"RobotModelConfig model contains duplicate joint names: {duplicate_model_joints}"
         )
-    model_links = [name for link in root.findall("link") if (name := link.get("name")) is not None]
-    duplicate_links = _duplicates(model_links)
+    duplicate_links = _duplicates(model.links)
     if duplicate_links:
-        raise ValueError(
-            f"RobotModelConfig '{config.name}' model contains duplicate link names: "
-            f"{duplicate_links}"
-        )
+        raise ValueError(f"RobotModelConfig model contains duplicate link names: {duplicate_links}")
 
-    model_joint_names = {joint.name for joint in model_joints}
+    model_joint_names = {joint.name for joint in model.joints}
     missing_joints = sorted(set(config.joint_names) - model_joint_names)
     if missing_joints:
         raise ValueError(
-            f"RobotModelConfig '{config.name}' configured joints are missing from the model: "
-            f"{missing_joints}"
+            f"RobotModelConfig configured joints are missing from the model: {missing_joints}"
         )
-    model_link_names = set(model_links)
-    if config.base_link not in model_link_names:
-        raise ValueError(
-            f"RobotModelConfig '{config.name}' base link '{config.base_link}' is missing"
-        )
+    if config.base_link not in model.links:
+        raise ValueError(f"RobotModelConfig base link '{config.base_link}' is missing")
 
     duplicate_group_names = _duplicates(group.name for group in config.planning_groups)
     if duplicate_group_names:
         raise ValueError(
-            f"RobotModelConfig '{config.name}' contains duplicate planning groups: "
-            f"{duplicate_group_names}"
+            f"RobotModelConfig contains duplicate planning groups: {duplicate_group_names}"
         )
     controllable = set(config.joint_names)
     for group in config.planning_groups:
         if not group.name:
-            raise ValueError(
-                f"RobotModelConfig '{config.name}' contains an empty planning-group name"
-            )
+            raise ValueError("RobotModelConfig contains an empty planning-group name")
         if not group.joint_names:
-            raise ValueError(
-                f"Planning group '{group.name}' for '{config.name}' contains no joints"
-            )
+            raise ValueError(f"Planning group '{group.name}' contains no joints")
         duplicate_group_joints = _duplicates(group.joint_names)
         if duplicate_group_joints:
             raise ValueError(
-                f"Planning group '{group.name}' for '{config.name}' contains duplicate joints: "
-                f"{duplicate_group_joints}"
+                f"Planning group '{group.name}' contains duplicate joints: {duplicate_group_joints}"
             )
         unknown_group_joints = sorted(set(group.joint_names) - controllable)
         if unknown_group_joints:
             raise ValueError(
-                f"Planning group '{group.name}' for '{config.name}' references joints outside "
+                f"Planning group '{group.name}' references joints outside "
                 f"the controllable model set: {unknown_group_joints}"
             )
         for role, link_name in (("base", group.base_link), ("tip", group.tip_link)):
-            if link_name is not None and link_name not in model_link_names:
+            if link_name is not None and link_name not in model.links:
                 raise ValueError(
-                    f"Planning group '{group.name}' for '{config.name}' has missing "
-                    f"{role} link '{link_name}'"
+                    f"Planning group '{group.name}' has missing {role} link '{link_name}'"
                 )
     return model
 
 
-def _validate_srdf(robot_name: str, srdf_path: Path) -> None:
+def _validate_srdf(srdf_path: Path) -> None:
     if not srdf_path.exists():
-        raise ValueError(f"RobotModelConfig '{robot_name}' SRDF file is missing: {srdf_path}")
+        raise ValueError(f"RobotModelConfig SRDF file is missing: {srdf_path}")
     try:
         root = ET.parse(srdf_path).getroot()
     except (ET.ParseError, OSError) as exc:
-        raise ValueError(f"RobotModelConfig '{robot_name}' has an invalid SRDF: {exc}") from exc
+        raise ValueError(f"RobotModelConfig has an invalid SRDF: {exc}") from exc
     if root.tag != "robot":
-        raise ValueError(
-            f"RobotModelConfig '{robot_name}' SRDF root must be <robot>, got <{root.tag}>"
-        )
+        raise ValueError(f"RobotModelConfig SRDF root must be <robot>, got <{root.tag}>")
 
 
 def _duplicates(values: Iterable[str]) -> list[str]:

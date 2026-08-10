@@ -39,7 +39,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import RobotModel
 
 
 class RecordingGenerator:
@@ -71,20 +70,28 @@ class RecordingGenerator:
         )
 
 
-def _robot(name: str, joints: list[str], velocity: float, acceleration: float) -> RobotModelConfig:
+def _model() -> RobotModelConfig:
     return RobotModelConfig(
-        name=name,
-        model=RobotModel.from_file(Path("/robot.urdf")),
+        model_path=Path("/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-        joint_names=joints,
+        joint_names=["left/a", "left/b", "right/c"],
         base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
-                name="group", joint_names=tuple(reversed(joints)), base_link="base", tip_link="tip"
-            )
+                name="left_arm",
+                joint_names=("left/b", "left/a"),
+                base_link="base",
+                tip_link="left_tip",
+            ),
+            PlanningGroupDefinition(
+                name="right_arm",
+                joint_names=("right/c",),
+                base_link="base",
+                tip_link="right_tip",
+            ),
         ],
-        max_velocity=velocity,
-        max_acceleration=acceleration,
+        max_velocity=3.0,
+        max_acceleration=4.0,
     )
 
 
@@ -96,21 +103,12 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
         "simple_parametrizer.JointTrajectoryGenerator",
         RecordingGenerator,
     )
-    left = _robot("left", ["a", "b"], 1.0, 2.0)
-    right = _robot("right", ["c"], 3.0, 4.0)
+    model = _model()
     module = module_factory()
-    module._robots = {
-        "left": ("left_id", left),
-        "right": ("right_id", right),
-    }
     module._world_monitor = MagicMock()
     module._world_monitor.world = MagicMock()
-    module._world_monitor.world.get_robot_ids.return_value = ["left_id", "right_id"]
-    module._world_monitor.world.get_robot_config.side_effect = {
-        "left_id": left,
-        "right_id": right,
-    }.__getitem__
-    module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
+    module._world_monitor.world.get_model_config.return_value = model
+    module._world_monitor.planning_groups = PlanningGroupRegistry([model])
     module._planner = MagicMock()
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
@@ -135,9 +133,9 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert module._plan_selected_path(("left/group", "right/group"), path[0], path[-1], 1, 1.0)
+    assert module._plan_selected_path(("left_arm", "right_arm"), path[0], path[-1], 1)
     assert RecordingGenerator.calls == [[[0.0, 0.0, 0.0], [0.2, 0.1, 0.3]]]
-    assert RecordingGenerator.limits == ([1.0, 1.0, 3.0], [2.0, 2.0, 4.0])
+    assert RecordingGenerator.limits == ([3.0, 3.0, 3.0], [4.0, 4.0, 4.0])
     assert module._last_plan is not None
     assert module._last_plan.path is not module._last_plan.trajectory.points
     assert module._last_plan.trajectory.joint_names == names
@@ -147,22 +145,23 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
     module = _module(monkeypatch, module_factory)
     module._state = ManipulationState.IDLE
+    assert module.set_motion_speed(0.5)
     names = ["left/b", "left/a"]
     start = JointState(name=names, position=[0.0, 0.0])
     path = [
         JointState(name=names, position=[0.0, 0.0], velocity=[0.0, 0.0]),
         JointState(name=names, position=[0.2, 0.1], velocity=[0.4, 0.2]),
     ]
-    module._world_monitor.current_global_joint_state.return_value = start
+    module._world_monitor.current_model_joint_state.return_value = start
     module._planner.plan_cartesian_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=path,
         timestamps=[0.0, 0.25],
     )
 
-    plan = module.generate_cartesian_plan(
+    success = module.plan_cartesian_targets(
         {
-            "left/group": (
+            "left_arm": (
                 Transform.identity(),
                 Transform(translation=Vector3(0.01, 0.0, 0.0)),
             )
@@ -171,9 +170,10 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
             velocity_scale=0.8,
             acceleration_scale=0.6,
         ),
-        speed_scale=0.5,
     )
+    plan = module._last_plan
 
+    assert success
     assert plan is not None
     assert [point.time_from_start for point in plan.trajectory.points] == [0.0, 0.25]
     assert [point.velocities for point in plan.trajectory.points] == [
@@ -195,8 +195,8 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, mo
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
-    assert module._plan_selected_path(("left/group",), path[0], path[-1], 1, 1.0)
+    assert module._plan_selected_path(("left_arm",), path[0], path[-1], 1)
     RecordingGenerator.calls = []
 
-    module.wait_for_execution(timeout=0.0)
+    module._wait_for_trajectory_completion(timeout=0.0)
     assert RecordingGenerator.calls == []

@@ -22,18 +22,16 @@ from pydantic import Field
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
-from dimos.manipulation.planning.groups.identifiers import assert_valid_robot_name
+from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):
     """Configuration for adding a robot to the world.
 
     Attributes:
-        name: Human-readable robot name
-        model: Portable robot model loaded by backend adapters
+        model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
         srdf_path: Optional path to SRDF file containing planning group definitions
         base_pose: Placement transform. This is the canonical world placement for
             robot instances.
@@ -41,37 +39,35 @@ class RobotModelConfig(ModuleConfig):
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
+        package_paths: Dict mapping package names to filesystem Paths
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
         velocity_limits: Joint velocity limits (rad/s)
         auto_convert_meshes: Auto-convert DAE/STL meshes to OBJ for Drake
+        xacro_args: Arguments to pass to xacro processor (for .xacro files)
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
-        joint_name_mapping: Maps coordinator joint names to model joint names.
-            This is retained for current coordinator/monitor integrations while planning
-            APIs move toward globally scoped joint names.
     """
 
-    name: str
-    model: RobotModel
+    model_path: Path
     srdf_path: Path | None = None
     base_pose: PoseStamped = Field(default_factory=PoseStamped)
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
+    package_paths: dict[str, Path] = Field(default_factory=dict)
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
     velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
+    xacro_args: dict[str, str] = Field(default_factory=dict)
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
-    # Coordinator integration
-    joint_name_mapping: dict[str, str] = Field(default_factory=dict)
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
@@ -83,28 +79,9 @@ class RobotModelConfig(ModuleConfig):
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
     def model_post_init(self, __context: object) -> None:
-        """Validate robot naming and canonical joint-name constraints."""
-        assert_valid_robot_name(self.name)
+        """Validate configuration-level naming constraints."""
+        assert_valid_joint_names(self.joint_names)
         if any(not name for name in self.joint_names):
             raise ValueError("RobotModelConfig.joint_names must contain non-empty names")
         if len(self.joint_names) != len(set(self.joint_names)):
-            raise ValueError(
-                f"RobotModelConfig '{self.name}' contains duplicate canonical joint names"
-            )
-
-    def get_urdf_joint_name(self, coordinator_name: str) -> str:
-        """Translate coordinator joint name to local model joint name."""
-        return self.joint_name_mapping.get(coordinator_name, coordinator_name)
-
-    def get_coordinator_joint_name(self, urdf_name: str) -> str:
-        """Translate local model joint name to coordinator joint name."""
-        for coord_name, model_name in self.joint_name_mapping.items():
-            if model_name == urdf_name:
-                return coord_name
-        return urdf_name
-
-    def get_coordinator_joint_names(self) -> list[str]:
-        """Get joint names in coordinator namespace."""
-        if not self.joint_name_mapping:
-            return self.joint_names
-        return [self.get_coordinator_joint_name(joint_name) for joint_name in self.joint_names]
+            raise ValueError("RobotModelConfig contains duplicate canonical joint names")

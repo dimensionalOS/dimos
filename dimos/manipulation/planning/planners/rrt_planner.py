@@ -39,7 +39,6 @@ from dimos.manipulation.planning.spec.models import (
     JointPath,
     PlanningGroupID,
     PlanningResult,
-    WorldRobotID,
 )
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
@@ -93,7 +92,6 @@ class RRTConnectPlanner:
     def plan_joint_path(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
         timeout: float = 10.0,
@@ -107,14 +105,14 @@ class RRTConnectPlanner:
         q_goal = np.array(goal.position, dtype=np.float64)
         joint_names = start.name  # Store for converting back to JointState
 
-        error = self._validate_inputs(world, robot_id, start, goal)
+        error = self._validate_inputs(world, start, goal)
         if error is not None:
             return error
 
-        if world.check_edge_collision_free(robot_id, start, goal, self._collision_step_size):
+        if world.check_edge_collision_free(start, goal, self._collision_step_size):
             return _create_success_result([start, goal], time.time() - start_time, 0)
 
-        lower, upper = world.get_joint_limits(robot_id)
+        lower, upper = world.get_joint_limits()
         start_tree = [TreeNode(config=q_start.copy())]
         goal_tree = [TreeNode(config=q_goal.copy())]
         trees_swapped = False
@@ -129,14 +127,11 @@ class RRTConnectPlanner:
                 )
 
             sample = np.random.uniform(lower, upper)
-            extended = self._extend_tree(
-                world, robot_id, start_tree, sample, self._step_size, joint_names
-            )
+            extended = self._extend_tree(world, start_tree, sample, self._step_size, joint_names)
 
             if extended is not None:
                 connected = self._connect_tree(
                     world,
-                    robot_id,
                     goal_tree,
                     extended.config,
                     self._connect_step_size,
@@ -146,7 +141,7 @@ class RRTConnectPlanner:
                     path = self._extract_path(extended, connected, joint_names)
                     if trees_swapped:
                         path = list(reversed(path))
-                    path = self._simplify_path(world, robot_id, path)
+                    path = self._simplify_path(world, path)
                     return _create_success_result(path, time.time() - start_time, iteration + 1)
 
             start_tree, goal_tree = goal_tree, start_tree
@@ -360,7 +355,6 @@ class RRTConnectPlanner:
     def _validate_inputs(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
     ) -> PlanningResult | None:
@@ -372,29 +366,22 @@ class RRTConnectPlanner:
                 "World must be finalized before planning",
             )
 
-        # Check robot exists
-        if robot_id not in world.get_robot_ids():
-            return _create_failure_result(
-                PlanningStatus.NO_SOLUTION,
-                f"Robot '{robot_id}' not found",
-            )
-
         # Check start validity using context-free method
-        if not world.check_config_collision_free(robot_id, start):
+        if not world.check_config_collision_free(start):
             return _create_failure_result(
                 PlanningStatus.COLLISION_AT_START,
                 "Start configuration is in collision",
             )
 
         # Check goal validity using context-free method
-        if not world.check_config_collision_free(robot_id, goal):
+        if not world.check_config_collision_free(goal):
             return _create_failure_result(
                 PlanningStatus.COLLISION_AT_GOAL,
                 "Goal configuration is in collision",
             )
 
         # Check limits with small tolerance for driver floating-point drift
-        lower, upper = world.get_joint_limits(robot_id)
+        lower, upper = world.get_joint_limits()
         q_start = np.array(start.position, dtype=np.float64)
         q_goal = np.array(goal.position, dtype=np.float64)
         limit_eps = 1e-3  # ~0.06 degrees
@@ -416,7 +403,6 @@ class RRTConnectPlanner:
     def _extend_tree(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         tree: list[TreeNode],
         target: NDArray[np.float64],
         step_size: float,
@@ -438,9 +424,7 @@ class RRTConnectPlanner:
         # Check validity of edge using context-free method
         start_state = JointState({"name": joint_names, "position": nearest.config.tolist()})
         end_state = JointState({"name": joint_names, "position": new_config.tolist()})
-        if world.check_edge_collision_free(
-            robot_id, start_state, end_state, self._collision_step_size
-        ):
+        if world.check_edge_collision_free(start_state, end_state, self._collision_step_size):
             new_node = TreeNode(config=new_config, parent=nearest)
             nearest.children.append(new_node)
             tree.append(new_node)
@@ -451,7 +435,6 @@ class RRTConnectPlanner:
     def _connect_tree(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         tree: list[TreeNode],
         target: NDArray[np.float64],
         step_size: float,
@@ -460,7 +443,7 @@ class RRTConnectPlanner:
         """Try to connect tree to target, returns connected node if successful."""
         # Keep extending toward target
         while True:
-            result = self._extend_tree(world, robot_id, tree, target, step_size, joint_names)
+            result = self._extend_tree(world, tree, target, step_size, joint_names)
 
             if result is None:
                 return None  # Extension failed
@@ -492,7 +475,6 @@ class RRTConnectPlanner:
     def _simplify_path(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         path: JointPath,
         max_iterations: int = 100,
     ) -> JointPath:
@@ -513,7 +495,7 @@ class RRTConnectPlanner:
             # Check if direct connection is valid using context-free method
             # path elements are already JointState
             if world.check_edge_collision_free(
-                robot_id, simplified[i], simplified[j], self._collision_step_size
+                simplified[i], simplified[j], self._collision_step_size
             ):
                 # Remove intermediate waypoints
                 simplified = simplified[: i + 1] + simplified[j:]

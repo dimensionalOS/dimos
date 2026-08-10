@@ -15,6 +15,7 @@
 """Shared manipulation test fixtures."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, Protocol, cast
 from unittest.mock import MagicMock
 
@@ -28,7 +29,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 
 class ModuleFactory(Protocol):
@@ -46,8 +48,16 @@ def _mock_control_coordinator() -> MagicMock:
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
+
+
+def _test_model() -> RobotModelConfig:
+    return RobotModelConfig(
+        model_path=Path("/test/model.urdf"),
+        joint_names=["arm/j0"],
+        base_link="base",
+        planning_groups=[PlanningGroupDefinition("manipulator", ("arm/j0",), "base", "tool")],
+    )
 
 
 @pytest.fixture
@@ -56,12 +66,13 @@ def module_factory() -> Iterator[ModuleFactory]:
     modules: list[ManipulationModule] = []
 
     def create(coordinator: ControlCoordinator | None = None) -> ManipulationModule:
-        module = ManipulationModule()
+        module = ManipulationModule(model=_test_model())
         modules.append(module)
         module._control_coordinator = (
             coordinator if coordinator is not None else _mock_control_coordinator()
         )
         cast("Any", module).coordinator_joint_state = None
+        module._initialize_planning = MagicMock()
         module.start()
         return module
 

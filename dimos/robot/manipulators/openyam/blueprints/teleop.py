@@ -16,32 +16,18 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import (
-    coordinator,
-    planner,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
-)
-from dimos.robot.manipulators.common.topics import (
-    EEF_TWIST_TASK_NAME,
-)
+from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_ARM_JOINTS,
-    OPENYAM_GRIPPER_JOINT,
-    OPENYAM_HARDWARE_ID,
-    OPENYAM_JOINTS,
+    make_openyam_hardware,
     make_openyam_model_config,
-    openyam_hardware,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _openyam_keyboard_hw = openyam_hardware()
-_openyam_model = make_openyam_model_config(name="arm")
+_openyam_model = make_openyam_model_config()
 
 
 def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
@@ -66,34 +52,19 @@ def _gripper_task() -> TaskConfig:
         priority=20,
     )
 
-
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
+    ControlCoordinator.blueprint(
         hardware=[_openyam_keyboard_hw],
         tasks=[
-            _eef_twist_task(),
-            _gripper_task(),
+            eef_twist_task(
+                _openyam_keyboard_hw,
+                robot_model=_openyam_model,
+            )
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openyam_model],
+        model=_openyam_model,
         visualization={"backend": "viser"},
-    ),
-)
-
-_openyam_keyboard_planner_hw = openyam_hardware()
-
-keyboard_teleop_openyam_planner = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    planner(robots=[_openyam_model]),
-    coordinator(
-        hardware=[_openyam_keyboard_planner_hw],
-        tasks=[
-            _eef_twist_task(priority=10),
-            _gripper_task(),
-            _trajectory_task(priority=20),
-        ],
     ),
 )

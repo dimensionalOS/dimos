@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from itertools import combinations
 from pathlib import Path
 from typing import Any, Protocol
 import xml.etree.ElementTree as ET
@@ -29,13 +28,12 @@ import numpy as np
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
 
-_MAX_COMPOSITE_GROUPS = 64
 _ROOT_LINK = ROBOPLAN_WORLD_FRAME
 _ROOT_JOINT = "dimos_world_joint"
 _FREE_ROOTS = {"world", "map", _ROOT_LINK}
@@ -50,6 +48,8 @@ _REFERENCE_ATTRIBUTES = (
     "parent_frame_id",
     "child_frame_id",
 )
+_MODEL_KEY = "model"
+_MODEL_NAME = "dimos_model"
 
 
 class _BuildRobot(Protocol):
@@ -88,16 +88,15 @@ class RoboPlanModel:
 
     scene: Any
     groups: Mapping[frozenset[PlanningGroupID], RoboPlanGroup]
-    legacy_group_ids: Mapping[RobotName, PlanningGroupID]
-    native_joint_by_global: Mapping[str, str]
-    native_link_by_robot: Mapping[RobotName, Mapping[str, str]]
+    native_joints: Mapping[str, str]
+    native_links: Mapping[str, str]
     all_group: RoboPlanGroup
 
-    def native_joint(self, robot_name: RobotName, local_name: str) -> str:
-        return self.native_joint_by_global[f"{robot_name}/{local_name}"]
+    def native_joint(self, canonical_name: str) -> str:
+        return self.native_joints[canonical_name]
 
-    def native_link(self, robot_name: RobotName, local_name: str) -> str:
-        return self.native_link_by_robot[robot_name][local_name]
+    def native_link(self, canonical_name: str) -> str:
+        return self.native_links[canonical_name]
 
 
 @dataclass(frozen=True)
@@ -111,41 +110,35 @@ class _NameMap:
 @dataclass(frozen=True)
 class _Composed:
     xml: str
-    maps: Mapping[RobotName, _NameMap]
+    maps: Mapping[str, _NameMap]
     adjacent_links: tuple[tuple[str, str], ...]
 
 
 def build_roboplan_model(
-    robots: Sequence[_BuildRobot],
+    robot: _BuildRobot,
     registry: PlanningGroupRegistry,
     scene_factory: _SceneFactory,
 ) -> RoboPlanModel:
     """Build one composite scene transactionally."""
-    if not robots:
-        raise ValueError("RoboPlanWorld requires at least one robot")
-    loaded = [
+    prepared = [
         (
             robot,
-            prepare_urdf_for_drake(
-                robot.config.model.load(),
-                convert_meshes=robot.config.auto_convert_meshes,
+            Path(
+                prepare_urdf_for_drake(
+                    robot.config.model_path,
+                    package_paths=robot.config.package_paths,
+                    xacro_args=robot.config.xacro_args,
+                    convert_meshes=robot.config.auto_convert_meshes,
+                )
             ),
         )
-        for robot in robots
     ]
-    prepared = [(robot, description.xml) for robot, description in loaded]
-    composite = len(robots) > 1
-    composed = _compose(prepared, composite)
-    groups, legacy_ids, all_group = _groups(robots, registry, composed.maps, composite)
-    model_name = "dimos_composite" if composite else robots[0].config.name
-    srdf = _srdf(model_name, robots, groups, composed)
-    package_paths = list(
-        dict.fromkeys(
-            str(path) for _, description in loaded for path in description.package_paths.values()
-        )
-    )
+    composed = _compose(prepared, False)
+    groups, all_group = _groups(robot, registry, composed.maps)
+    srdf = _srdf(_MODEL_NAME, [robot], groups, composed)
+    package_paths = [str(path) for path in robot.config.package_paths.values()]
     scene = scene_factory(
-        name=model_name,
+        name=_MODEL_NAME,
         urdf=composed.xml,
         srdf=srdf,
         package_paths=package_paths,
@@ -153,36 +146,31 @@ def build_roboplan_model(
     groups = _validate_group_order(scene, groups)
     all_group = groups[frozenset(all_group.group_ids)]
     _apply_collision_exclusions(scene, srdf)
-    native_joint_by_global = {
-        f"{robot.config.name}/{local}": composed.maps[robot.config.name].joints[local]
-        for robot in robots
-        for local in robot.config.joint_names
-    }
+    mapping = composed.maps[_MODEL_KEY]
     return RoboPlanModel(
         scene=scene,
         groups=groups,
-        legacy_group_ids=legacy_ids,
-        native_joint_by_global=native_joint_by_global,
-        native_link_by_robot={name: mapping.links for name, mapping in composed.maps.items()},
+        native_joints={name: mapping.joints[name] for name in robot.config.joint_names},
+        native_links=mapping.links,
         all_group=all_group,
     )
 
 
-def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _Composed:
+def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _Composed:
     result = ET.Element(
         "robot",
-        {"name": "dimos_composite" if composite else prepared[0][0].config.name},
+        {"name": "dimos_composite" if composite else _MODEL_NAME},
     )
     ET.SubElement(result, "link", {"name": _ROOT_LINK})
-    maps: dict[RobotName, _NameMap] = {}
+    maps: dict[str, _NameMap] = {}
     used_names: set[str] = {_ROOT_LINK}
-    for robot, urdf_xml in prepared:
+    for robot, path in prepared:
         config = robot.config
-        root = ET.fromstring(urdf_xml)
+        root = ET.parse(path).getroot()
         if _tag(root.tag) != "robot":
-            raise ValueError(f"Prepared model for '{config.name}' is not a URDF robot")
+            raise ValueError("Prepared model is not a URDF robot")
         _add_missing_acceleration_limits(root)
-        mapping = _name_map(root, config.name, composite)
+        mapping = _name_map(root, _MODEL_KEY, composite)
         mapped_names = {
             value
             for table in (mapping.links, mapping.joints, mapping.materials, mapping.frames)
@@ -193,13 +181,11 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _C
             raise ValueError(f"Duplicate composed model names: {sorted(duplicates)}")
         used_names.update(mapped_names)
         if config.base_link not in mapping.links:
-            raise ValueError(f"Robot '{config.name}' base link '{config.base_link}' is missing")
+            raise ValueError(f"Model base link '{config.base_link}' is missing")
         missing_joints = set(config.joint_names) - set(mapping.joints)
         if missing_joints:
-            raise ValueError(
-                f"Robot '{config.name}' configured joints are missing: {sorted(missing_joints)}"
-            )
-        authored_root = _authored_root(root, config.base_link, config.name)
+            raise ValueError(f"Configured model joints are missing: {sorted(missing_joints)}")
+        authored_root = _authored_root(root, config.base_link, _MODEL_KEY)
         authored_parent = (
             _joint_link(authored_root, "parent") if authored_root is not None else None
         )
@@ -215,15 +201,15 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, str]], composite: bool) -> _C
             copied = ET.fromstring(ET.tostring(element, encoding="unicode"))
             _rewrite(copied, mapping)
             result.append(copied)
-        attachment_name = _qualified(config.name, _ROOT_JOINT) if composite else _ROOT_JOINT
+        attachment_name = _qualified(_MODEL_KEY, _ROOT_JOINT) if composite else _ROOT_JOINT
         if attachment_name in used_names:
-            raise ValueError(f"Robot '{config.name}' collides with its synthetic attachment name")
+            raise ValueError("Model collides with its synthetic attachment name")
         used_names.add(attachment_name)
         joint = ET.SubElement(result, "joint", {"name": attachment_name, "type": "fixed"})
         ET.SubElement(joint, "parent", {"link": _ROOT_LINK})
         ET.SubElement(joint, "child", {"link": mapping.links[config.base_link]})
         ET.SubElement(joint, "origin", _pose_attributes(config.base_pose))
-        maps[config.name] = mapping
+        maps[_MODEL_KEY] = mapping
     adjacent: list[tuple[str, str]] = []
     for joint in result:
         if _tag(joint.tag) != "joint":
@@ -247,10 +233,10 @@ def _add_missing_acceleration_limits(root: ET.Element) -> None:
             limit.set("acceleration", str(_DEFAULT_ACCELERATION_LIMIT))
 
 
-def _name_map(root: ET.Element, robot_name: RobotName, prefix: bool) -> _NameMap:
+def _name_map(root: ET.Element, model_key: str, prefix: bool) -> _NameMap:
     def names(tag: str) -> dict[str, str]:
         return {
-            name: _qualified(robot_name, name) if prefix else name
+            name: _qualified(model_key, name) if prefix else name
             for element in root.iter()
             if _tag(element.tag) == tag
             if (name := element.get("name"))
@@ -259,7 +245,7 @@ def _name_map(root: ET.Element, robot_name: RobotName, prefix: bool) -> _NameMap
     return _NameMap(names("link"), names("joint"), names("material"), names("frame"))
 
 
-def _authored_root(root: ET.Element, base_link: str, robot_name: RobotName) -> ET.Element | None:
+def _authored_root(root: ET.Element, base_link: str, model_key: str) -> ET.Element | None:
     links = {element.get("name") for element in root if _tag(element.tag) == "link"}
     roots = {"world", "map", root.get("name", "")} & links | {"world", "map"}
     matches = [
@@ -270,11 +256,11 @@ def _authored_root(root: ET.Element, base_link: str, robot_name: RobotName) -> E
         if _joint_link(joint, "child") == base_link
     ]
     if len(matches) > 1:
-        raise ValueError(f"Robot '{robot_name}' has ambiguous world attachment")
+        raise ValueError(f"Model '{model_key}' has ambiguous world attachment")
     if not matches:
         return None
     if matches[0].get("type") != "fixed":
-        raise ValueError(f"Robot '{robot_name}' world attachment must be fixed")
+        raise ValueError(f"Model '{model_key}' world attachment must be fixed")
     return matches[0]
 
 
@@ -307,80 +293,42 @@ def _rewrite(element: ET.Element, mapping: _NameMap) -> None:
 
 
 def _groups(
-    robots: Sequence[_BuildRobot],
+    robot: _BuildRobot,
     registry: PlanningGroupRegistry,
-    maps: Mapping[RobotName, _NameMap],
-    composite: bool,
+    maps: Mapping[str, _NameMap],
 ) -> tuple[
     dict[frozenset[PlanningGroupID], RoboPlanGroup],
-    dict[RobotName, PlanningGroupID],
     RoboPlanGroup,
 ]:
     groups: dict[frozenset[PlanningGroupID], RoboPlanGroup] = {}
-    legacy_ids: dict[RobotName, PlanningGroupID] = {}
-    for robot in robots:
-        config = robot.config
-        group_id = f"{config.name}/__roboplan_legacy__"
-        legacy_ids[config.name] = group_id
-        legacy_group = RoboPlanGroup(
-            (group_id,),
-            f"_dimos_legacy__{_safe(config.name)}" if composite else config.name,
-            tuple(maps[config.name].joints[name] for name in config.joint_names),
-            tuple(config.joint_names),
-        )
-        groups[frozenset(legacy_group.group_ids)] = legacy_group
     configured = registry.list()
     for group in configured:
-        layout = _group_layout((group,), maps, composite)
+        layout = _group_layout((group,), maps)
         groups[frozenset(layout.group_ids)] = layout
-    generated = 0
-    for size in range(2, len(configured) + 1):
-        for selected in combinations(configured, size):
-            if len({name for group in selected for name in group.joint_names}) != sum(
-                len(group.joint_names) for group in selected
-            ):
-                continue
-            generated += 1
-            if generated > _MAX_COMPOSITE_GROUPS:
-                raise ValueError(
-                    f"RoboPlan composite planning groups exceed {_MAX_COMPOSITE_GROUPS}"
-                )
-            layout = _group_layout(selected, maps, True)
-            groups[frozenset(layout.group_ids)] = layout
     all_id = "__dimos_all_configured__"
+    config = robot.config
     all_group = RoboPlanGroup(
         (all_id,),
         all_id,
-        tuple(
-            maps[robot.config.name].joints[name]
-            for robot in robots
-            for name in robot.config.joint_names
-        ),
-        tuple(
-            f"{robot.config.name}/{name}" for robot in robots for name in robot.config.joint_names
-        ),
+        tuple(maps[_MODEL_KEY].joints[name] for name in config.joint_names),
+        tuple(config.joint_names),
     )
     groups[frozenset(all_group.group_ids)] = all_group
     names = [group.name for group in groups.values()]
     if len(names) != len(set(names)):
         raise ValueError("Generated RoboPlan planning-group names are not unique")
-    return groups, legacy_ids, all_group
+    return groups, all_group
 
 
 def _group_layout(
     selected: Sequence[PlanningGroup],
-    maps: Mapping[RobotName, _NameMap],
-    composite: bool,
+    maps: Mapping[str, _NameMap],
 ) -> RoboPlanGroup:
     ids = tuple(group.id for group in selected)
     return RoboPlanGroup(
         ids,
-        _composite_group_name(ids) if composite else selected[0].group_name,
-        tuple(
-            maps[group.robot_name].joints[local]
-            for group in selected
-            for local in group.local_joint_names
-        ),
+        _composite_group_name(ids) if len(selected) > 1 else selected[0].id,
+        tuple(maps[_MODEL_KEY].joints[name] for group in selected for name in group.joint_names),
         tuple(name for group in selected for name in group.joint_names),
     )
 
@@ -399,7 +347,7 @@ def _srdf(
     pairs = {tuple(sorted(pair)) for pair in composed.adjacent_links if _ROOT_LINK not in pair}
     for robot in robots:
         config = robot.config
-        mapping = composed.maps[config.name]
+        mapping = composed.maps[_MODEL_KEY]
         configured = list(config.collision_exclusion_pairs)
         if config.srdf_path is not None:
             configured.extend(_source_exclusions(config.srdf_path))
@@ -410,8 +358,7 @@ def _srdf(
                 continue
             if not first_exists or not second_exists:
                 raise ValueError(
-                    f"Robot '{config.name}' collision exclusion references unknown links: "
-                    f"{first} <-> {second}"
+                    f"Model collision exclusion references unknown links: {first} <-> {second}"
                 )
             pairs.add(tuple(sorted((mapping.links[first], mapping.links[second]))))
     lines.extend(
@@ -492,8 +439,8 @@ def _joint_link(joint: ET.Element | None, tag: str) -> str | None:
     )
 
 
-def _qualified(robot_name: RobotName, local_name: str) -> str:
-    return f"{_safe(robot_name)}__{_safe(local_name)}"
+def _qualified(model_key: str, local_name: str) -> str:
+    return f"{_safe(model_key)}__{_safe(local_name)}"
 
 
 def _safe(value: str) -> str:
