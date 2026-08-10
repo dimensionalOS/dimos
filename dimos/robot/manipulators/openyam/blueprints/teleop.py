@@ -60,6 +60,7 @@ keyboard_teleop_openyam = autoconnect(
             eef_twist_task(
                 _openyam_keyboard_hw,
                 robot_model=_openyam_model,
+                target_frame="yam_hand_tcp",
             )
         ],
     ),

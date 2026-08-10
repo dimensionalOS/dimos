@@ -39,6 +39,7 @@ from dimos.manipulation.planning.spec.validation import (
     validate_robot_model_config,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -180,8 +181,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             self._builder, time_step=time_step
         )
         self._parser = Parser(self._plant)
-        # Enable auto-renaming to avoid conflicts when adding multiple robots
-        # with the same URDF (e.g., 4 XArm6 arms all have model name "UF_ROBOT")
+        # The visualization preview loads a second copy of the configured model.
+        # Auto-renaming prevents its internal model name from colliding with the live copy.
         self._parser.SetAutoRenaming(True)
 
         # Visualization — wrapped to enforce Drake's thread affinity
@@ -251,48 +252,29 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 base_frame=base_frame,
                 preview_model_instance=preview_model_instance,
             )
-            logger.info("Loaded manipulation model")
 
     def _load_model(self, config: RobotModelConfig) -> Any:
-        """Load robot model (URDF/xacro/MJCF) and return model instance."""
-        original_path = config.model_path.resolve()
-        if not original_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {original_path}")
-
-        if original_path.suffix == ".xml":
-            # MJCF — pass directly to Drake (detects format from .xml extension)
-            prepared_path_obj = original_path
-        else:
-            # URDF/xacro — preprocess (xacro expansion, mesh conversion, package URI resolution)
-            prepared_path = prepare_urdf_for_drake(
-                urdf_path=original_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                convert_meshes=config.auto_convert_meshes,
-            )
-            prepared_path_obj = self._strip_world_base_joint(Path(prepared_path), config)
-
-            # Register package paths (not applicable to MJCF)
-            if config.package_paths:
-                for pkg_name, pkg_path in config.package_paths.items():
-                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
-            else:
-                self._parser.package_map().Add("robot_description", prepared_path_obj.parent)
-
-        logger.info(f"Using prepared model: {prepared_path_obj}")
-
-        model_instances = self._parser.AddModels(prepared_path_obj)
+        """Load the configured in-memory robot model."""
+        description = prepare_urdf_for_drake(
+            config.model.load(),
+            convert_meshes=config.auto_convert_meshes,
+        )
+        description = self._strip_world_base_joint(description, config)
+        for package_name, package_path in description.package_paths.items():
+            self._parser.package_map().Add(package_name, package_path)
+        if not description.package_paths:
+            self._parser.package_map().Add("robot_description", description.source_path.parent)
+        logger.info("Using in-memory model", model_path=str(description.source_path))
+        model_instances = self._parser.AddModelsFromString(description.xml, "urdf")
         if not model_instances:
-            raise ValueError(f"Failed to parse model: {prepared_path_obj}")
+            raise ValueError(f"Failed to parse model: {description.source_path}")
         return model_instances[0]
 
     @staticmethod
-    def _strip_world_base_joint(model_path: Path, config: RobotModelConfig) -> Path:
-        if model_path.suffix != ".urdf":
-            return model_path
-
-        tree = ET.parse(model_path)
-        root = tree.getroot()
+    def _strip_world_base_joint(
+        description: LoadedRobotModel, config: RobotModelConfig
+    ) -> LoadedRobotModel:
+        root = ET.fromstring(description.xml)
         joints = root.findall("joint")
         joints_to_remove = [
             joint
@@ -305,7 +287,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         ]
 
         if not joints_to_remove:
-            return model_path
+            return description
 
         for joint in joints_to_remove:
             root.remove(joint)
@@ -319,11 +301,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 if link.get("name") == "world":
                     root.remove(link)
 
-        stripped_path = model_path.with_name(
-            f"{model_path.stem}_config_base_pose{model_path.suffix}"
+        return LoadedRobotModel(
+            xml=ET.tostring(root, encoding="unicode"),
+            source_path=description.source_path,
+            package_paths=description.package_paths,
         )
-        tree.write(stripped_path, encoding="utf-8", xml_declaration=True)
-        return stripped_path
 
     def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
         """Weld robot base to world if not already welded in URDF."""
@@ -361,6 +343,15 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
     def get_model_config(self) -> RobotModelConfig:
         """Get the logical robot model configuration."""
         return self._require_model().config
+
+    def get_body_frame(self, link_name: str) -> Any:
+        """Return a configured model link frame for Drake-native planning backends."""
+        robot_data = self._require_model()
+        return self._plant.GetBodyByName(link_name, robot_data.model_instance).body_frame()
+
+    def get_model_joint_indices(self) -> list[int]:
+        """Return Drake position indices in canonical model-joint order."""
+        return list(self._require_model().joint_indices)
 
     def _require_model(self) -> _RobotData:
         if self._model is None:
@@ -453,7 +444,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
             # Check for duplicate in our tracking
             if obstacle_id in self._obstacles:
-                logger.debug(f"Obstacle '{obstacle_id}' already exists, skipping")
+                logger.debug("Obstacle already exists", obstacle_id=obstacle_id)
                 return None
 
             snapshot = deepcopy(obstacle)
@@ -465,12 +456,16 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     geometry_id=geometry_id,
                     source_id=self._obstacle_source_id,
                 )
-                logger.debug(f"Added obstacle '{obstacle_id}': {obstacle.obstacle_type.value}")
+                logger.debug(
+                    "Added obstacle",
+                    obstacle_id=obstacle_id,
+                    obstacle_type=obstacle.obstacle_type.value,
+                )
             except RuntimeError as e:
                 # Handle case where geometry name already exists in SceneGraph
                 # (can happen with concurrent access)
                 if "already been used" in str(e):
-                    logger.debug(f"Obstacle '{obstacle_id}' already in SceneGraph, skipping")
+                    logger.debug("Obstacle already in SceneGraph", obstacle_id=obstacle_id)
                     return None
                 else:
                     raise
@@ -634,7 +629,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             obstacle_data = self._obstacles[obstacle_id]
             self._remove_obstacle_geometry(obstacle_data)
             del self._obstacles[obstacle_id]
-            logger.debug(f"Removed obstacle '{obstacle_id}'")
+            logger.debug("Removed obstacle", obstacle_id=obstacle_id)
             return True
 
     def update_obstacle(self, obstacle: Obstacle) -> bool:
@@ -731,7 +726,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     num_positions = joint.num_positions()
                     joint_indices.extend(range(start_idx, start_idx + num_positions))
                 robot_data.joint_indices = joint_indices
-                logger.debug("Model joint indices: %s", joint_indices)
+                logger.debug("Computed model joint indices", joint_indices=joint_indices)
 
                 # Compute preview joint indices
                 if robot_data.preview_model_instance is not None:
@@ -744,7 +739,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                         num_positions = joint.num_positions()
                         preview_indices.extend(range(start_idx, start_idx + num_positions))
                     robot_data.preview_joint_indices = preview_indices
-                    logger.debug("Preview joint indices: %s", preview_indices)
+                    logger.debug("Computed preview joint indices", joint_indices=preview_indices)
 
             # Setup collision filters
             self._setup_collision_filters()
@@ -787,7 +782,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 self._set_positions_internal(self._plant_context, home)
 
             self._finalized = True
-            logger.info("World finalized with one model")
 
             # Initial visualization publish (routed to Meshcat thread)
             if self._meshcat_visualizer is not None:
@@ -827,7 +821,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     body2 = self._plant.GetBodyByName(name2, robot_data.model_instance)
                     self._exclude_body_pair(body1, body2)
                 except RuntimeError:
-                    logger.warning(f"Collision exclusion: link not found: {name1} or {name2}")
+                    logger.warning(
+                        "Collision exclusion link not found", first_link=name1, second_link=name2
+                    )
 
         logger.info("Collision filters applied")
 

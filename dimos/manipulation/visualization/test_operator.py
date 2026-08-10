@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-
 """Focused tests for the single-model visualization operator."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from dimos.agents.skill_result import SkillResult
+from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -39,11 +35,12 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 def _config() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/model.urdf"),
+        model=RobotModel.from_file(Path("/model.urdf")),
         joint_names=["left/j1", "left/j2", "right/j1"],
         base_link="base",
         planning_groups=[
@@ -69,6 +66,7 @@ def _plan() -> GeneratedPlan:
 def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     config = _config()
     module = MagicMock()
+    module.config = SimpleNamespace(default_speed_scale=1.0)
     module.get_operation_status.return_value = OperationStatus.COMPLETED
     module.get_error.return_value = ""
     module.has_planned_path.return_value = True
@@ -82,10 +80,9 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     module.generate_plan_to_pose_targets.return_value = _plan()
     module.generate_cartesian_plan.return_value = _plan()
     module.preview_plan.return_value = True
-    module.execute_plan.return_value = True
-    module.cancel.return_value = True
+    module._execute_generated_plan.return_value = True
+    module.cancel.return_value = ExecutionResult(ExecutionStatus.NO_EXECUTION)
     module.clear_planned_path.return_value = True
-    module.reset.return_value = SkillResult.ok("reset")
 
     monitor = MagicMock()
     monitor.planning_groups = PlanningGroupRegistry([config])
@@ -167,7 +164,6 @@ def test_planning_and_actions_return_exact_generated_plan() -> None:
     assert operator.execute(_plan())
     assert operator.cancel()
     assert operator.clear_plan()
-    assert operator.reset()
 
 
 def test_cartesian_planning_uses_current_group_pose() -> None:

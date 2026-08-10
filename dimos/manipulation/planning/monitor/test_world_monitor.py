@@ -48,26 +48,6 @@ from dimos.perception.experimental.object import Object
 from dimos.robot.assets.model import RobotModel
 
 
-class _VectorLike(list[float]):
-    def tolist(self) -> list[float]:
-        return list(self)
-
-
-class _FakeStateMonitor:
-    def __init__(self, positions: list[float], stale: bool = False) -> None:
-        self._positions = _VectorLike(positions)
-        self._stale = stale
-
-    def get_current_positions(self) -> _VectorLike:
-        return self._positions
-
-    def get_current_velocities(self) -> None:
-        return None
-
-    def is_state_stale(self, max_age: float) -> bool:
-        return self._stale
-
-
 class _ScratchContext:
     def __enter__(self) -> str:
         return "scratch"
@@ -228,7 +208,7 @@ class FakeViz:
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/tmp/arm.urdf"),
+        model=RobotModel.from_file(Path("/tmp/arm.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion([0, 0, 0, 1])),
         joint_names=["j1", "j2"],
         base_link="base",
@@ -431,7 +411,8 @@ def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
-    monitor._state_monitor = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
+    monitor.start_state_monitor()
+    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
 
     state = monitor.current_group_joint_state("manipulator")
 
@@ -439,11 +420,13 @@ def test_current_group_joint_state_uses_public_names_in_group_order() -> None:
     assert state.position == [0.2, 0.1]
 
 
-def test_current_model_joint_state_rejects_stale_state() -> None:
+def test_current_model_joint_state_rejects_stale_state(mocker) -> None:
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
-    monitor._state_monitor = _FakeStateMonitor([1.0, 2.0], stale=True)  # type: ignore[attr-defined]
+    monitor.start_state_monitor()
+    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[1.0, 2.0, 3.0]))
+    mocker.patch.object(monitor, "is_state_stale", return_value=True)
 
     state = monitor.current_model_joint_state(max_age=0.5)
 
@@ -451,11 +434,13 @@ def test_current_model_joint_state_rejects_stale_state() -> None:
     assert state.position == []
 
 
-def test_current_group_joint_state_rejects_stale_state() -> None:
+def test_current_group_joint_state_rejects_stale_state(mocker) -> None:
     stale_world = FakeWorld()
     stale_monitor = world_monitor_module.WorldMonitor(world=stale_world)  # type: ignore[arg-type]
     stale_monitor.load_model(_three_joint_reordered_group_config())
-    stale_monitor._state_monitor = _FakeStateMonitor([0.1, 0.2, 0.3], stale=True)  # type: ignore[attr-defined]
+    stale_monitor.start_state_monitor()
+    stale_monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    mocker.patch.object(stale_monitor, "is_state_stale", return_value=True)
 
     with pytest.raises(ValueError, match="stale"):
         stale_monitor.current_group_joint_state("manipulator")
@@ -465,7 +450,8 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     fake_world = FakeWorld()
     monitor = world_monitor_module.WorldMonitor(world=fake_world)  # type: ignore[arg-type]
     monitor.load_model(_three_joint_reordered_group_config())
-    monitor._state_monitor = _FakeStateMonitor([0.1, 0.2, 0.3])  # type: ignore[attr-defined]
+    monitor.start_state_monitor()
+    monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
 
     pose = monitor.get_group_ee_pose("manipulator")
 
@@ -475,11 +461,13 @@ def test_group_ee_pose_uses_current_state_when_no_joint_state_is_provided() -> N
     assert pose.position.x == 1
 
 
-def test_group_ee_pose_without_joint_state_rejects_stale_state() -> None:
+def test_group_ee_pose_without_joint_state_rejects_stale_state(mocker) -> None:
     stale_world = FakeWorld()
     stale_monitor = world_monitor_module.WorldMonitor(world=stale_world)  # type: ignore[arg-type]
     stale_monitor.load_model(_three_joint_reordered_group_config())
-    stale_monitor._state_monitor = _FakeStateMonitor([0.1, 0.2, 0.3], stale=True)  # type: ignore[attr-defined]
+    stale_monitor.start_state_monitor()
+    stale_monitor.on_joint_state(JointState(name=["j1", "j2", "j3"], position=[0.1, 0.2, 0.3]))
+    mocker.patch.object(stale_monitor, "is_state_stale", return_value=True)
 
     with pytest.raises(ValueError, match="stale"):
         stale_monitor.get_group_ee_pose("manipulator")

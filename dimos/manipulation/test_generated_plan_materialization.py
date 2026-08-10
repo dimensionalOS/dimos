@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 class RecordingGenerator:
@@ -72,7 +73,7 @@ class RecordingGenerator:
 
 def _model() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/robot.urdf"),
+        model=RobotModel.from_file(Path("/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["left/a", "left/b", "right/c"],
         base_link="base",
@@ -133,7 +134,7 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert module._plan_selected_path(("left_arm", "right_arm"), path[0], path[-1], 1)
+    assert module._plan_selected_path(("left_arm", "right_arm"), path[0], path[-1], 1, 1.0)
     assert RecordingGenerator.calls == [[[0.0, 0.0, 0.0], [0.2, 0.1, 0.3]]]
     assert RecordingGenerator.limits == ([3.0, 3.0, 3.0], [4.0, 4.0, 4.0])
     assert module._last_plan is not None
@@ -195,8 +196,9 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, mo
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
-    assert module._plan_selected_path(("left_arm",), path[0], path[-1], 1)
+    assert module._plan_selected_path(("left_arm",), path[0], path[-1], 1, 1.0)
     RecordingGenerator.calls = []
 
-    module._wait_for_trajectory_completion(timeout=0.0)
+    module.get_state()
+    module.has_planned_path()
     assert RecordingGenerator.calls == []

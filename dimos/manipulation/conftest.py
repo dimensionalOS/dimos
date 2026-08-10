@@ -31,6 +31,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import RobotModel
 
 
 class ModuleFactory(Protocol):
@@ -48,12 +50,13 @@ def _mock_control_coordinator() -> MagicMock:
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 
 def _test_model() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/test/model.urdf"),
+        model=RobotModel.from_file(Path("/test/model.urdf")),
         joint_names=["arm/j0"],
         base_link="base",
         planning_groups=[PlanningGroupDefinition("manipulator", ("arm/j0",), "base", "tool")],

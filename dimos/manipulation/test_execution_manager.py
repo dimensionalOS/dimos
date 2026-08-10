@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-
 """Tests for direct canonical trajectory execution."""
 
 from unittest.mock import MagicMock
@@ -30,12 +25,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation.execution_manager import ExecutionOutcome, PlanExecutionManager
+from dimos.manipulation.execution_manager import PlanExecutionManager
+from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 
 
 def _plan(
@@ -62,6 +59,7 @@ def _coordinator() -> MagicMock:
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 
@@ -69,21 +67,24 @@ def _manager(coordinator: MagicMock | None = None) -> PlanExecutionManager:
     return PlanExecutionManager(
         joint_names=("left/j1", "left/j2", "right/j1"),
         coordinator=coordinator or _coordinator(),
+        default_timeout=1.0,
     )
 
 
 def test_manager_rejects_empty_or_duplicate_model_joint_names() -> None:
     with pytest.raises(ValueError, match="non-empty and unique"):
-        PlanExecutionManager(joint_names=(), coordinator=_coordinator())
+        PlanExecutionManager(joint_names=(), coordinator=_coordinator(), default_timeout=1.0)
     with pytest.raises(ValueError, match="non-empty and unique"):
-        PlanExecutionManager(joint_names=("j1", "j1"), coordinator=_coordinator())
+        PlanExecutionManager(
+            joint_names=("j1", "j1"), coordinator=_coordinator(), default_timeout=1.0
+        )
 
 
 def test_execute_forwards_same_canonical_trajectory_object_unchanged() -> None:
     coordinator = _coordinator()
     plan = _plan()
-    result = _manager(coordinator).execute(plan)
-    assert result.accepted
+    result = _manager(coordinator).execute(plan, blocking=False)
+    assert result.status is ExecutionStatus.ACCEPTED
     assert coordinator.execute_trajectory.call_args.args[0] is plan.trajectory
 
 
@@ -96,8 +97,8 @@ def test_execute_forwards_same_canonical_trajectory_object_unchanged() -> None:
 )
 def test_execute_rejects_invalid_plan_before_rpc(plan: GeneratedPlan, message: str) -> None:
     coordinator = _coordinator()
-    result = _manager(coordinator).execute(plan)
-    assert result.outcome is ExecutionOutcome.REJECTED
+    result = _manager(coordinator).execute(plan, blocking=False)
+    assert result.status is ExecutionStatus.REJECTED
     assert message in result.message
     coordinator.execute_trajectory.assert_not_called()
 
@@ -108,21 +109,21 @@ def test_execute_preserves_coordinator_rejection() -> None:
         TrajectoryExecutionStatus.INVALID_TRAJECTORY, "specific rejection"
     )
     coordinator.execute_trajectory.return_value = rejection
-    result = _manager(coordinator).execute(_plan())
-    assert result.outcome is ExecutionOutcome.REJECTED
+    result = _manager(coordinator).execute(_plan(), blocking=False)
+    assert result.status is ExecutionStatus.REJECTED
     assert result.coordinator_result is rejection
 
 
 def test_execute_rpc_failure_is_uncertain() -> None:
     coordinator = _coordinator()
     coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
-    result = _manager(coordinator).execute(_plan())
-    assert result.outcome is ExecutionOutcome.UNCERTAIN
+    result = _manager(coordinator).execute(_plan(), blocking=False)
+    assert result.status is ExecutionStatus.UNCERTAIN
     assert "timed out" in result.message
 
 
 def test_cancel_forwards_to_coordinator() -> None:
     coordinator = _coordinator()
     result = _manager(coordinator).cancel()
-    assert result.status is TrajectoryCancellationStatus.ALREADY_STOPPED
+    assert result.status is ExecutionStatus.NO_EXECUTION
     coordinator.cancel_trajectory.assert_called_once_with()

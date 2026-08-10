@@ -442,9 +442,19 @@ class PickAndPlaceModule(ManipulationModule):
             lines.append("EE pose: unavailable")
 
         # Gripper
-        gripper_pos = self.get_gripper()
+        snapshot = self.get_state()
+        if group_id is not None:
+            group_state = snapshot.groups.get(group_id)
+            gripper_pos = group_state.gripper_position if group_state is not None else None
+        else:
+            gripper_positions = [
+                state.gripper_position
+                for state in snapshot.groups.values()
+                if state.gripper_position is not None
+            ]
+            gripper_pos = gripper_positions[0] if len(gripper_positions) == 1 else None
         if gripper_pos is not None:
-            lines.append(f"Gripper: {gripper_pos:.3f}m")
+            lines.append(f"Gripper: {gripper_pos:.0%} open")
         else:
             lines.append("Gripper: not configured")
 
@@ -514,10 +524,24 @@ then refreshes perception obstacles.
             min_duration: Minimum time an object must be seen to be included.
             group_id: Planning group to move; omission requires exactly one group.
         """
-        # Go to init for a clear camera view
-        init_result = self.go_init(group_id)
-        if not init_result.is_success():
-            return init_result
+        # Go to init for a clear camera view.
+        groups = self.get_state().groups
+        if group_id is None:
+            if len(groups) != 1:
+                return SkillResult.fail("ROBOT_NOT_FOUND", "Planning group is missing or ambiguous")
+            group_id = next(iter(groups))
+        group_state = groups.get(group_id)
+        if group_state is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", f"Unknown planning group: {group_id}")
+        init = group_state.joint_presets.get("init")
+        if init is None:
+            return SkillResult.fail("NOT_CONFIGURED", "No init joints captured")
+        plan = self.plan_to_joints({group_id: init})
+        if not plan.succeeded:
+            return SkillResult.fail("PLANNING_FAILED", plan.message)
+        execution = self.execute(blocking=True)
+        if not execution.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", execution.message)
 
         obstacles = self.refresh_obstacles(min_duration)
 

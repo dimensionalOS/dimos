@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class _FakeJoint:
@@ -168,7 +169,7 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/tmp/fake.urdf"),
+        model=RobotModel.from_file(Path("/tmp/fake.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         joint_names=["joint_a", "joint_b", "joint_c"],
         base_link="base",
@@ -375,7 +376,7 @@ def test_solve_single_reports_non_convergence(mocker: MockerFixture) -> None:
 def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._model_contexts = {"tool": context}
+    ik._model_context = context
 
     result = ik.solve(
         world=cast("Any", _FakeWorld(collision_free=False)),
@@ -394,7 +395,7 @@ def test_solve_rejects_collision_candidate(mocker: MockerFixture) -> None:
 def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     ik = _pink_ik(mocker, converge=True)
     context = _context()
-    ik._model_contexts = {"tool": context}
+    ik._model_context = context
     calls = 0
 
     def fake_solve_single(**_: object) -> IKResult:
@@ -433,22 +434,31 @@ def test_solve_retries_after_joint_limit_failure(mocker: MockerFixture) -> None:
     assert result.status == IKStatus.SUCCESS
 
 
-def test_robot_context_cache_key_includes_tip_frame(mocker: MockerFixture, tmp_path: Path) -> None:
+def test_robot_context_is_built_once_and_reused_for_every_tip_frame(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
     modules = _fake_modules()
     modules.pinocchio.buildModelFromUrdf = lambda path: _FakeModel()  # type: ignore[attr-defined]
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
+    mocker.patch.object(
+        pink_ik,
+        "prepare_urdf_for_drake",
+        return_value=LoadedRobotModel("<robot/>", tmp_path / "prepared.urdf", {}),
+    )
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     world = _FakeWorld()
-    world.config.model_path = model_path
+    world.config.model = RobotModel.from_file(model_path)
     ik = PinkIK(PinkIKConfig(max_iterations=1))
+    build_context = mocker.spy(ik, "_build_robot_context")
 
     first = ik._get_model_context(cast("Any", world), "tool")
     second = ik._get_model_context(cast("Any", world), "base")
 
     assert first is not second
-    assert set(ik._model_contexts) == {"tool", "base"}
+    assert first.model is second.model
+    assert first.data is second.data
+    build_context.assert_called_once_with(world.config, "tool")
 
 
 def test_build_robot_context_rejects_base_link_not_model_root(
@@ -459,11 +469,15 @@ def test_build_robot_context_rejects_base_link_not_model_root(
     modules = _fake_modules()
     modules.pinocchio.buildModelFromUrdf = lambda path: model  # type: ignore[attr-defined]
     mocker.patch.object(pink_ik, "_load_optional_dependencies", return_value=modules)
-    mocker.patch.object(pink_ik, "prepare_urdf_for_drake", return_value=tmp_path / "prepared.urdf")
+    mocker.patch.object(
+        pink_ik,
+        "prepare_urdf_for_drake",
+        return_value=LoadedRobotModel("<robot/>", tmp_path / "prepared.urdf", {}),
+    )
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     config = _robot_config()
-    config.model_path = model_path
+    config.model = RobotModel.from_file(model_path)
 
     with pytest.raises(ValueError, match="base_link 'base'.*model root"):
         PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(config, "tool")

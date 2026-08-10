@@ -114,14 +114,14 @@ class ManipulationOperator:
         return None if init is None else JointState(init)
 
     def evaluate_joint_target(self, request: JointTargetRequest) -> TargetEvaluationResult:
-        """Validate and evaluate a canonical global joint target."""
+        """Validate and evaluate a canonical joint target."""
         groups, validation = self._validate_joint_request(request)
         if validation is not None:
             return validation
         assert groups is not None
         complete = self._complete_states(groups, request.target)
         if complete is None:
-            return self._invalid(request.group_ids, "Incomplete robot target state")
+            return self._invalid(request.group_ids, "Incomplete model target state")
         return self._evaluate_global_target(groups, JointState(request.target), complete)
 
     def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
@@ -235,7 +235,7 @@ class ManipulationOperator:
             return None, self._invalid(request.group_ids, "Joint target contains duplicate joints")
         if names != expected:
             return None, self._invalid(
-                request.group_ids, "Joint target must use exact selected global joints in order"
+                request.group_ids, "Joint target must use exact selected canonical joints in order"
             )
         if any(not math.isfinite(value) for value in positions):
             return None, self._invalid(
@@ -280,7 +280,7 @@ class ManipulationOperator:
             expected = tuple(name for group in groups for name in group.joint_names)
             if seed_names != expected:
                 return group_ids, self._invalid(
-                    group_ids, "Seed must use exact selected global joints in order"
+                    group_ids, "Seed must use exact selected canonical joints in order"
                 )
             if any(not math.isfinite(float(value)) for value in request.seed.position):
                 return group_ids, self._invalid(group_ids, "Seed contains non-finite positions")

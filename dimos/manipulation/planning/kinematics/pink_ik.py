@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import importlib
-from pathlib import Path
+from tempfile import NamedTemporaryFile
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -107,7 +107,7 @@ class PinkIK:
         config_values.update(overrides)
         self.config = PinkKinematicsConfig(**config_values)
         self._modules = _load_optional_dependencies(self.config.solver)
-        self._model_contexts: dict[str, _PinkRobotContext] = {}
+        self._model_context: _PinkRobotContext | None = None
 
     def solve(
         self,
@@ -474,28 +474,28 @@ class PinkIK:
         )
 
     def _get_model_context(self, world: WorldSpec, frame_name: str) -> _PinkRobotContext:
-        if frame_name not in self._model_contexts:
-            self._model_contexts[frame_name] = self._build_robot_context(
-                world.get_model_config(), frame_name
-            )
-        return self._model_contexts[frame_name]
+        if self._model_context is None:
+            self._model_context = self._build_robot_context(world.get_model_config(), frame_name)
+        if self._model_context.frame_name == frame_name:
+            return self._model_context
+        return replace(
+            self._model_context,
+            frame_id=_get_frame_id(self._model_context.model, frame_name),
+            frame_name=frame_name,
+        )
 
     def _build_robot_context(self, config: RobotModelConfig, frame_name: str) -> _PinkRobotContext:
         pinocchio = self._modules.pinocchio
-        model_path = Path(config.model_path).resolve()
-        if not model_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {model_path}")
-
-        if model_path.suffix == ".xml":
-            model = pinocchio.buildModelFromMJCF(str(model_path))
-        else:
-            prepared_path = prepare_urdf_for_drake(
-                urdf_path=model_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                convert_meshes=config.auto_convert_meshes,
-            )
-            model = pinocchio.buildModelFromUrdf(str(prepared_path))
+        description = prepare_urdf_for_drake(
+            config.model.load(),
+            convert_meshes=config.auto_convert_meshes,
+        )
+        # Pinocchio's supported Python API loads URDFs by filename. Materialize
+        # the already-expanded model only for the duration of model creation.
+        with NamedTemporaryFile(mode="w", suffix=".urdf") as urdf_file:
+            urdf_file.write(description.xml)
+            urdf_file.flush()
+            model = pinocchio.buildModelFromUrdf(urdf_file.name)
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -55,6 +56,11 @@ def make_openyam_hardware(
         adapter_type="mock",
         address=None,
         auto_enable=auto_enable,
+        limits=JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        ),
         adapter_kwargs=adapter_kwargs,
     )
 

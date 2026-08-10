@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 def _pose() -> PoseStamped:
@@ -58,7 +59,7 @@ class _World:
         self.current = current or [0.0, 0.0, 0.7]
         self.projected_states: list[JointState] = []
         self.config = RobotModelConfig(
-            model_path=Path("robot.urdf"),
+            model=RobotModel.from_file(Path("robot.urdf")),
             base_pose=_pose(),
             joint_names=["arm/joint_a", "arm/joint_b", "arm/gripper"],
             base_link="base",

@@ -66,6 +66,7 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         add_gripper=True,
+        gripper_hardware_id="arm",
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
@@ -165,8 +166,9 @@ def make_xarm_hardware(
     initial_positions = kwargs.get("initial_positions")
     if gripper and isinstance(initial_positions, list):
         kwargs["initial_positions"] = [*initial_positions, 0.0]
+    limits: JointLimits | None = None
     if adapter_type == "mock":
-        kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([-2 * math.pi] * dof), *([0.0] * len(gripper_joints))],
             position_upper=[*([2 * math.pi] * dof), *([850.0] * len(gripper_joints))],
             velocity_max=[*([math.pi] * dof), *([0.0] * len(gripper_joints))],
@@ -178,6 +180,7 @@ def make_xarm_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
+        limits=limits,
         adapter_kwargs=kwargs,
     )
 
@@ -263,6 +266,7 @@ def make_xarm_model_config(
     *,
     prefix: str = "",
     add_gripper: bool = True,
+    gripper_hardware_id: str | None = None,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
     z_offset: float = 0.0,
@@ -305,7 +309,7 @@ def make_xarm_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=collision_exclusions if add_gripper else [],
-        gripper_hardware_id="arm" if add_gripper else None,
+        gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,

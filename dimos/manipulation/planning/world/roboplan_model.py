@@ -30,6 +30,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
 ROBOPLAN_WORLD_FRAME = "dimos_world"
@@ -123,20 +124,16 @@ def build_roboplan_model(
     prepared = [
         (
             robot,
-            Path(
-                prepare_urdf_for_drake(
-                    robot.config.model_path,
-                    package_paths=robot.config.package_paths,
-                    xacro_args=robot.config.xacro_args,
-                    convert_meshes=robot.config.auto_convert_meshes,
-                )
+            prepare_urdf_for_drake(
+                robot.config.model.load(),
+                convert_meshes=robot.config.auto_convert_meshes,
             ),
         )
     ]
     composed = _compose(prepared, False)
     groups, all_group = _groups(robot, registry, composed.maps)
     srdf = _srdf(_MODEL_NAME, [robot], groups, composed)
-    package_paths = [str(path) for path in robot.config.package_paths.values()]
+    package_paths = [str(path) for path in prepared[0][1].package_paths.values()]
     scene = scene_factory(
         name=_MODEL_NAME,
         urdf=composed.xml,
@@ -156,7 +153,9 @@ def build_roboplan_model(
     )
 
 
-def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _Composed:
+def _compose(
+    prepared: Sequence[tuple[_BuildRobot, LoadedRobotModel]], composite: bool
+) -> _Composed:
     result = ET.Element(
         "robot",
         {"name": "dimos_composite" if composite else _MODEL_NAME},
@@ -164,9 +163,9 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
     ET.SubElement(result, "link", {"name": _ROOT_LINK})
     maps: dict[str, _NameMap] = {}
     used_names: set[str] = {_ROOT_LINK}
-    for robot, path in prepared:
+    for robot, description in prepared:
         config = robot.config
-        root = ET.parse(path).getroot()
+        root = ET.fromstring(description.xml)
         if _tag(root.tag) != "robot":
             raise ValueError("Prepared model is not a URDF robot")
         _add_missing_acceleration_limits(root)

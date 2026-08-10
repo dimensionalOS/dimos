@@ -79,8 +79,9 @@ def a1z_hardware(
         adapter_kwargs["config"] = resolved_config
 
     gripper_joints = [f"{hw_id}/gripper"] if has_gripper else []
+    limits: JointLimits | None = None
     if adapter_type == "mock":
-        adapter_kwargs["limits"] = JointLimits(
+        limits = JointLimits(
             position_lower=[*([-math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
             position_upper=[*([math.pi] * A1Z_DOF), *([0.1] * len(gripper_joints))],
             velocity_max=[*([math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
@@ -92,6 +93,7 @@ def a1z_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=True,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
     )
 

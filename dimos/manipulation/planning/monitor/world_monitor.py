@@ -90,7 +90,6 @@ class WorldMonitor:
             self._world.load_model(config)
             self._model_config = config
             self._planning_groups.add_model(config)
-            logger.info("Loaded manipulation model")
 
     @property
     def planning_groups(self) -> PlanningGroupRegistry:
@@ -193,7 +192,6 @@ class WorldMonitor:
             )
             monitor.start()
             self._state_monitor = monitor
-            logger.info("State monitor started")
 
     def start_obstacle_monitor(self) -> None:
         """Start monitoring obstacle updates."""

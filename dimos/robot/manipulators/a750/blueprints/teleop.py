@@ -16,14 +16,14 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a750.config import (
     a750_hardware,
     make_a750_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import eef_twist_task
+from dimos.robot.manipulators.common.blueprints import eef_twist_task, trajectory_task
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a750_hw = a750_hardware("arm", mock_without_address=True)
@@ -53,6 +53,6 @@ keyboard_teleop_a750 = autoconnect(
     ),
     ManipulationModule.blueprint(
         model=_a750_model,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
 )

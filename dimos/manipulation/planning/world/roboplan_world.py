@@ -21,6 +21,7 @@ the optional dependency installed.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -128,6 +129,27 @@ class RoboPlanWorld:
         if robot.lower_limits is None or robot.upper_limits is None:
             raise RuntimeError("Joint limits are available after RoboPlan finalization")
         return robot.lower_limits.copy(), robot.upper_limits.copy()
+
+    def ordered_joint_positions(self, joint_state: JointState) -> NDArray[np.float64]:
+        """Return a canonical joint state in configured model order."""
+        return self._joint_state_to_q(joint_state)
+
+    def is_ready(self) -> bool:
+        """Return whether authoritative state is available for planning."""
+        with self._state_lock:
+            return self._model_data is not None and self._has_authoritative_state
+
+    def planning_group(self, group_ids: Sequence[PlanningGroupID]) -> RoboPlanGroup | None:
+        """Return the native group generated for a public group selection."""
+        return self._require_model().groups.get(frozenset(group_ids))
+
+    def all_planning_group(self) -> RoboPlanGroup:
+        """Return the generated group spanning every canonical model joint."""
+        return self._require_model().all_group
+
+    def native_link_name(self, canonical_name: str) -> str:
+        """Return the backend link name for a canonical model link."""
+        return self._require_model().native_link(canonical_name)
 
     # Obstacle Management
 
@@ -602,7 +624,3 @@ class RoboPlanWorld:
                 f"{obstacle.obstacle_type.name} obstacle requires {n_dims} dimensions, "
                 f"got {len(obstacle.dimensions)}"
             )
-
-    def _is_ready(self) -> bool:
-        with self._state_lock:
-            return self._model_data is not None and self._has_authoritative_state

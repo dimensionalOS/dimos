@@ -35,13 +35,14 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.fixture
 def canonical_model_config() -> RobotModelConfig:
     """Create a model whose joint names match coordinator-facing names."""
     return RobotModelConfig(
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["left/joint1", "left/joint2", "left/joint3"],
         base_link="link_base",
@@ -58,7 +59,7 @@ def canonical_model_config() -> RobotModelConfig:
 
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/path"),
+        model=RobotModel.from_file(Path("/path")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",

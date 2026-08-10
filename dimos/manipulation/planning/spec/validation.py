@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.robot.model_parser import ModelDescription, parse_model
+from dimos.robot.assets.model import LoadedRobotModel
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -39,38 +39,38 @@ _EXPECTED_DIMENSIONS = {
 }
 
 
-def validate_robot_model_config(config: RobotModelConfig) -> ModelDescription:
+def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
     """Validate one prepared robot model and its canonical planning groups."""
     if not config.joint_names:
         raise ValueError("RobotModelConfig contains no controllable joints")
     try:
-        model = parse_model(
-            config.model_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-        )
+        model = config.model.load()
+        root = ET.fromstring(model.xml)
+        model_joints = model.joints
     except (ET.ParseError, OSError, ValueError) as exc:
         raise ValueError(f"RobotModelConfig has an invalid model asset: {exc}") from exc
 
     if config.srdf_path is not None:
         _validate_srdf(config.srdf_path)
 
-    duplicate_model_joints = _duplicates(joint.name for joint in model.joints)
+    duplicate_model_joints = _duplicates(joint.name for joint in model_joints)
     if duplicate_model_joints:
         raise ValueError(
             f"RobotModelConfig model contains duplicate joint names: {duplicate_model_joints}"
         )
-    duplicate_links = _duplicates(model.links)
+    model_links = [name for link in root.findall("link") if (name := link.get("name")) is not None]
+    duplicate_links = _duplicates(model_links)
     if duplicate_links:
         raise ValueError(f"RobotModelConfig model contains duplicate link names: {duplicate_links}")
 
-    model_joint_names = {joint.name for joint in model.joints}
+    model_joint_names = {joint.name for joint in model_joints}
     missing_joints = sorted(set(config.joint_names) - model_joint_names)
     if missing_joints:
         raise ValueError(
             f"RobotModelConfig configured joints are missing from the model: {missing_joints}"
         )
-    if config.base_link not in model.links:
+    model_link_names = set(model_links)
+    if config.base_link not in model_link_names:
         raise ValueError(f"RobotModelConfig base link '{config.base_link}' is missing")
 
     duplicate_group_names = _duplicates(group.name for group in config.planning_groups)
@@ -96,7 +96,7 @@ def validate_robot_model_config(config: RobotModelConfig) -> ModelDescription:
                 f"the controllable model set: {unknown_group_joints}"
             )
         for role, link_name in (("base", group.base_link), ("tip", group.tip_link)):
-            if link_name is not None and link_name not in model.links:
+            if link_name is not None and link_name not in model_link_names:
                 raise ValueError(
                     f"Planning group '{group.name}' has missing {role} link '{link_name}'"
                 )

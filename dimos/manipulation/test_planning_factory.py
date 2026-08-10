@@ -55,6 +55,7 @@ from dimos.manipulation.planning.trajectory_generator.config import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.fixture
@@ -75,7 +76,7 @@ def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
 @pytest.fixture
 def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[

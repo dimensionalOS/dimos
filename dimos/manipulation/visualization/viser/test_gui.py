@@ -40,6 +40,7 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
 
 
 class EmptyServer:
@@ -165,7 +166,9 @@ def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     return ViserPanelGui(
         EmptyServer(),
         PlanningSceneInfo(
-            model=RobotModelConfig(model_path=Path("/tmp/model.urdf"), joint_names=[])
+            model=RobotModelConfig(
+                model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
+            )
         ),
         FakeOperator(module),
         lambda: None,

@@ -28,7 +28,7 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.model_parser import parse_model
+from dimos.robot.assets.model import RobotModel
 
 
 def _write_slash_model(path: Path) -> None:
@@ -61,7 +61,7 @@ def _write_slash_model(path: Path) -> None:
 
 def _config(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=path,
+        model=RobotModel.from_file(path),
         joint_names=["left/j1", "right/j1"],
         base_link="world",
         planning_groups=[
@@ -85,10 +85,13 @@ def test_canonical_slash_names_round_trip_through_common_model_parsers(tmp_path:
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
 
-    parsed = parse_model(urdf)
+    parsed = RobotModel.from_file(urdf).load()
     visual = URDF.load(urdf)
 
-    assert parsed.actuated_joint_names == ["left/j1", "right/j1"]
+    assert [joint.name for joint in parsed.joints if joint.type != "fixed"] == [
+        "left/j1",
+        "right/j1",
+    ]
     assert set(visual.actuated_joint_names) == {"left/j1", "right/j1"}
 
 
@@ -112,7 +115,10 @@ def test_prepared_model_validation_accepts_canonical_bimanual_model(tmp_path: Pa
     model = validate_robot_model_config(_config(urdf))
 
     assert model.root_link == "world"
-    assert model.actuated_joint_names == ["left/j1", "right/j1"]
+    assert [joint.name for joint in model.joints if joint.type != "fixed"] == [
+        "left/j1",
+        "right/j1",
+    ]
 
 
 @pytest.mark.parametrize(

@@ -12,16 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-
 """Tests for canonical, single-model planning groups."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -43,7 +36,18 @@ from dimos.manipulation.planning.groups.utils import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.model_parser import JointDescription, ModelDescription
+from dimos.robot.assets.model import JointDescription, RobotModel
+
+
+@dataclass
+class ModelDescription:
+    joints: list[JointDescription]
+    root_link: str
+    links: list[str]
+    source_path: Path = Path("/tmp/model.urdf")
+
+    def get_joint(self, name: str) -> JointDescription | None:
+        return next((joint for joint in self.joints if joint.name == name), None)
 
 
 def _serial_model(*joint_types: str) -> ModelDescription:
@@ -65,7 +69,7 @@ def _serial_model(*joint_types: str) -> ModelDescription:
 
 def _config(groups: list[PlanningGroupDefinition] | None = None) -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/tmp/model.urdf"),
+        model=RobotModel.from_file(Path("/tmp/model.urdf")),
         joint_names=["left/j1", "left/j2", "right/j1"],
         planning_groups=groups
         or [
@@ -116,7 +120,6 @@ def test_fallback_generation_and_branch_rejection() -> None:
 def test_discovery_rejects_missing_explicit_srdf(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="SRDF file not found"):
         discover_planning_group_definitions(
-            model_path=tmp_path / "model.urdf",
             model=_serial_model("revolute"),
             controllable_joint_names=["joint1"],
             srdf_path=tmp_path / "missing.srdf",
@@ -191,7 +194,10 @@ def test_selector_accepts_id_or_group() -> None:
 
 
 def test_model_config_rejects_obsolete_name_and_mapping_fields() -> None:
-    base = {"model_path": Path("/tmp/model.urdf"), "joint_names": ["joint1"]}
+    base = {
+        "model": RobotModel.from_file(Path("/tmp/model.urdf")),
+        "joint_names": ["joint1"],
+    }
     with pytest.raises(ValueError):
         RobotModelConfig(**base, name="arm")
     with pytest.raises(ValueError):

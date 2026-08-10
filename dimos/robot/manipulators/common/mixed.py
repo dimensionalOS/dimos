@@ -66,9 +66,8 @@ _piper_teleop_hw = make_piper_hardware(
     adapter_type="piper",
     address=global_config.can_port or "can0",
     gripper=True,
-    canonical_joint_names=[f"piper_arm/joint{i}" for i in range(1, 7)],
 )
-_xarm6_teleop_model = make_xarm6_model_config(add_gripper=False)
+_xarm6_teleop_model = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
 _piper_teleop_model = make_piper_model_config()
 
 coordinator_teleop_dual = ControlCoordinator.blueprint(
@@ -77,16 +76,30 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
         teleop_ik_task(
             _xarm6_teleop_hw,
             name="teleop_xarm",
-            hand="left",
+            bindings=[{"hand": "left", "target_frame": "xarm_arm/link6"}],
             robot_model=_xarm6_teleop_model,
             priority=10,
         ),
         teleop_ik_task(
             _piper_teleop_hw,
             name="teleop_piper",
-            hand="right",
+            bindings=[{"hand": "right", "target_frame": "gripper_base"}],
             robot_model=_piper_teleop_model,
             priority=10,
+        ),
+        TaskConfig(
+            name="xarm_arm_gripper",
+            type="gripper",
+            joint_names=["xarm_arm/gripper"],
+            priority=20,
+            stream_bind={"gripper_command": "left_gripper_command"},
+        ),
+        TaskConfig(
+            name="piper_arm_gripper",
+            type="gripper",
+            joint_names=["piper_arm/gripper"],
+            priority=20,
+            stream_bind={"gripper_command": "right_gripper_command"},
         ),
     ],
 )

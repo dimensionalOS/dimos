@@ -36,6 +36,7 @@ xarm_perception = autoconnect(
     PickAndPlaceModule.blueprint(
         model=make_xarm7_model_config(
             add_gripper=True,
+            gripper_hardware_id="arm",
             pitch=math.radians(45),
             tf_extra_links=["link7"],
         ),

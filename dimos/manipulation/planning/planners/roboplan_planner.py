@@ -93,20 +93,20 @@ class RoboPlanPlanner:
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
         try:
-            q_start = self._world._joint_state_to_q(start)
+            q_start = self._world.ordered_joint_positions(start)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
         try:
-            q_goal = self._world._joint_state_to_q(goal)
+            q_goal = self._world.ordered_joint_positions(goal)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             return PlanningResult(
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
         config = self._world.get_model_config()
-        group = self._world._require_model().all_group
+        group = self._world.all_planning_group()
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
                 ctx,
@@ -141,7 +141,7 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_GOAL,
                 message="No planning groups selected",
             )
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -194,7 +194,7 @@ class RoboPlanPlanner:
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
 
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -259,7 +259,7 @@ class RoboPlanPlanner:
         start: JointState,
     ) -> JointState:
         """Validate readiness and normalize the request's authoritative start."""
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             raise ValueError(
                 "RoboPlan planning scene is not ready: authoritative state is incomplete"
             )
@@ -361,7 +361,6 @@ class RoboPlanPlanner:
         selection: PlanningGroupSelection,
         targets: Mapping[PlanningGroupID, CartesianTarget],
     ) -> Any:
-        model = self._world._require_model()
         base_frames: list[str] = []
         tip_frames: list[str] = []
         waypoint_paths: list[list[NDArray[np.float64]]] = []
@@ -381,7 +380,7 @@ class RoboPlanPlanner:
                     f"Cartesian target for '{group.id}' must begin at its current TCP pose"
                 )
             base_frames.append(ROBOPLAN_WORLD_FRAME)
-            tip_frames.append(model.native_link(group.tip_link))
+            tip_frames.append(self._world.native_link_name(group.tip_link))
             waypoint_paths.append(target_matrices)
         return roboplan_core.CartesianPath(base_frames, tip_frames, waypoint_paths)
 

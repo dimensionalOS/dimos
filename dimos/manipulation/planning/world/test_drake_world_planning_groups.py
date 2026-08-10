@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 requires_drake = pytest.mark.skipif(
     not DRAKE_AVAILABLE,
@@ -120,7 +121,7 @@ def _config(
     path: Path, groups: list[PlanningGroupDefinition], joints: list[str] | None = None
 ) -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=path,
+        model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joints or ["joint1", "joint2"],
         base_link="base_link",
@@ -309,7 +310,7 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     world = DrakeWorld(enable_viz=False)
     world.load_model(
         RobotModelConfig(
-            model_path=urdf,
+            model=RobotModel.from_file(urdf),
             base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
@@ -376,11 +377,10 @@ def test_drake_default_pose_methods_fail_for_no_or_ambiguous_pose(tmp_path: Path
 
 
 @requires_drake
-def test_drake_rejects_non_controllable_group_joints_before_world_mutation(
-    tmp_path: Path,
-) -> None:
+def test_drake_load_rejects_group_joints_outside_controllable_set(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
+    world = DrakeWorld()
     with pytest.raises(ValueError, match="outside the controllable model set"):
         world.load_model(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
 

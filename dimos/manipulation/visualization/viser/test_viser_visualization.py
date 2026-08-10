@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-
 """Hermetic tests for singular Viser preview data."""
 
 from pathlib import Path
@@ -43,11 +38,12 @@ from dimos.manipulation.visualization.viser.visualizer import ViserManipulationV
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 
 
 def _model() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/model.urdf"),
+        model=RobotModel.from_file(Path("/model.urdf")),
         joint_names=["left/j1", "right/j1"],
         planning_groups=[
             PlanningGroupDefinition("left_arm", ("left/j1",), "base", "left/tool"),

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, MagicMock, call
 
 import pytest
 from pytest_mock import MockerFixture
@@ -34,6 +34,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.manipulation_spec import ExecutionStatus, PlanStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -58,6 +59,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import RobotModel
 
 
 def _control_coordinator(
@@ -68,6 +71,7 @@ def _control_coordinator(
     coordinator = MagicMock(spec=ControlCoordinator)
     coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 
@@ -75,7 +79,7 @@ def _control_coordinator(
 def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         base_link="link_base",
@@ -94,7 +98,7 @@ def robot_config():
 
 def _one_joint_config() -> RobotModelConfig:
     return RobotModelConfig(
-        model_path=Path("/path"),
+        model=RobotModel.from_file(Path("/path")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["j0"],
         base_link="base_link",
@@ -103,6 +107,20 @@ def _one_joint_config() -> RobotModelConfig:
                 name="manipulator", joint_names=("j0",), base_link="base_link", tip_link="ee"
             )
         ],
+    )
+
+
+def _bimanual_config() -> RobotModelConfig:
+    return RobotModelConfig(
+        model=RobotModel.from_file(Path("/path/to/bimanual.urdf")),
+        joint_names=["left/j1", "right/j1"],
+        base_link="base",
+        planning_groups=[
+            PlanningGroupDefinition("left_arm", ("left/j1",), "base", "left/tool"),
+            PlanningGroupDefinition("right_arm", ("right/j1",), "base", "right/tool"),
+            PlanningGroupDefinition("both_arms", ("left/j1", "right/j1"), "base"),
+        ],
+        home_joints=[0.0, 0.0],
     )
 
 
@@ -263,15 +281,15 @@ class TestStateMachine:
         module = module_factory()
 
         module._state = ManipulationState.IDLE
-        assert module.cancel() is False
+        assert module.cancel().status is ExecutionStatus.NO_EXECUTION
 
         module._state = ManipulationState.PLANNING
-        assert module.cancel() is True
+        assert module.cancel().status is ExecutionStatus.ABORTED
         assert module._state == ManipulationState.IDLE
         assert module._planning_epoch == 1
 
         module._state = ManipulationState.EXECUTING
-        assert module.cancel() is True
+        assert module.cancel().status is ExecutionStatus.NO_EXECUTION
         assert module._state == ManipulationState.IDLE
 
     def test_cancel_hides_active_plan_preview(self, module_factory):
@@ -282,7 +300,7 @@ class TestStateMachine:
         )
         module._world_monitor = MagicMock()
 
-        assert module.cancel() is True
+        assert module.cancel().status is ExecutionStatus.NO_EXECUTION
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
@@ -291,31 +309,26 @@ class TestStateMachine:
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [0.1])
         coordinator = _control_coordinator(cancel_status=TrajectoryCancellationStatus.CANCELLED)
+        coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.ABORTED)
         module._control_coordinator = coordinator
         module._initialize_execution()
 
-        assert module.execute_plan() is True
-        assert module._state == ManipulationState.COMPLETED
+        assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+        assert module._state == ManipulationState.EXECUTING
 
-        assert module.cancel() is True
+        assert module.cancel().status is ExecutionStatus.ABORTED
         module._control_coordinator.cancel_trajectory.assert_called_once_with()
         assert module._state == ManipulationState.IDLE
 
-    def test_reset_not_during_execution(self, module_factory):
-        """Reset works in any state except EXECUTING."""
+    def test_safe_cancel_clears_fault(self, module_factory):
         module = module_factory()
 
         module._state = ManipulationState.FAULT
         module._error_message = "Error"
-        result = module.reset()
-        assert result.is_success()
+        result = module.cancel()
+        assert result.status is ExecutionStatus.NO_EXECUTION
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
-
-        module._state = ManipulationState.EXECUTING
-        result = module.reset()
-        assert not result.is_success()
-        assert result.error_code == "INVALID_STATE"
 
     def test_fail_sets_fault_state(self, module_factory):
         """_fail helper sets FAULT state and message."""
@@ -324,7 +337,7 @@ class TestStateMachine:
 
         result = module._fail("Test error")
         assert result is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._error_message == "Test error"
 
     def test_motion_speed_applies_to_future_plans_only(self, module_factory):
@@ -542,7 +555,7 @@ class TestPlanningGroupApis:
         info = module.get_model_info()
 
         assert [group.id for group in groups] == ["manipulator"]
-        assert info["planning_groups"] == groups
+        assert info["planning_groups"] == list(groups)
         assert info["end_effector_link"] == "link_tcp"
 
     def test_plan_to_joint_targets_stores_generated_plan(self, robot_config, module_factory):
@@ -714,13 +727,13 @@ class TestPlanningGroupApis:
         )
 
         assert success is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
 
     def test_execute_plan_forwards_one_canonical_trajectory_unchanged(self, module_factory):
         model = RobotModelConfig(
-            model_path=Path("/path"),
+            model=RobotModel.from_file(Path("/path")),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["left/j1", "right/k0"],
             planning_groups=[
@@ -772,21 +785,68 @@ class TestPlanningGroupApis:
             name=["left/j1", "right/k0"], position=[0.0, 1.0]
         )
 
-        assert module.execute_plan() is True
+        trajectory = module._last_plan.trajectory
+        assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
 
         mock_coordinator.execute_trajectory.assert_called_once()
         payload = mock_coordinator.execute_trajectory.call_args.args[0]
-        assert payload is module._last_plan.trajectory
+        assert payload is trajectory
         assert payload.joint_names == ["left/j1", "right/k0"]
         assert [point.time_from_start for point in payload.points] == [0.0, 2.5]
         assert [point.positions for point in payload.points] == [[0.0, 1.0], [0.5, 1.5]]
         assert [point.velocities for point in payload.points] == [[0.0, 0.0], [0.2, 0.4]]
 
+    def test_get_state_exposes_selected_group_init_preset(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module._init_joints = JointState(name=model.joint_names, position=[0.1, -0.1])
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.current_group_joint_state.return_value = None
+        module._world_monitor.get_group_ee_pose.return_value = None
+
+        preset = module.get_state().groups["left_arm"].joint_presets["init"]
+
+        assert preset.name == ["left/j1"]
+        assert preset.position == [0.1]
+
+    def test_tf_loop_publishes_every_pose_group_for_bimanual_model(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.get_group_ee_pose.side_effect = [
+            PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
+            PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
+        ]
+        publish = mocker.patch.object(module.tf, "publish")
+
+        def stop_after_first_iteration(_period: float) -> bool:
+            module._tf_stop_event.set()
+            return True
+
+        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
+        module._tf_stop_event.clear()
+
+        module._tf_publish_loop()
+
+        assert module._world_monitor.get_group_ee_pose.call_args_list == [
+            call("left_arm"),
+            call("right_arm"),
+        ]
+        publish.assert_called_once()
+
     def test_pose_wrappers_fail_safely_without_unique_pose_group(
         self, robot_config, module_factory
     ):
         no_pose_config = RobotModelConfig(
-            model_path=robot_config.model_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -817,7 +877,7 @@ class TestPlanningGroupApis:
         self, robot_config, module_factory
     ):
         multi_pose_config = RobotModelConfig(
-            model_path=robot_config.model_path,
+            model=robot_config.model,
             base_pose=robot_config.base_pose,
             joint_names=robot_config.joint_names,
             base_link=robot_config.base_link,
@@ -889,10 +949,18 @@ class TestPlanningDiagnostics:
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
             status=PlanningStatus.TIMEOUT, message="planner timed out"
         )
-        assert not module.plan_to_joints(JointState(position=[1.0, 1.0, 1.0]))
+        result = module.plan_to_joints(
+            {
+                "manipulator": JointState(
+                    name=robot_config.joint_names,
+                    position=[1.0, 1.0, 1.0],
+                )
+            }
+        )
 
+        assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
 
 
 class TestExecute:
@@ -902,5 +970,5 @@ class TestExecute:
         """Execute fails without planned trajectory."""
         module = module_factory()
 
-        assert module.execute() is False
+        assert module.execute().status is ExecutionStatus.NO_PLAN
         assert module._state == ManipulationState.IDLE

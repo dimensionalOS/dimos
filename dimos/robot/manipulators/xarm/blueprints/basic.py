@@ -62,7 +62,12 @@ def _gripper_task() -> TaskConfig:
 
 
 xarm7_planner_coordinator = autoconnect(
-    planner(model=make_xarm7_model_config(add_gripper=True)),
+    planner(
+        model=make_xarm7_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+        )
+    ),
     coordinator(
         hardware=[_xarm7_hw],
         tasks=[trajectory_task(_xarm7_hw), _gripper_task()],
