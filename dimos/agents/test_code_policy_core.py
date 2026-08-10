@@ -1,0 +1,87 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import cloudpickle
+import pytest
+
+from dimos.agents.code_policy_core import validate_policy_callable
+from dimos.agents.code_policy_server import CodePolicyMcpServer
+from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.porcelain.dimos import Dimos
+
+
+def policy(app: Dimos) -> None:
+    del app
+
+
+def test_validate_policy_callable_accepts_canonical_signature() -> None:
+    validate_policy_callable(policy)
+
+
+@pytest.mark.parametrize(
+    ("candidate", "message"),
+    [
+        (lambda: None, "named 'policy'"),
+        (lambda app: None, "named 'policy'"),
+    ],
+)
+def test_validate_policy_callable_rejects_noncanonical_functions(candidate, message: str) -> None:
+    with pytest.raises(TypeError, match=message):
+        validate_policy_callable(candidate)
+
+
+def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) -> None:
+    artifacts = tmp_path / "trial"
+    artifacts.mkdir()
+    log_path = artifacts / "main.jsonl"
+    log_path.write_text(json.dumps({"module": "Planner", "event": "failed"}) + "\n")
+    memory_path = artifacts / "recording.db"
+    with SqliteStore(path=str(memory_path)) as memory:
+        memory.stream("events", str).append("attempted")
+    submitted: list[object] = []
+
+    def handle(source: str, serialized: bytes) -> TrialRun:
+        submitted.append(cloudpickle.loads(serialized))
+        assert "def policy" in source
+        return TrialRun(
+            run_id="debug-1",
+            outcome=TrialOutcome(
+                success=False,
+                reward=0.0,
+                status="completed",
+                error=None,
+                duration_seconds=1.0,
+            ),
+            artifacts=artifacts,
+            log_path=log_path,
+            memory_path=memory_path,
+        )
+
+    with CodePolicyMcpServer(handle) as server:
+        assert server.session is not None
+        result = server.session.python_exec(
+            "def policy(app: Dimos) -> None:\n"
+            "    app.list_modules()\n\n"
+            "trial = submit_policy(policy)\n"
+            "(trial.run_id, trial.outcome.success)"
+        )
+
+    assert "('debug-1', False)" in result
+    assert len(submitted) == 1

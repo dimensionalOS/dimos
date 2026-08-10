@@ -20,13 +20,18 @@ import sqlite3
 from reactivex.disposable import Disposable
 
 
-def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
+def open_sqlite_connection(path: str | Path, *, read_only: bool = False) -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
     import sqlite_vec
 
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    if read_only:
+        uri = Path(path).resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        conn.execute("PRAGMA query_only=ON")
+    else:
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -35,10 +40,12 @@ def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
 
 def open_disposable_sqlite_connection(
     path: str | Path,
+    *,
+    read_only: bool = False,
 ) -> tuple[Disposable, sqlite3.Connection]:
     """Open a WAL-mode SQLite connection and return (disposable, connection).
 
     The disposable closes the connection when disposed.
     """
-    conn = open_sqlite_connection(path)
+    conn = open_sqlite_connection(path, read_only=read_only)
     return Disposable(lambda: conn.close()), conn

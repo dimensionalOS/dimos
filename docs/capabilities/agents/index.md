@@ -4,6 +4,9 @@ sidebarTitle: "Overview"
 ---
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
+See [CodePolicy evaluation](/docs/capabilities/agents/evaluation.md) for the separate exploration and
+agent-free policy execution workflow.
+
 ## Architecture
 
 ```

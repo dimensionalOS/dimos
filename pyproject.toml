@@ -225,6 +225,14 @@ learning = [
 ]
 
 agents = [
+    # Persistent trusted Python runtime used by standalone CodePolicy evaluation.
+    "cloudpickle>=3.1,<4",
+    "ipykernel>=7.2.0",
+    "jupyter-client>=8.8.0",
+    # Loopback-only MCP host for standalone CodePolicy evaluation.
+    "mcp==2.0.0",
+    "requests>=2.32,<3",
+    "uvicorn>=0.34.0",
     "langchain>=1.2.3,<2",
     "langchain-core>=1.2.22,<2",
     "langchain-openai>=1,<2",
@@ -409,6 +417,12 @@ project-deps = [
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
+    "cloudpickle>=3.1,<4",
+    "ipykernel>=7.2.0",
+    "jupyter-client>=8.8.0",
+    "mcp==2.0.0",
+    "requests>=2.32,<3",
+    "uvicorn>=0.34.0",
 ]
 
 tests = [

@@ -41,6 +41,7 @@ def deserialize_component(data: dict[str, Any]) -> Any:
 
 class RegistryStoreConfig(BaseConfig):
     conn: sqlite3.Connection = Field(exclude=True)
+    read_only: bool = False
 
 
 class RegistryStore(Configurable):
@@ -51,13 +52,20 @@ class RegistryStore(Configurable):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._conn: sqlite3.Connection = self.config.conn
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS _streams ("
-            "    name   TEXT PRIMARY KEY,"
-            "    config TEXT NOT NULL"
-            ")"
-        )
-        self._conn.commit()
+        if self.config.read_only:
+            found = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_streams'"
+            ).fetchone()
+            if found is None:
+                raise ValueError("SQLite recording has no Memory2 stream registry")
+        else:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS _streams ("
+                "    name   TEXT PRIMARY KEY,"
+                "    config TEXT NOT NULL"
+                ")"
+            )
+            self._conn.commit()
 
     def get(self, name: str) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT config FROM _streams WHERE name = ?", (name,)).fetchone()
