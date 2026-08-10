@@ -36,9 +36,9 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.experimental.robot.bosdyn.spot.effectors.high_level import SpotHighLevel
+from dimos.experimental.robot.bosdyn.spot.rerun import spot_camera_layout
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.bosdyn.spot.effectors.high_level import SpotHighLevel
-from dimos.robot.bosdyn.spot.rerun import spot_camera_layout
 from dimos.visualization.vis_module import vis_module
 
 spot = autoconnect(

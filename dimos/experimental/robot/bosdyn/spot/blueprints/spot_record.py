@@ -30,7 +30,7 @@ Usage:
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.bosdyn.spot.blueprints.spot import spot
-from dimos.robot.bosdyn.spot.recorder import SpotRecorder
+from dimos.experimental.robot.bosdyn.spot.blueprints.spot import spot
+from dimos.experimental.robot.bosdyn.spot.recorder import SpotRecorder
 
 spot_record = autoconnect(spot, SpotRecorder.blueprint())

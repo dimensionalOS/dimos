@@ -47,6 +47,8 @@ viewer opens with the fisheye/depth cameras and odometry.
 
 ## Layout
 
+Spot support is experimental and lives in `dimos/experimental/robot/bosdyn/spot/`.
+
 - `config.py` — constants + pure address/credential helpers (no `bosdyn` import).
 - `effectors/high_level.py` — `SpotHighLevel`: the single Spot module —
   lease/E-stop/power/stand + velocity commands plus the five fisheye + five depth
