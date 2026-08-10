@@ -117,7 +117,7 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=drake`.
 
 Trajectory parametrization is a separate startup choice. Joint-space planners
-normally return an untimed geometric path; DimOS accepts the plan only after
+normally return an untimed geometric path; dimOS accepts the plan only after
 the selected backend converts that path to a validated timed trajectory:
 
 ```bash
@@ -267,7 +267,7 @@ Safety behavior for unsupported RoboPlan features:
 - Planning-critical unsupported inputs fail loudly before planning. Examples
   include unsupported obstacle geometry, unavailable robot loading APIs, or
   unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from
-  the DimOS robot config, including configured collision-exclusion pairs.
+  the dimOS robot config, including configured collision-exclusion pairs.
 - Unverified non-critical query methods raise explicit `NotImplementedError`.
   In particular, signed minimum-distance semantics are not implemented for
   RoboPlan until a safe equivalent is verified.
