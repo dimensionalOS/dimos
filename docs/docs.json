@@ -125,7 +125,8 @@
             "group": "Perception",
             "pages": [
               "capabilities/perception/index",
-              "vqa-benchmark"
+              "benchmarking/vqa-generation/README",
+              "benchmarking/vqa-generation/pipeline"
             ]
           },
           {

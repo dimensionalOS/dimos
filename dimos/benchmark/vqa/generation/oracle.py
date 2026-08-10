@@ -14,10 +14,12 @@ from dimos.benchmark.vqa.models import (
     AnswerContract,
     BooleanAnswerContract,
     ChoiceAnswerContract,
+    DeferredHeightChoiceContract,
     OracleToolResult,
     OracleTrace,
     QuestionProposal,
     RejectedOracleResult,
+    ResolvedAnswerContract,
 )
 
 if TYPE_CHECKING:
@@ -97,7 +99,7 @@ class PrivateToolCallingOracle:
     def __init__(
         self,
         model: BaseChatModel,
-        max_tool_calls: int = 4,
+        max_tool_calls: int = 8,
         semantic_validator: SemanticEvidenceValidator | None = None,
     ) -> None:
         if max_tool_calls < 1:
@@ -151,7 +153,7 @@ class PrivateToolCallingOracle:
         return _rejected(proposal, "tool_call_limit", registry.results, trace)
 
 
-def create_openai_oracle(model: str, max_tool_calls: int = 4) -> PrivateToolCallingOracle:
+def create_openai_oracle(model: str, max_tool_calls: int = 8) -> PrivateToolCallingOracle:
     """Construct the private-only OpenAI tool-calling oracle."""
     from langchain_openai import ChatOpenAI
 
@@ -169,6 +171,16 @@ def validate_oracle_answer(
     results: tuple[OracleToolResult, ...],
 ) -> str:
     """Deterministically validate an answer format and citations."""
+    return _resolve_oracle_answer(proposal, answer, evidence_ids, results)[0]
+
+
+def _resolve_oracle_answer(
+    proposal: QuestionProposal,
+    answer: Any,
+    evidence_ids: Any,
+    results: tuple[OracleToolResult, ...],
+) -> tuple[str, ResolvedAnswerContract]:
+    """Return a validated answer and the public contract resolved from private evidence."""
     if (
         not isinstance(evidence_ids, list)
         or not evidence_ids
@@ -182,14 +194,35 @@ def validate_oracle_answer(
     if isinstance(contract, BooleanAnswerContract):
         if answer not in ("yes", "no"):
             raise ValueError("boolean answer must be yes or no")
-        return str(answer)
+        return str(answer), contract
     if isinstance(contract, ChoiceAnswerContract):
         if not isinstance(answer, str) or answer not in contract.choices:
             raise ValueError("choice answer is not allowed")
-        measured_choices = {result.choice for result in results if result.choice is not None}
+        cited = set(evidence_ids)
+        measured_choices = {
+            result.choice
+            for result in results
+            if result.choice is not None and any(item.id in cited for item in result.evidence)
+        }
         if measured_choices and answer not in measured_choices:
             raise ValueError("choice answer does not match cited measurement bucket")
-        return answer
+        return answer, contract
+    if isinstance(contract, DeferredHeightChoiceContract):
+        bucket_results = [
+            result
+            for result in results
+            if result.tool == "bucket_measurement" and result.choice is not None and result.choices
+        ]
+        if len(bucket_results) != 1:
+            raise ValueError("deferred height answer requires exactly one measurement bucket")
+        bucket = bucket_results[0]
+        if not any(item.id in evidence_ids for item in bucket.evidence):
+            raise ValueError("deferred height answer must cite its measurement")
+        if answer != bucket.choice:
+            raise ValueError("deferred height answer does not match measurement bucket")
+        if bucket.choice not in bucket.choices:
+            raise ValueError("measurement bucket choice is not public")
+        return bucket.choice, ChoiceAnswerContract(bucket.choices)
     raise ValueError("unsupported answer contract")
 
 
@@ -202,7 +235,7 @@ def _validated_result(
 ) -> AcceptedOracleResult | RejectedOracleResult:
     try:
         payload = _parse_json_object(response)
-        answer = validate_oracle_answer(
+        answer, answer_contract = _resolve_oracle_answer(
             proposal, payload.get("answer"), payload.get("evidence_ids"), results
         )
         evidence_ids = tuple(payload["evidence_ids"])
@@ -211,7 +244,8 @@ def _validated_result(
     cited_results = _cited_results(evidence_ids, results)
     if semantic_validator is None:
         return _rejected(proposal, "semantic_validator_not_configured", results, trace)
-    verdict = semantic_validator.validate(proposal, answer, cited_results)
+    resolved_proposal = replace(proposal, answer_contract=answer_contract)
+    verdict = semantic_validator.validate(resolved_proposal, answer, cited_results)
     trace.append(
         OracleTrace(
             "semantic_validation",
@@ -220,7 +254,7 @@ def _validated_result(
     )
     if not verdict.accepted:
         return _rejected(proposal, f"unsupported_evidence:{verdict.reason}", results, trace)
-    return AcceptedOracleResult(proposal, answer, evidence_ids, results, tuple(trace))
+    return AcceptedOracleResult(proposal, answer, answer_contract, evidence_ids, results, tuple(trace))
 
 
 def _cited_results(
@@ -258,6 +292,11 @@ def _contract_prompt(contract: AnswerContract) -> str:
         return "boolean: yes or no"
     if isinstance(contract, ChoiceAnswerContract):
         return f"choice: {', '.join(contract.choices)}"
+    if isinstance(contract, DeferredHeightChoiceContract):
+        return (
+            "deferred height choice: call measure_height, then bucket_measurement, and return "
+            "the exact choice from that result"
+        )
     raise ValueError("unsupported answer contract")
 
 
