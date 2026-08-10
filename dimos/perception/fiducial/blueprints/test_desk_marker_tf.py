@@ -29,6 +29,7 @@ from dimos.perception.fiducial.blueprints.desk_marker_tf import (
 )
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
+from dimos.protocol.tf.tf import TF
 
 
 def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
@@ -98,11 +99,12 @@ def test_desk_static_tf_module_publishes_world_to_camera_optical_chain() -> None
         camera_translation_m=(0.3, 0.0, 0.2),
         camera_rotation_rpy_rad=(0.0, 0.0, 0.0),
     )
+    view = TF(mod.tf)
     try:
         mod.start()
         assert mod._last_publish_ts is not None
 
-        world_camera = mod.tf.get("world", "camera_optical", mod._last_publish_ts, 1.0)
+        world_camera = view.get("world", "camera_optical", mod._last_publish_ts, 1.0)
         assert world_camera is not None
         assert world_camera.frame_id == "world"
         assert world_camera.child_frame_id == "camera_optical"

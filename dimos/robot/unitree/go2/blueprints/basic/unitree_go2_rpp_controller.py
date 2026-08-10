@@ -56,6 +56,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_twist
 from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -69,11 +70,17 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 _go2_joints = make_twist_base_joints("go2")
 
 
+class _Go2RppCoordinator(PathFollowingCoordinator):
+    go2_joints: Out[JointState]
+
+
 unitree_go2_rpp_controller = (
     autoconnect(
         GO2Connection.blueprint(),
-        PathFollowingCoordinator.blueprint(
+        _Go2RppCoordinator.blueprint(
+            instance_name="ControlCoordinator",
             publish_joint_state=True,
+            publish_robot_joint_states=True,
             hardware=[
                 HardwareComponent(
                     hardware_id="go2",
@@ -138,11 +145,8 @@ unitree_go2_rpp_controller = (
             ("speed", Float32): LCMTransport("/speed", Float32),
             # Operator gate (teleop -> benchmark) to pace runs.
             ("operator_command", Int8): LCMTransport("/benchmark/gate", Int8),
-            # Aggregated joint state for observability (positions = [x,y,yaw]).
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-            ("coordinator_joint_state", JointState): LCMTransport(
-                "/coordinator/joint_state", JointState
-            ),
+            # This robot's joint state for observability (positions = [x,y,yaw]).
+            ("go2_joints", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
     .global_config(obstacle_avoidance=False)

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Any, TypeAlias, overload
 
 from dimos_lcm.geometry_msgs import (
     Pose as LCMPose,
@@ -35,24 +35,28 @@ PoseConvertable: TypeAlias = (
 )
 
 
+def _is_position_orientation_pair(value: Any) -> bool:
+    """True for a 2-element (position, orientation) pair, false for a 2D position."""
+    return (
+        isinstance(value, tuple | list)
+        and len(value) == 2
+        and not isinstance(value[0], int | float)
+        and not isinstance(value[1], int | float)
+    )
+
+
 class Pose(LCMPose):  # type: ignore[misc]
     position: Vector3
     orientation: Quaternion
     msg_name = "geometry_msgs.Pose"
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize a pose at origin with identity orientation."""
-        self.position = Vector3(0.0, 0.0, 0.0)
-        self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+    @overload
+    def __init__(self) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
-        """Initialize a pose with position and identity orientation."""
-        self.position = Vector3(x, y, z)
-        self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+    @overload
+    def __init__(self, x: int | float, y: int | float, z: int | float) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
+    @overload
     def __init__(
         self,
         x: int | float,
@@ -62,52 +66,74 @@ class Pose(LCMPose):  # type: ignore[misc]
         qy: int | float,
         qz: int | float,
         qw: int | float,
-    ) -> None:
-        """Initialize a pose with position and orientation."""
-        self.position = Vector3(x, y, z)
-        self.orientation = Quaternion(qx, qy, qz, qw)
+    ) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
+    @overload
     def __init__(
         self,
-        position: VectorConvertable | Vector3 | None = None,
-        orientation: QuaternionConvertable | Quaternion | None = None,
-    ) -> None:
-        """Initialize a pose with position and orientation."""
-        if orientation is None:
-            orientation = [0, 0, 0, 1]
-        if position is None:
-            position = [0, 0, 0]
-        self.position = Vector3(position)
-        self.orientation = Quaternion(orientation)
+        position: VectorConvertable | Vector3 | None = ...,
+        orientation: QuaternionConvertable | Quaternion | None = ...,
+    ) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_tuple: tuple[VectorConvertable, QuaternionConvertable]) -> None:
-        """Initialize from a tuple of (position, orientation)."""
-        self.position = Vector3(pose_tuple[0])
-        self.orientation = Quaternion(pose_tuple[1])
+    @overload
+    def __init__(self, value: PoseConvertable | Pose, /) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_dict: dict[str, VectorConvertable | QuaternionConvertable]) -> None:
-        """Initialize from a dictionary with 'position' and 'orientation' keys."""
-        self.position = Vector3(pose_dict["position"])
-        self.orientation = Quaternion(pose_dict["orientation"])
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize a pose.
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose: Pose) -> None:
-        """Initialize from another Pose (copy constructor)."""
-        self.position = Vector3(pose.position)
-        self.orientation = Quaternion(pose.orientation)
+        Supported forms:
+            Pose()                                  # origin, identity orientation
+            Pose(x, y, z)
+            Pose(x, y, z, qx, qy, qz, qw)
+            Pose(position)                          # any Vector3-convertable
+            Pose(position, orientation)
+            Pose(position=..., orientation=...)     # keyword args
+            Pose((position, orientation))           # pair
+            Pose({"position": ..., "orientation": ...})
+            Pose(other_pose)                        # copy constructor
+            Pose(lcm_pose)                          # from LCM message
+        """
+        position: Any = None
+        orientation: Any = None
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_pose: LCMPose) -> None:
-        """Initialize from an LCM Pose."""
-        self.position = Vector3(lcm_pose.position.x, lcm_pose.position.y, lcm_pose.position.z)
-        self.orientation = Quaternion(
-            lcm_pose.orientation.x,
-            lcm_pose.orientation.y,
-            lcm_pose.orientation.z,
-            lcm_pose.orientation.w,
+        if len(args) == 3:
+            position = args
+        elif len(args) == 7:
+            position, orientation = args[:3], args[3:]
+        elif len(args) == 2:
+            position, orientation = args
+        elif len(args) == 1:
+            value = args[0]
+            # Pose before LCMPose (it is a subclass); dict and pair before the
+            # generic "it is a position" fallback.
+            if isinstance(value, Pose):
+                position, orientation = value.position, value.orientation
+            elif isinstance(value, LCMPose):
+                position = (value.position.x, value.position.y, value.position.z)
+                orientation = (
+                    value.orientation.x,
+                    value.orientation.y,
+                    value.orientation.z,
+                    value.orientation.w,
+                )
+            elif isinstance(value, dict):
+                position, orientation = value["position"], value["orientation"]
+            elif _is_position_orientation_pair(value):
+                position, orientation = value
+            else:
+                position = value
+        elif args:
+            raise TypeError(f"Pose takes 1, 2, 3 or 7 positional arguments ({len(args)} given)")
+
+        if kwargs:
+            position = kwargs.pop("position", position)
+            orientation = kwargs.pop("orientation", orientation)
+            if kwargs:
+                raise TypeError(f"Pose got unexpected keyword arguments {sorted(kwargs)}")
+
+        self.position = Vector3(0.0, 0.0, 0.0) if position is None else Vector3(position)
+        self.orientation = (
+            Quaternion(0.0, 0.0, 0.0, 1.0) if orientation is None else Quaternion(orientation)
         )
 
     @property

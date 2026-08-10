@@ -18,6 +18,7 @@ The leaf (UnitreeWebRTCConnection.__init__) is covered in
 dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -64,6 +65,44 @@ def test_odom_to_tf_unprefixed_by_default() -> None:
         "camera_link",
         "camera_optical",
     )
+
+
+@pytest.fixture
+def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connection]]:
+    """Build GO2Connections with the tf and odom ports stubbed, and stop them after."""
+    built: list[GO2Connection] = []
+
+    def build(publish_tf: bool) -> GO2Connection:
+        conn = GO2Connection(
+            g=GlobalConfig(robot_ip="127.0.0.1"),
+            publish_tf=publish_tf,
+            odom_frame_id="go2_odom",
+        )
+        conn.tf = MagicMock()
+        conn.odom = MagicMock()
+        built.append(conn)
+        return conn
+
+    yield build
+    for conn in built:
+        conn.stop()
+
+
+def test_publish_tf_off_keeps_odometry_on_its_port(
+    connection: Callable[[bool], GO2Connection],
+) -> None:
+    """Turning tf off hands the base_link edge to another publisher, not the odom port."""
+    conn = connection(publish_tf=False)
+    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    assert conn.tf.publish.call_count == 0
+    assert conn.odom.publish.call_count == 1
+
+
+def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
+    conn = connection(publish_tf=True)
+    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    assert conn.tf.publish.call_count == 1
+    assert conn.odom.publish.call_count == 1
 
 
 def test_odom_to_tf_prefixed() -> None:

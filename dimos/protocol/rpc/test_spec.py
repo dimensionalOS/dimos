@@ -25,9 +25,10 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC, ZenohRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
-from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -105,6 +106,20 @@ def zenoh_rpc_context():
 
 
 testdata.append((zenoh_rpc_context, "zenoh"))
+
+
+def test_call_sync_unsubscribes_timed_out_callback(mocker) -> None:
+    client = mocker.Mock()
+    client.rpc_timeouts = {}
+    client.default_rpc_timeout = 0.0
+    unsubscribe = mocker.Mock()
+    client.call.return_value = unsubscribe
+
+    with pytest.raises(TimeoutError):
+        RPCSpec.call_sync(client, "missing", ([], {}), rpc_timeout=0.0)
+
+    unsubscribe.assert_called_once_with()
+
 
 # Try to add RedisRPC if available
 try:

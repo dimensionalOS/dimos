@@ -49,7 +49,7 @@ WHITELIST = [
         'ws_logger = logging.getLogger("websockets.server")',
     ),
     (
-        "dimos/utils/cli/spy/conftest.py",
+        "dimos/cli/spy/conftest.py",
         "lg = logging.getLogger(_CORE_LOGGER)",
     ),
 ]
