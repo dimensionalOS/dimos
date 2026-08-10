@@ -942,7 +942,12 @@ def _resolve_single_ref(
     is_class_ref = is_module_type(spec)
 
     def satisfies(cls: type) -> bool:
-        return cls is spec if is_class_ref else spec_structural_compliance(cls, spec)
+        # A subclass IS-A the declared provider, so a deployment that swaps in a
+        # subclass (extra ports, per-instance I/O) still satisfies the ref. Exact
+        # identity would resolve to None here, silently.
+        if is_class_ref:
+            return isinstance(cls, type) and issubclass(cls, spec)
+        return spec_structural_compliance(cls, spec)
 
     def module_of(candidate: Any) -> type[ModuleBase]:
         return candidate.module if isinstance(candidate, BlueprintAtom) else candidate
