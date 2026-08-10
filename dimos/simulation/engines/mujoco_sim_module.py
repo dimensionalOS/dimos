@@ -504,7 +504,6 @@ class MujocoSimModule(
             self._gripper_idx = dof
             self._gripper_ctrl_range = ctrl_range
             self._gripper_joint_range = joint_range
-            # Publish the range so the adapter can declare it (R13a).
             self._shm.write_gripper_range(*joint_range)
             logger.info(
                 "MujocoSimModule: gripper detected",

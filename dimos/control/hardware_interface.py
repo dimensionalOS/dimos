@@ -28,7 +28,6 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from dimos.hardware.grippers.spec import GripperAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.utils.logging_config import setup_logger
 
@@ -48,10 +47,8 @@ class ConnectedHardware:
     - Hold-last-value for partial commands
     - Converts between joint names and array indices
 
-    Gripper joints are not special here: they are the trailing entries of
-    ``component.all_joints`` and ride the same single array as every other
-    joint. This wrapper performs **no** unit conversion — each value is
-    already in the unit its adapter declared through ``get_limits()``.
+    Gripper joints are the trailing entries of ``component.all_joints`` and
+    ride the same array as every other joint; no unit conversion happens here.
 
     Created when hardware is added to the coordinator. One instance
     per physical hardware device.
@@ -59,14 +56,12 @@ class ConnectedHardware:
 
     def __init__(
         self,
-        adapter: ManipulatorAdapter | GripperAdapter,
+        adapter: ManipulatorAdapter,
         component: HardwareComponent,
     ) -> None:
         self._adapter = adapter
         self._component = component
         self._joint_names: list[JointName] = list(component.all_joints)
-        # Velocity writes carry arm joints only; positions carry everything.
-        self._arm_joint_names: list[JointName] = list(component.arm_joints)
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -75,7 +70,7 @@ class ConnectedHardware:
         self._current_mode: ControlMode | None = None
 
     @property
-    def adapter(self) -> ManipulatorAdapter | GripperAdapter:
+    def adapter(self) -> ManipulatorAdapter:
         """The underlying hardware adapter."""
         return self._adapter
 
@@ -163,13 +158,9 @@ class ConnectedHardware:
 
         match mode:
             case ControlMode.POSITION | ControlMode.SERVO_POSITION:
-                # One ordered array covering every joint, gripper last.
                 return self._adapter.write_joint_positions(self._build_ordered_command())
             case ControlMode.VELOCITY:
-                # Arm joints only: nothing produces a gripper velocity.
-                return self._adapter.write_joint_velocities(
-                    [self._last_commanded[name] for name in self._arm_joint_names]
-                )
+                return self._adapter.write_joint_velocities(self._build_ordered_command())
             case ControlMode.TORQUE:
                 logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
                 return False

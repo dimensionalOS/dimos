@@ -5,14 +5,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""No gripper joint has two claimants (GRIPPER-SPEC R17), and the shortcut is gone.
+"""Single-owner audit: gripper joints are claimed only by gripper tasks.
 
-**This audit instantiates tasks and reads ``claim()``.** Scanning TaskConfig is
-not enough and would have passed throughout: the deleted ``claim_with_gripper``
-added the gripper joint inside ``claim()`` at runtime, so a config-level check
-saw an arm task claiming only arm joints while the tick loop saw it claiming the
-gripper too. That is precisely the double ownership 3.4 describes, and it was
-invisible to static inspection.
+Instantiates tasks and reads claim(); a TaskConfig scan misses claims widened
+at runtime.
 """
 
 from __future__ import annotations
@@ -75,8 +71,7 @@ def _fake_hardware(components) -> dict[str, ConnectedHardware]:
 def test_no_task_config_declares_a_gripper_joint_but_the_gripper_task(
     module: str, name: str
 ) -> None:
-    """Static half — covers every blueprint, including ones whose tasks need
-    model assets we cannot load in a unit test."""
+    """Static half: every blueprint, including ones whose tasks need assets."""
     kwargs = _coordinator_kwargs(_blueprint(module, name))
     gripper_joints = {j for c in kwargs["hardware"] for j in c.gripper_joints}
     if not gripper_joints:
@@ -93,13 +88,7 @@ def test_no_task_config_declares_a_gripper_joint_but_the_gripper_task(
 
 @pytest.mark.parametrize(("module", "name"), _GRIPPER_BLUEPRINTS, ids=lambda v: str(v))
 def test_gripper_joints_have_exactly_one_runtime_claimant(module: str, name: str) -> None:
-    """Runtime half — the one that would have caught ``claim_with_gripper``.
-
-    A task whose model assets are unavailable here cannot be instantiated, so
-    instead of skipping the whole blueprint we assert that task is structurally
-    incapable of owning a gripper: its config declares none of those joints,
-    and its class does not augment ``claim()``.
-    """
+    """Runtime half: unbuildable tasks must be structurally unable to claim."""
     kwargs = _coordinator_kwargs(_blueprint(module, name))
     components = kwargs["hardware"]
     gripper_joints = {j for c in components for j in c.gripper_joints}
@@ -136,11 +125,7 @@ def test_gripper_joints_have_exactly_one_runtime_claimant(module: str, name: str
 
 
 def _augments_claim(task_type: str) -> bool:
-    """Does this task type define its own claim(), rather than inheriting one?
-
-    ``claim_with_gripper`` lived in exactly such an override. A type that only
-    inherits cannot widen its claim beyond its configured joints.
-    """
+    """True if the task type's module defines its own claim()."""
     import importlib
 
     path = control_task_registry._factory_paths[task_type.lower()]
@@ -157,14 +142,9 @@ def _augments_claim(task_type: str) -> bool:
 
 
 class TestTheOldPathsAreGone:
-    """Grep-level proof, because a deleted route leaves no test to fail."""
-
     @staticmethod
     def _sources() -> list[Path]:
-        """Production sources only.
-
-        Test files legitimately name these symbols to assert they are gone.
-        """
+        """Production sources; tests legitimately name the deleted symbols."""
         return [
             p
             for p in _SOURCE_ROOT.rglob("*.py")
@@ -196,12 +176,10 @@ class TestTheOldPathsAreGone:
         assert not hits, f"{symbol!r} should have been deleted; still in {hits}"
 
     def test_the_coordinator_has_no_gripper_rpc(self) -> None:
-        """R23: the shortcut route to hardware dies."""
         assert not hasattr(ControlCoordinator, "set_gripper_position")
         assert not hasattr(ControlCoordinator, "get_gripper_position")
 
     def test_the_adapter_protocol_has_no_scalar_gripper_api(self) -> None:
-        """R5: replaced by vectors."""
         from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
         members = dict(inspect.getmembers(ManipulatorAdapter))

@@ -130,15 +130,7 @@ def test_keyup_publishes_directly_without_timeout_wait(
     publish.assert_called_once()
 
 
-def test_gripper_emits_a_wish_only_when_it_changes(
-    module: KeyboardTeleopModule, mocker
-) -> None:
-    """The keyboard publishes open/closed, never a joint value.
-
-    It cannot know a vendor's travel: the old code published 1.0 as a joint
-    position, which on an a1z (0-0.1 m) was ten times over-range and survived
-    only because the adapter clamped (GRIPPER-SPEC R16).
-    """
+def test_gripper_emits_a_wish_only_when_it_changes(module: KeyboardTeleopModule, mocker) -> None:
     publish = mocker.patch.object(module.gripper_command, "publish")
 
     module._set_gripper_closed(GRIPPER_OPEN)

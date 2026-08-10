@@ -207,32 +207,17 @@ class ManipulatorAdapter(Protocol):
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Command **all** joints this adapter owns, gripper entries last.
+        """Command all joints, gripper entries trailing in their declared units.
 
-        This is the API for every joint. A gripper joint is a robot joint of a
-        special type, not a separate channel::
-
-            write_joint_positions([0.1, -0.4, 0.0, 0.9, 0.0, 1.2,  0.042])
-            #                      |<---- 6 arm joints, radians -->|  gripper
-
-        How an adapter reaches its gripper internally is not specified — an
-        integrated gripper is a capability of the arm's own SDK, so the
-        adapter uses the vendor's own call. But it MUST NOT convert the
-        gripper entry: the value handed in is already in the unit this
-        adapter declared through ``get_limits()``, and converting it a second
-        time is the class of bug this contract exists to remove.
-
-        Returns success.
+        Adapters must not rescale the gripper entry. Returns success.
         """
         ...
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command velocities for **arm joints only** (rad/s). Returns success.
+        """Command velocities for all joints, gripper last. Returns success.
 
-        Deliberately asymmetric with ``read_joint_velocities``, which covers
-        all joints. A gripper is commanded only in ``SERVO_POSITION``, so
-        nothing in this system produces a gripper velocity; offering the slot
-        would only invite a value invented to fill it. Do not "fix" this.
+        Adapters without gripper velocity control ignore or refuse the
+        trailing entries.
         """
         ...
 

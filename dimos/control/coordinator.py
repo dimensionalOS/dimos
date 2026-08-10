@@ -62,7 +62,6 @@ from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
-from dimos.hardware.grippers.spec import GripperAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -257,13 +256,11 @@ class ControlCoordinator(Module):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter | GripperAdapter
+        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter
         if component.hardware_type == HardwareType.WHOLE_BODY:
             adapter = self._create_whole_body_adapter(component)
         elif component.hardware_type == HardwareType.BASE:
             adapter = self._create_twist_base_adapter(component)
-        elif component.hardware_type == HardwareType.GRIPPER:
-            adapter = self._create_gripper_adapter(component)
         else:
             adapter = self._create_adapter(component)
 
@@ -309,22 +306,6 @@ class ControlCoordinator(Module):
             **component.adapter_kwargs,
         )
 
-    def _create_gripper_adapter(self, component: HardwareComponent) -> GripperAdapter:
-        """Create a standalone gripper adapter from component config.
-
-        ``dof`` is the device's own joint count — a gripper has no arm, so
-        the component invariant guarantees ``gripper_dof == len(all_joints)``.
-        """
-        from dimos.hardware.grippers.registry import gripper_adapter_registry
-
-        return gripper_adapter_registry.create(
-            component.adapter_type,
-            dof=component.gripper_dof,
-            address=component.address,
-            hardware_id=component.hardware_id,
-            **component.adapter_kwargs,
-        )
-
     def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
         """Create a whole-body adapter from component config."""
         from dimos.hardware.whole_body.registry import whole_body_adapter_registry
@@ -365,20 +346,12 @@ class ControlCoordinator(Module):
     @rpc
     def add_hardware(
         self,
-        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter | GripperAdapter,
+        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter,
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
         is_base = component.hardware_type == HardwareType.BASE
         is_whole_body = component.hardware_type == HardwareType.WHOLE_BODY
-        is_gripper = component.hardware_type == HardwareType.GRIPPER
-
-        if is_gripper and not isinstance(adapter, GripperAdapter):
-            raise TypeError(
-                f"Hardware type / adapter mismatch for '{component.hardware_id}': "
-                f"hardware_type={component.hardware_type.value} but got "
-                f"{type(adapter).__name__}"
-            )
 
         if is_base and not isinstance(adapter, TwistBaseAdapter):
             raise TypeError(

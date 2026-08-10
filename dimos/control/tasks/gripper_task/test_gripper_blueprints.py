@@ -5,12 +5,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The gripper task in a real coordinator, end to end (GRIPPER-SPEC 1.3).
-
-The unit tests prove the task converts correctly in isolation. These prove the
-wiring: that pressing ``[`` on the keyboard actually reaches an adapter, and
-that no other task is quietly claiming the same joint.
-"""
+"""Gripper task wiring tests: blueprints and the keyboard-to-adapter path."""
 
 from __future__ import annotations
 
@@ -44,9 +39,6 @@ def _load(name: str) -> Blueprint:
 
 
 class TestBothKeyboardBlueprintsMigrated:
-    """Both migrate together: the keyboard's move to ``gripper_command``
-    removes the publisher that *both* hand-rolled servo tasks read."""
-
     @pytest.mark.parametrize("name", _KEYBOARD_BLUEPRINTS)
     def test_carries_a_gripper_task_claiming_the_gripper_joints(self, name: str) -> None:
         kwargs = _coordinator_kwargs(_load(name))
@@ -60,7 +52,6 @@ class TestBothKeyboardBlueprintsMigrated:
 
     @pytest.mark.parametrize("name", _KEYBOARD_BLUEPRINTS)
     def test_no_servo_task_claims_a_gripper_joint(self, name: str) -> None:
-        """The hand-rolled pattern R30 replaces must be gone."""
         kwargs = _coordinator_kwargs(_load(name))
         hardware = kwargs["hardware"][0]
         gripper_joints = set(hardware.gripper_joints)
@@ -84,11 +75,7 @@ class TestBothKeyboardBlueprintsMigrated:
 
 
 class TestKeyboardReachesTheAdapter:
-    """``[`` and ``]`` drive a real adapter through the real wiring.
-
-    Built without instantiating the coordinator Module: this exercises the
-    task, the wrapper and the adapter, which is where the gripper path lives.
-    """
+    """Keyboard open/close drives a real adapter through the real wiring."""
 
     @pytest.fixture
     def wired(self) -> Any:
@@ -126,7 +113,6 @@ class TestKeyboardReachesTheAdapter:
         assert task.compute(_snapshot(hardware)).positions == [pytest.approx(0.08)]
 
     def test_command_travels_the_one_array_to_the_adapter(self, wired: Any) -> None:
-        """Through write_command, as the tick loop would route it."""
         task, hardware, adapter = wired
 
         task.on_gripper_command(Bool(data=False), 0.0)
@@ -140,7 +126,6 @@ class TestKeyboardReachesTheAdapter:
         assert positions[-1] == pytest.approx(0.08)
 
     def test_get_position_agrees_with_the_published_joint_state(self, wired: Any) -> None:
-        """R16: the stream and this RPC are one snapshot, not two sources."""
         task, hardware, adapter = wired
         adapter.write_joint_positions([0.0] * 6 + [0.042])
 
@@ -151,7 +136,6 @@ class TestKeyboardReachesTheAdapter:
         assert state.joints.get_position("arm/gripper") == pytest.approx(0.042)
 
     def test_the_task_resolved_its_range_from_the_adapter(self, wired: Any) -> None:
-        """R14a: not from config, and not by comparing array lengths."""
         task, _hardware, _adapter = wired
         assert task.get_state()["limits"] == [(0.0, 0.08)]
 

@@ -62,8 +62,7 @@ class ShmMujocoAdapter:
             raise ValueError(f"sim_mujoco supports 0 or 1 gripper joints (got {gripper_dof})")
         self._dof = dof
         self._gripper_dof = gripper_dof
-        # Filled from SHM on connect; the MJCF is the single declaration.
-        self._gripper_range: tuple[float, float] = (0.0, 1.0)
+        self._gripper_range: tuple[float, float] = (0.0, 1.0)  # from SHM on connect
         self._address = address
         self._hardware_id = hardware_id
         self._shm_key = shm_key_from_path(address)
@@ -102,7 +101,6 @@ class ShmMujocoAdapter:
                 return False
             time.sleep(_READY_WAIT_POLL_S)
 
-        # The gripper count comes from config, never from counting joints.
         if self._gripper_dof:
             self._gripper_range = self._shm.read_gripper_range()
         self._connected = True
@@ -151,12 +149,7 @@ class ShmMujocoAdapter:
         return self._gripper_dof
 
     def get_limits(self) -> JointLimits:
-        """Arm limits in radians, then the gripper's MJCF joint range.
-
-        The sim's native gripper unit is a joint position in the model's own
-        range — the value written is clamped into it before actuation — so the
-        MJCF is the authoritative declaration, read over SHM on connect.
-        """
+        """Arm limits in radians, then the gripper's MJCF joint range."""
         lo, hi = self._gripper_range
         max_vel_rad = math.radians(180.0)
         return JointLimits(
@@ -173,7 +166,7 @@ class ShmMujocoAdapter:
         return self._control_mode
 
     def read_joint_positions(self) -> list[float]:
-        """Arm positions in radians, then the gripper's MJCF joint position."""
+        """Read arm positions, then the gripper's MJCF joint position."""
         if self._shm is None:
             return [0.0] * (self._dof + self._gripper_dof)
         positions = self._shm.read_positions(self._dof)
@@ -182,7 +175,7 @@ class ShmMujocoAdapter:
         return positions
 
     def read_joint_velocities(self) -> list[float]:
-        """Arm velocities; the gripper reports 0.0 (sim publishes no rate)."""
+        """Read arm velocities; the gripper reports 0.0."""
         if self._shm is None:
             return [0.0] * (self._dof + self._gripper_dof)
         return self._shm.read_velocities(self._dof) + [0.0] * self._gripper_dof
@@ -202,7 +195,7 @@ class ShmMujocoAdapter:
         return self._error_code, self._error_message
 
     def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool:
-        """Command every joint, gripper last in the MJCF's own joint range."""
+        """Command all joints; the gripper entry is in the MJCF joint range."""
         if not self._servos_enabled or self._shm is None:
             return False
         self._control_mode = ControlMode.POSITION

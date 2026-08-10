@@ -34,14 +34,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Unit conversion constants — cartesian pose only. The gripper does NOT use
-# these: its SDK call takes a dimensionless 0-850, which is the unit this
-# adapter declares through get_limits() and receives in its joint array.
+# Cartesian pose conversions; the gripper does not use these.
 MM_TO_M = 0.001
 M_TO_MM = 1000.0
 
-# The xArm gripper's own scale. Not metres, despite the historical 0.85 —
-# that was only 850/1000, an accident of reusing the cartesian conversion.
+# The gripper SDK's own dimensionless scale.
 XARM_GRIPPER_MIN = 0.0
 XARM_GRIPPER_MAX = 850.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
@@ -131,7 +128,6 @@ class XArmAdapter(ManipulatorAdapter):
         return JointLimits(
             position_lower=[-limit] * self._dof + [XARM_GRIPPER_MIN] * self._gripper_dof,
             position_upper=[limit] * self._dof + [XARM_GRIPPER_MAX] * self._gripper_dof,
-            # The SDK exposes no gripper speed limit; 0.0 means "unspecified".
             velocity_max=[math.pi] * self._dof + [0.0] * self._gripper_dof,
         )
 
@@ -231,10 +227,7 @@ class XArmAdapter(ManipulatorAdapter):
         Uses set_servo_angle_j() for high-frequency servo control.
         Requires mode 1 (servo mode) to be active.
 
-        The array covers every joint this adapter owns, gripper last. The
-        gripper entry is already in this adapter's declared unit (0-850) and
-        is passed to the SDK unconverted — scaling it here is exactly the
-        double conversion this contract removes.
+        The trailing gripper entry passes to the SDK unconverted (0-850).
 
         Args:
             positions: Target positions, arm in radians then gripper native
@@ -331,8 +324,8 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
-        # Convert rad/s to deg/s
-        speeds = [math.degrees(v) for v in velocities]
+        # Arm entries only; the xArm gripper has no velocity interface.
+        speeds = [math.degrees(v) for v in velocities[: self._dof]]
         code: int = self._arm.vc_set_joint_velocity(speeds)
         return code == 0
 
@@ -404,7 +397,7 @@ class XArmAdapter(ManipulatorAdapter):
         return code == 0
 
     def _read_gripper(self) -> float:
-        """Gripper position in the SDK's own 0-850 scale. No conversion."""
+        """Read the gripper position in SDK units (0-850)."""
         if not self._arm:
             return 0.0
 
@@ -416,7 +409,7 @@ class XArmAdapter(ManipulatorAdapter):
         return 0.0
 
     def _write_gripper(self, position: float) -> bool:
-        """Command the gripper in the SDK's own 0-850 scale. No conversion."""
+        """Command the gripper in SDK units (0-850)."""
         if not self._arm:
             return False
 

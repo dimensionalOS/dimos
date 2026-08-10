@@ -60,10 +60,7 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
 DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
-# The keyboard has a wish, not a joint value: it cannot know a vendor's travel.
-# It used to publish 1.0 as a joint position on joint_command, which on an a1z
-# (0-0.1 m) is ten times over-range and survived only because the adapter
-# clamped. GripperControlTask owns the conversion now (GRIPPER-SPEC R16).
+# The keyboard sends open/closed intent; GripperControlTask owns the units.
 GRIPPER_OPEN = True
 GRIPPER_CLOSED = False
 

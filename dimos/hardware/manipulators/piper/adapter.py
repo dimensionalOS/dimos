@@ -299,7 +299,6 @@ class PiperAdapter(ManipulatorAdapter):
         return JointLimits(
             position_lower=lower + [0.0] * self._gripper_dof,
             position_upper=upper + [GRIPPER_MAX_OPENING_M] * self._gripper_dof,
-            # The SDK takes a speed code, not a metric rate; 0.0 is "unspecified".
             velocity_max=max_vel + [0.0] * self._gripper_dof,
         )
 
@@ -424,9 +423,6 @@ class PiperAdapter(ManipulatorAdapter):
         velocity: float = 1.0,
     ) -> bool:
         """Write joint positions (radians -> Piper units).
-
-        The array covers every joint this adapter owns, gripper last. The
-        gripper entry is already in metres, the unit get_limits() declares.
 
         Args:
             positions: Target positions, arm in radians then gripper in metres
@@ -627,7 +623,7 @@ class PiperAdapter(ManipulatorAdapter):
         return False
 
     def _read_gripper(self) -> float:
-        """Gripper opening in metres — the unit get_limits() declares."""
+        """Read the gripper opening in metres."""
         if not self._sdk:
             return 0.0
 
@@ -646,7 +642,7 @@ class PiperAdapter(ManipulatorAdapter):
         return 0.0
 
     def _write_gripper(self, position: float) -> bool:
-        """Command the gripper in metres. No conversion beyond SDK encoding."""
+        """Command the gripper opening in metres."""
         if not self._sdk:
             return False
 

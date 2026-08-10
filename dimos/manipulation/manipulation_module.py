@@ -191,11 +191,6 @@ class ManipulationModule(Module):
         # Canonical generated plan for plan/preview/execute workflow.
         # Robot-local paths and trajectories are derived from this plan on demand.
         self._last_plan: GeneratedPlan | None = None
-        # Gripper state, both fed from streams the module already consumes:
-        # the measured position from coordinator_joint_state, the range from
-        # one get_state call per task (ranges are static).
-        self._latest_gripper_position: dict[str, float] = {}
-        self._gripper_ranges: dict[str, tuple[float, float]] = {}
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -335,17 +330,11 @@ class ManipulationModule(Module):
         coordinator joint names, then routes to the correct monitor.
         """
         try:
-            # Build name → index map once for the whole message
-            name_to_idx = {name: i for i, name in enumerate(msg.name)}
-
-            # Cache gripper entries. This is the same snapshot the gripper
-            # task reads, so get_gripper() cannot disagree with it (R16/R26).
-            for name, idx in name_to_idx.items():
-                if name.endswith("/gripper") and idx < len(msg.position):
-                    self._latest_gripper_position[name] = msg.position[idx]
-
             if self._world_monitor is None:
                 return
+
+            # Build name → index map once for the whole message
+            name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
             for robot_name, (robot_id, config, _) in self._robots.items():
                 coord_names = config.get_coordinator_joint_names()
@@ -1654,30 +1643,9 @@ class ManipulationModule(Module):
         return str(config.gripper_hardware_id)
 
     def _gripper_task(self, robot_name: RobotName | None = None) -> str | None:
-        """The gripper task addressing this robot, derived not hard-coded.
-
-        Mirrors the joint it claims: task ``arm_gripper`` owns ``arm/gripper``
-        (GRIPPER-SPEC R30).
-        """
+        """Task name for this robot's gripper, e.g. "arm_gripper"."""
         hw_id = self._get_gripper_hardware_id(robot_name)
         return None if hw_id is None else f"{hw_id}_gripper"
-
-    def _gripper_range(self, robot_name: RobotName | None = None) -> tuple[float, float] | None:
-        """The gripper's travel, fetched once and cached.
-
-        The task read this from its adapter's ``get_limits()``; nothing above
-        the task declares an endpoint (R13/R14).
-        """
-        task = self._gripper_task(robot_name)
-        if task is None:
-            return None
-        if task not in self._gripper_ranges:
-            state = self._control_coordinator.task_invoke(task, "get_state", {})
-            limits = (state or {}).get("limits") or []
-            if not limits:
-                return None
-            self._gripper_ranges[task] = (float(limits[0][0]), float(limits[0][1]))
-        return self._gripper_ranges[task]
 
     def _gripper_invoke(
         self, method: str, kwargs: dict[str, Any], robot_name: RobotName | None = None
@@ -1689,37 +1657,16 @@ class ManipulationModule(Module):
 
     @rpc
     def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
-        """Gripper opening as 0.0-1.0 of travel; 0.0 closed, 1.0 open.
-
-        Reads the gripper entry of ``coordinator_joint_state`` — which the
-        module already subscribes to — and normalizes it on the way out using
-        the cached range, so ``set_gripper(get_gripper())`` is a no-op. No new
-        port, and no RPC per read.
+        """Gripper opening as 0.0-1.0 of travel (0.0 closed, 1.0 open).
 
         Args:
             robot_name: Robot to query (required if multiple robots configured)
         """
-        hw_id = self._get_gripper_hardware_id(robot_name)
-        if hw_id is None:
+        task = self._gripper_task(robot_name)
+        if task is None:
             return None
-        native = self._latest_gripper_position.get(f"{hw_id}/gripper")
-        if native is None:
-            return None
-        span = self._gripper_range(robot_name)
-        if span is None:
-            return None
-        lo, hi = span
-        return 0.0 if hi == lo else max(0.0, min(1.0, (native - lo) / (hi - lo)))
-
-    @rpc
-    def get_gripper_limits(self, robot_name: RobotName | None = None) -> tuple[float, float] | None:
-        """The gripper's travel in its adapter's own units.
-
-        For a consumer with a physical target — a grasp planner emitting a
-        width — this is the range to work in; command it with the task's
-        ``set_position`` rather than through the 0-1 skills.
-        """
-        return self._gripper_range(robot_name)
+        values = self._control_coordinator.task_invoke(task, "get_normalized", {})
+        return float(values[0]) if values else None
 
     @skill
     def set_gripper(
@@ -1728,11 +1675,7 @@ class ManipulationModule(Module):
         """Set gripper opening as a fraction of its travel.
 
         Args:
-            position: 0.0 = fully closed, 1.0 = fully open. Not metres: what
-                metres mean differs per gripper, and nothing at this layer
-                needs to know a vendor's range. A caller with a physical
-                target should read get_gripper_limits() and command the
-                gripper task's set_position directly.
+            position: 0.0 = fully closed, 1.0 = fully open.
             robot_name: Robot to control (only needed for multi-arm setups).
         """
         if self._gripper_invoke("set_normalized", {"values": [position]}, robot_name):
@@ -1753,9 +1696,6 @@ class ManipulationModule(Module):
     @skill
     def close_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Close the robot gripper onto its grasp posture.
-
-        Sweeps to the vendor's grasp pose rather than driving every joint to
-        its limit, which on a multi-finger hand is a fist, not a grasp.
 
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
@@ -1977,7 +1917,7 @@ class ManipulationModule(Module):
             )
 
         logger.info("Opening gripper...")
-        self._gripper_invoke("set_sweep", {"value": 1.0}, rname)
+        self.open_gripper(rname)
         time.sleep(0.5)
 
         goal = JointState(name=config.joint_names, position=config.home_joints)

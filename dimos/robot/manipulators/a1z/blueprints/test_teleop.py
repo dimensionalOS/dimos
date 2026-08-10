@@ -42,11 +42,9 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
     assert hardware.gripper_dof == 1
     assert hardware.all_joints[-1] == "arm/gripper"
 
-    # The gripper is owned by its own task, not by teleop (R17). No endpoint
-    # survives at this layer: the task reads its range from the adapter.
     assert gripper.name == "arm_gripper"
     assert gripper.joint_names == ["arm/gripper"]
-    assert gripper.params == {"hand": "left"}, "the left trigger drives it"
+    assert gripper.params == {"hand": "left"}
     assert not any(key.startswith("gripper_") for key in teleop.params)
 
 

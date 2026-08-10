@@ -169,10 +169,10 @@ class MockAdapter:
         return True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Set mock joint velocities — arm joints only (R4a)."""
-        if len(velocities) != self._dof:
+        """Set mock joint velocities; the gripper entry is stored as-is."""
+        if len(velocities) != self._dof + self._gripper_dof:
             return False
-        self._velocities = list(velocities) + [0.0] * self._gripper_dof
+        self._velocities = list(velocities)
         return True
 
     def write_stop(self) -> bool:

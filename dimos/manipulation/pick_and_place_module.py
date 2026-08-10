@@ -515,7 +515,7 @@ then refreshes perception obstacles.
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
-            self._gripper_invoke("set_sweep", {"value": 1.0}, rname)
+            self.open_gripper(rname)
             time.sleep(0.5)
 
             # 4. Execute approach to pre-grasp
@@ -533,7 +533,7 @@ then refreshes perception obstacles.
 
             # 6. Close gripper
             logger.info("Closing gripper...")
-            self._gripper_invoke("set_sweep", {"value": 0.0}, rname)
+            self.close_gripper(rname)
             time.sleep(1.5)  # Wait for gripper to close
 
             # 7. Retract to pre-grasp
@@ -624,7 +624,7 @@ then refreshes perception obstacles.
 
         # 3. Release
         logger.info("Releasing object...")
-        self._gripper_invoke("set_sweep", {"value": 1.0}, rname)
+        self.open_gripper(rname)
         time.sleep(1.0)
 
         # 4. Retract

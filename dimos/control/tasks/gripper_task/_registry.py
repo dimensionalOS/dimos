@@ -16,10 +16,8 @@ TASK_FACTORIES = {
     "gripper": "dimos.control.tasks.gripper_task.gripper_task:create_task",
 }
 
-# The two streams that carry gripper *intent* — never a joint value. A browser
-# toggle says "closed"; a trigger says "squeezed 42%". Neither sender knows the
-# gripper's travel, and neither should: vendor ranges stay below this task.
-# Numeric targets arrive through TASK_EXPOSES via task_invoke.
+# Streams carry gripper intent (open/closed, trigger), never joint values;
+# numeric targets arrive through TASK_EXPOSES via task_invoke.
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
     "gripper": {
         "gripper_command": ("on_gripper_command", "broadcast"),
@@ -34,6 +32,7 @@ TASK_EXPOSES: dict[str, list[str]] = {
         "set_sweep",
         "set_reference_pose",
         "get_position",
+        "get_normalized",
         "get_state",
     ],
 }

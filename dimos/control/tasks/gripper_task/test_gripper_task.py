@@ -5,7 +5,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GripperControlTask: the sole owner, converting exactly once (R14-R22)."""
+"""GripperControlTask unit tests."""
 
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ def _state(t_now: float = 0.0, **measured: float) -> CoordinatorState:
 
 class TestConversionHappensHere:
     def test_normalized_zero_lands_on_the_closed_limit(self) -> None:
-        """R19 polarity: 0.0 closes, 1.0 opens, on every scalar API."""
         task = _task()
 
         task.set_normalized([0.0], t_now=0.0)
@@ -74,7 +73,6 @@ class TestConversionHappensHere:
         assert task.compute(_state()).positions == [850.0]
 
     def test_emits_servo_position_so_it_never_fights_the_arm(self) -> None:
-        """R22: mode must match the arm tasks sharing the component."""
         task = _task()
         task.set_normalized([1.0], t_now=0.0)
         assert task.compute(_state()).mode is ControlMode.SERVO_POSITION
@@ -83,7 +81,6 @@ class TestConversionHappensHere:
 
 class TestSweep:
     def test_single_jaw_derives_its_grasp_from_the_closed_limit(self) -> None:
-        """R19a: for a jaw, closed *is* the grasp."""
         task = _task()
         task.set_sweep(0.0, t_now=0.0)
         assert task.compute(_state()).positions == [0.0]
@@ -91,11 +88,6 @@ class TestSweep:
         assert task.compute(_state()).positions == [850.0]
 
     def test_multi_joint_refuses_without_a_reference_pose(self) -> None:
-        """R19b: joint limits describe travel, not grasping.
-
-        Interpolating against them would drive every finger to its extreme —
-        a fist or a self-collision, not any grasp the vendor ships.
-        """
         task = _task(
             joint_names=make_gripper_joints("hand", 3),
             limits=[(0.0, 1.0)] * 3,
@@ -130,7 +122,6 @@ class TestSweep:
 
 class TestHoldAndActivity:
     def test_always_active_so_get_position_never_goes_stale(self) -> None:
-        """R21a: the tick loop only hands state to active tasks."""
         task = _task()
         assert task.is_active() is True, "must tick even with nothing to command"
 
@@ -144,7 +135,6 @@ class TestHoldAndActivity:
         assert task.is_active() is True
 
     def test_zero_hold_holds_indefinitely(self) -> None:
-        """Default matches the servo tasks it replaces (timeout: 0.0)."""
         task = _task(hold_duration=0.0)
         task.set_normalized([1.0], t_now=0.0)
 
@@ -159,11 +149,8 @@ class TestHoldAndActivity:
         assert task.compute(_state(t_now=10.6)) is None
 
     def test_never_stops_because_the_gripper_reached_its_target(self) -> None:
-        """R21: a gripper stalled on an object never reaches its command.
-
-        Stopping on 'measured == target' would misreport every successful
-        grasp, so a *matching* measurement must not end the hold.
-        """
+        # A stalled gripper never reaches its target; reaching it must not
+        # end the hold either.
         task = _task(hold_duration=0.0)
         task.set_normalized([1.0], t_now=0.0)
 
@@ -173,7 +160,6 @@ class TestHoldAndActivity:
             assert out.positions == [850.0]
 
     def test_a_command_without_a_clock_is_stamped_on_the_next_tick(self) -> None:
-        """Tasks must never read the wall clock; the coordinator owns time."""
         task = _task(hold_duration=1.0)
         task.set_normalized([1.0])  # no t_now, as a bare task_invoke would
 
@@ -184,9 +170,6 @@ class TestHoldAndActivity:
 
 class TestCommandsNeverBlock:
     def test_every_declared_command_returns_immediately(self) -> None:
-        """R20: task_invoke holds _task_lock, which the tick loop needs every
-        tick. Blocking here stalls the whole coordinator, not just the gripper.
-        """
         import time
 
         task = _task()
@@ -208,6 +191,16 @@ class TestCommandsNeverBlock:
         assert task.set_position([1.0, 2.0]) is False
         assert task.set_normalized([]) is False
         assert task.compute(_state()) is None
+
+    def test_get_normalized_maps_measured_to_fraction(self) -> None:
+        task = _task()
+        assert task.get_normalized() is None
+
+        task.compute(_state(**{"arm/gripper": 425.0}))
+        assert task.get_normalized() == pytest.approx([0.5])
+
+        task.compute(_state(**{"arm/gripper": 9999.0}))
+        assert task.get_normalized() == [1.0]
 
     def test_get_state_carries_the_range_so_callers_need_no_second_rpc(self) -> None:
         task = _task()
@@ -231,8 +224,6 @@ class TestTriggerAndToggle:
         return b
 
     def test_squeezing_the_trigger_closes(self) -> None:
-        """R17: the polarity inverts. Getting it wrong raises no error —
-        the gripper just opens when told to close."""
         task = _task(hand="right")
 
         task.on_teleop_buttons(self._buttons(primary=True, trigger=1.0), 0.0)
@@ -242,7 +233,6 @@ class TestTriggerAndToggle:
         assert task.compute(_state()).positions == pytest.approx([850.0], abs=7.0)
 
     def test_the_trigger_is_ignored_while_disengaged(self) -> None:
-        """A finger resting on the trigger must not close a disengaged gripper."""
         task = _task(hand="right")
 
         assert task.on_teleop_buttons(self._buttons(primary=False, trigger=1.0), 0.0) is False
@@ -254,7 +244,6 @@ class TestTriggerAndToggle:
         assert task.compute(_state()).positions == pytest.approx([0.0], abs=7.0)
 
     def test_only_the_configured_hand_drives_this_gripper(self) -> None:
-        """A dual-arm rig broadcasts one stream to both gripper tasks."""
         task = _task(hand="left")
 
         # Right hand fully engaged and squeezing; this is the LEFT gripper.
@@ -279,7 +268,6 @@ class TestTriggerAndToggle:
         assert task.on_teleop_buttons(self._buttons(primary=True, trigger=1.0), 0.0) is False
 
     def test_the_toggle_is_a_wish_not_a_value(self) -> None:
-        """Browser button and keyboard [/]: closed=True, open=False."""
         task = _task()
 
         task.on_gripper_command(Bool(data=True), 0.0)
@@ -306,8 +294,6 @@ class TestEstop:
 
 
 class TestLimitResolution:
-    """R14a — the chain, because the obvious shortcut violates R7."""
-
     @staticmethod
     def _hardware(gripper_dof: int = 1, dof: int = 6, limit_len: int | None = None):
         component = HardwareComponent(
@@ -349,7 +335,6 @@ class TestLimitResolution:
             create_task(self._cfg(["ghost/gripper"]), self._hardware())
 
     def test_rejects_an_adapter_whose_limits_omit_the_gripper(self) -> None:
-        """R13: get_limits() must cover all joints, not just the arm."""
         with pytest.raises(ValueError, match="limit entries"):
             create_task(self._cfg(["arm/gripper"]), self._hardware(limit_len=6))
 

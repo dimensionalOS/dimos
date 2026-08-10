@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The one stored joint array and its two derived views (GRIPPER-SPEC R28, R29)."""
+"""HardwareComponent joint array and derived views."""
 
 from __future__ import annotations
 
@@ -38,13 +38,7 @@ def _component(dof: int, gripper_dof: int) -> HardwareComponent:
 
 class TestDerivedViews:
     def test_gripperless_arm_keeps_every_joint_as_an_arm_joint(self) -> None:
-        """R28's `-0` trap: negative slicing would silently invert this.
-
-        `all_joints[:-gripper_dof]` is `all_joints[:-0]` == `all_joints[:0]` == []
-        when there is no gripper, which would report a gripper-less arm as having
-        no arm joints and six gripper joints. The split must be computed as
-        `len(all_joints) - gripper_dof`.
-        """
+        # Negative slicing would return [] here: -0 == 0.
         hw = _component(dof=6, gripper_dof=0)
 
         assert hw.arm_joints == hw.all_joints
@@ -65,7 +59,6 @@ class TestDerivedViews:
         assert hw.gripper_joints == ["arm/gripper1", "arm/gripper2", "arm/gripper3"]
 
     def test_all_gripper_component_has_no_arm(self) -> None:
-        """The standalone-gripper shape PR 2 introduces, arithmetically."""
         hw = HardwareComponent(
             hardware_id="hand",
             hardware_type=HardwareType.MANIPULATOR,
@@ -77,7 +70,6 @@ class TestDerivedViews:
         assert hw.gripper_joints == hw.all_joints
 
     def test_views_are_derived_not_stored(self) -> None:
-        """Mutating the array must move the split with it — no cached copies."""
         hw = _component(dof=6, gripper_dof=1)
         hw.all_joints.insert(0, "arm/joint0")
 
@@ -108,7 +100,6 @@ class TestValidation:
 
 class TestMakeGripperJoints:
     def test_single_joint_keeps_the_unnumbered_name(self) -> None:
-        """The existing name is load-bearing: blueprints and configs use it."""
         assert make_gripper_joints("arm") == ["arm/gripper"]
         assert make_gripper_joints("arm", 1) == ["arm/gripper"]
 

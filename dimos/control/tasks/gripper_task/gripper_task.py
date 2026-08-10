@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sole owner of a device's gripper joints (GRIPPER-SPEC R14-R22).
+"""Gripper control task: sole owner of a device's gripper joints.
 
-The gripper is not a side road to hardware. This task is a **translator at the
-border**: gripper-language goes in — "closed", "squeezed 42%", "open to 62mm" —
-and a plain joint vector in the adapter's own units comes out. Below it the path
-is identical to an arm joint's: arbitration, tick loop, one ordered array, one
-``write_joint_positions()``.
-
-That is what makes "a gripper joint is just a robot joint" true rather than
-aspirational. The specialness stops here.
+Converts normalized and sweep commands to the adapter's native units using
+limits read at construction. See dimos/hardware/GRIPPER-SPEC.md.
 """
 
 from __future__ import annotations
@@ -47,8 +41,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Normalization is 0.0 = fully closed, 1.0 = fully open, on every scalar API
-# (R15, R19). A mismatch here raises no error — it just opens when told to close.
+# 0.0 = fully closed, 1.0 = fully open on every scalar API.
 _CLOSED = 0.0
 _OPEN = 1.0
 
@@ -58,21 +51,16 @@ class GripperControlTaskConfig:
     """Configuration for the gripper task.
 
     Attributes:
-        joint_names: The gripper joints this task owns. MUST equal one
-            component's ``gripper_joints``, in order (R14a).
-        priority: Priority for arbitration. Uncontested under R17.
-        hold_duration: Seconds to keep emitting a target before falling
-            silent. ``0.0`` means hold indefinitely, matching the servo
-            tasks this replaces. Never stops on "measured reached target":
-            a gripper stalled on a grasped object never arrives (R21).
-        reference_pose: The vendor's grasp posture, per joint, in native
-            units. Mandatory for a multi-joint gripper; a single jaw derives
-            it from the closed limit, because closed *is* the grasp (R19a).
-        open_posture: Optional override for the open end of a sweep.
-            Defaults to each joint's upper limit.
-        hand: Which controller's trigger drives this gripper, if any.
+        joint_names: Gripper joints this task owns; must equal one component's
+            gripper_joints, in order.
+        priority: Priority for arbitration.
+        hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
+        reference_pose: Grasp posture per joint, native units. Required for
+            multi-joint grippers; a single jaw uses its closed limit.
+        open_posture: Open end of a sweep; defaults to the upper limits.
+        hand: Which controller trigger drives this gripper, if any.
         require_engagement: Accept the trigger only while that hand's primary
-            button is held, reproducing the gate teleop provides today (R17).
+            button is held.
     """
 
     joint_names: list[str]
@@ -85,12 +73,7 @@ class GripperControlTaskConfig:
 
 
 class GripperControlTask(BaseControlTask):
-    """Command-and-stream driven gripper owner.
-
-    Converts once, at this boundary, using the range its adapter declares
-    through ``get_limits()``. Nothing above it needs a vendor range; anything
-    that has a physical target can use ``set_position`` and read the range.
-    """
+    """Command- and stream-driven owner of a device's gripper joints."""
 
     def __init__(
         self,
@@ -119,14 +102,10 @@ class GripperControlTask(BaseControlTask):
         self._lock = threading.Lock()
         self._target: list[float] | None = None
         self._target_set_at: float = 0.0
-        # A caller that did not pass the coordinator's clock gets stamped on
-        # the next tick. Tasks must never read the wall clock themselves.
+        # Commands without the coordinator clock are stamped on the next tick.
         self._stamp_pending = False
         self._estopped = False
-        # Last measured snapshot, refreshed every tick so get_position never
-        # goes stale while the gripper sits idle (R21a).
         self._measured: dict[str, float] = {}
-        # Engagement latch for the hand-scoped trigger (R17).
         self._primary_down = False
 
         logger.info(
@@ -136,8 +115,6 @@ class GripperControlTask(BaseControlTask):
             limits=self._limits,
             hold_duration=config.hold_duration,
         )
-
-    # ---------------------------------------------------------------- config
 
     def _resolve_open_posture(self, config: GripperControlTaskConfig) -> list[float]:
         if config.open_posture is None:
@@ -150,13 +127,8 @@ class GripperControlTask(BaseControlTask):
         return list(config.open_posture)
 
     def _resolve_reference_pose(self, config: GripperControlTaskConfig) -> list[float] | None:
-        """The grasp posture a sweep scales towards.
-
-        A single jaw derives it: closed *is* the grasp. A multi-joint hand
-        cannot — driving every joint to its limit is a fist or a
-        self-collision, not any grasp the vendor ships (R19a) — so it must be
-        declared, and ``set_sweep`` refuses without it (R19b).
-        """
+        # A multi-joint gripper must declare its grasp: joint limits describe
+        # travel, not grasping.
         if config.reference_pose is not None:
             if len(config.reference_pose) != self._n:
                 raise ValueError(
@@ -168,10 +140,8 @@ class GripperControlTask(BaseControlTask):
             return [self._limits[0][0]]
         return None
 
-    # ------------------------------------------------------- ControlTask API
-
     def claim(self) -> ResourceClaim:
-        """Sole claimant of these joints (R17), in SERVO_POSITION (R22)."""
+        """Declare resource requirements."""
         return ResourceClaim(
             joints=self._joint_names,
             priority=self._config.priority,
@@ -179,13 +149,7 @@ class GripperControlTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        """Always True — ``compute()`` decides what to emit (R21a).
-
-        The tick loop only hands state to active tasks, so a task that went
-        inactive at the end of its hold would stop receiving snapshots and
-        ``get_position`` would go stale exactly while the gripper sits idle,
-        which is most of the time.
-        """
+        """Always True; compute() decides what to emit so reads stay fresh."""
         return True
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
@@ -206,8 +170,7 @@ class GripperControlTask(BaseControlTask):
                 self._stamp_pending = False
             hold = self._config.hold_duration
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
-                # Stop emitting; ConnectedHardware keeps re-sending the last
-                # commanded value, so closing force is maintained (R21).
+                # Hold expired; ConnectedHardware keeps re-sending the last value.
                 self._target = None
                 return None
             target = list(self._target)
@@ -219,35 +182,27 @@ class GripperControlTask(BaseControlTask):
         )
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        """Under R17 nothing else claims these joints; log if that ever fails."""
+        """Log preemption; this task is meant to be the sole claimant."""
         if joints & self._joint_names:
             logger.warning(
-                "Gripper joints preempted — R17 says this task is their sole owner",
+                "Gripper joints preempted",
                 task=self._name,
                 preempting_task=by_task,
                 joints=sorted(joints & self._joint_names),
             )
 
     def set_estop(self, estopped: bool) -> None:
-        """Latch E-STOP: stop emitting, and drop the target so it cannot replay."""
+        """Latch E-STOP and drop the target so it cannot replay."""
         with self._lock:
             self._estopped = estopped
             if estopped:
                 self._target = None
 
-    # -------------------------------------------------------------- commands
-    # Every command below returns immediately. task_invoke holds _task_lock,
-    # which the tick loop needs every tick, so blocking here would stall the
-    # entire coordinator — not merely the gripper (R20).
-
     def set_position(self, values: list[float], t_now: float | None = None) -> bool:
-        """Set per-joint targets in the adapter's declared units (R14)."""
+        """Set per-joint targets in the adapter's native units."""
         if len(values) != self._n:
             logger.warning(
-                "Gripper set_position arity mismatch",
-                task=self._name,
-                expected=self._n,
-                got=len(values),
+                "set_position arity mismatch", task=self._name, expected=self._n, got=len(values)
             )
             return False
         clamped = [max(lo, min(hi, v)) for v, (lo, hi) in zip(values, self._limits, strict=True)]
@@ -257,10 +212,7 @@ class GripperControlTask(BaseControlTask):
         """Set per-joint targets as 0.0-1.0 of travel; 0.0 closed, 1.0 open."""
         if len(values) != self._n:
             logger.warning(
-                "Gripper set_normalized arity mismatch",
-                task=self._name,
-                expected=self._n,
-                got=len(values),
+                "set_normalized arity mismatch", task=self._name, expected=self._n, got=len(values)
             )
             return False
         native = [
@@ -270,15 +222,10 @@ class GripperControlTask(BaseControlTask):
         return self._latch(native, t_now)
 
     def set_sweep(self, value: float, t_now: float | None = None) -> bool:
-        """Scale between the reference (grasp) posture and fully open.
-
-        ``0.0`` sits at the reference pose — the grasp, applied — and ``1.0``
-        is fully open, the same polarity every other scalar API uses (R19).
-        """
+        """Interpolate between the reference (grasp) posture and fully open."""
         if self._reference_pose is None:
             logger.error(
-                "set_sweep needs a reference_pose on a multi-joint gripper; "
-                "joint limits describe travel, not grasping (R19a/R19b)",
+                "set_sweep requires a configured reference_pose on a multi-joint gripper",
                 task=self._name,
                 joints=self._joint_names_list,
             )
@@ -291,10 +238,10 @@ class GripperControlTask(BaseControlTask):
         return self._latch(target, t_now)
 
     def set_reference_pose(self, values: list[float]) -> bool:
-        """Replace the grasp posture at runtime, e.g. from a grasp planner."""
+        """Replace the grasp posture at runtime."""
         if len(values) != self._n:
             logger.warning(
-                "Gripper set_reference_pose arity mismatch",
+                "set_reference_pose arity mismatch",
                 task=self._name,
                 expected=self._n,
                 got=len(values),
@@ -305,19 +252,24 @@ class GripperControlTask(BaseControlTask):
         return True
 
     def get_position(self) -> list[float] | None:
-        """Measured positions, in native units, from the tick snapshot.
-
-        Cannot disagree with ``coordinator_joint_state``: the tick loop passes
-        the same ``joint_states`` object to ``compute()`` and to the publisher.
-        """
+        """Measured positions in native units, from the tick snapshot."""
         with self._lock:
             if any(n not in self._measured for n in self._joint_names_list):
                 return None
             return [self._measured[n] for n in self._joint_names_list]
 
+    def get_normalized(self) -> list[float] | None:
+        """Measured positions as 0.0-1.0 of travel; 0.0 closed, 1.0 open."""
+        positions = self.get_position()
+        if positions is None:
+            return None
+        return [
+            0.0 if hi == lo else max(0.0, min(1.0, (p - lo) / (hi - lo)))
+            for p, (lo, hi) in zip(positions, self._limits, strict=True)
+        ]
+
     def get_state(self) -> dict[str, Any]:
-        """What the task is doing, plus the range, so a consumer can normalize
-        without a second RPC (R26)."""
+        """Report the task's target, limits, and status."""
         with self._lock:
             return {
                 "task": self._name,
@@ -331,22 +283,12 @@ class GripperControlTask(BaseControlTask):
                 else list(self._reference_pose),
             }
 
-    # ------------------------------------------------------ stream handlers
-
     def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        """Browser toggle and keyboard ``[`` / ``]``: a wish, not a value.
-
-        The sender has no idea what this gripper's travel is, and should not.
-        """
+        """Handle an open/closed toggle (True = closed)."""
         return self.set_sweep(_CLOSED if msg.data else _OPEN, t_now)
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
-        """Analog VR trigger, scoped to one hand.
-
-        **Polarity inverts here.** Squeezing the trigger closes the gripper, so
-        trigger 1.0 must become normalized 0.0. Getting this wrong raises no
-        error — the gripper just opens when told to close (R17, R19).
-        """
+        """Handle the configured hand's analog trigger; squeezing closes."""
         hand = self._config.hand
         if hand not in ("left", "right"):
             return False
@@ -362,18 +304,11 @@ class GripperControlTask(BaseControlTask):
             gated = self._config.require_engagement and not primary
 
         if gated:
-            # Disengaged: a finger resting on the trigger must not close it.
             return False
         squeeze = max(_CLOSED, min(_OPEN, float(trigger)))
-        # Sweep, not set_normalized: identical on a single jaw, but on a
-        # multi-finger hand normalized-to-limits is R19a's fist rather than
-        # any grasp the vendor ships.
         return self.set_sweep(_OPEN - squeeze, t_now)
 
-    # ----------------------------------------------------------------- internal
-
     def _latch(self, target: list[float], t_now: float | None) -> bool:
-        """Record the target and refresh the hold. Never blocks (R20)."""
         with self._lock:
             if self._estopped:
                 return False
@@ -387,7 +322,7 @@ class GripperControlTask(BaseControlTask):
 
 
 class GripperControlTaskParams(BaseConfig):
-    """Blueprint-supplied knobs for the gripper task."""
+    """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
     reference_pose: list[float] | None = None
@@ -397,12 +332,7 @@ class GripperControlTaskParams(BaseConfig):
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
-    """Find this task's gripper range, per R14a.
-
-    The tempting shortcut — slicing ``get_limits()`` by comparing its length
-    to the task's joint count — infers the gripper count from an array length,
-    which R7 forbids. The count comes from the component.
-    """
+    """Resolve the gripper's limits from its component's adapter."""
     where = f"gripper task {cfg.name!r}"
     joint_names = list(cfg.joint_names)
     if not joint_names:
@@ -424,10 +354,10 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
     if joint_names != list(component.gripper_joints):
         raise ValueError(
             f"{where}: joint_names {joint_names} must equal {hardware_id!r}'s "
-            f"gripper_joints {list(component.gripper_joints)}, in order — pass "
-            "hw.gripper_joints rather than writing the names out"
+            f"gripper_joints {list(component.gripper_joints)}, in order"
         )
 
+    # Trailing slice sized by the component's declared count, not array math.
     limits = connected.adapter.get_limits()
     split = len(component.all_joints) - component.gripper_dof
     lower = list(limits.position_lower)[split:]
@@ -436,7 +366,7 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
         raise ValueError(
             f"{where}: adapter {component.adapter_type!r} returned "
             f"{len(limits.position_lower)} limit entries; expected "
-            f"{len(component.all_joints)} covering all joints (R13)"
+            f"{len(component.all_joints)} covering all joints"
         )
     return list(zip(lower, upper, strict=True))
 

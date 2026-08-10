@@ -259,11 +259,10 @@ class GalaxeaA1ZAdapter:
     def get_limits(self) -> JointLimits:
         """Arm limits in radians, then the gripper's jaw opening in metres."""
         gripper = self._config.gripper
-        upper = [gripper.max_opening_m] if self._gripper_dof and gripper else []
+        gripper_upper = [gripper.max_opening_m] if self._gripper_dof and gripper else []
         return JointLimits(
             position_lower=list(_POSITION_LOWER) + [0.0] * self._gripper_dof,
-            position_upper=list(_POSITION_UPPER) + upper,
-            # The SDK commands a normalized fraction, not a metric rate.
+            position_upper=list(_POSITION_UPPER) + gripper_upper,
             velocity_max=list(_VELOCITY_MAX) + [0.0] * self._gripper_dof,
         )
 
@@ -344,9 +343,6 @@ class GalaxeaA1ZAdapter:
         POSITION mode: minimum-jerk planned move in a background thread;
         returns False if a planned move is already in progress.
         SERVO_POSITION mode: single streamed position target.
-
-        The array covers every joint this adapter owns, gripper last. The
-        gripper entry is already in metres, the unit get_limits() declares.
 
         Args:
             positions: Target positions, arm in radians then gripper in metres
@@ -503,12 +499,7 @@ class GalaxeaA1ZAdapter:
         return False
 
     def _read_gripper(self) -> float:
-        """Gripper opening in metres — the unit get_limits() declares.
-
-        The SDK reports a normalized fraction (0.0=closed, 1.0=open); scaling
-        it by the configured travel is this adapter's own encoding, not a
-        conversion of the caller's units.
-        """
+        """Read the gripper opening in metres (SDK reports a 0-1 fraction)."""
         gripper = self._config.gripper
         if not self._connected or gripper is None:
             return 0.0
@@ -522,7 +513,7 @@ class GalaxeaA1ZAdapter:
         return float(fraction) * gripper.max_opening_m
 
     def _write_gripper(self, position: float) -> bool:
-        """Command the gripper in metres, encoded to the SDK's fraction."""
+        """Command the gripper opening in metres."""
         gripper = self._config.gripper
         if (
             not self._connected

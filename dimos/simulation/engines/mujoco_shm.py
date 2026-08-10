@@ -68,9 +68,7 @@ _shm_sizes = {
     "eff": _joint_array_size,
     "pos_t": _joint_array_size,
     "vel_t": _joint_array_size,
-    # [gripper_position, gripper_target, range_lo, range_hi]. The range is the
-    # gripper joint's MJCF limits: the sim's native gripper unit, written once
-    # at startup so the adapter can declare it through get_limits().
+    # [gripper_position, gripper_target, range_lo, range_hi]
     "grp": _GRP_SLOTS * _FLOAT_BYTES,
     # Whole-body additions (unused by manipulator path).
     "imu": _IMU_FLOATS * _FLOAT_BYTES,  # [w,x,y,z, gx,gy,gz, ax,ay,az]
@@ -238,12 +236,7 @@ class ManipShmWriter:
         self._increment_seq(SEQ_GRIPPER_STATE)
 
     def write_gripper_range(self, low: float, high: float) -> None:
-        """Publish the gripper joint's MJCF range. Written once at startup.
-
-        This is the sim's authoritative unit declaration (GRIPPER-SPEC R13a):
-        the adapter reads it on connect and returns it from get_limits(), so
-        the model file stays the only place the range is written down.
-        """
+        """Publish the gripper joint's MJCF range; written once at startup."""
         arr = self._array(self.shm.grp, _GRP_SLOTS, np.float64)
         arr[2] = low
         arr[3] = high
@@ -389,12 +382,7 @@ class ManipShmReader:
         return float(arr[0])
 
     def read_gripper_range(self) -> tuple[float, float]:
-        """The gripper joint's MJCF range, as published by the sim module.
-
-        Falls back to (0.0, 1.0) when the scene declared no range, which keeps
-        a gripper-less or not-yet-ready scene from returning a degenerate
-        (0.0, 0.0) that would make every normalized command land closed.
-        """
+        """Read the published MJCF gripper range; (0.0, 1.0) if undeclared."""
         arr = np.ndarray((_GRP_SLOTS,), dtype=np.float64, buffer=self.shm.grp.buf)
         low, high = float(arr[2]), float(arr[3])
         return (low, high) if high > low else (0.0, 1.0)

@@ -5,19 +5,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The one-array contract, across every registered adapter (GRIPPER-SPEC R4-R13).
-
-Two things are pinned here:
-
-1. **The xArm regression.** Section 3.5 measured 15% of the gripper's travel
-   lost to a double conversion — the value was mapped through blueprint
-   endpoints, then multiplied again by the adapter's cartesian mm factor.
-   Fully-open reached the SDK as 722.5 instead of 850.0. That number is
-   asserted below.
-2. **The array shape**, for every adapter the registry can build, so a new
-   adapter cannot quietly disagree about where the gripper lives or how long
-   the arrays are.
-"""
+"""One-array contract tests: the GRIPPER-SPEC 3.5 regression (850.0, not
+722.5, reaching a stubbed xArm SDK) and array-shape conformance."""
 
 from __future__ import annotations
 
@@ -93,7 +82,6 @@ class TestSection35Regression:
     def test_fully_open_reaches_the_sdk_as_850_not_722_point_5(
         self, xarm_hardware: tuple[ConnectedHardware, _FakeXArmSDK]
     ) -> None:
-        """The measurement in GRIPPER-SPEC 3.5, inverted into a guarantee."""
         hardware, sdk = xarm_hardware
 
         # Fully open, in the unit the adapter declares.
@@ -110,7 +98,6 @@ class TestSection35Regression:
     def test_no_intermediate_layer_scales_the_value(
         self, xarm_hardware: tuple[ConnectedHardware, _FakeXArmSDK]
     ) -> None:
-        """Whatever is emitted arrives, across the whole range."""
         hardware, sdk = xarm_hardware
 
         for commanded in (0.0, 212.5, 425.0, 850.0):
@@ -120,7 +107,6 @@ class TestSection35Regression:
     def test_arm_and_gripper_travel_in_one_write(
         self, xarm_hardware: tuple[ConnectedHardware, _FakeXArmSDK]
     ) -> None:
-        """The gripper is not a second channel — R4."""
         hardware, sdk = xarm_hardware
         commands = {f"arm/joint{i + 1}": 0.1 for i in range(7)}
         commands["arm/gripper"] = 400.0
@@ -133,7 +119,7 @@ class TestArrayShapeAcrossAdapters:
     @pytest.mark.parametrize("name", _LOCAL_ADAPTERS)
     @pytest.mark.parametrize("gripper_dof", [0, 1])
     def test_array_lengths_agree(self, name: str, gripper_dof: int) -> None:
-        """R4/R8/R13: reads and limits cover all joints; get_dof() is arm-only."""
+        """Reads and limits cover all joints; get_dof() is arm-only."""
         from dimos.hardware.manipulators.registry import adapter_registry
 
         adapter = adapter_registry.create(name, dof=6, gripper_dof=gripper_dof)
@@ -154,15 +140,14 @@ class TestArrayShapeAcrossAdapters:
 
     @pytest.mark.parametrize("name", _LOCAL_ADAPTERS)
     def test_deleted_scalar_gripper_api_is_gone(self, name: str) -> None:
-        """R5: the single-scalar gripper API no longer exists anywhere."""
         from dimos.hardware.manipulators.registry import adapter_registry
 
         adapter = adapter_registry.create(name, dof=6, gripper_dof=1)
         assert not hasattr(adapter, "read_gripper_position")
         assert not hasattr(adapter, "write_gripper_position")
 
-    def test_velocity_writes_are_arm_only(self) -> None:
-        """R4a: the wrapper must never put a gripper position in a velocity array."""
+    def test_velocity_writes_carry_all_joints(self) -> None:
+        """R4a: velocity writes are symmetric with positions and reads."""
         adapter = MagicMock()
         adapter.set_control_mode.return_value = True
         adapter.write_joint_velocities.return_value = True
@@ -178,4 +163,4 @@ class TestArrayShapeAcrossAdapters:
         hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
 
         sent = adapter.write_joint_velocities.call_args.args[0]
-        assert len(sent) == 6
+        assert len(sent) == 7

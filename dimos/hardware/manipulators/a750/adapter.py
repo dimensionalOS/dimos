@@ -225,9 +225,9 @@ class A750Adapter:
         return self._write_gripper(grip[0]) if grip else True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command joint velocities."""
+        """Command joint velocities; the gripper entry is ignored."""
         self._trace("write_joint_velocities", velocities=velocities)
-        return self._connected and len(velocities) == self._dof
+        return self._connected and len(velocities) == self._dof + self._gripper_dof
 
     def write_stop(self) -> bool:
         """Stop all motion."""

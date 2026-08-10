@@ -41,7 +41,6 @@ class HardwareType(Enum):
     MANIPULATOR = "manipulator"
     BASE = "base"
     WHOLE_BODY = "whole_body"
-    GRIPPER = "gripper"
 
 
 @dataclass(frozen=True)
@@ -57,10 +56,8 @@ class JointState:
 class HardwareComponent:
     """Configuration for a hardware component.
 
-    ``all_joints`` is the one stored joint list and *is* the adapter's array:
-    this order is the order every read and write uses, with gripper joints
-    trailing. ``arm_joints`` and ``gripper_joints`` are derived views, never
-    stored, so the split cannot drift from the array the adapter sees.
+    ``all_joints`` is the stored list and is the adapter's array order;
+    ``arm_joints`` and ``gripper_joints`` are derived views.
 
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
@@ -96,7 +93,6 @@ class HardwareComponent:
     wb_config: WholeBodyConfig | None = None
 
     def __post_init__(self) -> None:
-        """Reject a gripper count the joint list cannot support."""
         if self.gripper_dof < 0:
             raise ValueError(
                 f"HardwareComponent '{self.hardware_id}': gripper_dof must be >= 0, "
@@ -107,23 +103,11 @@ class HardwareComponent:
                 f"HardwareComponent '{self.hardware_id}': gripper_dof {self.gripper_dof} "
                 f"exceeds all_joints length {len(self.all_joints)}"
             )
-        # A standalone gripper is ALL gripper: the degenerate split
-        # (arm_joints == []) is a checked invariant, not a convention.
-        if self.hardware_type is HardwareType.GRIPPER and self.gripper_dof != len(self.all_joints):
-            raise ValueError(
-                f"HardwareComponent '{self.hardware_id}': a GRIPPER component must have "
-                f"gripper_dof == len(all_joints), got {self.gripper_dof} != {len(self.all_joints)}"
-            )
 
     @property
     def _gripper_start(self) -> int:
-        """Index where the gripper begins in ``all_joints``.
-
-        Computed as ``len - gripper_dof``, never by negative slicing: ``-0 == 0``
-        in Python, so ``all_joints[:-gripper_dof]`` would return an empty list
-        whenever ``gripper_dof == 0``, silently reporting that a gripper-less
-        arm has no arm joints and that every joint is a gripper joint.
-        """
+        # len - gripper_dof, never negative slicing: -0 == 0 would report a
+        # gripper-less arm as having no arm joints.
         return len(self.all_joints) - self.gripper_dof
 
     @property
@@ -142,12 +126,10 @@ def make_gripper_joints(hardware_id: HardwareId, count: int = 1) -> list[JointNa
 
     Args:
         hardware_id: The hardware identifier (e.g., "arm")
-        count: Number of actuated gripper joints. A jaw is 1; a multi-finger
-            hand declares one name per actuated degree of freedom.
+        count: Number of actuated gripper joints
 
     Returns:
-        ``["arm/gripper"]`` for a single joint, otherwise
-        ``["hand/gripper1", ..., "hand/gripperN"]``
+        ``["arm/gripper"]``, or ``["hand/gripper1", ..., "hand/gripperN"]``
     """
     if count < 1:
         raise ValueError(f"make_gripper_joints({hardware_id!r}): count must be >= 1, got {count}")

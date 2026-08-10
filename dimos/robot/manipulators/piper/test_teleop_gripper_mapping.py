@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regression test for GRIPPER-SPEC 3.5 — the double-conversion bug.
-
-The wrapper used to map a gripper value through blueprint-declared endpoints
-on its way to the adapter, which then converted again. Two conversions, no
-rule about which was authoritative, and 15% of the xArm's travel lost.
-
-The value a task emits must now arrive at the adapter unchanged.
-"""
+"""GRIPPER-SPEC 3.5 regression: gripper values reach the adapter unchanged."""
 
 from __future__ import annotations
 
@@ -46,7 +39,6 @@ def _connected() -> tuple[ConnectedHardware, MagicMock]:
 
 @pytest.mark.parametrize("commanded", [0.0, 0.04, 0.08])
 def test_gripper_value_reaches_the_adapter_unchanged(commanded: float) -> None:
-    """No scaling, no clamping, no endpoint mapping between task and adapter."""
     hardware, adapter = _connected()
 
     assert hardware.write_command({"arm/gripper": commanded}, ControlMode.POSITION)
@@ -58,7 +50,6 @@ def test_gripper_value_reaches_the_adapter_unchanged(commanded: float) -> None:
 
 
 def test_one_call_carries_arm_and_gripper_together() -> None:
-    """One ordered array, one call — the gripper is not a second channel."""
     hardware, adapter = _connected()
     arm = {f"arm/joint{i + 1}": 0.1 * (i + 1) for i in range(6)}
 
@@ -73,15 +64,13 @@ def test_one_call_carries_arm_and_gripper_together() -> None:
 
 
 def test_read_round_trips_the_gripper_unconverted() -> None:
-    """What the adapter reports is what the coordinator publishes."""
     hardware, adapter = _connected()
     adapter.read_joint_positions.return_value = [0.0] * 6 + [0.055]
 
     assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.055)
 
 
-def test_velocity_writes_stay_arm_only() -> None:
-    """R4a: nothing produces a gripper velocity, so the slot is not offered."""
+def test_velocity_writes_carry_all_joints() -> None:
     hardware, adapter = _connected()
     adapter.write_joint_velocities.return_value = True
 
@@ -89,5 +78,4 @@ def test_velocity_writes_stay_arm_only() -> None:
         {f"arm/joint{i + 1}": 0.0 for i in range(6)}, ControlMode.VELOCITY
     )
 
-    sent = adapter.write_joint_velocities.call_args.args[0]
-    assert len(sent) == 6, "a gripper position must never be sent as a velocity"
+    assert len(adapter.write_joint_velocities.call_args.args[0]) == 7
