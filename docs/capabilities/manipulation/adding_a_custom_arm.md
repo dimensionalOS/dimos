@@ -610,16 +610,15 @@ yourarm_planner = manipulation_module(
 | Field | Description |
 |-------|-------------|
 | `model_path` | Path to `.urdf` or `.xacro` file |
-| `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
+| `joint_names` | Ordered canonical model joint set (must match the URDF and coordinator); not itself a planning group |
 | `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
 
-Coordinator-facing joint states and trajectories use global joint names derived
-mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
-Keep hardware-native name translation inside the hardware adapter; manipulation
-planning config uses local model joint names.
+Coordinator-facing joint states and trajectories use the model's canonical
+joint names unchanged. Keep hardware-native name translation inside the
+hardware adapter.
 
 Planning-group `base_link`/`tip_link` values define kinematic chains and pose
 target frames. `base_link` is only the robot-scoped link placed by

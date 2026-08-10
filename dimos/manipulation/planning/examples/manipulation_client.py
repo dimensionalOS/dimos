@@ -37,8 +37,7 @@ Available functions:
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
     url()                 Get Meshcat visualization URL
-    robots()              List configured robots
-    info(robot)           Get robot config details
+    info()                Get model configuration details
     gripper(pos)          Set gripper position (0.0=closed, 0.85=open)
     add_box(name,x,y,z)   Add box obstacle
     add_sphere(name,x,y,z) Add sphere obstacle
@@ -69,14 +68,14 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 _client = RPCClient(None, ManipulationModule)
 
 
-def joints(robot_name: str | None = None) -> list[float] | None:
+def joints() -> list[float] | None:
     """Get current joint positions."""
-    return _client.get_current_joints(robot_name)
+    return _client.get_current_joints()
 
 
-def ee(robot_name: str | None = None) -> Pose | None:
+def ee(group_id: str | None = None) -> Pose | None:
     """Get end-effector pose."""
-    return _client.get_ee_pose(robot_name)
+    return _client.get_ee_pose(group_id)
 
 
 def state() -> str:
@@ -84,10 +83,10 @@ def state() -> str:
     return _client.get_state()
 
 
-def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
+def plan(target_joints: list[float], group_id: str | None = None) -> bool:
     """Plan to joint configuration. e.g. plan([0.1]*7)"""
     js = JointState(position=target_joints)
-    return _client.plan_to_joints(js, robot_name)
+    return _client.plan_to_joints(js, group_id)
 
 
 def groups() -> list[PlanningGroup]:
@@ -112,21 +111,20 @@ def _make_target_pose(
     roll: float | None = None,
     pitch: float | None = None,
     yaw: float | None = None,
-    robot_name: str | None = None,
+    group_id: str | None = None,
 ) -> Pose:
     """Create a target pose, preserving current orientation if rpy is not given."""
     if roll is not None or pitch is not None or yaw is not None:
         orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
     else:
         # Preserve current EE orientation
-        current = _client.get_ee_pose(robot_name)
+        current = _client.get_ee_pose(group_id)
         orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
     return Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
 
 
 def _make_seed_joint_state(
     seed_joints: list[float] | JointState | None,
-    robot_name: str | None,
 ) -> JointState | None:
     """Create a seed JointState for IK from explicit joints, if provided."""
     if seed_joints is None:
@@ -134,7 +132,7 @@ def _make_seed_joint_state(
     if isinstance(seed_joints, JointState):
         return seed_joints
 
-    info = _client.get_robot_info(robot_name) or {}
+    info = _client.get_model_info() or {}
     joint_names = info.get("joint_names", [])
     if len(joint_names) != len(seed_joints):
         joint_names = []
@@ -148,7 +146,7 @@ def ik_pose(
     roll: float | None = None,
     pitch: float | None = None,
     yaw: float | None = None,
-    robot_name: str | None = None,
+    group_id: str | None = None,
     seed_joints: list[float] | JointState | None = None,
 ) -> IKResult:
     """Solve IK for a Cartesian pose without path planning.
@@ -160,13 +158,13 @@ def ik_pose(
         roll: Optional target roll. Preserves current orientation if omitted.
         pitch: Optional target pitch. Preserves current orientation if omitted.
         yaw: Optional target yaw. Preserves current orientation if omitted.
-        robot_name: Robot to solve for when multiple robots are configured.
+        group_id: Planning group to solve; omission requires one compatible group.
         seed_joints: Optional initial joint configuration for local IK. Pass either
             a list of joint positions in robot joint order or a named JointState.
     """
-    target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
-    seed = _make_seed_joint_state(seed_joints, robot_name)
-    return _client.inverse_kinematics_single(target, robot_name, seed)
+    target = _make_target_pose(x, y, z, roll, pitch, yaw, group_id)
+    seed = _make_seed_joint_state(seed_joints)
+    return _client.inverse_kinematics_single(target, group_id, seed)
 
 
 def ik_group_pose(
@@ -196,11 +194,11 @@ def plan_pose(
     roll: float | None = None,
     pitch: float | None = None,
     yaw: float | None = None,
-    robot_name: str | None = None,
+    group_id: str | None = None,
 ) -> bool:
     """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
-    target = _make_target_pose(x, y, z, roll, pitch, yaw, robot_name)
-    return _client.plan_to_pose(target, robot_name)
+    target = _make_target_pose(x, y, z, roll, pitch, yaw, group_id)
+    return _client.plan_to_pose(target, group_id)
 
 
 def plan_group_pose(
@@ -219,10 +217,9 @@ def plan_group_pose(
 
 def preview(
     duration: float | None = None,
-    robot_name: str | None = None,
 ) -> bool:
     """Preview the last generated plan in the visualizer."""
-    return _client.preview_plan(None, duration, robot_name)
+    return _client.preview_plan(None, duration)
 
 
 def execute() -> bool:
@@ -230,12 +227,12 @@ def execute() -> bool:
     return _client.execute()
 
 
-def home(robot_name: str | None = None) -> bool:
+def home(group_id: str | None = None) -> bool:
     """Plan and execute move to home position."""
     from dimos.msgs.sensor_msgs.JointState import JointState
 
-    home_joints = _client.get_robot_info(robot_name).get("home_joints", [0.0] * 7)
-    success = _client.plan_to_joints(JointState(position=home_joints), robot_name)
+    home_joints = _client.get_model_info().get("home_joints", [0.0] * 7)
+    success = _client.plan_to_joints(JointState(position=home_joints), group_id)
     if success:
         return _client.execute()
     return False
@@ -246,19 +243,14 @@ def url() -> str | None:
     return _client.get_visualization_url()
 
 
-def robots() -> list[str]:
-    """List configured robots."""
-    return _client.list_robots()
+def info() -> dict[str, Any]:
+    """Get configured model details."""
+    return _client.get_model_info()
 
 
-def info(robot_name: str | None = None) -> dict[str, Any] | None:
-    """Get robot config details."""
-    return _client.get_robot_info(robot_name)
-
-
-def gripper(position: float, robot_name: str | None = None) -> str:
+def gripper(position: float) -> str:
     """Set gripper position (0.0=closed, 0.85=open)."""
-    return _client.set_gripper(position, robot_name)
+    return _client.set_gripper(position)
 
 
 def add_box(
@@ -357,9 +349,9 @@ def remove(obstacle_id: str) -> bool:
     return _client.remove_obstacle(obstacle_id)
 
 
-def collision_free(target_joints: list[float], robot_name: str | None = None) -> bool:
+def collision_free(target_joints: list[float]) -> bool:
     """Check if a joint configuration is collision-free."""
-    return _client.is_collision_free(target_joints, robot_name)
+    return _client.is_collision_free(target_joints)
 
 
 def commands() -> None:

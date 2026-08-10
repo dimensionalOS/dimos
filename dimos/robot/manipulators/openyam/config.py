@@ -18,12 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
     base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -47,7 +46,7 @@ def make_openyam_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints(hw_id, OPENYAM_DOF),
+        joints=joint_names(OPENYAM_DOF, prefix="yam_joint"),
         adapter_type="mock",
         address=None,
         auto_enable=auto_enable,
@@ -66,23 +65,20 @@ def openyam_hardware(
 
 
 def make_openyam_model_config(
-    name: str = "arm",
     *,
-    joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     """Build a planning config for the gripper-equipped OpenYAM."""
-    local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
+    model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
-        name=name,
         model_path=OPENYAM_MODEL_PATH,
         base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=model_joint_names,
         base_link="yam_base_link",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
+                joint_names=tuple(model_joint_names),
                 base_link="yam_base_link",
                 tip_link="yam_hand_tcp",
             )
@@ -90,12 +86,6 @@ def make_openyam_model_config(
         package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            OPENYAM_DOF,
-            joint_prefix=joint_prefix,
-            urdf_joint_prefix="yam_",
-        ),
-        gripper_hardware_id=name,
+        gripper_hardware_id="arm",
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

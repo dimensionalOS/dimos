@@ -24,15 +24,10 @@ from dimos.robot.manipulators.openarm.blueprints.basic import (
     mock_right,
     right_hw,
 )
-from dimos.robot.manipulators.openarm.config import openarm_model_config
+from dimos.robot.manipulators.openarm.config import openarm_dual_model_config
 
 openarm_mock_planner_coordinator = autoconnect(
-    planner(
-        robots=[
-            openarm_model_config("left"),
-            openarm_model_config("right"),
-        ],
-    ),
+    planner(model=openarm_dual_model_config()),
     coordinator(
         hardware=[mock_left, mock_right],
         tasks=[trajectory_task(mock_left, mock_right)],
@@ -40,12 +35,7 @@ openarm_mock_planner_coordinator = autoconnect(
 )
 
 openarm_planner_coordinator = autoconnect(
-    planner(
-        robots=[
-            openarm_model_config("left"),
-            openarm_model_config("right"),
-        ],
-    ),
+    planner(model=openarm_dual_model_config()),
     coordinator(
         hardware=[left_hw, right_hw],
         tasks=[trajectory_task(left_hw, right_hw)],

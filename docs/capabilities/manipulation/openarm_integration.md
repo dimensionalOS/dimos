@@ -143,32 +143,33 @@ This gives you an interactive Python prompt with these functions:
 
 | Function | Purpose |
 |---|---|
-| `robots()` | List configured robots (here: `["left_arm", "right_arm"]`) |
-| `joints(robot_name)` | Read current joint positions (7 floats) |
-| `ee(robot_name)` | Read current end-effector pose |
+| `info()` | Inspect the configured model and its canonical joints |
+| `groups()` | List planning groups (`left_arm`, `right_arm`, `both_arms`) |
+| `joints()` | Read the complete 14-joint canonical model state |
+| `ee(group_id)` | Read a planning group's end-effector pose |
 | `state()` | Module state: `IDLE`, `PLANNING`, `EXECUTING`, `FAULT`, etc. |
-| `plan([q1..q7], robot_name)` | Plan a collision-free trajectory to a joint configuration |
-| `plan_pose(x, y, z, robot_name=...)` | Plan to a Cartesian EE pose (preserves current orientation) |
-| `preview(robot_name)` | Animate the planned path in Meshcat without executing |
+| `plan_group(group_id, [q1..q7])` | Plan a collision-free trajectory for one arm |
+| `plan_group_pose(group_id, x, y, z)` | Plan one arm to a Cartesian EE pose |
+| `preview()` | Animate the planned path in Meshcat without executing |
 | `execute()` | Send the complete planned trajectory to the coordinator |
-| `home(robot_name)` | Plan + execute to home joints |
+| `home(group_id)` | Plan + execute one group to home joints |
 | `commands()` | Print all available functions |
 
 #### Example session — simple joint moves
 
 ```python skip
->>> robots()
-['left_arm', 'right_arm']
+>>> [group.id for group in groups()]
+['left_arm', 'right_arm', 'both_arms']
 
->>> joints(robot_name="left_arm")
-[0.02, -0.01, -0.13, 0.15, 0.17, -0.07, 0.10]
+>>> joints()
+[0.02, -0.01, -0.13, 0.15, 0.17, -0.07, 0.10, 0.01, 0.0, -0.1, 0.1, 0.2, 0.0, 0.0]
 
 >>> # One-liner: plan → preview in Meshcat → execute on hardware
->>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and preview(robot_name="left_arm") and execute()
+>>> plan_group("left_arm", [0.3, 0, 0, 0, 0, 0, 0]) and preview() and execute()
 True
 
->>> joints(robot_name="left_arm")
-[0.30, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]   # arm is now at the commanded pose
+>>> joints()[:7]
+[0.30, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
 ```
 
 `plan()` returns `True` on success, `False` if planning failed (check the coordinator terminal for `COLLISION_AT_GOAL`, `INVALID_START`, `NO_SOLUTION`, etc). The `and` chaining is an idiom — if any step fails, the next one is short-circuited.
@@ -184,9 +185,9 @@ If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset 
 
 ```python skip
 >>> # Move both arms to mirrored poses
->>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and execute()
+>>> plan_group("left_arm", [0.5, 0, 0, 0, 0, 0, 0]) and execute()
 True
->>> plan([-0.5, 0, 0, 0, 0, 0, 0], robot_name="right_arm") and execute()
+>>> plan_group("right_arm", [-0.5, 0, 0, 0, 0, 0, 0]) and execute()
 True
 ```
 
@@ -195,8 +196,8 @@ Each arm plans and executes independently — the coordinator runs both trajecto
 #### Example session — Cartesian target
 
 ```python skip
->>> ee(robot_name="left_arm")           # see where the EE currently is
->>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm") and preview(robot_name="left_arm")
+>>> ee("left_arm")           # see where the EE currently is
+>>> plan_group_pose("left_arm", 0.1, 0.3, 0.5) and preview()
 True
 >>> execute()
 True
@@ -209,7 +210,7 @@ If you don't know which Cartesian targets are reachable, check first with the wo
 ```python skip
 >>> add_box("table", 0.4, 0.0, 0.1, w=0.6, h=0.4, d=0.05)  # rectangular obstacle
 >>> add_sphere("ball", 0.3, 0.2, 0.4, radius=0.05)
->>> plan_pose(0.4, 0.0, 0.3, robot_name="left_arm")         # now plans around it
+>>> plan_group_pose("left_arm", 0.4, 0.0, 0.3)  # now plans around it
 >>> remove("table")                                          # id returned by add_*
 ```
 

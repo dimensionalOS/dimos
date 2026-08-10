@@ -64,7 +64,7 @@ keyboard_teleop_xarm6 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm6_model_config(add_gripper=True)],
+        model=make_xarm6_model_config(add_gripper=True),
         visualization={"backend": "viser"},
     ),
 )
@@ -86,7 +86,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_xarm7_model_config(add_gripper=True)],
+        model=make_xarm7_model_config(add_gripper=True),
         visualization={"backend": "viser"},
     ),
 )
@@ -187,7 +187,7 @@ coordinator_teleop_xarm7 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_xarm7_teleop_model],
+        model=_xarm7_teleop_model,
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_teleop_hw.joints)),
@@ -216,7 +216,7 @@ coordinator_teleop_xarm6 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_xarm6_teleop_model],
+        model=_xarm6_teleop_model,
         visualization={"backend": "viser"},
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_teleop_hw.joints)),

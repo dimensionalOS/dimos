@@ -33,7 +33,7 @@ _xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[make_xarm7_sim_robot_config()],
+        model=make_xarm7_sim_robot_config(),
         planning_timeout=10.0,
         visualization={"backend": "meshcat"},
     ),

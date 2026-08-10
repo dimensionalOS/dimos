@@ -14,7 +14,6 @@
 
 """Tests for ManipulationModule plan-execution result projection."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from dimos.control.coordinator import ControlCoordinator
@@ -25,8 +24,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -52,7 +49,7 @@ def _plan(final_position: float = 1.0) -> GeneratedPlan:
         ],
     )
     return GeneratedPlan(
-        group_ids=("arm/manipulator",),
+        group_ids=("manipulator",),
         trajectory=trajectory,
         path=[
             JointState(name=names, position=[0.0]),
@@ -67,22 +64,6 @@ def _module_with_coordinator(
     module_factory,
 ) -> ManipulationModule:
     module = module_factory(coordinator)
-    config = RobotModelConfig(
-        name="arm",
-        model_path=Path("/path/to/robot.urdf"),
-        joint_names=["j0"],
-        base_link="base",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=("j0",),
-                base_link="base",
-                tip_link="tool",
-            )
-        ],
-    )
-    module._robots = {"arm": ("arm_id", config)}
-    module._initialize_execution()
     return module
 
 

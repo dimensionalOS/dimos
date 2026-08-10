@@ -27,7 +27,7 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _openyam_keyboard_hw = make_openyam_hardware("arm")
-_openyam_model = make_openyam_model_config(name="arm")
+_openyam_model = make_openyam_model_config()
 
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
@@ -41,7 +41,7 @@ keyboard_teleop_openyam = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openyam_model],
+        model=_openyam_model,
         visualization={"backend": "viser"},
     ),
 )

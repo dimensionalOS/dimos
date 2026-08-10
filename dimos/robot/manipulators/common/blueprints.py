@@ -88,9 +88,8 @@ def _resolve_control_ik(
     robot_model: RobotModelConfig,
     control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, Any]:
-    coordinator_joints = robot_model.get_coordinator_joint_names()
-    if hardware.joints != coordinator_joints:
-        raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
+    if list(hardware.joints) != list(robot_model.joint_names):
+        raise ValueError("hardware and RobotModelConfig joints must match exactly")
     payload = dict(control_ik or {})
     payload["robot_model"] = robot_model
     return payload
@@ -222,13 +221,13 @@ def coordinator(
 
 def planner(
     *,
-    robots: Sequence[RobotModelConfig],
+    model: RobotModelConfig,
     planning_timeout: float = 10.0,
     visualization: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> Blueprint:
     module_kwargs: dict[str, Any] = {
-        "robots": list(robots),
+        "model": model,
         "planning_timeout": planning_timeout,
         **kwargs,
     }
