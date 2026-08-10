@@ -52,6 +52,7 @@ all_blueprints = {
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-capabilities": "dimos.agents.demos.demo_capabilities:demo_capabilities",
     "demo-cuvslam-realsense": "dimos.mapping.cuvslam.demo_cuvslam_realsense:demo_cuvslam_realsense",
+    "demo-cuvslam-zed": "dimos.mapping.cuvslam.demo_cuvslam_zed:demo_cuvslam_zed",
     "demo-error-on-name-conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav",
