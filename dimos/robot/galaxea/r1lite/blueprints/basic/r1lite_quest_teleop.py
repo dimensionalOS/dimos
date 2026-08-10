@@ -180,6 +180,14 @@ r1lite_quest_teleop = autoconnect(
 )
 
 
+# Sim boot pose: joint-range centers (the raised-elbow guard pose). The
+# vendor URDF puts q=0 ON the limit boundary with the elbow extended —
+# near-singular AND limit-pinned, the worst corner of the workspace —
+# so a zero start misrepresents how the architecture drives. The real
+# robot still boots folded; hardware gets a go-to-ready move instead.
+_SIM_HOME_ARM = [0.0, 1.571, -1.658, 0.0, 0.0, 0.0]
+
+
 def _sim_hardware() -> list[HardwareComponent]:
     return [
         HardwareComponent(
@@ -187,6 +195,7 @@ def _sim_hardware() -> list[HardwareComponent]:
             hardware_type=HardwareType.MANIPULATOR,
             joints=list(cfg.R1LITE_ARM_JOINTS),
             adapter_type="mock",
+            adapter_kwargs={"initial_positions": _SIM_HOME_ARM * 2},
         ),
         HardwareComponent(
             hardware_id="chassis",
