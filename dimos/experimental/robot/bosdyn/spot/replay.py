@@ -19,6 +19,9 @@ camera, depth, and odometry stream onto Out ports named exactly like
 `SpotHighLevel`'s, so the same Rerun visualization wires up by name — no robot
 required. The recorded ``tf`` tree (odom->base_link plus the base_link->camera
 mounts) is republished so every frame stays spatially anchored in 3D.
+
+The travelled trail is not built here: ``odometry`` feeds ``OdometryPath``,
+which accumulates it and is equally happy on a live robot.
 """
 
 from __future__ import annotations
@@ -38,7 +41,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -51,9 +53,6 @@ _IMAGE_STREAMS = [
     f"{kind}_image_{suffix}" for kind in ("grayscale", "depth") for suffix in CAMERA_STREAM_SUFFIXES
 ]
 _PLAYBACK_STREAMS = [*_IMAGE_STREAMS, "grayscale_info", "depth_info", "odometry"]
-
-# Cap the accumulated odom trail so a looping replay doesn't grow it forever.
-_MAX_PATH_POSES = 2000
 
 # SpotHighLevel rights the sideways front camera images but leaves their optical
 # tf frames at the raw mount orientation, so the 3D frustum + depth
@@ -107,10 +106,7 @@ class SpotReplay(Module):
     depth_info: Out[CameraInfo]
 
     odometry: Out[Odometry]
-    odom_path: Out[NavPath]
     tf: Out[TFMessage]
-
-    _odom_path: NavPath
 
     def _resolve_db_path(self) -> Path:
         if self.config.db_path:
@@ -141,14 +137,6 @@ class SpotReplay(Module):
             ts=transform.ts,
         )
 
-    def _republish_odometry(self, message: Odometry) -> None:
-        self.odometry.publish(message)
-        self._odom_path.frame_id = message.frame_id or self._odom_path.frame_id
-        self._odom_path.push_mut(message.to_pose_stamped())
-        if len(self._odom_path.poses) > _MAX_PATH_POSES:
-            del self._odom_path.poses[:-_MAX_PATH_POSES]
-        self.odom_path.publish(self._odom_path)
-
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()
         logger.info(f"Replaying Spot recording from {db_path}")
@@ -165,17 +153,13 @@ class SpotReplay(Module):
         )
         available = set(replay.list_streams())
 
-        self._odom_path = NavPath(frame_id="odom")
-
         for name in _PLAYBACK_STREAMS:
             if name not in available:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
-            if name == "odometry":
-                subscriber = self._republish_odometry
-            else:
-                subscriber = getattr(self, name).publish
-            self.register_disposable(replay.stream(name).observable().subscribe(subscriber))
+            self.register_disposable(
+                replay.stream(name).observable().subscribe(getattr(self, name).publish)
+            )
 
         if "tf" in available:
             self.register_disposable(replay.stream("tf").observable().subscribe(self._republish_tf))

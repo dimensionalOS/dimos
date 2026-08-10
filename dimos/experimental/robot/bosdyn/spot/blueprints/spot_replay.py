@@ -24,7 +24,7 @@ Usage:
     # newest *.db under ~/datasets/spot:
     dimos run spot-replay
     # a specific recording:
-    dimos run spot-replay -o spotreplay.db_path=/path/to/spot.db
+    dimos run spot-replay --db-path=/path/to/spot.db
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from dimos.experimental.robot.bosdyn.spot.rerun import (
     spot_camera_layout,
     spot_camera_visual_overrides,
 )
+from dimos.mapping.odometry_path import OdometryPath
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -46,6 +47,7 @@ from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 # bundles the WebsocketVisModule, which auto-opens the 7779 Command Center tab.
 spot_replay = autoconnect(
     SpotReplay.blueprint(),
+    OdometryPath.blueprint(),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],
         rerun_open=global_config.rerun_open,
@@ -55,4 +57,4 @@ spot_replay = autoconnect(
         static=spot_body_static_overrides(),
     ),
     RerunWebSocketServer.blueprint(),
-)
+).remappings([(OdometryPath, "path", "odom_path")])
