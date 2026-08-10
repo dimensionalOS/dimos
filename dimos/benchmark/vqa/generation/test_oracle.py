@@ -9,16 +9,15 @@ from langchain_core.messages import AIMessage
 import numpy as np
 
 from dimos.benchmark.vqa.generation.geometry import project_visible_points
-from dimos.benchmark.vqa.generation.measurements import estimate_ground_plane
 from dimos.benchmark.vqa.generation.oracle import (
     PrivateToolCallingOracle,
     SemanticEvidenceValidation,
     validate_oracle_answer,
 )
-from dimos.benchmark.vqa.generation.oracle_tools import (
-    LocalOracleToolRegistry,
-    _height_choice_window,
-)
+from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.geometry import estimate_ground_plane
 from dimos.benchmark.vqa.generation.question_agent import (
     AGENTIC_QUESTION_PROMPT,
     OpenAIFreeformQuestionAuthor,
@@ -28,6 +27,7 @@ from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     ChoiceAnswerContract,
     DeferredHeightChoiceContract,
+    GroundingConfig,
     OracleEvidence,
     OracleToolResult,
     QuestionProposal,
@@ -37,6 +37,8 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 class _QuestionModel:
@@ -46,13 +48,15 @@ class _QuestionModel:
 
 
 class _Grounding:
-    def detect_objects(self, frame: Any, query: str) -> list[Any]:
+    frame = cast("Any", object())
+
+    def detect_objects(self, query: str) -> list[Any]:
         return []
 
-    def segment_detections(self, frame: Any, query: str) -> list[Any]:
+    def segment_detections(self, query: str) -> list[Any]:
         return []
 
-    def ground_masks(self, frame: Any, query: str) -> list[Any]:
+    def ground_masks(self, query: str) -> list[Any]:
         return [
             type(
                 "Object",
@@ -66,20 +70,6 @@ class _Grounding:
                 },
             )()
         ]
-
-    def masks_for_query(self, query: str) -> tuple[Any, ...]:
-        return ()
-
-
-class _GroundingWithMask(_Grounding):
-    def __init__(self, mask: np.ndarray) -> None:
-        self._mask = mask
-
-    def masks_for_query(self, query: str) -> tuple[Any, ...]:
-        return (type("Mask", (), {"mask": self._mask})(),)
-
-    def segment_detections(self, frame: Any, query: str) -> list[Any]:
-        return list(self.masks_for_query(query))
 
 
 def _measurement_frame(points: np.ndarray | None = None) -> CalibratedFrame:
@@ -97,6 +87,39 @@ def _measurement_frame(points: np.ndarray | None = None) -> CalibratedFrame:
         camera_info=CameraInfo.from_intrinsics(50.0, 50.0, 50.0, 50.0, 100, 100),
         pointcloud_to_camera=Transform.identity(),
         image_is_rectified=True,
+    )
+
+
+class _MaskDetector:
+    def __init__(self, mask: np.ndarray) -> None:
+        self._mask = mask
+
+    def detect(self, image: Image, query: str) -> ImageDetections2D:
+        detection = Detection2DSeg(
+            (0.0, 0.0, float(image.width - 1), float(image.height - 1)),
+            0,
+            -1,
+            1.0,
+            query,
+            0.0,
+            image,
+            self._mask,
+        )
+        return ImageDetections2D(image, [detection])
+
+
+class _IdentitySegmenter:
+    def segment(self, detections: Any) -> Any:
+        return detections
+
+
+def _frame_primitives(
+    frame: CalibratedFrame, mask: np.ndarray | None = None
+) -> FramePerceptionPrimitives:
+    if mask is None:
+        mask = np.full((frame.image.height, frame.image.width), 255, dtype=np.uint8)
+    return FramePerceptionPrimitives(
+        frame, _MaskDetector(mask), _IdentitySegmenter(), config=GroundingConfig(min_mask_area_px=1)
     )
 
 
@@ -260,7 +283,7 @@ def test_freeform_question_author_ignores_malformed_optional_query_hints() -> No
 
 
 def test_local_tool_returns_geometry_and_evidence_ids() -> None:
-    registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
 
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detections(detection["detection_id"]))
@@ -290,7 +313,7 @@ def test_ground_plane_estimator_fits_visible_lower_band() -> None:
 
 def test_ground_plane_tool_returns_quality_gated_rejection() -> None:
     frame = _measurement_frame(np.asarray([[0.0, 1.0, 3.0]], dtype=np.float32))
-    registry = LocalOracleToolRegistry(frame, cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(_frame_primitives(frame))
 
     payload = json.loads(registry.fit_ground_plane())
 
@@ -306,7 +329,7 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
     for (x, y), point in zip(projected.pixels, projected.camera_points, strict=True):
         if point[0] > 1.5:
             mask[y, x] = 255
-    registry = LocalOracleToolRegistry(frame, cast("Any", _GroundingWithMask(mask)))
+    registry = LocalOracleToolRegistry(_frame_primitives(frame, mask))
 
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detections(detection["detection_id"]))
@@ -322,7 +345,7 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
 
 
 def test_local_registry_exposes_geometry_tools() -> None:
-    registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
 
     assert {tool.name for tool in registry.tools()} == {
         "detect_objects",
@@ -336,7 +359,7 @@ def test_local_registry_exposes_geometry_tools() -> None:
 
 
 def test_height_choice_window_is_local_and_deterministic() -> None:
-    choices, answer = _height_choice_window(0.42)
+    choices, answer = height_choice_window(0.42)
 
     assert choices == (
         "under 0.2 m",
@@ -345,7 +368,7 @@ def test_height_choice_window_is_local_and_deterministic() -> None:
         "over 1.0 m",
     )
     assert answer == "0.2-0.6 m"
-    assert _height_choice_window(3.0)[1] == "over 2.0 m"
+    assert height_choice_window(3.0)[1] == "over 2.0 m"
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:
@@ -393,7 +416,7 @@ def test_oracle_derives_deferred_height_answer_from_measurement_bucket() -> None
 
 def test_private_oracle_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
     result = PrivateToolCallingOracle(
@@ -428,7 +451,7 @@ def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
     proposal = QuestionProposal(
         "q", "How tall is the chair?", ChoiceAnswerContract(("under 0.5 m", "0.5-1.0 m"))
     )
-    registry = LocalOracleToolRegistry(cast("Any", object()), cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
     validator = _SemanticValidator(
         SemanticEvidenceValidation(False, "range and side do not measure height")
     )
@@ -446,7 +469,7 @@ def test_agentic_oracle_never_uses_legacy_answer_program() -> None:
             raise AssertionError("agentic oracle must not call legacy answer")
 
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", object()), _GroundingWithoutLegacyAnswer())
+    registry = LocalOracleToolRegistry(cast("Any", _GroundingWithoutLegacyAnswer()))
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
     result = PrivateToolCallingOracle(

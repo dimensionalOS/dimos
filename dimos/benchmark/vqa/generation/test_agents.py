@@ -7,6 +7,7 @@ from typing import cast
 import numpy as np
 
 from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
 from dimos.benchmark.vqa.models import CalibratedFrame, GroundingConfig, QuestionIntent
 from dimos.models.vl.openai import OpenAIVlModel
@@ -42,6 +43,20 @@ class _MultiDetector:
 
     def detect(self, image: Image, query: str) -> ImageDetections2D:
         return ImageDetections2D(self._image, self._detections if query == "chair" else [])
+
+
+def _agent(
+    frame: CalibratedFrame,
+    detector: _Detector | _MultiDetector,
+    segmenter: _Segmenter,
+    *,
+    localizer: _PointLocalizer | None = None,
+    point_segmenter: _PointSegmenter | None = None,
+    config: GroundingConfig = GroundingConfig(),
+) -> VqaGroundTruthGenerator:
+    return VqaGroundTruthGenerator(
+        FramePerceptionPrimitives(frame, detector, segmenter, localizer, point_segmenter, config)
+    )
 
 
 class _Segmenter:
@@ -95,8 +110,11 @@ def test_question_agent_returns_constrained_intents() -> None:
 
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
     frame, detection = _frame_and_detection()
-    agent = VqaGroundTruthGenerator(
-        _Detector(frame.image, detection), _Segmenter(), config=GroundingConfig(min_mask_area_px=1)
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
     )
 
     answered = agent.answer(
@@ -122,8 +140,11 @@ def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> 
 
 def test_ground_truth_agent_rejects_small_masks() -> None:
     frame, detection = _frame_and_detection()
-    agent = VqaGroundTruthGenerator(
-        _Detector(frame.image, detection), _Segmenter(), config=GroundingConfig(min_mask_area_px=37)
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=37),
     )
 
     result = agent.answer(frame, QuestionIntent(kind="presence", object_query="chair"))
@@ -143,7 +164,8 @@ def test_ground_truth_agent_falls_back_to_point_prompt() -> None:
         detection.image,
         detection.mask,
     )
-    agent = VqaGroundTruthGenerator(
+    agent = _agent(
+        frame,
         _Detector(frame.image, detection),
         _Segmenter(),
         localizer=_PointLocalizer(),
@@ -192,8 +214,11 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
         Detection2DSeg((0.0, 0.0, 2.0, 5.0), 0, -1, 1.0, "chair", 0.0, image, left_mask),
         Detection2DSeg((3.0, 0.0, 5.0, 5.0), 1, -1, 1.0, "chair", 0.0, image, right_mask),
     ]
-    agent = VqaGroundTruthGenerator(
-        _MultiDetector(image, detections), _Segmenter(), config=GroundingConfig(min_mask_area_px=1)
+    agent = _agent(
+        frame,
+        _MultiDetector(image, detections),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
     )
 
     result = agent.answer(
@@ -207,8 +232,11 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
 
 def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None:
     frame, detection = _frame_and_detection()
-    agent = VqaGroundTruthGenerator(
-        _Detector(frame.image, detection), _Segmenter(), config=GroundingConfig(min_mask_area_px=1)
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
     )
 
     result = agent.answer(

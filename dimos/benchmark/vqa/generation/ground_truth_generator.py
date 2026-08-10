@@ -3,52 +3,24 @@
 
 from __future__ import annotations
 
-from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.generation.questions import generate_questions
-from dimos.benchmark.vqa.generation.selection import select_nearest_object
 from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     GroundedObject,
-    GroundingConfig,
     GroundTruthResult,
-    ObjectDetector,
-    ObjectPointLocalizer,
-    ObjectSegmenter,
-    PointObjectSegmenter,
     QuestionIntent,
     ToolTrace,
     VqaExample,
 )
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.point import Detection2DPoint
-from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 class VqaGroundTruthGenerator:
     """Answer constrained questions by calling detection, segmentation, and geometry tools."""
 
-    def __init__(
-        self,
-        detector: ObjectDetector,
-        segmenter: ObjectSegmenter,
-        localizer: ObjectPointLocalizer | None = None,
-        point_segmenter: PointObjectSegmenter | None = None,
-        config: GroundingConfig = GroundingConfig(),
-    ) -> None:
-        self._detector = detector
-        self._segmenter = segmenter
-        self._localizer = localizer
-        self._point_segmenter = point_segmenter
-        if config.min_mask_area_px < 1 or config.min_foreground_points < 1:
-            raise ValueError("grounding thresholds must be positive")
-        self._config = config
-        self._groundings: dict[str, list[GroundedObject]] = {}
-        self._detected: dict[str, ImageDetections2D] = {}
-        self._segmented_queries: set[str] = set()
-        self._masks: dict[str, list[Detection2DSeg]] = {}
-        self._detections: dict[str, list[Detection2DBBox]] = {}
-        self._points: dict[str, list[Detection2DPoint]] = {}
+    def __init__(self, primitives: FramePerceptionPrimitives) -> None:
+        self.primitives = primitives
 
     def answer(self, frame: CalibratedFrame, intent: QuestionIntent) -> GroundTruthResult:
         objects, trace = self.ground(frame, intent.object_query)
@@ -58,75 +30,22 @@ class VqaGroundTruthGenerator:
         self, frame: CalibratedFrame, object_query: str
     ) -> tuple[list[GroundedObject], tuple[ToolTrace, ...]]:
         """Run the fixed constrained grounding recipe over shared primitives."""
-        if object_query in self._groundings:
-            return self._groundings[object_query], (ToolTrace("reuse_grounding", object_query),)
+        if self.primitives.has_grounding(object_query):
+            return self.primitives.ground_masks(object_query), (
+                ToolTrace("reuse_grounding", object_query),
+            )
         trace: list[ToolTrace] = [ToolTrace("detect_objects", object_query)]
-        detections = self.detect_objects(frame, object_query)
+        detections = self.primitives.detect_objects(object_query)
         if len(detections):
             trace.append(ToolTrace("segment_objects", f"count={len(detections)}"))
-        elif self._localizer is not None and self._point_segmenter is not None:
+        elif self.primitives.can_localize_points:
             trace.append(ToolTrace("locate_object_point", object_query))
-        masks = self.segment_detections(frame, object_query)
-        if not len(detections) and object_query in self._points:
-            trace.append(
-                ToolTrace("segment_object_point", f"count={len(self._points[object_query])}")
-            )
+        masks = self.primitives.segment_detections(object_query)
+        if not len(detections) and self.primitives.used_point_localization(object_query):
+            trace.append(ToolTrace("segment_object_point", object_query))
         trace.append(ToolTrace("get_foreground_geometry", f"masks={len(masks)}"))
-        objects = self.ground_masks(frame, object_query)
+        objects = self.primitives.ground_masks(object_query)
         return objects, tuple(trace)
-
-    def detect_objects(self, frame: CalibratedFrame, object_query: str) -> ImageDetections2D:
-        """Run private MoonDream detection once for an opaque object query."""
-        cached = self._detected.get(object_query)
-        if cached is not None:
-            return cached
-        detections = self._detector.detect(frame.image, object_query)
-        self._detected[object_query] = detections
-        self._detections[object_query] = [
-            item for item in detections if isinstance(item, Detection2DBBox)
-        ]
-        return detections
-
-    def segment_detections(self, frame: CalibratedFrame, object_query: str) -> list[Detection2DSeg]:
-        """Run private EdgeTAM segmentation once for a detected object query."""
-        if object_query in self._segmented_queries:
-            return self._masks.get(object_query, [])
-        detections = self.detect_objects(frame, object_query)
-        if len(detections):
-            segmented = self._segmenter.segment(detections)
-        elif self._localizer is not None and self._point_segmenter is not None:
-            points = self._localizer.locate(frame.image, object_query)
-            self._points[object_query] = [
-                item for item in points if isinstance(item, Detection2DPoint)
-            ]
-            segmented = self._point_segmenter.segment_points(points)
-        else:
-            segmented = detections
-        masks = [
-            item
-            for item in segmented
-            if isinstance(item, Detection2DSeg)
-            and int((item.mask > 0).sum()) >= self._config.min_mask_area_px
-        ]
-        self._masks[object_query] = masks
-        self._segmented_queries.add(object_query)
-        return masks
-
-    def ground_masks(self, frame: CalibratedFrame, object_query: str) -> list[GroundedObject]:
-        """Project visible point-cloud support through an accepted mask set."""
-        cached = self._groundings.get(object_query)
-        if cached is not None:
-            return cached
-        masks = self.segment_detections(frame, object_query)
-        objects = ground_segmented_objects(
-            frame, masks, min_foreground_points=self._config.min_foreground_points
-        )
-        self._groundings[object_query] = objects
-        return objects
-
-    def masks_for_query(self, object_query: str) -> tuple[Detection2DSeg, ...]:
-        """Return masks produced by the most recent local grounding for a query."""
-        return tuple(self._masks.get(object_query, []))
 
     def _answer_from_objects(
         self,
@@ -173,6 +92,7 @@ class VqaGroundTruthGenerator:
         return GroundTruthResult(
             intent, rejected, "rejected", None, "no_grounded_object", tuple(objects), trace
         )
+
 
 def _render_question(intent: QuestionIntent) -> str:
     if intent.kind == "presence":

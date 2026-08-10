@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.benchmark.vqa.generation.selection import select_nearest_object
+from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import GroundedObject, VqaExample
 
 

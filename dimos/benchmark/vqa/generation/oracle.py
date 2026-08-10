@@ -254,7 +254,9 @@ def _validated_result(
     )
     if not verdict.accepted:
         return _rejected(proposal, f"unsupported_evidence:{verdict.reason}", results, trace)
-    return AcceptedOracleResult(proposal, answer, answer_contract, evidence_ids, results, tuple(trace))
+    return AcceptedOracleResult(
+        proposal, answer, answer_contract, evidence_ids, results, tuple(trace)
+    )
 
 
 def _cited_results(
