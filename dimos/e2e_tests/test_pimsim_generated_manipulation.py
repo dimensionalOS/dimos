@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import time
 from typing import Protocol, cast
 
@@ -32,6 +34,26 @@ class _PickAndPlaceActions(Protocol):
     def pick(self, target: str) -> SkillResult: ...
 
     def drop_on(self, target: str, *, z_offset: float) -> SkillResult: ...
+
+    def move_to_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        roll: float,
+        pitch: float,
+        yaw: float,
+    ) -> SkillResult: ...
+
+    def open_gripper(self) -> SkillResult: ...
+
+    def close_gripper(self) -> SkillResult: ...
+
+    def get_gripper(self) -> float | None: ...
+
+    def get_current_joints(self) -> list[float] | None: ...
+
+    def is_collision_free(self, joints: list[float]) -> bool: ...
 
 
 TABLETOP_CASES = {
@@ -105,6 +127,20 @@ TABLETOP_CASES = {
         required_modules=("PickAndPlaceModule",),
     ),
 }
+
+ROBOCASA_OPEN_DRAWER_CASE = EvaluationCase(
+    case_id="layout-1-style-1-open-drawer-seed-3",
+    family_id="robocasa-open-drawer-canary",
+    scene_seed=3,
+    variation_seed=3,
+    robot_model="xarm7",
+    blueprint_name="xarm-perception-sim",
+    role_constraints={
+        "drawer": "drawer",
+        "drawer_object": "pizza_cutter",
+    },
+    required_modules=("PickAndPlaceModule",),
+)
 
 PLACE_CASES = (
     pytest.param(TABLETOP_CASES["object-in-receptacle"], 0.10, id="object-in-receptacle"),
@@ -218,6 +254,48 @@ def test_rearrange_objects(evaluation_episode: EpisodeRun) -> None:
     assert evaluation.passed is True
 
 
+@pytest.mark.parametrize(
+    "evaluation_episode",
+    [pytest.param(ROBOCASA_OPEN_DRAWER_CASE, id="open-drawer")],
+    indirect=True,
+)
+def test_native_robocasa_drawer_reports_partial_public_execution(
+    evaluation_episode: EpisodeRun,
+) -> None:
+    actions = _actions(evaluation_episode)
+    joints = actions.get_current_joints()
+    assert joints is not None
+    assert actions.is_collision_free(joints), "robot starts in collision"
+
+    open_result = actions.open_gripper()
+    assert open_result.success, open_result
+    for x, y, z in (
+        (0.50, -0.85, 0.950),
+        (0.50, -0.75, 0.785),
+        (0.50, -0.607, 0.785),
+    ):
+        result = actions.move_to_pose(x, y, z, -math.pi / 2.0, 0.0, 0.0)
+        assert result.success, result
+
+    open_position = actions.get_gripper()
+    assert open_position is not None
+    close_result = actions.close_gripper()
+    assert close_result.success, close_result
+    _wait_for_gripper_motion_to_settle(actions, initial_position=open_position)
+
+    for y in (-0.66, -0.70, -0.74, -0.78, -0.82, -0.86, -0.90, -0.94):
+        result = actions.move_to_pose(0.50, y, 0.785, -math.pi / 2.0, 0.0, 0.0)
+        assert result.success, result
+
+    evaluation = evaluation_episode.evaluate_goal()
+    goal = json.loads(evaluation.summary)
+
+    assert evaluation.passed is False
+    assert goal["kind"] == "open"
+    assert goal["passed"] is False
+    assert 0.40 < goal["measurements"]["open_progress"] < 0.95
+
+
 def _wait_for_role(
     episode: EpisodeRun,
     actions: _PickAndPlaceActions,
@@ -237,3 +315,26 @@ def _wait_for_role(
 
 def _actions(episode: EpisodeRun) -> _PickAndPlaceActions:
     return cast("_PickAndPlaceActions", episode.app.get_module("PickAndPlaceModule"))
+
+
+def _wait_for_gripper_motion_to_settle(
+    actions: _PickAndPlaceActions,
+    *,
+    initial_position: float,
+    timeout: float = 3.0,
+) -> float:
+    deadline = time.monotonic() + timeout
+    previous = initial_position
+    moved = False
+    stable_samples = 0
+    while time.monotonic() < deadline:
+        current = actions.get_gripper()
+        if current is None:
+            pytest.fail("gripper state became unavailable")
+        moved = moved or abs(current - initial_position) > 0.01
+        stable_samples = stable_samples + 1 if abs(current - previous) < 1e-3 else 0
+        if moved and stable_samples >= 3:
+            return current
+        previous = current
+        time.sleep(0.05)
+    pytest.fail("gripper did not move and settle before the timeout")
