@@ -261,8 +261,10 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
             assert control_ik["orientation_cost"] == 0.5
             assert control_ik["joint_centering_cost"] == 1e-2
-            assert control_ik["joint_centering_weights"] == [4.0, 3.0, 1.0, 0.5, 0.5, 0.5]
-            assert control_ik["manipulability_cost"] == 0.005
+            # 6-DOF arms: no per-joint weights, no manipulability task —
+            # both trade against tracking without a null space.
+            assert "joint_centering_weights" not in control_ik
+            assert "manipulability_cost" not in control_ik
             assert control_ik["max_velocity"] == 2.0
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.

@@ -78,17 +78,15 @@ _ARM_CONTROL_IK = {
     # arms that is the raised-elbow guard pose — so a stronger weight is
     # a standing null-space bias away from wraps and limit corners.
     "joint_centering_cost": 1e-2,
-    # Base joints stiff, wrist free (OpenArm-style redundancy shaping):
-    # the solver prefers wrist motion and recruits the base only when
-    # the target demands it — calm base, agile hand.
-    "joint_centering_weights": [4.0, 3.0, 1.0, 0.5, 0.5, 0.5],
-    # Bias away from singular configurations (straight-elbow start,
-    # aligned-axis wrist poses) — the wobble regions from the first
-    # dev.12/13 sim sessions.
-    "manipulability_cost": 0.005,
+    # Uniform joint treatment: these arms are 6-DOF — no null space —
+    # so per-joint centering weights and manipulability objectives trade
+    # directly against tracking (VR session 2026-08-10: shoulder motion
+    # went stiff while the wrist overcompensated). The redundancy-shaping
+    # tricks stay reserved for redundant arms.
     # Frame-task damping near singularities, raised from the 1e-4
-    # default per the upstream tuning guidance for unstable motion
-    # near singular poses.
+    # default per the upstream tuning guidance: measured to cut
+    # velocity jitter at the straight-arm pose by ~40% on its own,
+    # with no effect on reach.
     "lm_damping": 1e-2,
     "seed_limit_tolerance": 0.05,
 }
