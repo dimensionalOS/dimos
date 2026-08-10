@@ -47,11 +47,7 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
     @cached_property
     def _model(self) -> HFSiglipModel:
         self._ensure_cuda_initialized()
-        return (
-            HFSiglipModel.from_pretrained(self.config.model_name)
-            .eval()
-            .to(self.config.device)
-        )
+        return HFSiglipModel.from_pretrained(self.config.model_name).eval().to(self.config.device)
 
     @cached_property
     def _processor(self) -> SiglipProcessor:
@@ -72,8 +68,7 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
                 image_features = functional.normalize(image_features, dim=-1)
 
         embeddings = [
-            Embedding(vector=feat, timestamp=images[i].ts)
-            for i, feat in enumerate(image_features)
+            Embedding(vector=feat, timestamp=images[i].ts) for i, feat in enumerate(image_features)
         ]
         return embeddings[0] if len(images) == 1 else embeddings
 
