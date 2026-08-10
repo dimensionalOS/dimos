@@ -53,7 +53,6 @@ import pytest
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
@@ -64,12 +63,17 @@ DURATION = float(os.environ.get("DIMOS_BENCH_DURATION", "60"))
 SPEED = 1000.0  # every emission delay clamps to 0: a pure CPU-bound drain
 QUIET_S = 3.0  # all watched streams silent this long => drained
 DRAIN_TIMEOUT = 420.0  # build+drain deadline, inside the test timeout
-# GO2Connection source streams. camera_info is deliberately absent: it is
-# published by a 1 Hz forever-loop thread and never quiesces.
-WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image))
-# Validity gates, not the timing edge: odom is small and near-lossless; the
-# heavy latest-wins streams legitimately drop under the flood.
-FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.5, "color_image": 0.5}
+# GO2Connection source streams. camera_info is deliberately absent (published
+# by a 1 Hz forever-loop thread — never quiesces). color_image is too: raw
+# decoded Image frames (~MBs each) at max replay speed are a multi-GB/s LCM
+# fragment flood of which essentially nothing survives to an observer, and the
+# video path is already validity-checked synchronously — the first frame
+# decodes inside GO2Connection.start(), so a broken codec fails build()
+# loudly (see the missing-libturbojpeg incident).
+WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2))
+# Validity gates, not the timing edge: odom is small and near-lossless; lidar
+# frames are compact enough to survive the flood with the 64MB rmem tuning.
+FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.5}
 
 
 def _expected_counts(db_path: str) -> dict[str, int]:
