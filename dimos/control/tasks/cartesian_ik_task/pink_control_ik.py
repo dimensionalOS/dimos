@@ -29,7 +29,7 @@ _PINK_INSTALL_ERROR = "Pink control tasks require the 'pink' dependency. Install
 try:
     from pink import Configuration, solve_ik
     from pink.limits import ConfigurationLimit
-    from pink.tasks import DampingTask, FrameTask, PostureTask
+    from pink.tasks import DampingTask, FrameTask, ManipulabilityTask, PostureTask
 except ModuleNotFoundError as exc:
     raise ModuleNotFoundError(
         f"{_PINK_INSTALL_ERROR} Missing module: {exc.name}",
@@ -53,6 +53,16 @@ class PinkControlIKConfig(BaseConfig):
     orientation_cost: FiniteFloat = Field(1.0, ge=0.0)
     posture_cost: FiniteFloat = Field(1e-3, ge=0.0)
     joint_centering_cost: FiniteFloat = Field(0.0, ge=0.0)
+    # Per-joint multipliers on the centering cost (model joint order):
+    # high on base joints and low on distal ones makes the solver prefer
+    # wrist motion and recruit the base only when needed — a calm base
+    # with an agile hand, without hard per-joint velocity caps.
+    joint_centering_weights: list[FiniteFloat] | None = None
+    # Positive cost adds a manipulability objective on the end-effector
+    # frame, biasing the arm away from singular configurations — the
+    # wobble source near straight-elbow and aligned-axis poses.
+    manipulability_cost: FiniteFloat = Field(0.0, ge=0.0)
+    manipulability_rate: FiniteFloat = Field(0.05, gt=0.0)
     damping_cost: FiniteFloat = Field(0.0, ge=0.0)
     position_limit_margin: FiniteFloat = Field(1e-3, ge=0.0)
     seed_limit_tolerance: FiniteFloat = Field(1e-2, ge=0.0)
@@ -161,7 +171,25 @@ class _PinkControlIKBuilder:
         )
         if joint_centering_task is not None:
             joint_centering_task.set_target(self._build_joint_center_q(model, mapping, reference_q))
+            if config.joint_centering_weights is not None:
+                weights = np.asarray(config.joint_centering_weights, dtype=np.float64)
+                if weights.shape != (model.nv,) or np.any(weights < 0.0):
+                    raise ValueError(
+                        f"joint_centering_weights needs {model.nv} non-negative values"
+                    )
+                joint_centering_task.cost = config.joint_centering_cost * weights
         damping_task = DampingTask(cost=config.damping_cost) if config.damping_cost > 0.0 else None
+        manipulability_task = (
+            ManipulabilityTask(
+                robot.end_effector_link,
+                model,
+                cost=config.manipulability_cost,
+                manipulability_rate=config.manipulability_rate,
+                mask="position",
+            )
+            if config.manipulability_cost > 0.0
+            else None
+        )
         tasks: list[object] = [frame_task]
         if posture_task is not None:
             tasks.append(posture_task)
@@ -169,6 +197,8 @@ class _PinkControlIKBuilder:
             tasks.append(joint_centering_task)
         if damping_task is not None:
             tasks.append(damping_task)
+        if manipulability_task is not None:
+            tasks.append(manipulability_task)
 
         velocity_limits = np.asarray(model.velocityLimit, dtype=np.float64).copy()
         if (
