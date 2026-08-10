@@ -7,8 +7,8 @@
 //      tf, depth_image, imu
 // out: odometry, corrected_odometry, tf
 //
-// A tracking-loss restart is rebased onto the last published pose; odometry never
-// jumps. The rig comes from the tf tree.
+// Nothing is published while tracking is lost. cuVSLAM keeps one world frame for the
+// life of the tracker, so it resumes in the same frame. The rig comes from the tf tree.
 
 #include <algorithm>
 #include <array>
@@ -147,10 +147,15 @@ struct CuvslamConfig {
     std::vector<std::string> camera_frames;
     /// Images arrive rectified: no distortion, rows aligned.
     bool rectified;
-    /// A step implying more than this is cuVSLAM changing world frames, not motion.
-    double implausible_speed_meters_per_second;
+    /// Frames dropped before the first Track(), so the tracker does not initialise on the
+    /// exposure ramp at the start of a capture. 0 tracks from the first frame.
+    int warmup_frames;
     std::string odom_frame;
     std::string base_frame;
+    /// Frame the cuVSLAM rig is expressed in. Empty means base_frame. Setting it to a camera's
+    /// optical frame reproduces NVIDIA's examples, whose rig IS the left camera; the published
+    /// odometry stays on base_frame either way, since the two differ by a fixed transform.
+    std::string rig_frame;
     std::string map_frame;
     /// Only read when Slam is off, where map->odom can only be identity.
     bool publish_map_to_odom;
@@ -192,6 +197,7 @@ public:
         mode_ = cfg_.camera_mode == "stereo" ? Mode::Stereo
                 : cfg_.camera_mode == "rgbd"  ? Mode::Rgbd
                                               : Mode::Mono;
+        warmup_left_ = std::max(cfg_.warmup_frames, 0);
 
         builder.input<tf2_msgs::TFMessage>("tf", &CuvslamOdometry::on_tf, this);
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
@@ -219,6 +225,8 @@ public:
                        logging::Field("imu_dropped_before_start",
                                       static_cast<std::int64_t>(imu_dropped_)),
                        logging::Field("skew_rejects", static_cast<std::int64_t>(skew_rejects_)),
+                       logging::Field("warmup_skipped",
+                                      static_cast<std::int64_t>(warmup_skipped_)),
                        logging::Field("unmatched_images",
                                       static_cast<std::int64_t>(unplaced_images_))});
     }
@@ -283,7 +291,12 @@ private:
         return std::nullopt;
     }
 
-    /// Place every camera against base_frame, or nothing until they all resolve.
+    /// The frame cuVSLAM's rig is expressed in, which need not be the published frame.
+    const std::string& rig_frame() const {
+        return cfg_.rig_frame.empty() ? cfg_.base_frame : cfg_.rig_frame;
+    }
+
+    /// Place every camera against the rig frame, or nothing until they all resolve.
     void resolve_rig() {
         if (!cameras_.empty()) {
             return;
@@ -312,7 +325,7 @@ private:
 
         std::vector<RigCamera> cameras;
         for (const std::string& frame : frames) {
-            const std::optional<Transform> rig_from_camera = tf_lookup(cfg_.base_frame, frame);
+            const std::optional<Transform> rig_from_camera = tf_lookup(rig_frame(), frame);
             const auto info = camera_info_.find(frame);
             if (!rig_from_camera || info == camera_info_.end()) {
                 return;
@@ -406,11 +419,22 @@ private:
         return cfg_.enable_imu ? OdometryMode::Inertial : OdometryMode::Multicamera;
     }
 
-    /// The rig frame is base_frame; poses come out in body axes.
+    /// Builds the tracker against rig_frame(). Poses are converted back onto base_frame on
+    /// publish, so rig_frame is an internal choice with no effect on the output contract.
     void ensure_tracker() {
         if (tracker_) {
             return;
         }
+        const std::optional<Transform> base_from_rig = tf_lookup(cfg_.base_frame, rig_frame());
+        if (!base_from_rig) {
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                "cuvslam: tf does not place the rig frame against base_frame",
+                                logging::Field("rig_frame", rig_frame()),
+                                logging::Field("base_frame", cfg_.base_frame));
+            return;
+        }
+        base_from_rig_ = *base_from_rig;
+        rig_from_base_ = invert(*base_from_rig);
         cuvslam::Rig rig;
         for (const RigCamera& rig_camera : cameras_) {
             const sensor_msgs::CameraInfo& info = rig_camera.info;
@@ -424,7 +448,7 @@ private:
         }
         if (cfg_.enable_imu) {
             const std::optional<Transform> rig_from_imu =
-                imu_frame_.empty() ? std::nullopt : tf_lookup(cfg_.base_frame, imu_frame_);
+                imu_frame_.empty() ? std::nullopt : tf_lookup(rig_frame(), imu_frame_);
             if (!rig_from_imu) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: enable_imu is on but tf does not place the IMU",
@@ -454,11 +478,14 @@ private:
         // thread, where no caller-side handler can catch it, and the process aborts.
         // NVIDIA's own launcher leaves it off too.
         odometry_cfg.async_sba = false;
-        odometry_cfg.rgbd_settings.depth_scale_factor =
-            static_cast<float>(cfg_.depth_units_per_meter);
-        // The default of -1 means no camera, and depth belonging to nothing is silently
-        // ignored. A depth stream usually reports its own frame, so unrecognised means 0.
-        odometry_cfg.rgbd_settings.depth_camera_id = std::max(camera_index(depth_.header.frame_id), 0);
+        if (mode_ == Mode::Rgbd) {
+            odometry_cfg.rgbd_settings.depth_scale_factor =
+                static_cast<float>(cfg_.depth_units_per_meter);
+            // The default of -1 means no camera, and depth belonging to nothing is silently
+            // ignored. A depth stream usually reports its own frame, so unrecognised means 0.
+            odometry_cfg.rgbd_settings.depth_camera_id =
+                std::max(camera_index(depth_.header.frame_id), 0);
+        }
 
         tracker_.emplace(rig, odometry_cfg);
         if (cfg_.enable_slam) {
@@ -561,6 +588,16 @@ private:
         }
 
         register_imu_through(newest);
+        // cuVSLAM's realsense examples drop 60 frames before the first Track(). Off by
+        // default here: sweeping it on sf_office1_3 gave 1.4 m tag error at 15 frames and
+        // 23.5 m at 30, so it moves the result without correcting anything.
+        if (warmup_left_ > 0) {
+            --warmup_left_;
+            ++warmup_skipped_;
+            last_ts_ns_ = newest;
+            clear_frame_set();
+            return;
+        }
         const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
         ++frames_;
         last_ts_ns_ = newest;
@@ -570,36 +607,15 @@ private:
             if (was_tracking_) {
                 ++segment_id_;
                 was_tracking_ = false;
-                pending_rebase_ = true;
                 logging::warn("cuvslam tracking lost",
                               {logging::Field("segment", static_cast<std::int64_t>(segment_id_))});
             }
             return;
         }
-        const Transform tracker_from_rig = to_transform(est.world_from_rig->pose);
-        const Transform candidate = compose(world_from_tracker_, tracker_from_rig);
-        if (last_pose_ns_) {
-            const double dt = static_cast<double>(est.timestamp_ns - *last_pose_ns_) / kNsPerSec;
-            double moved = 0.0;
-            for (int axis = 0; axis < 3; ++axis) {
-                const double step = candidate.translation[axis] - world_from_rig_.translation[axis];
-                moved += step * step;
-            }
-            if (dt > 0.0 && std::sqrt(moved) / dt > cfg_.implausible_speed_meters_per_second) {
-                ++segment_id_;
-                pending_rebase_ = true;
-                logging::warn("cuvslam world frame restarted",
-                              {logging::Field("reset", static_cast<std::int64_t>(segment_id_)),
-                               logging::Field("timestamp_ns", est.timestamp_ns),
-                               logging::Field("implied_speed_mps", std::sqrt(moved) / dt)});
-            }
-        }
-        if (pending_rebase_) {
-            world_from_tracker_ = compose(world_from_rig_, invert(tracker_from_rig));
-            pending_rebase_ = false;
-        }
-        world_from_rig_ = compose(world_from_tracker_, tracker_from_rig);
-        last_pose_ns_ = est.timestamp_ns;
+        // cuVSLAM tracks rig_frame(); the contract is base_frame starting at identity. Both
+        // collapse to the raw pose when the two frames are the same.
+        world_from_rig_ = compose(base_from_rig_,
+                                  compose(to_transform(est.world_from_rig->pose), rig_from_base_));
         was_tracking_ = true;
         ++tracked_;
         publish(est.timestamp_ns);
@@ -618,24 +634,29 @@ private:
         if (!slam_started_) {
             return;
         }
-        const Transform map_from_rig = to_transform(slam_->GetPose());
+        // Slam tracks the same rig, so its pose needs the same move onto base_frame as the
+        // odometry one before it can be compared with world_from_rig_ or published.
+        const Transform map_from_base =
+            compose(to_transform(slam_->GetPose()), rig_from_base_);
 
-        const Transform map_from_odom_raw = compose(map_from_rig, invert(world_from_rig_));
+        const Transform map_from_odom_raw = compose(map_from_base, invert(world_from_rig_));
 
         nav_msgs::Odometry corrected{};
-        fill_pose(corrected, map_from_rig, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
+        fill_pose(corrected, map_from_base, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
         publish_tf(map_from_odom_raw, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
-        if (metrics.lc_status && timestamp_ns != last_closure_ns_) {
+        // The metrics are retained between Slam steps, which happen per keyframe, so a
+        // closure reads back on every frame until the next one. Key on the step's own stamp.
+        if (metrics.lc_status && metrics.timestamp_ns != last_closure_ns_) {
             ++loop_closures_;
-            last_closure_ns_ = timestamp_ns;
+            last_closure_ns_ = metrics.timestamp_ns;
             logging::info("cuvslam loop closure",
                           {logging::Field("count", static_cast<std::int64_t>(loop_closures_)),
-                           logging::Field("timestamp_ns", timestamp_ns),
+                           logging::Field("timestamp_ns", metrics.timestamp_ns),
                            logging::Field("tracked_landmarks",
                                           static_cast<std::int64_t>(metrics.lc_tracked_landmarks_count))});
         }
@@ -717,14 +738,15 @@ private:
 
     // tracking state
     std::optional<cuvslam::Odometry> tracker_;
-    Transform world_from_tracker_;  ///< accumulated offset across tracking losses
-    Transform world_from_rig_;      ///< last published pose, in the continuous frame
-    std::optional<std::int64_t> last_pose_ns_;
-    bool pending_rebase_{false};
+    Transform world_from_rig_;  ///< last published pose, on base_frame
+    Transform base_from_rig_;   ///< fixed; identity when rig_frame is base_frame
+    Transform rig_from_base_;
     bool was_tracking_{false};
     std::uint64_t segment_id_{0};
     std::uint64_t frames_{0};
     std::uint64_t tracked_{0};
+    int warmup_left_{0};
+    std::uint64_t warmup_skipped_{0};
 
     Output<nav_msgs::Odometry> odometry_;
     Output<nav_msgs::Odometry> corrected_odometry_;

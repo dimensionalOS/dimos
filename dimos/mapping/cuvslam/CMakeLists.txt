@@ -39,7 +39,7 @@ find_library(CUVSLAM_LIBRARY cuvslam HINTS ${CUVSLAM_SDK_DIR}/lib REQUIRED)
 message(STATUS "cuVSLAM headers: ${CUVSLAM_INCLUDE_DIR}")
 message(STATUS "cuVSLAM library: ${CUVSLAM_LIBRARY}")
 
-add_executable(cuvslam_odometry src/cuvslam_odometry.cpp)
+add_executable(cuvslam_odometry src/cuvslam_main.cpp)
 target_include_directories(cuvslam_odometry PRIVATE
   ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
   ${LCM_INCLUDE_DIRS}
