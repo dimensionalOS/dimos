@@ -68,7 +68,7 @@ _ARM_IK_PARAMS = {
     # Ride through pose-stream gaps instead of cycling engage state.
 }
 _ARM_CONTROL_IK = {
-    "max_velocity": 2.0,
+    "max_velocity": 1.5,
     # Softened from 1.0 per the upstream Pink tuning guidance: a stiff
     # orientation objective makes translation stiff or unreachable near
     # awkward poses. Kept above the guidance floor because the 0.17 m

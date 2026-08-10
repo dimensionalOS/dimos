@@ -261,7 +261,7 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
             assert control_ik["orientation_cost"] == 0.5
             assert control_ik["joint_centering_cost"] == 1e-2
-            assert control_ik["max_velocity"] == 2.0
+            assert control_ik["max_velocity"] == 1.5
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.
             assert control_ik["seed_limit_tolerance"] >= 0.04
