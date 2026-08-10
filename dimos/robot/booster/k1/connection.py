@@ -33,7 +33,6 @@ from typing import Any
 
 from pydantic import Field
 from reactivex.disposable import Disposable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -115,6 +114,8 @@ class K1Connection(Module, Camera):
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Rerun view blueprint for the K1 camera."""
+        import rerun.blueprint as rrb
+
         return [
             rrb.Spatial2DView(name="Camera", origin="world/robot/camera/rgb"),
         ]

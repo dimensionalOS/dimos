@@ -29,7 +29,6 @@ from booster_rpc import (  # type: ignore[import-not-found]
     RobotMode,
     RpcApiId,
 )
-import cv2
 import grpc  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.observable import Observable
@@ -99,6 +98,7 @@ class BoosterRPCConnection:
 
     async def run_camera(self) -> None:
         """Decode the robot's JPEG stream onto `camera_stream()` until cancelled."""
+        import cv2
 
         def on_jpeg(jpeg: bytes) -> None:
             arr = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
