@@ -119,7 +119,8 @@ class _PinkControlIKBuilder:
 
         model = pinocchio.buildModelFromUrdf(str(prepared_path))
         mapping = self._build_mapping(model, robot)
-        ee_frame_id = self._validate_frame(model, robot.end_effector_link)
+        end_effector_link = self._end_effector_link(robot)
+        ee_frame_id = self._validate_frame(model, end_effector_link)
         limits = self._apply_limits(model, mapping, robot)
         full_reference_q = self._build_reference_q(model, config.reference_q)
         locked_joint_ids = [
@@ -136,7 +137,7 @@ class _PinkControlIKBuilder:
                 )
             model = pinocchio.buildReducedModel(model, locked_joint_ids, full_reference_q)
             mapping = self._build_mapping(model, robot)
-            ee_frame_id = self._validate_frame(model, robot.end_effector_link)
+            ee_frame_id = self._validate_frame(model, end_effector_link)
             limits = self._apply_limits(model, mapping, robot)
 
         data = model.createData()
@@ -147,7 +148,7 @@ class _PinkControlIKBuilder:
             reference_q.copy(),
         )
         frame_task = FrameTask(
-            robot.end_effector_link,
+            end_effector_link,
             position_cost=config.position_cost,
             orientation_cost=config.orientation_cost,
             lm_damping=config.lm_damping,
@@ -194,6 +195,21 @@ class _PinkControlIKBuilder:
             limits=limits,
             velocity_limits=velocity_limits,
         )
+
+    @staticmethod
+    def _end_effector_link(robot: RobotModelConfig) -> str:
+        """Resolve the unique pose-targetable planning-group tip."""
+        tip_links = [
+            group.tip_link
+            for group in robot.planning_groups
+            if group.has_pose_target and group.tip_link is not None
+        ]
+        if len(tip_links) != 1:
+            raise ValueError(
+                f"Pink control requires exactly one pose-targetable planning group; "
+                f"robot '{robot.name}' has {len(tip_links)}"
+            )
+        return tip_links[0]
 
     @staticmethod
     def _build_mapping(
