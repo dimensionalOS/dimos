@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
-import rerun as rr
-import rerun.blueprint as rrb
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import rerun.blueprint as rrb
 
 
 def _grayscale_origin(suffix: str) -> str:
@@ -29,6 +31,8 @@ def _depth_origin(suffix: str) -> str:
 
 
 def _camera_view(origin: str, name: str) -> rrb.Spatial2DView:
+    import rerun.blueprint as rrb
+
     return rrb.Spatial2DView(origin=origin, name=name)
 
 
@@ -38,6 +42,9 @@ def spot_camera_layout() -> rrb.Blueprint:
     Left: the robot's tf tree and every camera frustum in place. Right: tabs of
     grayscale/depth feeds labelled by URDF mount position.
     """
+    import rerun as rr
+    import rerun.blueprint as rrb
+
     world_view = rrb.Spatial3DView(
         origin="world",
         name="3D",
