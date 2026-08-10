@@ -33,9 +33,11 @@ def assert_valid_robot_name(robot_name: RobotName) -> None:
 
 
 def assert_valid_local_joint_name(local_joint_name: LocalModelJointName) -> None:
-    """Validate a local model joint name for delimiter-based global joint names."""
-    if not local_joint_name or "/" in local_joint_name:
-        raise ValueError(f"Invalid local joint name: {local_joint_name!r}")
+    """Validate an exact model joint name before adding the legacy robot scope."""
+    if not local_joint_name or local_joint_name.startswith("/") or local_joint_name.endswith("/"):
+        raise ValueError(f"Invalid model joint name: {local_joint_name!r}")
+    if any(not part for part in local_joint_name.split("/")):
+        raise ValueError(f"Invalid model joint name: {local_joint_name!r}")
 
 
 def assert_local_joint_names(names: Sequence[LocalModelJointName]) -> None:
@@ -81,9 +83,9 @@ def make_global_joint_names(
 
 
 def is_global_joint_name(name: str) -> bool:
-    """Return whether name has the exact global joint-name shape."""
+    """Return whether name has a robot scope followed by a canonical model name."""
     parts = name.split("/")
-    return len(parts) == 2 and bool(parts[0]) and bool(parts[1])
+    return len(parts) >= 2 and all(parts)
 
 
 def assert_global_joint_names(names: Sequence[GlobalJointName]) -> None:

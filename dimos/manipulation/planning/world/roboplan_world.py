@@ -24,7 +24,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
@@ -49,7 +48,10 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
-from dimos.manipulation.planning.spec.validation import validate_obstacle
+from dimos.manipulation.planning.spec.validation import (
+    validate_obstacle,
+    validate_robot_model_config,
+)
 from dimos.manipulation.planning.world.roboplan_model import (
     ROBOPLAN_WORLD_FRAME,
     RoboPlanGroup,
@@ -111,10 +113,9 @@ class RoboPlanWorld:
         """Register a robot for the scene built by :meth:`finalize`."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
         if any(data.config.name == config.name for data in self._robots.values()):
             raise ValueError(f"Robot name '{config.name}' is already registered")
+        validate_robot_model_config(config)
         self._validate_planning_group_config(config)
         self._validate_robot_config(config)
         self._robot_counter += 1

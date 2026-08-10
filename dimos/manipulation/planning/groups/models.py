@@ -33,7 +33,7 @@ PlanningGroupSource: TypeAlias = Literal["srdf", "fallback"]
 class PlanningGroupDefinition:
     """Model-level declaration of a planning group.
 
-    Joint names are local model names. The definition is safe to store on
+    Joint names are exact canonical model names. The definition is safe to store on
     ``RobotModelConfig`` and is not bound to any runtime world robot ID.
     """
 

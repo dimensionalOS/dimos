@@ -15,15 +15,15 @@ The numbered sections are review and merge units. PR4a–PR4c may proceed in par
 
 ## 1. PR1 — Static Single-Robot Model
 
-- [ ] 1.1 Add a parser compatibility test for canonical `/` names across every supported manipulation backend and record which backend, if any, needs private reversible encoding.
-- [ ] 1.2 Define the one-model configuration containing prepared URDF, optional SRDF, logical root, optional whole-model pose, and planning-group declarations.
-- [ ] 1.3 Define planning groups with group name, canonical joint names, base link, and tip link; remove the singular model-wide end-effector assumption from the new shape.
-- [ ] 1.4 Prepare and check in or generate through the existing asset workflow one static dual-xArm mock URDF/SRDF fixture with `left/...` and `right/...` canonical names.
-- [ ] 1.5 Update Drake, RoboPlan, Pink, and visualization model loaders to consume one prepared model configuration and isolate any necessary backend-native name encoding.
-- [ ] 1.6 Add model-validation errors for missing joints, duplicate canonical names, invalid groups, invalid base/tip links, and malformed prepared model assets.
-- [ ] 1.7 Convert focused model/backend fixtures and tests to one-model inputs and canonical planning groups.
-- [ ] 1.8 Remove superseded multi-model configuration properties within the model-loading boundary; do not add aliases.
-- [ ] 1.9 Run focused model loader, FK, collision, IK, and dual-arm fixture tests for every installed backend.
+- [x] 1.1 Add a parser compatibility test for canonical `/` names across every supported manipulation backend and record which backend, if any, needs private reversible encoding.
+- [x] 1.2 Define the one-model configuration containing prepared URDF, optional SRDF, logical root, optional whole-model pose, and planning-group declarations.
+- [x] 1.3 Define planning groups with group name, canonical joint names, base link, and tip link; remove the singular model-wide end-effector assumption from the new shape.
+- [x] 1.4 Prepare and check in or generate through the existing asset workflow one static dual-xArm mock URDF/SRDF fixture with `left/...` and `right/...` canonical names.
+- [x] 1.5 Update Drake, RoboPlan, Pink, and visualization model loaders to consume one prepared model configuration and isolate any necessary backend-native name encoding.
+- [x] 1.6 Add model-validation errors for missing joints, duplicate canonical names, invalid groups, invalid base/tip links, and malformed prepared model assets.
+- [x] 1.7 Convert focused model/backend fixtures and tests to one-model inputs and canonical planning groups.
+- [x] 1.8 Remove superseded multi-model configuration properties within the model-loading boundary; do not add aliases.
+- [x] 1.9 Run focused model loader, FK, collision, IK, and dual-arm fixture tests for every installed backend.
 
 ## 2. PR2 — Single-Robot Manipulation Cutover
 
