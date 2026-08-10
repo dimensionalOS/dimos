@@ -26,14 +26,14 @@ address in the Spot Admin Console (`https://192.168.80.3` → Network Setup → 
 
 ```bash
 dimos run spot \
-  -o spothighlevel.username=<user> \
-  -o spothighlevel.password=<password>
+  --spothighlevel.username=<user> \
+  --spothighlevel.password=<password>
 ```
 
 The username and password are printed on the sticker inside Spot's battery bay (visible
 when the battery is removed).
 
-The IP auto-detects (WiFi then Ethernet). Force one with `-o spothighlevel.ip=<addr>`.
+The IP auto-detects (WiFi then Ethernet). Force one with `--spothighlevel.ip=<addr>`.
 
 Keyboard teleop: WASD move/turn, QE strafe, Space soft-stop, ESC quit. A Rerun
 viewer opens with the fisheye/depth cameras and odometry.

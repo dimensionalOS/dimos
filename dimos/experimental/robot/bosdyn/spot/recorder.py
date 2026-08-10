@@ -40,7 +40,7 @@ LOSSLESS_CODEC = "lz4+lcm"
 
 class SpotRecorderConfig(RecorderConfig):
     # Timestamped by default so each run lands in its own file instead of appending
-    # onto the last one. Override with `-o spotrecorder.db_path=...` to pick a path.
+    # onto the last one. Override with `--spotrecorder.db_path=...` to pick a path.
     db_path: str | Path = Field(
         default_factory=lambda: f"spot_recording_{datetime.now():%Y-%m-%d_%H-%M-%S}.db"
     )

@@ -22,9 +22,9 @@ In ports to `SpotHighLevel`'s outputs by name.
 
 Usage:
     dimos run spot-record \
-        -o spothighlevel.username=admin -o spothighlevel.password=<password>
+        --spothighlevel.username=admin --spothighlevel.password=<password>
     # choose where the recording lands:
-    dimos run spot-record ... -o spotrecorder.db_path=/path/to/spot.db
+    dimos run spot-record ... --spotrecorder.db_path=/path/to/spot.db
 """
 
 from __future__ import annotations

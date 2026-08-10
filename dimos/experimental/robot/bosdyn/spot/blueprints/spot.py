@@ -21,15 +21,15 @@ executes. The same module streams the five fisheye + five depth cameras and body
 odometry. Because the browser is the input surface there is no on-main-thread
 pygame window, so this runs on macOS.
 
-The ip auto-detects: with no `-o spothighlevel.ip=` given, it probes Spot's WiFi
+The ip auto-detects: with no `--spothighlevel.ip=` given, it probes Spot's WiFi
 AP address (192.168.80.3) then the Ethernet address (10.0.0.3) and uses
 whichever answers.
 
 Usage:
     dimos run spot \
-        -o spothighlevel.username=admin -o spothighlevel.password=<password>
+        --spothighlevel.username=admin --spothighlevel.password=<password>
     # or force an address:
-    dimos run spot ... -o spothighlevel.ip=10.0.0.3
+    dimos run spot ... --spothighlevel.ip=10.0.0.3
 """
 
 from __future__ import annotations
