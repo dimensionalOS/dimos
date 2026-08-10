@@ -74,6 +74,11 @@ jobs:
       # .lfsconfig endpoint.
       - name: Fetch the replay dataset from LFS if not cached
         run: |
+          # The host-owned workspace trips git's dubious-ownership refusal for
+          # the container's root user, and git-lfs then reports it as not being
+          # in a repository. Global config, so get_data's own `git lfs pull`
+          # in the pre-extract step is covered too.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           if git lfs pointer --check --file data/.lfs/go2_hongkong_office.db.tar.gz; then
             git lfs pull --include="data/.lfs/go2_hongkong_office.db.tar.gz" --exclude=""
           else
