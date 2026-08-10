@@ -32,6 +32,8 @@ Constrained generation expands visible objects into fixed choice-question famili
 
 Agentic generation freezes a free-form image-authored question, then a private oracle uses read-only local tools to establish its answer. Height questions use the fixed choices `under 0.5 m`, `0.5-1.0 m`, `1.0-1.5 m`, and `over 1.5 m`; the private tool measures height and maps it deterministically to one choice. Additional oracle tools will be added as new evidence capabilities mature.
 
+The generation models are code-level defaults, not CLI settings. Constrained mode uses the image author when no `--query` is provided; supplying one or more `--query` values selects the deterministic families for those objects.
+
 Geometry quality gates are the private validation step. They reject insufficient point support, ambiguous masks, unreliable ground planes, and incomplete height evidence before a case becomes public.
 
 ## Dataset Format
