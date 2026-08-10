@@ -95,6 +95,8 @@ all_blueprints = {
     "r1lite-keyboard-teleop": "dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_keyboard_teleop:r1lite_keyboard_teleop",
     "r1lite-quest-teleop": "dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop:r1lite_quest_teleop",
     "r1lite-quest-teleop-sim": "dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop:r1lite_quest_teleop_sim",
+    "r1lite-quest-teleop-hosted": "dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop_hosted:r1lite_quest_teleop_hosted",
+    "r1lite-quest-teleop-hosted-sim": "dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop_hosted:r1lite_quest_teleop_hosted_sim",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
     "teleop-hosted-xarm6": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm6",
