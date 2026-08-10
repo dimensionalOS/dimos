@@ -259,13 +259,11 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             # The controlled point is the grasp-center URDF frame
             # (formerly the task-level tool_offset_m).
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
-            assert control_ik["orientation_cost"] == 0.5
-            assert control_ik["joint_centering_cost"] == 1e-2
-            # 6-DOF arms: no per-joint weights, no manipulability task —
-            # both trade against tracking without a null space.
-            assert "joint_centering_weights" not in control_ik
-            assert "manipulability_cost" not in control_ik
+            assert control_ik["orientation_cost"] == 1.0
             assert control_ik["max_velocity"] == 2.0
+            # Hand-local deltas from the module must compose locally in
+            # the task; a world/local mismatch is the drift bug.
+            assert task.params["rotation_frame"] == "local"
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.
             assert control_ik["seed_limit_tolerance"] >= 0.04
@@ -314,9 +312,9 @@ def test_module_rotation_pairing_and_no_default_recording() -> None:
         kwargs = next(
             atom.kwargs for atom in blueprint.blueprints if atom.module is R1LiteQuestTeleopModule
         )
-        # World-frame deltas: the merged task applies rotations
-        # world-frame, so the module must publish them world-frame too.
-        assert kwargs["local_rotation"] is False
+        # Hand-local deltas (the natural VR mapping), paired with the
+        # task-side local composition.
+        assert kwargs["local_rotation"] is True
         # Recording is opt-in per session, never a blueprint default.
         assert kwargs.get("record_path", "") == ""  # recording stays opt-in
 

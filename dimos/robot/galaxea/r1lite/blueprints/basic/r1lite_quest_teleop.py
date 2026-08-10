@@ -66,28 +66,11 @@ _TELEOP_PRIORITY = 20  # preempts the servo holder (10) on the arm joints while 
 _ARM_IK_PARAMS = {
     "timeout": 1.5,
     # Ride through pose-stream gaps instead of cycling engage state.
+    "rotation_frame": "local",
 }
 _ARM_CONTROL_IK = {
     "max_velocity": 2.0,
-    # Softened from 1.0 per the upstream Pink tuning guidance: a stiff
-    # orientation objective makes translation stiff or unreachable near
-    # awkward poses. Kept above the guidance floor because the 0.17 m
-    # grasp-center lever otherwise lets the wrist swing the tool.
-    "orientation_cost": 0.5,
-    # The joint-centering task targets joint-range centers — for these
-    # arms that is the raised-elbow guard pose — so a stronger weight is
-    # a standing null-space bias away from wraps and limit corners.
-    "joint_centering_cost": 1e-2,
-    # Uniform joint treatment: these arms are 6-DOF — no null space —
-    # so per-joint centering weights and manipulability objectives trade
-    # directly against tracking (VR session 2026-08-10: shoulder motion
-    # went stiff while the wrist overcompensated). The redundancy-shaping
-    # tricks stay reserved for redundant arms.
-    # Frame-task damping near singularities, raised from the 1e-4
-    # default per the upstream tuning guidance: measured to cut
-    # velocity jitter at the straight-arm pose by ~40% on its own,
-    # with no effect on reach.
-    "lm_damping": 1e-2,
+    "orientation_cost": 1.0,
     "seed_limit_tolerance": 0.05,
 }
 
@@ -157,11 +140,10 @@ r1lite_quest_teleop = autoconnect(
             else os.environ.get("QUEST_RECORD", "")
         ),
         motion_gain=1.3,
-        # World-frame rotation deltas: the merged teleop task applies
-        # delta rotations world-frame (the old task-side rotation_frame
-        # pairing is gone), so hand-local deltas here would land in the
-        # wrong frame and drift with wrist excursion. A1Z parity.
-        local_rotation=False,
+        # Hand-local rotation deltas — the natural VR mapping and the
+        # dev.12 feel — paired with rotation_frame="local" in the task
+        # so they compose in the right frame (the actual drift fix).
+        local_rotation=True,
         position_deadband_m=0.02,
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows
@@ -180,14 +162,6 @@ r1lite_quest_teleop = autoconnect(
 )
 
 
-# Sim boot pose: joint-range centers (the raised-elbow guard pose). The
-# vendor URDF puts q=0 ON the limit boundary with the elbow extended —
-# near-singular AND limit-pinned, the worst corner of the workspace —
-# so a zero start misrepresents how the architecture drives. The real
-# robot still boots folded; hardware gets a go-to-ready move instead.
-_SIM_HOME_ARM = [0.0, 1.571, -1.658, 0.0, 0.0, 0.0]
-
-
 def _sim_hardware() -> list[HardwareComponent]:
     return [
         HardwareComponent(
@@ -195,7 +169,6 @@ def _sim_hardware() -> list[HardwareComponent]:
             hardware_type=HardwareType.MANIPULATOR,
             joints=list(cfg.R1LITE_ARM_JOINTS),
             adapter_type="mock",
-            adapter_kwargs={"initial_positions": _SIM_HOME_ARM * 2},
         ),
         HardwareComponent(
             hardware_id="chassis",
@@ -249,7 +222,7 @@ def _sim_trajectory_tasks() -> list[TaskConfig]:
 
 
 r1lite_quest_teleop_sim = autoconnect(
-    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=False),
+    R1LiteQuestTeleopModule.blueprint(task_names=_TASK_NAMES, local_rotation=True),
     ControlCoordinator.blueprint(
         hardware=_sim_hardware(),
         tasks=[*r1lite_standard_tasks(), *_teleop_tasks(), *_sim_trajectory_tasks()],

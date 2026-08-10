@@ -70,6 +70,11 @@ class TeleopIKTaskConfig(CartesianIKTaskConfig):
 
     max_joint_delta_deg: float = 5.0
     hand: Literal["left", "right"] | None = None
+    # Frame the incoming rotation delta is expressed in. "world" composes
+    # delta @ baseline (rotation about base-frame axes); "local" composes
+    # baseline @ delta (rotation about the current tool axes) and must be
+    # paired with a module publishing hand-local deltas.
+    rotation_frame: Literal["world", "local"] = "world"
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
@@ -162,8 +167,12 @@ class TeleopIKTask(CartesianIKTask):
                     self._initial_ee_pose = captured.copy()
                 baseline = self._initial_ee_pose
 
+        if self._config.rotation_frame == "local":
+            rotation = baseline.rotation @ delta.rotation
+        else:
+            rotation = delta.rotation @ baseline.rotation
         target = pinocchio.SE3(
-            delta.rotation @ baseline.rotation,
+            rotation,
             baseline.translation + delta.translation,
         )
         values = np.concatenate((target.translation, target.rotation.reshape(-1)))
@@ -332,6 +341,7 @@ class TeleopIKTask(CartesianIKTask):
 class TeleopIKTaskParams(CartesianIKTaskParams):
     control_ik: TeleopControlIKConfig
     hand: Literal["left", "right"] | None = None
+    rotation_frame: Literal["world", "local"] = "world"
     max_joint_delta_deg: float = 5.0
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
@@ -348,6 +358,7 @@ def create_task(cfg: TaskConfig, hardware: object) -> TeleopIKTask:
             control_ik=params.control_ik,
             priority=cfg.priority,
             timeout=params.timeout,
+            rotation_frame=params.rotation_frame,
             max_joint_delta_deg=params.max_joint_delta_deg,
             max_tracking_error_deg=params.max_tracking_error_deg,
             min_dt=params.min_dt,

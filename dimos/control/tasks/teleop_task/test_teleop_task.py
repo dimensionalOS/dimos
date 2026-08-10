@@ -302,3 +302,32 @@ def test_factory_requires_pink_configuration_and_matching_model(tmp_path: Path) 
     )
     with pytest.raises(ValueError, match="task joints must match"):
         create_task(mismatched, {})
+
+
+def test_local_rotation_frame_composes_about_tool_axes(
+    tmp_path: Path, fake_ik: _FakePinkIK
+) -> None:
+    # The same delta must produce baseline @ delta under "local" and
+    # delta @ baseline under "world" — the mismatch between a module
+    # publishing hand-local deltas and world composition was felt as
+    # orientation drift growing with wrist excursion.
+    results = {}
+    for frame in ("local", "world"):
+        task = TeleopIKTask(
+            "teleop_arm",
+            TeleopIKTaskConfig(
+                joint_names=["arm/joint1", "arm/joint2"],
+                control_ik=_pink_config(tmp_path / "unused.urdf"),
+                hand="right",
+                rotation_frame=frame,
+            ),
+        )
+        task.start()
+        _engage(task)
+        assert task.on_cartesian_command(_delta(angle=0.3), t_now=1.0)
+        assert task.compute(_state(1.01)) is not None
+        results[frame] = fake_ik.solve_calls[-1][0].rotation
+    baseline = pinocchio.exp3(np.array([0.0, 0.0, 0.2]))
+    delta = pinocchio.exp3(np.array([0.0, 0.0, 0.3]))
+    assert np.allclose(results["local"], baseline @ delta)
+    assert np.allclose(results["world"], delta @ baseline)
