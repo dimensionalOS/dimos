@@ -18,9 +18,9 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-import torch
 from ultralytics import YOLOE  # type: ignore[attr-defined]
 
+from dimos.models.base import default_torch_device
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -81,7 +81,7 @@ class Yoloe2DDetector(Detector):
         if self.max_area_ratio is not None and not (0.0 < self.max_area_ratio <= 1.0):
             raise ValueError("max_area_ratio must be in the range (0, 1].")
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or default_torch_device()
         logger.info(
             f"YOLO-E detector loaded model={model_name} prompt_mode={prompt_mode.value} "
             f"device={self.device} conf={self.conf}"
