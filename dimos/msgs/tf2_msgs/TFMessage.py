@@ -132,6 +132,11 @@ class TFMessage:
         origin while keeping TF visualization isolated from semantic entities
         like `world/robot/...`.
 
+        Frames are flat here because a single message carries only a subset of the
+        tree. The rerun bridge reconstructs the full tree instead and logs these
+        transforms at nested paths (`world/tf/odom/base_link`), so it does not go
+        through this method.
+
         Returns:
             List of (entity_path, rr.Transform3D) tuples
 
