@@ -421,7 +421,7 @@ def test_world_monitor_invalid_group_joint_name_does_not_mutate_backend() -> Non
         ]
     )
 
-    with pytest.raises(ValueError, match="Invalid local joint name"):
+    with pytest.raises(ValueError, match="unknown model joints"):
         monitor.add_robot(invalid_config)
 
     assert [call[0] for call in fake_world.calls].count("add_robot") == 0

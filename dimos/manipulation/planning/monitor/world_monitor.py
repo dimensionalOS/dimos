@@ -397,11 +397,18 @@ class WorldMonitor:
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
         """Validate planning groups before mutating world/backend state."""
         seen_group_names: set[str] = set()
+        model_joint_names = set(config.joint_names)
         for definition in config.planning_groups:
             group_id = make_planning_group_id(config.name, definition.name)
             if definition.name in seen_group_names:
                 raise ValueError(f"Planning group '{group_id}' is already registered")
             make_global_joint_names(config.name, definition.joint_names)
+            unknown_joint_names = set(definition.joint_names) - model_joint_names
+            if unknown_joint_names:
+                raise ValueError(
+                    f"Planning group '{group_id}' contains unknown model joints: "
+                    f"{sorted(unknown_joint_names)}"
+                )
             seen_group_names.add(definition.name)
 
     def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:

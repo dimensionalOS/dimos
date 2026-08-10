@@ -56,7 +56,7 @@ def test_make_openyam_model_config_maps_only_arm_joints() -> None:
     assert set(config.joint_name_mapping) == set(OPENYAM_ARM_JOINTS)
     assert OPENYAM_GRIPPER_JOINT not in config.joint_name_mapping
     assert config.base_link == "base"
-    assert config.end_effector_link == "gripper_tip"
+    assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
 
 

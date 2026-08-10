@@ -61,6 +61,8 @@ XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
+XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
+XARM_DUAL_SRDF_PATH = Path(__file__).with_name("dual_xarm6.srdf")
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
@@ -74,6 +76,51 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
+    )
+
+
+def make_dual_xarm6_model_config(name: str = "robot") -> RobotModelConfig:
+    """Return one statically authored model containing two canonical xArm6 chains."""
+    left_joints = joint_names(6, prefix="left/joint")
+    right_joints = joint_names(6, prefix="right/joint")
+    canonical_joints = [*left_joints, *right_joints]
+    return RobotModelConfig(
+        name=name,
+        model=RobotModel.from_file(
+            XARM_DUAL_MODEL_PATH,
+            package_paths=XARM_PACKAGE_PATHS,
+            xacro_args={
+                "prefix_1": "left/",
+                "prefix_2": "right/",
+                "dof_1": "6",
+                "dof_2": "6",
+                "limited": "true",
+            },
+        ),
+        srdf_path=XARM_DUAL_SRDF_PATH,
+        joint_names=canonical_joints,
+        base_link="world",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=tuple(left_joints),
+                base_link="left/link_base",
+                tip_link="left/link6",
+            ),
+            PlanningGroupDefinition(
+                name="right_arm",
+                joint_names=tuple(right_joints),
+                base_link="right/link_base",
+                tip_link="right/link6",
+            ),
+            PlanningGroupDefinition(
+                name="both_arms",
+                joint_names=tuple(canonical_joints),
+                base_link="world",
+            ),
+        ],
+        auto_convert_meshes=True,
+        home_joints=[0.0] * 12,
     )
 
 
