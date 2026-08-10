@@ -39,9 +39,7 @@ class SimulatorBase(ABC):
     @abstractmethod
     def get_stage(self):  # type: ignore[no-untyped-def]
         """Get the current stage/scene."""
-        pass
 
     @abstractmethod
     def close(self):  # type: ignore[no-untyped-def]
         """Close the simulation."""
-        pass

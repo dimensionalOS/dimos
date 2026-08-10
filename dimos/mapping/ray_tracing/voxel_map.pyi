@@ -41,18 +41,15 @@ class VoxelRayMapper:
         origin: tuple[float, float, float],
     ) -> None:
         """Update the map with a frame of lidar points. Shape (N, 3) float32."""
-        ...
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
-        ...
 
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return healthy voxel centers and their surface normals, both (M, 3) float32.
 
         Matching order. The normal is the zero vector where the voxel has no plane.
         """
-        ...
 
     def local_map(
         self,
@@ -62,18 +59,14 @@ class VoxelRayMapper:
         z_max: float,
     ) -> NDArray[np.float32]:
         """Return healthy voxels inside the cylinder around origin as (M, 3) float32."""
-        ...
 
     def voxel_count(self) -> int:
         """Number of healthy voxels currently in the map."""
-        ...
 
     def clear(self) -> None:
         """Reset the map to empty."""
-        ...
 
     def __len__(self) -> int: ...
-    def __repr__(self) -> str: ...
 
 def local_bounds(
     points: NDArray[np.float32],
@@ -85,6 +78,5 @@ def local_bounds(
 
     Non-finite points are ignored.
     """
-    ...
 
 __all__ = ["VoxelRayMapper", "local_bounds"]

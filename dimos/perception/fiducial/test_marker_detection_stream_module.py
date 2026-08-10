@@ -283,7 +283,6 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
 
         def get(self, *args: Any, **kwargs: Any) -> None:
             self.calls += 1
-            return None
 
         def dispose(self) -> None:
             pass

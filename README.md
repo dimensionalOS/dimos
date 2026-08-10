@@ -255,6 +255,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 
+
 class RobotConnection(Module):
     cmd_vel: In[Twist]
     color_image: Out[Image]
@@ -273,12 +274,14 @@ class RobotConnection(Module):
             self.color_image.publish(img)
             time.sleep(0.2)
 
+
 class Listener(Module):
     color_image: In[Image]
 
     @rpc
     def start(self):
         self.color_image.subscribe(lambda img: print(f"image {img.width}x{img.height}"))
+
 
 if __name__ == "__main__":
     autoconnect(

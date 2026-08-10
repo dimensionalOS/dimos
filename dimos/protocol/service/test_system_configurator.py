@@ -43,18 +43,16 @@ from dimos.utils import prompt
 
 class TestSudoRun:
     def test_runs_without_sudo_when_root(self) -> None:
-        with patch("os.geteuid", return_value=0):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                prompt.sudo_run("echo", "hello", check=True)
-                mock_run.assert_called_once_with(["echo", "hello"], check=True)
+        with patch("os.geteuid", return_value=0), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            prompt.sudo_run("echo", "hello", check=True)
+            mock_run.assert_called_once_with(["echo", "hello"], check=True)
 
     def test_runs_with_sudo_when_not_root(self) -> None:
-        with patch("os.geteuid", return_value=1000):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                prompt.sudo_run("echo", "hello", check=True)
-                mock_run.assert_called_once_with(["sudo", "echo", "hello"], check=True)
+        with patch("os.geteuid", return_value=1000), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            prompt.sudo_run("echo", "hello", check=True)
+            mock_run.assert_called_once_with(["sudo", "echo", "hello"], check=True)
 
 
 class TestReadSysctlInt:
@@ -90,16 +88,15 @@ class TestReadSysctlInt:
 
 class TestWriteSysctlInt:
     def test_calls_sudo_run_with_correct_args(self) -> None:
-        with patch("os.geteuid", return_value=1000):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                _write_sysctl_int("net.core.rmem_max", 67108864)
-                mock_run.assert_called_once_with(
-                    ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
-                    check=True,
-                    text=True,
-                    capture_output=True,
-                )
+        with patch("os.geteuid", return_value=1000), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            _write_sysctl_int("net.core.rmem_max", 67108864)
+            mock_run.assert_called_once_with(
+                ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
 
 
 # configure_system tests
@@ -233,11 +230,10 @@ class TestMulticastConfiguratorLinux:
         configurator = MulticastConfiguratorLinux()
         configurator.loopback_ok = False
         configurator.route_ok = False
-        with patch("os.geteuid", return_value=0):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                configurator.fix()
-                assert mock_run.call_count == 2
+        with patch("os.geteuid", return_value=0), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 2
 
 
 # MulticastConfiguratorMacOS tests
@@ -274,21 +270,20 @@ class TestMulticastConfiguratorMacOS:
 
     def test_fix_runs_route_command(self) -> None:
         configurator = MulticastConfiguratorMacOS()
-        with patch("os.geteuid", return_value=0):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                configurator.fix()
-                assert mock_run.call_count == 2
-                # First call: route delete (pre-clean stale route)
-                delete_args = mock_run.call_args_list[0][0][0]
-                assert "route" in delete_args
-                assert "delete" in delete_args
-                assert "224.0.0.0/4" in delete_args
-                # Second call: route add
-                add_args = mock_run.call_args_list[1][0][0]
-                assert "route" in add_args
-                assert "add" in add_args
-                assert "224.0.0.0/4" in add_args
+        with patch("os.geteuid", return_value=0), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 2
+            # First call: route delete (pre-clean stale route)
+            delete_args = mock_run.call_args_list[0][0][0]
+            assert "route" in delete_args
+            assert "delete" in delete_args
+            assert "224.0.0.0/4" in delete_args
+            # Second call: route add
+            add_args = mock_run.call_args_list[1][0][0]
+            assert "route" in add_args
+            assert "add" in add_args
+            assert "224.0.0.0/4" in add_args
 
 
 # BufferConfiguratorLinux tests
@@ -500,15 +495,14 @@ class TestMaxFileConfiguratorMacOS:
         configurator.current_soft = 256
         configurator.current_hard = 10240
         configurator.can_fix_without_sudo = False
-        with patch("os.geteuid", return_value=0):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                with patch("resource.setrlimit"):
-                    configurator.fix()
-                    # Check launchctl was called
-                    args = mock_run.call_args[0][0]
-                    assert "launchctl" in args
-                    assert "maxfiles" in args
+        with patch("os.geteuid", return_value=0), patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("resource.setrlimit"):
+                configurator.fix()
+                # Check launchctl was called
+                args = mock_run.call_args[0][0]
+                assert "launchctl" in args
+                assert "maxfiles" in args
 
     def test_fix_raises_on_setrlimit_error(self) -> None:
         configurator = MaxFileConfiguratorMacOS(target=65536)

@@ -93,8 +93,7 @@ async def _run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float
         robot_x = msg.x
         robot_y = msg.y
         robot_z = msg.pose.position.z
-        if robot_z > max_z_seen:
-            max_z_seen = robot_z
+        max_z_seen = max(max_z_seen, robot_z)
 
     subscription = lcm.subscribe(ODOM_TOPIC, _odom_handler)
 

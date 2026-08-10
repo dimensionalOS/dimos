@@ -63,7 +63,7 @@ class TFMessage:
                            If not provided, defaults to "base_link" for all.
         """
 
-        res = list(map(lambda t: t.lcm_transform(), self.transforms))
+        res = [t.lcm_transform() for t in self.transforms]
 
         lcm_msg = LCMTFMessage(
             transforms_length=len(self.transforms),
