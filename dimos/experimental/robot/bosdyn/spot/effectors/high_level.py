@@ -79,6 +79,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -267,7 +268,6 @@ class SpotHighLevel(StaticTfPublisher):
                 )
                 self._standing = True
 
-            self.tf.start()
             self._image_task = asyncio.create_task(self._poll_images())
             self._odom_task = asyncio.create_task(self._poll_odom())
 
@@ -487,17 +487,21 @@ class SpotHighLevel(StaticTfPublisher):
         )
         self.odometry.publish(odometry)
         self.tf.publish(
-            Transform(
-                translation=Vector3(vision_tform_body.x, vision_tform_body.y, vision_tform_body.z),
-                rotation=Quaternion(
-                    vision_tform_body.rot.x,
-                    vision_tform_body.rot.y,
-                    vision_tform_body.rot.z,
-                    vision_tform_body.rot.w,
-                ),
-                frame_id=self.config.odom_frame_id,
-                child_frame_id=self.config.base_frame_id,
-                ts=ts,
+            TFMessage(
+                Transform(
+                    translation=Vector3(
+                        vision_tform_body.x, vision_tform_body.y, vision_tform_body.z
+                    ),
+                    rotation=Quaternion(
+                        vision_tform_body.rot.x,
+                        vision_tform_body.rot.y,
+                        vision_tform_body.rot.z,
+                        vision_tform_body.rot.w,
+                    ),
+                    frame_id=self.config.odom_frame_id,
+                    child_frame_id=self.config.base_frame_id,
+                    ts=ts,
+                )
             )
         )
 
