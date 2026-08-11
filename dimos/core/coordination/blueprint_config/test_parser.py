@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -464,6 +465,14 @@ class ArbitraryModule(Module):
     config: ArbitraryConfig
 
 
+@dataclass(frozen=True)
+class CallableFactory:
+    label: str
+
+    def __call__(self, value: Any) -> str:
+        return f"{self.label}:{value}"
+
+
 def test_arbitrary_type_fields_are_hidden_and_rejected_as_unknown() -> None:
     parser = BlueprintConfigParser(ArbitraryModule.blueprint())
 
@@ -488,6 +497,18 @@ def test_blueprint_pinned_arbitrary_value_survives_filtering() -> None:
     parsed = BlueprintConfigParser(ArbitraryModule.blueprint(scaling=Anchor())).parse(environ={})
 
     assert isinstance(parsed.module_kwargs("arbitrarymodule")["scaling"], Anchor)
+
+
+def test_blueprint_pinned_callable_dataclass_survives_validation() -> None:
+    factory = CallableFactory("visual")
+
+    parsed = BlueprintConfigParser(ArbitraryModule.blueprint(handlers={"factory": factory})).parse(
+        environ={}
+    )
+
+    parsed_factory = parsed.module_kwargs("arbitrarymodule")["handlers"]["factory"]
+    assert parsed_factory == factory
+    assert parsed_factory("value") == "visual:value"
 
 
 def test_format_help_uses_nested_parent_default_instance() -> None:

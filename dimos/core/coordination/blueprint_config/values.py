@@ -41,6 +41,25 @@ def plain_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
     return {key: plain(value) for key, value in values.items()}
 
 
+def explicit_model_values(model: BaseModel) -> dict[str, Any]:
+    """Copy explicitly set model fields without serializing opaque Python values."""
+    return {name: _plain_explicit(getattr(model, name)) for name in model.model_fields_set}
+
+
+def _plain_explicit(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return explicit_model_values(value)
+    if isinstance(value, Mapping):
+        return {_copy_opaque(key): _plain_explicit(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_explicit(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_plain_explicit(item) for item in value)
+    if isinstance(value, set):
+        return {_plain_explicit(item) for item in value}
+    return _copy_opaque(value)
+
+
 def plain(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return {key: plain(item) for key, item in value.model_dump(mode="python").items()}

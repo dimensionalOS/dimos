@@ -70,6 +70,7 @@ from dimos.core.coordination.blueprint_config.sources import (
 )
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
+    explicit_model_values,
     extract_shape,
     normalize_mapping_keys,
     plain,
@@ -421,7 +422,11 @@ class BlueprintConfigParser:
                 raise BlueprintConfigError(
                     format_validation_error(module.atom.name, error)
                 ) from error
-            dumped = model.model_dump(mode="python", exclude_unset=True)
+            # Read explicitly supplied fields from the validated model instead
+            # of using model_dump(). Pydantic recursively serializes dataclass
+            # instances during a dump, which destroys callable configuration
+            # objects such as Rerun visualization factories.
+            dumped = explicit_model_values(model)
             dumped.pop("g", None)
             dumped.pop("instance_name", None)
             parsed[module.atom.name] = dumped
