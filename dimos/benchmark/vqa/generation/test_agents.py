@@ -7,9 +7,20 @@ from typing import cast
 import numpy as np
 
 from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+from dimos.benchmark.vqa.generation.primitives.contracts import (
+    HeightMeasurementResult,
+    HorizontalRelationResult,
+)
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
-from dimos.benchmark.vqa.models import CalibratedFrame, GroundingConfig, QuestionIntent
+from dimos.benchmark.vqa.models import (
+    CalibratedFrame,
+    GroundedObject,
+    GroundingConfig,
+    GroundPlaneEstimate,
+    OracleMeasurement,
+    QuestionIntent,
+)
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -104,6 +115,8 @@ def test_question_agent_returns_constrained_intents() -> None:
         QuestionIntent(kind="presence", object_query="chair"),
         QuestionIntent(kind="horizontal_direction", object_query="chair"),
         QuestionIntent(kind="within_distance", object_query="chair", threshold_m=3.0),
+        QuestionIntent(kind="visible_count", object_query="chair"),
+        QuestionIntent(kind="camera_range", object_query="chair"),
         QuestionIntent(kind="compare_nearest_by_side", object_query="chair"),
     ]
 
@@ -168,6 +181,32 @@ def test_question_agent_accepts_forward_path_intent() -> None:
     )
 
     assert intents == [QuestionIntent(kind="forward_path", object_query="forward path")]
+
+
+def test_question_agent_accepts_count_range_and_height_comparison_intents() -> None:
+    class _GeometryQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            assert "visible_count" in prompt
+            assert "comparison_query" in prompt
+            return """[
+                {"kind":"visible_count","object_query":"chair"},
+                {"kind":"camera_range","object_query":"lamp"},
+                {"kind":"compare_left_right","object_query":"chair","comparison_query":"table"},
+                {"kind":"compare_height","object_query":"chair","comparison_query":"table"}
+            ]"""
+
+    frame, _ = _frame_and_detection()
+
+    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _GeometryQuestionModel())).propose(
+        frame.image
+    )
+
+    assert intents == [
+        QuestionIntent(kind="visible_count", object_query="chair"),
+        QuestionIntent(kind="camera_range", object_query="lamp"),
+        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
+        QuestionIntent(kind="compare_height", object_query="chair", comparison_query="table"),
+    ]
 
 
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
@@ -307,3 +346,99 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
 
     assert result.status == "rejected"
     assert result.reason == "missing_grounded_side"
+
+
+def test_ground_truth_agent_buckets_visible_count_and_camera_range() -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
+    )
+
+    count = agent.answer(frame, QuestionIntent(kind="visible_count", object_query="chair"))
+    camera_range = agent.answer(frame, QuestionIntent(kind="camera_range", object_query="chair"))
+
+    assert count.answer == "1-2"
+    assert count.question.allowed_answers == ("1-2", "3-4", "5-7", "8+")
+    assert camera_range.answer == "1 to under 2 m"
+    assert camera_range.question.allowed_answers == (
+        "under 1 m",
+        "1 to under 2 m",
+        "2 to under 4 m",
+        "4 m or more",
+    )
+
+
+def test_ground_truth_agent_compares_ground_plane_relative_heights(monkeypatch: object) -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
+    )
+    chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
+    table = GroundedObject("table-0", "table", 8, 2.0, "right")
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    monkeypatch.setattr(
+        agent,
+        "ground",
+        lambda _frame, query: ([chair] if query == "chair" else [table], ()),
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "fit_ground_plane",
+        lambda: type("Fit", (), {"estimate": plane, "rejection_reason": None})(),
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "measure_height",
+        lambda item, accepted_plane: HeightMeasurementResult(
+            item,
+            accepted_plane,
+            OracleMeasurement(0.8 if item == chair else 0.5, "m", 0.05, (), ()),
+            (),
+        ),
+    )
+
+    result = agent.answer(
+        frame,
+        QuestionIntent(kind="compare_height", object_query="chair", comparison_query="table"),
+    )
+
+    assert result.status == "answered"
+    assert result.answer == "chair"
+    assert result.question.allowed_answers == ("chair", "table")
+
+
+def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
+    )
+    chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
+    table = GroundedObject("table-0", "table", 8, 2.0, "right")
+    monkeypatch.setattr(
+        agent,
+        "ground",
+        lambda _frame, query: ([chair] if query == "chair" else [table], ()),
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "classify_horizontal_relation",
+        lambda first, second: HorizontalRelationResult("left", ("camera_frame_support_centroids",)),
+    )
+
+    result = agent.answer(
+        frame,
+        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
+    )
+
+    assert result.status == "answered"
+    assert result.answer == "left"
+    assert result.question.allowed_answers == ("left", "right")

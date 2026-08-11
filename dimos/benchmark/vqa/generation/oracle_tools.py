@@ -8,7 +8,13 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
+from dimos.benchmark.vqa.generation.primitives.choices import (
+    CAMERA_RANGE_CHOICES,
+    COUNT_CHOICES,
+    camera_range_choice,
+    count_choice,
+    height_choice_window,
+)
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import (
@@ -66,6 +72,29 @@ class LocalOracleToolRegistry:
                 ),
             ),
             StructuredTool.from_function(
+                self.count_grounded_objects,
+                name="count_grounded_objects",
+                description="Count opaque grounded object IDs into fixed public count buckets.",
+            ),
+            StructuredTool.from_function(
+                self.bucket_camera_range,
+                name="bucket_camera_range",
+                description="Bucket one opaque object's private camera-origin range into fixed public choices.",
+            ),
+            StructuredTool.from_function(
+                self.compare_nearest_by_side,
+                name="compare_nearest_by_side",
+                description="Choose whether the nearest opaque left or right object is closer to the camera.",
+            ),
+            StructuredTool.from_function(
+                self.compare_left_right,
+                name="compare_left_right",
+                description=(
+                    "Choose whether one opaque object is left or right of another from private "
+                    "camera-frame support centroids. Rejects ambiguous separation."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.select_closest_object,
                 name="select_closest_object",
                 description=(
@@ -83,6 +112,14 @@ class LocalOracleToolRegistry:
                 name="measure_height",
                 description=(
                     "Measure one opaque grounded object above one opaque accepted ground-plane ID."
+                ),
+            ),
+            StructuredTool.from_function(
+                self.compare_heights,
+                name="compare_heights",
+                description=(
+                    "Compare two opaque grounded objects against one opaque accepted ground-plane ID. "
+                    "Rejects overlapping physical-height uncertainty."
                 ),
             ),
             StructuredTool.from_function(
@@ -202,6 +239,101 @@ class LocalOracleToolRegistry:
         self._results.append(result)
         return json.dumps(_tool_payload(result, object_id=nearest.id))
 
+    def count_grounded_objects(self, object_ids: list[str]) -> str:
+        """Count unique grounded object IDs into fixed public count choices."""
+        objects = self._lookup_objects("count_grounded_objects", object_ids)
+        if objects is None:
+            return self._record_rejection(
+                "count_grounded_objects", "", [], "unknown_or_duplicate_object_id"
+            )
+        if not objects:
+            return self._record_rejection("count_grounded_objects", "", [], "no_grounded_object")
+        result = OracleToolResult(
+            "count_grounded_objects",
+            objects[0].label,
+            tuple(_grounding_evidence(item) for item in objects),
+            choice=count_choice(len(objects)),
+            choices=COUNT_CHOICES,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
+    def bucket_camera_range(self, object_id: str) -> str:
+        """Map one grounded object's camera-origin range into fixed public choices."""
+        object = self._objects.get(object_id)
+        if object is None:
+            return self._record_rejection("bucket_camera_range", object_id, [], "unknown_object_id")
+        measurement = OracleMeasurement(
+            object.range_m,
+            "m",
+            0.0,
+            ("camera_origin_euclidean_range",),
+            (f"grounding:v1:{object.id}",),
+        )
+        result = OracleToolResult(
+            "bucket_camera_range",
+            object.label,
+            (_grounding_evidence(object),),
+            measurement=measurement,
+            choice=camera_range_choice(object.range_m),
+            choices=CAMERA_RANGE_CHOICES,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
+    def compare_nearest_by_side(self, object_ids: list[str]) -> str:
+        """Compare the nearest left and right grounded objects by camera range."""
+        objects = self._lookup_objects("compare_nearest_by_side", object_ids)
+        if objects is None:
+            return self._record_rejection(
+                "compare_nearest_by_side", "", [], "unknown_or_duplicate_object_id"
+            )
+        left = select_nearest_object(objects, "left")
+        right = select_nearest_object(objects, "right")
+        if left is None or right is None:
+            return self._record_rejection(
+                "compare_nearest_by_side", "", [], "missing_grounded_side"
+            )
+        if left.range_m == right.range_m:
+            return self._record_rejection(
+                "compare_nearest_by_side", "", [], "ambiguous_nearest_by_side"
+            )
+        choice = "left" if left.range_m < right.range_m else "right"
+        result = OracleToolResult(
+            "compare_nearest_by_side",
+            left.label,
+            (_grounding_evidence(left), _grounding_evidence(right)),
+            choice=choice,
+            choices=("left", "right"),
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result, left_object_id=left.id, right_object_id=right.id))
+
+    def compare_left_right(self, first_object_id: str, second_object_id: str) -> str:
+        """Classify one grounded object's left/right relation to another grounded object."""
+        first = self._objects.get(first_object_id)
+        second = self._objects.get(second_object_id)
+        if first is None or second is None:
+            return self._record_rejection("compare_left_right", "", [], "unknown_object_id")
+        relation = self._primitives.classify_horizontal_relation(first, second)
+        if relation.relation is None:
+            return self._record_rejection(
+                "compare_left_right",
+                f"{first.label},{second.label}",
+                list(relation.quality_flags),
+                relation.rejection_reason,
+            )
+        result = OracleToolResult(
+            "compare_left_right",
+            f"{first.label},{second.label}",
+            (_grounding_evidence(first), _grounding_evidence(second)),
+            choice=relation.relation,
+            choices=("left", "right"),
+            quality_flags=relation.quality_flags,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
     def select_closest_object(self, target_id: str, candidate_ids: list[str]) -> str:
         """Select one candidate closest to a target by private 3D support-point proximity."""
         target = self._objects.get(target_id)
@@ -252,16 +384,7 @@ class LocalOracleToolRegistry:
                 measured.rejection_reason,
             )
         measurement = measured.measurement
-        evidence = OracleEvidence(
-            f"height:v1:{object.id}",
-            "v1",
-            object.id,
-            object.label,
-            object.range_m,
-            object.horizontal_direction,
-            object.point_count,
-            measurement,
-        )
+        evidence = _height_evidence(object, measurement)
         result = OracleToolResult(
             "measure_height",
             object.label,
@@ -274,6 +397,52 @@ class LocalOracleToolRegistry:
         self._measurements[measurement_id] = result
         self._results.append(result)
         return json.dumps(_tool_payload(result, measurement_id=measurement_id))
+
+    def compare_heights(self, first_object_id: str, second_object_id: str, plane_id: str) -> str:
+        """Choose the taller object only when one shared-plane measurement is unambiguous."""
+        first = self._objects.get(first_object_id)
+        second = self._objects.get(second_object_id)
+        plane = self._planes.get(plane_id)
+        if first is None or second is None:
+            return self._record_rejection("compare_heights", "", [], "unknown_object_id")
+        if first.id == second.id:
+            return self._record_rejection("compare_heights", first.label, [], "duplicate_object_id")
+        if plane is None:
+            return self._record_rejection("compare_heights", "", [], "unknown_plane_id")
+        first_height = self._primitives.measure_height(first, plane)
+        second_height = self._primitives.measure_height(second, plane)
+        if first_height.measurement is None or second_height.measurement is None:
+            return self._record_rejection(
+                "compare_heights",
+                "",
+                [*first_height.quality_flags, *second_height.quality_flags],
+                first_height.rejection_reason
+                or second_height.rejection_reason
+                or "height_measurement_rejected",
+            )
+        first_measurement = first_height.measurement
+        second_measurement = second_height.measurement
+        first_lower = first_measurement.value - first_measurement.tolerance
+        second_lower = second_measurement.value - second_measurement.tolerance
+        first_upper = first_measurement.value + first_measurement.tolerance
+        second_upper = second_measurement.value + second_measurement.tolerance
+        if first_lower <= second_upper and second_lower <= first_upper:
+            return self._record_rejection("compare_heights", "", [], "ambiguous_height_comparison")
+        choice = first.label if first_lower > second_upper else second.label
+        result = OracleToolResult(
+            "compare_heights",
+            f"{first.label},{second.label}",
+            (
+                _height_evidence(first, first_measurement),
+                _height_evidence(second, second_measurement),
+            ),
+            choice=choice,
+            choices=(first.label, second.label),
+            plane=plane,
+            quality_flags=(*first_height.quality_flags, *second_height.quality_flags),
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
 
     def classify_door_state(self, object_id: str) -> str:
         """Classify one grounded door against the surrounding point-cloud plane."""
@@ -366,6 +535,17 @@ class LocalOracleToolRegistry:
         self._results.append(result)
         return json.dumps(_tool_payload(result))
 
+    def _lookup_objects(self, tool: str, object_ids: list[str]) -> list[GroundedObject] | None:
+        if len(set(object_ids)) != len(object_ids):
+            return None
+        objects: list[GroundedObject] = []
+        for object_id in object_ids:
+            object = self._objects.get(object_id)
+            if object is None:
+                return None
+            objects.append(object)
+        return objects
+
     def _id(self, kind: str) -> str:
         self._next_id += 1
         return f"{kind}:v1:{self._next_id:04d}"
@@ -380,6 +560,19 @@ def _grounding_evidence(item: GroundedObject) -> OracleEvidence:
         item.range_m,
         item.horizontal_direction,
         item.point_count,
+    )
+
+
+def _height_evidence(item: GroundedObject, measurement: OracleMeasurement) -> OracleEvidence:
+    return OracleEvidence(
+        f"height:v1:{item.id}",
+        "v1",
+        item.id,
+        item.label,
+        item.range_m,
+        item.horizontal_direction,
+        item.point_count,
+        measurement,
     )
 
 

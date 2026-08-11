@@ -90,7 +90,11 @@ QuestionKind = Literal[
     "presence",
     "horizontal_direction",
     "within_distance",
+    "visible_count",
+    "camera_range",
     "compare_nearest_by_side",
+    "compare_left_right",
+    "compare_height",
     "door_state",
     "closest_object",
     "forward_path",
@@ -105,6 +109,7 @@ class QuestionIntent:
     object_query: str
     threshold_m: float | None = None
     candidate_queries: tuple[str, ...] = ()
+    comparison_query: str | None = None
 
 
 @dataclass(frozen=True)

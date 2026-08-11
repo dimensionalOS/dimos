@@ -3,6 +3,12 @@
 
 from __future__ import annotations
 
+from dimos.benchmark.vqa.generation.primitives.choices import (
+    CAMERA_RANGE_CHOICES,
+    COUNT_CHOICES,
+    camera_range_choice,
+    count_choice,
+)
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.generation.questions import generate_questions
@@ -69,6 +75,14 @@ class VqaGroundTruthGenerator:
             )
         if intent.kind == "compare_nearest_by_side":
             return _compare_nearest_by_side(frame, intent, objects, trace)
+        if intent.kind == "visible_count":
+            return _count_visible_objects(frame, intent, objects, trace)
+        if intent.kind == "camera_range":
+            return _bucket_camera_range(frame, intent, objects, trace)
+        if intent.kind == "compare_left_right":
+            return _compare_left_right(frame, intent, objects, trace, self)
+        if intent.kind == "compare_height":
+            return _compare_heights(frame, intent, objects, trace, self)
         if intent.kind == "door_state":
             return _classify_door_state(frame, intent, objects, trace, self.primitives)
         if intent.kind == "closest_object":
@@ -105,8 +119,18 @@ def _render_question(intent: QuestionIntent) -> str:
         return f"Is there a {intent.object_query} in the image? Answer yes or no."
     if intent.kind == "horizontal_direction":
         return f"Where is the nearest {intent.object_query}: left, center, or right?"
+    if intent.kind == "visible_count":
+        return f"How many {intent.object_query}s are visible?"
+    if intent.kind == "camera_range":
+        return f"How far is the nearest {intent.object_query} from the camera?"
     if intent.kind == "compare_nearest_by_side":
         return f"Which {intent.object_query} is closer: the left one or the right one?"
+    if intent.kind == "compare_left_right":
+        return (
+            f"Is the {intent.object_query} to the left or right of the {intent.comparison_query}?"
+        )
+    if intent.kind == "compare_height":
+        return f"Which is taller: the {intent.object_query} or the {intent.comparison_query}?"
     if intent.kind == "door_state":
         return f"Is the {intent.object_query} open or closed?"
     if intent.kind == "closest_object":
@@ -114,6 +138,157 @@ def _render_question(intent: QuestionIntent) -> str:
     if intent.kind == "forward_path":
         return "Is the path directly ahead clear or blocked?"
     return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
+
+
+def _count_visible_objects(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+) -> GroundTruthResult:
+    answer = count_choice(len(objects))
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-visible-count",
+        _render_question(intent),
+        answer,
+        "choice",
+        tuple(item.id for item in objects),
+        COUNT_CHOICES,
+    )
+    return GroundTruthResult(intent, example, "answered", answer, None, tuple(objects), trace)
+
+
+def _bucket_camera_range(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+) -> GroundTruthResult:
+    selected = select_nearest_object(objects)
+    if selected is None:
+        return _rejected_result(frame, intent, objects, trace, "no_grounded_object")
+    answer = camera_range_choice(selected.range_m)
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-camera-range",
+        _render_question(intent),
+        answer,
+        "choice",
+        (selected.id,),
+        CAMERA_RANGE_CHOICES,
+    )
+    return GroundTruthResult(intent, example, "answered", answer, None, (selected,), trace)
+
+
+def _compare_heights(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+    generator: VqaGroundTruthGenerator,
+) -> GroundTruthResult:
+    if len(objects) != 1 or intent.comparison_query is None:
+        return _rejected_result(frame, intent, objects, trace, "ambiguous_first_height_object")
+    other_objects, other_trace = generator.ground(frame, intent.comparison_query)
+    trace = (*trace, *other_trace)
+    if len(other_objects) != 1:
+        return _rejected_result(
+            frame, intent, [*objects, *other_objects], trace, "ambiguous_second_height_object"
+        )
+    plane_fit = generator.primitives.fit_ground_plane()
+    trace = (*trace, ToolTrace("fit_ground_plane", plane_fit.rejection_reason or "accepted"))
+    if plane_fit.estimate is None:
+        return _rejected_result(
+            frame,
+            intent,
+            [*objects, *other_objects],
+            trace,
+            plane_fit.rejection_reason or "ground_plane_rejected",
+        )
+    first = generator.primitives.measure_height(objects[0], plane_fit.estimate)
+    second = generator.primitives.measure_height(other_objects[0], plane_fit.estimate)
+    trace = (
+        *trace,
+        ToolTrace("measure_height", first.rejection_reason or objects[0].id),
+        ToolTrace("measure_height", second.rejection_reason or other_objects[0].id),
+    )
+    if first.measurement is None or second.measurement is None:
+        return _rejected_result(
+            frame,
+            intent,
+            [*objects, *other_objects],
+            trace,
+            first.rejection_reason or second.rejection_reason or "height_measurement_rejected",
+        )
+    first_lower = first.measurement.value - first.measurement.tolerance
+    second_lower = second.measurement.value - second.measurement.tolerance
+    first_upper = first.measurement.value + first.measurement.tolerance
+    second_upper = second.measurement.value + second.measurement.tolerance
+    if first_lower <= second_upper and second_lower <= first_upper:
+        return _rejected_result(
+            frame, intent, [*objects, *other_objects], trace, "ambiguous_height_comparison"
+        )
+    answer = intent.object_query if first_lower > second_upper else intent.comparison_query
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-{intent.comparison_query}-height-comparison",
+        _render_question(intent),
+        answer,
+        "choice",
+        (objects[0].id, other_objects[0].id),
+        (intent.object_query, intent.comparison_query),
+    )
+    return GroundTruthResult(
+        intent, example, "answered", answer, None, (objects[0], other_objects[0]), trace
+    )
+
+
+def _compare_left_right(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+    generator: VqaGroundTruthGenerator,
+) -> GroundTruthResult:
+    if len(objects) != 1 or intent.comparison_query is None:
+        return _rejected_result(frame, intent, objects, trace, "ambiguous_first_relation_object")
+    other_objects, other_trace = generator.ground(frame, intent.comparison_query)
+    trace = (*trace, *other_trace)
+    if len(other_objects) != 1:
+        return _rejected_result(
+            frame, intent, [*objects, *other_objects], trace, "ambiguous_second_relation_object"
+        )
+    relation = generator.primitives.classify_horizontal_relation(objects[0], other_objects[0])
+    trace = (
+        *trace,
+        ToolTrace(
+            "classify_horizontal_relation",
+            relation.relation or relation.rejection_reason or "rejected",
+        ),
+    )
+    if relation.relation is None:
+        return _rejected_result(
+            frame,
+            intent,
+            [*objects, *other_objects],
+            trace,
+            relation.rejection_reason or "horizontal_relation_rejected",
+        )
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-{intent.comparison_query}-left-right",
+        _render_question(intent),
+        relation.relation,
+        "choice",
+        (objects[0].id, other_objects[0].id),
+        ("left", "right"),
+    )
+    return GroundTruthResult(
+        intent,
+        example,
+        "answered",
+        relation.relation,
+        None,
+        (objects[0], other_objects[0]),
+        trace,
+    )
 
 
 def _compare_nearest_by_side(

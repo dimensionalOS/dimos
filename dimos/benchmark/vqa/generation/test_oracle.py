@@ -15,7 +15,15 @@ from dimos.benchmark.vqa.generation.oracle import (
     validate_oracle_answer,
 )
 from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
-from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
+from dimos.benchmark.vqa.generation.primitives.choices import (
+    camera_range_choice,
+    count_choice,
+    height_choice_window,
+)
+from dimos.benchmark.vqa.generation.primitives.contracts import (
+    HeightMeasurementResult,
+    HorizontalRelationResult,
+)
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     classify_door_plane_angle,
@@ -35,6 +43,7 @@ from dimos.benchmark.vqa.models import (
     GroundingConfig,
     GroundPlaneEstimate,
     OracleEvidence,
+    OracleMeasurement,
     OracleToolResult,
     QuestionProposal,
 )
@@ -359,9 +368,14 @@ def test_local_registry_exposes_geometry_tools() -> None:
         "segment_detections",
         "ground_masks",
         "select_nearest_object",
+        "count_grounded_objects",
+        "bucket_camera_range",
+        "compare_nearest_by_side",
+        "compare_left_right",
         "select_closest_object",
         "fit_ground_plane",
         "measure_height",
+        "compare_heights",
         "classify_door_state",
         "classify_forward_path",
         "bucket_measurement",
@@ -379,6 +393,70 @@ def test_height_choice_window_is_local_and_deterministic() -> None:
     )
     assert answer == "0.2-0.6 m"
     assert height_choice_window(3.0)[1] == "over 2.0 m"
+
+
+def test_count_and_camera_range_choices_are_fixed_and_non_overlapping() -> None:
+    assert [count_choice(value) for value in (1, 2, 3, 4, 5, 7, 8)] == [
+        "1-2",
+        "1-2",
+        "3-4",
+        "3-4",
+        "5-7",
+        "5-7",
+        "8+",
+    ]
+    assert [camera_range_choice(value) for value in (0.99, 1.0, 2.0, 4.0)] == [
+        "under 1 m",
+        "1 to under 2 m",
+        "2 to under 4 m",
+        "4 m or more",
+    ]
+
+
+def test_local_registry_buckets_count_range_and_pairwise_side() -> None:
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    left = GroundedObject("left", "chair", 8, 1.0, "left")
+    right = GroundedObject("right", "chair", 8, 2.0, "right")
+    registry._objects = {left.id: left, right.id: right}
+
+    count = json.loads(registry.count_grounded_objects([left.id, right.id]))
+    camera_range = json.loads(registry.bucket_camera_range(right.id))
+    side = json.loads(registry.compare_nearest_by_side([left.id, right.id]))
+
+    assert count["choice"] == "1-2"
+    assert camera_range["choice"] == "2 to under 4 m"
+    assert side["choice"] == "left"
+
+
+def test_local_registry_compares_pairwise_relation_and_height(monkeypatch: Any) -> None:
+    primitives = _frame_primitives(_measurement_frame())
+    registry = LocalOracleToolRegistry(primitives)
+    chair = GroundedObject("chair", "chair", 8, 1.0, "left")
+    table = GroundedObject("table", "table", 8, 2.0, "right")
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    registry._objects = {chair.id: chair, table.id: table}
+    registry._planes = {"plane": plane}
+    monkeypatch.setattr(
+        primitives,
+        "classify_horizontal_relation",
+        lambda first, second: HorizontalRelationResult("left", ("camera_frame_support_centroids",)),
+    )
+    monkeypatch.setattr(
+        primitives,
+        "measure_height",
+        lambda item, accepted_plane: HeightMeasurementResult(
+            item,
+            accepted_plane,
+            OracleMeasurement(0.8 if item == chair else 0.5, "m", 0.05, (), ()),
+            (),
+        ),
+    )
+
+    relation = json.loads(registry.compare_left_right(chair.id, table.id))
+    height = json.loads(registry.compare_heights(chair.id, table.id, "plane"))
+
+    assert relation["choice"] == "left"
+    assert height["choice"] == "chair"
 
 
 def test_door_state_accepts_clear_plane_angles_and_rejects_ajar() -> None:
@@ -416,6 +494,24 @@ def test_closest_object_uses_point_cloud_centroids_and_rejects_ties(monkeypatch:
     assert (
         primitives.select_closest_object(target, [close, far]).rejection_reason
         == "ambiguous_object_proximity"
+    )
+
+
+def test_horizontal_relation_uses_camera_frame_support_centroids(monkeypatch: Any) -> None:
+    left = GroundedObject("left", "chair", 8, 1.0, "left")
+    right = GroundedObject("right", "table", 8, 2.0, "right")
+    primitives = _frame_primitives(_measurement_frame())
+    centers = {
+        "left": np.tile((-0.3, 0.0, 1.0), (6, 1)),
+        "right": np.tile((0.3, 0.0, 1.0), (6, 1)),
+    }
+    monkeypatch.setattr(primitives, "_object_points", lambda item: centers[item.id])
+
+    assert primitives.classify_horizontal_relation(left, right).relation == "left"
+    monkeypatch.setattr(primitives, "_object_points", lambda item: np.zeros((6, 3)))
+    assert (
+        primitives.classify_horizontal_relation(left, right).rejection_reason
+        == "ambiguous_horizontal_relation"
     )
 
 
