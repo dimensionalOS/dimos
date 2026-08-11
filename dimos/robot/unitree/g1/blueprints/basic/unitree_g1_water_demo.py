@@ -73,11 +73,41 @@ _demo_remappings = [
     (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
 ]
 
+_CAMERA_ENTITY = "world/color_compressed"
+
+
+def _water_demo_rerun_blueprint() -> Any:
+    """3D scene beside the head camera; the base layout is 3D-only."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                origin="world",
+                name="G1 water demo",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.0)),
+            ),
+            rrb.Spatial2DView(origin=_CAMERA_ENTITY, name="Head camera"),
+            column_shares=[2, 1],
+        ),
+        rrb.TimePanel(state="collapsed"),
+    )
+
+
 # Camera caps are non-negotiable on the Jetson: uncapped image streams have
-# eaten 20 GB of Rerun RAM before.
+# eaten 20 GB of Rerun RAM before. coordinator_joint_state is the coordinator's
+# full 29-joint aggregate at the 100 Hz tick — it saturates the viewer's gRPC
+# channel on its own, and the per-robot /g1/joints stream already drives the mesh.
 _demo_rerun_config: dict[str, Any] = {
     **_rerun_config,
-    "max_hz": {**_rerun_config["max_hz"], "world/color_compressed": 5.0},
+    "blueprint": _water_demo_rerun_blueprint,
+    "max_hz": {**_rerun_config["max_hz"], _CAMERA_ENTITY: 5.0},
+    "visual_override": {
+        **_rerun_config["visual_override"],
+        "world/coordinator_joint_state": None,
+    },
     "memory_limit": "5%",
 }
 

@@ -83,6 +83,14 @@ def test_camera_publishes_compressed_color() -> None:
     }
 
 
+def test_camera_has_a_2d_view_to_render_into() -> None:
+    # The inherited layout is 3D-only, so an image logged to world/color_compressed
+    # arrives but is never displayed.
+    bridge = _kwargs(BRIDGE)
+    views = bridge["blueprint"]().root_container.contents
+    assert [str(v.origin) for v in views] == ["world", "world/color_compressed"]
+
+
 def test_rerun_caps_survive_config_parsing() -> None:
     # model_dump() used to turn the URDF factories into plain dicts here, which
     # crashed the bridge on worker deploy.
