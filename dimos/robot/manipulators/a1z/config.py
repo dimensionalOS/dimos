@@ -91,7 +91,7 @@ def a1z_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints(hw_id, A1Z_DOF), *gripper_joints],
+        joints=[*make_joints(hw_id, A1Z_DOF), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=True,

@@ -38,7 +38,7 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
 
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
-    assert hardware.all_joints[-1] == "arm/gripper"
+    assert hardware.joints[-1] == "arm/gripper"
 
     assert gripper.name == "arm_gripper"
     assert gripper.joint_names == ["arm/gripper"]
@@ -66,7 +66,7 @@ def test_a1z_hardware_uses_mock_adapter_in_simulation(monkeypatch: pytest.Monkey
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
     assert hardware.adapter_kwargs["limits"].position_upper[-1] > 0.0
-    assert hardware.all_joints[-1] == "arm/gripper"
+    assert hardware.joints[-1] == "arm/gripper"
 
 
 def test_a1z_hardware_uses_real_adapter_when_can_port_is_selected(
@@ -79,4 +79,4 @@ def test_a1z_hardware_uses_real_adapter_when_can_port_is_selected(
 
     assert hardware.adapter_type == "galaxea_a1z"
     assert hardware.address == "a1zcan"
-    assert hardware.all_joints[-1] == "arm/gripper"
+    assert hardware.joints[-1] == "arm/gripper"

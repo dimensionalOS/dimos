@@ -57,7 +57,7 @@ def make_openyam_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints(hw_id, OPENYAM_DOF), f"{hw_id}/gripper"],
+        joints=[*make_joints(hw_id, OPENYAM_DOF), f"{hw_id}/gripper"],
         adapter_type="mock",
         address=None,
         auto_enable=auto_enable,

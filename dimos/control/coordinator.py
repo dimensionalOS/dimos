@@ -287,7 +287,7 @@ class ControlCoordinator(Module):
 
         return adapter_registry.create(
             component.adapter_type,
-            dof=len(component.all_joints),
+            dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
             **component.adapter_kwargs,
@@ -299,7 +299,7 @@ class ControlCoordinator(Module):
 
         return twist_base_adapter_registry.create(
             component.adapter_type,
-            dof=len(component.all_joints),
+            dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
             **component.adapter_kwargs,
@@ -311,7 +311,7 @@ class ControlCoordinator(Module):
 
         return whole_body_adapter_registry.create(
             component.adapter_type,
-            dof=len(component.all_joints),
+            dof=len(component.joints),
             hardware_id=component.hardware_id,
             address=component.address,
             domain_id=component.domain_id,

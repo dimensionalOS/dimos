@@ -19,7 +19,7 @@ def test_hardware_component_does_not_classify_joint_semantics() -> None:
     component = HardwareComponent(
         hardware_id="arm",
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints("arm", 6), "arm/tool_joint"],
+        joints=[*make_joints("arm", 6), "arm/tool_joint"],
     )
 
     assert not hasattr(component, "arm_joints")

@@ -47,7 +47,7 @@ class ConnectedHardware:
     - Hold-last-value for partial commands
     - Converts between joint names and array indices
 
-    Gripper joints are the trailing entries of ``component.all_joints`` and
+    Gripper joints are the trailing entries of ``component.joints`` and
     ride the same array as every other joint; no unit conversion happens here.
 
     Created when hardware is added to the coordinator. One instance
@@ -61,7 +61,7 @@ class ConnectedHardware:
     ) -> None:
         self._adapter = adapter
         self._component = component
-        self._joint_names: list[JointName] = list(component.all_joints)
+        self._joint_names: list[JointName] = list(component.joints)
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -217,7 +217,7 @@ class ConnectedTwistBase(ConnectedHardware):
     ) -> None:
         self._twist_adapter = adapter
         self._component = component
-        self._joint_names = component.all_joints
+        self._joint_names = component.joints
 
         # Twist bases start at zero velocity — no need to read from hardware
         self._last_commanded: dict[str, float] = {name: 0.0 for name in self._joint_names}
@@ -305,7 +305,7 @@ class ConnectedWholeBody(ConnectedHardware):
     ) -> None:
         self._wb_adapter = adapter
         self._component = component
-        self._joint_names = component.all_joints
+        self._joint_names = component.joints
 
         # Resolve per-joint PD gains once at wire-up time.  Gains live on
         # the WB-specific sub-config; fall back to _DEFAULT_KP/_DEFAULT_KD

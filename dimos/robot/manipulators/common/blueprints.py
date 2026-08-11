@@ -70,7 +70,7 @@ def trajectory_task(
         type="trajectory",
         joint_names=list(joint_names)
         if joint_names is not None
-        else [joint for component in hardware_components for joint in component.all_joints],
+        else [joint for component in hardware_components for joint in component.joints],
         priority=priority,
         params={"start_position_tolerance": start_position_tolerance},
     )
@@ -82,7 +82,7 @@ def _resolve_control_ik(
     control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, Any]:
     coordinator_joints = robot_model.get_coordinator_joint_names()
-    if not set(coordinator_joints) <= set(hardware.all_joints):
+    if not set(coordinator_joints) <= set(hardware.joints):
         raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
     payload = dict(control_ik or {})
     payload["robot_model"] = robot_model

@@ -56,7 +56,7 @@ def _component(hardware_id: str, joints: list[str], positions: list[float]) -> H
     return HardwareComponent(
         hardware_id=hardware_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=joints,
+        joints=joints,
         adapter_type="mock",
         adapter_kwargs={"initial_positions": positions},
     )
@@ -138,7 +138,7 @@ def _mock_hardware(
     component = HardwareComponent(
         hardware_id=hardware_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=joints,
+        joints=joints,
     )
     return ConnectedHardware(adapter, component)
 

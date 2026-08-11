@@ -71,7 +71,7 @@ def xarm_hardware(monkeypatch: pytest.MonkeyPatch) -> tuple[ConnectedHardware, _
     component = HardwareComponent(
         hardware_id="arm",
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints("arm", 7), "arm/gripper"],
+        joints=[*make_joints("arm", 7), "arm/gripper"],
         adapter_type="xarm",
     )
     return ConnectedHardware(adapter, component), adapter._arm
@@ -153,7 +153,7 @@ class TestArrayShapeAcrossAdapters:
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            all_joints=[*make_joints("arm", 6), "arm/gripper"],
+            joints=[*make_joints("arm", 6), "arm/gripper"],
         )
         hardware = ConnectedHardware(adapter, component)
 

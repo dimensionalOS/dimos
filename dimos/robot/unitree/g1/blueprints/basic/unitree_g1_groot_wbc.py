@@ -496,7 +496,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         HardwareComponent(
             hardware_id="g1",
             hardware_type=HardwareType.WHOLE_BODY,
-            all_joints=g1_joints,
+            joints=g1_joints,
             adapter_type=_adapter_type,
             address=_adapter_address,
             wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),

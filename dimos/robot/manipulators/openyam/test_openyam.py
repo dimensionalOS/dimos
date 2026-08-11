@@ -55,7 +55,7 @@ def test_openyam_mock_hardware_has_gripper() -> None:
     hardware = make_openyam_hardware("arm")
 
     assert hardware.adapter_type == "mock"
-    assert hardware.all_joints == [
+    assert hardware.joints == [
         *[f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)],
         "arm/gripper",
     ]
@@ -91,5 +91,5 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     blueprint = coordinator_openyam
     kwargs = _coordinator_kwargs(blueprint)
     assert len(kwargs["hardware"]) == 1
-    assert len(kwargs["hardware"][0].all_joints) == OPENYAM_DOF + 1
-    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].all_joints[:-1]
+    assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF + 1
+    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints[:-1]

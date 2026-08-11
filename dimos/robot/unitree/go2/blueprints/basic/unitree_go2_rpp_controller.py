@@ -85,7 +85,7 @@ unitree_go2_rpp_controller = (
                 HardwareComponent(
                     hardware_id="go2",
                     hardware_type=HardwareType.BASE,
-                    all_joints=_go2_joints,
+                    joints=_go2_joints,
                     adapter_type="transport_lcm",
                 ),
             ],

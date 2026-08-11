@@ -54,7 +54,7 @@ unitree_g1_coordinator = (
                 HardwareComponent(
                     hardware_id="g1",
                     hardware_type=HardwareType.WHOLE_BODY,
-                    all_joints=_g1_joints,
+                    joints=_g1_joints,
                     adapter_type="transport_lcm",
                 ),
             ],

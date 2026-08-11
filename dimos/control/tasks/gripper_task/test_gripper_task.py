@@ -81,7 +81,7 @@ def _hardware(limit_len: int = 7) -> dict[str, SimpleNamespace]:
     component = HardwareComponent(
         hardware_id="arm",
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints("arm", 6), "arm/tool_joint"],
+        joints=[*make_joints("arm", 6), "arm/tool_joint"],
     )
     adapter = SimpleNamespace(
         get_limits=lambda: SimpleNamespace(

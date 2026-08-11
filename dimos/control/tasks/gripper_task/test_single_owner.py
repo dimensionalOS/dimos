@@ -59,11 +59,11 @@ def _fake_hardware(components) -> dict[str, ConnectedHardware]:
     hardware = {}
     for component in components:
         adapter = MockAdapter(
-            dof=len(component.all_joints),
+            dof=len(component.joints),
             limits=JointLimits(
-                position_lower=[-3.14] * (len(component.all_joints) - 1) + [0.0],
-                position_upper=[3.14] * (len(component.all_joints) - 1) + [0.08],
-                velocity_max=[1.0] * len(component.all_joints),
+                position_lower=[-3.14] * (len(component.joints) - 1) + [0.0],
+                position_upper=[3.14] * (len(component.joints) - 1) + [0.08],
+                velocity_max=[1.0] * len(component.joints),
             ),
         )
         adapter.connect()
@@ -206,7 +206,7 @@ class TestSkillRoundTrip:
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            all_joints=[*make_joints("arm", 6), "arm/gripper"],
+            joints=[*make_joints("arm", 6), "arm/gripper"],
         )
         adapter = MockAdapter(
             dof=7,

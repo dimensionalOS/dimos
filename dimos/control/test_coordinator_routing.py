@@ -285,7 +285,7 @@ def _base_component() -> HardwareComponent:
     return HardwareComponent(
         hardware_id="base",
         hardware_type=HardwareType.BASE,
-        all_joints=make_twist_base_joints("base"),
+        joints=make_twist_base_joints("base"),
         adapter_type="mock_twist_base",
     )
 
@@ -351,7 +351,7 @@ class TestTwistRouting:
                 HardwareComponent(
                     hardware_id="base",
                     hardware_type=HardwareType.BASE,
-                    all_joints=carlike_joints,
+                    joints=carlike_joints,
                     adapter_type="mock_twist_base",
                 )
             ],
@@ -371,7 +371,7 @@ class TestTwistRouting:
                 HardwareComponent(
                     hardware_id="base",
                     hardware_type=HardwareType.BASE,
-                    all_joints=drone_joints,
+                    joints=drone_joints,
                     adapter_type="mock_twist_base",
                 )
             ],
@@ -391,7 +391,7 @@ class TestTwistRouting:
                 HardwareComponent(
                     hardware_id="arm",
                     hardware_type=HardwareType.MANIPULATOR,
-                    all_joints=["arm/vx"],
+                    joints=["arm/vx"],
                     adapter_type="mock",
                 ),
             ],
@@ -460,7 +460,7 @@ class TestTwistCardContract:
 
         component = _base_component()
         adapter = twist_base_adapter_registry.create(
-            "mock_twist_base", dof=len(component.all_joints), hardware_id="base"
+            "mock_twist_base", dof=len(component.joints), hardware_id="base"
         )
         assert adapter.connect()
         assert coordinator.add_hardware(adapter, component)

@@ -56,13 +56,13 @@ class JointState:
 class HardwareComponent:
     """Configuration for a hardware component.
 
-    ``all_joints`` is the adapter's complete array order. Joint semantics
+    ``joints`` is the adapter's complete array order. Joint semantics
     belong to tasks and concrete adapters, not this shared component model.
 
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
         hardware_type: Type of hardware (MANIPULATOR, BASE)
-        all_joints: Every joint name in adapter order.
+        joints: Every joint name in adapter order.
         adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
@@ -80,7 +80,7 @@ class HardwareComponent:
 
     hardware_id: HardwareId
     hardware_type: HardwareType
-    all_joints: list[JointName] = field(default_factory=list)
+    joints: list[JointName] = field(default_factory=list)
     adapter_type: str = "mock"
     address: str | Path | None = None
     auto_enable: bool = True

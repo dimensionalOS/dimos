@@ -50,7 +50,7 @@ def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.BASE,
-        all_joints=make_twist_base_joints(hw_id),
+        joints=make_twist_base_joints(hw_id),
         adapter_type="mock_twist_base",
     )
 
@@ -66,7 +66,7 @@ def _flowbase_twist_base(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.BASE,
-        all_joints=make_twist_base_joints(hw_id),
+        joints=make_twist_base_joints(hw_id),
         adapter_type="flowbase",
         address=address,
     )
@@ -191,7 +191,7 @@ coordinator_flowbase_nav = (
 _mock_arm_hw = HardwareComponent(
     hardware_id="arm",
     hardware_type=HardwareType.MANIPULATOR,
-    all_joints=make_joints("arm", 7),
+    joints=make_joints("arm", 7),
     adapter_type="mock",
 )
 
@@ -201,7 +201,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=_mock_arm_hw.all_joints,
+            joint_names=_mock_arm_hw.joints,
             priority=10,
         ),
         TaskConfig(

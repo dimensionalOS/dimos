@@ -41,7 +41,7 @@ def coordinator(mocker) -> Any:
             HardwareComponent(
                 hardware_id="go2",
                 hardware_type=HardwareType.BASE,
-                all_joints=JOINTS,
+                joints=JOINTS,
                 adapter_type="mock_twist_base",
             )
         ],

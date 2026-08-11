@@ -50,7 +50,7 @@ class TestBothKeyboardBlueprintsMigrated:
         assert len(gripper) == 1, f"{name}: expected exactly one gripper task"
         assert gripper[0].name == "arm_gripper"
         assert gripper[0].joint_names == ["arm/gripper"]
-        assert set(gripper[0].joint_names) <= set(hardware.all_joints)
+        assert set(gripper[0].joint_names) <= set(hardware.joints)
 
     @pytest.mark.parametrize("name", _KEYBOARD_BLUEPRINTS)
     def test_no_servo_task_claims_a_gripper_joint(self, name: str) -> None:
@@ -81,7 +81,7 @@ class TestKeyboardReachesTheAdapter:
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            all_joints=[*make_joints("arm", 6), "arm/gripper"],
+            joints=[*make_joints("arm", 6), "arm/gripper"],
             adapter_type="mock",
         )
         adapter = MockAdapter(

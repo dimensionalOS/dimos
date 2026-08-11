@@ -24,7 +24,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 _mock_hw = HardwareComponent(
     hardware_id="arm",
     hardware_type=HardwareType.MANIPULATOR,
-    all_joints=make_joints("arm", 7),
+    joints=make_joints("arm", 7),
     adapter_type="mock",
 )
 
@@ -34,7 +34,7 @@ coordinator_mock = ControlCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=_mock_hw.all_joints,
+            joint_names=_mock_hw.joints,
             priority=10,
         )
     ],
@@ -43,13 +43,13 @@ coordinator_mock = ControlCoordinator.blueprint(
 _mock_left = HardwareComponent(
     hardware_id="left_arm",
     hardware_type=HardwareType.MANIPULATOR,
-    all_joints=make_joints("left_arm", 7),
+    joints=make_joints("left_arm", 7),
     adapter_type="mock",
 )
 _mock_right = HardwareComponent(
     hardware_id="right_arm",
     hardware_type=HardwareType.MANIPULATOR,
-    all_joints=make_joints("right_arm", 6),
+    joints=make_joints("right_arm", 6),
     adapter_type="mock",
 )
 
@@ -67,7 +67,7 @@ coordinator_dual_mock = _DualMockCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=[*_mock_left.all_joints, *_mock_right.all_joints],
+            joint_names=[*_mock_left.joints, *_mock_right.joints],
             priority=10,
         ),
     ],

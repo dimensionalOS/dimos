@@ -128,7 +128,7 @@ def make_xarm_hardware(
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints(hw_id, dof), *gripper_joints],
+        joints=[*make_joints(hw_id, dof), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,

@@ -37,7 +37,7 @@ unitree_go2_keyboard_teleop = (
                 HardwareComponent(
                     hardware_id="go2",
                     hardware_type=HardwareType.BASE,
-                    all_joints=_go2_joints,
+                    joints=_go2_joints,
                     adapter_type="unitree_go2",
                     adapter_kwargs={"rage_mode": False},
                 ),

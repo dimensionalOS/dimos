@@ -290,17 +290,17 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
             )
         component = connected.component
         try:
-            index = component.all_joints.index(joint_name)
+            index = component.joints.index(joint_name)
         except ValueError as exc:
             raise ValueError(
                 f"{where}: joint {joint_name!r} is not owned by hardware {hardware_id!r}"
             ) from exc
         limits = connected.adapter.get_limits()
         arrays = (limits.position_lower, limits.position_upper, limits.velocity_max)
-        if any(len(array) != len(component.all_joints) for array in arrays):
+        if any(len(array) != len(component.joints) for array in arrays):
             raise ValueError(
                 f"{where}: adapter {component.adapter_type!r} limits must contain "
-                f"{len(component.all_joints)} entries"
+                f"{len(component.joints)} entries"
             )
         resolved.append((float(limits.position_lower[index]), float(limits.position_upper[index])))
     return resolved

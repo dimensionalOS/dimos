@@ -72,7 +72,7 @@ def openarm_hardware(
     return HardwareComponent(
         hardware_id=name or f"{side}_arm",
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=openarm_joints(side),
+        joints=openarm_joints(side),
         adapter_type=adapter_type,
         address=address,
         adapter_kwargs=kwargs,
