@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "benchmark": "vlnce_r2r",
+  "condition": "dimos_geometry_training_scene_development",
+  "upstream": {
+    "vlnce": {
+      "repository": "https://github.com/jacobkrantz/VLN-CE",
+      "revision": "729d141b2ee10628061ada74dd3a5b9f70faeba5"
+    },
+    "habitat_sim": {
+      "repository": "https://github.com/facebookresearch/habitat-sim",
+      "revision": "856d4b08c1a2632626bf0d205bf46471a99502b7",
+      "release": "v0.1.7"
+    },
+    "habitat_lab": {
+      "repository": "https://github.com/facebookresearch/habitat-lab",
+      "revision": "d6ed1c0a0e786f16f261de2beafe347f4186d0d8",
+      "release": "v0.1.7"
+    }
+  },
+  "assets": {
+    "r2r_vlnce_v1_3": {
+      "url": "https://drive.usercontent.google.com/download?id=1T9SjqZWyR2PCLSXYkFckfDeIs6Un0Rjm&export=download&confirm=t",
+      "archive_sha256": "e2a81331524a6ca9a987d014a1affcb3b7174240cfae3647532bbaf68ef18404",
+      "archive_bytes": 2608469,
+      "extract_root": "R2R_VLNCE_v1-3",
+      "train_file": "R2R_VLNCE_v1-3/train/train.json.gz",
+      "train_file_sha256": "f411066b53f96d1241c045fd05a6a9e01b484c2ed9369f5b6f41806969056a34"
+    },
+    "mp3d_example_v1_1": {
+      "url": "https://dl.fbaipublicfiles.com/habitat/mp3d/mp3d_example_v1.1.zip",
+      "archive_sha256": "5a628b32c7c9f0bb84d46c76130c9f01fabf471a8dc28cb6d2089f87a9aacf2c",
+      "archive_bytes": 67765004,
+      "extract_root": ".",
+      "required_files": {
+        "17DRP5sb8fy/17DRP5sb8fy.glb": "334456925e056c83a9a7a5c768b3d37cdd23425d8ca20743bfce015be3f56b04",
+        "17DRP5sb8fy/17DRP5sb8fy.navmesh": "0f36abb98ee3545d7e1f5103882269206feaaea05dcb54014333290b1d2b00c8",
+        "mp3d.scene_dataset_config.json": "b56050135d429839ca7066f335de51897d27e9741810bff8e13972fe539b0f5f"
+      }
+    }
+  },
+  "episode": {
+    "dataset": "R2R_VLNCE_v1-3",
+    "split": "train",
+    "episode_id": "515",
+    "trajectory_id": 338,
+    "scene_id": "mp3d/17DRP5sb8fy/17DRP5sb8fy.glb",
+    "instruction": "Exit the bedroom, enter the bathroom, wait at the toilet. ",
+    "instruction_sha256": "90ca6464335d102214fe820c9dc18117584b3527c0f5d140fac314215a010d36",
+    "canonical_episode_sha256": "d5934ea7576ecbe96093aa6b7cc8c097081b651382898f7c7ce1410fbfd3740a"
+  },
+  "licenses": {
+    "vlnce_code": "https://github.com/jacobkrantz/VLN-CE/blob/master/LICENSE",
+    "matterport_terms": "https://niessner.github.io/Matterport/"
+  }
+}

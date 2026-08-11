@@ -33,7 +33,7 @@ from dimos.benchmark.evaluation.models import (
     EvaluationRunSpecification,
 )
 from dimos.benchmark.evaluation.progress import ProgressSink, StatusProgress, emit_progress
-from dimos.benchmark.evaluation.protocol import EvaluationContext
+from dimos.benchmark.evaluation.protocol import EvaluationContext, EvaluationRuntime
 from dimos.benchmark.evaluation.registry import resolve_evaluation
 from dimos.benchmark.evaluation.runtime import CodePolicyRuntimeFactory
 
@@ -64,9 +64,11 @@ def execute_evaluation(
     run_id = str(uuid4())
     started_at = datetime.now(timezone.utc)
     started = time.monotonic()
-    runtime = CodePolicyRuntimeFactory(
+    runtime = _make_runtime(
+        resolved.evaluation.runtime_profile,
         api_key=api_key,
         workspace=temporary,
+        condition=specification.runtime,
         progress=progress,
     )
     context = EvaluationContext(
@@ -139,3 +141,16 @@ def _validate_output(output: Path) -> None:
 
 def _redact_error(message: str, api_key: str) -> str:
     return message.replace(api_key, "[REDACTED]")
+
+
+def _make_runtime(
+    profile: str,
+    **kwargs: object,
+) -> EvaluationRuntime:
+    if profile == "code-policy-v1":
+        return CodePolicyRuntimeFactory(**kwargs)  # type: ignore[arg-type]
+    if profile == "live-agent-v1":
+        from dimos.benchmark.evaluation.live_agent import LiveAgentRuntimeFactory
+
+        return LiveAgentRuntimeFactory(**kwargs)  # type: ignore[arg-type]
+    raise ValueError(f"Unsupported Evaluation runtime profile {profile!r}")

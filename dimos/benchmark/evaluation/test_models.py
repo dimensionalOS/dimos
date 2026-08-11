@@ -25,6 +25,7 @@ from dimos.benchmark.evaluation.models import (
     EvaluationRun,
     EvaluationRunSpecification,
     InlineNativeResult,
+    RuntimeCondition,
     RuntimeIdentity,
 )
 
@@ -41,10 +42,12 @@ def test_completed_run_requires_evaluation_report() -> None:
         EvaluationRun(
             run_id="run",
             specification=EvaluationRunSpecification(
-                evaluation=EvaluationReference(name="fixture")
+                runtime=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+                evaluation=EvaluationReference(name="fixture"),
             ),
             evaluation=EvaluationIdentity(name="fixture", provider="tests", version="1"),
             runtime=RuntimeIdentity(
+                profile="code-policy-v1",
                 driver_version="test",
                 model="gpt-5.6-luna",
                 thinking_level="medium",
@@ -62,3 +65,21 @@ def test_native_result_preserves_nested_benchmark_payload() -> None:
     report = EvaluationReport(native_result=InlineNativeResult(value=payload))
 
     assert report.model_dump(mode="json")["native_result"]["value"] == payload
+
+
+def test_run_specification_requires_runtime_condition() -> None:
+    with pytest.raises(ValidationError, match="runtime"):
+        EvaluationRunSpecification.model_validate(
+            {"schema_version": "2.0", "evaluation": {"name": "fixture"}}
+        )
+
+
+def test_run_specification_rejects_obsolete_schema() -> None:
+    with pytest.raises(ValidationError, match="schema_version"):
+        EvaluationRunSpecification.model_validate(
+            {
+                "schema_version": "1.0",
+                "runtime": {"model": "gpt-5.6-luna", "thinking_level": "medium"},
+                "evaluation": {"name": "fixture"},
+            }
+        )

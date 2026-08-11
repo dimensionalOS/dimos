@@ -67,6 +67,10 @@ class PiExportError(RuntimeError):
     pass
 
 
+class PiRunCancelledError(PiRunError):
+    """The evaluator stopped an in-flight Pi session."""
+
+
 class PiCliRunner:
     """Thin stock-CLI binding; the extension owns only the `python_exec` tool."""
 
@@ -102,6 +106,7 @@ class PiCliRunner:
         mcp_url: str,
         api_key: str,
         run_dir: Path,
+        cancel: threading.Event | None = None,
     ) -> PiRunResult:
         session_dir = run_dir / "pi-session"
         agent_dir = run_dir / ".pi-agent"
@@ -190,16 +195,42 @@ class PiCliRunner:
         for reader in readers:
             reader.start()
         timed_out = False
+        cancelled = False
         try:
-            process.wait(timeout=self.timeout_s)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            if cancel is None:
+                try:
+                    process.wait(timeout=self.timeout_s)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            else:
+                deadline = time.monotonic() + self.timeout_s
+                while process.poll() is None:
+                    if cancel.wait(0.1):
+                        cancelled = True
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    try:
+                        process.wait(timeout=min(remaining, 0.1))
+                    except subprocess.TimeoutExpired:
+                        pass
+            if cancelled or timed_out:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        except BaseException:
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            raise
         finally:
             for reader, stream in zip(
                 readers,
@@ -213,6 +244,12 @@ class PiCliRunner:
 
         stderr = "".join(stderr_parts)
         transcript_path = _latest_transcript(session_dir)
+        if cancelled:
+            raise PiRunCancelledError(
+                "Pi was cancelled by the evaluator",
+                stderr=stderr,
+                transcript_path=transcript_path,
+            )
         if timed_out:
             raise PiRunError(
                 f"Pi timed out after {self.timeout_s:g}s",

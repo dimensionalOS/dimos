@@ -1,0 +1,59 @@
+# Copyright 2026 Dimensional Inc.
+# Licensed under the Apache License, Version 2.0.
+
+FROM docker.io/mambaorg/micromamba@sha256:0d2870c1159dfb0c285e1c942c68385cd1110255cc9551838a29e48793e21af1
+
+ARG DEBIAN_FRONTEND=noninteractive
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates git libegl1 libgl1-mesa-glx libglib2.0-0 libxext6 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN micromamba create -y -n vlnce -c aihabitat -c pytorch -c conda-forge -c defaults \
+        python=3.6.13 numpy=1.19.5 numba=0.53.1 scipy=1.5.2 \
+        pytorch=1.10.2=py3.6_cpu_0 \
+        habitat-sim=0.1.7=py3.6_headless_linux_856d4b08c1a2632626bf0d205bf46471a99502b7 \
+    && micromamba clean -afy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libopengl0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git init /opt/habitat-lab \
+    && git -C /opt/habitat-lab remote add origin https://github.com/facebookresearch/habitat-lab.git \
+    && git -C /opt/habitat-lab fetch --depth=1 origin d6ed1c0a0e786f16f261de2beafe347f4186d0d8 \
+    && git -C /opt/habitat-lab checkout FETCH_HEAD \
+    && /opt/conda/envs/vlnce/bin/python -m pip install --no-cache-dir \
+        -e /opt/habitat-lab \
+        dtw==1.4.0 fastdtw==0.3.4 grpcio==1.48.2 protobuf==3.19.6 \
+        gym==0.17.3 networkx==2.5.1 opencv-python==4.5.5.64 \
+        pickle5==0.0.12 yacs==0.1.8
+
+RUN git init /opt/VLN-CE \
+    && git -C /opt/VLN-CE remote add origin https://github.com/jacobkrantz/VLN-CE.git \
+    && git -C /opt/VLN-CE fetch --depth=1 origin 729d141b2ee10628061ada74dd3a5b9f70faeba5 \
+    && git -C /opt/VLN-CE checkout FETCH_HEAD
+
+COPY container/overlays/habitat_extensions_init.py /opt/VLN-CE/habitat_extensions/__init__.py
+
+RUN /opt/conda/envs/vlnce/bin/python -m pip install --no-cache-dir dataclasses==0.8
+
+ENV PATH=/opt/conda/envs/vlnce/bin:$PATH \
+    PYTHONPATH=/opt/VLN-CE:/runtime \
+    LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libEGL.so.1:/usr/lib/x86_64-linux-gnu/libGLdispatch.so.0 \
+    MAGNUM_LOG=quiet \
+    HABITAT_SIM_LOG=quiet
+
+COPY container/runtime/ /runtime/
+COPY protocol/__init__.py \
+     protocol/vlnce_public_v1.proto \
+     protocol/vlnce_public_v1_pb2.py \
+     protocol/vlnce_public_v1_pb2_grpc.py \
+     protocol/contract.py \
+     protocol/session.py \
+     /runtime/vlnce_runtime/protocol/
+COPY container/runtime-lock.v1.json /runtime/runtime-lock.v1.json
+WORKDIR /runtime
+ENTRYPOINT ["python", "-m", "vlnce_runtime"]
+CMD ["serve"]

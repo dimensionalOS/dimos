@@ -29,7 +29,9 @@ from dimos.benchmark.evaluation.protocol import Evaluation
 
 ENTRY_POINT_GROUP = "dimos.evaluations"
 LOCAL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-BUILTIN_EVALUATIONS: dict[str, str] = {}
+BUILTIN_EVALUATIONS: dict[str, str] = {
+    "vlnce-r2r": "dimos.benchmark.vlnce_r2r.evaluation:vlnce_r2r",
+}
 
 
 class EvaluationRegistryError(ValueError):
@@ -115,7 +117,7 @@ def _load_target(path: str, name: str) -> Any:
 def _validate_target(name: str, target: Any) -> Evaluation:
     if not isinstance(target, Evaluation):
         raise EvaluationRegistryError(
-            f"Evaluation {name!r} must expose name, config_model, and run()"
+            f"Evaluation {name!r} must expose name, runtime_profile, config_model, and run()"
         )
     config_model = target.config_model
     if not isinstance(config_model, type) or not issubclass(config_model, BaseModel):

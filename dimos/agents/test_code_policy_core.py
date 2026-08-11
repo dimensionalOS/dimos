@@ -20,7 +20,13 @@ from pathlib import Path
 import cloudpickle
 import pytest
 
-from dimos.agents.code_policy_core import validate_policy_callable
+from dimos.agents.code_policy_core import (
+    CodePolicySessionConfig,
+    LiveDimosEnvironment,
+    _bootstrap_source,
+    _kernel_environment,
+    validate_policy_callable,
+)
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
 from dimos.memory2.store.sqlite import SqliteStore
@@ -85,3 +91,21 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
 
     assert "('debug-1', False)" in result
     assert len(submitted) == 1
+
+
+def test_live_repl_bootstraps_public_runtime_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ORDINARY_SETTING", "retained")
+    environment = LiveDimosEnvironment(recording_path="/attempt/recording.db")
+    config = CodePolicySessionConfig(environment=environment)
+
+    source = _bootstrap_source(environment)
+    kernel_environment = _kernel_environment(config)
+
+    assert "memory = SqliteStore" in source
+    assert "app = Dimos.connect()" in source
+    assert "submit_policy" not in source
+    assert "OPENAI_API_KEY" not in kernel_environment
+    assert kernel_environment["ORDINARY_SETTING"] == "retained"

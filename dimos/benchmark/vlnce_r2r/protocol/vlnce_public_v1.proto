@@ -1,0 +1,146 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package dimos.benchmark.vlnce_r2r.public.v1;
+
+service VlncePublicGateway {
+  rpc Stream(stream ClientMessage) returns (stream ServerMessage);
+}
+
+message Handshake {
+  string attempt_id = 1;
+  string case_id = 2;
+  string episode_id = 3;
+  string protocol_revision = 4;
+  string world_frame = 5;
+  string base_frame = 6;
+  string camera_frame = 7;
+  string rgb_encoding = 8;
+  string depth_encoding = 9;
+  double max_linear_x = 10;
+  double max_linear_y = 11;
+  double max_angular_z = 12;
+  double control_period_seconds = 13;
+  repeated string capabilities = 14;
+}
+
+message LifecycleCommand {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    BEGIN = 1;
+    CANCEL = 2;
+  }
+  Kind kind = 1;
+}
+
+message PlanarControl {
+  uint64 command_sequence = 1;
+  uint64 observation_sequence = 2;
+  double linear_x = 3;
+  double linear_y = 4;
+  double angular_z = 5;
+}
+
+message SubmitRoute {
+  uint64 command_sequence = 1;
+  uint64 observation_sequence = 2;
+}
+
+message ClientMessage {
+  oneof payload {
+    Handshake handshake = 1;
+    LifecycleCommand lifecycle = 2;
+    PlanarControl control = 3;
+    SubmitRoute submit_route = 4;
+  }
+}
+
+message Calibration {
+  uint32 width = 1;
+  uint32 height = 2;
+  double fx = 3;
+  double fy = 4;
+  double cx = 5;
+  double cy = 6;
+}
+
+message Pose {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double qx = 4;
+  double qy = 5;
+  double qz = 6;
+  double qw = 7;
+}
+
+message OccupancyMap {
+  string frame_id = 1;
+  double resolution = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  Pose origin = 5;
+  bytes traversability = 6;
+  string encoding = 7;
+}
+
+message Observation {
+  uint64 sequence = 1;
+  int64 monotonic_time_ns = 2;
+  string world_frame = 3;
+  string base_frame = 4;
+  string camera_frame = 5;
+  Pose world_from_base = 6;
+  Pose base_from_camera = 7;
+  Calibration rgb_calibration = 8;
+  bytes rgb = 9;
+  string rgb_encoding = 10;
+  Calibration depth_calibration = 11;
+  bytes depth = 12;
+  string depth_encoding = 13;
+  OccupancyMap static_map = 14;
+  uint64 dropped_observations = 15;
+}
+
+message Ready {
+  Handshake negotiated = 1;
+}
+
+message Acknowledgement {
+  uint64 command_sequence = 1;
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    CONTROL_ACCEPTED = 1;
+    ROUTE_SUBMITTED = 2;
+    CANCELLATION_ACCEPTED = 3;
+  }
+  Kind kind = 2;
+}
+
+message PublicError {
+  string code = 1;
+  string message = 2;
+  bool terminal = 3;
+}
+
+message ServerMessage {
+  oneof payload {
+    Ready ready = 1;
+    Observation observation = 2;
+    Acknowledgement acknowledgement = 3;
+    PublicError error = 4;
+  }
+}
