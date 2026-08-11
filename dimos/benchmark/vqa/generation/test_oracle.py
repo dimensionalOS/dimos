@@ -19,6 +19,7 @@ from dimos.benchmark.vqa.generation.primitives.choices import height_choice_wind
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     classify_door_plane_angle,
+    classify_forward_corridor,
     estimate_ground_plane,
 )
 from dimos.benchmark.vqa.generation.question_agent import (
@@ -362,6 +363,7 @@ def test_local_registry_exposes_geometry_tools() -> None:
         "fit_ground_plane",
         "measure_height",
         "classify_door_state",
+        "classify_forward_path",
         "bucket_measurement",
     }
 
@@ -415,6 +417,20 @@ def test_closest_object_uses_point_cloud_centroids_and_rejects_ties(monkeypatch:
         primitives.select_closest_object(target, [close, far]).rejection_reason
         == "ambiguous_object_proximity"
     )
+
+
+def test_forward_corridor_requires_ground_support_and_detects_obstacles() -> None:
+    ground = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    floor = np.asarray(
+        [
+            [0.0, 1.0, depth]
+            for depth in (0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8)
+        ]
+    )
+
+    assert classify_forward_corridor(floor, ground)[0] == "clear"
+    obstacle = np.repeat(np.asarray([[0.0, 0.5, 1.0]]), 4, axis=0)
+    assert classify_forward_corridor(np.vstack((floor, obstacle)), ground)[0] == "blocked"
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:

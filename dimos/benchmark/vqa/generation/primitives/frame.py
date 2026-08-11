@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.benchmark.vqa.generation.geometry import project_visible_points
 from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     ClosestObjectResult,
     DoorStateResult,
+    ForwardPathResult,
     HeightMeasurementResult,
 )
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     PlaneFitResult,
     classify_door_plane_angle,
+    classify_forward_corridor,
     estimate_ground_plane,
     fit_surface_plane,
     points_around_mask,
@@ -224,6 +227,21 @@ class FramePerceptionPrimitives:
         if len(distances) > 1 and distances[1][0] - distances[0][0] < 0.15:
             return ClosestObjectResult(None, None, (), "ambiguous_object_proximity")
         return ClosestObjectResult(distances[0][1], distances[0][0], ("object_centroid_proximity",))
+
+    def classify_forward_path(self) -> ForwardPathResult:
+        """Classify the observed camera-forward corridor as clear or blocked."""
+        ground_fit = self.fit_ground_plane()
+        if ground_fit.estimate is None:
+            return ForwardPathResult(
+                None,
+                0,
+                ("ground_plane_rejected", *ground_fit.quality_flags),
+                ground_fit.rejection_reason,
+            )
+        projected = project_visible_points(self.frame)
+        points = np.asarray(projected.camera_points, dtype=np.float64)
+        state, flags, reason = classify_forward_corridor(points, ground_fit.estimate)
+        return ForwardPathResult(state, len(points), flags, reason)
 
     def _object_points(self, object: GroundedObject) -> np.ndarray | None:
         mask = self._object_masks.get(object.id)

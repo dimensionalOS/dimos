@@ -22,7 +22,7 @@ QUESTION_PROMPT = """Select up to 5 challenging but visually well-supported sing
 Inspect only this image. Do not assume depth, point clouds, calibration, metadata, or temporal context.
 Return JSON only: an array of objects with kind, object_query, and threshold_m only for
 within_distance, plus candidate_queries only for closest_object. kind must be one of presence,
-horizontal_direction, within_distance, compare_nearest_by_side, door_state, or closest_object.
+horizontal_direction, within_distance, compare_nearest_by_side, door_state, closest_object, or forward_path.
 Use threshold_m: 3.0 for within_distance.
 Use image context to select only intents likely to produce a useful geometric case: emit
 compare_nearest_by_side only when at least two visible instances of the same object appear on
@@ -31,6 +31,8 @@ or directional intents over presence. Emit door_state only for a clearly visible
 visible structure. Diversify object classes and question families when the scene supports them.
 Emit closest_object only when one target and at least two distinct candidate object types are
 visible; candidate_queries must name the visible candidate types.
+Emit forward_path only when the center foreground and visible floor provide enough context to judge
+the local path directly ahead. Use object_query: "forward path" for forward_path.
 Do not return bare object names, floors, walls, ceilings, background surfaces,
 questions, answers, explanations, Markdown, or information not visible in the image."""
 
@@ -47,10 +49,10 @@ count choices for a visibly repeated object, and height for an upright grounded 
 closest-object questions, use distinct visible candidate object types as the fixed choices. Use concise,
 mutually exclusive fixed choices with two to four options. For a clearly visible door with nearby
 visible structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use
-object_queries for every referenced
-object and tool_hints from "detect_objects", "segment_detections", "ground_masks",
+the fixed choices ["clear", "blocked"] only for a visibly supported local path directly ahead.
+Use object_queries for every referenced object and tool_hints from "detect_objects", "segment_detections", "ground_masks",
 "fit_ground_plane", "select_nearest_object", "measure_height", "classify_door_state", or
-"select_closest_object", "bucket_measurement" when applicable. Use visibility/presence questions only when no stronger
+"select_closest_object", "classify_forward_path", "bucket_measurement" when applicable. Use visibility/presence questions only when no stronger
 geometric question is available.
 Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
 metric distances without a supplied choice contract. Use only visible objects. Do not include
@@ -95,6 +97,7 @@ class OpenAIQuestionAgent:
                 "compare_nearest_by_side",
                 "door_state",
                 "closest_object",
+                "forward_path",
             ):
                 raise ValueError(f"unsupported question kind: {kind!r}")
             if not isinstance(query, str) or not query:
@@ -108,6 +111,8 @@ class OpenAIQuestionAgent:
             candidates = _string_tuple(item.get("candidate_queries"), "candidate_queries")
             if kind == "closest_object" and (len(candidates) < 2 or query in candidates):
                 raise ValueError("closest_object requires two distinct candidate_queries")
+            if kind == "forward_path" and query != "forward path":
+                raise ValueError('forward_path requires object_query "forward path"')
             intents.append(QuestionIntent(kind, query, threshold, candidates))
         return intents
 

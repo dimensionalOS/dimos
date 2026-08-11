@@ -94,6 +94,14 @@ class LocalOracleToolRegistry:
                 ),
             ),
             StructuredTool.from_function(
+                self.classify_forward_path,
+                name="classify_forward_path",
+                description=(
+                    "Classify the visible camera-forward corridor as clear or blocked from point-cloud "
+                    "ground and obstacle support. Rejects incomplete or ambiguous visibility."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.bucket_measurement,
                 name="bucket_measurement",
                 description=(
@@ -296,6 +304,35 @@ class LocalOracleToolRegistry:
         tool_result = OracleToolResult(
             "classify_door_state",
             object.label,
+            (evidence,),
+            choice=result.state,
+            quality_flags=result.quality_flags,
+        )
+        self._results.append(tool_result)
+        return json.dumps(_tool_payload(tool_result))
+
+    def classify_forward_path(self) -> str:
+        """Classify the observed local corridor directly ahead of the camera."""
+        result = self._primitives.classify_forward_path()
+        if result.state is None:
+            return self._record_rejection(
+                "classify_forward_path",
+                "",
+                list(result.quality_flags),
+                result.rejection_reason,
+            )
+        evidence = OracleEvidence(
+            f"forward-path:v1:{self._primitives.frame.id}",
+            "v1",
+            "forward-path",
+            "forward path",
+            0.0,
+            "center",
+            result.point_count,
+        )
+        tool_result = OracleToolResult(
+            "classify_forward_path",
+            "forward path",
             (evidence,),
             choice=result.state,
             quality_flags=result.quality_flags,

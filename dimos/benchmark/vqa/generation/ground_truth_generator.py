@@ -23,6 +23,8 @@ class VqaGroundTruthGenerator:
         self.primitives = primitives
 
     def answer(self, frame: CalibratedFrame, intent: QuestionIntent) -> GroundTruthResult:
+        if intent.kind == "forward_path":
+            return _classify_forward_path(frame, intent, self.primitives)
         objects, trace = self.ground(frame, intent.object_query)
         return self._answer_from_objects(frame, intent, objects, trace)
 
@@ -109,6 +111,8 @@ def _render_question(intent: QuestionIntent) -> str:
         return f"Is the {intent.object_query} open or closed?"
     if intent.kind == "closest_object":
         return f"Which object is closest to the {intent.object_query}: {', '.join(intent.candidate_queries)}?"
+    if intent.kind == "forward_path":
+        return "Is the path directly ahead clear or blocked?"
     return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
 
 
@@ -222,6 +226,28 @@ def _select_closest_object(
         tuple([*objects, *candidates]),
         trace,
     )
+
+
+def _classify_forward_path(
+    frame: CalibratedFrame, intent: QuestionIntent, primitives: FramePerceptionPrimitives
+) -> GroundTruthResult:
+    result = primitives.classify_forward_path()
+    trace = (
+        ToolTrace("classify_forward_path", result.state or result.rejection_reason or "rejected"),
+    )
+    if result.state is None:
+        return _rejected_result(
+            frame, intent, [], trace, result.rejection_reason or "forward_path_rejected"
+        )
+    example = VqaExample(
+        f"{frame.id}-forward-path",
+        _render_question(intent),
+        result.state,
+        "choice",
+        (),
+        ("clear", "blocked"),
+    )
+    return GroundTruthResult(intent, example, "answered", result.state, None, (), trace)
 
 
 def _rejected_result(

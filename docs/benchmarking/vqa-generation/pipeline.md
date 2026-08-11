@@ -67,6 +67,7 @@ every family. Private grounding still rejects unsupported or ambiguous candidate
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
 | Closest object | `Which object is closest to the chair: table or lamp?` | `table`, `lamp` |
 | Door state | `Is the door open or closed?` | `open`, `closed` |
+| Forward path | `Is the path directly ahead clear or blocked?` | `clear`, `blocked` |
 
 ### Agentic
 
@@ -110,6 +111,10 @@ robust plane fit in a narrow ring around that mask. The planes must be either ne
 Closest-object questions require exactly one grounded target and one grounded instance for every
 candidate choice. They compare private support-point centroids and reject candidates whose nearest
 two distances are within `0.15 m`.
+
+Forward-path questions require a fitted visible ground plane and enough ground support in each third
+of the center camera-forward corridor from `0.5-3.0 m`. Supported non-ground points block the
+corridor; incomplete ground support or sparse obstacle evidence is rejected.
 
 ## 4. Create Answers
 
@@ -169,6 +174,7 @@ The private oracle chooses a sequence from the same read-only primitives used by
 | `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
 | `measure_height` | object ID, plane ID | Measurement ID, private height, uncertainty, provenance, quality flags. |
 | `classify_door_state` | object ID | Public `open` or `closed` choice, or a private geometry rejection. |
+| `classify_forward_path` | none | Public `clear` or `blocked` choice, or a private visibility rejection. |
 | `bucket_measurement` | measurement ID | Public answer-conditioned height choices and matching choice. |
 
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The

@@ -155,6 +155,21 @@ def test_question_agent_accepts_closest_object_intent() -> None:
     assert intents == [QuestionIntent("closest_object", "chair", None, ("table", "lamp"))]
 
 
+def test_question_agent_accepts_forward_path_intent() -> None:
+    class _ForwardPathQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            assert "forward_path" in prompt
+            return '[{"kind":"forward_path","object_query":"forward path"}]'
+
+    frame, _ = _frame_and_detection()
+
+    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _ForwardPathQuestionModel())).propose(
+        frame.image
+    )
+
+    assert intents == [QuestionIntent(kind="forward_path", object_query="forward path")]
+
+
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
