@@ -95,4 +95,39 @@ jobs:
           CODSPEED_PROFILER_ENABLED: "false"
         with:
           mode: walltime
-          run: uv run pytest --codspeed -m '' --no-cov
+          run: uv run pytest --codspeed -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
+
+  simulation:
+    # Single-process instruction-count benchmark (Valgrind) of the replay
+    # compute pipeline; runs on hosted runners — no self-hosted, no workers.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # OIDC upload to CodSpeed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Fetch the replay dataset
+        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      # pyaudio build needs portaudio; the recording's JPEG frames need turbojpeg.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Setup Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+      - name: Pre-extract the replay database
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation
+          run: uv run pytest --codspeed -m '' --no-cov dimos/robot/unitree/go2/test_replay_pipeline_benchmark.py

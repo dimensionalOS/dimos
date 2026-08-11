@@ -71,7 +71,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2))
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.5}
 
 
-def _expected_counts(db_path: str) -> dict[str, int]:
+def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]:
     """Windowed per-stream counts straight from the DB.
 
     Mirrors ReplayConnection's stream-name fallback (mid360-era recordings use
@@ -82,7 +82,7 @@ def _expected_counts(db_path: str) -> dict[str, int]:
     store = SqliteStore(path=db_path, must_exist=True)
     store.start()
     try:
-        replay = store.replay(duration=DURATION)
+        replay = store.replay(duration=duration)
         available = replay.list_streams()
 
         def first_present(*names: str) -> str:
