@@ -376,9 +376,13 @@ def test_hosted_sticks_and_arm_engagement_coexist() -> None:
     the combined mode the whole feature exists for."""
     m = _module()
     now = _fresh_joy(m, Hand.LEFT, Hand.RIGHT)
+    # Both streams per hand: engagement handling is fail-closed and drops
+    # any hand whose pose stream is not live alongside its Joy stream.
     m._on_cmd_raw(_joy_frame("left", stick_y=-0.8))
+    m._on_cmd_raw(_stamped_pose("left", time.time()))
     m._on_cmd_raw(_joy_frame("right", primary=True))
     m._on_cmd_raw(_stamped_pose("right", time.time()))
+    m._pose_rx_ts[Hand.LEFT] = m._pose_rx_ts[Hand.RIGHT] = time.monotonic()
     m._handle_engage()
     assert m._is_engaged[Hand.RIGHT]
     assert m._should_publish(Hand.RIGHT)
