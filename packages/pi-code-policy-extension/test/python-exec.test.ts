@@ -44,6 +44,29 @@ test("registers one tool that calls MCP directly", async () => {
   await installPythonExec(pi, "http://127.0.0.1:1/mcp", async () => client);
   assert.equal(tool?.name, "python_exec");
   assert.equal(tool?.description, "Canonical CodePolicy description");
+  const theme = {
+    bold: (value: string) => value,
+    fg: (_color: string, value: string) => value,
+  } as never;
+  const call = tool!.renderCall!(
+    { code: "def policy():\n    return 1", timeout_s: 3 },
+    theme,
+    {} as never,
+  );
+  const renderedText = (lines: string[]) => lines.map((line) => line.trimEnd()).join("\n");
+  assert.equal(renderedText(call.render(200)), "Python\ndef policy():\n    return 1");
+  const recorded = "In [1] completed\n\nfirst line\nsecond line";
+  const renderResult = (expanded: boolean) =>
+    renderedText(
+      tool!.renderResult!(
+        { content: [{ type: "text", text: recorded }], details: {} },
+        { expanded, isPartial: false },
+        theme,
+        { isError: false } as never,
+      ).render(200),
+    );
+  assert.equal(renderResult(false), `Python result\n${recorded}`);
+  assert.equal(renderResult(true), `Python result\n${recorded}`);
   const result = await tool!.execute("call-1", { code: "1 + 1", timeout_s: 3 }, undefined, undefined, {} as never);
   assert.deepEqual(result.content, [{ type: "text", text: "2" }]);
   await shutdown!();

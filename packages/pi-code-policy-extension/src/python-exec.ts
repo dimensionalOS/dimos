@@ -3,7 +3,8 @@ import {
   StreamableHTTPClientTransport,
   type CallToolResult,
 } from "@modelcontextprotocol/client";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { highlightCode, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const TOOL_NAME = "python_exec";
@@ -59,6 +60,24 @@ export async function installPythonExec(
       { additionalProperties: false },
     ),
     executionMode: "sequential",
+    renderCall: (params, theme) => {
+      const title = theme.fg("toolTitle", theme.bold("Python"));
+      const code = highlightCode(params.code, "python").join("\n");
+      return new Text(`${title}\n${code}`, 0, 0);
+    },
+    renderResult: (result, _options, theme, context) => {
+      const output = result.content
+        .filter((item): item is Extract<typeof item, { type: "text" }> => item.type === "text")
+        .map((item) => item.text)
+        .join("\n");
+      const isError = context.isError;
+      const title = theme.fg(
+        isError ? "error" : "success",
+        theme.bold(isError ? "Python error" : "Python result"),
+      );
+      const body = highlightCode(output || "(completed)", "python").join("\n");
+      return new Text(`${title}\n${body}`, 0, 0);
+    },
     execute: async (_id, params) => {
       const timeoutSeconds = params.timeout_s ?? DEFAULT_TIMEOUT_SECONDS;
       const result = await client.callTool(
