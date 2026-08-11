@@ -349,3 +349,38 @@ def test_real_stick_input_takes_priority_over_gesture() -> None:
     # Stick semantics win: full stick-forward, not the gesture value.
     assert twist.linear.x == pytest.approx(m.config.linear_speed)
     assert m._drive_anchor[Hand.LEFT] is None or True  # anchor state irrelevant here
+
+
+def test_hosted_stick_frames_drive_the_chassis_end_to_end() -> None:
+    """A stick-deflected Joy frame through the broker ingress produces
+    chassis velocity — the full remote joystick path, no headset needed.
+    (Field evidence 2026-08-10: the portal's VR client does transmit
+    real stick values in axes[0..1].)"""
+    m = _module()
+    now = _fresh_joy(m, Hand.LEFT, Hand.RIGHT)
+    # Left stick pushed fully forward (Quest up = -1), right stick right.
+    m._on_cmd_raw(_joy_frame("left", stick_y=-1.0))
+    m._on_cmd_raw(_joy_frame("right", stick_x=1.0))
+    twist = m._chassis_twist(m._controllers[Hand.LEFT], m._controllers[Hand.RIGHT], now)
+    assert twist.linear.x == pytest.approx(m.config.linear_speed)
+    assert twist.angular.z == pytest.approx(-m.config.angular_speed)
+    # Sticks released: back to zero (dead-man semantics).
+    m._on_cmd_raw(_joy_frame("left"))
+    m._on_cmd_raw(_joy_frame("right"))
+    twist = m._chassis_twist(m._controllers[Hand.LEFT], m._controllers[Hand.RIGHT], now)
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_hosted_sticks_and_arm_engagement_coexist() -> None:
+    """Drive with the left stick while the right hand engages the arm —
+    the combined mode the whole feature exists for."""
+    m = _module()
+    now = _fresh_joy(m, Hand.LEFT, Hand.RIGHT)
+    m._on_cmd_raw(_joy_frame("left", stick_y=-0.8))
+    m._on_cmd_raw(_joy_frame("right", primary=True))
+    m._on_cmd_raw(_stamped_pose("right", time.time()))
+    m._handle_engage()
+    assert m._is_engaged[Hand.RIGHT]
+    assert m._should_publish(Hand.RIGHT)
+    twist = m._chassis_twist(m._controllers[Hand.LEFT], m._controllers[Hand.RIGHT], now)
+    assert twist.linear.x > 0.0
