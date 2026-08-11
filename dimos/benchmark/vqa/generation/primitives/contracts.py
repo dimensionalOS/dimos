@@ -20,17 +20,6 @@ class HeightMeasurementResult:
 
 
 @dataclass(frozen=True)
-class DoorStateResult:
-    """A conservative point-cloud classification of one door's state."""
-
-    object: GroundedObject
-    state: Literal["open", "closed"] | None
-    quality_flags: tuple[str, ...]
-    rejection_reason: str | None = None
-    angle_deg: float | None = None
-
-
-@dataclass(frozen=True)
 class ClosestObjectResult:
     """A point-cloud selected candidate nearest to one grounded target object."""
 
@@ -45,6 +34,40 @@ class HorizontalRelationResult:
     """A pairwise camera-frame horizontal relation or its explicit rejection."""
 
     relation: Literal["left", "right"] | None
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ObjectOnSupportResult:
+    """Verified direct support/contact separation, or an explicit conservative rejection."""
+
+    object: GroundedObject
+    support: GroundedObject
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+    answer: Literal["yes", "no"] | None = None
+
+
+@dataclass(frozen=True)
+class ObjectPlaneRelationResult:
+    """Private geometric relation of one visible object to a selected support plane."""
+
+    lower_clearance_m: float | None
+    upper_clearance_m: float | None
+    elevated_fraction: float | None
+    contact_point_count: int
+    planar_separation_m: float | None
+    contact_overlap_count: int
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OpeningWidthResult:
+    """A metric doorway opening width, or an explicit conservative rejection."""
+
+    measurement: OracleMeasurement | None
     quality_flags: tuple[str, ...]
     rejection_reason: str | None = None
 

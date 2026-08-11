@@ -69,6 +69,8 @@ every family. Private grounding still rejects unsupported or ambiguous candidate
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
 | Pairwise left/right | `Is the chair to the left or right of the table?` | `left`, `right` |
 | Height comparison | `Which is taller: the chair or the table?` | `chair`, `table` |
+| Direct support | `Is the box on the table?` | `yes`, `no` |
+| Opening width | `How wide is the doorway?` | `under 0.2 m`, `0.2 to under 0.5 m`, `0.5 to under 0.8 m`, `0.8 m or more` |
 | Closest object | `Which object is closest to the chair: table or lamp?` | `table`, `lamp` |
 | Door state | `Is the door open or closed?` | `open`, `closed` |
 | Forward path | `Is the path directly ahead clear or blocked?` | `clear`, `blocked` |
@@ -91,81 +93,64 @@ example, a private height of `0.42 m` produces:
 under 0.2 m | 0.2-0.6 m | 0.6-1.0 m | over 1.0 m
 ```
 
+The agentic oracle is not bound to a constrained family. It can inspect individual detection, mask,
+object, and plane handles, choose its own tool sequence, and either return a cited answer or privately
+reject the proposal with the missing evidence.
+
 ## 3. Pre-Answer Grounding Checks
 
-For each referenced object:
+All referenced objects need a detected mask with enough visible 3D point support.
 
-1. MoonDream detects or point-localizes the object.
-2. EdgeTAM produces a mask.
-3. Visible calibrated point-cloud samples are projected into the mask.
-4. Mask area must meet `--min-mask-area-px`.
-5. Point support must meet `--min-foreground-points`.
+- Height: one grounded object and an accepted ground plane.
+- Door state: a door plane and nearby surrounding plane with a clear relative angle.
+- Closest object: one grounded target and one grounded instance per candidate.
+- Count and range: accepted grounded instances only.
+- Left/right and height comparison: one grounded instance per named object with clear separation.
+- Object on support: contact or clear separation relative to the support plane.
+- Opening width: one ground-connected aperture and stable surrounding-wall geometry.
+- Forward path: visible ground support across the forward corridor and supported obstacle evidence.
 
-Height questions also require:
-
-1. Accepted Open3D RANSAC ground plane.
-2. Exactly one grounded object and one mask.
-3. At least six points inside the object mask.
-4. At least four elevated points, with at least 60% of selected points elevated more than `0.02 m` above the plane.
-
-Door-state questions also require one grounded door, a robust plane fit for the door mask, and a
-robust plane fit in a narrow ring around that mask. The planes must be either nearly aligned
-(`closed`) or clearly rotated (`open`); slightly ajar or otherwise ambiguous doors are rejected.
-
-Closest-object questions require exactly one grounded target and one grounded instance for every
-candidate choice. They compare private support-point centroids and reject candidates whose nearest
-two distances are within `0.15 m`.
-
-Visible-count questions count only accepted grounded instances, rather than raw detections. Camera-range
-questions use the nearest grounded instance's camera-origin Euclidean range. Height comparisons require
-one accepted shared ground plane and one successful physical-height measurement per distinct object;
-overlapping measurement uncertainty intervals are rejected.
-
-Pairwise left/right questions require exactly one grounded instance for each named object. They compare
-their visible support-point centroids in the camera horizontal axis and reject separation under `0.1 m`.
-
-Forward-path questions require a fitted visible ground plane and enough ground support in each third
-of the center camera-forward corridor from `0.5-3.0 m`. Supported non-ground points block the
-corridor; incomplete ground support or sparse obstacle evidence is rejected.
+Missing, sparse, or ambiguous evidence rejects the question.
 
 ## 4. Create Answers
 
 ### Constrained
 
-Each deterministic family runs its own fixed sequence.
+Each deterministic family runs its own fixed sequence. `ground(A)` below is always the same private
+primitive chain:
+
+```text
+ground(A)
+-> detect_objects(A)
+-> segment_detections(A)
+-> ground_masks(A)
+-> accepted grounded A instances, or reject if the family requires an unavailable instance
+```
 
 ```text
 presence(A)
--> detect_objects(A) -> detection_id
--> segment_detections(detection_id) -> mask_id
--> ground_masks(mask_id) -> grounded A instances
+-> ground(A)
 -> no grounded A: reject
 -> one or more grounded A instances: yes
 ```
 
 ```text
 horizontal_direction(A)
--> detect_objects(A) -> detection_id
--> segment_detections(detection_id) -> mask_id
--> ground_masks(mask_id) -> grounded A instances
+-> ground(A)
 -> select_nearest_object(grounded A instances) -> nearest A
 -> nearest A horizontal_direction: left/center/right
 ```
 
 ```text
 within_distance(A, T)
--> detect_objects(A) -> detection_id
--> segment_detections(detection_id) -> mask_id
--> ground_masks(mask_id) -> grounded A instances
+-> ground(A)
 -> select_nearest_object(grounded A instances) -> nearest A
 -> nearest A range_m <= T: yes/no
 ```
 
 ```text
 compare_nearest_by_side(A)
--> detect_objects(A) -> detection_id
--> segment_detections(detection_id) -> mask_id
--> ground_masks(mask_id) -> grounded A instances
+-> ground(A)
 -> select_nearest_object(grounded A instances, left) -> nearest left A
 -> select_nearest_object(grounded A instances, right) -> nearest right A
 -> either side missing or tied: reject
@@ -174,27 +159,77 @@ compare_nearest_by_side(A)
 
 ```text
 visible_count(A)
--> detect_objects(A) -> segment_detections(...) -> ground_masks(...) -> grounded A instances
+-> ground(A)
 -> bucket accepted instance count: 1-2 / 3-4 / 5-7 / 8+
 ```
 
 ```text
 camera_range(A)
--> detect_objects(A) -> segment_detections(...) -> ground_masks(...) -> grounded A instances
+-> ground(A)
 -> select_nearest_object(...) -> bucket camera-origin range
 ```
 
 ```text
 compare_left_right(A, B)
--> ground exactly one A and one B -> compare camera-frame support centroids
+-> ground(A), ground(B)
+-> require exactly one accepted A and B
+-> compare camera-frame support centroids
 -> separation under 0.1 m: reject -> otherwise choose left/right
 ```
 
 ```text
 compare_height(A, B)
--> ground exactly one A and one B -> fit_ground_plane()
+-> ground(A), ground(B)
+-> require exactly one accepted A and B
+-> fit_ground_plane()
 -> measure_height(A, plane) and measure_height(B, plane)
 -> reject overlapping uncertainty intervals -> choose taller A/B
+```
+
+```text
+object_on_support(A, B)
+-> ground(A), ground(B)
+-> require exactly one accepted A and B
+-> fit_ground_plane() -> ground plane
+-> fit_object_surface_plane(B) -> support plane
+-> reject non-horizontal support plane
+-> measure_object_plane_relation(A, B, support plane, ground normal)
+-> clear separation: no -> unsupported or ambiguous geometry: reject -> otherwise yes
+```
+
+```text
+opening_width(A)
+-> detect_objects(A) -> segment_detections(A)
+-> require exactly one accepted aperture mask
+-> fit_ground_plane() -> ground plane
+-> measure_opening_width_from_mask(mask, ground plane)
+-> reject non-ground-connected, nonvertical, edge-clipped, or unstable aperture geometry
+-> bucket: under 0.2 / 0.2-0.5 / 0.5-0.8 / 0.8 m or more
+```
+
+```text
+closest_object(A, B, C, ...)
+-> ground(A), ground(B), ground(C), ...
+-> require exactly one target and one instance for every candidate type
+-> select_closest_object(target, candidates) from private support-point centroids
+-> reject ties within 0.15 m -> otherwise choose the closest candidate
+```
+
+```text
+door_state(A)
+-> ground(A) -> require exactly one door
+-> fit_object_surface_plane(door) -> door plane
+-> fit_object_surrounding_plane(door) -> surrounding plane
+-> measure_relative_plane_angle(door plane, surrounding plane)
+-> nearly aligned: closed; clearly rotated: open; intermediate/failed geometry: reject
+```
+
+```text
+forward_path()
+-> fit_ground_plane()
+-> classify_forward_corridor(visible camera points, ground plane)
+-> require ground support across each forward distance band
+-> supported elevated points: blocked; no supported obstacle: clear; otherwise reject
 ```
 
 ### Agentic
@@ -203,21 +238,19 @@ The private oracle chooses a sequence from the same read-only primitives used by
 
 | Tool | Input | Output |
 |---|---|---|
-| `detect_objects` | semantic query | Detection ID and private boxes. |
-| `segment_detections` | detection ID | Mask ID and accepted mask count. |
-| `ground_masks` | mask ID | Grounded object IDs, range, side, point support, evidence IDs. |
-| `select_nearest_object` | object IDs, optional side | Nearest grounded object ID. |
-| `count_grounded_objects` | object IDs | Fixed count bucket and cited grounded instances. |
-| `bucket_camera_range` | object ID | Fixed camera-origin range bucket and cited object. |
-| `compare_nearest_by_side` | object IDs | Public `left` or `right` choice from nearest grounded objects. |
-| `compare_left_right` | two object IDs | Public pairwise `left` or `right` relation, or an ambiguity rejection. |
-| `select_closest_object` | target ID, candidate IDs | Candidate nearest to target by private support-point centroids. |
+| `detect_objects` | semantic query | Individual opaque detection IDs and confidence. |
+| `segment_detection` | detection ID | Individual opaque mask IDs. |
+| `ground_mask` | mask ID | One grounded object ID and citable support evidence. |
 | `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
+| `get_object_pose` | object ID | Camera-frame grounding evidence: range, side, support count. |
+| `fit_object_surface_plane` | object ID | Plane ID from one object's visible support. |
+| `fit_mask_surrounding_plane` | mask ID | Plane ID from visible support around a mask. |
+| `measure_object_pair_distance` | two object IDs | Private 3D support-centroid distance. |
+| `measure_relative_plane_angle` | two plane IDs | Private unsigned angle between accepted planes. |
+| `measure_object_plane_relation` | object ID, support ID, support plane, ground plane | Clearance, contact, and projected-separation metrics. |
+| `measure_aperture_geometry` | mask ID, ground plane | Private ground-connected aperture span and uncertainty. |
+| `measure_forward_corridor` | ground plane | Private floor-support and elevated-obstacle metrics. |
 | `measure_height` | object ID, plane ID | Measurement ID, private height, uncertainty, provenance, quality flags. |
-| `compare_heights` | two object IDs, plane ID | Taller object choice from shared-plane measurements, or rejection. |
-| `classify_door_state` | object ID | Public `open` or `closed` choice, or a private geometry rejection. |
-| `classify_forward_path` | none | Public `clear` or `blocked` choice, or a private visibility rejection. |
-| `bucket_measurement` | measurement ID | Public answer-conditioned height choices and matching choice. |
 
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The
 oracle returns a candidate answer and cited evidence IDs. Deferred height choices are the sole

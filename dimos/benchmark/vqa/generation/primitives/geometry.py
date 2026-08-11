@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from dimos.benchmark.vqa.generation.geometry import project_visible_points
-from dimos.benchmark.vqa.models import CalibratedFrame, GroundPlaneEstimate
+from dimos.benchmark.vqa.models import CalibratedFrame, GroundPlaneEstimate, OracleMeasurement
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,26 @@ class PlaneFitResult:
 
     estimate: GroundPlaneEstimate | None
     quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OpeningGeometryResult:
+    """Opening width from a mask and surrounding structural plane."""
+
+    width_m: float | None
+    tolerance_m: float | None
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ForwardCorridorMeasurement:
+    """Private point-support metrics for the camera-forward corridor."""
+
+    ground_band_counts: tuple[int, int, int]
+    obstacle_count: int
+    point_count: int
     rejection_reason: str | None = None
 
 
@@ -150,38 +170,152 @@ def fit_surface_plane(points: np.ndarray) -> PlaneFitResult:
     )
 
 
-def classify_door_plane_angle(
-    door: GroundPlaneEstimate, surrounding: GroundPlaneEstimate
-) -> tuple[str | None, str | None, float]:
-    """Classify only clearly coplanar or rotated door and surrounding planes."""
-    alignment = abs(float(np.dot(door.normal, surrounding.normal)))
-    angle_deg = float(np.degrees(np.arccos(np.clip(alignment, -1.0, 1.0))))
-    if angle_deg <= 12.0:
-        return "closed", None, angle_deg
-    if angle_deg >= 25.0:
-        return "open", None, angle_deg
-    return None, "ambiguous_door_angle", angle_deg
+def measure_relative_plane_angle(
+    first: GroundPlaneEstimate, second: GroundPlaneEstimate
+) -> OracleMeasurement:
+    """Measure the unsigned angle between two accepted plane normals."""
+    alignment = abs(float(np.dot(first.normal, second.normal)))
+    return OracleMeasurement(
+        float(np.degrees(np.arccos(np.clip(alignment, -1.0, 1.0)))),
+        "deg",
+        2.0,
+        ("accepted_plane_normals",),
+        (),
+    )
 
 
 def classify_forward_corridor(
     points: np.ndarray, ground: GroundPlaneEstimate
 ) -> tuple[str | None, tuple[str, ...], str | None]:
     """Classify a visible camera-forward corridor as clear or blocked."""
+    measured = measure_forward_corridor(points, ground)
+    if measured.rejection_reason is not None:
+        return None, (), measured.rejection_reason
+    if measured.obstacle_count >= 4:
+        return "blocked", ("visible_forward_obstacle", "forward_ground_supported"), None
+    if measured.obstacle_count:
+        return None, (), "ambiguous_forward_obstacle"
+    return "clear", ("forward_ground_supported", "no_supported_forward_obstacle"), None
+
+
+def measure_forward_corridor(
+    points: np.ndarray, ground: GroundPlaneEstimate
+) -> ForwardCorridorMeasurement:
+    """Measure private floor and elevated-obstacle support in the camera-forward corridor."""
     if len(points) == 0:
-        return None, (), "insufficient_forward_support"
+        return ForwardCorridorMeasurement((0, 0, 0), 0, 0, "insufficient_forward_support")
     depth = points[:, 2]
     lateral_limit = depth * np.tan(np.radians(20.0))
     corridor = points[(depth >= 0.5) & (depth <= 3.0) & (np.abs(points[:, 0]) <= lateral_limit)]
     if len(corridor) < 12:
-        return None, (), "insufficient_forward_support"
+        return ForwardCorridorMeasurement(
+            (0, 0, 0), 0, len(corridor), "insufficient_forward_support"
+        )
     elevation = corridor @ np.asarray(ground.normal) + ground.offset_m
     ground_points = corridor[np.abs(elevation) <= 0.08]
-    for start, stop in ((0.5, 1.33), (1.33, 2.16), (2.16, 3.0)):
-        if int(((ground_points[:, 2] >= start) & (ground_points[:, 2] < stop)).sum()) < 3:
-            return None, (), "incomplete_forward_ground_support"
+    bands = tuple(
+        int(((ground_points[:, 2] >= start) & (ground_points[:, 2] < stop)).sum())
+        for start, stop in ((0.5, 1.33), (1.33, 2.16), (2.16, 3.0))
+    )
+    if any(count < 3 for count in bands):
+        return ForwardCorridorMeasurement(
+            bands, 0, len(corridor), "incomplete_forward_ground_support"
+        )
     obstacle_count = int((elevation > 0.15).sum())
-    if obstacle_count >= 4:
-        return "blocked", ("visible_forward_obstacle", "forward_ground_supported"), None
-    if obstacle_count:
-        return None, (), "ambiguous_forward_obstacle"
-    return "clear", ("forward_ground_supported", "no_supported_forward_obstacle"), None
+    return ForwardCorridorMeasurement(bands, obstacle_count, len(corridor))
+
+
+def measure_opening_width(
+    frame: CalibratedFrame, mask: np.ndarray, ground: GroundPlaneEstimate
+) -> OpeningGeometryResult:
+    """Measure a ground-connected vertical aperture from its silhouette and surrounding wall plane."""
+    if mask.shape != (frame.image.height, frame.image.width):
+        raise ValueError("segmentation mask dimensions must match the image")
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        (mask > 0).astype(np.uint8)
+    )
+    components = [
+        index for index in range(1, component_count) if stats[index, cv2.CC_STAT_AREA] >= 128
+    ]
+    if len(components) != 1:
+        return OpeningGeometryResult(None, None, (), "ambiguous_opening_component")
+    component = components[0]
+    x, y, width_px, height_px, _ = stats[component]
+    if x == 0 or y == 0 or x + width_px >= frame.image.width or y + height_px >= frame.image.height:
+        return OpeningGeometryResult(None, None, (), "opening_touches_image_edge")
+    structure = fit_surface_plane(points_around_mask(frame, (labels == component).astype(np.uint8)))
+    if structure.estimate is None:
+        return OpeningGeometryResult(
+            None,
+            None,
+            structure.quality_flags,
+            structure.rejection_reason or "structure_plane_rejected",
+        )
+    normal = np.asarray(structure.estimate.normal)
+    ground_normal = np.asarray(ground.normal)
+    if abs(float(normal @ ground_normal)) > np.sin(np.radians(20.0)):
+        return OpeningGeometryResult(
+            None, None, structure.quality_flags, "opening_structure_not_vertical"
+        )
+    direction = np.cross(ground_normal, normal)
+    direction_norm = float(np.linalg.norm(direction))
+    if direction_norm == 0:
+        return OpeningGeometryResult(
+            None, None, structure.quality_flags, "opening_width_axis_rejected"
+        )
+    direction /= direction_norm
+    component_mask = labels == component
+    rows = range(y + int(height_px * 0.3), y + max(int(height_px * 0.7), 1))
+    widths: list[float] = []
+    for row in rows:
+        columns = np.flatnonzero(component_mask[row])
+        if len(columns) < 2:
+            continue
+        left = _intersect_pixel_with_plane(frame, int(columns[0]), row, structure.estimate)
+        right = _intersect_pixel_with_plane(frame, int(columns[-1]), row, structure.estimate)
+        if left is not None and right is not None:
+            widths.append(abs(float((right - left) @ direction)))
+    if len(widths) < 5:
+        return OpeningGeometryResult(
+            None, None, structure.quality_flags, "insufficient_opening_scanlines"
+        )
+    median_width = float(np.median(widths))
+    mad = float(np.median(np.abs(np.asarray(widths) - median_width)))
+    if median_width < 0.4 or max(widths) - min(widths) > max(0.1, median_width * 0.1):
+        return OpeningGeometryResult(None, None, structure.quality_flags, "ambiguous_opening_width")
+    bottom_columns = np.flatnonzero(component_mask[y + height_px - 1])
+    if not len(bottom_columns):
+        return OpeningGeometryResult(
+            None, None, structure.quality_flags, "opening_not_ground_connected"
+        )
+    bottom = _intersect_pixel_with_plane(
+        frame, int(np.median(bottom_columns)), y + height_px - 1, structure.estimate
+    )
+    if bottom is None or abs(float(bottom @ ground_normal + ground.offset_m)) > 0.08:
+        return OpeningGeometryResult(
+            None, None, structure.quality_flags, "opening_not_ground_connected"
+        )
+    return OpeningGeometryResult(
+        median_width,
+        max(0.05, structure.estimate.residual_m + 1.4826 * mad),
+        (*structure.quality_flags, "ground_connected_vertical_opening", "stable_opening_scanlines"),
+    )
+
+
+def _intersect_pixel_with_plane(
+    frame: CalibratedFrame, x: int, y: int, plane: GroundPlaneEstimate
+) -> np.ndarray | None:
+    fx, fy, cx, cy = (
+        frame.camera_info.K[0],
+        frame.camera_info.K[4],
+        frame.camera_info.K[2],
+        frame.camera_info.K[5],
+    )
+    if fx <= 0 or fy <= 0:
+        return None
+    ray = np.asarray(((x - cx) / fx, (y - cy) / fy, 1.0))
+    denominator = float(np.asarray(plane.normal) @ ray)
+    if abs(denominator) < 1e-6:
+        return None
+    distance = -plane.offset_m / denominator
+    return ray * distance if distance > 0 else None

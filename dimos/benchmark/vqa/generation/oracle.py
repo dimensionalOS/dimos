@@ -9,6 +9,7 @@ import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
 from dimos.benchmark.vqa.models import (
     AcceptedOracleResult,
     AnswerContract,
@@ -99,7 +100,7 @@ class PrivateToolCallingOracle:
     def __init__(
         self,
         model: BaseChatModel,
-        max_tool_calls: int = 8,
+        max_tool_calls: int = 25,
         semantic_validator: SemanticEvidenceValidator | None = None,
     ) -> None:
         if max_tool_calls < 1:
@@ -118,7 +119,13 @@ class PrivateToolCallingOracle:
         messages: list[Any] = [
             SystemMessage(
                 "You are a private VQA oracle. Use only supplied local tools. Do not invent "
-                'evidence. Finish with JSON only: {"answer": value, "evidence_ids": [..]}.'
+                "evidence. Detection IDs can only be passed to segment_detection. Mask IDs can only "
+                "be passed to ground_mask. Only grounded object IDs can be passed to object and "
+                "geometry measurements. If grounding fails, reject rather than trying unrelated "
+                "tools. Finish with JSON only: either "
+                '{"answer": value, "evidence_ids": [..]} or '
+                '{"status": "rejected", "reason": "non-empty reason", "evidence_ids": [..]}. '
+                "Rejected results must not include an answer."
             ),
             HumanMessage(_proposal_prompt(proposal)),
         ]
@@ -153,7 +160,7 @@ class PrivateToolCallingOracle:
         return _rejected(proposal, "tool_call_limit", registry.results, trace)
 
 
-def create_openai_oracle(model: str, max_tool_calls: int = 8) -> PrivateToolCallingOracle:
+def create_openai_oracle(model: str, max_tool_calls: int = 25) -> PrivateToolCallingOracle:
     """Construct the private-only OpenAI tool-calling oracle."""
     from langchain_openai import ChatOpenAI
 
@@ -208,21 +215,19 @@ def _resolve_oracle_answer(
             raise ValueError("choice answer does not match cited measurement bucket")
         return answer, contract
     if isinstance(contract, DeferredHeightChoiceContract):
-        bucket_results = [
+        height_results = [
             result
             for result in results
-            if result.tool == "bucket_measurement" and result.choice is not None and result.choices
+            if (
+                result.tool == "measure_height"
+                and result.measurement is not None
+                and any(item.id in evidence_ids for item in result.evidence)
+            )
         ]
-        if len(bucket_results) != 1:
-            raise ValueError("deferred height answer requires exactly one measurement bucket")
-        bucket = bucket_results[0]
-        if not any(item.id in evidence_ids for item in bucket.evidence):
-            raise ValueError("deferred height answer must cite its measurement")
-        if answer != bucket.choice:
-            raise ValueError("deferred height answer does not match measurement bucket")
-        if bucket.choice not in bucket.choices:
-            raise ValueError("measurement bucket choice is not public")
-        return bucket.choice, ChoiceAnswerContract(bucket.choices)
+        if len(height_results) != 1:
+            raise ValueError("deferred height answer requires exactly one cited height measurement")
+        choices, choice = height_choice_window(height_results[0].measurement.value)
+        return choice, ChoiceAnswerContract(choices)
     raise ValueError("unsupported answer contract")
 
 
@@ -235,6 +240,19 @@ def _validated_result(
 ) -> AcceptedOracleResult | RejectedOracleResult:
     try:
         payload = _parse_json_object(response)
+        if payload.get("status") == "rejected":
+            if set(payload) - {"status", "reason", "evidence_ids"}:
+                raise ValueError("rejected final response contains unsupported fields")
+            reason = payload.get("reason")
+            evidence_ids = payload.get("evidence_ids")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("rejected final response requires non-empty reason")
+            if evidence_ids is not None and (
+                not isinstance(evidence_ids, list)
+                or not all(isinstance(item, str) for item in evidence_ids)
+            ):
+                raise ValueError("rejected evidence_ids must be a list of strings")
+            return _rejected(proposal, reason, results, trace)
         answer, answer_contract = _resolve_oracle_answer(
             proposal, payload.get("answer"), payload.get("evidence_ids"), results
         )
@@ -296,8 +314,8 @@ def _contract_prompt(contract: AnswerContract) -> str:
         return f"choice: {', '.join(contract.choices)}"
     if isinstance(contract, DeferredHeightChoiceContract):
         return (
-            "deferred height choice: call measure_height, then bucket_measurement, and return "
-            "the exact choice from that result"
+            "deferred height choice: call measure_height, cite exactly one accepted height evidence ID, "
+            "and return answer: null. The private pipeline derives the public choice from the measurement"
         )
     raise ValueError("unsupported answer contract")
 

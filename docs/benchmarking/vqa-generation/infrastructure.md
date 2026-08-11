@@ -45,7 +45,8 @@ dimos/benchmark/vqa/
       geometry.py              plane fitting and masked-point helpers
       selection.py             nearest-object selection
       choices.py               deterministic answer-choice resolution
-    ground_truth_generator.py  deterministic constrained recipe runner
+    ground_truth_generator.py  primitive-owning answer dispatch and grounding coordinator
+    families.py                deterministic constrained family recipes and result helpers
     oracle_tools.py            opaque-ID and LangChain adapter for primitives
     oracle.py                  bounded tool-calling and evidence validation
     question_agent.py          image-only question author
@@ -75,21 +76,21 @@ generation can skip completed frames after an interrupted run.
 
 ### Shared Perception Primitives
 
-Constrained and agentic generation use the same private primitives:
+Constrained and agentic generation share the same private geometry runtime. Constrained families select a
+fixed recipe; the agentic oracle may inspect intermediate results and choose its own next operation. Handles
+are immutable and scoped to one frozen frame.
 
 ```text
 detect_objects(query)
--> segment_detections(detection_id)
--> ground_masks(mask_id)
--> select_nearest_object(object_ids, side)
+-> segment_detection(detection_id)
+-> ground_mask(mask_id)
+-> object_id / pose / supported point set
 -> fit_ground_plane()
--> measure_height(object_id, plane_id)
--> bucket_measurement(measurement_id)
+-> fitted planes and reusable geometric measurements
 ```
 
-Constrained generation selects a fixed sequence for each question family. Agentic generation lets
-the oracle select a bounded sequence of these tools, passing opaque IDs rather than masks or point
-arrays between calls.
+Agentic answers may explicitly reject a question when the available primitive results cannot establish it;
+the rejection and missing-evidence reason remain private generation audit data.
 
 ## Question And Answer Contracts
 

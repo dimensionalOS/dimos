@@ -95,6 +95,8 @@ QuestionKind = Literal[
     "compare_nearest_by_side",
     "compare_left_right",
     "compare_height",
+    "object_on_support",
+    "opening_width",
     "door_state",
     "closest_object",
     "forward_path",
@@ -221,6 +223,7 @@ class OracleToolResult:
     plane: GroundPlaneEstimate | None = None
     quality_flags: tuple[str, ...] = ()
     rejection_reason: str | None = None
+    metrics: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)

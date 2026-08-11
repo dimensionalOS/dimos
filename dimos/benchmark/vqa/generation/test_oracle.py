@@ -23,12 +23,17 @@ from dimos.benchmark.vqa.generation.primitives.choices import (
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     HeightMeasurementResult,
     HorizontalRelationResult,
+    ObjectOnSupportResult,
+    OpeningWidthResult,
 )
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.geometry import (
-    classify_door_plane_angle,
+    ForwardCorridorMeasurement,
+    PlaneFitResult,
     classify_forward_corridor,
     estimate_ground_plane,
+    measure_opening_width,
+    measure_relative_plane_angle,
 )
 from dimos.benchmark.vqa.generation.question_agent import (
     AGENTIC_QUESTION_PROMPT,
@@ -46,6 +51,7 @@ from dimos.benchmark.vqa.models import (
     OracleMeasurement,
     OracleToolResult,
     QuestionProposal,
+    RejectedOracleResult,
 )
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -150,29 +156,28 @@ class _BoundModel:
         if self._calls == 1:
             return AIMessage(
                 content="",
-                tool_calls=[{"name": "detect_objects", "args": {"query": "chair"}, "id": "call-1"}],
-            )
-        if self._calls == 2:
-            return AIMessage(
-                content="",
                 tool_calls=[
                     {
-                        "name": "segment_detections",
-                        "args": {"detection_id": "detection:v1:0001"},
+                        "name": "get_object_pose",
+                        "args": {"object_id": "synthetic-chair-0"},
                         "id": "call-2",
                     }
-                ],
-            )
-        if self._calls == 3:
-            return AIMessage(
-                content="",
-                tool_calls=[
-                    {"name": "ground_masks", "args": {"mask_id": "mask:v1:0002"}, "id": "call-3"}
                 ],
             )
         return AIMessage(
             content='{"answer":"yes","evidence_ids":["grounding:v1:synthetic-chair-0"]}'
         )
+
+
+class _ScriptedModel:
+    def __init__(self, responses: list[AIMessage]) -> None:
+        self._responses = responses
+
+    def bind_tools(self, tools: Any) -> _ScriptedModel:
+        return self
+
+    def invoke(self, messages: Any) -> AIMessage:
+        return self._responses.pop(0)
 
 
 class _SemanticValidator:
@@ -203,11 +208,11 @@ def test_freeform_question_author_parses_public_contract() -> None:
 
 
 def test_freeform_author_prompt_prioritizes_geometric_questions() -> None:
-    assert "measure_height" in AGENTIC_QUESTION_PROMPT
+    assert "chooses its own sequence" in AGENTIC_QUESTION_PROMPT
     assert "closest to a named target" in AGENTIC_QUESTION_PROMPT
     assert "visibly repeated object" in AGENTIC_QUESTION_PROMPT
     assert "diverse set of questions" in AGENTIC_QUESTION_PROMPT
-    assert "Use visibility/presence questions only" in AGENTIC_QUESTION_PROMPT
+    assert "visibility/presence" in AGENTIC_QUESTION_PROMPT
 
 
 def test_freeform_question_author_assigns_missing_ids() -> None:
@@ -299,20 +304,15 @@ def test_freeform_question_author_ignores_malformed_optional_query_hints() -> No
 
 
 def test_local_tool_returns_geometry_and_evidence_ids() -> None:
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = LocalOracleToolRegistry(_frame_primitives(_measurement_frame()))
 
     detection = json.loads(registry.detect_objects("chair"))
-    masks = json.loads(registry.segment_detections(detection["detection_id"]))
-    payload = json.loads(registry.ground_masks(masks["mask_id"]))
+    masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
+    payload = json.loads(registry.ground_mask(masks["mask_ids"][0]))
 
-    assert payload["objects"][0] == {
-        "evidence_id": "grounding:v1:synthetic-chair-0",
-        "id": "synthetic-chair-0",
-        "label": "chair",
-        "range_m": 1.0,
-        "side": "left",
-        "point_count": 4,
-    }
+    assert "detection_id" not in detection
+    assert payload["object_id"].startswith("object:v1:")
+    assert payload["objects"][0]["evidence_id"] == f"grounding:v1:{payload['object_id']}"
     assert registry.results[-1].version == "v1"
 
 
@@ -348,15 +348,15 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
     registry = LocalOracleToolRegistry(_frame_primitives(frame, mask))
 
     detection = json.loads(registry.detect_objects("chair"))
-    masks = json.loads(registry.segment_detections(detection["detection_id"]))
-    grounded = json.loads(registry.ground_masks(masks["mask_id"]))
+    masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
+    grounded = json.loads(registry.ground_mask(masks["mask_ids"][0]))
     plane = json.loads(registry.fit_ground_plane())
-    payload = json.loads(registry.measure_height(grounded["object_ids"][0], plane["plane_id"]))
+    payload = json.loads(registry.measure_height(grounded["object_id"], plane["plane_id"]))
 
     assert payload["measurement"]["unit"] == "m"
     assert 0.8 < payload["measurement"]["value"] < 1.0
     assert payload["measurement"]["tolerance"] >= 0.05
-    assert payload["objects"][0]["evidence_id"] == "height:v1:synthetic-chair-0"
+    assert payload["objects"][0]["evidence_id"] == f"height:v1:{grounded['object_id']}"
     assert "visible_point_cloud_height" in payload["quality_flags"]
 
 
@@ -365,21 +365,45 @@ def test_local_registry_exposes_geometry_tools() -> None:
 
     assert {tool.name for tool in registry.tools()} == {
         "detect_objects",
-        "segment_detections",
-        "ground_masks",
-        "select_nearest_object",
-        "count_grounded_objects",
-        "bucket_camera_range",
-        "compare_nearest_by_side",
-        "compare_left_right",
-        "select_closest_object",
+        "segment_detection",
+        "ground_mask",
         "fit_ground_plane",
+        "get_object_pose",
+        "fit_object_surface_plane",
+        "fit_mask_surrounding_plane",
+        "measure_object_pair_distance",
+        "measure_relative_plane_angle",
+        "measure_object_plane_relation",
+        "measure_aperture_geometry",
+        "measure_forward_corridor",
         "measure_height",
-        "compare_heights",
-        "classify_door_state",
-        "classify_forward_path",
-        "bucket_measurement",
     }
+
+
+def test_local_registry_exposes_forward_corridor_metrics(monkeypatch: Any) -> None:
+    primitives = _frame_primitives(_measurement_frame())
+    registry = LocalOracleToolRegistry(primitives)
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    registry._planes["ground"] = plane
+    registry._ground_planes.add("ground")
+    monkeypatch.setattr(
+        primitives,
+        "measure_forward_corridor",
+        lambda accepted_plane: ForwardCorridorMeasurement((3, 4, 5), 6, 24),
+    )
+
+    payload = json.loads(registry.measure_forward_corridor("ground"))
+    rejected = json.loads(registry.measure_forward_corridor("unknown"))
+
+    assert payload["metrics"] == {
+        "ground_band_1_count": 3.0,
+        "ground_band_2_count": 4.0,
+        "ground_band_3_count": 5.0,
+        "elevated_obstacle_count": 6.0,
+        "corridor_point_count": 24.0,
+    }
+    assert payload["objects"][0]["evidence_id"] == "forward-corridor:v1:synthetic"
+    assert rejected["rejection_reason"] == "unknown_ground_plane_id"
 
 
 def test_height_choice_window_is_local_and_deterministic() -> None:
@@ -415,6 +439,9 @@ def test_count_and_camera_range_choices_are_fixed_and_non_overlapping() -> None:
 
 def test_local_registry_buckets_count_range_and_pairwise_side() -> None:
     registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry._objects["synthetic-chair-0"] = GroundedObject(
+        "synthetic-chair-0", "chair", 4, 1.0, "left"
+    )
     left = GroundedObject("left", "chair", 8, 1.0, "left")
     right = GroundedObject("right", "chair", 8, 2.0, "right")
     registry._objects = {left.id: left, right.id: right}
@@ -459,15 +486,75 @@ def test_local_registry_compares_pairwise_relation_and_height(monkeypatch: Any) 
     assert height["choice"] == "chair"
 
 
-def test_door_state_accepts_clear_plane_angles_and_rejects_ajar() -> None:
+def test_local_registry_verifies_support_and_measures_opening(monkeypatch: Any) -> None:
+    primitives = _frame_primitives(_measurement_frame())
+    registry = LocalOracleToolRegistry(primitives)
+    box = GroundedObject("box", "box", 8, 1.0, "left")
+    table = GroundedObject("table", "table", 8, 2.0, "right")
+    registry._objects = {box.id: box, table.id: table}
+    registry._masks = {"mask": "doorway"}
+    measurement = OracleMeasurement(0.9, "m", 0.05, (), ())
+    monkeypatch.setattr(
+        primitives,
+        "classify_object_on_support",
+        lambda item, support: ObjectOnSupportResult(
+            item, support, ("contact_band_supported",), answer="yes"
+        ),
+    )
+    monkeypatch.setattr(
+        primitives,
+        "measure_opening_width",
+        lambda query: OpeningWidthResult(measurement, ("stable_opening_scanlines",)),
+    )
+
+    support = json.loads(registry.classify_object_on_support(box.id, table.id))
+    opening = json.loads(registry.measure_opening_width("mask"))
+
+    assert support["choice"] == "yes"
+    assert opening["measurement"]["value"] == 0.9
+
+
+def test_opening_width_uses_wall_geometry_outside_the_aperture() -> None:
+    image = Image.from_numpy(np.zeros((100, 100, 3), dtype=np.uint8))
+    camera_info = CameraInfo.from_intrinsics(50.0, 50.0, 50.0, 50.0, 100, 100)
+    opening = np.zeros((100, 100), dtype=np.uint8)
+    opening[35:61, 40:61] = 255
+    points: list[list[float]] = []
+    for y in range(20, 61, 4):
+        for x in range(28, 73, 4):
+            if opening[y, x]:
+                continue
+            points.append([(x - 50) / 50 * 5.0, (y - 50) / 50 * 5.0, 5.0])
+    for y in (65, 75, 85, 95):
+        for x in range(0, 100, 10):
+            depth = 1.0 / ((y - 50) / 50)
+            points.append([(x - 50) / 50 * depth, 1.0, depth])
+    frame = CalibratedFrame(
+        "opening",
+        image,
+        PointCloud2.from_numpy(np.asarray(points, dtype=np.float32)),
+        camera_info,
+        Transform.identity(),
+        True,
+    )
+    ground = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+
+    result = measure_opening_width(frame, opening, ground)
+
+    assert result.rejection_reason is None
+    assert result.width_m is not None
+    assert 1.9 < result.width_m < 2.1
+
+
+def test_relative_plane_angle_measurement_is_unsigned() -> None:
     door = GroundPlaneEstimate((1.0, 0.0, 0.0), 0.0, 20, 20, 0.01)
     closed = GroundPlaneEstimate((1.0, 0.0, 0.0), 0.0, 20, 20, 0.01)
     open_door = GroundPlaneEstimate((0.0, 0.0, 1.0), 0.0, 20, 20, 0.01)
     ajar_door = GroundPlaneEstimate((0.95, 0.0, 0.31), 0.0, 20, 20, 0.01)
 
-    assert classify_door_plane_angle(door, closed)[0] == "closed"
-    assert classify_door_plane_angle(door, open_door)[0] == "open"
-    assert classify_door_plane_angle(door, ajar_door)[1] == "ambiguous_door_angle"
+    assert measure_relative_plane_angle(door, closed).value == 0.0
+    assert measure_relative_plane_angle(door, open_door).value == 90.0
+    assert 17.0 < measure_relative_plane_angle(door, ajar_door).value < 19.0
 
 
 def test_closest_object_uses_point_cloud_centroids_and_rejects_ties(monkeypatch: Any) -> None:
@@ -515,6 +602,28 @@ def test_horizontal_relation_uses_camera_frame_support_centroids(monkeypatch: An
     )
 
 
+def test_object_on_support_keeps_clearly_separated_objects_as_no(monkeypatch: Any) -> None:
+    box = GroundedObject("box", "box", 8, 1.0, "left")
+    support = GroundedObject("table", "table", 8, 2.0, "right")
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    primitives = _frame_primitives(_measurement_frame())
+    points = {
+        box.id: np.tile((2.0, 0.5, 4.0), (6, 1)),
+        support.id: np.tile((0.0, 1.0, 4.0), (6, 1)),
+    }
+    monkeypatch.setattr(primitives, "_object_points", lambda item: points[item.id])
+    monkeypatch.setattr(primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
+    monkeypatch.setattr(
+        "dimos.benchmark.vqa.generation.primitives.frame.fit_surface_plane",
+        lambda support_points: PlaneFitResult(plane, ("surface_plane_accepted",)),
+    )
+
+    result = primitives.classify_object_on_support(box, support)
+
+    assert result.answer == "no"
+    assert "objects_separated_in_plane" in result.quality_flags
+
+
 def test_forward_corridor_requires_ground_support_and_detects_obstacles() -> None:
     ground = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
     floor = np.asarray(
@@ -550,31 +659,34 @@ def test_oracle_validates_evidence_and_answer_contract() -> None:
         raise AssertionError("unknown evidence was accepted")
 
 
-def test_oracle_derives_deferred_height_answer_from_measurement_bucket() -> None:
+def test_oracle_derives_deferred_height_answer_from_cited_measurement() -> None:
     proposal = QuestionProposal(
         "q", "How tall is the chair?", DeferredHeightChoiceContract(), ("chair",)
     )
-    evidence = OracleEvidence("height-1", "v1", "chair-1", "chair", 1.0, "left", 8)
+    measurement = OracleMeasurement(0.42, "m", 0.05, (), ())
+    evidence = OracleEvidence("height-1", "v1", "chair-1", "chair", 1.0, "left", 8, measurement)
     result = OracleToolResult(
-        "bucket_measurement",
+        "measure_height",
         "chair",
         (evidence,),
-        choice="0.2-0.6 m",
-        choices=("under 0.2 m", "0.2-0.6 m", "0.6-1.0 m", "over 1.0 m"),
+        measurement=measurement,
     )
 
-    assert validate_oracle_answer(proposal, "0.2-0.6 m", ["height-1"], (result,)) == "0.2-0.6 m"
+    assert validate_oracle_answer(proposal, None, ["height-1"], (result,)) == "0.2-0.6 m"
     try:
-        validate_oracle_answer(proposal, "under 0.2 m", ["height-1"], (result,))
+        validate_oracle_answer(proposal, None, [], (result,))
     except ValueError as exc:
-        assert "does not match measurement bucket" in str(exc)
+        assert "evidence_ids" in str(exc)
     else:
-        raise AssertionError("non-derived deferred height answer was accepted")
+        raise AssertionError("deferred height answer without evidence was accepted")
 
 
 def test_private_oracle_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry._objects["synthetic-chair-0"] = GroundedObject(
+        "synthetic-chair-0", "chair", 4, 1.0, "left"
+    )
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
     result = PrivateToolCallingOracle(
@@ -621,6 +733,48 @@ def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
     assert result.reason == "invalid_final_answer:answer cites unknown evidence"
 
 
+def test_private_oracle_allows_explicit_rejection_without_answer_resolution() -> None:
+    proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
+    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    validator = _SemanticValidator(SemanticEvidenceValidation(True, "should not be called"))
+    model = _ScriptedModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "detect_objects", "args": {"query": "chair"}, "id": "call-1"}],
+            ),
+            AIMessage(
+                content='{"status":"rejected","reason":"chair cannot be verified","evidence_ids":[]}'
+            ),
+        ]
+    )
+
+    result = PrivateToolCallingOracle(cast("Any", model), semantic_validator=validator).answer(
+        proposal, registry
+    )
+
+    assert isinstance(result, RejectedOracleResult)
+    assert result.reason == "chair cannot be verified"
+    assert result.tool_results == registry.results
+    assert len(result.trace) == 1
+    assert result.trace[0].operation == "tool"
+    assert validator.calls == []
+
+
+def test_private_oracle_rejects_malformed_explicit_rejection() -> None:
+    proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract())
+    validator = _SemanticValidator(SemanticEvidenceValidation(True, "should not be called"))
+    model = _ScriptedModel([AIMessage(content='{"status":"rejected","reason":""}')])
+
+    result = PrivateToolCallingOracle(cast("Any", model), semantic_validator=validator).answer(
+        proposal, LocalOracleToolRegistry(cast("Any", _Grounding()))
+    )
+
+    assert isinstance(result, RejectedOracleResult)
+    assert result.reason.startswith("invalid_final_answer:")
+    assert validator.calls == []
+
+
 def test_agentic_oracle_never_uses_legacy_answer_program() -> None:
     class _GroundingWithoutLegacyAnswer(_Grounding):
         def answer(self, frame: Any, intent: Any) -> None:
@@ -628,6 +782,9 @@ def test_agentic_oracle_never_uses_legacy_answer_program() -> None:
 
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = LocalOracleToolRegistry(cast("Any", _GroundingWithoutLegacyAnswer()))
+    registry._objects["synthetic-chair-0"] = GroundedObject(
+        "synthetic-chair-0", "chair", 4, 1.0, "left"
+    )
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
     result = PrivateToolCallingOracle(

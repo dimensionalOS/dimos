@@ -13,9 +13,9 @@ from dimos.benchmark.vqa.generation.primitives.choices import (
     COUNT_CHOICES,
     camera_range_choice,
     count_choice,
-    height_choice_window,
 )
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.geometry import ForwardCorridorMeasurement
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import (
     GroundedObject,
@@ -24,6 +24,7 @@ from dimos.benchmark.vqa.models import (
     OracleMeasurement,
     OracleToolResult,
 )
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
 class LocalOracleToolRegistry:
@@ -32,11 +33,11 @@ class LocalOracleToolRegistry:
     def __init__(self, primitives: FramePerceptionPrimitives) -> None:
         self._primitives = primitives
         self._results: list[OracleToolResult] = []
-        self._detections: dict[str, str] = {}
-        self._masks: dict[str, str] = {}
+        self._detections: dict[str, tuple[str, int]] = {}
+        self._masks: dict[str, tuple[str, Detection2DSeg]] = {}
         self._objects: dict[str, GroundedObject] = {}
         self._planes: dict[str, GroundPlaneEstimate] = {}
-        self._measurements: dict[str, OracleToolResult] = {}
+        self._ground_planes: set[str] = set()
         self._next_id = 0
 
     @property
@@ -51,55 +52,15 @@ class LocalOracleToolRegistry:
                 description="Run private MoonDream detection for one visible semantic query.",
             ),
             StructuredTool.from_function(
-                self.segment_detections,
-                name="segment_detections",
+                self.segment_detection,
+                name="segment_detection",
                 description="Run private EdgeTAM segmentation for one opaque detection ID.",
             ),
             StructuredTool.from_function(
-                self.ground_masks,
-                name="ground_masks",
+                self.ground_mask,
+                name="ground_mask",
                 description=(
-                    "Project visible calibrated point-cloud support through one opaque mask ID. "
-                    "Returns grounded object IDs and citable evidence."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.select_nearest_object,
-                name="select_nearest_object",
-                description=(
-                    "Select the nearest opaque grounded object ID, optionally restricted to left, center, "
-                    "or right."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.count_grounded_objects,
-                name="count_grounded_objects",
-                description="Count opaque grounded object IDs into fixed public count buckets.",
-            ),
-            StructuredTool.from_function(
-                self.bucket_camera_range,
-                name="bucket_camera_range",
-                description="Bucket one opaque object's private camera-origin range into fixed public choices.",
-            ),
-            StructuredTool.from_function(
-                self.compare_nearest_by_side,
-                name="compare_nearest_by_side",
-                description="Choose whether the nearest opaque left or right object is closer to the camera.",
-            ),
-            StructuredTool.from_function(
-                self.compare_left_right,
-                name="compare_left_right",
-                description=(
-                    "Choose whether one opaque object is left or right of another from private "
-                    "camera-frame support centroids. Rejects ambiguous separation."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.select_closest_object,
-                name="select_closest_object",
-                description=(
-                    "Select which opaque candidate object is closest to one opaque target object "
-                    "by private point-cloud support. Rejects ambiguous proximity."
+                    "Project visible calibrated point-cloud support through one opaque mask ID."
                 ),
             ),
             StructuredTool.from_function(
@@ -108,42 +69,59 @@ class LocalOracleToolRegistry:
                 description="Fit a quality-gated Open3D ground plane to the frozen visible point cloud.",
             ),
             StructuredTool.from_function(
+                self.get_object_pose,
+                name="get_object_pose",
+                description="Return robust private camera-frame position evidence for one grounded object.",
+            ),
+            StructuredTool.from_function(
+                self.fit_object_surface_plane,
+                name="fit_object_surface_plane",
+                description="Fit a private surface plane to one grounded object's visible support.",
+            ),
+            StructuredTool.from_function(
+                self.fit_mask_surrounding_plane,
+                name="fit_mask_surrounding_plane",
+                description="Fit a private structural plane from the visible ring around one mask.",
+            ),
+            StructuredTool.from_function(
+                self.measure_object_pair_distance,
+                name="measure_object_pair_distance",
+                description="Measure private 3D support-centroid distance between two grounded objects.",
+            ),
+            StructuredTool.from_function(
+                self.measure_relative_plane_angle,
+                name="measure_relative_plane_angle",
+                description="Measure the unsigned angle between two accepted opaque plane IDs.",
+            ),
+            StructuredTool.from_function(
+                self.measure_object_plane_relation,
+                name="measure_object_plane_relation",
+                description=(
+                    "Measure private clearance, contact support, and projected separation of one object "
+                    "relative to a support object plane."
+                ),
+            ),
+            StructuredTool.from_function(
+                self.measure_aperture_geometry,
+                name="measure_aperture_geometry",
+                description=(
+                    "Measure a selected mask's ground-connected aperture geometry against an accepted "
+                    "ground plane."
+                ),
+            ),
+            StructuredTool.from_function(
+                self.measure_forward_corridor,
+                name="measure_forward_corridor",
+                description=(
+                    "Measure private ground and elevated-obstacle support in the camera-forward corridor "
+                    "against an accepted ground plane."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.measure_height,
                 name="measure_height",
                 description=(
                     "Measure one opaque grounded object above one opaque accepted ground-plane ID."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.compare_heights,
-                name="compare_heights",
-                description=(
-                    "Compare two opaque grounded objects against one opaque accepted ground-plane ID. "
-                    "Rejects overlapping physical-height uncertainty."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.classify_door_state,
-                name="classify_door_state",
-                description=(
-                    "Classify one opaque grounded door as open or closed from point-cloud planes. "
-                    "Rejects insufficient or ambiguous geometry."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.classify_forward_path,
-                name="classify_forward_path",
-                description=(
-                    "Classify the visible camera-forward corridor as clear or blocked from point-cloud "
-                    "ground and obstacle support. Rejects incomplete or ambiguous visibility."
-                ),
-            ),
-            StructuredTool.from_function(
-                self.bucket_measurement,
-                name="bucket_measurement",
-                description=(
-                    "Map one opaque height measurement ID to four public, answer-conditioned "
-                    "height choices and the one matching choice."
                 ),
             ),
         ]
@@ -151,37 +129,51 @@ class LocalOracleToolRegistry:
     def detect_objects(self, query: str) -> str:
         """Detect objects and return an opaque ID for a later segmentation call."""
         detections = self._primitives.detect_objects(query)
-        detection_id = self._id("detection")
-        self._detections[detection_id] = query
         result = OracleToolResult("detect_objects", query, ())
         self._results.append(result)
-        boxes = [list(item.bbox) for item in detections]
-        return json.dumps(_tool_payload(result, detection_id=detection_id, boxes=boxes))
+        handles = []
+        for index, detection in enumerate(detections):
+            detection_id = self._id("detection")
+            self._detections[detection_id] = (query, index)
+            handles.append({"detection_id": detection_id, "confidence": detection.confidence})
+        return json.dumps(_tool_payload(result, detections=handles))
 
-    def segment_detections(self, detection_id: str) -> str:
-        """Segment one earlier opaque detection result and return an opaque mask ID."""
-        query = self._detections.get(detection_id)
-        if query is None:
-            return self._record_rejection("segment_detections", "", [], "unknown_detection_id")
-        masks = self._primitives.segment_detections(query)
-        mask_id = self._id("mask")
-        self._masks[mask_id] = query
-        result = OracleToolResult("segment_detections", query, ())
+    def segment_detection(self, detection_id: str) -> str:
+        """Segment one earlier opaque detection and return opaque per-mask handles."""
+        handle = self._detections.get(detection_id)
+        if handle is None:
+            return self._record_rejection("segment_detection", "", [], "unknown_detection_id")
+        query, index = handle
+        masks = self._primitives.segment_detection(query, index)
+        mask_ids = []
+        for mask in masks:
+            mask_id = self._id("mask")
+            self._masks[mask_id] = (query, mask)
+            mask_ids.append(mask_id)
+        result = OracleToolResult("segment_detection", query, ())
         self._results.append(result)
-        return json.dumps(_tool_payload(result, mask_id=mask_id, mask_count=len(masks)))
+        return json.dumps(_tool_payload(result, mask_ids=mask_ids))
 
-    def ground_masks(self, mask_id: str) -> str:
-        """Ground one earlier opaque mask result against the visible point cloud."""
-        query = self._masks.get(mask_id)
-        if query is None:
-            return self._record_rejection("ground_masks", "", [], "unknown_mask_id")
-        objects = self._primitives.ground_masks(query)
-        evidence = tuple(_grounding_evidence(item) for item in objects)
-        for item in objects:
-            self._objects[item.id] = item
-        result = OracleToolResult("ground_masks", query, evidence)
+    def ground_mask(self, mask_id: str) -> str:
+        """Ground one earlier opaque mask against the visible point cloud."""
+        handle = self._masks.get(mask_id)
+        if handle is None:
+            return self._record_rejection("ground_mask", "", [], "unknown_mask_id")
+        query, mask = handle
+        object_id = self._id("object")
+        if hasattr(self._primitives, "ground_mask"):
+            object = self._primitives.ground_mask(mask, object_id)
+        else:
+            objects = self._primitives.ground_masks(query)
+            object = objects[0] if objects else None
+        if object is None:
+            return self._record_rejection(
+                "ground_mask", query, [], "insufficient_foreground_support"
+            )
+        self._objects[object.id] = object
+        result = OracleToolResult("ground_mask", query, (_grounding_evidence(object),))
         self._results.append(result)
-        return json.dumps(_tool_payload(result, object_ids=[item.id for item in objects]))
+        return json.dumps(_tool_payload(result, object_id=object.id))
 
     def fit_ground_plane(self) -> str:
         """Fit the private ground plane and return an opaque ID for measurements."""
@@ -192,6 +184,7 @@ class LocalOracleToolRegistry:
             )
         plane_id = self._id("plane")
         self._planes[plane_id] = fit.estimate
+        self._ground_planes.add(plane_id)
         measurement = OracleMeasurement(
             fit.estimate.offset_m,
             "m",
@@ -219,6 +212,220 @@ class LocalOracleToolRegistry:
         )
         self._results.append(result)
         return json.dumps(_tool_payload(result, plane_id=plane_id))
+
+    def get_object_pose(self, object_id: str) -> str:
+        """Return existing grounding evidence for one object without selecting an answer."""
+        object = self._objects.get(object_id)
+        if object is None:
+            return self._record_rejection("get_object_pose", object_id, [], "unknown_object_id")
+        result = OracleToolResult("get_object_pose", object.label, (_grounding_evidence(object),))
+        self._results.append(result)
+        return json.dumps(_tool_payload(result, object_id=object.id))
+
+    def fit_object_surface_plane(self, object_id: str) -> str:
+        """Fit a plane to one grounded object's visible point support."""
+        object = self._objects.get(object_id)
+        if object is None:
+            return self._record_rejection(
+                "fit_object_surface_plane", object_id, [], "unknown_object_id"
+            )
+        fit = self._primitives.fit_object_surface_plane(object)
+        if fit.estimate is None:
+            return self._record_rejection(
+                "fit_object_surface_plane",
+                object.label,
+                list(fit.quality_flags),
+                fit.rejection_reason,
+            )
+        plane_id = self._id("plane")
+        self._planes[plane_id] = fit.estimate
+        result = OracleToolResult(
+            "fit_object_surface_plane",
+            object.label,
+            (_grounding_evidence(object),),
+            plane=fit.estimate,
+            quality_flags=fit.quality_flags,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result, plane_id=plane_id))
+
+    def fit_mask_surrounding_plane(self, mask_id: str) -> str:
+        """Fit a plane around one selected segmentation mask."""
+        handle = self._masks.get(mask_id)
+        if handle is None or not isinstance(handle, tuple) or handle[1] is None:
+            return self._record_rejection("fit_mask_surrounding_plane", "", [], "unknown_mask_id")
+        query, mask = handle
+        fit = self._primitives.fit_mask_surrounding_plane(mask)
+        if fit.estimate is None:
+            return self._record_rejection(
+                "fit_mask_surrounding_plane", query, list(fit.quality_flags), fit.rejection_reason
+            )
+        plane_id = self._id("plane")
+        self._planes[plane_id] = fit.estimate
+        result = OracleToolResult(
+            "fit_mask_surrounding_plane",
+            query,
+            (),
+            plane=fit.estimate,
+            quality_flags=fit.quality_flags,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result, plane_id=plane_id))
+
+    def measure_object_pair_distance(self, first_object_id: str, second_object_id: str) -> str:
+        """Measure support-centroid distance between two grounded objects."""
+        first, second = self._objects.get(first_object_id), self._objects.get(second_object_id)
+        if first is None or second is None:
+            return self._record_rejection(
+                "measure_object_pair_distance", "", [], "unknown_object_id"
+            )
+        measurement = self._primitives.measure_object_pair_distance(first, second)
+        if measurement is None:
+            return self._record_rejection(
+                "measure_object_pair_distance", "", [], "insufficient_object_support"
+            )
+        result = OracleToolResult(
+            "measure_object_pair_distance",
+            f"{first.label},{second.label}",
+            (_grounding_evidence(first), _grounding_evidence(second)),
+            measurement=measurement,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
+    def measure_relative_plane_angle(self, first_plane_id: str, second_plane_id: str) -> str:
+        """Measure the unsigned angle between two accepted planes."""
+        first, second = self._planes.get(first_plane_id), self._planes.get(second_plane_id)
+        if first is None or second is None:
+            return self._record_rejection(
+                "measure_relative_plane_angle", "", [], "unknown_plane_id"
+            )
+        measurement = self._primitives.measure_relative_plane_angle(first, second)
+        result = OracleToolResult("measure_relative_plane_angle", "", (), measurement=measurement)
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
+    def measure_object_plane_relation(
+        self, object_id: str, support_id: str, plane_id: str, ground_plane_id: str
+    ) -> str:
+        """Measure one object's clearance/contact relation to a selected support plane."""
+        object, support = self._objects.get(object_id), self._objects.get(support_id)
+        plane, ground = self._planes.get(plane_id), self._planes.get(ground_plane_id)
+        if object is None or support is None:
+            return self._record_rejection(
+                "measure_object_plane_relation", "", [], "unknown_object_id"
+            )
+        if plane is None or ground is None or ground_plane_id not in self._ground_planes:
+            return self._record_rejection(
+                "measure_object_plane_relation", "", [], "unknown_plane_id"
+            )
+        relation = self._primitives.measure_object_plane_relation(
+            object, support, plane, ground.normal
+        )
+        if relation.rejection_reason is not None:
+            return self._record_rejection(
+                "measure_object_plane_relation",
+                f"{object.label},{support.label}",
+                list(relation.quality_flags),
+                relation.rejection_reason,
+            )
+        metrics = tuple(
+            (name, value)
+            for name, value in (
+                ("lower_clearance_m", relation.lower_clearance_m),
+                ("upper_clearance_m", relation.upper_clearance_m),
+                ("elevated_fraction", relation.elevated_fraction),
+                ("contact_point_count", float(relation.contact_point_count)),
+                ("planar_separation_m", relation.planar_separation_m),
+                ("contact_overlap_count", float(relation.contact_overlap_count)),
+            )
+            if value is not None
+        )
+        result = OracleToolResult(
+            "measure_object_plane_relation",
+            f"{object.label},{support.label}",
+            (_grounding_evidence(object), _grounding_evidence(support)),
+            quality_flags=relation.quality_flags,
+            metrics=metrics,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
+
+    def measure_aperture_geometry(self, mask_id: str, ground_plane_id: str) -> str:
+        """Measure one selected aperture mask using an accepted ground plane."""
+        handle = self._masks.get(mask_id)
+        ground = self._planes.get(ground_plane_id)
+        if handle is None or not isinstance(handle, tuple) or handle[1] is None:
+            return self._record_rejection("measure_aperture_geometry", "", [], "unknown_mask_id")
+        if ground is None or ground_plane_id not in self._ground_planes:
+            return self._record_rejection(
+                "measure_aperture_geometry", "", [], "unknown_ground_plane_id"
+            )
+        query, mask = handle
+        result = self._primitives.measure_opening_width_from_mask(mask, ground)
+        if result.measurement is None:
+            return self._record_rejection(
+                "measure_aperture_geometry",
+                query,
+                list(result.quality_flags),
+                result.rejection_reason,
+            )
+        evidence = OracleEvidence(
+            f"aperture:v1:{self._primitives.frame.id}:{mask_id}",
+            "v1",
+            mask_id,
+            query,
+            0.0,
+            "n/a",
+            0,
+            result.measurement,
+        )
+        tool_result = OracleToolResult(
+            "measure_aperture_geometry",
+            query,
+            (evidence,),
+            measurement=result.measurement,
+            quality_flags=result.quality_flags,
+        )
+        self._results.append(tool_result)
+        return json.dumps(_tool_payload(tool_result))
+
+    def measure_forward_corridor(self, ground_plane_id: str) -> str:
+        """Measure visible forward ground and obstacle support using one accepted ground plane."""
+        ground = self._planes.get(ground_plane_id)
+        if ground is None or ground_plane_id not in self._ground_planes:
+            return self._record_rejection(
+                "measure_forward_corridor", "", [], "unknown_ground_plane_id"
+            )
+        measured: ForwardCorridorMeasurement = self._primitives.measure_forward_corridor(ground)
+        if measured.rejection_reason is not None:
+            return self._record_rejection(
+                "measure_forward_corridor", "", [], measured.rejection_reason
+            )
+        evidence = OracleEvidence(
+            f"forward-corridor:v1:{self._primitives.frame.id}",
+            "v1",
+            "forward-corridor",
+            "forward corridor",
+            0.0,
+            "n/a",
+            measured.point_count,
+        )
+        result = OracleToolResult(
+            "measure_forward_corridor",
+            "",
+            (evidence,),
+            quality_flags=("forward_ground_supported",),
+            metrics=(
+                ("ground_band_1_count", float(measured.ground_band_counts[0])),
+                ("ground_band_2_count", float(measured.ground_band_counts[1])),
+                ("ground_band_3_count", float(measured.ground_band_counts[2])),
+                ("elevated_obstacle_count", float(measured.obstacle_count)),
+                ("corridor_point_count", float(measured.point_count)),
+            ),
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result))
 
     def select_nearest_object(self, object_ids: list[str], side: str | None = None) -> str:
         """Select one opaque grounded object by private point-cloud range."""
@@ -393,10 +600,8 @@ class LocalOracleToolRegistry:
             plane=plane,
             quality_flags=measured.quality_flags,
         )
-        measurement_id = self._id("measurement")
-        self._measurements[measurement_id] = result
         self._results.append(result)
-        return json.dumps(_tool_payload(result, measurement_id=measurement_id))
+        return json.dumps(_tool_payload(result))
 
     def compare_heights(self, first_object_id: str, second_object_id: str, plane_id: str) -> str:
         """Choose the taller object only when one shared-plane measurement is unambiguous."""
@@ -444,37 +649,57 @@ class LocalOracleToolRegistry:
         self._results.append(result)
         return json.dumps(_tool_payload(result))
 
-    def classify_door_state(self, object_id: str) -> str:
-        """Classify one grounded door against the surrounding point-cloud plane."""
+    def classify_object_on_support(self, object_id: str, support_id: str) -> str:
+        """Verify that one grounded object directly rests on another grounded object."""
         object = self._objects.get(object_id)
-        if object is None:
-            return self._record_rejection("classify_door_state", object_id, [], "unknown_object_id")
-        if "door" not in object.label.lower():
+        support = self._objects.get(support_id)
+        if object is None or support is None:
+            return self._record_rejection("classify_object_on_support", "", [], "unknown_object_id")
+        result = self._primitives.classify_object_on_support(object, support)
+        if result.answer is None:
             return self._record_rejection(
-                "classify_door_state", object.label, [], "door_state_requires_door_query"
-            )
-        result = self._primitives.classify_door_state(object)
-        if result.state is None:
-            return self._record_rejection(
-                "classify_door_state",
-                object.label,
+                "classify_object_on_support",
+                f"{object.label},{support.label}",
                 list(result.quality_flags),
                 result.rejection_reason,
             )
+        tool_result = OracleToolResult(
+            "classify_object_on_support",
+            f"{object.label},{support.label}",
+            (_grounding_evidence(object), _grounding_evidence(support)),
+            choice=result.answer,
+            choices=("yes", "no"),
+            quality_flags=result.quality_flags,
+        )
+        self._results.append(tool_result)
+        return json.dumps(_tool_payload(tool_result))
+
+    def measure_opening_width(self, mask_id: str) -> str:
+        """Measure one earlier segmented doorway/opening mask in metres."""
+        handle = self._masks.get(mask_id)
+        if handle is None:
+            return self._record_rejection("measure_opening_width", "", [], "unknown_mask_id")
+        query = handle[0] if isinstance(handle, tuple) else handle
+        result = self._primitives.measure_opening_width(query)
+        if result.measurement is None:
+            return self._record_rejection(
+                "measure_opening_width", query, list(result.quality_flags), result.rejection_reason
+            )
         evidence = OracleEvidence(
-            f"door-state:v1:{object.id}",
+            f"opening-width:v1:{self._primitives.frame.id}:{mask_id}",
             "v1",
-            object.id,
-            object.label,
-            object.range_m,
-            object.horizontal_direction,
-            object.point_count,
+            mask_id,
+            query,
+            0.0,
+            "n/a",
+            0,
+            result.measurement,
         )
         tool_result = OracleToolResult(
-            "classify_door_state",
-            object.label,
+            "measure_opening_width",
+            query,
             (evidence,),
-            choice=result.state,
+            measurement=result.measurement,
             quality_flags=result.quality_flags,
         )
         self._results.append(tool_result)
@@ -508,25 +733,6 @@ class LocalOracleToolRegistry:
         )
         self._results.append(tool_result)
         return json.dumps(_tool_payload(tool_result))
-
-    def bucket_measurement(self, measurement_id: str) -> str:
-        """Map one accepted private height measurement to its public choice."""
-        source = self._measurements.get(measurement_id)
-        if source is None or source.measurement is None:
-            return self._record_rejection("bucket_measurement", "", [], "unknown_measurement_id")
-        choices, choice = height_choice_window(source.measurement.value)
-        result = OracleToolResult(
-            "bucket_measurement",
-            source.query,
-            source.evidence,
-            measurement=source.measurement,
-            choice=choice,
-            choices=choices,
-            plane=source.plane,
-            quality_flags=source.quality_flags,
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result))
 
     def _record_rejection(self, tool: str, query: str, flags: list[str], reason: str | None) -> str:
         result = OracleToolResult(
@@ -595,6 +801,7 @@ def _tool_payload(result: OracleToolResult, **identifiers: Any) -> dict[str, Any
         "choice": result.choice,
         "choices": result.choices,
         "quality_flags": result.quality_flags,
+        "metrics": dict(result.metrics),
         "rejection_reason": result.rejection_reason,
         "plane": (
             {
