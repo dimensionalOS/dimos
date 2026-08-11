@@ -44,17 +44,14 @@ smoke against the small bundled recording:
 import os
 import threading
 import time
-from typing import TYPE_CHECKING
 
 import pytest
+from pytest_codspeed import BenchmarkFixture
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-if TYPE_CHECKING:
-    from pytest_codspeed import BenchmarkFixture
 
 REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_hongkong_office")
 DURATION = float(os.environ.get("DIMOS_BENCH_DURATION", 60))
