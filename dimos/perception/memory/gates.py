@@ -47,8 +47,7 @@ if TYPE_CHECKING:
 OPTICAL_FRAME = "camera_color_optical_frame"
 WORLD_FRAME = "world"
 
-# One world-pose period (9.86 Hz measured) plus margin. The 0.5 s the sketch
-# used spans five samples - up to 7.5 cm of smear at peak wrist speed.
+# One world-pose period plus margin.
 TF_TOLERANCE = 0.12
 
 SPEED_MAX = 0.02  # m/s - camera counts as still below this
@@ -223,9 +222,10 @@ def scene_still(
 def depth_at(store: Any, ts: float, tolerance: float = 0.06) -> Image | None:
     """Temporal join: aligned depth frame for a color timestamp."""
     try:
-        return store.streams.depth_image.at(ts, tolerance).first().data
+        depth: Image = store.streams.depth_image.at(ts, tolerance).first().data
     except LookupError:
         return None
+    return depth
 
 
 def keyframes(

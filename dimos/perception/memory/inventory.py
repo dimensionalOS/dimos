@@ -64,12 +64,10 @@ MAX_PROPOSALS_PER_FRAME = 40
 NAME_FRAMES_PER_INSTANCE = 5
 NAME_SCORE_FLOOR = 0.18
 # An attachment must be the detector drawing a box around this member, not a
-# box that merely crosses it: a tape-grid "ruler" box overlapping a diagonal
-# book's axis-aligned bbox reaches IoU 0.31, the book's own box reaches 0.95.
+# box that merely crosses it.
 NAME_ATTACH_IOU = 0.45
-# Measured on the S1 run: a 31-class prompt dilutes the text tokens enough
-# that a plainly visible class drops out of its own box (book: 0.39 in a
-# 10-class prompt, absent at the same threshold in the 31-class one).
+# Post-processing reports one label per box per request, so chunking is what
+# lets a box carry more than one label. It changes no score.
 NAME_PROMPT_CAP = 10
 SUPPRESS_SCORE = 0.25
 SUPPRESS_OVERLAP = 0.35
@@ -124,7 +122,8 @@ class _Track:
 
     @property
     def centroid(self) -> np.ndarray:
-        return np.median(np.stack([m.centroid for m in self.members]), axis=0)
+        median: np.ndarray = np.median(np.stack([m.centroid for m in self.members]), axis=0)
+        return median
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -298,8 +297,7 @@ def _in_scope(obs: SupportObservation, plane: SupportPlane | None, policy: Inven
     if low < band_lo or high > band_hi:
         return False
     if not policy.include_surfaces and high < policy.min_height_above_plane_m:
-        # A patch of the surface itself: no volume above the plane. Tape
-        # lines and wood-grain segments die here; every real object rises.
+        # A patch of the surface itself: no volume above the plane.
         return False
     inside = plane.footprint_contains(points[:, :2])
     return bool(inside.mean() >= 0.3)
@@ -415,14 +413,14 @@ def _associate(
                 cost[i, j] = 1.0 - overlap
 
         rows, cols = linear_sum_assignment(cost)
-        assigned = {}
+        assigned: dict[int, int] = {}
         for i, j in zip(rows, cols, strict=False):
             if cost[i, j] < forbidden:
                 assigned[i] = j
         for i, obs in enumerate(observations):
-            j = assigned.get(i)
-            if j is not None:
-                tracks[j].add(obs, frame_key)
+            match = assigned.get(i)
+            if match is not None:
+                tracks[match].add(obs, frame_key)
             else:
                 track = _Track()
                 track.add(obs, frame_key)
@@ -540,14 +538,15 @@ def _build_instance(index: int, track: _Track, grounded: bool = True) -> Instanc
     latest = track.latest
     coverage, axes_observed = _view_coverage(track.members)
     lo, hi = track.aabb
+    center = (lo + hi) / 2
     extent = np.maximum(hi - lo, 0.005)
     centroids = np.stack([m.centroid for m in track.members])
     sigma = centroids.std(axis=0) if len(track.members) > 1 else np.full(3, 0.01)
     support = Support(
-        center_xyz=tuple(float(v) for v in (lo + hi) / 2),
-        extent_xyz_m=tuple(float(v) for v in extent),
+        center_xyz=(float(center[0]), float(center[1]), float(center[2])),
+        extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
         orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
-        sigma_xyz_m=tuple(float(v) for v in sigma),
+        sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
         coverage=coverage,
         axes_observed=axes_observed,
         frame_id="world",
@@ -561,7 +560,11 @@ def _build_instance(index: int, track: _Track, grounded: bool = True) -> Instanc
         state="active",
         identity_confidence=min(1.0, distinct_views / 3.0),
         support=support,
-        latest_position_xyz=tuple(float(v) for v in latest.centroid),
+        latest_position_xyz=(
+            float(latest.centroid[0]),
+            float(latest.centroid[1]),
+            float(latest.centroid[2]),
+        ),
         latest_seen_ts=latest.ts,
         members=track.members,
     )

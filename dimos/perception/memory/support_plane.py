@@ -43,6 +43,7 @@ logger = setup_logger()
 BACKDROP_DEPTH_TRUNC = 1.5  # m - the workspace a wrist camera actually covers
 PLANE_DISTANCE = 0.01  # m - RANSAC inlier distance
 MIN_HORIZONTAL_DOT = 0.90  # |normal . z| for a plane to count as horizontal
+PLANE_SEED = 0  # RANSAC is seeded so one window always fits the same plane
 FOOTPRINT_DILATE_M = 0.03
 
 
@@ -62,7 +63,8 @@ class SupportPlane:
     def height_above(self, points: np.ndarray) -> np.ndarray:
         """Signed height of (N, 3) world points above the plane."""
         a, b, c, d = self.coefficients
-        return points @ np.array([a, b, c]) + d
+        heights: np.ndarray = points @ np.array([a, b, c]) + d
+        return heights
 
     def footprint_contains(self, points_xy: np.ndarray) -> np.ndarray:
         """Boolean mask: which (N, 2) world XY points fall inside the (dilated) hull."""
@@ -118,6 +120,9 @@ def fit_support_plane(
 
     import open3d as o3d
 
+    # Unseeded, the plane fit lands on a different set of inliers each run
+    o3d.utility.random.seed(PLANE_SEED)
+
     remaining = o3d.geometry.PointCloud()
     remaining.points = o3d.utility.Vector3dVector(points)
     best: tuple[np.ndarray, np.ndarray] | None = None  # (coefficients, inlier points)
@@ -125,7 +130,7 @@ def fit_support_plane(
         if len(remaining.points) < 500:
             break
         model, inlier_idx = remaining.segment_plane(
-            distance_threshold=PLANE_DISTANCE, ransac_n=3, num_iterations=1000
+            distance_threshold=PLANE_DISTANCE, ransac_n=3, num_iterations=1000, probability=1.0
         )
         inliers = np.asarray(remaining.points)[inlier_idx]
         normal = np.array(model[:3])
@@ -146,7 +151,7 @@ def fit_support_plane(
     xy = inliers[:, :2]
     hull = ConvexHull(xy)
     return SupportPlane(
-        coefficients=tuple(float(v) for v in model),
+        coefficients=(float(model[0]), float(model[1]), float(model[2]), float(model[3])),
         footprint_hull=xy[hull.vertices],
         inlier_count=len(inliers),
     )

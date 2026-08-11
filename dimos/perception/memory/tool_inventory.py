@@ -19,8 +19,15 @@ Run: uv run python -m dimos.perception.memory.tool_inventory
 
 Stdout contract: a summary line ``instances: N`` followed by one line per
 instance: ``<i>  id=<run_local_id>  name=<str>  xyz=(x,y,z)  ts_offset=<s>
-members=<k>``. Exit code 0 whenever the call completes; an empty scene is
-``instances: 0``, not a failure.
+members=<k>  extent=(x,y,z)  sigma=(x,y,z)  coverage=<f>``. Exit code 0
+whenever the call completes; an empty scene is ``instances: 0``, not a
+failure.
+
+``extent`` is the instance's bounding size in meters and ``sigma`` the
+spread of its member centroids, so a caller can check an object against a
+gripper without a second query. Both are what the views actually saw:
+``coverage`` is the fraction of viewing azimuth covered, and an instance
+seen from one side reports the extent of that side.
 
 The instance list reports the scene as of the window's end: position and
 timestamp come from each instance's latest member observation. An object
@@ -83,10 +90,20 @@ def main() -> int:
             xyz = f"({x:.3f},{y:.3f},{z:.3f})"
         else:
             xyz = "None"
+        if instance.support is not None:
+            ex, ey, ez = instance.support.extent_xyz_m
+            sx, sy, sz = instance.support.sigma_xyz_m
+            geometry = (
+                f"  extent=({ex:.3f},{ey:.3f},{ez:.3f})"
+                f"  sigma=({sx:.3f},{sy:.3f},{sz:.3f})"
+                f"  coverage={instance.support.coverage:.2f}"
+            )
+        else:
+            geometry = ""
         print(
             f"{i}  id={instance.instance_id}  name={instance.primary_label}  "
             f"xyz={xyz}  ts_offset={instance.latest_seen_ts - lo:.1f}  "
-            f"members={len(instance.members)}"
+            f"members={len(instance.members)}{geometry}"
         )
     return 0
 

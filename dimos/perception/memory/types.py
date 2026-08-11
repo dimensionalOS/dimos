@@ -112,11 +112,6 @@ class LocalizePolicy:
     """
 
     candidate_floor: float = 0.25  # form a candidate at this score
-    # Measured across the replay: every true positive's best view scores 0.43
-    # or higher (the diagonal book is the floor); every text-only near-miss -
-    # gray tape rolls for "roll of black tape" at 0.31, a dark table stripe
-    # for "black tape" at 0.36 - stays at or under 0.36. The accept sits
-    # between.
     accept_score: float = 0.40
     refusal_margin: float = 0.15
     min_views: int = 2  # a support seen from one pose only is unconfirmed
@@ -126,10 +121,7 @@ class LocalizePolicy:
     max_object_extent_m: float = 0.60
     min_camera_range_m: float = 0.28
     # A cloud that hugs the support surface is a patch of the surface, not an
-    # object: a dark wood-grain cell outlined by the tape grid reads as "black
-    # tape" to the detector at 0.41, but nothing about it rises above the
-    # table. The flattest real object here, a sticky pad, clears 5 mm at its
-    # 95th height percentile; surface patches stay under 2 mm.
+    # object: every real object rises above the plane, a surface patch does not.
     surface_patch_max_rise_m: float = 0.003
     surface_patch_min_drop_m: float = -0.02
 

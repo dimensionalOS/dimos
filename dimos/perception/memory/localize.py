@@ -102,7 +102,8 @@ class _Cluster:
     @property
     def extent(self) -> np.ndarray:
         points = np.concatenate([np.asarray(o.cloud.pointcloud.points) for o in self.observations])
-        return points.max(axis=0) - points.min(axis=0)
+        extent: np.ndarray = points.max(axis=0) - points.min(axis=0)
+        return extent
 
 
 @dataclass
@@ -168,7 +169,9 @@ class _DetectionCache:
         hit = self._cache.get(key)
         if hit is not None:
             return hit
-        detections = self.owl.query_detections(image, [self.query], threshold=self.floor)
+        detections: ImageDetections2D = self.owl.query_detections(
+            image, [self.query], threshold=self.floor
+        )
         detections = ImageDetections2D(
             image,
             sorted(detections.detections, key=lambda d: -d.confidence)[:BOXES_PER_FRAME],
@@ -245,7 +248,8 @@ def _embed_index(
         )
         .filter(lambda obs: obs.pose is not None)
     )
-    return posed.transform(EmbedImages(siglip)).materialize()
+    embedded: Stream[Any, Any] = posed.transform(EmbedImages(siglip)).materialize()
+    return embedded
 
 
 def _retrieve(
@@ -497,18 +501,18 @@ def localize(
         orientation = _quaternion_from_matrix(np.asarray(latest.cloud.oriented_bounding_box.R))
     except Exception:
         orientation = (0.0, 0.0, 0.0, 1.0)
+    center = (aabb_min + aabb_max) / 2
+    extent = np.maximum(aabb_max - aabb_min, 0.005)
+    sigma = (
+        np.stack([o.centroid for o in winner.observations]).std(axis=0)
+        if len(winner.observations) > 1
+        else np.full(3, 0.01)
+    )
     support = Support(
-        center_xyz=tuple(float(v) for v in (aabb_min + aabb_max) / 2),
-        extent_xyz_m=tuple(float(v) for v in np.maximum(aabb_max - aabb_min, 0.005)),
+        center_xyz=(float(center[0]), float(center[1]), float(center[2])),
+        extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
         orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
-        sigma_xyz_m=tuple(
-            float(v)
-            for v in (
-                np.stack([o.centroid for o in winner.observations]).std(axis=0)
-                if len(winner.observations) > 1
-                else np.full(3, 0.01)
-            )
-        ),
+        sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
         coverage=_azimuth_coverage(winner.observations, winner.center),
         axes_observed=_axes_observed(winner.observations, winner.center),
         frame_id="world",
@@ -523,7 +527,11 @@ def localize(
         semantic_score=winner.max_score,
         identity_score=min(1.0, winner.n_views / 4.0),
         ambiguity_margin=margin,
-        position_world_xyz=tuple(float(v) for v in latest.centroid),
+        position_world_xyz=(
+            float(latest.centroid[0]),
+            float(latest.centroid[1]),
+            float(latest.centroid[2]),
+        ),
         orientation_world_xyzw=orientation,
         frame_id="world",
         support=support,
