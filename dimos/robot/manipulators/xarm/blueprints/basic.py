@@ -48,9 +48,10 @@ dual_xarm6_planner_coordinator = autoconnect(
 )
 
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+_xarm7_model = make_xarm7_model_config(name="arm", add_gripper=True)
 
 xarm7_planner_coordinator = autoconnect(
-    planner(robots=[make_xarm7_model_config(name="arm", add_gripper=True)]),
+    planner(robots=[_xarm7_model]),
     coordinator(
         hardware=[_xarm7_hw],
         tasks=[

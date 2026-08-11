@@ -117,8 +117,9 @@ def make_xarm_hardware(
     if adapter_kwargs:
         kwargs.update(adapter_kwargs)
     gripper_joints = [f"{hw_id}/gripper"] if gripper else []
-    if gripper and isinstance(kwargs.get("initial_positions"), list):
-        kwargs["initial_positions"] = [*kwargs["initial_positions"], 0.0]
+    initial_positions = kwargs.get("initial_positions")
+    if gripper and isinstance(initial_positions, list):
+        kwargs["initial_positions"] = [*initial_positions, 0.0]
     if adapter_type == "mock":
         kwargs["limits"] = JointLimits(
             position_lower=[*([-2 * math.pi] * dof), *([0.0] * len(gripper_joints))],

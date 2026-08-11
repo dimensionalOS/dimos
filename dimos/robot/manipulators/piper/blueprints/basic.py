@@ -19,9 +19,14 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
-from dimos.robot.manipulators.piper.config import PIPER_SIM_PATH, piper_hardware
+from dimos.robot.manipulators.piper.config import (
+    PIPER_SIM_PATH,
+    make_piper_model_config,
+    piper_hardware,
+)
 
 _piper_hw = piper_hardware("arm")
+_piper_model = make_piper_model_config()
 
 coordinator_piper = autoconnect(
     ControlCoordinator.blueprint(
