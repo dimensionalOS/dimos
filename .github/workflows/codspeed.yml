@@ -39,10 +39,6 @@ jobs:
   benchmarks:
     # Same-repo PRs and pushes only: fork PRs must not run on the self-hosted
     # runner (mirrors the self-hosted-tests gate in ci.yml).
-    # Walltime on our own runner rather than `codspeed-macro`: the CodSpeed
-    # macro fleet is AWS a1.metal (Graviton1, ARMv8.0) where ARMv8.2-compiled
-    # wheels (torch et al.) SIGILL at import. One job per runner agent means
-    # the benchmark has the machine to itself while it runs.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     needs: compute-ros-pin
     timeout-minutes: 30
