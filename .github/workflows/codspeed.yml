@@ -76,9 +76,8 @@ jobs:
         with:
           # /root/.cache is a persisted volume
           enable-cache: false
-      # uv-managed (python-build-standalone) rather than the container python:
-      # it statically bundles a modern sqlite (>=3.45), which reading the
-      # replay DB's JSONB tags requires; jammy's libsqlite3 is 3.37.
+      # uv-managed rather than the container's python for sqlite (>=3.45).
+      # TODO: Can be dropped after upgrading to 26.04.
       - name: Setup Python
         run: uv python install 3.12
       - name: Install dependencies
