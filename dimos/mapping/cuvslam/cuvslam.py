@@ -193,6 +193,13 @@ class CuvslamConfig(NativeModuleConfig):
     slam_throttling_ms: int = 0
     enable_imu: bool = False
     imu_calibration: ImuCalibration | None = None
+    # Rebase guard: a frame whose translation standard deviation (root of the largest
+    # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
+    # path rebased onto the held pose, so the published odometry never carries a teleport
+    # from an unconstrained scene. Meters; 0 publishes the raw integrator untouched.
+    # Measured on sf_office1_3: normal frames sit at 0.01-0.3 m, the blank-wall burst
+    # reports 5-330 m or NaN, so 1.0 separates them by an order of magnitude each way.
+    covariance_gate_translation_std: float = 1.0
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
