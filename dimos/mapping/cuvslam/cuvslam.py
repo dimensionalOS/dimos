@@ -200,6 +200,14 @@ class CuvslamConfig(NativeModuleConfig):
     # Measured on sf_office1_3: normal frames sit at 0.01-0.3 m, the blank-wall burst
     # reports 5-330 m or NaN, so 1.0 separates them by an order of magnitude each way.
     covariance_gate_translation_std: float = 1.0
+    # Rebase guard on physically implausible frame-to-frame motion, in metres/second and
+    # radians/second against the previous tracked frame. Catches confident teleports the
+    # covariance gate misses (0.9 m in one 33 ms frame is 27 m/s) without trusting the
+    # tracker's self-report; VINS-Mono's failureDetection() gates the same way. Linear sits
+    # above any handheld or robot speed (jogging is ~4 m/s), angular deliberately high --
+    # a fast handheld pan peaks near 5 rad/s. 0 disables that limit.
+    speed_gate_max_linear: float = 5.0
+    speed_gate_max_angular: float = 12.0
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0

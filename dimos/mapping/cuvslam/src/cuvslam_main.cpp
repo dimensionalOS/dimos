@@ -92,6 +92,20 @@ Transform invert(const Transform& transform) {
     return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
 }
 
+double translation_between(const Transform& from, const Transform& to) {
+    const double dx = to.translation[0] - from.translation[0];
+    const double dy = to.translation[1] - from.translation[1];
+    const double dz = to.translation[2] - from.translation[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+/// Angle of the relative rotation between two orientations, radians.
+double angle_between(const std::array<double, 4>& from, const std::array<double, 4>& to) {
+    const double dot = std::abs(from[0] * to[0] + from[1] * to[1] + from[2] * to[2] +
+                                from[3] * to[3]);
+    return 2.0 * std::acos(std::min(dot, 1.0));
+}
+
 std_msgs::Time to_stamp(std::int64_t timestamp_ns) {
     std_msgs::Time stamp{};
     stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
@@ -252,6 +266,14 @@ struct CuvslamConfig {
     /// published path never carries the teleport. Meters; 0 disables the guard and the raw
     /// integrator is published untouched.
     double covariance_gate_translation_std;
+    /// Rebase guard on physically implausible frame-to-frame motion, sharing the
+    /// covariance gate's hold-and-rebase machinery but trusting kinematics instead of the
+    /// tracker's self-report: a teleport with confident covariance still cannot claim the
+    /// rig moved faster than the platform can. Linear is metres/second, angular is
+    /// radians/second, both measured on the raw pose against the previous tracked frame;
+    /// 0 disables that limit.
+    double speed_gate_max_linear;
+    double speed_gate_max_angular;
     /// cuVSLAM's Inertial mode is stereo plus one IMU.
     bool enable_imu;
     /// Flattened from the python ImuCalibration. All zero means enable_imu is off.
@@ -317,6 +339,8 @@ public:
                                       static_cast<std::int64_t>(depth_reprojected_)),
                        logging::Field("covariance_gated",
                                       static_cast<std::int64_t>(covariance_gated_)),
+                       logging::Field("speed_gated",
+                                      static_cast<std::int64_t>(speed_gated_)),
                        logging::Field("unmatched_images",
                                       static_cast<std::int64_t>(unplaced_images_))});
     }
@@ -746,6 +770,9 @@ private:
             if (was_tracking_) {
                 ++segment_id_;
                 was_tracking_ = false;
+                // The next tracked frame restarts across an unmeasured gap; its speed
+                // against the pre-loss pose would be meaningless.
+                previous_raw_.reset();
                 logging::warn("cuvslam tracking lost",
                               {logging::Field("segment", static_cast<std::int64_t>(segment_id_))});
             }
@@ -760,20 +787,50 @@ private:
             std::max({covariance_[0], covariance_[7], covariance_[14]})));
         // NaN covariance is the tracker's own way of saying unconstrained; a NaN never
         // exceeds a threshold, so it has to be gated explicitly.
+        bool gate_frame = false;
         if (cfg_.covariance_gate_translation_std > 0.0 && was_tracking_ &&
             (!std::isfinite(translation_std) ||
              translation_std > cfg_.covariance_gate_translation_std)) {
-            // Unconstrained frame (blank wall, repeated texture): drop its motion and keep
-            // rebasing onto the held pose, so recovery continues from here with only the
-            // delta measured after the scene became constrained again.
-            rebase_ = compose(world_from_rig_, invert(raw_pose));
-            frame_gated_ = true;
+            gate_frame = true;
             ++covariance_gated_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(5),
                                 "cuvslam covariance gate holding pose",
                                 logging::Field("translation_std", translation_std),
                                 logging::Field("gated",
                                                static_cast<std::int64_t>(covariance_gated_)));
+        }
+        // Speed is judged against the previous raw pose even when that frame was gated:
+        // after a teleport the tracker keeps integrating from the far side, so later
+        // frames are near the teleported pose and only the jump frame itself trips.
+        if ((cfg_.speed_gate_max_linear > 0.0 || cfg_.speed_gate_max_angular > 0.0) &&
+            previous_raw_.has_value()) {
+            // Track() rejects non-increasing stamps, so dt is strictly positive here.
+            const double dt = static_cast<double>(est.timestamp_ns - previous_raw_ns_) / 1.0e9;
+            const double linear_speed = translation_between(*previous_raw_, raw_pose) / dt;
+            const double angular_speed =
+                angle_between(previous_raw_->rotation, raw_pose.rotation) / dt;
+            if ((cfg_.speed_gate_max_linear > 0.0 &&
+                 linear_speed > cfg_.speed_gate_max_linear) ||
+                (cfg_.speed_gate_max_angular > 0.0 &&
+                 angular_speed > cfg_.speed_gate_max_angular)) {
+                gate_frame = true;
+                ++speed_gated_;
+                DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(5),
+                                    "cuvslam speed gate holding pose",
+                                    logging::Field("linear_mps", linear_speed),
+                                    logging::Field("angular_rps", angular_speed),
+                                    logging::Field("gated",
+                                                   static_cast<std::int64_t>(speed_gated_)));
+            }
+        }
+        previous_raw_ = raw_pose;
+        previous_raw_ns_ = est.timestamp_ns;
+        if (gate_frame) {
+            // Implausible frame (blank wall, repeated texture, teleport): drop its motion
+            // and keep rebasing onto the held pose, so recovery continues from here with
+            // only the delta measured after tracking became sane again.
+            rebase_ = compose(world_from_rig_, invert(raw_pose));
+            frame_gated_ = true;
         } else {
             world_from_rig_ = compose(rebase_, raw_pose);
             frame_gated_ = false;
@@ -914,6 +971,9 @@ private:
     Transform corrected_rebase_;
     Transform map_from_base_;  ///< last published loop-closed pose
     std::uint64_t covariance_gated_{0};
+    std::optional<Transform> previous_raw_;  ///< raw pose of the last tracked frame
+    std::int64_t previous_raw_ns_{0};
+    std::uint64_t speed_gated_{0};
 
     sensor_msgs::Image depth_{};
     bool have_depth_{false};
