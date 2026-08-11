@@ -28,9 +28,9 @@
 #include "sensor_msgs/Image.hpp"
 #include "sensor_msgs/Imu.hpp"
 #include "tf2_msgs/TFMessage.hpp"
-#include "depth_reproject.hpp"
-#include "msg_convert.hpp"
-#include "transform.hpp"
+#include "utils/depth_reproject.hpp"
+#include "utils/msg_convert.hpp"
+#include "utils/transform.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
