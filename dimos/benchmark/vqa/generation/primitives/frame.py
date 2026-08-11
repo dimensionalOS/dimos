@@ -11,6 +11,7 @@ from dimos.benchmark.vqa.generation.primitives.contracts import (
     DoorStateResult,
     ForwardPathResult,
     HeightMeasurementResult,
+    HorizontalRelationResult,
 )
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     PlaneFitResult,
@@ -227,6 +228,23 @@ class FramePerceptionPrimitives:
         if len(distances) > 1 and distances[1][0] - distances[0][0] < 0.15:
             return ClosestObjectResult(None, None, (), "ambiguous_object_proximity")
         return ClosestObjectResult(distances[0][1], distances[0][0], ("object_centroid_proximity",))
+
+    def classify_horizontal_relation(
+        self, first: GroundedObject, second: GroundedObject
+    ) -> HorizontalRelationResult:
+        """Classify whether the first object's support centroid is left or right of the second's."""
+        if first.id == second.id:
+            return HorizontalRelationResult(None, (), "duplicate_object_id")
+        first_points = self._object_points(first)
+        second_points = self._object_points(second)
+        if first_points is None or second_points is None:
+            return HorizontalRelationResult(None, (), "insufficient_object_support")
+        horizontal_offset_m = float(np.median(first_points[:, 0]) - np.median(second_points[:, 0]))
+        if abs(horizontal_offset_m) < 0.1:
+            return HorizontalRelationResult(None, (), "ambiguous_horizontal_relation")
+        return HorizontalRelationResult(
+            "left" if horizontal_offset_m < 0 else "right", ("camera_frame_support_centroids",)
+        )
 
     def classify_forward_path(self) -> ForwardPathResult:
         """Classify the observed camera-forward corridor as clear or blocked."""

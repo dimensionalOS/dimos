@@ -41,6 +41,15 @@ class ClosestObjectResult:
 
 
 @dataclass(frozen=True)
+class HorizontalRelationResult:
+    """A pairwise camera-frame horizontal relation or its explicit rejection."""
+
+    relation: Literal["left", "right"] | None
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class ForwardPathResult:
     """A conservative visible-corridor classification from point-cloud evidence."""
 

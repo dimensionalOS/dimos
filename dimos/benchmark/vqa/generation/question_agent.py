@@ -21,16 +21,22 @@ from dimos.msgs.sensor_msgs.Image import Image
 QUESTION_PROMPT = """Select up to 5 challenging but visually well-supported single-frame VQA intents.
 Inspect only this image. Do not assume depth, point clouds, calibration, metadata, or temporal context.
 Return JSON only: an array of objects with kind, object_query, and threshold_m only for
-within_distance, plus candidate_queries only for closest_object. kind must be one of presence,
-horizontal_direction, within_distance, compare_nearest_by_side, door_state, closest_object, or forward_path.
+within_distance, candidate_queries only for closest_object, and comparison_query only for
+compare_height. kind must be one of presence, horizontal_direction, within_distance, visible_count,
+camera_range, compare_nearest_by_side, compare_left_right, compare_height, door_state, closest_object,
+or forward_path.
 Use threshold_m: 3.0 for within_distance.
 Use image context to select only intents likely to produce a useful geometric case: emit
 compare_nearest_by_side only when at least two visible instances of the same object appear on
 opposite image sides; emit horizontal_direction only for a visible object; and prefer relational
 or directional intents over presence. Emit door_state only for a clearly visible door with nearby
 visible structure. Diversify object classes and question families when the scene supports them.
-Emit closest_object only when one target and at least two distinct candidate object types are
-visible; candidate_queries must name the visible candidate types.
+Emit visible_count only when at least one repeated visible object is present. Emit camera_range only
+for a visible object. Emit compare_height only for two distinct visible upright object types resting
+on the visible ground; comparison_query must name the other object type. Emit compare_left_right only
+for two distinct visible object types; comparison_query must name the other object type. Emit closest_object only when
+one target and at least two distinct candidate object types are visible; candidate_queries must name
+the visible candidate types.
 Emit forward_path only when the center foreground and visible floor provide enough context to judge
 the local path directly ahead. Use object_query: "forward path" for forward_path.
 Do not return bare object names, floors, walls, ceilings, background surfaces,
@@ -45,15 +51,20 @@ Prioritize questions that a private point-cloud oracle can validate. For the hei
 object resting on visible ground, use deferred_height_choice. Its choices are generated privately
 from a successful height measurement. Aim for a diverse set of questions that use the visible scene
 composition: relative left/center/right position, which listed object is closest to a named target,
-count choices for a visibly repeated object, and height for an upright grounded object. For
-closest-object questions, use distinct visible candidate object types as the fixed choices. Use concise,
-mutually exclusive fixed choices with two to four options. For a clearly visible door with nearby
-visible structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use
-the fixed choices ["clear", "blocked"] only for a visibly supported local path directly ahead.
-Use object_queries for every referenced object and tool_hints from "detect_objects", "segment_detections", "ground_masks",
-"fit_ground_plane", "select_nearest_object", "measure_height", "classify_door_state", or
-"select_closest_object", "classify_forward_path", "bucket_measurement" when applicable. Use visibility/presence questions only when no stronger
-geometric question is available.
+and height for an upright grounded object. For a visibly repeated object, count questions must use exactly
+["1-2", "3-4", "5-7", "8+"]; camera-distance questions must use exactly ["under 1 m",
+"1 to under 2 m", "2 to under 4 m", "4 m or more"]. For a pairwise left/right range question,
+use exactly ["left", "right"]. For an A/B left-right relation question, use exactly ["left", "right"]
+and name both objects. For a pairwise height question, use the two distinct object types as the choices.
+For closest-object questions, use distinct visible candidate object types as the fixed choices. Use concise,
+mutually exclusive fixed choices with two to four options. For a clearly visible door with nearby visible
+structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use the fixed choices
+["clear", "blocked"] only for a visibly supported local path directly ahead.
+Use object_queries for every referenced object and tool_hints from "detect_objects", "segment_detections",
+"ground_masks", "count_grounded_objects", "bucket_camera_range", "compare_nearest_by_side",
+"compare_left_right", "fit_ground_plane", "measure_height", "compare_heights", "classify_door_state", "select_closest_object",
+"classify_forward_path", or "bucket_measurement" when applicable. Use visibility/presence questions only
+when no stronger geometric question is available.
 Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
 metric distances without a supplied choice contract. Use only visible objects. Do not include
 answers, explanations, Markdown, or background surfaces."""
@@ -94,7 +105,11 @@ class OpenAIQuestionAgent:
                 "presence",
                 "horizontal_direction",
                 "within_distance",
+                "visible_count",
+                "camera_range",
                 "compare_nearest_by_side",
+                "compare_left_right",
+                "compare_height",
                 "door_state",
                 "closest_object",
                 "forward_path",
@@ -109,11 +124,20 @@ class OpenAIQuestionAgent:
             if kind != "within_distance":
                 threshold = None
             candidates = _string_tuple(item.get("candidate_queries"), "candidate_queries")
+            comparison_query = item.get("comparison_query")
             if kind == "closest_object" and (len(candidates) < 2 or query in candidates):
                 raise ValueError("closest_object requires two distinct candidate_queries")
             if kind == "forward_path" and query != "forward path":
                 raise ValueError('forward_path requires object_query "forward path"')
-            intents.append(QuestionIntent(kind, query, threshold, candidates))
+            if kind in ("compare_left_right", "compare_height") and (
+                not isinstance(comparison_query, str)
+                or not comparison_query
+                or comparison_query == query
+            ):
+                raise ValueError(f"{kind} requires a distinct comparison_query")
+            if kind not in ("compare_left_right", "compare_height"):
+                comparison_query = None
+            intents.append(QuestionIntent(kind, query, threshold, candidates, comparison_query))
         return intents
 
 
@@ -182,6 +206,8 @@ def _intents_for_query(query: str) -> list[QuestionIntent]:
         QuestionIntent(kind="presence", object_query=query),
         QuestionIntent(kind="horizontal_direction", object_query=query),
         QuestionIntent(kind="within_distance", object_query=query, threshold_m=3.0),
+        QuestionIntent(kind="visible_count", object_query=query),
+        QuestionIntent(kind="camera_range", object_query=query),
         QuestionIntent(kind="compare_nearest_by_side", object_query=query),
     ]
 
