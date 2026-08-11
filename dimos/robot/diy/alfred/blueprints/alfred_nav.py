@@ -26,20 +26,20 @@ from dimos.robot.diy.alfred.config import LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.visualization.vis_module import vis_module
 
-nav_config: dict[str, Any] = dict(
-    planner="simple",
-    vehicle_height=0.5,
-    max_speed=0.8,
-    terrain_analysis={
+nav_config: dict[str, Any] = {
+    "planner": "simple",
+    "vehicle_height": 0.5,
+    "max_speed": 0.8,
+    "terrain_analysis": {
         "obstacle_height_threshold": 0.15,
         "ground_height_threshold": 0.10,
         "sensor_range": 20,
     },
-    local_planner={
+    "local_planner": {
         "paths_dir": str(LOCAL_PLANNER_PRECOMPUTED_PATHS),
         "publish_free_paths": False,
     },
-    simple_planner={
+    "simple_planner": {
         "body_frame": "mid360_link",
         "cell_size": 0.2,
         "obstacle_height_threshold": 0.15,
@@ -48,7 +48,7 @@ nav_config: dict[str, Any] = dict(
         "replan_rate": 5.0,
         "replan_cooldown": 2.0,
     },
-)
+}
 
 alfred_nav = (
     autoconnect(

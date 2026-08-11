@@ -34,7 +34,7 @@ except ImportError:
     try:
         from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
-        logger.warn(
+        logger.warning(
             "openai-whisper not installed, falling back to faster-whisper. "
             "Install openai-whisper for the full backend: pip install openai-whisper",
         )

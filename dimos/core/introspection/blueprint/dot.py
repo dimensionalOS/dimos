@@ -174,8 +174,8 @@ def render(
             group_a = sorted_groups[i]
             group_b = sorted_groups[i + 1]
             # Pick first node from each cluster
-            node_a = sorted(by_group[group_a])[0]
-            node_b = sorted(by_group[group_b])[0]
+            node_a = min(by_group[group_a])
+            node_b = min(by_group[group_b])
             lines.append(f"    {node_a} -> {node_b} [style=invis, weight=10];")
         lines.append("")
 
