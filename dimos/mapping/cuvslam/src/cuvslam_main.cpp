@@ -767,6 +767,7 @@ private:
             // rebasing onto the held pose, so recovery continues from here with only the
             // delta measured after the scene became constrained again.
             rebase_ = compose(world_from_rig_, invert(raw_pose));
+            frame_gated_ = true;
             ++covariance_gated_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(5),
                                 "cuvslam covariance gate holding pose",
@@ -775,6 +776,7 @@ private:
                                                static_cast<std::int64_t>(covariance_gated_)));
         } else {
             world_from_rig_ = compose(rebase_, raw_pose);
+            frame_gated_ = false;
         }
         was_tracking_ = true;
         ++tracked_;
@@ -796,8 +798,16 @@ private:
         }
         // Slam tracks the same rig, so its pose needs the same move onto base_frame as the
         // odometry one before it can be compared with world_from_rig_ or published.
-        const Transform map_from_base =
-            compose(to_transform(slam_->GetPose()), rig_from_base_);
+        const Transform slam_pose = compose(to_transform(slam_->GetPose()), rig_from_base_);
+        // The gate's decision carries over: an unconstrained frame poisons the slam pose
+        // through the same estimate, so the loop-closed stream holds and rebases with the
+        // VO stream. A real loop-closure snap has ordinary covariance and passes through.
+        if (frame_gated_) {
+            corrected_rebase_ = compose(map_from_base_, invert(slam_pose));
+        } else {
+            map_from_base_ = compose(corrected_rebase_, slam_pose);
+        }
+        const Transform& map_from_base = map_from_base_;
 
         const Transform map_from_odom_raw = compose(map_from_base, invert(world_from_rig_));
 
@@ -900,6 +910,9 @@ private:
     /// covariance gate
     cuvslam::PoseCovariance covariance_{};
     Transform rebase_;  ///< identity until the gate first fires
+    bool frame_gated_{false};
+    Transform corrected_rebase_;
+    Transform map_from_base_;  ///< last published loop-closed pose
     std::uint64_t covariance_gated_{0};
 
     sensor_msgs::Image depth_{};
