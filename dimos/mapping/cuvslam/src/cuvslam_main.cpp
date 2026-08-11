@@ -28,101 +28,23 @@
 #include "sensor_msgs/Image.hpp"
 #include "sensor_msgs/Imu.hpp"
 #include "tf2_msgs/TFMessage.hpp"
+#include "depth_reproject.hpp"
+#include "msg_convert.hpp"
+#include "transform.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
 using dimos::native::Module;
 using dimos::native::Output;
 namespace logging = dimos::native::log;
+using namespace depth_reproject;
+using namespace msg_convert;
+using namespace transform_math;
 
 namespace {
 
-constexpr std::int64_t kNsPerSec = 1000000000LL;
-
-std::int64_t stamp_to_ns(const std_msgs::Header& header) {
-    return static_cast<std::int64_t>(header.stamp.sec) * kNsPerSec +
-           static_cast<std::int64_t>(header.stamp.nsec);
-}
-
 /// cuVSLAM's Track() contract asks for stereo stamps within 1 ms.
-constexpr std::int64_t kMaxPairSkewNs = 1000000LL;  // 1 ms
-
-/// Rigid transform, rotation as xyzw to match cuvslam::Pose.
-struct Transform {
-    std::array<double, 4> rotation{0.0, 0.0, 0.0, 1.0};
-    std::array<double, 3> translation{0.0, 0.0, 0.0};
-};
-
-std::array<double, 4> quat_multiply(const std::array<double, 4>& left,
-                                    const std::array<double, 4>& right) {
-    return {left[3] * right[0] + left[0] * right[3] + left[1] * right[2] - left[2] * right[1],
-            left[3] * right[1] - left[0] * right[2] + left[1] * right[3] + left[2] * right[0],
-            left[3] * right[2] + left[0] * right[1] - left[1] * right[0] + left[2] * right[3],
-            left[3] * right[3] - left[0] * right[0] - left[1] * right[1] - left[2] * right[2]};
-}
-
-std::array<double, 3> cross(const std::array<double, 3>& left,
-                            const std::array<double, 3>& right) {
-    return {left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2],
-            left[0] * right[1] - left[1] * right[0]};
-}
-
-std::array<double, 3> quat_rotate(const std::array<double, 4>& rotation,
-                                  const std::array<double, 3>& vector) {
-    const std::array<double, 3> axis{rotation[0], rotation[1], rotation[2]};
-    std::array<double, 3> inner = cross(axis, vector);
-    for (int component = 0; component < 3; ++component) {
-        inner[component] += rotation[3] * vector[component];
-    }
-    const std::array<double, 3> outer = cross(axis, inner);
-    return {vector[0] + 2.0 * outer[0], vector[1] + 2.0 * outer[1], vector[2] + 2.0 * outer[2]};
-}
-
-Transform compose(const Transform& outer, const Transform& inner) {
-    const std::array<double, 3> rotated = quat_rotate(outer.rotation, inner.translation);
-    return Transform{quat_multiply(outer.rotation, inner.rotation),
-                     {outer.translation[0] + rotated[0], outer.translation[1] + rotated[1],
-                      outer.translation[2] + rotated[2]}};
-}
-
-Transform invert(const Transform& transform) {
-    const std::array<double, 4> conjugate{-transform.rotation[0], -transform.rotation[1],
-                                          -transform.rotation[2], transform.rotation[3]};
-    const std::array<double, 3> rotated = quat_rotate(conjugate, transform.translation);
-    return Transform{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
-}
-
-double translation_between(const Transform& from, const Transform& to) {
-    const double dx = to.translation[0] - from.translation[0];
-    const double dy = to.translation[1] - from.translation[1];
-    const double dz = to.translation[2] - from.translation[2];
-    return std::sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-/// Angle of the relative rotation between two orientations, radians.
-double angle_between(const std::array<double, 4>& from, const std::array<double, 4>& to) {
-    const double dot = std::abs(from[0] * to[0] + from[1] * to[1] + from[2] * to[2] +
-                                from[3] * to[3]);
-    return 2.0 * std::acos(std::min(dot, 1.0));
-}
-
-std_msgs::Time to_stamp(std::int64_t timestamp_ns) {
-    std_msgs::Time stamp{};
-    stamp.sec = static_cast<std::int32_t>(timestamp_ns / kNsPerSec);
-    stamp.nsec = static_cast<std::int32_t>(timestamp_ns % kNsPerSec);
-    return stamp;
-}
-
-Transform to_transform(const cuvslam::Pose& pose) {
-    return Transform{{pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
-                     {pose.translation[0], pose.translation[1], pose.translation[2]}};
-}
-
-Transform to_transform(const geometry_msgs::Transform& message) {
-    return Transform{
-        {message.rotation.x, message.rotation.y, message.rotation.z, message.rotation.w},
-        {message.translation.x, message.translation.y, message.translation.z}};
-}
+constexpr std::int64_t MAX_PAIR_SKEW_NS = 1000000LL;  // 1 ms
 
 std::string join(const std::vector<std::string>& parts) {
     std::string joined;
@@ -130,17 +52,6 @@ std::string join(const std::vector<std::string>& parts) {
         joined += joined.empty() ? part : ", " + part;
     }
     return joined;
-}
-
-cuvslam::Pose to_pose(const Transform& transform) {
-    cuvslam::Pose pose{};
-    pose.rotation = {
-        static_cast<float>(transform.rotation[0]), static_cast<float>(transform.rotation[1]),
-        static_cast<float>(transform.rotation[2]), static_cast<float>(transform.rotation[3])};
-    pose.translation = {static_cast<float>(transform.translation[0]),
-                        static_cast<float>(transform.translation[1]),
-                        static_cast<float>(transform.translation[2])};
-    return pose;
 }
 
 struct RigCamera {
@@ -151,83 +62,6 @@ struct RigCamera {
     bool have_image{false};
 };
 
-/// Pinhole for a rectified camera, Brown for one whose camera_info carries real plumb_bob
-/// coefficients (a D455's color stream is raw; its IR streams are rectified with D all zero).
-/// ROS orders plumb_bob (k1, k2, p1, p2, k3); cuVSLAM's Brown wants (k1, k2, k3, p1, p2).
-cuvslam::Distortion to_distortion(const sensor_msgs::CameraInfo& info) {
-    const std::vector<double>& d = info.D;
-    const bool distorted =
-        d.size() >= 5 && std::any_of(d.begin(), d.end(), [](double c) { return c != 0.0; });
-    if (!distorted) {
-        return cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
-    }
-    cuvslam::Distortion distortion{cuvslam::Distortion::Model::Brown};
-    distortion.parameters = {static_cast<float>(d[0]), static_cast<float>(d[1]),
-                             static_cast<float>(d[4]), static_cast<float>(d[2]),
-                             static_cast<float>(d[3])};
-    return distortion;
-}
-
-/// Depth recorded against one camera, reprojected onto another: deproject through the depth
-/// intrinsics, move through camera_from_depth, project through the target intrinsics. Where
-/// several depth pixels land on one target pixel the nearest surface wins, matching what the
-/// target camera would have seen. Unhit pixels stay 0, which cuVSLAM reads as no depth.
-void reproject_depth(const sensor_msgs::Image& depth, const sensor_msgs::CameraInfo& depth_info,
-                     const sensor_msgs::CameraInfo& camera_info,
-                     const Transform& camera_from_depth, double units_per_meter,
-                     sensor_msgs::Image& out) {
-    out.header = depth.header;
-    out.header.frame_id = camera_info.header.frame_id;
-    out.width = camera_info.width;
-    out.height = camera_info.height;
-    out.encoding = depth.encoding;
-    out.is_bigendian = depth.is_bigendian;
-    out.step = out.width * static_cast<std::int32_t>(sizeof(std::uint16_t));
-    out.data.assign(static_cast<std::size_t>(out.step) * out.height, 0);
-    out.data_length = static_cast<std::int32_t>(out.data.size());
-
-    // The rotation as columns, so each point costs multiplies rather than quaternion algebra.
-    const std::array<double, 3> col_x = quat_rotate(camera_from_depth.rotation, {1.0, 0.0, 0.0});
-    const std::array<double, 3> col_y = quat_rotate(camera_from_depth.rotation, {0.0, 1.0, 0.0});
-    const std::array<double, 3> col_z = quat_rotate(camera_from_depth.rotation, {0.0, 0.0, 1.0});
-    const std::array<double, 3>& origin = camera_from_depth.translation;
-    const double fx_d = depth_info.K[0], fy_d = depth_info.K[4];
-    const double cx_d = depth_info.K[2], cy_d = depth_info.K[5];
-    const double fx_c = camera_info.K[0], fy_c = camera_info.K[4];
-    const double cx_c = camera_info.K[2], cy_c = camera_info.K[5];
-
-    auto* aligned = reinterpret_cast<std::uint16_t*>(out.data.data());
-    for (std::int32_t v = 0; v < depth.height; ++v) {
-        const auto* row = reinterpret_cast<const std::uint16_t*>(
-            depth.data.data() + static_cast<std::size_t>(v) * depth.step);
-        for (std::int32_t u = 0; u < depth.width; ++u) {
-            const std::uint16_t raw = row[u];
-            if (raw == 0) {
-                continue;
-            }
-            const double z = raw / units_per_meter;
-            const double x = (u - cx_d) / fx_d * z;
-            const double y = (v - cy_d) / fy_d * z;
-            const double z_c = col_x[2] * x + col_y[2] * y + col_z[2] * z + origin[2];
-            if (z_c <= 0.0) {
-                continue;
-            }
-            const double x_c = col_x[0] * x + col_y[0] * y + col_z[0] * z + origin[0];
-            const double y_c = col_x[1] * x + col_y[1] * y + col_z[1] * z + origin[1];
-            const auto u_c = static_cast<std::int32_t>(std::lround(fx_c * x_c / z_c + cx_c));
-            const auto v_c = static_cast<std::int32_t>(std::lround(fy_c * y_c / z_c + cy_c));
-            if (u_c < 0 || u_c >= out.width || v_c < 0 || v_c >= out.height) {
-                continue;
-            }
-            const auto value = static_cast<std::uint16_t>(
-                std::min(std::lround(z_c * units_per_meter), 65535L));
-            std::uint16_t& slot = aligned[static_cast<std::size_t>(v_c) * out.width + u_c];
-            if (slot == 0 || value < slot) {
-                slot = value;
-            }
-        }
-    }
-}
 
 }  // namespace
 
@@ -239,9 +73,6 @@ struct CuvslamConfig {
     std::vector<std::string> camera_frames;
     /// Images arrive rectified: no distortion, rows aligned.
     bool rectified;
-    /// Frames dropped before the first Track(), so the tracker does not initialise on the
-    /// exposure ramp at the start of a capture. 0 tracks from the first frame.
-    int warmup_frames;
     std::string odom_frame;
     std::string base_frame;
     /// Frame the cuVSLAM rig is expressed in. Empty means base_frame. Setting it to a camera's
@@ -303,7 +134,6 @@ public:
         mode_ = cfg_.camera_mode == "stereo" ? Mode::Stereo
                 : cfg_.camera_mode == "rgbd"  ? Mode::Rgbd
                                               : Mode::Mono;
-        warmup_left_ = std::max(cfg_.warmup_frames, 0);
 
         builder.input<tf2_msgs::TFMessage>("tf", &CuvslamOdometry::on_tf, this);
         builder.input<sensor_msgs::CameraInfo>("camera_info", &CuvslamOdometry::on_camera_info,
@@ -333,8 +163,6 @@ public:
                        logging::Field("imu_dropped_before_start",
                                       static_cast<std::int64_t>(imu_dropped_)),
                        logging::Field("skew_rejects", static_cast<std::int64_t>(skew_rejects_)),
-                       logging::Field("warmup_skipped",
-                                      static_cast<std::int64_t>(warmup_skipped_)),
                        logging::Field("depth_reprojected",
                                       static_cast<std::int64_t>(depth_reprojected_)),
                        logging::Field("covariance_gated",
@@ -378,7 +206,7 @@ private:
         std::unordered_map<std::string, Transform> from_child{{child_frame, Transform{}}};
         std::string frame = child_frame;
         Transform ancestor_from_child;
-        for (std::size_t step = 0; step < kMaxTfDepth; ++step) {
+        for (std::size_t step = 0; step < MAX_TF_DEPTH; ++step) {
             auto edge = tf_edges_.find(frame);
             if (edge == tf_edges_.end()) {
                 break;
@@ -390,7 +218,7 @@ private:
 
         frame = parent_frame;
         Transform ancestor_from_parent;
-        for (std::size_t step = 0; step <= kMaxTfDepth; ++step) {
+        for (std::size_t step = 0; step <= MAX_TF_DEPTH; ++step) {
             auto shared = from_child.find(frame);
             if (shared != from_child.end()) {
                 return compose(invert(ancestor_from_parent), shared->second);
@@ -719,7 +547,7 @@ private:
             oldest = std::min(oldest, ts);
             newest = std::max(newest, ts);
         }
-        if (newest - oldest > kMaxPairSkewNs) {
+        if (newest - oldest > MAX_PAIR_SKEW_NS) {
             ++skew_rejects_;
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam frame sets exceed the 1 ms skew limit",
@@ -751,16 +579,6 @@ private:
         }
 
         register_imu_through(newest);
-        // cuVSLAM's realsense examples drop 60 frames before the first Track(). Off by
-        // default here: sweeping it on sf_office1_3 gave 1.4 m tag error at 15 frames and
-        // 23.5 m at 30, so it moves the result without correcting anything.
-        if (warmup_left_ > 0) {
-            --warmup_left_;
-            ++warmup_skipped_;
-            last_ts_ns_ = newest;
-            clear_frame_set();
-            return;
-        }
         const cuvslam::PoseEstimate est = tracker_->Track(images, {}, depths);
         ++frames_;
         last_ts_ns_ = newest;
@@ -961,7 +779,7 @@ private:
     std::string imu_frame_;
 
     /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
-    static constexpr std::size_t kMaxTfDepth = 32;
+    static constexpr std::size_t MAX_TF_DEPTH = 32;
     std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
 
     /// covariance gate
@@ -993,8 +811,6 @@ private:
     std::uint64_t segment_id_{0};
     std::uint64_t frames_{0};
     std::uint64_t tracked_{0};
-    int warmup_left_{0};
-    std::uint64_t warmup_skipped_{0};
 
     Output<nav_msgs::Odometry> odometry_;
     Output<nav_msgs::Odometry> corrected_odometry_;
