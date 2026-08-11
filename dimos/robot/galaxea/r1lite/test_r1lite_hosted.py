@@ -135,19 +135,40 @@ def _stamped_pose(hand: str, ts: float) -> bytes:
     return msg.lcm_encode()
 
 
-def test_stale_pose_dropped() -> None:
+def test_lagging_pose_dropped_relative_to_link_baseline(monkeypatch: Any) -> None:
+    """Staleness = lag beyond the link's own delay baseline, not clock age."""
+    import dimos.robot.galaxea.r1lite.hosted_module as hm
+
+    t = [1000.0]
+    monkeypatch.setattr(hm.time, "time", lambda: t[0])
     m = _module()
-    m._on_cmd_raw(_stamped_pose("left", time.time() - 5.0))
-    assert m._current_poses.get(Hand.LEFT) is None
+    m._on_cmd_raw(_stamped_pose("left", 999.7))  # baseline delay 0.3s
+    first = m._current_poses.get(Hand.LEFT)
+    assert first is not None
+    t[0] = 1001.0
+    m._on_cmd_raw(_stamped_pose("left", 1000.7))  # same delay: fresh
+    second = m._current_poses[Hand.LEFT]
+    assert second is not first
+    t[0] = 1002.5
+    m._on_cmd_raw(_stamped_pose("left", 1001.0))  # 1.2s over baseline: dropped
+    assert m._current_poses[Hand.LEFT] is second
 
 
-def test_future_pose_dropped_without_advancing_watermark() -> None:
-    m = _module()
-    m._on_cmd_raw(_stamped_pose("left", time.time() + 60.0))
-    assert m._current_poses.get(Hand.LEFT) is None
-    # A fresh, sane pose afterwards must still be accepted.
-    m._on_cmd_raw(_stamped_pose("left", time.time()))
-    assert m._current_poses.get(Hand.LEFT) is not None
+def test_operator_clock_skew_does_not_freeze_the_hand(monkeypatch: Any) -> None:
+    """Hardware regression 2026-08-11: a headset ~357 ms off robot time
+    intermittently tripped the absolute stale/future guards and froze
+    arms and sticks. Skewed-but-steady clocks must pass in both
+    directions; only added lag may drop poses."""
+    import dimos.robot.galaxea.r1lite.hosted_module as hm
+
+    t = [2000.0]
+    monkeypatch.setattr(hm.time, "time", lambda: t[0])
+    for skew in (-0.357, +0.357, -60.0, +60.0):
+        m = _module()
+        for i in range(5):
+            t[0] = 2000.0 + 0.1 * i
+            m._on_cmd_raw(_stamped_pose("left", t[0] + skew))
+        assert m._current_poses.get(Hand.LEFT) is not None, f"skew={skew}"
 
 
 def test_out_of_order_pose_dropped() -> None:

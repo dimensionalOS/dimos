@@ -18,8 +18,8 @@ The R1 Lite analog of the hosted ArmCommandModule: the same dual-arm,
 gripper, and chassis teleop as R1LiteQuestTeleopModule, but operator
 frames arrive from the broker over the ``cmd_raw`` plane instead of a
 robot-local WebSocket server, with the WAN protections remote operation
-needs — stale/future/out-of-order pose drops, an operator E-STOP latch
-that also freezes the chassis, and command acks. Local teleop behavior
+needs — lag-based (clock-agnostic) and out-of-order pose drops, an
+operator E-STOP latch that also freezes the chassis, and command acks. Local teleop behavior
 and configuration are inherited unchanged, so the remote feel matches
 the validated local feel.
 """
@@ -52,13 +52,12 @@ logger = setup_logger()
 
 class R1LiteHostedTeleopConfig(R1LiteQuestTeleopConfig):
     cmd_stale_after_sec: float = 0.5
-    # Hand-gesture chassis drive: the hosted arm pipeline transmits full
-    # Quest Joy frames but zero-fills the thumbstick axes, so the sticks
-    # cannot drive remotely. Holding a secondary button (Y/B) turns that
-    # hand into a virtual joystick instead: displacement from the press
-    # anchor maps to velocity — left hand translates, right hand yaws —
-    # with release-to-zero as the dead-man. Real stick input, if it ever
-    # arrives, takes priority automatically.
+    # Hand-gesture chassis drive, the fallback if the frontend ever
+    # stops transmitting thumbstick axes (today it does transmit them,
+    # and real stick input takes priority automatically): holding a
+    # secondary button (Y/B) turns that hand into a virtual joystick —
+    # displacement from the press anchor maps to velocity, left hand
+    # translates, right hand yaws, release-to-zero as the dead-man.
     drive_gesture_full_scale_m: float = 0.15
     drive_gesture_deadband_m: float = 0.03
 
@@ -82,8 +81,17 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
             lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
         )
         self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
+        # Per-hand baseline of (robot clock - operator stamp): operator
+        # clock offset plus minimum transit. Hardware session 2026-08-11:
+        # a headset ~357 ms off robot time pushed absolute pose ages
+        # across the stale/future thresholds and froze both arms and the
+        # stick path — operator device clocks are not ours to sync, so
+        # staleness must mean lag RELATIVE to the link's own baseline.
+        self._pose_delay_baseline: dict[Hand, float | None] = {
+            Hand.LEFT: None,
+            Hand.RIGHT: None,
+        }
         self._last_stale_warn = 0.0
-        self._last_future_warn = 0.0
         # Per-hand drive-gesture anchor (robot-frame x, y at press time)
         self._drive_anchor: dict[Hand, tuple[float, float] | None] = {
             Hand.LEFT: None,
@@ -130,9 +138,20 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
     def _on_pose_bytes(self, data: bytes) -> None:
         """WAN guards in front of the inherited validation + conversion.
 
-        Stale, future-stamped, and out-of-order poses are dropped before
-        they can move an arm; everything that passes flows through the
-        exact local-teleop path so remote feel matches local feel.
+        Lagging and out-of-order poses are dropped before they can move
+        an arm; everything that passes flows through the exact
+        local-teleop path so remote feel matches local feel.
+
+        Staleness is judged against the link's own delay baseline, not
+        absolute clock agreement: the baseline tracks the fastest
+        observed (robot clock - operator stamp), so an operator device
+        with a skewed clock still gets the full freshness budget, and a
+        pose is dropped only when it arrives cmd_stale_after_sec later
+        than the link has proven it can deliver — the actual dead-man
+        condition. The baseline re-anchors instantly downward (faster
+        delivery, or an operator clock stepping forward) and creeps
+        upward slowly to follow genuine clock drift without absorbing a
+        real lag spike.
         """
         msg = PoseStamped.lcm_decode(data)
         if msg.frame_id == "left":
@@ -144,18 +163,19 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
         ts = float(msg.ts)
         if not math.isfinite(ts):
             return
-        age = time.time() - ts
-        if age > self.config.cmd_stale_after_sec:
+        delay = time.time() - ts
+        baseline = self._pose_delay_baseline[hand]
+        if baseline is None or delay < baseline:
+            baseline = delay
+        else:
+            baseline += 0.001 * (delay - baseline)
+        self._pose_delay_baseline[hand] = baseline
+        lag = delay - baseline
+        if lag > self.config.cmd_stale_after_sec:
             now = time.monotonic()
             if now - self._last_stale_warn >= 1.0:
                 self._last_stale_warn = now
-                logger.warning("dropping stale pose: age=%.2fs — operator link lagging", age)
-            return
-        if age < 0:  # future-stamped: advancing the watermark would freeze the hand
-            now = time.monotonic()
-            if now - self._last_future_warn >= 1.0:
-                self._last_future_warn = now
-                logger.warning("dropping future-stamped pose — operator clock sync likely off")
+                logger.warning("dropping stale pose: lag=%.2fs — operator link lagging", lag)
             return
         if ts <= self._last_pose_ts[hand]:
             return
