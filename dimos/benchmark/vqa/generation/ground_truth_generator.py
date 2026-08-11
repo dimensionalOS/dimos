@@ -69,6 +69,8 @@ class VqaGroundTruthGenerator:
             return _compare_nearest_by_side(frame, intent, objects, trace)
         if intent.kind == "door_state":
             return _classify_door_state(frame, intent, objects, trace, self.primitives)
+        if intent.kind == "closest_object":
+            return _select_closest_object(frame, intent, objects, trace, self)
         examples = generate_questions(
             frame.id, objects, [intent.object_query], distance_m=intent.threshold_m or 3.0
         )
@@ -105,6 +107,8 @@ def _render_question(intent: QuestionIntent) -> str:
         return f"Which {intent.object_query} is closer: the left one or the right one?"
     if intent.kind == "door_state":
         return f"Is the {intent.object_query} open or closed?"
+    if intent.kind == "closest_object":
+        return f"Which object is closest to the {intent.object_query}: {', '.join(intent.candidate_queries)}?"
     return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
 
 
@@ -161,6 +165,63 @@ def _classify_door_state(
         ("open", "closed"),
     )
     return GroundTruthResult(intent, example, "answered", result.state, None, tuple(objects), trace)
+
+
+def _select_closest_object(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+    generator: VqaGroundTruthGenerator,
+) -> GroundTruthResult:
+    if len(objects) != 1:
+        return _rejected_result(frame, intent, objects, trace, "ambiguous_target_object")
+    candidates: list[GroundedObject] = []
+    for query in intent.candidate_queries:
+        matches, candidate_trace = generator.ground(frame, query)
+        trace = (*trace, *candidate_trace)
+        if len(matches) != 1:
+            return _rejected_result(
+                frame,
+                intent,
+                [*objects, *candidates, *matches],
+                trace,
+                "ambiguous_candidate_object",
+            )
+        candidates.append(matches[0])
+    selected = generator.primitives.select_closest_object(objects[0], candidates)
+    trace = (
+        *trace,
+        ToolTrace(
+            "select_closest_object",
+            selected.object.id if selected.object else selected.rejection_reason or "rejected",
+        ),
+    )
+    if selected.object is None:
+        return _rejected_result(
+            frame,
+            intent,
+            [*objects, *candidates],
+            trace,
+            selected.rejection_reason or "closest_object_rejected",
+        )
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-closest-object",
+        _render_question(intent),
+        selected.object.label,
+        "choice",
+        (objects[0].id, *(item.id for item in candidates)),
+        intent.candidate_queries,
+    )
+    return GroundTruthResult(
+        intent,
+        example,
+        "answered",
+        selected.object.label,
+        None,
+        tuple([*objects, *candidates]),
+        trace,
+    )
 
 
 def _rejected_result(

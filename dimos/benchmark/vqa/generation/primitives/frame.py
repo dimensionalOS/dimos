@@ -6,6 +6,7 @@ import numpy as np
 
 from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
 from dimos.benchmark.vqa.generation.primitives.contracts import (
+    ClosestObjectResult,
     DoorStateResult,
     HeightMeasurementResult,
 )
@@ -199,6 +200,37 @@ class FramePerceptionPrimitives:
             reason,
             angle_deg,
         )
+
+    def select_closest_object(
+        self, target: GroundedObject, candidates: list[GroundedObject]
+    ) -> ClosestObjectResult:
+        """Select the unambiguously closest candidate by private support-point centroids."""
+        if not candidates:
+            return ClosestObjectResult(None, None, (), "no_candidate_objects")
+        if any(item.id == target.id for item in candidates):
+            return ClosestObjectResult(None, None, (), "target_cannot_be_candidate")
+        target_points = self._object_points(target)
+        if target_points is None:
+            return ClosestObjectResult(None, None, (), "insufficient_target_support")
+        target_center = np.median(target_points, axis=0)
+        distances: list[tuple[float, GroundedObject]] = []
+        for candidate in candidates:
+            candidate_points = self._object_points(candidate)
+            if candidate_points is None:
+                return ClosestObjectResult(None, None, (), "insufficient_candidate_support")
+            distance = float(np.linalg.norm(np.median(candidate_points, axis=0) - target_center))
+            distances.append((distance, candidate))
+        distances.sort(key=lambda item: item[0])
+        if len(distances) > 1 and distances[1][0] - distances[0][0] < 0.15:
+            return ClosestObjectResult(None, None, (), "ambiguous_object_proximity")
+        return ClosestObjectResult(distances[0][1], distances[0][0], ("object_centroid_proximity",))
+
+    def _object_points(self, object: GroundedObject) -> np.ndarray | None:
+        mask = self._object_masks.get(object.id)
+        if mask is None:
+            raise ValueError(f"unknown grounded object: {object.id}")
+        points = points_in_mask(self.frame, mask.mask)
+        return points if len(points) >= 6 else None
 
 
 def _object_mask_index(item: GroundedObject) -> int:

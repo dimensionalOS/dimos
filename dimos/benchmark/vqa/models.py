@@ -87,7 +87,12 @@ class VqaExample:
 
 
 QuestionKind = Literal[
-    "presence", "horizontal_direction", "within_distance", "compare_nearest_by_side", "door_state"
+    "presence",
+    "horizontal_direction",
+    "within_distance",
+    "compare_nearest_by_side",
+    "door_state",
+    "closest_object",
 ]
 
 
@@ -98,6 +103,7 @@ class QuestionIntent:
     kind: QuestionKind
     object_query: str
     threshold_m: float | None = None
+    candidate_queries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

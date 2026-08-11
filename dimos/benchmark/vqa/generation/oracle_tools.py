@@ -66,6 +66,14 @@ class LocalOracleToolRegistry:
                 ),
             ),
             StructuredTool.from_function(
+                self.select_closest_object,
+                name="select_closest_object",
+                description=(
+                    "Select which opaque candidate object is closest to one opaque target object "
+                    "by private point-cloud support. Rejects ambiguous proximity."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.fit_ground_plane,
                 name="fit_ground_plane",
                 description="Fit a quality-gated Open3D ground plane to the frozen visible point cloud.",
@@ -185,6 +193,39 @@ class LocalOracleToolRegistry:
         )
         self._results.append(result)
         return json.dumps(_tool_payload(result, object_id=nearest.id))
+
+    def select_closest_object(self, target_id: str, candidate_ids: list[str]) -> str:
+        """Select one candidate closest to a target by private 3D support-point proximity."""
+        target = self._objects.get(target_id)
+        if target is None:
+            return self._record_rejection(
+                "select_closest_object", target_id, [], "unknown_target_id"
+            )
+        candidates: list[GroundedObject] = []
+        for candidate_id in candidate_ids:
+            candidate = self._objects.get(candidate_id)
+            if candidate is None:
+                return self._record_rejection(
+                    "select_closest_object", candidate_id, [], "unknown_candidate_id"
+                )
+            candidates.append(candidate)
+        selected = self._primitives.select_closest_object(target, candidates)
+        if selected.object is None:
+            return self._record_rejection(
+                "select_closest_object",
+                target.label,
+                list(selected.quality_flags),
+                selected.rejection_reason,
+            )
+        result = OracleToolResult(
+            "select_closest_object",
+            target.label,
+            (_grounding_evidence(target), _grounding_evidence(selected.object)),
+            choice=selected.object.label,
+            quality_flags=selected.quality_flags,
+        )
+        self._results.append(result)
+        return json.dumps(_tool_payload(result, object_id=selected.object.id))
 
     def measure_height(self, object_id: str, plane_id: str) -> str:
         """Measure one grounded object against one previously accepted plane."""

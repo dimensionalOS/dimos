@@ -65,6 +65,7 @@ every family. Private grounding still rejects unsupported or ambiguous candidate
 | Horizontal direction | `Where is the nearest chair?` | `left`, `center`, `right` |
 | Distance threshold | `Is the nearest chair within 3 meters?` | `yes`, `no` |
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
+| Closest object | `Which object is closest to the chair: table or lamp?` | `table`, `lamp` |
 | Door state | `Is the door open or closed?` | `open`, `closed` |
 
 ### Agentic
@@ -105,6 +106,10 @@ Height questions also require:
 Door-state questions also require one grounded door, a robust plane fit for the door mask, and a
 robust plane fit in a narrow ring around that mask. The planes must be either nearly aligned
 (`closed`) or clearly rotated (`open`); slightly ajar or otherwise ambiguous doors are rejected.
+
+Closest-object questions require exactly one grounded target and one grounded instance for every
+candidate choice. They compare private support-point centroids and reject candidates whose nearest
+two distances are within `0.15 m`.
 
 ## 4. Create Answers
 
@@ -160,6 +165,7 @@ The private oracle chooses a sequence from the same read-only primitives used by
 | `segment_detections` | detection ID | Mask ID and accepted mask count. |
 | `ground_masks` | mask ID | Grounded object IDs, range, side, point support, evidence IDs. |
 | `select_nearest_object` | object IDs, optional side | Nearest grounded object ID. |
+| `select_closest_object` | target ID, candidate IDs | Candidate nearest to target by private support-point centroids. |
 | `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
 | `measure_height` | object ID, plane ID | Measurement ID, private height, uncertainty, provenance, quality flags. |
 | `classify_door_state` | object ID | Public `open` or `closed` choice, or a private geometry rejection. |

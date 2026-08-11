@@ -28,3 +28,13 @@ class DoorStateResult:
     quality_flags: tuple[str, ...]
     rejection_reason: str | None = None
     angle_deg: float | None = None
+
+
+@dataclass(frozen=True)
+class ClosestObjectResult:
+    """A point-cloud selected candidate nearest to one grounded target object."""
+
+    object: GroundedObject | None
+    distance_m: float | None
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
