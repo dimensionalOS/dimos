@@ -117,8 +117,10 @@ def test_no_nav_stack() -> None:
     }
 
 
-def test_viser_is_off_on_the_robot() -> None:
+def test_viser_is_reachable_from_the_operator_laptop() -> None:
+    # Viser defaults to 127.0.0.1, which is invisible from off the robot.
     (manip,) = [
         a for a in unitree_g1_water_demo.active_blueprints if a.name == "manipulationmodule"
     ]
-    assert "visualization" not in manip.kwargs
+    assert manip.kwargs["visualization"].backend == "viser"
+    assert manip.kwargs["visualization"].host == "0.0.0.0"

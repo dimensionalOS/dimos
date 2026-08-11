@@ -45,6 +45,7 @@ from typing import Any, cast
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _backend,
     _G1GrootCoordinator,
@@ -87,7 +88,7 @@ unitree_g1_water_demo = (
         # JPEG over the wire and straight into Rerun as an EncodedImage: the
         # robot never decodes, and raw color would cost ~18 MB/s of egress.
         RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False, compress_color=True),
-        g1_manipulation(),
+        g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))
