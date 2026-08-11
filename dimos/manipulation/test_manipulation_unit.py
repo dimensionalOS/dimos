@@ -993,6 +993,43 @@ class TestPlanningGroupApis:
         assert result.status == IKStatus.NO_SOLUTION
         assert "2 pose-targetable planning groups" in result.message
 
+    def test_naming_a_group_makes_pose_planning_work_on_a_multi_group_robot(
+        self, robot_config, module_factory, mocker: MockerFixture
+    ):
+        """A two-armed robot is addressed by planning group, not by robot name."""
+        multi_pose_config = RobotModelConfig(
+            name="test_arm",
+            model_path=robot_config.model_path,
+            base_pose=robot_config.base_pose,
+            joint_names=robot_config.joint_names,
+            base_link=robot_config.base_link,
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="wrist",
+                    joint_names=("joint1", "joint2"),
+                    base_link="link_base",
+                    tip_link="link_wrist",
+                ),
+                PlanningGroupDefinition(
+                    name="tool",
+                    joint_names=("joint1", "joint2", "joint3"),
+                    base_link="link_base",
+                    tip_link="link_tcp",
+                ),
+            ],
+        )
+        module = module_factory()
+        module._robots = {"test_arm": ("robot_id", multi_pose_config)}
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([multi_pose_config])
+        module._kinematics = MagicMock()
+        targets = mocker.patch.object(module, "plan_to_pose_targets", return_value=True)
+
+        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
+
+        assert module.plan_to_pose(pose, group_id="test_arm/tool") is True
+        targets.assert_called_once_with({"test_arm/tool": pose})
+
     def test_solve_ik_preserves_backend_failure_detail(self, robot_config, module_factory):
         """IK diagnostics include the backend's human-readable failure message."""
         module = module_factory()

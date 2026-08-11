@@ -1089,27 +1089,35 @@ class ManipulationModule(Module):
         return result
 
     @rpc
-    def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
+    def plan_to_pose(
+        self,
+        pose: Pose,
+        robot_name: RobotName | None = None,
+        group_id: PlanningGroupID | None = None,
+    ) -> bool:
         """Plan motion to pose. Use preview_plan() then execute().
 
         Args:
             pose: Target end-effector pose
             robot_name: Robot to plan for (required if multiple robots configured)
+            group_id: Planning group to move. Required when the robot has more
+                than one pose-targetable group, such as a two-armed humanoid.
         """
         if self._kinematics is None or self._world_monitor is None:
             self._record_error("Planning not initialized")
             return False
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            self._record_error("Robot not found or robot_name is required")
-            return False
-        selected_robot_name, _, _ = robot
-        try:
-            group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
-        except ValueError as exc:
-            logger.warning("Pose planning unavailable: %s", exc)
-            self._record_error(str(exc))
-            return False
+        if group_id is None:
+            robot = self._get_robot(robot_name)
+            if robot is None:
+                self._record_error("Robot not found or robot_name is required")
+                return False
+            selected_robot_name, _, _ = robot
+            try:
+                group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
+            except ValueError as exc:
+                logger.warning("Pose planning unavailable: %s", exc)
+                self._record_error(str(exc))
+                return False
         return self.plan_to_pose_targets({group_id: pose})
 
     @rpc
@@ -1829,18 +1837,30 @@ class ManipulationModule(Module):
         time.sleep(wait_time)
         return True
 
+    def _current_tip_pose(
+        self, robot_name: RobotName | None = None, group_id: PlanningGroupID | None = None
+    ) -> Pose | None:
+        """Current TCP pose, for the named group or the robot's only one."""
+        if group_id is None:
+            return self.get_ee_pose(robot_name)
+        stamped = self.get_group_ee_pose(group_id)
+        return None if stamped is None else Pose(stamped.position, stamped.orientation)
+
     def _lift_if_low(
-        self, robot_name: RobotName | None = None, min_z: float = 0.05
+        self,
+        robot_name: RobotName | None = None,
+        min_z: float = 0.05,
+        group_id: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
-        ee = self.get_ee_pose(robot_name)
+        ee = self._current_tip_pose(robot_name, group_id)
         if ee is None or ee.position.z >= min_z:
             return SkillResult.ok()
 
         lift_z = min_z + 0.05
         logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
         lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
-        if not self.plan_to_pose(lift_pose, robot_name):
+        if not self.plan_to_pose(lift_pose, robot_name, group_id):
             return SkillResult.fail(
                 "PLANNING_FAILED",
                 f"Failed to plan lift from z={ee.position.z:.3f}",
@@ -1910,6 +1930,7 @@ class ManipulationModule(Module):
         pitch: float | None = None,
         yaw: float | None = None,
         robot_name: str | None = None,
+        group_id: str | None = None,
     ) -> SkillResult[ManipulationSkillError]:
         """Move the robot end-effector to a target pose.
 
@@ -1924,19 +1945,20 @@ class ManipulationModule(Module):
             pitch: Target pitch in radians (omit to keep current orientation).
             yaw: Target yaw in radians (omit to keep current orientation).
             robot_name: Robot to move (only needed for multi-arm setups).
+            group_id: Planning group to move, e.g. "g1/right_arm". Required when
+                the robot has more than one pose-targetable group.
         """
         logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
         # If no orientation specified, preserve the current EE orientation.
         # If partially specified, fill unspecified angles from current orientation.
+        current_pose = self._current_tip_pose(robot_name, group_id)
         if roll is None and pitch is None and yaw is None:
-            current_pose = self.get_ee_pose(robot_name)
             if current_pose is not None:
                 orientation = current_pose.orientation
             else:
                 orientation = Quaternion(0, 0, 0, 1)  # identity fallback
         else:
-            current_pose = self.get_ee_pose(robot_name)
             if current_pose is not None:
                 current_euler = current_pose.orientation.to_euler()
                 orientation = Quaternion.from_euler(
@@ -1952,11 +1974,11 @@ class ManipulationModule(Module):
         pose = Pose(Vector3(x, y, z), orientation)
 
         # If EE is low, lift up first to clear obstacles
-        lift = self._lift_if_low(robot_name)
+        lift = self._lift_if_low(robot_name, group_id=group_id)
         if not lift.is_success():
             return lift
 
-        if not self.plan_to_pose(pose, robot_name):
+        if not self.plan_to_pose(pose, robot_name, group_id):
             return SkillResult.fail(
                 "PLANNING_FAILED",
                 f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
