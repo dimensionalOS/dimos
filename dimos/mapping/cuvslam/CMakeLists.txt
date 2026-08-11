@@ -38,24 +38,28 @@ message(STATUS "cuVSLAM headers: ${CUVSLAM_INCLUDE_DIR}")
 message(STATUS "cuVSLAM library: ${CUVSLAM_LIBRARY}")
 
 add_executable(cuvslam_odometry src/cuvslam_main.cpp)
-target_include_directories(cuvslam_odometry PRIVATE
-  ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
-  ${LCM_INCLUDE_DIRS}
-  ${CUVSLAM_INCLUDE_DIR}
-)
-target_link_libraries(cuvslam_odometry PRIVATE
-  dimos_native
-  ${LCM_LIBRARIES}
-  ${CUVSLAM_LIBRARY}
-)
-target_link_directories(cuvslam_odometry PRIVATE ${LCM_LIBRARY_DIRS})
-if(APPLE)
-  # The SDK's install name is @rpath/libcuvslam.dylib, so the directory it was linked
-  # from has to survive into the installed binary.
-  get_filename_component(CUVSLAM_LIBRARY_DIR ${CUVSLAM_LIBRARY} DIRECTORY)
-  set_target_properties(cuvslam_odometry PROPERTIES
-    INSTALL_RPATH ${CUVSLAM_LIBRARY_DIR}
-    BUILD_WITH_INSTALL_RPATH TRUE
+# Offline replay: the same module compiled around a capture transport.
+add_executable(cuvslam_replay src/cuvslam_replay_main.cpp)
+foreach(target cuvslam_odometry cuvslam_replay)
+  target_include_directories(${target} PRIVATE
+    ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
+    ${LCM_INCLUDE_DIRS}
+    ${CUVSLAM_INCLUDE_DIR}
   )
-endif()
-install(TARGETS cuvslam_odometry RUNTIME DESTINATION bin)
+  target_link_libraries(${target} PRIVATE
+    dimos_native
+    ${LCM_LIBRARIES}
+    ${CUVSLAM_LIBRARY}
+  )
+  target_link_directories(${target} PRIVATE ${LCM_LIBRARY_DIRS})
+  if(APPLE)
+    # The SDK's install name is @rpath/libcuvslam.dylib, so the directory it was linked
+    # from has to survive into the installed binary.
+    get_filename_component(CUVSLAM_LIBRARY_DIR ${CUVSLAM_LIBRARY} DIRECTORY)
+    set_target_properties(${target} PROPERTIES
+      INSTALL_RPATH ${CUVSLAM_LIBRARY_DIR}
+      BUILD_WITH_INSTALL_RPATH TRUE
+    )
+  endif()
+endforeach()
+install(TARGETS cuvslam_odometry cuvslam_replay RUNTIME DESTINATION bin)
