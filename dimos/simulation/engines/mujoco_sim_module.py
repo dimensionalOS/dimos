@@ -247,6 +247,10 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     robot_meshdir: str | Path | None = None
     robot_id: str = ""
     scene_entities: list[dict[str, Any]] = Field(default_factory=list)
+    # Extra MJCF files merged into the composed worldbody with their names kept,
+    # for props that belong in the repo rather than in a cooked scene package.
+    # Composition path only; the legacy ``address`` path ignores them.
+    extra_mjcf: list[str | Path] = Field(default_factory=list)
     spawn_xy: tuple[float, float] | None = None
     spawn_z: float | None = None
     spawn_yaw: float | None = None
@@ -634,6 +638,12 @@ class MujocoSimModule(
             )
             prefix = f"{self.config.robot_id}-" if self.config.robot_id else None
             spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
+
+            for extra_path in self.config.extra_mjcf:
+                spec_extra = mujoco.MjSpec.from_file(str(extra_path))
+                # Empty prefix keeps the prop's own body names, so privileged
+                # pose lookups can address it by the name in the file.
+                spec_scene.attach(spec_extra, prefix="", frame=spec_scene.worldbody.add_frame())
 
             if self.config.scene_entities:
                 add_scene_package_entities_to_spec(

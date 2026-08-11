@@ -81,7 +81,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
-from dimos.simulation.scene_assets.spec import ScenePackage
+from dimos.simulation.scene_assets.spec import PROPS_DIR, ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
@@ -93,6 +93,9 @@ _GROOT_MODEL_DIR = LfsPath("groot")
 _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 _ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29dof.xml"
 _ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
+# Manipulation props. In-repo MJCF rather than a cooked scene package edit, so
+# the target survives a scene re-pull. Body name: plant_pot_1.
+_SCENE_PROPS: list[str | Path] = [PROPS_DIR / "potted_plant.xml"]
 
 _adapter_address: str | Path
 _cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
@@ -244,6 +247,7 @@ if global_config.simulation == "mujoco":
                 robot_meshdir=_ROBOT_MESHDIR,
                 robot_id="",
                 scene_entities=package.entities,
+                extra_mjcf=_SCENE_PROPS,
                 headless=True,
                 dof=_G1_NUM_MOTORS,
                 **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),

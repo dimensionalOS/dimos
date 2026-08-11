@@ -26,6 +26,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+PROPS_DIR = Path(__file__).resolve().parent / "props"
+"""In-repo MJCF props merged into composed scenes, outside any cooked package."""
+
 ARTIFACT_FRAMES = {
     "browser_visual": "source",
     "browser_collision": "source",

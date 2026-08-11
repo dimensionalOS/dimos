@@ -1,0 +1,27 @@
+<mujoco model="potted_plant">
+  <!-- Free-standing prop merged into a composed scene through MujocoSimModule's
+       extra_mjcf, so it lives in the repo instead of inside a cooked scene
+       package.
+
+       It stands on the floor, and the pour clearance is what puts the tool at a
+       height the arm is comfortable at: the plant does not move to suit the
+       robot, the pour point does. The body origin is the pot's base, so a pour
+       target only needs the rim height, 0.30 m, above it.
+
+       Only the pot wall collides; soil, stem and foliage are visual so they
+       cannot block a hand reaching over the rim. Geom group 3 matches cooked
+       scene entities, which is what the raycast lidar renders. -->
+  <worldbody>
+    <body name="plant_pot_1" pos="1.0 -0.15 0">
+      <freejoint name="plant_pot_1_free"/>
+      <geom name="plant_pot_1_pot" type="cylinder" size="0.115 0.15" pos="0 0 0.15"
+            group="3" mass="3" rgba="0.62 0.33 0.24 1"/>
+      <geom name="plant_pot_1_soil" type="cylinder" size="0.10 0.01" pos="0 0 0.30"
+            group="3" contype="0" conaffinity="0" mass="0" rgba="0.25 0.18 0.12 1"/>
+      <geom name="plant_pot_1_stem" type="capsule" size="0.012" fromto="0 0 0.30 0 0 0.52"
+            group="3" contype="0" conaffinity="0" mass="0" rgba="0.30 0.42 0.20 1"/>
+      <geom name="plant_pot_1_foliage" type="ellipsoid" size="0.18 0.18 0.13" pos="0 0 0.62"
+            group="3" contype="0" conaffinity="0" mass="0" rgba="0.18 0.47 0.20 1"/>
+    </body>
+  </worldbody>
+</mujoco>
