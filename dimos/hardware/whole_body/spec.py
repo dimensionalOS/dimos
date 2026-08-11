@@ -71,6 +71,20 @@ class WholeBodyConfig:
 
     kp: tuple[float, ...] | None = None
     kd: tuple[float, ...] | None = None
+    # Gravity feedforward: fills MotorCommand.tau for ``gravity_ff_joints``
+    # from RNEA on ``gravity_ff_model`` (URDF or MJCF; in sim, the sim's own
+    # MJCF makes the model masses match exactly) at the measured
+    # configuration. ``gravity_ff_joint_map`` maps component joint names to
+    # model joint names (all joints that should shape the model's q, not
+    # just the ff set); ``gravity_ff_payloads`` adds (model_frame, kg) point
+    # masses, e.g. a carried jug at the palm.
+    gravity_ff_model: str | None = None
+    gravity_ff_joint_map: tuple[tuple[str, str], ...] = ()
+    gravity_ff_joints: tuple[str, ...] = ()
+    gravity_ff_payloads: tuple[tuple[str, float], ...] = ()
+    # Global multiplier on the model torques; calibrate against measured
+    # sag since model masses rarely match the plant (sim or hardware).
+    gravity_ff_scale: float = 1.0
 
 
 @runtime_checkable

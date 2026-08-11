@@ -506,7 +506,21 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
                 joints=g1_joints,
                 adapter_type=_adapter_type,
                 address=_adapter_address,
-                wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
+                wb_config=WholeBodyConfig(
+                    kp=tuple(G1_GROOT_KP),
+                    kd=tuple(G1_GROOT_KD),
+                    # Cancels arm self-weight sag (D1) without touching the
+                    # GR00T-trained gain contract. Sim-validated only; H1
+                    # re-checks hardware torque limits before enabling there.
+                    gravity_ff_model=str(LfsPath("g1_urdf/g1.urdf")),
+                    gravity_ff_joint_map=tuple(
+                        (name, f"{name.removeprefix('g1/')}_joint") for name in g1_joints
+                    ),
+                    gravity_ff_joints=tuple(g1_arms),
+                    # Calibrated against measured sag in sim (URDF masses run
+                    # ~30% heavy); recalibrate on hardware in H1.
+                    gravity_ff_scale=0.7,
+                ),
             ),
         ],
         tasks=[

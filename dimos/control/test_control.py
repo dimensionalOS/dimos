@@ -1018,3 +1018,84 @@ class TestIntegration:
 
         assert traj_task.get_state() == TrajectoryState.COMPLETED
         assert mock_adapter.write_joint_positions.call_count > 0
+
+
+class _StubWholeBodyAdapter:
+    def __init__(self, n: int) -> None:
+        self.n = n
+        self.written: list[list[Any]] = []
+
+    def connect(self) -> bool:
+        return True
+
+    def disconnect(self) -> None:
+        pass
+
+    def is_connected(self) -> bool:
+        return True
+
+    def read_motor_states(self):
+        from dimos.hardware.whole_body.spec import MotorState
+
+        return [MotorState(q=0.1 * i) for i in range(self.n)]
+
+    def has_motor_states(self) -> bool:
+        return True
+
+    def read_imu(self):
+        from dimos.hardware.whole_body.spec import IMUState
+
+        return IMUState()
+
+    def write_motor_commands(self, commands) -> bool:
+        self.written.append(list(commands))
+        return True
+
+
+class TestWholeBodyGravityFF:
+    def _connected(self, wb_config=None):
+        from dimos.control.hardware_interface import ConnectedWholeBody
+        from dimos.hardware.whole_body.spec import WholeBodyConfig
+
+        joints = ["g1/a", "g1/b"]
+        adapter = _StubWholeBodyAdapter(len(joints))
+        component = HardwareComponent(
+            hardware_id="g1",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=joints,
+            adapter_type="stub",
+            wb_config=wb_config or WholeBodyConfig(kp=(10.0, 10.0), kd=(1.0, 1.0)),
+        )
+        return ConnectedWholeBody(adapter, component), adapter
+
+    def test_tau_zero_without_gravity_ff(self):
+        connected, adapter = self._connected()
+        connected.write_command({"g1/a": 0.5}, ControlMode.POSITION)
+        assert [cmd.tau for cmd in adapter.written[-1]] == [0.0, 0.0]
+
+    def test_gravity_ff_fills_tau_for_ff_joints_only(self):
+        connected, adapter = self._connected()
+
+        class _StubFF:
+            def tau(self, positions):
+                assert positions == {"g1/a": 0.0, "g1/b": 0.1}
+                return {"g1/b": -3.5}
+
+        connected._gravity_ff = _StubFF()
+        connected.write_command({"g1/a": 0.5}, ControlMode.POSITION)
+        assert [cmd.tau for cmd in adapter.written[-1]] == [0.0, -3.5]
+
+    def test_gravity_ff_config_builds_lazily_without_model_load(self):
+        from dimos.hardware.whole_body.gravity import GravityFeedforward
+        from dimos.hardware.whole_body.spec import WholeBodyConfig
+
+        connected, _adapter = self._connected(
+            WholeBodyConfig(
+                kp=(10.0, 10.0),
+                kd=(1.0, 1.0),
+                gravity_ff_model="/nonexistent/model.urdf",
+                gravity_ff_joint_map=(("g1/a", "a_joint"),),
+                gravity_ff_joints=("g1/a",),
+            )
+        )
+        assert isinstance(connected._gravity_ff, GravityFeedforward)

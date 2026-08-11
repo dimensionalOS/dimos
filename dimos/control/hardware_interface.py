@@ -393,6 +393,18 @@ class ConnectedWholeBody(ConnectedHardware):
         self._warned_unknown_joints: set[str] = set()
         self._current_mode: ControlMode | None = None
 
+        self._gravity_ff = None
+        if wb is not None and wb.gravity_ff_model is not None:
+            from dimos.hardware.whole_body.gravity import GravityFeedforward
+
+            self._gravity_ff = GravityFeedforward(
+                model_path=wb.gravity_ff_model,
+                joint_map=dict(wb.gravity_ff_joint_map),
+                ff_joints=wb.gravity_ff_joints,
+                payloads=wb.gravity_ff_payloads,
+                scale=wb.gravity_ff_scale,
+            )
+
     @property
     def adapter(self) -> WholeBodyAdapter:  # type: ignore[override]
         """The underlying whole-body adapter."""
@@ -447,13 +459,19 @@ class ConnectedWholeBody(ConnectedHardware):
                 )
                 self._warned_unknown_joints.add(joint_name)
 
+        tau_ff: dict[str, float] = {}
+        if self._gravity_ff is not None:
+            states = self._wb_adapter.read_motor_states()
+            measured = {name: states[i].q for i, name in enumerate(self._joint_names)}
+            tau_ff = self._gravity_ff.tau(measured)
+
         motor_cmds = [
             MotorCommand(
                 q=self._last_commanded[name],
                 dq=0.0,
                 kp=self._kp_by_name[name],
                 kd=self._kd_by_name[name],
-                tau=0.0,
+                tau=tau_ff.get(name, 0.0),
             )
             for name in self._joint_names
         ]
