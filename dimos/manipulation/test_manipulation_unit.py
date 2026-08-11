@@ -22,6 +22,7 @@ from unittest.mock import ANY, MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.agents.skill_result import SkillResult
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
@@ -1029,6 +1030,31 @@ class TestPlanningGroupApis:
 
         assert module.plan_to_pose(pose, group_id="test_arm/tool") is True
         targets.assert_called_once_with({"test_arm/tool": pose})
+
+    def test_go_init_still_reaches_the_joint_goal_when_the_waypoint_cannot_be_planned(
+        self, robot_config, module_factory, mocker: MockerFixture
+    ):
+        """The safe waypoint is optional, so its failure must not fault the skill out."""
+        module = module_factory()
+        module._robots = {"test_arm": ("robot_id", robot_config)}
+        module._world_monitor = MagicMock()
+        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.get_ee_pose.return_value = PoseStamped(
+            position=Vector3(0.3, 0.0, 0.3), orientation=Quaternion()
+        )
+        module._init_joints = {
+            "test_arm": JointState(name=list(robot_config.joint_names), position=[0.0, 0.0, 0.0])
+        }
+        mocker.patch.object(module, "_lift_if_low", return_value=SkillResult.ok())
+        mocker.patch.object(module, "plan_to_pose", return_value=False)
+        joints = mocker.patch.object(module, "plan_to_joints", return_value=True)
+        mocker.patch.object(module, "_preview_execute_wait", return_value=SkillResult.ok())
+
+        result = module.go_init("test_arm")
+
+        assert result.is_success()
+        assert joints.call_count == 1
+        assert module.get_state() != ManipulationState.FAULT.name
 
     def test_solve_ik_preserves_backend_failure_detail(self, robot_config, module_factory):
         """IK diagnostics include the backend's human-readable failure message."""

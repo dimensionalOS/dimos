@@ -1130,12 +1130,19 @@ class ManipulationModule(Module):
         return self.generate_plan_to_pose_targets(pose_targets, auxiliary_groups) is not None
 
     @rpc
-    def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
+    def plan_to_joints(
+        self,
+        joints: JointState,
+        robot_name: RobotName | None = None,
+        group_id: PlanningGroupID | None = None,
+    ) -> bool:
         """Plan motion to joint config. Use preview_plan() then execute().
 
         Args:
             joints: Target joint state (names + positions)
             robot_name: Robot to plan for (required if multiple robots configured)
+            group_id: Planning group to move. Required when the robot has no
+                unique default group, such as a two-armed humanoid.
         """
         robot = self._get_robot(robot_name)
         if robot is None:
@@ -1147,12 +1154,13 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             self._record_error("Planning not initialized")
             return False
-        group_id = self._world_monitor.planning_groups.default_group_id_for_robot(
-            selected_robot_name
-        )
+        if group_id is None:
+            group_id = self._world_monitor.planning_groups.default_group_id_for_robot(
+                selected_robot_name
+            )
         if group_id is None:
             logger.error(
-                "Robot '%s' has no unique default planning group; use explicit group APIs",
+                "Robot '%s' has no unique default planning group; name one with group_id",
                 selected_robot_name,
             )
             return False
@@ -2066,8 +2074,28 @@ class ManipulationModule(Module):
 
         return SkillResult.ok("Reached home position")
 
+    def _init_waypoint_pose(
+        self, robot_id: WorldRobotID, init: JointState, group_id: PlanningGroupID | None
+    ) -> Pose | None:
+        """TCP pose the init configuration puts the tool at, if it can be resolved."""
+        if self._world_monitor is None:
+            return None
+        try:
+            if group_id is None:
+                stamped = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
+            else:
+                stamped = self._world_monitor.get_group_ee_pose(group_id, joint_state=init)
+        except (KeyError, ValueError) as exc:
+            # A robot with several arms has no single TCP; without a named group
+            # there is no waypoint to compute, so go straight to the joint goal.
+            logger.info("Skipping the init safe waypoint: %s", exc)
+            return None
+        return None if stamped is None else Pose(stamped.position, stamped.orientation)
+
     @skill
-    def go_init(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    def go_init(
+        self, robot_name: str | None = None, group_id: str | None = None
+    ) -> SkillResult[ManipulationSkillError]:
         """Move the robot to its init position (captured at startup or set manually).
 
         The init position is the joint configuration the robot was in when the
@@ -2075,6 +2103,9 @@ class ManipulationModule(Module):
 
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
+            group_id: Planning group whose tool the safe waypoint is computed for.
+                Robots with several pose-targetable groups skip the waypoint
+                unless one is named.
         """
         robot = self._get_robot(robot_name)
         if robot is None:
@@ -2089,34 +2120,53 @@ class ManipulationModule(Module):
             )
 
         # Lift if EE is low before moving to init
-        lift = self._lift_if_low(robot_name)
+        lift = self._lift_if_low(robot_name, group_id=group_id)
         if not lift.is_success():
             return lift
 
         # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
         # This avoids direct paths through the workspace that could collide with objects.
-        if self._world_monitor is not None:
-            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
-            if init_ee is not None:
-                wp = Pose(
-                    Vector3(
-                        init_ee.position.x + 0.05,
-                        init_ee.position.y,
-                        init_ee.position.z + 0.10,
-                    ),
-                    init_ee.orientation,
-                )
-                if self.plan_to_pose(wp, robot_name):
-                    wp_result = self._preview_execute_wait(robot_name)
-                    if not wp_result.is_success():
-                        return wp_result
-                else:
-                    logger.warning("Safe waypoint unreachable, going directly to init")
+        init_ee = self._init_waypoint_pose(robot_id, init, group_id)
+        if init_ee is not None:
+            wp = Pose(
+                Vector3(
+                    init_ee.position.x + 0.05,
+                    init_ee.position.y,
+                    init_ee.position.z + 0.10,
+                ),
+                init_ee.orientation,
+            )
+            if self.plan_to_pose(wp, robot_name, group_id):
+                wp_result = self._preview_execute_wait(robot_name)
+                if not wp_result.is_success():
+                    return wp_result
+            else:
+                # The waypoint is a nicety. Its failed plan faults the module,
+                # which would then refuse the joint goal that is the actual
+                # point of this skill, so clear it and carry on.
+                logger.warning("Safe waypoint unreachable, going directly to init")
+                self.reset()
+
+        goal = init
+        if group_id is not None and self._world_monitor is not None:
+            # Init is a whole-robot snapshot in the coordinator namespace; a
+            # named group only moves its own joints back, leaving the rest of
+            # the robot where it is.
+            config = self.get_robot_config(rname)
+            assert config is not None
+            model_named = JointState(
+                name=[config.get_urdf_joint_name(name) for name in init.name],
+                position=list(init.position),
+            )
+            group = self._world_monitor.planning_groups.get(group_id)
+            goal = filter_joint_state_to_selected_joints(
+                model_named, group.joint_names, group.local_joint_names
+            )
 
         logger.info(
-            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
+            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in goal.position)}]..."
         )
-        if not self.plan_to_joints(init, robot_name):
+        if not self.plan_to_joints(goal, robot_name, group_id):
             return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
 
         exec_result = self._preview_execute_wait(robot_name)
