@@ -64,7 +64,9 @@ class GripperControlTaskConfig:
 
 
 class GripperControlTask(BaseControlTask):
-    """Command- and stream-driven owner of a device's gripper joints."""
+    """Command- and stream-driven owner of a device's gripper joints.
+    TODO: cleanup gripper call wiring
+    """
 
     def __init__(
         self,
