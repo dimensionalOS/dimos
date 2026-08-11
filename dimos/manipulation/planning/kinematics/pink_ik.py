@@ -109,6 +109,7 @@ class PinkIK:
         self.config = PinkKinematicsConfig(**config_values)
         self._modules = _load_optional_dependencies(self.config.solver)
         self._robot_contexts: dict[tuple[str, str], _PinkRobotContext] = {}
+        self._rng = np.random.default_rng()
 
     def _resolve_tolerances(
         self, position_tolerance: float | None, orientation_tolerance: float | None
@@ -162,9 +163,17 @@ class PinkIK:
         attempts = self._resolve_max_attempts(max_attempts)
         fallback_result: IKResult | None = None
 
+        try:
+            base_positions = _seed_positions_for_mapping(seed, robot_context.mapping)
+        except ValueError as exc:
+            return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
+
         for attempt in range(attempts):
+            positions = self._attempt_positions(
+                base_positions, lower_limits, upper_limits, attempt, attempts
+            )
             try:
-                q0 = self._initial_q(robot_context, seed, lower_limits, upper_limits, attempt)
+                q0 = self._q_from_dimos_positions(robot_context, positions)
                 result = self._solve_single(
                     robot_context=robot_context,
                     target_model=target_model,
@@ -284,10 +293,13 @@ class PinkIK:
             fallback_result: IKResult | None = None
             for attempt in range(attempts):
                 current_positions = seed_positions.copy()
-                if attempt > 0:
-                    current_positions[selected_indices] = np.random.uniform(
-                        lower_limits[selected_indices], upper_limits[selected_indices]
-                    )
+                current_positions[selected_indices] = self._attempt_positions(
+                    seed_positions[selected_indices],
+                    lower_limits[selected_indices],
+                    upper_limits[selected_indices],
+                    attempt,
+                    attempts,
+                )
                 try:
                     q0 = self._q_from_dimos_positions(targets[0][0], current_positions)
                     with _velocity_locked_joints(
@@ -317,8 +329,8 @@ class PinkIK:
                 except ValueError as exc:
                     return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
                 except Exception as exc:
-                    # A solver blow-up (e.g. QP infeasibility from a bad random
-                    # restart) fails this attempt, not the whole solve.
+                    # A solver blow-up (e.g. QP infeasibility from a bad restart)
+                    # fails this attempt, not the whole solve.
                     if fallback_result is None:
                         fallback_result = _failure(
                             IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
@@ -610,26 +622,23 @@ class PinkIK:
     def _resolve_max_attempts(self, max_attempts: int | None) -> int:
         return self.config.max_attempts if max_attempts is None else max_attempts
 
-    def _initial_q(
+    def _attempt_positions(
         self,
-        context: _PinkRobotContext,
-        seed: JointState,
+        seed_positions: NDArray[np.float64],
         lower_limits: NDArray[np.float64],
         upper_limits: NDArray[np.float64],
         attempt: int,
+        max_attempts: int,
     ) -> NDArray[np.float64]:
-        pinocchio = self._modules.pinocchio
-        neutral = pinocchio.neutral(context.model)
-        q = np.array(neutral, dtype=np.float64)
-
+        """Seed positions for one attempt, perturbed further as attempts fail."""
         if attempt == 0:
-            positions = _seed_positions_for_mapping(seed, context.mapping)
-        else:
-            positions = np.random.uniform(lower_limits, upper_limits)
-
-        for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
-            q[idx_q] = value
-        return q
+            return np.array(seed_positions, dtype=np.float64)
+        if attempt >= max(max_attempts - self.config.uniform_restart_attempts, 1):
+            return np.asarray(self._rng.uniform(lower_limits, upper_limits), dtype=np.float64)
+        noise = self._rng.normal(
+            0.0, self.config.retry_seed_noise * attempt, size=len(seed_positions)
+        )
+        return np.clip(seed_positions + noise, lower_limits, upper_limits)
 
     def _q_from_dimos_positions(
         self,

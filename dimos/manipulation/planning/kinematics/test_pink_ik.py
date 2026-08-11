@@ -136,6 +136,22 @@ class _FakePostureTask:
         self.target = configuration.q.copy()
 
 
+class _RecordingRng:
+    """Deterministic stand-in for a numpy Generator that records draws."""
+
+    def __init__(self) -> None:
+        self.normal_scales: list[float] = []
+        self.uniform_calls = 0
+
+    def normal(self, loc: float, scale: float, size: int) -> np.ndarray:
+        self.normal_scales.append(scale)
+        return np.full(size, scale)
+
+    def uniform(self, low: np.ndarray, high: np.ndarray) -> np.ndarray:
+        self.uniform_calls += 1
+        return np.asarray(high, dtype=float)
+
+
 def _fake_modules(converge: bool = True) -> _PinkModules:
     pinocchio = ModuleType("pinocchio")
     pinocchio.SE3 = _FakeSE3  # type: ignore[attr-defined]
@@ -796,3 +812,142 @@ def test_max_attempts_defaults_to_config_and_call_arg_wins(mocker: MockerFixture
         max_attempts=1,
     )
     assert solve_single.call_count == 1
+
+
+def _solved() -> IKResult:
+    return IKResult(
+        status=IKStatus.SUCCESS,
+        joint_state=JointState(
+            {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+        ),
+    )
+
+
+def _capture_seeds(mocker: MockerFixture, ik: PinkIK, key: str) -> list[np.ndarray]:
+    captured: list[np.ndarray] = []
+
+    def fake_solve_single(**kwargs: Any) -> IKResult:
+        captured.append(np.array(kwargs[key]))
+        return _no_convergence()
+
+    mocker.patch.object(ik, "_solve_single", side_effect=fake_solve_single)
+    return captured
+
+
+def test_solve_recovers_from_solver_exception(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker)
+    ik._robot_contexts = {("robot", "tool"): _context()}
+    calls = 0
+
+    def fake_solve_single(**_: object) -> IKResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("proxqp blew up")
+        return _solved()
+
+    mocker.patch.object(ik, "_solve_single", side_effect=fake_solve_single)
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld()),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        max_attempts=2,
+    )
+
+    assert calls == 2
+    assert result.status == IKStatus.SUCCESS
+
+
+def test_solve_pose_targets_recovers_from_solver_exception(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    calls = 0
+
+    def fake_solve_single(**_: object) -> IKResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("proxqp blew up")
+        return _solved()
+
+    mocker.patch.object(ik, "_solve_single", side_effect=fake_solve_single)
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+        max_attempts=2,
+    )
+
+    assert calls == 2
+    assert result.status == IKStatus.SUCCESS
+
+
+def test_retry_seeds_perturb_only_the_selected_joints(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, uniform_restart_attempts=0)
+    rng = _RecordingRng()
+    ik._rng = cast("Any", rng)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    seeds = _capture_seeds(mocker, ik, "seed_q")
+    world = _FakeWorld()
+
+    ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+        max_attempts=3,
+    )
+
+    # q is ordered joint_b, joint_a, joint_c; only joint_a and joint_b are in the group.
+    assert len(seeds) == 3
+    assert seeds[0].tolist() == pytest.approx([-0.3, 0.5, 0.7])
+    for attempt, seed_q in enumerate(seeds[1:], start=1):
+        offset = ik.config.retry_seed_noise * attempt
+        assert seed_q[0] == pytest.approx(-0.3 + offset)
+        assert seed_q[1] == pytest.approx(0.5 + offset)
+        assert seed_q[2] == pytest.approx(0.7)
+    assert rng.uniform_calls == 0
+
+
+def test_retry_seeds_stay_within_joint_limits(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, uniform_restart_attempts=0, retry_seed_noise=5.0)
+    ik._rng = cast("Any", _RecordingRng())
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    seeds = _capture_seeds(mocker, ik, "seed_q")
+    world = _FakeWorld()
+
+    ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+        max_attempts=3,
+    )
+
+    for seed_q in seeds[1:]:
+        assert seed_q[0] == pytest.approx(1.0)
+        assert seed_q[1] == pytest.approx(1.0)
+
+
+def test_last_attempts_restart_uniformly(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, uniform_restart_attempts=2)
+    rng = _RecordingRng()
+    ik._rng = cast("Any", rng)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    seeds = _capture_seeds(mocker, ik, "seed_q")
+    world = _FakeWorld()
+
+    ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+        max_attempts=4,
+    )
+
+    assert rng.normal_scales == [ik.config.retry_seed_noise]
+    assert rng.uniform_calls == 2
+    assert seeds[2].tolist() == pytest.approx([1.0, 1.0, 0.7])
