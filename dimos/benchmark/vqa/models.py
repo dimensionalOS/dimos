@@ -93,6 +93,7 @@ QuestionKind = Literal[
     "compare_nearest_by_side",
     "door_state",
     "closest_object",
+    "forward_path",
 ]
 
 

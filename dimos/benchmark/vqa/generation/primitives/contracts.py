@@ -38,3 +38,13 @@ class ClosestObjectResult:
     distance_m: float | None
     quality_flags: tuple[str, ...]
     rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ForwardPathResult:
+    """A conservative visible-corridor classification from point-cloud evidence."""
+
+    state: Literal["clear", "blocked"] | None
+    point_count: int
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None

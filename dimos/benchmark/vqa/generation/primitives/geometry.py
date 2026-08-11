@@ -161,3 +161,27 @@ def classify_door_plane_angle(
     if angle_deg >= 25.0:
         return "open", None, angle_deg
     return None, "ambiguous_door_angle", angle_deg
+
+
+def classify_forward_corridor(
+    points: np.ndarray, ground: GroundPlaneEstimate
+) -> tuple[str | None, tuple[str, ...], str | None]:
+    """Classify a visible camera-forward corridor as clear or blocked."""
+    if len(points) == 0:
+        return None, (), "insufficient_forward_support"
+    depth = points[:, 2]
+    lateral_limit = depth * np.tan(np.radians(20.0))
+    corridor = points[(depth >= 0.5) & (depth <= 3.0) & (np.abs(points[:, 0]) <= lateral_limit)]
+    if len(corridor) < 12:
+        return None, (), "insufficient_forward_support"
+    elevation = corridor @ np.asarray(ground.normal) + ground.offset_m
+    ground_points = corridor[np.abs(elevation) <= 0.08]
+    for start, stop in ((0.5, 1.33), (1.33, 2.16), (2.16, 3.0)):
+        if int(((ground_points[:, 2] >= start) & (ground_points[:, 2] < stop)).sum()) < 3:
+            return None, (), "incomplete_forward_ground_support"
+    obstacle_count = int((elevation > 0.15).sum())
+    if obstacle_count >= 4:
+        return "blocked", ("visible_forward_obstacle", "forward_ground_supported"), None
+    if obstacle_count:
+        return None, (), "ambiguous_forward_obstacle"
+    return "clear", ("forward_ground_supported", "no_supported_forward_obstacle"), None
