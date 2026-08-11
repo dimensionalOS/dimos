@@ -102,6 +102,7 @@ class RoboPlanWorld:
         self._finalized = False
         self._usable = True
         self._live_context = RoboPlanContext()
+        self._state_lock = RLock()
         self._lock = RLock()
 
     # Robot Management
@@ -270,18 +271,23 @@ class RoboPlanWorld:
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._state_lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(
+                q_by_robot={
+                    robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()
+                }
+            )
         yield ctx
 
     def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
-        self._authoritative_robot_ids.add(robot_id)
+        q = self._joint_state_to_q(robot_id, joint_state)
+        with self._state_lock:
+            self._live_context.q_by_robot[robot_id] = q
+            self._authoritative_robot_ids.add(robot_id)
 
     # State Operations
 
@@ -507,6 +513,12 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
 
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,
@@ -641,4 +653,5 @@ class RoboPlanWorld:
         return model.groups[frozenset((group_id,))]
 
     def _is_ready(self) -> bool:
-        return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)
+        with self._state_lock:
+            return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)

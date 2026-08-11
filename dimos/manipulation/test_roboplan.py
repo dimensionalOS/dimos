@@ -1663,6 +1663,43 @@ def test_native_selected_planner_accepts_local_joint_names(
     assert result.path[-1].position == [0.2, 0.4]
 
 
+def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
+    fake_roboplan: None,
+    robot_config: RobotModelConfig,
+    mocker: MockerFixture,
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    selection = _selection((robot_config,), "arm/manipulator")
+    observed_scene_start: list[float] = []
+    native_plan = FakeRRT.plan
+
+    def capture_scene_start(
+        planner: FakeRRT,
+        q_start: FakeJointConfiguration,
+        q_goal: FakeJointConfiguration,
+    ) -> FakeJointPath:
+        observed_scene_start.extend(planner.scene.current_positions.tolist())
+        return native_plan(planner, q_start, q_goal)
+
+    mocker.patch.object(FakeRRT, "plan", autospec=True, side_effect=capture_scene_start)
+    start = JointState(name=list(selection.joint_names), position=[0.1, -0.1])
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+    )
+
+    result = _planner_for(world).plan_selected_joint_path(
+        world,
+        selection,
+        start,
+        JointState(name=list(selection.joint_names), position=[0.4, 0.2]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx(start.position)
+    assert observed_scene_start[:2] == pytest.approx(start.position)
+
+
 def test_native_selected_planner_rejects_multi_group_selection(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
@@ -1931,22 +1968,29 @@ def test_cartesian_rejects_invalid_requests(
     assert result.path == []
 
 
-def test_cartesian_rejects_start_that_differs_from_scene(
+def test_cartesian_uses_explicit_start_after_live_state_advances(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    world, _ = _make_world(fake_roboplan, robot_config)
+    world, robot_id = _make_world(fake_roboplan, robot_config)
     selection = _selection((robot_config,), "arm/manipulator")
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+    world.sync_from_joint_state(
+        robot_id,
+        JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
+    )
 
     result = _planner_for(world).plan_cartesian_path(
         world,
         selection,
-        JointState(name=list(selection.joint_names), position=[0.1, 0.0]),
+        start,
         {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
         RoboPlanCartesianPathConfig(),
     )
 
-    assert result.status == PlanningStatus.INVALID_START
-    assert "does not match current scene state" in result.message
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path[0].position == pytest.approx(start.position)
+    start_pose = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0][0]
+    assert start_pose[0, 3] == pytest.approx(sum(start.position))
 
 
 def test_cartesian_rejects_official_planner_failure(
@@ -2197,6 +2241,30 @@ def test_scene_receives_generated_model_contents_inline(
     assert urdf.tag == "robot"
     assert srdf.tag == "robot"
     assert world._scene.constructor_kwargs["package_paths"] == []
+
+
+def test_composed_model_fills_only_missing_acceleration_limits(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    tree = ET.parse(robot_config.model_path)
+    authored = tree.find("./joint[@name='joint1']/limit")
+    assert authored is not None
+    authored.set("acceleration", "3.5")
+    tree.write(robot_config.model_path)
+
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    urdf = ET.fromstring(world._scene.constructor_kwargs["urdf"])
+    acceleration_by_joint = {
+        joint.get("name"): limit.get("acceleration")
+        for joint in urdf.findall("./joint")
+        if (limit := joint.find("./limit")) is not None
+    }
+    assert acceleration_by_joint == {
+        "joint1": "3.5",
+        "joint2": "2.0",
+        "joint3": "2.0",
+    }
 
 
 def test_base_pose_is_written_to_composed_model(
