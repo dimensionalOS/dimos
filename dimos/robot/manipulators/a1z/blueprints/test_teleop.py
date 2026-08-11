@@ -33,11 +33,15 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("blueprint", [keyboard_teleop_a1z, coordinator_teleop_a1z])
-def test_gripper_joint_has_one_configured_owner(blueprint: Blueprint) -> None:
+def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
+    blueprint: Blueprint,
+) -> None:
     tasks = cast("list[TaskConfig]", _coordinator_kwargs(blueprint)["tasks"])
-    owners = [task for task in tasks if "arm/gripper" in task.joint_names]
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+    gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert [(task.name, task.type) for task in owners] == [("arm_gripper", "gripper")]
+    assert "arm/gripper" in trajectory.joint_names
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
 
 
 def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:

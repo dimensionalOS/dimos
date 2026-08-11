@@ -42,11 +42,7 @@ xarm_perception_sim = autoconnect(
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
-        tasks=[
-            trajectory_task(
-                _xarm7_sim_hw, joint_names=_xarm7_sim_model.get_coordinator_joint_names()
-            )
-        ],
+        tasks=[trajectory_task(_xarm7_sim_hw)],
     ),
     RerunBridgeModule.blueprint(),
 )

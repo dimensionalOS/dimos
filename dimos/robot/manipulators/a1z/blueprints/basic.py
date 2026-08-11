@@ -32,9 +32,7 @@ a1z_planner_coordinator = autoconnect(
     planner(robots=[_a1z_model]),
     coordinator(
         hardware=[_a1z_planner_hw],
-        tasks=[
-            trajectory_task(_a1z_planner_hw, joint_names=_a1z_model.get_coordinator_joint_names())
-        ],
+        tasks=[trajectory_task(_a1z_planner_hw)],
     ),
 )
 
@@ -45,7 +43,5 @@ _coordinator_a1z_hw = a1z_hardware(
 
 coordinator_a1z = ControlCoordinator.blueprint(
     hardware=[_coordinator_a1z_hw],
-    tasks=[
-        trajectory_task(_coordinator_a1z_hw, joint_names=_a1z_model.get_coordinator_joint_names())
-    ],
+    tasks=[trajectory_task(_coordinator_a1z_hw)],
 )

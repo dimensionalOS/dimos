@@ -161,8 +161,7 @@ _xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
-# While engaged, VR also owns the gripper joint (trigger), so the browser
-# gripper toggle only takes effect when VR is disengaged.
+# The dedicated gripper task handles gripper inputs independently.
 
 
 coordinator_teleop_xarm7 = autoconnect(
@@ -189,10 +188,7 @@ coordinator_teleop_xarm7 = autoconnect(
                 priority=20,
                 params={"hand": "right"},
             ),
-            trajectory_task(
-                _xarm7_teleop_hw,
-                joint_names=_xarm7_control_model.get_coordinator_joint_names(),
-            ),
+            trajectory_task(_xarm7_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -226,10 +222,7 @@ coordinator_teleop_xarm6 = autoconnect(
                 priority=20,
                 params={"hand": "right"},
             ),
-            trajectory_task(
-                _xarm6_teleop_hw,
-                joint_names=_xarm6_control_model.get_coordinator_joint_names(),
-            ),
+            trajectory_task(_xarm6_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(

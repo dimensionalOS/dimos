@@ -84,12 +84,12 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
     assert config.gripper_hardware_id == "arm"
     task = _coordinator_kwargs(blueprint)["tasks"][0]
     assert task.type == "trajectory"
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert task.joint_names == _coordinator_kwargs(blueprint)["hardware"][0].joints
 
 
-def test_openyam_trajectory_owns_arm_joints_but_not_gripper() -> None:
+def test_openyam_trajectory_accepts_all_hardware_joints() -> None:
     blueprint = coordinator_openyam
     kwargs = _coordinator_kwargs(blueprint)
     assert len(kwargs["hardware"]) == 1
     assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF + 1
-    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints[:-1]
+    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints

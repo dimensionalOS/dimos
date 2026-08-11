@@ -52,7 +52,15 @@ def test_keyboard_teleop_uses_roboplan_compatible_visualization(blueprint: Bluep
 
 
 @pytest.mark.parametrize("blueprint", _GRIPPER_BLUEPRINTS)
-def test_gripper_joint_has_one_configured_owner(blueprint: Blueprint) -> None:
-    owners = [task for task in _coordinator_tasks(blueprint) if "arm/gripper" in task.joint_names]
+def test_gripper_has_dedicated_task(blueprint: Blueprint) -> None:
+    tasks = _coordinator_tasks(blueprint)
+    gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert [(task.name, task.type) for task in owners] == [("arm_gripper", "gripper")]
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
+
+
+@pytest.mark.parametrize("blueprint", [coordinator_teleop_xarm6, coordinator_teleop_xarm7])
+def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
+    trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
+
+    assert "arm/gripper" in trajectory.joint_names

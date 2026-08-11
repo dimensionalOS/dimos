@@ -47,12 +47,7 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=[
-                *make_xarm6_model_config(
-                    name="xarm_arm", add_gripper=False
-                ).get_coordinator_joint_names(),
-                *make_piper_model_config(name="piper_arm").get_coordinator_joint_names(),
-            ],
+            joint_names=[*_xarm6_dual.joints, *_piper_dual.joints],
             priority=10,
         ),
     ],

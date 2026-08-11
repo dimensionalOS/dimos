@@ -58,10 +58,7 @@ keyboard_teleop_piper = autoconnect(
                 joint_names=["arm/gripper"],
                 priority=20,
             ),
-            trajectory_task(
-                _piper_keyboard_hw,
-                joint_names=_piper_model.get_coordinator_joint_names(),
-            ),
+            trajectory_task(_piper_keyboard_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -100,10 +97,7 @@ coordinator_teleop_piper = autoconnect(
                 priority=20,
                 params={"hand": "left"},
             ),
-            trajectory_task(
-                _piper_teleop_hw,
-                joint_names=_piper_model.get_coordinator_joint_names(),
-            ),
+            trajectory_task(_piper_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(

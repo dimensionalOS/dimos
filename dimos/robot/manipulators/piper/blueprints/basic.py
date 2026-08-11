@@ -35,7 +35,7 @@ coordinator_piper = autoconnect(
             TaskConfig(
                 name="traj_piper",
                 type="trajectory",
-                joint_names=_piper_model.get_coordinator_joint_names(),
+                joint_names=_piper_hw.joints,
                 priority=10,
             )
         ],

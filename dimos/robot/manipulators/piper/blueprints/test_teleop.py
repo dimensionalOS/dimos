@@ -34,7 +34,12 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
 
 
 @pytest.mark.parametrize("blueprint", [keyboard_teleop_piper, coordinator_teleop_piper])
-def test_gripper_joint_has_one_configured_owner(blueprint: Blueprint) -> None:
-    owners = [task for task in _coordinator_tasks(blueprint) if "arm/gripper" in task.joint_names]
+def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
+    blueprint: Blueprint,
+) -> None:
+    tasks = _coordinator_tasks(blueprint)
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+    gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert [(task.name, task.type) for task in owners] == [("arm_gripper", "gripper")]
+    assert "arm/gripper" in trajectory.joint_names
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])

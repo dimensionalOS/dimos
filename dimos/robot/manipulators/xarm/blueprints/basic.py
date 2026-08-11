@@ -54,12 +54,7 @@ xarm7_planner_coordinator = autoconnect(
     planner(robots=[_xarm7_model]),
     coordinator(
         hardware=[_xarm7_hw],
-        tasks=[
-            trajectory_task(
-                _xarm7_hw,
-                joint_names=_xarm7_model.get_coordinator_joint_names(),
-            )
-        ],
+        tasks=[trajectory_task(_xarm7_hw)],
     ),
 )
 
