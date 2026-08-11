@@ -14,7 +14,7 @@
 # before the container exits.
 services:
   dimos:
-    image: ghcr.io/dimensionalos/dimos-r1lite@sha256:7880c2c539a06a6660d6d0a576cf8dbfdd09bb86e011a62759e8d92959d232c3
+    image: ghcr.io/dimensionalos/dimos-r1lite@sha256:d631705f136991de7e9a859b5e7a189ca44024a88d7d4f37528cb9338a4a19dd
     network_mode: host
     ipc: host
     pid: host

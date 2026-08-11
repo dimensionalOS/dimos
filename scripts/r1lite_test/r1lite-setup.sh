@@ -17,7 +17,7 @@ set -o pipefail
 BRANCH="feat/krishna/r1lite-v4-docker"
 RAW_BASE="https://raw.githubusercontent.com/dimensionalOS/dimos/$BRANCH/scripts/r1lite_test"
 REPO_REF="ghcr.io/dimensionalos/dimos-r1lite"
-DEFAULT_TAG="0.0.14b1-r1lite-dev.11"
+DEFAULT_TAG="0.0.14b1-r1lite-dev.14"
 TAG="${R1LITE_IMAGE_TAG:-$DEFAULT_TAG}"
 STATE_DIR="$HOME/.config/dimos-r1lite"
 STATE="$STATE_DIR/image.env"
