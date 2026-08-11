@@ -817,11 +817,7 @@ private:
     Output<tf2_msgs::TFMessage> tf_;
 };
 
-// The offline replay harness includes this file for the module class and brings
-// its own main().
-#ifndef CUVSLAM_REPLAY_HARNESS
 int main() {
     dimos::native::run_with_transport<CuvslamOdometry>();
     return 0;
 }
-#endif
