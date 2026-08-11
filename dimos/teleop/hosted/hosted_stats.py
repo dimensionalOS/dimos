@@ -146,9 +146,10 @@ class HostedStatsModule(Module):
         soc = None
         # Optional module ref: graphs without a GO2Connection never bind
         # it, so the attribute may not exist at all.
-        if getattr(self, "go2", None) is not None:
+        go2 = getattr(self, "go2", None)
+        if go2 is not None:
             try:
-                soc = self.go2.battery_soc()
+                soc = go2.battery_soc()
             except Exception:
                 pass
         return {
