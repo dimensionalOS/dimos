@@ -951,3 +951,58 @@ def test_last_attempts_restart_uniformly(mocker: MockerFixture) -> None:
     assert rng.normal_scales == [ik.config.retry_seed_noise]
     assert rng.uniform_calls == 2
     assert seeds[2].tolist() == pytest.approx([1.0, 1.0, 0.7])
+
+
+def test_failure_message_aggregates_attempt_reasons(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, max_attempts=3, uniform_restart_attempts=0)
+    ik._rng = cast("Any", _RecordingRng())
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    mocker.patch.object(
+        ik,
+        "_solve_single",
+        side_effect=[
+            RuntimeError("proxqp blew up"),
+            _no_convergence(position_error=0.02),
+            IKResult(
+                status=IKStatus.JOINT_LIMITS,
+                joint_state=None,
+                position_error=0.05,
+                message="Pink IK candidate violates DimOS joint limits",
+            ),
+        ],
+    )
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+    )
+
+    assert result.status == IKStatus.NO_SOLUTION
+    assert "Pink IK failed after 3 attempts" in result.message
+    assert "1 qp-error" in result.message
+    assert "1 no-convergence" in result.message
+    assert "1 joint-limits" in result.message
+    assert "best position error 0.0200m" in result.message
+
+
+def test_failure_keeps_the_closest_candidate_not_the_first(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, max_attempts=2, uniform_restart_attempts=0)
+    ik._rng = cast("Any", _RecordingRng())
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    mocker.patch.object(
+        ik,
+        "_solve_single",
+        side_effect=[_no_convergence(position_error=0.4), _no_convergence(position_error=0.05)],
+    )
+    world = _FakeWorld()
+
+    result = ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+    )
+
+    assert result.position_error == pytest.approx(0.05)
+    assert "best position error 0.0500m" in result.message

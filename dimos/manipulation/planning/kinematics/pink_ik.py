@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 import contextlib
 from dataclasses import dataclass
@@ -161,7 +162,7 @@ class PinkIK:
         target_model = self._target_in_model_frame(world.get_robot_config(robot_id), target_pose)
 
         attempts = self._resolve_max_attempts(max_attempts)
-        fallback_result: IKResult | None = None
+        outcomes = _AttemptLog()
 
         try:
             base_positions = _seed_positions_for_mapping(seed, robot_context.mapping)
@@ -186,29 +187,22 @@ class PinkIK:
             except ValueError as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK mapping failed: {exc}")
             except Exception as exc:
-                if fallback_result is None:
-                    fallback_result = _failure(
-                        IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
-                    )
+                outcomes.record(_solver_failure(exc), attempt, attempts)
                 continue
 
             if not result.is_success() or result.joint_state is None:
-                if fallback_result is None:
-                    fallback_result = result
+                outcomes.record(result, attempt, attempts)
                 continue
 
             if check_collision and not world.check_config_collision_free(
                 robot_id, result.joint_state
             ):
-                fallback_result = _collision_failure(result)
+                outcomes.record(_collision_failure(result), attempt, attempts)
                 continue
 
             return result
 
-        if fallback_result is not None:
-            return fallback_result
-
-        return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {attempts} attempts")
+        return outcomes.failure(attempts)
 
     def solve_pose_targets(
         self,
@@ -290,7 +284,7 @@ class PinkIK:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
             attempts = self._resolve_max_attempts(max_attempts)
-            fallback_result: IKResult | None = None
+            outcomes = _AttemptLog()
             for attempt in range(attempts):
                 current_positions = seed_positions.copy()
                 current_positions[selected_indices] = self._attempt_positions(
@@ -331,22 +325,16 @@ class PinkIK:
                 except Exception as exc:
                     # A solver blow-up (e.g. QP infeasibility from a bad restart)
                     # fails this attempt, not the whole solve.
-                    if fallback_result is None:
-                        fallback_result = _failure(
-                            IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}"
-                        )
+                    outcomes.record(_solver_failure(exc), attempt, attempts)
                     continue
 
                 if not result.is_success() or result.joint_state is None:
-                    if fallback_result is None:
-                        fallback_result = result
+                    outcomes.record(result, attempt, attempts)
                     continue
                 results_by_robot[robot_name] = result
                 break
             else:
-                if fallback_result is not None:
-                    return fallback_result
-                return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {attempts} attempts")
+                return outcomes.failure(attempts)
 
         positions_by_robot: dict[RobotName, dict[str, float]] = {}
         max_position_error = 0.0
@@ -900,6 +888,69 @@ def _success(
 
 def _failure(status: IKStatus, message: str, iterations: int = 0) -> IKResult:
     return IKResult(status=status, joint_state=None, iterations=iterations, message=message)
+
+
+def _solver_failure(exc: Exception) -> IKResult:
+    return IKResult(
+        status=IKStatus.NO_SOLUTION,
+        joint_state=None,
+        position_error=float("inf"),
+        orientation_error=float("inf"),
+        message=f"Pink IK solver failed: {type(exc).__name__}: {exc}",
+    )
+
+
+def _failure_reason(result: IKResult) -> str:
+    if result.status == IKStatus.JOINT_LIMITS:
+        return "joint-limits"
+    if result.status == IKStatus.COLLISION:
+        return "collision"
+    if result.message.startswith("Pink IK solver failed"):
+        return "qp-error"
+    return "no-convergence"
+
+
+class _AttemptLog:
+    """Per-attempt failure tally, keeping the closest candidate seen."""
+
+    def __init__(self) -> None:
+        self.reasons: Counter[str] = Counter()
+        self.best: IKResult | None = None
+
+    def record(self, result: IKResult, attempt: int, max_attempts: int) -> None:
+        reason = _failure_reason(result)
+        self.reasons[reason] += 1
+        logger.debug(
+            "Pink IK attempt %d/%d failed (%s): %s pos_err=%.4f ori_err=%.4f",
+            attempt + 1,
+            max_attempts,
+            reason,
+            result.message,
+            result.position_error,
+            result.orientation_error,
+        )
+        if self.best is None or result.position_error < self.best.position_error:
+            self.best = result
+
+    def failure(self, max_attempts: int) -> IKResult:
+        tally = ", ".join(f"{count} {reason}" for reason, count in sorted(self.reasons.items()))
+        message = f"Pink IK failed after {max_attempts} attempts"
+        if tally:
+            message += f" ({tally})"
+        best = self.best
+        if best is not None and np.isfinite(best.position_error):
+            message += f"; best position error {best.position_error:.4f}m"
+        logger.info(message)
+        if best is None:
+            return _failure(IKStatus.NO_SOLUTION, message)
+        return IKResult(
+            status=best.status,
+            joint_state=None,
+            position_error=best.position_error,
+            orientation_error=best.orientation_error,
+            iterations=best.iterations,
+            message=message,
+        )
 
 
 def _collision_failure(result: IKResult) -> IKResult:
