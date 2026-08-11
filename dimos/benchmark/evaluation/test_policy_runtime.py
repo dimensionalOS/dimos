@@ -21,7 +21,7 @@ import queue
 import cloudpickle
 import pytest
 
-from dimos.benchmark.evaluation.pi_process import PiRunResult
+from dimos.benchmark.evaluation.pi_process import PiRunError, PiRunResult
 from dimos.benchmark.evaluation.protocol import PolicyArtifact, TrialOutcome, TrialRun
 import dimos.benchmark.evaluation.runtime as runtime_module
 from dimos.benchmark.evaluation.runtime import (
@@ -35,6 +35,21 @@ from dimos.porcelain.dimos import Dimos
 
 def policy(app: Dimos) -> None:
     del app
+
+
+class _FakeCodePolicyServer:
+    current = None
+    mcp_url = "http://127.0.0.1:1/mcp"
+
+    def __init__(self, submission_handler) -> None:
+        self.submission_handler = submission_handler
+        _FakeCodePolicyServer.current = self
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
 
 
 def _trial(path: Path, number: int) -> TrialRun:
@@ -121,29 +136,15 @@ def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> 
 
 
 def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) -> None:
-    class FakeServer:
-        current = None
-        mcp_url = "http://127.0.0.1:1/mcp"
-
-        def __init__(self, submission_handler) -> None:
-            self.submission_handler = submission_handler
-            FakeServer.current = self
-
-        def start(self) -> None:
-            pass
-
-        def stop(self) -> None:
-            pass
-
     class FakePiRunner:
         def __init__(self, **_kwargs) -> None:
             pass
 
         def run(self, **_kwargs) -> PiRunResult:
-            assert FakeServer.current is not None
+            assert _FakeCodePolicyServer.current is not None
             serialized = cloudpickle.dumps(policy)
             for _ in range(5):
-                FakeServer.current.submission_handler(
+                _FakeCodePolicyServer.current.submission_handler(
                     "def policy(app: Dimos) -> None: ...",
                     serialized,
                 )
@@ -151,7 +152,7 @@ def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) 
 
     marker = tmp_path / "pi"
     marker.touch()
-    mocker.patch.object(runtime_module, "CodePolicyMcpServer", FakeServer)
+    mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
     mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
     mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
     runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
@@ -166,3 +167,114 @@ def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) 
     assert len(outcome.trials) == 5
     assert outcome.policy is not None
     assert outcome.policy.serialized_path.parent.name == "submission-0005"
+
+
+def test_explore_publishes_jsonl_and_rendered_transcript(mocker, tmp_path: Path) -> None:
+    class FakePiRunner:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> PiRunResult:
+            transcript = kwargs["run_dir"] / "pi-session" / "session.jsonl"
+            transcript.parent.mkdir()
+            transcript.write_text('{"type":"session"}\n')
+            return PiRunResult("done", 1, 2.0, transcript, "")
+
+        def export_transcript(self, **kwargs) -> None:
+            kwargs["output_path"].write_text("<html>rendered</html>")
+
+    marker = tmp_path / "pi"
+    marker.touch()
+    mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
+    mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
+    mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
+    runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
+
+    outcome = runtime.explore(
+        evaluation_protocol="Use normal DimOS information.",
+        task_input="Complete the task.",
+        submit_debug_trial=lambda _policy, number, path: _trial(path, number),
+    )
+
+    exploration = tmp_path / "runtime" / "exploration-0001"
+    assert outcome.status == "invalid"
+    assert (exploration / "pi-transcript.jsonl").read_text() == '{"type":"session"}\n'
+    assert (exploration / "pi-transcript.html").read_text() == "<html>rendered</html>"
+    artifacts = {artifact.path: artifact.media_type for artifact in runtime.runtime_artifacts}
+    assert artifacts["runtime/exploration-0001/pi-transcript.jsonl"] == ("application/x-ndjson")
+    assert artifacts["runtime/exploration-0001/pi-transcript.html"] == "text/html"
+
+
+def test_explore_retains_transcript_when_pi_fails(mocker, tmp_path: Path) -> None:
+    class FakePiRunner:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> PiRunResult:
+            transcript = kwargs["run_dir"] / "pi-session" / "session.jsonl"
+            transcript.parent.mkdir()
+            transcript.write_text('{"type":"session"}\n')
+            raise PiRunError("agent stopped", transcript_path=transcript)
+
+        def export_transcript(self, **kwargs) -> None:
+            kwargs["output_path"].write_text("<html>failure</html>")
+
+    marker = tmp_path / "pi"
+    marker.touch()
+    mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
+    mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
+    mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
+    runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
+
+    with pytest.raises(PiRunError, match="agent stopped"):
+        runtime.explore(
+            evaluation_protocol="Use normal DimOS information.",
+            task_input="Complete the task.",
+            submit_debug_trial=lambda _policy, number, path: _trial(path, number),
+        )
+
+    exploration = tmp_path / "runtime" / "exploration-0001"
+    assert (exploration / "pi-transcript.jsonl").is_file()
+    assert (exploration / "pi-transcript.html").read_text() == "<html>failure</html>"
+
+
+def test_transcript_export_failure_is_diagnostic_only(mocker, tmp_path: Path) -> None:
+    class FakePiRunner:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> PiRunResult:
+            transcript = kwargs["run_dir"] / "pi-session" / "session.jsonl"
+            transcript.parent.mkdir()
+            transcript.write_text('{"type":"session"}\n')
+            return PiRunResult("done", 1, 2.0, transcript, "")
+
+        def export_transcript(self, **_kwargs) -> None:
+            raise RuntimeError("secret could not render")
+
+    marker = tmp_path / "pi"
+    marker.touch()
+    progress = []
+    mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
+    mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
+    mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
+    runtime = CodePolicyRuntimeFactory(
+        api_key="secret", workspace=tmp_path, progress=progress.append
+    )
+
+    outcome = runtime.explore(
+        evaluation_protocol="Use normal DimOS information.",
+        task_input="Complete the task.",
+        submit_debug_trial=lambda _policy, number, path: _trial(path, number),
+    )
+
+    exploration = tmp_path / "runtime" / "exploration-0001"
+    assert outcome.status == "invalid"
+    assert (exploration / "pi-transcript.jsonl").is_file()
+    assert not (exploration / "pi-transcript.html").exists()
+    assert (exploration / "pi-transcript-export-error.log").read_text() == (
+        "RuntimeError: [REDACTED] could not render\n"
+    )
+    assert progress[-1].message == (
+        "transcript export failed: RuntimeError: [REDACTED] could not render"
+    )
