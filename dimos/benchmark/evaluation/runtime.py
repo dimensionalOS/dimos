@@ -20,7 +20,6 @@ import hashlib
 import json
 import multiprocessing
 from pathlib import Path
-import queue
 import shutil
 import time
 from typing import Any, Literal
@@ -34,6 +33,7 @@ from dimos.benchmark.evaluation.protocol import (
     ExplorationOutcome,
     PolicyArtifact,
     PolicyExecution,
+    PolicyExecutionHandle,
     TrialRun,
 )
 
@@ -195,52 +195,40 @@ class CodePolicyRuntimeFactory:
             server.stop()
             shutil.rmtree(path / "working", ignore_errors=True)
 
-    def execute(self, policy: PolicyArtifact, *, timeout_s: float) -> PolicyExecution:
-        if timeout_s <= 0:
-            raise ValueError("timeout_s must be positive")
-        started = time.monotonic()
+    def prepare(
+        self,
+        policy: PolicyArtifact,
+        *,
+        startup_timeout_s: float,
+    ) -> PolicyExecutionHandle:
+        if startup_timeout_s <= 0:
+            raise ValueError("startup_timeout_s must be positive")
         context = multiprocessing.get_context("spawn")
-        result_queue = context.Queue(maxsize=1)
+        messages, worker_messages = context.Pipe(duplex=False)
+        start_event = context.Event()
         process = context.Process(
             target=_execute_policy_worker,
-            args=(str(policy.serialized_path), result_queue),
+            args=(str(policy.serialized_path), worker_messages, start_event),
             daemon=True,
         )
         try:
             process.start()
-            process.join(timeout_s)
+            worker_messages.close()
+            if not messages.poll(startup_timeout_s):
+                _stop_process(process)
+                raise TimeoutError(f"policy startup timed out after {startup_timeout_s:g}s")
+            message, error = messages.recv()
+            if message != "ready":
+                _stop_process(process)
+                messages.close()
+                raise RuntimeError(error or "policy worker failed before readiness")
+            return _PolicyExecutionProcess(process, messages, start_event)
+        except BaseException:
             if process.is_alive():
-                process.terminate()
-                process.join(5)
-                if process.is_alive():
-                    process.kill()
-                    process.join()
-                return PolicyExecution(
-                    status="timed_out",
-                    duration_seconds=time.monotonic() - started,
-                    error=f"policy timed out after {timeout_s:g}s",
-                )
-            try:
-                status, error = result_queue.get_nowait()
-            except queue.Empty:
-                return PolicyExecution(
-                    status="infrastructure_error",
-                    duration_seconds=time.monotonic() - started,
-                    error=f"policy worker exited with code {process.exitcode} without a result",
-                )
-            return PolicyExecution(
-                status=status,
-                duration_seconds=time.monotonic() - started,
-                error=error,
-            )
-        except Exception as exc:
-            return PolicyExecution(
-                status="infrastructure_error",
-                duration_seconds=time.monotonic() - started,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-        finally:
-            result_queue.close()
+                _stop_process(process)
+            messages.close()
+            worker_messages.close()
+            raise
 
     def _record_prompt(
         self,
@@ -401,36 +389,100 @@ class _SubmissionManager:
         return trial
 
 
-def _execute_policy_worker(serialized_path: str, result_queue: Any) -> None:
+def _execute_policy_worker(serialized_path: str, messages: Any, start_event: Any) -> None:
     try:
-        import cloudpickle
+        try:
+            import cloudpickle
 
-        with Path(serialized_path).open("rb") as handle:
-            policy = cloudpickle.load(handle)
-    except Exception as exc:
-        result_queue.put(
-            ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
-        )
-        return
-    try:
-        from dimos.porcelain.dimos import Dimos
+            with Path(serialized_path).open("rb") as handle:
+                policy = cloudpickle.load(handle)
+        except Exception as exc:
+            messages.send(
+                ("infrastructure_error", f"policy load failed: {type(exc).__name__}: {exc}")
+            )
+            return
+        try:
+            from dimos.porcelain.dimos import Dimos
 
-        app = Dimos.connect()
-    except Exception as exc:
-        result_queue.put(
-            ("infrastructure_error", f"DimOS connection failed: {type(exc).__name__}: {exc}")
-        )
-        return
-    try:
-        result = policy(app)
-        if result is not None:
-            raise TypeError("policy(app) must return None")
-    except Exception as exc:
-        result_queue.put(("policy_error", f"{type(exc).__name__}: {exc}"))
-    else:
-        result_queue.put(("completed", None))
+            app = Dimos.connect()
+        except Exception as exc:
+            messages.send(
+                ("infrastructure_error", f"DimOS connection failed: {type(exc).__name__}: {exc}")
+            )
+            return
+        messages.send(("ready", None))
+        start_event.wait()
+        try:
+            result = policy(app)
+            if result is not None:
+                raise TypeError("policy(app) must return None")
+        except Exception as exc:
+            messages.send(("policy_error", f"{type(exc).__name__}: {exc}"))
+        else:
+            messages.send(("completed", None))
+        finally:
+            app.stop()
     finally:
-        app.stop()
+        messages.close()
+
+
+class _PolicyExecutionProcess:
+    def __init__(self, process: Any, messages: Any, start_event: Any) -> None:
+        self._process = process
+        self._messages = messages
+        self._start_event = start_event
+        self._started_at: float | None = None
+        self._finished: PolicyExecution | None = None
+
+    def start(self) -> None:
+        if self._started_at is not None:
+            raise RuntimeError("policy execution already started")
+        self._started_at = time.monotonic()
+        self._start_event.set()
+
+    def finish(self, *, grace_s: float = 1.0) -> PolicyExecution:
+        if grace_s < 0:
+            raise ValueError("grace_s must be non-negative")
+        if self._finished is not None:
+            return self._finished
+        if self._started_at is None:
+            raise RuntimeError("policy execution has not started")
+        if self._messages.poll(grace_s):
+            try:
+                status, error = self._messages.recv()
+            except EOFError:
+                status = "infrastructure_error"
+                error = "policy worker closed its result channel without a result"
+            self._process.join(grace_s)
+            if self._process.is_alive():
+                _stop_process(self._process)
+        else:
+            stopped = self._process.is_alive()
+            if stopped:
+                _stop_process(self._process)
+                status, error = "stopped", None
+            else:
+                self._process.join()
+                status = "infrastructure_error"
+                error = f"policy worker exited with code {self._process.exitcode} without a result"
+        self._messages.close()
+        self._finished = PolicyExecution(
+            status=status,
+            duration_seconds=time.monotonic() - self._started_at,
+            error=error,
+        )
+        return self._finished
+
+
+def _stop_process(process: Any) -> None:
+    if not process.is_alive():
+        process.join()
+        return
+    process.terminate()
+    process.join(5)
+    if process.is_alive():
+        process.kill()
+        process.join()
 
 
 def _assemble_user_message(evaluation_protocol: str, task_input: str) -> str:

@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "evaluation": {
+    "name": "libero-pro",
+    "config": {
+      "task_manifest": "task.json"
+    }
+  }
+}

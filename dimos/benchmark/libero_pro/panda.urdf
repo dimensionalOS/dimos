@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<!-- Kinematics and limits transcribed from Robosuite 1.4's Panda robot.xml. -->
+<robot name="panda">
+  <link name="base"/>
+  <link name="link0"/>
+  <joint name="base_fixed" type="fixed">
+    <parent link="base"/><child link="link0"/>
+  </joint>
+  <link name="link1"><collision><geometry><cylinder radius="0.06" length="0.25"/></geometry></collision></link>
+  <joint name="joint1" type="revolute">
+    <parent link="link0"/><child link="link1"/><origin xyz="0 0 0.333"/><axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" effort="80" velocity="2.175"/>
+  </joint>
+  <link name="link2"><collision><geometry><cylinder radius="0.055" length="0.25"/></geometry></collision></link>
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/><child link="link2"/><origin rpy="-1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-1.7628" upper="1.7628" effort="80" velocity="2.175"/>
+  </joint>
+  <link name="link3"><collision><geometry><cylinder radius="0.05" length="0.28"/></geometry></collision></link>
+  <joint name="joint3" type="revolute">
+    <parent link="link2"/><child link="link3"/><origin xyz="0 -0.316 0" rpy="1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" effort="80" velocity="2.175"/>
+  </joint>
+  <link name="link4"><collision><geometry><cylinder radius="0.05" length="0.28"/></geometry></collision></link>
+  <joint name="joint4" type="revolute">
+    <parent link="link3"/><child link="link4"/><origin xyz="0.0825 0 0" rpy="1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-3.0718" upper="-0.0698" effort="80" velocity="2.175"/>
+  </joint>
+  <link name="link5"><collision><geometry><cylinder radius="0.045" length="0.25"/></geometry></collision></link>
+  <joint name="joint5" type="revolute">
+    <parent link="link4"/><child link="link5"/><origin xyz="-0.0825 0.384 0" rpy="-1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" effort="80" velocity="2.61"/>
+  </joint>
+  <link name="link6"><collision><geometry><cylinder radius="0.045" length="0.20"/></geometry></collision></link>
+  <joint name="joint6" type="revolute">
+    <parent link="link5"/><child link="link6"/><origin rpy="1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-0.0175" upper="3.7525" effort="12" velocity="2.61"/>
+  </joint>
+  <link name="link7"><collision><geometry><cylinder radius="0.04" length="0.16"/></geometry></collision></link>
+  <joint name="joint7" type="revolute">
+    <parent link="link6"/><child link="link7"/><origin xyz="0.088 0 0" rpy="1.57079632679 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-2.8973" upper="2.8973" effort="12" velocity="2.61"/>
+  </joint>
+  <link name="right_hand"><collision><geometry><box size="0.10 0.10 0.08"/></geometry></collision></link>
+  <joint name="right_hand_fixed" type="fixed">
+    <parent link="link7"/><child link="right_hand"/><origin xyz="0 0 0.1065" rpy="0 0 -0.78539816339"/>
+  </joint>
+</robot>

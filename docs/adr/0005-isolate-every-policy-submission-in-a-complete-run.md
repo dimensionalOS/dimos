@@ -1,0 +1,3 @@
+# Isolate every policy submission in a complete run
+
+Every `submit_policy()` call builds a brand-new complete DimOS blueprint, spawns a fresh LIBERO episode within that run, executes the submitted policy against the connected blueprint, stops the entire run, and returns its immutable outcome, logs, Memory2 recording, and artifacts. No simulator, blueprint, module state, or policy process is reused between submissions. The scored LIBERO-PRO trial uses the same fresh-run harness without the exploration agent, concentrating lifecycle and cleanup semantics in one path while preventing state leakage between training attempts and evaluation.

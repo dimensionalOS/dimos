@@ -1,0 +1,3 @@
+# Use gRPC and protobuf for the LIBERO container protocol
+
+The LIBERO container and in-process evaluation modules communicate through a checked-in protobuf contract implemented with gRPC. `LiberoConnection` translates the Policy Interface's streamed observations, robot state, actuator commands, readiness, and health into ordinary DimOS behavior, while the Evaluation uses the separate control service. The repository will declare `grpcio` directly rather than rely on its current transitive lock entry, keep LIBERO dependencies inside the image, and check in generated Python stubs so ordinary runtime and image startup do not require a protobuf compiler.

@@ -76,6 +76,13 @@ def test_unknown_evaluation_reports_name(monkeypatch) -> None:
         registry.resolve_evaluation("missing")
 
 
+def test_builtin_libero_pro_evaluation_resolves_in_repo() -> None:
+    resolved = registry.resolve_evaluation("libero-pro")
+
+    assert resolved.provider == "dimos"
+    assert resolved.evaluation.name == "libero-pro"
+
+
 def test_builtin_vlnce_r2r_evaluation_resolves_with_live_agent() -> None:
     resolved = registry.resolve_evaluation("vlnce-r2r")
 

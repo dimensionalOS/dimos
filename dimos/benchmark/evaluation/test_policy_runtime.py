@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
-import queue
+import threading
 
 import cloudpickle
 import pytest
@@ -28,6 +29,7 @@ import dimos.benchmark.evaluation.runtime as runtime_module
 from dimos.benchmark.evaluation.runtime import (
     CodePolicyRuntimeFactory,
     _execute_policy_worker,
+    _PolicyExecutionProcess,
     _SubmissionManager,
 )
 from dimos.memory2.store.sqlite import SqliteStore
@@ -51,6 +53,13 @@ class _FakeCodePolicyServer:
 
     def stop(self) -> None:
         pass
+
+
+def _send_large_policy_error(messages, start_event, result_sending) -> None:
+    start_event.wait()
+    result_sending.set()
+    messages.send(("policy_error", "x" * 1_000_000))
+    messages.close()
 
 
 def _trial(path: Path, number: int) -> TrialRun:
@@ -127,13 +136,66 @@ def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> 
     serialized_path.write_bytes(cloudpickle.dumps(policy))
     app = mocker.Mock(spec=Dimos)
     connect = mocker.patch.object(Dimos, "connect", return_value=app)
-    results: queue.Queue[tuple[str, str | None]] = queue.Queue()
+    results, worker_results = multiprocessing.Pipe(duplex=False)
+    start_event = threading.Event()
 
-    _execute_policy_worker(str(serialized_path), results)
+    worker = threading.Thread(
+        target=_execute_policy_worker,
+        args=(str(serialized_path), worker_results, start_event),
+    )
+    worker.start()
 
-    assert results.get_nowait() == ("completed", None)
+    assert results.poll(1)
+    assert results.recv() == ("ready", None)
     connect.assert_called_once_with()
+    start_event.set()
+    assert results.poll(1)
+    assert results.recv() == ("completed", None)
+    worker.join(timeout=1)
+    assert not worker.is_alive()
     app.stop.assert_called_once_with()
+    results.close()
+    worker_results.close()
+
+
+def test_prepared_policy_waits_for_explicit_start_and_stops_at_trial_end(mocker) -> None:
+    process = mocker.Mock()
+    process.is_alive.return_value = True
+    messages = mocker.Mock()
+    messages.poll.return_value = False
+    start_event = threading.Event()
+    execution = _PolicyExecutionProcess(process, messages, start_event)
+
+    assert not start_event.is_set()
+    execution.start()
+    assert start_event.is_set()
+
+    result = execution.finish(grace_s=0.0)
+
+    assert result.status == "stopped"
+    process.terminate.assert_called_once_with()
+
+
+def test_policy_result_larger_than_pipe_buffer_does_not_deadlock() -> None:
+    context = multiprocessing.get_context("spawn")
+    messages, worker_messages = context.Pipe(duplex=False)
+    start_event = context.Event()
+    result_sending = context.Event()
+    process = context.Process(
+        target=_send_large_policy_error,
+        args=(worker_messages, start_event, result_sending),
+        daemon=True,
+    )
+    process.start()
+    worker_messages.close()
+    execution = _PolicyExecutionProcess(process, messages, start_event)
+    execution.start()
+    assert result_sending.wait(timeout=2)
+
+    result = execution.finish(grace_s=0.01)
+
+    assert result.status == "policy_error"
+    assert result.error == "x" * 1_000_000
 
 
 def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) -> None:

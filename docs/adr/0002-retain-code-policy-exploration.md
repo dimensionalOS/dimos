@@ -1,0 +1,3 @@
+# Retain code-policy exploration
+
+The evaluated system includes PR #3434's task-specific Exploration Stage: Pi may submit policies, observe unscored debug-trial outcomes, and revise the Policy Artifact before measured LIBERO-PRO rollouts. We treat this as the code-as-policy system's training phase, analogous to the training available to learned policies, because evaluating only a pre-existing callable would remove the approach's intended learning mechanism and make code-as-policy itself largely irrelevant. Comparability therefore depends on declaring and enforcing the evidence available during exploration, not on deleting exploration.

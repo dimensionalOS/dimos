@@ -30,6 +30,7 @@ from dimos.benchmark.evaluation.protocol import Evaluation
 ENTRY_POINT_GROUP = "dimos.evaluations"
 LOCAL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 BUILTIN_EVALUATIONS: dict[str, str] = {
+    "libero-pro": "dimos.benchmark.libero_pro.evaluation:libero_pro",
     "vlnce-r2r": "dimos.benchmark.vlnce_r2r.evaluation:vlnce_r2r",
 }
 

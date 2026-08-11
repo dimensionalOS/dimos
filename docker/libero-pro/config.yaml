@@ -1,0 +1,5 @@
+assets: /opt/libero-pro/libero/libero/assets
+bddl_files: /opt/libero-pro/libero/libero/bddl_files
+benchmark_root: /opt/libero-pro/libero/libero
+datasets: /opt/libero-pro/libero/datasets
+init_states: /opt/libero-pro/libero/libero/init_files
