@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reactivex.disposable import Disposable
 
@@ -34,10 +34,20 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.robot.unitree.go2.connection import GO2Connection
+else:
+    # The go2 ref is optional and only annotation-deep; arm-only images
+    # (r1lite) ship without the unitree stack, and get_type_hints still
+    # resolves the annotation at runtime, so the fallback must be a type.
+    try:
+        from dimos.robot.unitree.go2.connection import GO2Connection
+    except ImportError:
+        GO2Connection = Any
 
 logger = setup_logger()
 
