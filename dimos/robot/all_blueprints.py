@@ -59,7 +59,6 @@ all_blueprints = {
     "demo-mcp-stress-test": "dimos.core.demos.stress_test_blueprint:demo_mcp_stress_test",
     "demo-object-scene-registration": "dimos.perception.experimental.demo_object_scene_registration:demo_object_scene_registration",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
-    "demo-replay-tmp": "dimos.mapping.cuvslam.demo_replay_tmp:demo_replay_tmp",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "demo-virtual-mid360-fastlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_fastlio",
     "demo-virtual-mid360-pointlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_pointlio",
