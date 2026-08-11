@@ -275,6 +275,7 @@ all_modules = {
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory2.module.SemanticSearch",
+    "sim-body-pose": "dimos.simulation.engines.sim_body_pose.SimBodyPose",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "simple-planner": "dimos.navigation.cmu_nav.modules.simple_planner.simple_planner.SimplePlanner",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
