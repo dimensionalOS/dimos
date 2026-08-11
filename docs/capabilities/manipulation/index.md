@@ -116,10 +116,72 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+Trajectory parametrization is a separate startup choice. Joint-space planners
+normally return an untimed geometric path; DimOS accepts the plan only after
+the selected backend converts that path to a validated timed trajectory:
+
+```bash
+# Stock xArm compatibility test: independent trapezoids on RoboPlanWorld
+dimos run xarm7-planner-coordinator \
+  --trajectory-parametrization.backend=simple_trapezoid
+
+# Omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
+dimos run xarm7-planner-coordinator
+
+# Equivalent explicit TOPP-RA selection
+dimos run xarm7-planner-coordinator \
+  --world-backend=roboplan \
+  --trajectory-parametrization.backend=roboplan_toppra
+
+# DrakeWorld selects simple_trapezoid when no parametrizer is specified
+dimos run xarm7-planner-coordinator \
+  --world-backend=drake \
+  --planner.backend=rrt_connect
+```
+
+Exactly one backend is constructed for the stack lifetime. There is no
+cross-backend fallback. `roboplan_toppra` may parametrize paths from either
+RoboPlan's planner or the generic RRT planner, but it requires
+`world_backend=roboplan` because it reuses that world's model, groups, and URDF
+motion limits. A planner-native result that already has timestamps and
+velocities bypasses path parametrization and retains its existing timing after
+canonical validation. TOPP-RA follows the collision-checked geometric path
+without corner blending; collision checking remains the planner's concern.
+Explicit configuration overrides the world-based default.
+RoboPlan model composition preserves authored acceleration limits and inserts a
+temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+acceleration overrides will replace this fallback.
+
+The Viser panel's **Next plan speed** slider provides runtime speed tuning from
+`0.05` to `1.0`. Changing it leaves the accepted plan and any active execution
+unchanged; press **Plan** again to generate motion at the new scale. For
+joint-space planning the value reduces the selected parametrizer's configured
+velocity and acceleration scales. For Cartesian planning Viser puts the same
+scale into a native time-optimal planning request before its timestamps are
+generated. Cartesian output is sampled every 50 ms; the control coordinator
+interpolates it at execution rate.
+
+RoboPlan shortens native joint-space RRT paths by default. Configure or disable
+the backend's best-effort shortcutting pass with nested planner options:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  --planner.path-shortcutting.enabled true \
+  --planner.path-shortcutting.max-iters 100 \
+  --planner.path-shortcutting.max-step-size 0.05
+```
+
+Existing RoboPlan deployments may therefore receive paths with fewer waypoints.
+Shortcutting configuration is copied when the RoboPlan planner is constructed.
+
+The remaining options mirror RoboPlan's native path shortcutter:
+`seed`, `max_convergence_iters`, and `redundant_removal_iters`. If shortcutting
+fails, planning returns the valid raw RRT path and logs a warning.
+
 RoboPlan Cartesian options are supplied per planning request:
 
 ```python skip
-from dimos.manipulation.planning.planners.config import (
+from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
@@ -290,9 +352,11 @@ not need extra setup because it observes the Drake world directly.
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
 Viser projects the globally named trajectory into robot-local preview ghosts and
 plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execute freshness is enforced by the manipulation
-module/operator immediately before dispatch, not by Viser-side telemetry
-snapshots.
+scales the stored delays. Execution projects that same accepted trajectory into
+each robot's local joint order while preserving timestamps and velocities; it
+does not regenerate or retime it. Execute freshness is enforced by the
+manipulation module/operator immediately before dispatch, not by Viser-side
+telemetry snapshots.
 
 ### Perception + Agent
 
@@ -378,4 +442,6 @@ planner is locked for its whole native call.
 | [`robot/manipulators/xarm/blueprints/perception.py`](/dimos/robot/manipulators/xarm/blueprints/perception.py) | XArm perception blueprint |
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |
 | [`planning/world/drake_world.py`](/dimos/manipulation/planning/world/drake_world.py) | Drake physics backend |
+| [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |
+| [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |

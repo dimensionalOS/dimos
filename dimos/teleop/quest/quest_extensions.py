@@ -16,6 +16,7 @@
 
 Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
+    - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
@@ -192,6 +193,46 @@ class ArmTeleopModule(QuestTeleopModule):
             left=left.trigger if left is not None else 0.0,
             right=right.trigger if right is not None else 0.0,
         )
+        self.teleop_buttons.publish(buttons)
+
+
+class HandTeleopModule(ArmTeleopModule):
+    """WebXR hand teleop with pinch-to-toggle engage and task name routing.
+
+    A thumb-and-index pinch is sent as the primary button by the browser. Each
+    pinch edge toggles that hand between engaged and disengaged, so movement
+    continues after releasing the pinch.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._primary_was_pressed: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+
+    def _handle_engage(self) -> None:
+        """Toggle each hand on the rising edge of its primary button."""
+        for hand in Hand:
+            controller = self._controllers.get(hand)
+            is_pressed = controller is not None and controller.primary
+            if is_pressed and not self._primary_was_pressed[hand]:
+                if self._is_engaged[hand]:
+                    self._disengage(hand)
+                else:
+                    self._engage(hand)
+            self._primary_was_pressed[hand] = is_pressed
+
+    def _publish_button_state(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        """Keep downstream press-and-hold teleop tasks engaged between pinches."""
+        buttons = Buttons.from_controllers(left, right)
+        buttons.pack_analog_triggers(
+            left=left.trigger if left is not None else 0.0,
+            right=right.trigger if right is not None else 0.0,
+        )
+        buttons.left_primary = self._is_engaged[Hand.LEFT]
+        buttons.right_primary = self._is_engaged[Hand.RIGHT]
         self.teleop_buttons.publish(buttons)
 
 

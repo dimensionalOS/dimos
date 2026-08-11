@@ -65,8 +65,8 @@ from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
     ManipulationPlannerConfig,
-    RoboPlanPlannerConfig,
 )
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -80,9 +80,13 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
-from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
-from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
-    JointTrajectoryGenerator,
+from dimos.manipulation.planning.spec.protocols import (
+    KinematicsSpec,
+    PlannerSpec,
+    TrajectoryParametrizerSpec,
+)
+from dimos.manipulation.planning.trajectory_generator.config import (
+    TrajectoryParametrizationConfig,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.manipulation.visualization.config import (
@@ -98,15 +102,13 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
-RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
-"""(world_robot_id, config, trajectory_generator)"""
+RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig]
+"""(world_robot_id, config)"""
 
 RobotRegistry: TypeAlias = dict[RobotName, RobotEntry]
 """Maps robot_name -> RobotEntry"""
@@ -146,6 +148,13 @@ class ManipulationModuleConfig(ModuleConfig):
         default_factory=NoManipulationVisualizationConfig
     )
     planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
+    trajectory_parametrization: TrajectoryParametrizationConfig | None = Field(
+        default=None,
+        description=(
+            "Path parametrizer selected at startup. Omit to use roboplan_toppra "
+            "with RoboPlanWorld or simple_trapezoid with DrakeWorld."
+        ),
+    )
     kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
     # Deprecated: use kinematics.backend instead.
     kinematics_name: KinematicsName | None = None
@@ -179,13 +188,15 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
+        self._motion_speed_scale = 1.0
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
+        self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
 
-        # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
+        # Robot registry: maps robot_name -> (world_robot_id, config)
         self._robots: RobotRegistry = {}
 
         # Canonical generated plan for plan/preview/execute workflow.
@@ -236,10 +247,12 @@ class ManipulationModule(Module):
             planner=self.config.planner,
             kinematics_name=self.config.kinematics_name,
             kinematics=self.config.kinematics,
+            trajectory_parametrization=self.config.trajectory_parametrization,
         )
         self._world_monitor = planning_specs.world_monitor
         self._planner = planning_specs.planner
         self._kinematics = planning_specs.kinematics
+        self._trajectory_parametrizer = planning_specs.trajectory_parametrizer
         visualization = create_manipulation_visualization(
             self.config.visualization,
             world=world,
@@ -249,12 +262,7 @@ class ManipulationModule(Module):
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
-            traj_gen = JointTrajectoryGenerator(
-                num_joints=len(robot_config.joint_names),
-                max_velocity=robot_config.max_velocity,
-                max_acceleration=robot_config.max_acceleration,
-            )
-            self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
+            self._robots[robot_config.name] = (robot_id, robot_config)
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
@@ -276,7 +284,7 @@ class ManipulationModule(Module):
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
 
-        for _, (robot_id, _, _) in self._robots.items():
+        for _, (robot_id, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
         if self._world_monitor.visualization is not None:
@@ -285,7 +293,7 @@ class ManipulationModule(Module):
                 logger.info(f"Visualization: {url}")
 
         # Start TF publishing thread if any robot has tf_extra_links
-        if any(c.tf_extra_links for _, c, _ in self._robots.values()):
+        if any(c.tf_extra_links for _, c in self._robots.values()):
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
@@ -301,14 +309,14 @@ class ManipulationModule(Module):
 
     def _get_robot(
         self, robot_name: RobotName | None = None
-    ) -> tuple[RobotName, WorldRobotID, RobotModelConfig, JointTrajectoryGenerator] | None:
+    ) -> tuple[RobotName, WorldRobotID, RobotModelConfig] | None:
         """Get robot by name or default.
 
         Args:
             robot_name: Robot name or None for default (if single robot)
 
         Returns:
-            (robot_name, robot_id, config, traj_gen) or None if not found
+            (robot_name, robot_id, config) or None if not found
         """
         if not robot_name:  # None or empty string (LLMs often pass "")
             robot_name = self._get_default_robot_name()
@@ -320,8 +328,8 @@ class ManipulationModule(Module):
             logger.error(f"Unknown robot: {robot_name}")
             return None
 
-        robot_id, config, traj_gen = self._robots[robot_name]
-        return (robot_name, robot_id, config, traj_gen)
+        robot_id, config = self._robots[robot_name]
+        return (robot_name, robot_id, config)
 
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when joint state received from driver.
@@ -336,7 +344,7 @@ class ManipulationModule(Module):
             # Build name → index map once for the whole message
             name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
-            for robot_name, (robot_id, config, _) in self._robots.items():
+            for robot_name, (robot_id, config) in self._robots.items():
                 coord_names = config.get_coordinator_joint_names()
                 indices = [name_to_idx.get(cn) for cn in coord_names]
                 if any(idx is None for idx in indices):
@@ -386,7 +394,7 @@ class ManipulationModule(Module):
                 if self._world_monitor is None:
                     break
                 transforms: list[Transform] = []
-                for robot_id, config, _ in self._robots.values():
+                for robot_id, config in self._robots.values():
                     # Publish world → EE
                     ee_pose = self._world_monitor.get_ee_pose(robot_id)
                     if ee_pose is not None:
@@ -422,6 +430,27 @@ class ManipulationModule(Module):
             Error message or empty string
         """
         return self._error_message
+
+    @rpc
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        """Set a runtime speed reduction for plans generated in the future.
+
+        Existing accepted plans and dispatched trajectories remain unchanged.
+        Plan again after changing this value.
+        """
+        if not math.isfinite(speed_scale) or speed_scale <= 0.0 or speed_scale > 1.0:
+            self._record_error("motion speed scale must be finite, > 0, and <= 1")
+            return False
+        with self._lock:
+            self._motion_speed_scale = float(speed_scale)
+            self._error_message = ""
+        return True
+
+    @rpc
+    def get_motion_speed(self) -> float:
+        """Return the runtime speed reduction used for future plans."""
+        with self._lock:
+            return self._motion_speed_scale
 
     @rpc
     def cancel(self) -> bool:
@@ -513,7 +542,7 @@ class ManipulationModule(Module):
             robot_name: Robot to check (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            _, robot_id, config, _ = robot
+            _, robot_id, config = robot
             joint_state = JointState(name=config.joint_names, position=joints)
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
@@ -567,149 +596,6 @@ class ManipulationModule(Module):
             )
         return group_id
 
-    @staticmethod
-    def _assert_finite_sequence(values: Sequence[float], label: str) -> None:
-        for value in values:
-            if not math.isfinite(value):
-                raise ValueError(f"{label} contains non-finite value")
-
-    def _limits_for_global_joints(
-        self, joint_names: Sequence[str]
-    ) -> tuple[list[float], list[float]]:
-        velocities: list[float] = []
-        accelerations: list[float] = []
-        for global_name in joint_names:
-            if "/" not in global_name:
-                raise ValueError(f"Joint '{global_name}' is not globally named")
-            robot_name, local_name = global_name.split("/", 1)
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                raise ValueError(f"Unknown robot for joint '{global_name}'")
-            _, _, config, _ = robot
-            if local_name not in config.joint_names:
-                raise ValueError(f"Unknown local joint '{global_name}'")
-            velocity = float(config.max_velocity)
-            acceleration = float(config.max_acceleration)
-            if not math.isfinite(velocity) or velocity <= 0.0:
-                raise ValueError(f"Invalid velocity limit for '{global_name}'")
-            if not math.isfinite(acceleration) or acceleration <= 0.0:
-                raise ValueError(f"Invalid acceleration limit for '{global_name}'")
-            velocities.append(velocity)
-            accelerations.append(acceleration)
-        return velocities, accelerations
-
-    def _validate_selected_path(
-        self, path: Sequence[JointState], expected_names: Sequence[str]
-    ) -> list[list[float]]:
-        if len(path) < 2:
-            raise ValueError("Planner returned fewer than two waypoints")
-        expected = list(expected_names)
-        waypoints: list[list[float]] = []
-        for waypoint_index, state in enumerate(path):
-            if list(state.name) != expected:
-                raise ValueError(
-                    f"Waypoint {waypoint_index} joint names do not match selected order"
-                )
-            positions = list(state.position)
-            if len(positions) != len(expected):
-                raise ValueError(f"Waypoint {waypoint_index} position dimension mismatch")
-            self._assert_finite_sequence(positions, f"Waypoint {waypoint_index} positions")
-            waypoints.append(positions)
-        return waypoints
-
-    def _validate_generated_trajectory(
-        self,
-        trajectory: JointTrajectory,
-        expected_names: Sequence[str],
-        waypoints: Sequence[Sequence[float]],
-    ) -> None:
-        expected = list(expected_names)
-        if list(trajectory.joint_names) != expected:
-            raise ValueError("Generated trajectory joint names do not match selected order")
-        if not trajectory.points:
-            raise ValueError("Generated trajectory has no points")
-        previous_time: float | None = None
-        for point_index, point in enumerate(trajectory.points):
-            if len(point.positions) != len(expected) or len(point.velocities) != len(expected):
-                raise ValueError(f"Generated point {point_index} dimension mismatch")
-            self._assert_finite_sequence(
-                point.positions, f"Generated point {point_index} positions"
-            )
-            self._assert_finite_sequence(
-                point.velocities, f"Generated point {point_index} velocities"
-            )
-            if not math.isfinite(point.time_from_start):
-                raise ValueError(f"Generated point {point_index} time is non-finite")
-            if point_index == 0 and point.time_from_start != 0.0:
-                raise ValueError("Generated trajectory must start at time 0")
-            if previous_time is not None and point.time_from_start <= previous_time:
-                raise ValueError("Generated trajectory times must be strictly increasing")
-            previous_time = point.time_from_start
-        non_noop = any(list(waypoint) != list(waypoints[0]) for waypoint in waypoints[1:])
-        if non_noop and trajectory.duration <= 0.0:
-            raise ValueError("Generated trajectory duration must be positive")
-        waypoint_index = 0
-        for point in trajectory.points:
-            if list(point.positions) == list(waypoints[waypoint_index]):
-                waypoint_index += 1
-                if waypoint_index == len(waypoints):
-                    break
-        if waypoint_index != len(waypoints):
-            raise ValueError("Generated trajectory does not contain ordered waypoint boundaries")
-
-    def _materialize_generated_plan(
-        self, group_ids: tuple[PlanningGroupID, ...], result_path: Sequence[JointState]
-    ) -> tuple[list[JointState], JointTrajectory]:
-        assert self._world_monitor is not None
-        selection = self._world_monitor.planning_groups.select(group_ids)
-        expected_names = list(selection.joint_names)
-        path = [JointState(state) for state in result_path]
-        waypoints = self._validate_selected_path(path, expected_names)
-        velocities, accelerations = self._limits_for_global_joints(expected_names)
-        generator = JointTrajectoryGenerator(
-            num_joints=len(expected_names),
-            max_velocity=velocities,
-            max_acceleration=accelerations,
-        )
-        generated = generator.generate(waypoints)
-        trajectory = JointTrajectory(
-            joint_names=expected_names,
-            points=generated.points,
-            timestamp=generated.timestamp,
-        )
-        self._validate_generated_trajectory(trajectory, expected_names, waypoints)
-        return path, trajectory
-
-    def _materialize_timed_generated_plan(
-        self,
-        group_ids: tuple[PlanningGroupID, ...],
-        result: PlanningResult,
-    ) -> tuple[list[JointState], JointTrajectory]:
-        """Preserve a planner-supplied timed trajectory without reparameterizing it."""
-        assert self._world_monitor is not None
-        selection = self._world_monitor.planning_groups.select(group_ids)
-        expected_names = list(selection.joint_names)
-        path = [JointState(state) for state in result.path]
-        waypoints = self._validate_selected_path(path, expected_names)
-        timestamps = result.timestamps
-        if timestamps is None or len(timestamps) != len(path):
-            raise ValueError("Planner must return one timestamp per waypoint")
-        points: list[TrajectoryPoint] = []
-        for waypoint_index, (state, timestamp) in enumerate(zip(path, timestamps, strict=True)):
-            velocities = list(state.velocity)
-            if len(velocities) != len(expected_names):
-                raise ValueError(f"Waypoint {waypoint_index} velocity dimension mismatch")
-            points.append(
-                TrajectoryPoint(
-                    time_from_start=float(timestamp),
-                    positions=list(state.position),
-                    velocities=velocities,
-                )
-            )
-        trajectory = JointTrajectory(joint_names=expected_names, points=points)
-        self._validate_generated_trajectory(trajectory, expected_names, waypoints)
-        return path, trajectory
-
     def _resolve_group_plan_start(
         self,
         group_ids: tuple[PlanningGroupID, ...],
@@ -731,28 +617,21 @@ class ManipulationModule(Module):
         group_ids: tuple[PlanningGroupID, ...],
         result: PlanningResult,
         planning_epoch: int,
-        *,
-        preserve_timing: bool = False,
     ) -> GeneratedPlan | None:
         """Validate, materialize, and atomically store a successful planning result."""
         try:
-            if preserve_timing:
-                path, trajectory = self._materialize_timed_generated_plan(group_ids, result)
-            else:
-                path, trajectory = self._materialize_generated_plan(group_ids, result.path)
+            if self._world_monitor is None or self._trajectory_parametrizer is None:
+                raise ValueError("Trajectory parametrizer is not initialized")
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            plan = self._trajectory_parametrizer.materialize_plan(
+                world=self._world_monitor.world,
+                selection=selection,
+                result=result,
+                speed_scale=self.get_motion_speed(),
+            )
         except Exception as exc:
             self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
             return None
-        plan = GeneratedPlan(
-            group_ids=group_ids,
-            trajectory=trajectory,
-            path=path,
-            status=result.status,
-            planning_time=result.planning_time,
-            path_length=result.path_length,
-            iterations=result.iterations,
-            message=result.message,
-        )
         with self._lock:
             if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
                 logger.info("Discarding cancelled planning result")
@@ -914,7 +793,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
-        selected_robot_name, _, _, _ = robot
+        selected_robot_name, _, _ = robot
         try:
             group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
         except ValueError as exc:
@@ -989,7 +868,7 @@ class ManipulationModule(Module):
         if robot is None:
             self._record_error("Robot not found or robot_name is required")
             return False
-        selected_robot_name, _, _, _ = robot
+        selected_robot_name, _, _ = robot
         try:
             group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
         except ValueError as exc:
@@ -1018,7 +897,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return False
-        selected_robot_name, _, _, _ = robot
+        selected_robot_name, _, _ = robot
         logger.info(
             f"Planning to joints for {selected_robot_name}: {[f'{j:.3f}' for j in joints.position]}"
         )
@@ -1159,12 +1038,19 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         selection, start = resolved
+        speed_scale = self.get_motion_speed()
+        scaled_config = config.model_copy(
+            update={
+                "velocity_scale": config.velocity_scale * speed_scale,
+                "acceleration_scale": config.acceleration_scale * speed_scale,
+            }
+        )
         result = self._planner.plan_cartesian_path(
             world=self._world_monitor.world,
             selection=selection,
             start=start,
             targets=normalized_targets,
-            config=config,
+            config=scaled_config,
             auxiliary_groups=auxiliary_ids,
         )
         if not result.is_success():
@@ -1173,12 +1059,7 @@ class ManipulationModule(Module):
                 planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
             )
             return None
-        return self._store_generated_plan(
-            group_ids,
-            result,
-            planning_epoch,
-            preserve_timing=True,
-        )
+        return self._store_generated_plan(group_ids, result, planning_epoch)
 
     @rpc
     def preview_path(
@@ -1302,7 +1183,7 @@ class ManipulationModule(Module):
         if robot is None:
             return None
 
-        robot_name, robot_id, config, _ = robot
+        robot_name, robot_id, config = robot
         planning_groups = (
             list(self._world_monitor.planning_groups.groups_for_robot(robot_name))
             if self._world_monitor is not None
@@ -1332,7 +1213,7 @@ class ManipulationModule(Module):
 
     def robot_items(self) -> list[tuple[RobotName, WorldRobotID, RobotModelConfig]]:
         """Return configured robots for in-process visualization adapters."""
-        return [(name, robot_id, config) for name, (robot_id, config, _) in self._robots.items()]
+        return [(name, robot_id, config) for name, (robot_id, config) in self._robots.items()]
 
     def robot_id_for_name(self, robot_name: RobotName) -> WorldRobotID | None:
         """Return the planning-world robot id for a configured robot name."""
@@ -1341,7 +1222,7 @@ class ManipulationModule(Module):
 
     def robot_name_for_id(self, robot_id: WorldRobotID) -> RobotName | None:
         """Return the configured robot name for a planning-world robot id."""
-        for robot_name, (candidate_id, _, _) in self._robots.items():
+        for robot_name, (candidate_id, _) in self._robots.items():
             if candidate_id == robot_id:
                 return robot_name
         return None
@@ -1468,7 +1349,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return False
-        robot_name_resolved, robot_id, _, _ = robot
+        robot_name_resolved, robot_id, _ = robot
         if self._world_monitor is None:
             return False
         current = self._world_monitor.get_current_joint_state(robot_id)
@@ -1490,7 +1371,7 @@ class ManipulationModule(Module):
                 model_joint_names=config.joint_names,
                 coordinator_to_model=config.joint_name_mapping,
             )
-            for _, config, _ in self._robots.values()
+            for _, config in self._robots.values()
         ]
         self._execution_manager = PlanExecutionManager(
             targets=targets,
@@ -1636,7 +1517,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return None
-        _, _, config, _ = robot
+        _, _, config = robot
         if not config.gripper_hardware_id:
             logger.warning(f"No gripper_hardware_id configured for '{config.name}'")
             return None
@@ -1874,7 +1755,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        rname, _, config = robot
         goal = JointState(name=config.joint_names, position=joint_values)
 
         logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
@@ -1902,7 +1783,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        rname, _, config = robot
 
         if config.home_joints is None:
             return SkillResult.fail(
@@ -1938,7 +1819,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, robot_id, _, _ = robot
+        rname, robot_id, _ = robot
 
         init = self._init_joints.get(rname)
         if init is None:
