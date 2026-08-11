@@ -40,6 +40,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _backend,
@@ -58,6 +59,25 @@ _ARM_TRAJECTORY_TASK = TaskConfig(
     priority=30,
 )
 
+
+def g1_manipulation(visualization: ManipulationVisualizationConfig | None = None) -> Blueprint:
+    """ManipulationModule against the G1 planning model; Viser off unless passed."""
+    kwargs = {} if visualization is None else {"visualization": visualization}
+    return ManipulationModule.blueprint(
+        robots=[make_g1_model_config()],
+        # Reaches are position-driven; a hard 0.01 rad orientation
+        # tolerance makes the 7-DOF solve knife-edged from live stances.
+        kinematics=PinkKinematicsConfig(
+            position_tolerance=0.01, orientation_cost=0.3, orientation_tolerance=0.35
+        ),
+        # The pelvis pose the planning base is latched to. autoconnect
+        # binds this to the sim's ``odom``; on hardware the same port
+        # takes lidar odometry.
+        odom_robot_name="g1",
+        **kwargs,
+    )
+
+
 _PLANT_POSE: list[Blueprint] = []
 if global_config.simulation == "mujoco":
     from dimos.simulation.engines.sim_body_pose import SimBodyPose
@@ -70,19 +90,7 @@ unitree_g1_groot_wbc_manip = (
         g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
         _nav_stack,
         *_PLANT_POSE,
-        ManipulationModule.blueprint(
-            robots=[make_g1_model_config()],
-            # Reaches are position-driven; a hard 0.01 rad orientation
-            # tolerance makes the 7-DOF solve knife-edged from live stances.
-            kinematics=PinkKinematicsConfig(
-                position_tolerance=0.01, orientation_cost=0.3, orientation_tolerance=0.35
-            ),
-            visualization=ViserVisualizationConfig(),
-            # The pelvis pose the planning base is latched to. autoconnect
-            # binds this to the sim's ``odom``; on hardware the same port
-            # takes lidar odometry.
-            odom_robot_name="g1",
-        ),
+        g1_manipulation(visualization=ViserVisualizationConfig()),
         _viewer(),
     )
     .remappings(cast("Any", _remappings))

@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -70,11 +71,17 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
+    # Publish color as JPEG CompressedImage on ``color_compressed`` instead of
+    # raw Image on ``color_image``. Off by default: every color consumer in the
+    # repo takes In[Image], so flipping this without a decode path starves them.
+    compress_color: bool = False
+    jpeg_quality: int = 75
 
 
 class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     config: RealSenseCameraConfig
     color_image: Out[Image]
+    color_compressed: Out[CompressedImage]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
@@ -298,7 +305,12 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
-                self.color_image.publish(color_img)
+                if self.config.compress_color:
+                    self.color_compressed.publish(
+                        CompressedImage.from_image(color_img, quality=self.config.jpeg_quality)
+                    )
+                else:
+                    self.color_image.publish(color_img)
 
             # Process depth
             depth_img = None
