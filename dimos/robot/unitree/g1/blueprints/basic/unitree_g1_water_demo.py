@@ -14,11 +14,14 @@
 
 """Unitree G1 office watering demo: hardware GR00T WBC + manipulation + camera.
 
-Hardware-only ``unitree-g1-groot-wbc-manip`` (Viser off) plus the head
-RealSense publishing JPEG color for the Rerun stream. Comes up unarmed +
-dry-run with the 10 s activation ramp of the base hardware blueprint. The
-plant pose arrives on ``/object_pose`` from perception (same message the sim
-publishes from ``SimBodyPose``); this blueprint does not publish it yet.
+Hardware only. The GR00T WBC coordinator (policy at priority 50, arm
+trajectories at 30 over the servo hold at 10), the manipulation module with
+Viser off, and the head RealSense publishing JPEG color for the Rerun
+stream. Comes up unarmed + dry-run with the base blueprint's 10 s
+activation ramp.
+
+The plant pose arrives on ``/object_pose`` from perception (the same message
+sim publishes from ``SimBodyPose``); this blueprint does not publish it yet.
 
 Driving is the viewer's own teleop, wired straight through: the viewer's
 ``tele_cmd_vel`` is remapped onto ``cmd_vel``, which is the coordinator's
