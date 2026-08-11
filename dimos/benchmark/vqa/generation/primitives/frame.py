@@ -5,10 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
-from dimos.benchmark.vqa.generation.primitives.contracts import HeightMeasurementResult
+from dimos.benchmark.vqa.generation.primitives.contracts import (
+    DoorStateResult,
+    HeightMeasurementResult,
+)
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     PlaneFitResult,
+    classify_door_plane_angle,
     estimate_ground_plane,
+    fit_surface_plane,
+    points_around_mask,
     points_in_mask,
 )
 from dimos.benchmark.vqa.models import (
@@ -157,6 +163,42 @@ class FramePerceptionPrimitives:
             ),
         )
         return HeightMeasurementResult(object, plane, measurement, tuple(flags))
+
+    def classify_door_state(self, object: GroundedObject) -> DoorStateResult:
+        """Classify a door as open or closed from its plane relative to nearby structure."""
+        mask = self._object_masks.get(object.id)
+        if mask is None:
+            raise ValueError(f"unknown grounded object: {object.id}")
+        door_fit = fit_surface_plane(points_in_mask(self.frame, mask.mask))
+        if door_fit.estimate is None:
+            return DoorStateResult(
+                object,
+                None,
+                ("door_plane_rejected", *door_fit.quality_flags),
+                door_fit.rejection_reason,
+            )
+        surrounding_fit = fit_surface_plane(points_around_mask(self.frame, mask.mask))
+        if surrounding_fit.estimate is None:
+            return DoorStateResult(
+                object,
+                None,
+                ("surrounding_plane_rejected", *surrounding_fit.quality_flags),
+                surrounding_fit.rejection_reason,
+            )
+        state, reason, angle_deg = classify_door_plane_angle(
+            door_fit.estimate, surrounding_fit.estimate
+        )
+        return DoorStateResult(
+            object,
+            state,
+            (
+                "door_and_surrounding_planes_accepted",
+                *door_fit.quality_flags,
+                *surrounding_fit.quality_flags,
+            ),
+            reason,
+            angle_deg,
+        )
 
 
 def _object_mask_index(item: GroundedObject) -> int:

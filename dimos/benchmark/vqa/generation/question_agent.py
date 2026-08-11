@@ -18,11 +18,18 @@ from dimos.benchmark.vqa.models import (
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 
-QUESTION_PROMPT = """You generate challenging but visually answerable single-frame VQA questions.
-Inspect only this image. Do not assume depth, point clouds, metadata, or temporal context.
-Return JSON only: an array of at most 5 visible, salient object names as strings.
-Do not return floors, walls, ceilings, background surfaces, questions, explanations, Markdown,
-or information not visible in the image."""
+QUESTION_PROMPT = """Select up to 5 challenging but visually well-supported single-frame VQA intents.
+Inspect only this image. Do not assume depth, point clouds, calibration, metadata, or temporal context.
+Return JSON only: an array of objects with kind, object_query, and threshold_m only for
+within_distance. kind must be one of presence, horizontal_direction, within_distance, or
+compare_nearest_by_side, or door_state. Use threshold_m: 3.0 for within_distance.
+Use image context to select only intents likely to produce a useful geometric case: emit
+compare_nearest_by_side only when at least two visible instances of the same object appear on
+opposite image sides; emit horizontal_direction only for a visible object; and prefer relational
+or directional intents over presence. Emit door_state only for a clearly visible door with nearby
+visible structure. Diversify object classes and question families when the scene supports them.
+Do not return bare object names, floors, walls, ceilings, background surfaces,
+questions, answers, explanations, Markdown, or information not visible in the image."""
 
 AGENTIC_QUESTION_PROMPT = """Author up to 5 challenging, visually answerable single-frame VQA questions.
 Inspect only this image. Do not use or infer depth, point clouds, calibration, metadata, or answers.
@@ -31,14 +38,19 @@ and optional tool_hints. answer_contract is {"kind":"boolean"}, {"kind":"choice"
 or {"kind":"deferred_height_choice","strategy":"height-window-v1"}.
 Prioritize questions that a private point-cloud oracle can validate. For the height of one upright
 object resting on visible ground, use deferred_height_choice. Its choices are generated privately
-from a successful height measurement. Also prefer which of
-two named objects is closer (choice, with those object names as choices), object count, left/right
-spatial relation, and distance-threshold questions. Use object_queries for every referenced object
-and tool_hints from "detect_objects", "segment_detections", "ground_masks", "fit_ground_plane",
-"select_nearest_object", "measure_height", or "bucket_measurement" when applicable.
-Use visibility/presence questions only when no stronger geometric question is available. Do not ask
-about color, material, text, intent, full physical size, hidden parts, or terrain. Use only visible
-objects. Do not include answers, explanations, Markdown, or background surfaces."""
+from a successful height measurement. Aim for a diverse set of questions that use the visible scene
+composition: relative left/center/right position, which of two named object types is closer, count
+choices for a visibly repeated object, and height for an upright grounded object. Use concise,
+mutually exclusive fixed choices with two to four options. For a clearly visible door with nearby
+visible structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use
+object_queries for every referenced
+object and tool_hints from "detect_objects", "segment_detections", "ground_masks",
+"fit_ground_plane", "select_nearest_object", "measure_height", "classify_door_state", or
+"bucket_measurement" when applicable. Use visibility/presence questions only when no stronger
+geometric question is available.
+Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
+metric distances without a supplied choice contract. Use only visible objects. Do not include
+answers, explanations, Markdown, or background surfaces."""
 
 _UNSUPPORTED_QUERIES = {"background", "ceiling", "floor", "ground", "room", "wall"}
 
@@ -77,6 +89,7 @@ class OpenAIQuestionAgent:
                 "horizontal_direction",
                 "within_distance",
                 "compare_nearest_by_side",
+                "door_state",
             ):
                 raise ValueError(f"unsupported question kind: {kind!r}")
             if not isinstance(query, str) or not query:

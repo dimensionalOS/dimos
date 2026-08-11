@@ -108,6 +108,35 @@ def test_question_agent_returns_constrained_intents() -> None:
     ]
 
 
+def test_question_agent_uses_image_selected_structured_intents() -> None:
+    class _StructuredQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            assert "Do not return bare object names" in prompt
+            assert "opposite image sides" in prompt
+            return '[{"kind":"compare_nearest_by_side","object_query":"chair"}]'
+
+    frame, _ = _frame_and_detection()
+
+    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _StructuredQuestionModel())).propose(
+        frame.image
+    )
+
+    assert intents == [QuestionIntent(kind="compare_nearest_by_side", object_query="chair")]
+
+
+def test_question_agent_accepts_door_state_intent() -> None:
+    class _DoorQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            assert "door_state" in prompt
+            return '[{"kind":"door_state","object_query":"door"}]'
+
+    frame, _ = _frame_and_detection()
+
+    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _DoorQuestionModel())).propose(frame.image)
+
+    assert intents == [QuestionIntent(kind="door_state", object_query="door")]
+
+
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(

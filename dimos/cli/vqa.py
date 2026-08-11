@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import cast
@@ -23,6 +24,7 @@ from dimos.benchmark.vqa.generation.question_agent import (
     OpenAIQuestionAgent,
 )
 from dimos.benchmark.vqa.generation.recording import load_go2_frame
+from dimos.benchmark.vqa.generation.specification import VqaGenerationSpecification
 from dimos.benchmark.vqa.models import (
     AcceptedOracleResult,
     CalibratedFrame,
@@ -129,20 +131,42 @@ def single_frame(
 
 @app.command("generate")
 def generate(
-    recording: str = typer.Option(..., "--recording"),
-    start_index: int = typer.Option(0, "--start-index"),
-    stop_index: int = typer.Option(..., "--stop-index"),
-    stride: int = typer.Option(1, "--stride"),
-    question_mode: str = typer.Option("constrained", "--question-mode"),
-    min_mask_area_px: int = typer.Option(128, "--min-mask-area-px"),
-    min_foreground_points: int = typer.Option(3, "--min-foreground-points"),
+    recording: str | None = typer.Option(None, "--recording"),
+    start_index: int | None = typer.Option(None, "--start-index"),
+    stop_index: int | None = typer.Option(None, "--stop-index"),
+    stride: int | None = typer.Option(None, "--stride"),
+    question_mode: str | None = typer.Option(None, "--question-mode"),
+    min_mask_area_px: int | None = typer.Option(None, "--min-mask-area-px"),
+    min_foreground_points: int | None = typer.Option(None, "--min-foreground-points"),
     output: Path | None = typer.Option(None, "--output"),
+    spec: Path | None = typer.Option(None, "--spec", exists=True, dir_okay=False, readable=True),
 ) -> None:
     """Generate a resumable VQA dataset from sampled Go2 recording frames."""
-    if start_index < 0 or stop_index <= start_index or stride < 1:
+    generation = _resolve_generation_spec(
+        spec,
+        recording,
+        start_index,
+        stop_index,
+        stride,
+        question_mode,
+        min_mask_area_px,
+        min_foreground_points,
+        output,
+    )
+    if generation.stop_index <= generation.start_index:
         raise typer.BadParameter("provide valid frame bounds")
-    output = output or (STATE_DIR / "datasets" / "vqa" / f"{Path(recording).stem}-frames")
-    _validate_question_mode(question_mode)
+    recording = generation.recording
+    start_index = generation.start_index
+    stop_index = generation.stop_index
+    stride = generation.stride
+    question_mode = generation.question_mode
+    min_mask_area_px = generation.grounding.min_mask_area_px
+    min_foreground_points = generation.grounding.min_foreground_points
+    output = (
+        Path(generation.output).expanduser()
+        if generation.output is not None
+        else STATE_DIR / "datasets" / "vqa" / f"{Path(recording).stem}-frames"
+    )
     _require_openai_for_question_author()
     output.mkdir(parents=True, exist_ok=True)
     _require_edgetam_cuda()
@@ -221,6 +245,7 @@ def generate(
     finally:
         model.stop()
     summary = write_dataset_manifest(output)
+    _write_generation_run(output, generation, summary)
     typer.echo(f"Dataset manifest: {summary}")
 
 
@@ -263,6 +288,77 @@ def _answer_agentic(
 def _validate_question_mode(question_mode: str) -> None:
     if question_mode not in ("constrained", "agentic"):
         raise typer.BadParameter("question mode must be constrained or agentic")
+
+
+def _resolve_generation_spec(
+    spec: Path | None,
+    recording: str | None,
+    start_index: int | None,
+    stop_index: int | None,
+    stride: int | None,
+    question_mode: str | None,
+    min_mask_area_px: int | None,
+    min_foreground_points: int | None,
+    output: Path | None,
+) -> VqaGenerationSpecification:
+    """Load a JSON generation specification or resolve the explicit CLI alternatives."""
+    values = (
+        recording,
+        start_index,
+        stop_index,
+        stride,
+        question_mode,
+        min_mask_area_px,
+        min_foreground_points,
+        output,
+    )
+    if spec is not None:
+        if any(value is not None for value in values):
+            raise typer.BadParameter("--spec cannot be combined with generation options")
+        try:
+            return VqaGenerationSpecification.model_validate_json(spec.read_bytes())
+        except ValueError as exc:
+            raise typer.BadParameter(f"invalid generation specification: {exc}") from exc
+    if recording is None or stop_index is None:
+        raise typer.BadParameter("--recording and --stop-index are required without --spec")
+    try:
+        return VqaGenerationSpecification(
+            recording=recording,
+            start_index=0 if start_index is None else start_index,
+            stop_index=stop_index,
+            stride=1 if stride is None else stride,
+            question_mode="constrained" if question_mode is None else question_mode,
+            grounding={
+                "min_mask_area_px": 128 if min_mask_area_px is None else min_mask_area_px,
+                "min_foreground_points": 3
+                if min_foreground_points is None
+                else min_foreground_points,
+            },
+            output=str(output) if output is not None else None,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(f"invalid generation options: {exc}") from exc
+
+
+def _write_generation_run(
+    output: Path,
+    generation: VqaGenerationSpecification,
+    summary: dict[str, int],
+) -> None:
+    """Record the resolved request that produced one generated dataset."""
+    payload = {
+        "schema_version": "1.0",
+        "generation": {
+            **generation.model_dump(mode="json"),
+            "output": str(output),
+        },
+        "models": {
+            "question_author": QUESTION_MODEL,
+            "oracle": ORACLE_MODEL if generation.question_mode == "agentic" else None,
+        },
+        "summary": summary,
+    }
+    (output / "run.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _require_openai_for_question_author() -> None:

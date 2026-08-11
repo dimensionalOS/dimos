@@ -17,7 +17,10 @@ from dimos.benchmark.vqa.generation.oracle import (
 from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
 from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.primitives.geometry import estimate_ground_plane
+from dimos.benchmark.vqa.generation.primitives.geometry import (
+    classify_door_plane_angle,
+    estimate_ground_plane,
+)
 from dimos.benchmark.vqa.generation.question_agent import (
     AGENTIC_QUESTION_PROMPT,
     OpenAIFreeformQuestionAuthor,
@@ -28,6 +31,7 @@ from dimos.benchmark.vqa.models import (
     ChoiceAnswerContract,
     DeferredHeightChoiceContract,
     GroundingConfig,
+    GroundPlaneEstimate,
     OracleEvidence,
     OracleToolResult,
     QuestionProposal,
@@ -189,8 +193,9 @@ def test_freeform_question_author_parses_public_contract() -> None:
 
 def test_freeform_author_prompt_prioritizes_geometric_questions() -> None:
     assert "measure_height" in AGENTIC_QUESTION_PROMPT
-    assert "two named objects is closer" in AGENTIC_QUESTION_PROMPT
-    assert "closer (choice" in AGENTIC_QUESTION_PROMPT
+    assert "two named object types is closer" in AGENTIC_QUESTION_PROMPT
+    assert "visibly repeated object" in AGENTIC_QUESTION_PROMPT
+    assert "diverse set of questions" in AGENTIC_QUESTION_PROMPT
     assert "Use visibility/presence questions only" in AGENTIC_QUESTION_PROMPT
 
 
@@ -354,6 +359,7 @@ def test_local_registry_exposes_geometry_tools() -> None:
         "select_nearest_object",
         "fit_ground_plane",
         "measure_height",
+        "classify_door_state",
         "bucket_measurement",
     }
 
@@ -369,6 +375,17 @@ def test_height_choice_window_is_local_and_deterministic() -> None:
     )
     assert answer == "0.2-0.6 m"
     assert height_choice_window(3.0)[1] == "over 2.0 m"
+
+
+def test_door_state_accepts_clear_plane_angles_and_rejects_ajar() -> None:
+    door = GroundPlaneEstimate((1.0, 0.0, 0.0), 0.0, 20, 20, 0.01)
+    closed = GroundPlaneEstimate((1.0, 0.0, 0.0), 0.0, 20, 20, 0.01)
+    open_door = GroundPlaneEstimate((0.0, 0.0, 1.0), 0.0, 20, 20, 0.01)
+    ajar_door = GroundPlaneEstimate((0.95, 0.0, 0.31), 0.0, 20, 20, 0.01)
+
+    assert classify_door_plane_angle(door, closed)[0] == "closed"
+    assert classify_door_plane_angle(door, open_door)[0] == "open"
+    assert classify_door_plane_angle(door, ajar_door)[1] == "ambiguous_door_angle"
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:

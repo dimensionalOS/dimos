@@ -87,7 +87,7 @@ class VqaExample:
 
 
 QuestionKind = Literal[
-    "presence", "horizontal_direction", "within_distance", "compare_nearest_by_side"
+    "presence", "horizontal_direction", "within_distance", "compare_nearest_by_side", "door_state"
 ]
 
 
