@@ -21,6 +21,11 @@ the priority-50 policy's legs+waist claim -- so planned arm trajectories
 override the servo hold while executing and release back to it on
 completion.
 
+In simulation ``SimBodyPose`` publishes the ``plant_pot_1`` prop's privileged
+body pose as a world-frame PoseStamped, which is what a manipulation target
+is aimed at. On hardware perception publishes the same message and nothing
+downstream changes.
+
 Usage:
     dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc-manip
 """
@@ -31,7 +36,8 @@ from typing import Any, cast
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import g1_arms
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -52,11 +58,18 @@ _ARM_TRAJECTORY_TASK = TaskConfig(
     priority=30,
 )
 
+_PLANT_POSE: list[Blueprint] = []
+if global_config.simulation == "mujoco":
+    from dimos.simulation.engines.sim_body_pose import SimBodyPose
+
+    _PLANT_POSE.append(SimBodyPose.blueprint(body_name="plant_pot_1"))
+
 unitree_g1_groot_wbc_manip = (
     autoconnect(
         _backend,
         g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
         _nav_stack,
+        *_PLANT_POSE,
         ManipulationModule.blueprint(
             robots=[make_g1_model_config()],
             # Reaches are position-driven; a hard 0.01 rad orientation
