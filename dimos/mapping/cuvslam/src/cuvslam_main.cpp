@@ -246,6 +246,12 @@ struct CuvslamConfig {
     int slam_max_poses;
     /// Floor on the interval between loop closures, milliseconds.
     int slam_throttling_ms;
+    /// Rebase guard. A frame whose translation standard deviation (root of the largest
+    /// translation term of cuVSLAM's covariance) exceeds this is unconstrained: its motion
+    /// is dropped, the pose holds, and later frames are rebased onto the held pose so the
+    /// published path never carries the teleport. Meters; 0 disables the guard and the raw
+    /// integrator is published untouched.
+    double covariance_gate_translation_std;
     /// cuVSLAM's Inertial mode is stereo plus one IMU.
     bool enable_imu;
     /// Flattened from the python ImuCalibration. All zero means enable_imu is off.
@@ -309,6 +315,8 @@ public:
                                       static_cast<std::int64_t>(warmup_skipped_)),
                        logging::Field("depth_reprojected",
                                       static_cast<std::int64_t>(depth_reprojected_)),
+                       logging::Field("covariance_gated",
+                                      static_cast<std::int64_t>(covariance_gated_)),
                        logging::Field("unmatched_images",
                                       static_cast<std::int64_t>(unplaced_images_))});
     }
@@ -745,8 +753,29 @@ private:
         }
         // cuVSLAM tracks rig_frame(); the contract is base_frame starting at identity. Both
         // collapse to the raw pose when the two frames are the same.
-        world_from_rig_ = compose(base_from_rig_,
-                                  compose(to_transform(est.world_from_rig->pose), rig_from_base_));
+        const Transform raw_pose = compose(
+            base_from_rig_, compose(to_transform(est.world_from_rig->pose), rig_from_base_));
+        covariance_ = est.world_from_rig->covariance_xyz_rpy;
+        const double translation_std = std::sqrt(static_cast<double>(
+            std::max({covariance_[0], covariance_[7], covariance_[14]})));
+        // NaN covariance is the tracker's own way of saying unconstrained; a NaN never
+        // exceeds a threshold, so it has to be gated explicitly.
+        if (cfg_.covariance_gate_translation_std > 0.0 && was_tracking_ &&
+            (!std::isfinite(translation_std) ||
+             translation_std > cfg_.covariance_gate_translation_std)) {
+            // Unconstrained frame (blank wall, repeated texture): drop its motion and keep
+            // rebasing onto the held pose, so recovery continues from here with only the
+            // delta measured after the scene became constrained again.
+            rebase_ = compose(world_from_rig_, invert(raw_pose));
+            ++covariance_gated_;
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(5),
+                                "cuvslam covariance gate holding pose",
+                                logging::Field("translation_std", translation_std),
+                                logging::Field("gated",
+                                               static_cast<std::int64_t>(covariance_gated_)));
+        } else {
+            world_from_rig_ = compose(rebase_, raw_pose);
+        }
         was_tracking_ = true;
         ++tracked_;
         publish(est.timestamp_ns);
@@ -830,6 +859,11 @@ private:
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
         fill_pose(msg, world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
+        // cuVSLAM's own 6x6, row-major xyz-rpy, the order ROS uses. Reported against the
+        // rig frame, which is base_frame unless rig_frame overrides it.
+        for (std::size_t i = 0; i < covariance_.size(); ++i) {
+            msg.pose.covariance[i] = covariance_[i];
+        }
         odometry_.publish(msg);
         publish_tf(world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         // With Slam running, map->odom is its correction; only one publisher per edge.
@@ -862,6 +896,11 @@ private:
     /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
     static constexpr std::size_t kMaxTfDepth = 32;
     std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
+
+    /// covariance gate
+    cuvslam::PoseCovariance covariance_{};
+    Transform rebase_;  ///< identity until the gate first fires
+    std::uint64_t covariance_gated_{0};
 
     sensor_msgs::Image depth_{};
     bool have_depth_{false};
