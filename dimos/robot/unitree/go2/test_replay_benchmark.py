@@ -41,8 +41,6 @@ smoke against the small bundled recording:
         -m self_hosted --no-cov -v
 """
 
-from __future__ import annotations
-
 import os
 import threading
 import time
@@ -59,8 +57,8 @@ if TYPE_CHECKING:
     from pytest_codspeed import BenchmarkFixture
 
 REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_hongkong_office")
-DURATION = float(os.environ.get("DIMOS_BENCH_DURATION", "60"))
-SPEED = 1000.0  # every emission delay clamps to 0: a pure CPU-bound drain
+DURATION = float(os.environ.get("DIMOS_BENCH_DURATION", 60))
+SPEED = 1000.0
 QUIET_S = 3.0  # all watched streams silent this long => drained
 DRAIN_TIMEOUT = 420.0  # build+drain deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent (published
