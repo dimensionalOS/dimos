@@ -150,6 +150,7 @@ def run(
     workers: int = typer.Option(
         os.cpu_count() or 1,
         "--workers",
+        min=1,
         help="Datasets evaluated in parallel processes",
     ),
     set_: list[str] | None = typer.Option(

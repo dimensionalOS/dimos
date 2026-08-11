@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+import math
 
 
 @dataclass
@@ -56,6 +57,12 @@ class EvalConfig:
 
     def validate(self) -> None:
         """Called again after --set, which mutates an already-built config."""
+        # nan compares false against every bound below, so it would pass each
+        # check and then quietly fail whole cases downstream.
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{f.name} must be finite, got {value}")
         # An inverted band makes check_path admit nothing and pass every path,
         # which reads as a perfect score rather than a failure.
         if self.body_clearance <= self.ground_margin:
@@ -69,6 +76,8 @@ class EvalConfig:
             "robot_height",
             "robot_length",
             "robot_width",
+            "ground_margin",
+            "body_clearance",
             "support_radius_m",
             "support_depth_m",
             "goal_tolerance",

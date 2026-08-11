@@ -185,6 +185,9 @@ def test_config_and_kinematics_validation() -> None:
     for name in ("voxel_size", "max_range", "robot_height", "goal_tolerance", "visit_radius_m"):
         with pytest.raises(ValueError, match=name):
             EvalConfig(**{name: 0.0})
+    for name in ("goal_tolerance", "max_slope", "kinematic_window_m"):
+        with pytest.raises(ValueError, match=name):
+            EvalConfig(**{name: float("nan")})  # nan passes every bound check
 
     stairs = np.array([[0, 0, 0], [0.4, 0, 0.16], [0.8, 0, 0.32]], dtype=np.float32)
     assert metrics.check_kinematics(stairs, _cfg(max_slope=1.0)).valid
