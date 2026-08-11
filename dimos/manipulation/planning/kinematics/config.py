@@ -42,23 +42,24 @@ class PinkKinematicsConfig(BaseConfig):
     solver: str = "proxqp"
     dt: float = 0.05
     max_iterations: int = 200
-    damping: float = 1e-8
+    # Near a reach-envelope edge the arm Jacobian goes near-singular and
+    # proxqp stops converging below ~1e-7; 1e-6 costs nothing on easy poses.
+    damping: float = 1e-6
     position_cost: float = 1.0
     orientation_cost: float = 1.0
     posture_cost: float = 1e-3
-    lm_damping: float = 1e-6
+    # Error-proportional task damping; 1e-6 is effectively off, and without it
+    # full QP steps limit-cycle around the tolerance near singular reaches.
+    lm_damping: float = 1e-1
     gain: float = 0.5
     safety_break: bool = True
     # Default solve tolerances; callers may still override per call.
     position_tolerance: float = 0.001
     orientation_tolerance: float = 0.01
-    # Retries only run after a failure, so a larger budget costs nothing on
-    # poses that solve first time.
-    max_attempts: int = 30
+    # Retries only run after a failure; easy poses solve on attempt 0.
+    max_attempts: int = 10
     # Std of the Gaussian perturbation applied per joint on a retry, scaled by
-    # the attempt index, so restarts widen from a nudge to a rethink. Measured
-    # on G1 reach-envelope poses: 0.02 solved 89% of the retries a uniform
-    # redraw solved 30% of.
+    # the attempt index, so restarts widen from a nudge to a rethink.
     retry_seed_noise: float = 0.02
     # Trailing attempts that redraw uniformly over the joint range, so a seed
     # sitting in a genuinely bad basin still gets a global restart.
