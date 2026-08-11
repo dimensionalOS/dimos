@@ -10,8 +10,11 @@ from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruth
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     HeightMeasurementResult,
     HorizontalRelationResult,
+    ObjectPlaneRelationResult,
+    OpeningWidthResult,
 )
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.geometry import PlaneFitResult
 from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
 from dimos.benchmark.vqa.models import (
     CalibratedFrame,
@@ -190,9 +193,10 @@ def test_question_agent_accepts_count_range_and_height_comparison_intents() -> N
             assert "comparison_query" in prompt
             return """[
                 {"kind":"visible_count","object_query":"chair"},
-                {"kind":"camera_range","object_query":"lamp"},
                 {"kind":"compare_left_right","object_query":"chair","comparison_query":"table"},
                 {"kind":"compare_height","object_query":"chair","comparison_query":"table"}
+                ,{"kind":"object_on_support","object_query":"box","comparison_query":"table"}
+                ,{"kind":"opening_width","object_query":"doorway"}
             ]"""
 
     frame, _ = _frame_and_detection()
@@ -203,9 +207,10 @@ def test_question_agent_accepts_count_range_and_height_comparison_intents() -> N
 
     assert intents == [
         QuestionIntent(kind="visible_count", object_query="chair"),
-        QuestionIntent(kind="camera_range", object_query="lamp"),
         QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
         QuestionIntent(kind="compare_height", object_query="chair", comparison_query="table"),
+        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table"),
+        QuestionIntent(kind="opening_width", object_query="doorway"),
     ]
 
 
@@ -442,3 +447,99 @@ def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) ->
     assert result.status == "answered"
     assert result.answer == "left"
     assert result.question.allowed_answers == ("left", "right")
+
+
+def test_ground_truth_agent_generates_verified_support_and_opening_width(
+    monkeypatch: object,
+) -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
+    )
+    box = GroundedObject("box-0", "box", 8, 1.0, "left")
+    table = GroundedObject("table-0", "table", 8, 2.0, "right")
+    monkeypatch.setattr(
+        agent,
+        "ground",
+        lambda _frame, query: ([box] if query == "box" else [table], ()),
+    )
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
+    monkeypatch.setattr(
+        agent.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "measure_object_plane_relation",
+        lambda item, support, support_plane, normal: ObjectPlaneRelationResult(
+            0.0,
+            0.8,
+            0.8,
+            4,
+            0.0,
+            3,
+            (),
+        ),
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "measure_opening_width_from_mask",
+        lambda mask, ground: OpeningWidthResult(OracleMeasurement(0.6, "m", 0.05, (), ()), ()),
+    )
+    monkeypatch.setattr(agent.primitives, "segment_detections", lambda query: [detection])
+
+    support = agent.answer(
+        frame,
+        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table"),
+    )
+    opening = agent.answer(frame, QuestionIntent(kind="opening_width", object_query="doorway"))
+
+    assert support.answer == "yes"
+    assert support.question.allowed_answers == ("yes", "no")
+    assert opening.answer == "0.5 to under 0.8 m"
+
+
+def test_ground_truth_agent_keeps_verified_non_support_cases(monkeypatch: object) -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=GroundingConfig(min_mask_area_px=1),
+    )
+    box = GroundedObject("box-0", "box", 8, 1.0, "left")
+    table = GroundedObject("table-0", "table", 8, 2.0, "right")
+    monkeypatch.setattr(
+        agent,
+        "ground",
+        lambda _frame, query: ([box] if query == "box" else [table], ()),
+    )
+    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
+    monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
+    monkeypatch.setattr(
+        agent.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+    )
+    monkeypatch.setattr(
+        agent.primitives,
+        "measure_object_plane_relation",
+        lambda item, support, support_plane, normal: ObjectPlaneRelationResult(
+            0.0,
+            0.8,
+            0.8,
+            0,
+            0.3,
+            0,
+            (),
+        ),
+    )
+
+    result = agent.answer(
+        frame,
+        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table"),
+    )
+
+    assert result.status == "answered"
+    assert result.answer == "no"

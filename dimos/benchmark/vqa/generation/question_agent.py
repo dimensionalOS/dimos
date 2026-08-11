@@ -18,13 +18,13 @@ from dimos.benchmark.vqa.models import (
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 
-QUESTION_PROMPT = """Select up to 5 challenging but visually well-supported single-frame VQA intents.
+QUESTION_PROMPT = """Select up to 15 challenging but visually well-supported single-frame VQA intents.
 Inspect only this image. Do not assume depth, point clouds, calibration, metadata, or temporal context.
 Return JSON only: an array of objects with kind, object_query, and threshold_m only for
 within_distance, candidate_queries only for closest_object, and comparison_query only for
 compare_height. kind must be one of presence, horizontal_direction, within_distance, visible_count,
 camera_range, compare_nearest_by_side, compare_left_right, compare_height, door_state, closest_object,
-or forward_path.
+object_on_support, opening_width, or forward_path.
 Use threshold_m: 3.0 for within_distance.
 Use image context to select only intents likely to produce a useful geometric case: emit
 compare_nearest_by_side only when at least two visible instances of the same object appear on
@@ -37,12 +37,15 @@ on the visible ground; comparison_query must name the other object type. Emit co
 for two distinct visible object types; comparison_query must name the other object type. Emit closest_object only when
 one target and at least two distinct candidate object types are visible; candidate_queries must name
 the visible candidate types.
+Emit object_on_support only when one visible object is clearly resting on a distinct visible table,
+bench, or other horizontal support; comparison_query must name that support. Emit opening_width only
+for one clearly visible doorway aperture with nearby wall structure.
 Emit forward_path only when the center foreground and visible floor provide enough context to judge
 the local path directly ahead. Use object_query: "forward path" for forward_path.
 Do not return bare object names, floors, walls, ceilings, background surfaces,
 questions, answers, explanations, Markdown, or information not visible in the image."""
 
-AGENTIC_QUESTION_PROMPT = """Author up to 5 challenging, visually answerable single-frame VQA questions.
+AGENTIC_QUESTION_PROMPT = """Author up to 15 challenging, visually answerable single-frame VQA questions.
 Inspect only this image. Do not use or infer depth, point clouds, calibration, metadata, or answers.
 Return JSON only: an array of objects with question, answer_contract, optional object_queries,
 and optional tool_hints. answer_contract is {"kind":"boolean"}, {"kind":"choice","choices":[...]},
@@ -60,11 +63,9 @@ For closest-object questions, use distinct visible candidate object types as the
 mutually exclusive fixed choices with two to four options. For a clearly visible door with nearby visible
 structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use the fixed choices
 ["clear", "blocked"] only for a visibly supported local path directly ahead.
-Use object_queries for every referenced object and tool_hints from "detect_objects", "segment_detections",
-"ground_masks", "count_grounded_objects", "bucket_camera_range", "compare_nearest_by_side",
-"compare_left_right", "fit_ground_plane", "measure_height", "compare_heights", "classify_door_state", "select_closest_object",
-"classify_forward_path", or "bucket_measurement" when applicable. Use visibility/presence questions only
-when no stronger geometric question is available.
+Use object_queries for every referenced object. The private oracle chooses its own sequence of reusable
+perception and geometry tools; do not prescribe an answer-level tool sequence. Use visibility/presence questions
+only when no stronger geometric question is available.
 Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
 metric distances without a supplied choice contract. Use only visible objects. Do not include
 answers, explanations, Markdown, or background surfaces."""
@@ -83,8 +84,8 @@ class OpenAIQuestionAgent:
             payload: Any = _parse_json_array(self._model.query(image, QUESTION_PROMPT))
         except json.JSONDecodeError as exc:
             raise ValueError("question agent did not return JSON") from exc
-        if not isinstance(payload, list) or len(payload) > 5:
-            raise ValueError("question agent must return an array of at most five intents")
+        if not isinstance(payload, list) or len(payload) > 15:
+            raise ValueError("question agent must return an array of at most 15 intents")
         intents: list[QuestionIntent] = []
         if all(isinstance(item, str) for item in payload):
             return [
@@ -95,7 +96,7 @@ class OpenAIQuestionAgent:
             ]
         for item in payload:
             if not isinstance(item, dict):
-                raise ValueError("question intent must be an object")
+                continue
             kind, query, threshold = (
                 item.get("kind"),
                 item.get("object_query"),
@@ -110,32 +111,34 @@ class OpenAIQuestionAgent:
                 "compare_nearest_by_side",
                 "compare_left_right",
                 "compare_height",
+                "object_on_support",
+                "opening_width",
                 "door_state",
                 "closest_object",
                 "forward_path",
             ):
-                raise ValueError(f"unsupported question kind: {kind!r}")
+                continue
             if not isinstance(query, str) or not query:
-                raise ValueError("question intent requires object_query")
+                continue
             if kind == "within_distance" and (
                 not isinstance(threshold, (int, float)) or threshold <= 0
             ):
-                raise ValueError("within_distance requires a positive threshold_m")
+                continue
             if kind != "within_distance":
                 threshold = None
             candidates = _string_tuple(item.get("candidate_queries"), "candidate_queries")
             comparison_query = item.get("comparison_query")
             if kind == "closest_object" and (len(candidates) < 2 or query in candidates):
-                raise ValueError("closest_object requires two distinct candidate_queries")
+                continue
             if kind == "forward_path" and query != "forward path":
-                raise ValueError('forward_path requires object_query "forward path"')
-            if kind in ("compare_left_right", "compare_height") and (
+                continue
+            if kind in ("compare_left_right", "compare_height", "object_on_support") and (
                 not isinstance(comparison_query, str)
                 or not comparison_query
                 or comparison_query == query
             ):
-                raise ValueError(f"{kind} requires a distinct comparison_query")
-            if kind not in ("compare_left_right", "compare_height"):
+                continue
+            if kind not in ("compare_left_right", "compare_height", "object_on_support"):
                 comparison_query = None
             intents.append(QuestionIntent(kind, query, threshold, candidates, comparison_query))
         return intents
@@ -144,7 +147,7 @@ class OpenAIQuestionAgent:
 class OpenAIFreeformQuestionAuthor:
     """Image-only author for generic public questions and answer contracts."""
 
-    def __init__(self, model: OpenAIVlModel, max_questions: int = 5) -> None:
+    def __init__(self, model: OpenAIVlModel, max_questions: int = 15) -> None:
         self._model = model
         self._max_questions = max_questions
 
@@ -155,9 +158,16 @@ class OpenAIFreeformQuestionAuthor:
             raise ValueError("question author did not return JSON") from exc
         if not isinstance(payload, list) or len(payload) > self._max_questions:
             raise ValueError("question author returned too many questions")
-        proposals = [
-            _proposal_from_json(item, index) for index, item in enumerate(payload, start=1)
-        ]
+        proposals = []
+        errors: list[ValueError] = []
+        for index, item in enumerate(payload, start=1):
+            try:
+                proposals.append(_proposal_from_json(item, index))
+            except ValueError as exc:
+                errors.append(exc)
+                continue
+        if not proposals and errors:
+            raise errors[0]
         if len({item.id for item in proposals}) != len(proposals):
             raise ValueError("question ids must be unique")
         return proposals

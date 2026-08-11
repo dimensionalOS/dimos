@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from dimos.benchmark.vqa.generation.geometry import project_visible_points
 from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     ClosestObjectResult,
-    DoorStateResult,
     ForwardPathResult,
     HeightMeasurementResult,
     HorizontalRelationResult,
+    ObjectOnSupportResult,
+    ObjectPlaneRelationResult,
+    OpeningWidthResult,
 )
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     PlaneFitResult,
-    classify_door_plane_angle,
     classify_forward_corridor,
     estimate_ground_plane,
     fit_surface_plane,
+    measure_forward_corridor,
+    measure_opening_width,
+    measure_relative_plane_angle,
     points_around_mask,
     points_in_mask,
 )
@@ -98,6 +104,30 @@ class FramePerceptionPrimitives:
         self._segmented_queries.add(query)
         return masks
 
+    def segment_detection(self, query: str, index: int) -> list[Detection2DSeg]:
+        """Segment one frozen detection selected by its query-local index."""
+        detections = self.detect_objects(query)
+        if index < 0 or index >= len(detections):
+            raise ValueError("unknown_detection_index")
+        selected = ImageDetections2D(self.frame.image, [detections[index]])
+        return [
+            item
+            for item in self._segmenter.segment(selected)
+            if isinstance(item, Detection2DSeg)
+            and int((item.mask > 0).sum()) >= self._config.min_mask_area_px
+        ]
+
+    def ground_mask(self, mask: Detection2DSeg, object_id: str) -> GroundedObject | None:
+        """Ground one selected segmentation mask under a caller-owned opaque object ID."""
+        objects = ground_segmented_objects(
+            self.frame, [mask], min_foreground_points=self._config.min_foreground_points
+        )
+        if len(objects) != 1:
+            return None
+        object = replace(objects[0], id=object_id)
+        self._object_masks[object.id] = mask
+        return object
+
     def ground_masks(self, query: str) -> list[GroundedObject]:
         """Project visible point-cloud support through accepted masks."""
         cached = self._groundings.get(query)
@@ -132,6 +162,85 @@ class FramePerceptionPrimitives:
         if self._plane_fit is None:
             self._plane_fit = estimate_ground_plane(self.frame)
         return self._plane_fit
+
+    def fit_object_surface_plane(self, object: GroundedObject) -> PlaneFitResult:
+        """Fit one object-supported surface plane without assigning it a semantic role."""
+        points = self._object_points(object)
+        if points is None:
+            return PlaneFitResult(None, ("insufficient_object_support",), "insufficient_support")
+        return fit_surface_plane(points)
+
+    def fit_mask_surrounding_plane(self, mask: Detection2DSeg) -> PlaneFitResult:
+        """Fit a surface plane from visible support around one selected mask."""
+        return fit_surface_plane(points_around_mask(self.frame, mask.mask))
+
+    def fit_object_surrounding_plane(self, object: GroundedObject) -> PlaneFitResult:
+        """Fit a surface plane around one grounded object's selected mask."""
+        mask = self._object_masks.get(object.id)
+        if mask is None:
+            return PlaneFitResult(None, ("unknown_grounded_object",), "unknown_object_id")
+        return self.fit_mask_surrounding_plane(mask)
+
+    def measure_object_pair_distance(
+        self, first: GroundedObject, second: GroundedObject
+    ) -> OracleMeasurement | None:
+        """Measure support-centroid distance between two grounded objects."""
+        first_points = self._object_points(first)
+        second_points = self._object_points(second)
+        if first_points is None or second_points is None:
+            return None
+        value = float(
+            np.linalg.norm(np.median(first_points, axis=0) - np.median(second_points, axis=0))
+        )
+        return OracleMeasurement(
+            value,
+            "m",
+            0.05,
+            ("visible_support_centroids",),
+            (f"grounding:v1:{first.id}", f"grounding:v1:{second.id}"),
+        )
+
+    def measure_object_plane_relation(
+        self,
+        object: GroundedObject,
+        support: GroundedObject,
+        plane: GroundPlaneEstimate,
+        reference_normal: tuple[float, float, float],
+    ) -> ObjectPlaneRelationResult:
+        """Measure clearance and projected support proximity without assigning a relation label."""
+        object_points = self._object_points(object)
+        support_points = self._object_points(support)
+        if object_points is None or support_points is None:
+            return ObjectPlaneRelationResult(
+                None, None, None, 0, None, 0, (), "insufficient_object_support"
+            )
+        normal = np.asarray(plane.normal)
+        offset = plane.offset_m
+        if float(normal @ np.asarray(reference_normal)) < 0:
+            normal, offset = -normal, -offset
+        elevation = object_points @ normal + offset
+        projected_support = support_points - np.outer(support_points @ normal + offset, normal)
+        projected_object = object_points - np.outer(elevation, normal)
+        separation = np.linalg.norm(
+            projected_object[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
+        ).min(axis=1)
+        contact_points = object_points[np.abs(elevation) <= 0.08]
+        overlap_count = 0
+        if len(contact_points):
+            projected_contact = contact_points - np.outer(contact_points @ normal + offset, normal)
+            contact_separation = np.linalg.norm(
+                projected_contact[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
+            ).min(axis=1)
+            overlap_count = int((contact_separation <= 0.1).sum())
+        return ObjectPlaneRelationResult(
+            float(np.percentile(elevation, 15)),
+            float(np.percentile(elevation, 85)),
+            float((elevation >= 0.02).mean()),
+            len(contact_points),
+            float(separation.min()),
+            overlap_count,
+            ("visible_object_plane_relation",),
+        )
 
     def measure_height(
         self, object: GroundedObject, plane: GroundPlaneEstimate
@@ -169,41 +278,11 @@ class FramePerceptionPrimitives:
         )
         return HeightMeasurementResult(object, plane, measurement, tuple(flags))
 
-    def classify_door_state(self, object: GroundedObject) -> DoorStateResult:
-        """Classify a door as open or closed from its plane relative to nearby structure."""
-        mask = self._object_masks.get(object.id)
-        if mask is None:
-            raise ValueError(f"unknown grounded object: {object.id}")
-        door_fit = fit_surface_plane(points_in_mask(self.frame, mask.mask))
-        if door_fit.estimate is None:
-            return DoorStateResult(
-                object,
-                None,
-                ("door_plane_rejected", *door_fit.quality_flags),
-                door_fit.rejection_reason,
-            )
-        surrounding_fit = fit_surface_plane(points_around_mask(self.frame, mask.mask))
-        if surrounding_fit.estimate is None:
-            return DoorStateResult(
-                object,
-                None,
-                ("surrounding_plane_rejected", *surrounding_fit.quality_flags),
-                surrounding_fit.rejection_reason,
-            )
-        state, reason, angle_deg = classify_door_plane_angle(
-            door_fit.estimate, surrounding_fit.estimate
-        )
-        return DoorStateResult(
-            object,
-            state,
-            (
-                "door_and_surrounding_planes_accepted",
-                *door_fit.quality_flags,
-                *surrounding_fit.quality_flags,
-            ),
-            reason,
-            angle_deg,
-        )
+    def measure_relative_plane_angle(
+        self, first: GroundPlaneEstimate, second: GroundPlaneEstimate
+    ) -> OracleMeasurement:
+        """Measure the unsigned angle between two accepted planes."""
+        return measure_relative_plane_angle(first, second)
 
     def select_closest_object(
         self, target: GroundedObject, candidates: list[GroundedObject]
@@ -246,6 +325,134 @@ class FramePerceptionPrimitives:
             "left" if horizontal_offset_m < 0 else "right", ("camera_frame_support_centroids",)
         )
 
+    def classify_object_on_support(
+        self, object: GroundedObject, support: GroundedObject
+    ) -> ObjectOnSupportResult:
+        """Verify direct contact between an object and a horizontal support surface."""
+        if object.id == support.id:
+            return ObjectOnSupportResult(object, support, (), "duplicate_object_id")
+        object_points = self._object_points(object)
+        support_points = self._object_points(support)
+        if object_points is None or support_points is None:
+            return ObjectOnSupportResult(object, support, (), "insufficient_object_support")
+        ground_fit = self.fit_ground_plane()
+        if ground_fit.estimate is None:
+            return ObjectOnSupportResult(
+                object,
+                support,
+                ground_fit.quality_flags,
+                ground_fit.rejection_reason or "ground_plane_rejected",
+            )
+        support_fit = fit_surface_plane(support_points)
+        if support_fit.estimate is None:
+            return ObjectOnSupportResult(
+                object,
+                support,
+                support_fit.quality_flags,
+                support_fit.rejection_reason or "support_plane_rejected",
+            )
+        normal = np.asarray(support_fit.estimate.normal)
+        ground_normal = np.asarray(ground_fit.estimate.normal)
+        if abs(float(normal @ ground_normal)) < np.cos(np.radians(12.0)):
+            return ObjectOnSupportResult(
+                object, support, support_fit.quality_flags, "support_not_horizontal"
+            )
+        if float(normal @ ground_normal) < 0:
+            normal = -normal
+        elevation = object_points @ normal + support_fit.estimate.offset_m
+        projected_support = support_points - np.outer(
+            support_points @ normal + support_fit.estimate.offset_m, normal
+        )
+        projected_object = object_points - np.outer(
+            object_points @ normal + support_fit.estimate.offset_m, normal
+        )
+        nearest_support_distance = np.linalg.norm(
+            projected_object[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
+        ).min(axis=1)
+        if float(nearest_support_distance.min()) > 0.2:
+            return ObjectOnSupportResult(
+                object,
+                support,
+                (*support_fit.quality_flags, "objects_separated_in_plane"),
+                answer="no",
+            )
+        if float(np.percentile(elevation, 15)) > 0.2:
+            return ObjectOnSupportResult(
+                object,
+                support,
+                (*support_fit.quality_flags, "object_clearly_above_support"),
+                answer="no",
+            )
+        contact_points = object_points[np.abs(elevation) <= 0.08]
+        if (
+            len(contact_points) < 4
+            or float(np.percentile(elevation, 15)) > 0.08
+            or float(np.percentile(elevation, 85)) < 0.15
+            or float((elevation >= 0.02).mean()) < 0.7
+        ):
+            return ObjectOnSupportResult(
+                object, support, support_fit.quality_flags, "insufficient_contact_evidence"
+            )
+        projected_contact = contact_points - np.outer(
+            contact_points @ normal + support_fit.estimate.offset_m, normal
+        )
+        distances = np.linalg.norm(
+            projected_contact[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
+        )
+        if int((distances.min(axis=1) <= 0.1).sum()) < 3:
+            return ObjectOnSupportResult(
+                object, support, support_fit.quality_flags, "insufficient_in_plane_support_overlap"
+            )
+        return ObjectOnSupportResult(
+            object,
+            support,
+            (
+                *ground_fit.quality_flags,
+                *support_fit.quality_flags,
+                "support_horizontal",
+                "contact_band_supported",
+                "in_plane_support_overlap",
+            ),
+            answer="yes",
+        )
+
+    def measure_opening_width(self, query: str) -> OpeningWidthResult:
+        """Measure one segmented doorway aperture using its adjacent structural plane."""
+        masks = self.segment_detections(query)
+        if len(masks) != 1:
+            return OpeningWidthResult(None, (), "ambiguous_opening_instances")
+        ground_fit = self.fit_ground_plane()
+        if ground_fit.estimate is None:
+            return OpeningWidthResult(
+                None,
+                ground_fit.quality_flags,
+                ground_fit.rejection_reason or "ground_plane_rejected",
+            )
+        return self.measure_opening_width_from_mask(masks[0], ground_fit.estimate)
+
+    def measure_opening_width_from_mask(
+        self, mask: Detection2DSeg, ground: GroundPlaneEstimate
+    ) -> OpeningWidthResult:
+        """Measure one selected aperture mask against an already accepted ground plane."""
+        result = measure_opening_width(self.frame, mask.mask, ground)
+        if result.width_m is None or result.tolerance_m is None:
+            return OpeningWidthResult(
+                None,
+                result.quality_flags,
+                result.rejection_reason or "opening_width_rejected",
+            )
+        measurement = OracleMeasurement(
+            result.width_m,
+            "m",
+            result.tolerance_m,
+            result.quality_flags,
+            (f"frame:{self.frame.id}", f"opening-mask:v1:{query}"),
+        )
+        return OpeningWidthResult(
+            measurement,
+            result.quality_flags,
+        )
+
     def classify_forward_path(self) -> ForwardPathResult:
         """Classify the observed camera-forward corridor as clear or blocked."""
         ground_fit = self.fit_ground_plane()
@@ -260,6 +467,12 @@ class FramePerceptionPrimitives:
         points = np.asarray(projected.camera_points, dtype=np.float64)
         state, flags, reason = classify_forward_corridor(points, ground_fit.estimate)
         return ForwardPathResult(state, len(points), flags, reason)
+
+    def measure_forward_corridor(self, plane: GroundPlaneEstimate):
+        """Measure visible forward corridor support against an accepted ground plane."""
+        projected = project_visible_points(self.frame)
+        points = np.asarray(projected.camera_points, dtype=np.float64)
+        return measure_forward_corridor(points, plane)
 
     def _object_points(self, object: GroundedObject) -> np.ndarray | None:
         mask = self._object_masks.get(object.id)

@@ -6,6 +6,7 @@ from bisect import bisect_right
 
 COUNT_CHOICES = ("1-2", "3-4", "5-7", "8+")
 CAMERA_RANGE_CHOICES = ("under 1 m", "1 to under 2 m", "2 to under 4 m", "4 m or more")
+OPENING_WIDTH_CHOICES = ("under 0.2 m", "0.2 to under 0.5 m", "0.5 to under 0.8 m", "0.8 m or more")
 
 
 def count_choice(count: int) -> str:
@@ -32,6 +33,19 @@ def camera_range_choice(range_m: float) -> str:
     if range_m < 4.0:
         return CAMERA_RANGE_CHOICES[2]
     return CAMERA_RANGE_CHOICES[3]
+
+
+def opening_width_choice(width_m: float) -> str:
+    """Return the public doorway-width bucket for a positive metric measurement."""
+    if width_m < 0:
+        raise ValueError("width must be non-negative")
+    if width_m < 0.2:
+        return OPENING_WIDTH_CHOICES[0]
+    if width_m < 0.5:
+        return OPENING_WIDTH_CHOICES[1]
+    if width_m < 0.8:
+        return OPENING_WIDTH_CHOICES[2]
+    return OPENING_WIDTH_CHOICES[3]
 
 
 def height_choice_window(height_m: float) -> tuple[tuple[str, ...], str]:
