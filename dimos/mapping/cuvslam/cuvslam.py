@@ -166,11 +166,6 @@ class CuvslamConfig(NativeModuleConfig):
     camera_frames: list[str] = Field(default_factory=list)
     # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
-    # Frames dropped before the first Track(), as cuVSLAM's realsense examples do with 60.
-    # Off by default: measured on sf_office1_3 the effect is a lottery, not a correction --
-    # 15 and 60 frames scored well, 30 scored far worse than tracking from frame 0, and the
-    # auto-exposure ramp everyone assumes it fixes is over by frame 10.
-    warmup_frames: int = 0
 
     map_frame: str = "map"
     odom_frame: str = "odom"
@@ -197,8 +192,8 @@ class CuvslamConfig(NativeModuleConfig):
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
     # path rebased onto the held pose, so the published odometry never carries a teleport
     # from an unconstrained scene. Meters; 0 publishes the raw integrator untouched.
-    # Measured on sf_office1_3: normal frames sit at 0.01-0.3 m, the blank-wall burst
-    # reports 5-330 m or NaN, so 1.0 separates them by an order of magnitude each way.
+    # Measured: well-constrained frames report 0.01-0.3 m, degenerate bursts (blank wall,
+    # repeated texture) 5-330 m or NaN, so 1.0 separates them by an order of magnitude.
     covariance_gate_translation_std: float = 1.0
     # Rebase guard on physically implausible frame-to-frame motion, in metres/second and
     # radians/second against the previous tracked frame. Catches confident teleports the
