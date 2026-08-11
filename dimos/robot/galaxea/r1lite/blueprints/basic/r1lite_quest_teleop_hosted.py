@@ -65,7 +65,12 @@ r1lite_quest_teleop_hosted = (
     autoconnect(
         R1LiteHostedTeleopModule.blueprint(**_MODULE_KWARGS),
         HostedStatsModule.blueprint(),
-        CameraMuxModule.blueprint(cameras=["cam1"]),
+        # Width/fps caps keep the head-camera stream from saturating the
+        # robot's uplink: uncapped video queued the WebRTC data channel
+        # until pose lag blew past the freshness guard and froze arms
+        # and sticks (hardware session 2026-08-11). 640@15 is ample to
+        # drive by and leaves the control plane its bandwidth.
+        CameraMuxModule.blueprint(cameras=["cam1"], video_max_width=640, video_max_fps=15.0),
         r1lite_control_base(
             extra_tasks=_teleop_tasks(),
             # Head camera on for the operator's view; watch TELEM for
