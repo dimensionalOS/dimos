@@ -68,7 +68,13 @@ _ARM_IK_PARAMS = {
     # Ride through pose-stream gaps instead of cycling engage state.
 }
 _ARM_CONTROL_IK = {
-    "max_velocity": 1.5,
+    # Hardware A/B (2026-08-11, three instrumented runs): at 1.5 the
+    # solver outran the vendor tracker — tracking error hit the 10 deg
+    # rebase cap in storms (115 rebases in 40 s engaged, hand-lag p90
+    # 21 cm) and the arm visibly stopped following fast motions. 1.1
+    # paired with tracking_speed 3.5 cut hand-lag p90 to 13 cm and
+    # cured the shoulder-yaw starvation; 4.0 regressed (overshoot).
+    "max_velocity": 1.1,
     # Softened from 1.0 per the upstream Pink tuning guidance: a stiff
     # orientation objective makes translation stiff or unreachable near
     # awkward poses. Kept above the guidance floor because the 0.17 m
@@ -155,11 +161,13 @@ r1lite_quest_teleop = autoconnect(
         position_deadband_m=0.02,
     ),
     # tracking_speed is the actual arm speed (the vendor tracker follows
-    # each target at this rate); cameras off keeps decode off the control
-    # path during teleop.
+    # each target at this rate); 3.5 keeps the tracker ahead of the
+    # solver's 1.1 rad/s ceiling (2.5 starved the shoulder yaw — see
+    # _ARM_CONTROL_IK; 4.0 overshot). Cameras off keeps decode off the
+    # control path during teleop.
     r1lite_control_base(
         extra_tasks=_teleop_tasks(),
-        connection_kwargs={"tracking_speed": 2.5, "enable_cameras": False},
+        connection_kwargs={"tracking_speed": 3.5, "enable_cameras": False},
     ),
 ).remappings(
     [

@@ -71,7 +71,7 @@ r1lite_quest_teleop_hosted = (
             # Head camera on for the operator's view; watch TELEM for
             # control-loop pressure (the local blueprint keeps cameras
             # off for exactly that reason).
-            connection_kwargs={"tracking_speed": 2.5, "enable_cameras": True},
+            connection_kwargs={"tracking_speed": 3.5, "enable_cameras": True},
         ),
     )
     .remappings(

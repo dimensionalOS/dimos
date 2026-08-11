@@ -261,7 +261,7 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
             assert robot_model.end_effector_link.endswith("_arm_grasp_center")
             assert control_ik["orientation_cost"] == 0.5
             assert control_ik["joint_centering_cost"] == 1e-2
-            assert control_ik["max_velocity"] == 1.5
+            assert control_ik["max_velocity"] == 1.1
             # Folded boot pose: measured up to 1.74 deg below the vendor
             # URDF lower bound; the tolerance must cover it.
             assert control_ik["seed_limit_tolerance"] >= 0.04
@@ -323,7 +323,7 @@ def test_hardware_blueprint_teleop_overrides() -> None:
     kwargs = next(
         atom.kwargs for atom in r1lite_quest_teleop.blueprints if atom.module is R1LiteConnection
     )
-    assert kwargs["tracking_speed"] == 2.5
+    assert kwargs["tracking_speed"] == 3.5
     assert kwargs["enable_cameras"] is False
 
 
