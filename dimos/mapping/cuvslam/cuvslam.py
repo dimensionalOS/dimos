@@ -221,8 +221,9 @@ class CuvslamOdometry(NativeModule):
     Every camera publishes onto the same ``image`` and ``camera_info`` streams and is
     told apart by ``frame_id``; ``camera_frames`` fixes which frames are on the rig and
     in what order. Extrinsics come from tf against ``base_frame``, which is also the
-    rig frame. ``rgbd`` pairs one camera with ``depth_image``, whose ``frame_id`` says
-    which camera the depth is aligned with.
+    rig frame. ``rgbd`` pairs one camera with ``depth_image``. Depth recorded against a
+    different sensor than the rig camera (a D455 aligns depth to the left IR camera, not
+    color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
     tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
@@ -235,6 +236,7 @@ class CuvslamOdometry(NativeModule):
     image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
+    depth_camera_info: In[CameraInfo]
     imu: In[Imu]
 
     odometry: Out[Odometry]

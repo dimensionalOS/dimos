@@ -137,6 +137,84 @@ struct RigCamera {
     bool have_image{false};
 };
 
+/// Pinhole for a rectified camera, Brown for one whose camera_info carries real plumb_bob
+/// coefficients (a D455's color stream is raw; its IR streams are rectified with D all zero).
+/// ROS orders plumb_bob (k1, k2, p1, p2, k3); cuVSLAM's Brown wants (k1, k2, k3, p1, p2).
+cuvslam::Distortion to_distortion(const sensor_msgs::CameraInfo& info) {
+    const std::vector<double>& d = info.D;
+    const bool distorted =
+        d.size() >= 5 && std::any_of(d.begin(), d.end(), [](double c) { return c != 0.0; });
+    if (!distorted) {
+        return cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
+    }
+    cuvslam::Distortion distortion{cuvslam::Distortion::Model::Brown};
+    distortion.parameters = {static_cast<float>(d[0]), static_cast<float>(d[1]),
+                             static_cast<float>(d[4]), static_cast<float>(d[2]),
+                             static_cast<float>(d[3])};
+    return distortion;
+}
+
+/// Depth recorded against one camera, reprojected onto another: deproject through the depth
+/// intrinsics, move through camera_from_depth, project through the target intrinsics. Where
+/// several depth pixels land on one target pixel the nearest surface wins, matching what the
+/// target camera would have seen. Unhit pixels stay 0, which cuVSLAM reads as no depth.
+void reproject_depth(const sensor_msgs::Image& depth, const sensor_msgs::CameraInfo& depth_info,
+                     const sensor_msgs::CameraInfo& camera_info,
+                     const Transform& camera_from_depth, double units_per_meter,
+                     sensor_msgs::Image& out) {
+    out.header = depth.header;
+    out.header.frame_id = camera_info.header.frame_id;
+    out.width = camera_info.width;
+    out.height = camera_info.height;
+    out.encoding = depth.encoding;
+    out.is_bigendian = depth.is_bigendian;
+    out.step = out.width * static_cast<std::int32_t>(sizeof(std::uint16_t));
+    out.data.assign(static_cast<std::size_t>(out.step) * out.height, 0);
+    out.data_length = static_cast<std::int32_t>(out.data.size());
+
+    // The rotation as columns, so each point costs multiplies rather than quaternion algebra.
+    const std::array<double, 3> col_x = quat_rotate(camera_from_depth.rotation, {1.0, 0.0, 0.0});
+    const std::array<double, 3> col_y = quat_rotate(camera_from_depth.rotation, {0.0, 1.0, 0.0});
+    const std::array<double, 3> col_z = quat_rotate(camera_from_depth.rotation, {0.0, 0.0, 1.0});
+    const std::array<double, 3>& origin = camera_from_depth.translation;
+    const double fx_d = depth_info.K[0], fy_d = depth_info.K[4];
+    const double cx_d = depth_info.K[2], cy_d = depth_info.K[5];
+    const double fx_c = camera_info.K[0], fy_c = camera_info.K[4];
+    const double cx_c = camera_info.K[2], cy_c = camera_info.K[5];
+
+    auto* aligned = reinterpret_cast<std::uint16_t*>(out.data.data());
+    for (std::int32_t v = 0; v < depth.height; ++v) {
+        const auto* row = reinterpret_cast<const std::uint16_t*>(
+            depth.data.data() + static_cast<std::size_t>(v) * depth.step);
+        for (std::int32_t u = 0; u < depth.width; ++u) {
+            const std::uint16_t raw = row[u];
+            if (raw == 0) {
+                continue;
+            }
+            const double z = raw / units_per_meter;
+            const double x = (u - cx_d) / fx_d * z;
+            const double y = (v - cy_d) / fy_d * z;
+            const double z_c = col_x[2] * x + col_y[2] * y + col_z[2] * z + origin[2];
+            if (z_c <= 0.0) {
+                continue;
+            }
+            const double x_c = col_x[0] * x + col_y[0] * y + col_z[0] * z + origin[0];
+            const double y_c = col_x[1] * x + col_y[1] * y + col_z[1] * z + origin[1];
+            const auto u_c = static_cast<std::int32_t>(std::lround(fx_c * x_c / z_c + cx_c));
+            const auto v_c = static_cast<std::int32_t>(std::lround(fy_c * y_c / z_c + cy_c));
+            if (u_c < 0 || u_c >= out.width || v_c < 0 || v_c >= out.height) {
+                continue;
+            }
+            const auto value = static_cast<std::uint16_t>(
+                std::min(std::lround(z_c * units_per_meter), 65535L));
+            std::uint16_t& slot = aligned[static_cast<std::size_t>(v_c) * out.width + u_c];
+            if (slot == 0 || value < slot) {
+                slot = value;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 struct CuvslamConfig {
@@ -205,6 +283,8 @@ public:
         builder.input<sensor_msgs::Image>("image", &CuvslamOdometry::on_image, this);
         if (mode_ == Mode::Rgbd) {
             builder.input<sensor_msgs::Image>("depth_image", &CuvslamOdometry::on_depth, this);
+            builder.input<sensor_msgs::CameraInfo>("depth_camera_info",
+                                                   &CuvslamOdometry::on_depth_camera_info, this);
         }
         if (cfg_.enable_imu) {
             builder.input<sensor_msgs::Imu>("imu", &CuvslamOdometry::on_imu, this);
@@ -227,6 +307,8 @@ public:
                        logging::Field("skew_rejects", static_cast<std::int64_t>(skew_rejects_)),
                        logging::Field("warmup_skipped",
                                       static_cast<std::int64_t>(warmup_skipped_)),
+                       logging::Field("depth_reprojected",
+                                      static_cast<std::int64_t>(depth_reprojected_)),
                        logging::Field("unmatched_images",
                                       static_cast<std::int64_t>(unplaced_images_))});
     }
@@ -407,6 +489,52 @@ private:
         try_track();
     }
 
+    /// Intrinsics of the depth sensor itself, only needed when depth has to be reprojected
+    /// onto the rig camera. Kept off `camera_info` so it cannot join the rig discovery.
+    void on_depth_camera_info(const sensor_msgs::CameraInfo& info) {
+        if (!have_depth_info_) {
+            depth_info_ = info;
+            have_depth_info_ = true;
+        }
+    }
+
+    /// Depth pixel-aligned with the rig camera, as cuVSLAM's RGBD contract requires.
+    /// Passthrough when it was recorded against that camera; reprojected through the depth
+    /// intrinsics and the tf between the two sensors when it was not (a D455 records depth
+    /// against the left IR camera, not the color camera). Null while the pieces to
+    /// reproject are still missing.
+    const sensor_msgs::Image* align_depth() {
+        const RigCamera& camera = cameras_[0];
+        if (depth_.header.frame_id == camera.frame) {
+            return &depth_;
+        }
+        if (!have_depth_info_) {
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                "cuvslam: depth is in another frame than the camera and needs "
+                                "depth_camera_info to reproject",
+                                logging::Field("depth_frame", depth_.header.frame_id),
+                                logging::Field("camera_frame", camera.frame));
+            return nullptr;
+        }
+        if (!camera_from_depth_) {
+            camera_from_depth_ = tf_lookup(camera.frame, depth_.header.frame_id);
+            if (!camera_from_depth_) {
+                DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
+                                    "cuvslam: tf does not connect the depth frame to the camera",
+                                    logging::Field("depth_frame", depth_.header.frame_id),
+                                    logging::Field("camera_frame", camera.frame));
+                return nullptr;
+            }
+            logging::info("cuvslam reprojecting depth onto the rig camera",
+                          {logging::Field("depth_frame", depth_.header.frame_id),
+                           logging::Field("camera_frame", camera.frame)});
+        }
+        reproject_depth(depth_, depth_info_, camera.info, *camera_from_depth_,
+                        cfg_.depth_units_per_meter, aligned_depth_);
+        ++depth_reprojected_;
+        return &aligned_depth_;
+    }
+
     cuvslam::Odometry::OdometryMode odometry_mode() const {
         using OdometryMode = cuvslam::Odometry::OdometryMode;
         if (mode_ == Mode::Rgbd) {
@@ -443,7 +571,7 @@ private:
             camera.principal = {static_cast<float>(info.K[2]), static_cast<float>(info.K[5])};
             camera.focal = {static_cast<float>(info.K[0]), static_cast<float>(info.K[4])};
             camera.rig_from_camera = to_pose(rig_camera.rig_from_camera);
-            camera.distortion = cuvslam::Distortion{cuvslam::Distortion::Model::Pinhole};
+            camera.distortion = to_distortion(info);
             rig.cameras.push_back(camera);
         }
         if (cfg_.enable_imu) {
@@ -580,7 +708,11 @@ private:
         }
         cuvslam::Odometry::ImageSet depths;
         if (mode_ == Mode::Rgbd) {
-            cuvslam::Image depth = to_cuvslam_image(depth_, newest, images[0].camera_index);
+            const sensor_msgs::Image* aligned = align_depth();
+            if (aligned == nullptr) {
+                return;  // reprojection inputs still missing; retry on the next message
+            }
+            cuvslam::Image depth = to_cuvslam_image(*aligned, newest, images[0].camera_index);
             depth.encoding = cuvslam::ImageData::Encoding::MONO;
             depth.data_type = cuvslam::ImageData::DataType::UINT16;
             depths.push_back(depth);
@@ -733,6 +865,11 @@ private:
 
     sensor_msgs::Image depth_{};
     bool have_depth_{false};
+    sensor_msgs::CameraInfo depth_info_{};
+    bool have_depth_info_{false};
+    sensor_msgs::Image aligned_depth_{};
+    std::optional<Transform> camera_from_depth_;
+    std::uint64_t depth_reprojected_{0};
     std::optional<std::int64_t> last_ts_ns_;
 
     // tracking state
