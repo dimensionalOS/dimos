@@ -144,7 +144,9 @@ class HostedStatsModule(Module):
     def _telemetry_payload(self) -> dict[str, Any]:
         """One robot_telemetry frame: cmd stats + latest robot_state + battery."""
         soc = None
-        if self.go2 is not None:
+        # Optional module ref: graphs without a GO2Connection never bind
+        # it, so the attribute may not exist at all.
+        if getattr(self, "go2", None) is not None:
             try:
                 soc = self.go2.battery_soc()
             except Exception:
