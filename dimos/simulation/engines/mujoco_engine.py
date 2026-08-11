@@ -862,6 +862,18 @@ class MujocoEngine(SimulationEngine):
         qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
+    def get_body_pose(
+        self, body_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """World pose of any body, as (position, xyzw quaternion)."""
+        with self._lock:
+            body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id < 0:
+                return None
+            position = self._data.xpos[body_id].copy()
+            qw, qx, qy, qz = self._data.xquat[body_id].copy()
+            return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
         if mapping.actuator_id is None:

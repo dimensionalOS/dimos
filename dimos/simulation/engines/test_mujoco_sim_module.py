@@ -168,6 +168,28 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
+def test_get_body_poses_omits_unknown_bodies() -> None:
+    module = MujocoSimModule()
+
+    class _FakeEngine:
+        def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray] | None:
+            if body_name == "known":
+                return np.array([1.0, 2.0, 3.0]), np.array([0.0, 0.0, 0.0, 1.0])
+            return None
+
+        def disconnect(self) -> None:
+            pass
+
+    try:
+        module._engine = _FakeEngine()
+
+        assert module.get_body_poses(["known", "missing"]) == {
+            "known": [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0]
+        }
+    finally:
+        module.stop()
+
+
 def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
     engine = _FakeRespawnEngine()
     hooks = _FakeSimHooks()
