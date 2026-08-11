@@ -1945,6 +1945,8 @@ project-deps = [
     { name = "xacro" },
 ]
 r1lite-runtime = [
+    { name = "aiohttp" },
+    { name = "aiortc" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "pin-pink" },
@@ -2247,6 +2249,8 @@ project-deps = [
     { name = "xacro" },
 ]
 r1lite-runtime = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "aiortc", specifier = ">=1.14.0" },
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "ffmpeg-python" },
     { name = "pin-pink", specifier = ">=4.2.0" },

@@ -486,6 +486,11 @@ r1lite-runtime = [
     "trimesh>=4.0.0",
     "roboplan",
     "xacro",
+    # The hosted teleop blueprints reach the broker over WebRTC; the
+    # providers import aiortc lazily on start(), so a module-import gate
+    # cannot catch these missing.
+    "aiortc>=1.14.0",
+    "aiohttp>=3.9.0",
 ]
 
 # Full CI test group for the self-hosted runner. Inherits `tests` and adds

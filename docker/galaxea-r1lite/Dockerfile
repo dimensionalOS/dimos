@@ -129,12 +129,17 @@ RUN python3 -m pip check > /tmp/pipcheck.txt 2>/tmp/pipcheck_err.txt; \
 # Build-time gate, run as the runtime user. Constructing a teleop task
 # builds the real Pink control pipeline, which imports pink and verifies
 # the QP backend; a missing or downgraded solver fails the build here
-# instead of at robot startup.
+# instead of at robot startup. The hosted stack's WebRTC deps are
+# imported explicitly because the providers load them lazily on start(),
+# where a blueprint-import check cannot see them.
 RUN dimos list | grep -q r1lite-coordinator \
     && dimos list | grep -q r1lite-quest-teleop \
+    && dimos list | grep -q r1lite-quest-teleop-hosted \
     && python3 -c "from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_coordinator import r1lite_coordinator" \
     && python3 -c "from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_keyboard_teleop import r1lite_keyboard_teleop" \
+    && python3 -c "from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop_hosted import r1lite_quest_teleop_hosted" \
     && python3 -c "import pink, proxsuite" \
+    && python3 -c "import aiortc, aiohttp, av" \
     && python3 -c "\
 from dimos.control.tasks.teleop_task.teleop_task import TeleopControlIKConfig, TeleopIKTask, create_task; \
 from dimos.robot.galaxea.r1lite.blueprints.basic.r1lite_quest_teleop import _teleop_tasks; \
