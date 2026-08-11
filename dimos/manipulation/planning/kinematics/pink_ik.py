@@ -131,7 +131,7 @@ class PinkIK:
         position_tolerance: float | None = None,
         orientation_tolerance: float | None = None,
         check_collision: bool = True,
-        max_attempts: int = 10,
+        max_attempts: int | None = None,
     ) -> IKResult:
         """Solve IK with Pink, returning the standard planning ``IKResult``."""
         position_tolerance, orientation_tolerance = self._resolve_tolerances(
@@ -159,9 +159,10 @@ class PinkIK:
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
         target_model = self._target_in_model_frame(world.get_robot_config(robot_id), target_pose)
 
+        attempts = self._resolve_max_attempts(max_attempts)
         fallback_result: IKResult | None = None
 
-        for attempt in range(max_attempts):
+        for attempt in range(attempts):
             try:
                 q0 = self._initial_q(robot_context, seed, lower_limits, upper_limits, attempt)
                 result = self._solve_single(
@@ -198,7 +199,7 @@ class PinkIK:
         if fallback_result is not None:
             return fallback_result
 
-        return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {max_attempts} attempts")
+        return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {attempts} attempts")
 
     def solve_pose_targets(
         self,
@@ -209,7 +210,7 @@ class PinkIK:
         position_tolerance: float | None = None,
         orientation_tolerance: float | None = None,
         check_collision: bool = True,
-        max_attempts: int = 10,
+        max_attempts: int | None = None,
     ) -> IKResult:
         """Solve planning-group-scoped pose targets with Pink IK."""
         position_tolerance, orientation_tolerance = self._resolve_tolerances(
@@ -279,8 +280,9 @@ class PinkIK:
             except (FileNotFoundError, ImportError, ValueError) as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
+            attempts = self._resolve_max_attempts(max_attempts)
             fallback_result: IKResult | None = None
-            for attempt in range(max_attempts):
+            for attempt in range(attempts):
                 current_positions = seed_positions.copy()
                 if attempt > 0:
                     current_positions[selected_indices] = np.random.uniform(
@@ -332,9 +334,7 @@ class PinkIK:
             else:
                 if fallback_result is not None:
                     return fallback_result
-                return _failure(
-                    IKStatus.NO_SOLUTION, f"Pink IK failed after {max_attempts} attempts"
-                )
+                return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {attempts} attempts")
 
         positions_by_robot: dict[RobotName, dict[str, float]] = {}
         max_position_error = 0.0
@@ -606,6 +606,9 @@ class PinkIK:
             frame_name=frame_name,
             mapping=mapping,
         )
+
+    def _resolve_max_attempts(self, max_attempts: int | None) -> int:
+        return self.config.max_attempts if max_attempts is None else max_attempts
 
     def _initial_q(
         self,

@@ -190,11 +190,11 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
-def _pink_ik(mocker: MockerFixture, converge: bool = True) -> PinkIK:
+def _pink_ik(mocker: MockerFixture, converge: bool = True, **overrides: Any) -> PinkIK:
     mocker.patch.object(
         pink_ik, "_load_optional_dependencies", return_value=_fake_modules(converge=converge)
     )
-    return PinkIK(PinkIKConfig(max_iterations=3))
+    return PinkIK(PinkIKConfig(max_iterations=3, **overrides))
 
 
 def _context() -> _PinkRobotContext:
@@ -754,3 +754,45 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
     assert result.joint_state.name == ["arm/joint_c", "arm/joint_a", "arm/joint_b"]
     assert result.joint_state.position == [0.3, 0.1, 0.2]
     assert world.joint_state_calls == 0
+
+
+def _identity_pose() -> PoseStamped:
+    return PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+
+
+def _group_seed() -> JointState:
+    return JointState(
+        {"name": ["arm/joint_a", "arm/joint_b", "arm/joint_c"], "position": [0.5, -0.3, 0.7]}
+    )
+
+
+def _no_convergence(position_error: float = 0.5) -> IKResult:
+    return IKResult(
+        status=IKStatus.NO_SOLUTION,
+        joint_state=None,
+        position_error=position_error,
+        message="Pink IK did not converge within the iteration budget",
+    )
+
+
+def test_max_attempts_defaults_to_config_and_call_arg_wins(mocker: MockerFixture) -> None:
+    ik = _pink_ik(mocker, max_attempts=3)
+    mocker.patch.object(ik, "_get_robot_context", return_value=_context())
+    solve_single = mocker.patch.object(ik, "_solve_single", return_value=_no_convergence())
+    world = _FakeWorld()
+
+    ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+    )
+    assert solve_single.call_count == 3
+
+    solve_single.reset_mock()
+    ik.solve_pose_targets(
+        world=cast("Any", world),
+        pose_targets={world.groups["arm/manipulator"]: _identity_pose()},
+        seed=_group_seed(),
+        max_attempts=1,
+    )
+    assert solve_single.call_count == 1

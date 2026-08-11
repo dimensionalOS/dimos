@@ -52,6 +52,7 @@ class PinkKinematicsConfig(BaseConfig):
     # Default solve tolerances; callers may still override per call.
     position_tolerance: float = 0.001
     orientation_tolerance: float = 0.01
+    max_attempts: int = 10
 
 
 ManipulationKinematicsConfig = Annotated[
