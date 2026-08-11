@@ -84,12 +84,12 @@ class GraphNodes3D(Timestamped):
 
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "map",
         nodes: list[GraphNode] | None = None,
     ) -> None:
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.nodes = nodes if nodes is not None else []
 
     def lcm_encode(self) -> bytes:
