@@ -137,6 +137,24 @@ def test_question_agent_accepts_door_state_intent() -> None:
     assert intents == [QuestionIntent(kind="door_state", object_query="door")]
 
 
+def test_question_agent_accepts_closest_object_intent() -> None:
+    class _ClosestQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            assert "candidate_queries" in prompt
+            return (
+                '[{"kind":"closest_object","object_query":"chair",'
+                '"candidate_queries":["table","lamp"]}]'
+            )
+
+    frame, _ = _frame_and_detection()
+
+    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _ClosestQuestionModel())).propose(
+        frame.image
+    )
+
+    assert intents == [QuestionIntent("closest_object", "chair", None, ("table", "lamp"))]
+
+
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(

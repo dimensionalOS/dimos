@@ -30,6 +30,7 @@ from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     ChoiceAnswerContract,
     DeferredHeightChoiceContract,
+    GroundedObject,
     GroundingConfig,
     GroundPlaneEstimate,
     OracleEvidence,
@@ -193,7 +194,7 @@ def test_freeform_question_author_parses_public_contract() -> None:
 
 def test_freeform_author_prompt_prioritizes_geometric_questions() -> None:
     assert "measure_height" in AGENTIC_QUESTION_PROMPT
-    assert "two named object types is closer" in AGENTIC_QUESTION_PROMPT
+    assert "closest to a named target" in AGENTIC_QUESTION_PROMPT
     assert "visibly repeated object" in AGENTIC_QUESTION_PROMPT
     assert "diverse set of questions" in AGENTIC_QUESTION_PROMPT
     assert "Use visibility/presence questions only" in AGENTIC_QUESTION_PROMPT
@@ -357,6 +358,7 @@ def test_local_registry_exposes_geometry_tools() -> None:
         "segment_detections",
         "ground_masks",
         "select_nearest_object",
+        "select_closest_object",
         "fit_ground_plane",
         "measure_height",
         "classify_door_state",
@@ -386,6 +388,33 @@ def test_door_state_accepts_clear_plane_angles_and_rejects_ajar() -> None:
     assert classify_door_plane_angle(door, closed)[0] == "closed"
     assert classify_door_plane_angle(door, open_door)[0] == "open"
     assert classify_door_plane_angle(door, ajar_door)[1] == "ambiguous_door_angle"
+
+
+def test_closest_object_uses_point_cloud_centroids_and_rejects_ties(monkeypatch: Any) -> None:
+    target = GroundedObject("target", "chair", 8, 1.0, "left")
+    close = GroundedObject("close", "table", 8, 2.0, "center")
+    far = GroundedObject("far", "lamp", 8, 3.0, "right")
+    primitives = _frame_primitives(_measurement_frame())
+    centers = {
+        "target": np.zeros((6, 3)),
+        "close": np.tile((1.0, 0.0, 0.0), (6, 1)),
+        "far": np.tile((2.0, 0.0, 0.0), (6, 1)),
+    }
+    monkeypatch.setattr(primitives, "_object_points", lambda item: centers[item.id])
+
+    selected = primitives.select_closest_object(target, [close, far])
+
+    assert selected.object == close
+    assert selected.distance_m == 1.0
+    monkeypatch.setattr(
+        primitives,
+        "_object_points",
+        lambda item: np.tile((1.0, 0.0, 0.0), (6, 1)) if item.id != "target" else centers["target"],
+    )
+    assert (
+        primitives.select_closest_object(target, [close, far]).rejection_reason
+        == "ambiguous_object_proximity"
+    )
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:
