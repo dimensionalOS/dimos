@@ -332,7 +332,18 @@ def main() -> None:
     node = rclpy.create_node("dimos_r1lite_preflight")
     try:
         rates = _measure_rates(node, list(cfg.FEEDBACK_NOMINAL_HZ))
-        publishers = {t: _publisher_node_names(node, t) for t in cfg.ARMING_MATRIX}
+        # A fresh container's DDS graph needs a few seconds to discover
+        # the blueprint's publishers; a cold snapshot reports "no
+        # publisher" phantoms while the connection is demonstrably up.
+        # Spin until the connection node appears anywhere, bounded.
+        warm = time.monotonic() + 5.0
+        while True:
+            publishers = {t: _publisher_node_names(node, t) for t in cfg.ARMING_MATRIX}
+            if any(cfg.ROS_NODE_NAME in names for names in publishers.values()):
+                break
+            if time.monotonic() >= warm:
+                break
+            rclpy.spin_once(node, timeout_sec=0.2)
     finally:
         node.destroy_node()
         rclpy.shutdown()

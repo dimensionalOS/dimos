@@ -63,6 +63,13 @@ kill_gello() {
         tmux kill-session -t r1lite_teleop 2>/dev/null || true
         say "killed the factory GELLO teleop session (it silently grabs the arms)"
     fi
+    # The vendor's own teleop IK co-publishes on the arm target topics
+    # (fails preflight's sole-writer gate; found on-site 2026-07-24 and
+    # again 2026-08-11 — every vendor boot resurrects it).
+    if pgrep -f relaxed_ik >/dev/null 2>&1; then
+        pkill -f relaxed_ik || true
+        say "killed vendor relaxed_ik nodes (they co-publish arm targets)"
+    fi
 }
 
 host_prereqs() {

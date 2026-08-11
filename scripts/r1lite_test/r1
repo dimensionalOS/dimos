@@ -56,11 +56,13 @@ cmd_run() {
     local log="$LOG_DIR/r1_run_$(date +%Y%m%d_%H%M%S).log"
     say "running $bp from $IMAGE_TAG; log: $log"
     mkdir -p "$HOME/r1lite-cache"
+    # tee -i: Ctrl-C must not kill the logger before the container's
+    # teardown lines ("chassis stop settled") reach the log file.
     docker run --rm --name "$RUN_NAME" --network host --ipc host --pid host \
         -v "$LOG_DIR":/app/logs \
         -v "$HOME/r1lite-cache":/home/dimos/.local/share/dimos \
         -e QUEST_RECORD="${QUEST_RECORD:-}" \
-        "$IMAGE" run "$bp" 2>&1 | tee "$log"
+        "$IMAGE" run "$bp" 2>&1 | tee -i "$log"
 }
 
 cmd_status() {
