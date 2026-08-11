@@ -107,9 +107,7 @@ def openarm_control_model_config(side: str) -> RobotModelConfig:
         ],
         package_paths=OPENARM_PACKAGE_PATHS,
         auto_convert_meshes=True,
-        joint_name_mapping=dict(
-            zip(openarm_arm_joints(side), local_joint_names, strict=True)
-        ),
+        joint_name_mapping=dict(zip(openarm_arm_joints(side), local_joint_names, strict=True)),
         home_joints=[0.0] * OPENARM_DOF,
     )
 

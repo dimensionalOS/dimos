@@ -35,9 +35,7 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 KEYBOARD_EEF_TASK_NAME = "eef_twist_left_arm"
 
 _openarm_keyboard_hw = openarm_hardware()
-_openarm_control_models = {
-    side: openarm_control_model_config(side) for side in ("left", "right")
-}
+_openarm_control_models = {side: openarm_control_model_config(side) for side in ("left", "right")}
 _openarm_planning_model = openarm_bimanual_model_config()
 
 
