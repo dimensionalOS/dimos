@@ -78,6 +78,14 @@ class LocalOracleToolRegistry:
                 ),
             ),
             StructuredTool.from_function(
+                self.classify_door_state,
+                name="classify_door_state",
+                description=(
+                    "Classify one opaque grounded door as open or closed from point-cloud planes. "
+                    "Rejects insufficient or ambiguous geometry."
+                ),
+            ),
+            StructuredTool.from_function(
                 self.bucket_measurement,
                 name="bucket_measurement",
                 description=(
@@ -217,6 +225,42 @@ class LocalOracleToolRegistry:
         self._measurements[measurement_id] = result
         self._results.append(result)
         return json.dumps(_tool_payload(result, measurement_id=measurement_id))
+
+    def classify_door_state(self, object_id: str) -> str:
+        """Classify one grounded door against the surrounding point-cloud plane."""
+        object = self._objects.get(object_id)
+        if object is None:
+            return self._record_rejection("classify_door_state", object_id, [], "unknown_object_id")
+        if "door" not in object.label.lower():
+            return self._record_rejection(
+                "classify_door_state", object.label, [], "door_state_requires_door_query"
+            )
+        result = self._primitives.classify_door_state(object)
+        if result.state is None:
+            return self._record_rejection(
+                "classify_door_state",
+                object.label,
+                list(result.quality_flags),
+                result.rejection_reason,
+            )
+        evidence = OracleEvidence(
+            f"door-state:v1:{object.id}",
+            "v1",
+            object.id,
+            object.label,
+            object.range_m,
+            object.horizontal_direction,
+            object.point_count,
+        )
+        tool_result = OracleToolResult(
+            "classify_door_state",
+            object.label,
+            (evidence,),
+            choice=result.state,
+            quality_flags=result.quality_flags,
+        )
+        self._results.append(tool_result)
+        return json.dumps(_tool_payload(tool_result))
 
     def bucket_measurement(self, measurement_id: str) -> str:
         """Map one accepted private height measurement to its public choice."""

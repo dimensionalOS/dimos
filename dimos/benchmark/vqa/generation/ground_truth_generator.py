@@ -67,6 +67,8 @@ class VqaGroundTruthGenerator:
             )
         if intent.kind == "compare_nearest_by_side":
             return _compare_nearest_by_side(frame, intent, objects, trace)
+        if intent.kind == "door_state":
+            return _classify_door_state(frame, intent, objects, trace, self.primitives)
         examples = generate_questions(
             frame.id, objects, [intent.object_query], distance_m=intent.threshold_m or 3.0
         )
@@ -101,6 +103,8 @@ def _render_question(intent: QuestionIntent) -> str:
         return f"Where is the nearest {intent.object_query}: left, center, or right?"
     if intent.kind == "compare_nearest_by_side":
         return f"Which {intent.object_query} is closer: the left one or the right one?"
+    if intent.kind == "door_state":
+        return f"Is the {intent.object_query} open or closed?"
     return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
 
 
@@ -126,6 +130,37 @@ def _compare_nearest_by_side(
         ("left", "right"),
     )
     return GroundTruthResult(intent, example, "answered", answer, None, (left, right), trace)
+
+
+def _classify_door_state(
+    frame: CalibratedFrame,
+    intent: QuestionIntent,
+    objects: list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+    primitives: FramePerceptionPrimitives,
+) -> GroundTruthResult:
+    if "door" not in intent.object_query.lower():
+        return _rejected_result(frame, intent, objects, trace, "door_state_requires_door_query")
+    if len(objects) != 1:
+        return _rejected_result(frame, intent, objects, trace, "ambiguous_door_instances")
+    result = primitives.classify_door_state(objects[0])
+    trace = (
+        *trace,
+        ToolTrace("classify_door_state", result.state or result.rejection_reason or "rejected"),
+    )
+    if result.state is None:
+        return _rejected_result(
+            frame, intent, objects, trace, result.rejection_reason or "door_state_rejected"
+        )
+    example = VqaExample(
+        f"{frame.id}-{intent.object_query}-state",
+        _render_question(intent),
+        result.state,
+        "choice",
+        (objects[0].id,),
+        ("open", "closed"),
+    )
+    return GroundTruthResult(intent, example, "answered", result.state, None, tuple(objects), trace)
 
 
 def _rejected_result(

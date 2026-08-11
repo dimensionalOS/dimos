@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 from dimos.benchmark.vqa.generation.geometry import project_visible_points
@@ -87,3 +88,76 @@ def points_in_mask(frame: CalibratedFrame, mask: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float64,
     )
+
+
+def points_around_mask(frame: CalibratedFrame, mask: np.ndarray, radius_px: int = 12) -> np.ndarray:
+    """Return visible points in an annulus surrounding one foreground mask."""
+    if radius_px < 1:
+        raise ValueError("mask ring radius must be positive")
+    if mask.shape != (frame.image.height, frame.image.width):
+        raise ValueError("segmentation mask dimensions must match the image")
+    foreground = mask > 0
+    expanded = cv2.dilate(
+        foreground.astype(np.uint8),
+        np.ones((radius_px * 2 + 1, radius_px * 2 + 1), dtype=np.uint8),
+    ).astype(bool)
+    return points_in_mask(frame, expanded & ~foreground)
+
+
+def fit_surface_plane(points: np.ndarray) -> PlaneFitResult:
+    """Fit a robust plane to private surface points without assuming ground orientation."""
+    min_points, min_inliers, threshold = 12, 10, 0.06
+    if len(points) < min_points:
+        return PlaneFitResult(None, ("insufficient_surface_points",), "insufficient_support")
+
+    import open3d as o3d
+
+    o3d.utility.random.seed(0)
+    point_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    _, inlier_indices = point_cloud.segment_plane(
+        distance_threshold=threshold,
+        ransac_n=3,
+        num_iterations=816,
+    )
+    if len(inlier_indices) < min_inliers:
+        return PlaneFitResult(None, ("insufficient_surface_inliers",), "insufficient_inliers")
+
+    inlier_points = points[np.asarray(inlier_indices, dtype=int)]
+    center = np.mean(inlier_points, axis=0)
+    _, _, right = np.linalg.svd(inlier_points - center, full_matrices=False)
+    normal = right[-1]
+    offset = -float(normal @ center)
+    residuals = np.abs(points @ normal + offset)
+    inliers = residuals <= threshold
+    residual_m = (
+        float(np.sqrt(np.mean(np.square(residuals[inliers])))) if inliers.any() else float("inf")
+    )
+    if int(inliers.sum()) < min_inliers:
+        return PlaneFitResult(
+            None, ("insufficient_refined_surface_inliers",), "insufficient_inliers"
+        )
+    if residual_m > 0.035:
+        return PlaneFitResult(None, ("high_surface_residual",), "residual_too_high")
+    return PlaneFitResult(
+        GroundPlaneEstimate(
+            tuple(float(value) for value in normal),
+            float(offset),
+            len(points),
+            int(inliers.sum()),
+            residual_m,
+        ),
+        ("surface_plane_accepted",),
+    )
+
+
+def classify_door_plane_angle(
+    door: GroundPlaneEstimate, surrounding: GroundPlaneEstimate
+) -> tuple[str | None, str | None, float]:
+    """Classify only clearly coplanar or rotated door and surrounding planes."""
+    alignment = abs(float(np.dot(door.normal, surrounding.normal)))
+    angle_deg = float(np.degrees(np.arccos(np.clip(alignment, -1.0, 1.0))))
+    if angle_deg <= 12.0:
+        return "closed", None, angle_deg
+    if angle_deg >= 25.0:
+        return "open", None, angle_deg
+    return None, "ambiguous_door_angle", angle_deg

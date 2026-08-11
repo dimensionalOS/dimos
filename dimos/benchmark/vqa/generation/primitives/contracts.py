@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from dimos.benchmark.vqa.models import GroundedObject, GroundPlaneEstimate, OracleMeasurement
 
@@ -16,3 +17,14 @@ class HeightMeasurementResult:
     measurement: OracleMeasurement | None
     quality_flags: tuple[str, ...]
     rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DoorStateResult:
+    """A conservative point-cloud classification of one door's state."""
+
+    object: GroundedObject
+    state: Literal["open", "closed"] | None
+    quality_flags: tuple[str, ...]
+    rejection_reason: str | None = None
+    angle_deg: float | None = None

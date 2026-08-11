@@ -27,11 +27,37 @@ Flags:
 
 `dimos vqa single-frame` accepts the same generation settings and uses `--frame-index` instead of frame bounds.
 
+### Generation Specification
+
+`dimos vqa generate --spec <generation.json>` is an alternative to the explicit generation flags.
+Do not combine `--spec` with `--recording`, frame bounds, question mode, grounding thresholds, or
+output flags. A specification is a reproducible generation request:
+
+```json
+{
+  "recording": "go2_bigoffice.db",
+  "start_index": 0,
+  "stop_index": 100,
+  "stride": 20,
+  "question_mode": "agentic",
+  "grounding": {
+    "min_mask_area_px": 128,
+    "min_foreground_points": 3
+  },
+  "output": "~/.local/state/dimos/datasets/vqa/go2-bigoffice"
+}
+```
+
+Generation writes the resolved request, model IDs, and aggregate counts to the dataset root's
+private `run.json`. This is an output record, not the input specification.
+
 ## 2. Create Questions
 
 ### Constrained
 
-The image author proposes visible object queries, then the generator creates these deterministic families for every query:
+The image author inspects the scene and returns up to five structured intents. It selects only
+families likely to be useful for the visible arrangement, rather than expanding every object into
+every family. Private grounding still rejects unsupported or ambiguous candidates.
 
 | Family | Sample question | Choices |
 |---|---|---|
@@ -39,6 +65,7 @@ The image author proposes visible object queries, then the generator creates the
 | Horizontal direction | `Where is the nearest chair?` | `left`, `center`, `right` |
 | Distance threshold | `Is the nearest chair within 3 meters?` | `yes`, `no` |
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
+| Door state | `Is the door open or closed?` | `open`, `closed` |
 
 ### Agentic
 
@@ -74,6 +101,10 @@ Height questions also require:
 2. Exactly one grounded object and one mask.
 3. At least six points inside the object mask.
 4. At least four elevated points, with at least 60% of selected points elevated more than `0.02 m` above the plane.
+
+Door-state questions also require one grounded door, a robust plane fit for the door mask, and a
+robust plane fit in a narrow ring around that mask. The planes must be either nearly aligned
+(`closed`) or clearly rotated (`open`); slightly ajar or otherwise ambiguous doors are rejected.
 
 ## 4. Create Answers
 
@@ -131,6 +162,7 @@ The private oracle chooses a sequence from the same read-only primitives used by
 | `select_nearest_object` | object IDs, optional side | Nearest grounded object ID. |
 | `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
 | `measure_height` | object ID, plane ID | Measurement ID, private height, uncertainty, provenance, quality flags. |
+| `classify_door_state` | object ID | Public `open` or `closed` choice, or a private geometry rejection. |
 | `bucket_measurement` | measurement ID | Public answer-conditioned height choices and matching choice. |
 
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The
@@ -167,6 +199,7 @@ The dataset root aggregates:
 ```text
 cases.jsonl               public id, image path, question, choices
 labels.jsonl              private id and expected choice
+run.json                  private resolved generation request and aggregate counts
 ```
 
 Each line in `cases.jsonl` is one public evaluation case. Formatted for readability, one record is:

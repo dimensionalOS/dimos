@@ -49,6 +49,7 @@ dimos/benchmark/vqa/
     oracle_tools.py            opaque-ID and LangChain adapter for primitives
     oracle.py                  bounded tool-calling and evidence validation
     question_agent.py          image-only question author
+    specification.py           validated generation-specification schema
     dataset.py                 frame records and evaluation export
   evaluation.py                shared point-cloud-vqa Evaluation plugin
 
@@ -63,7 +64,10 @@ dimos/cli/vqa.py              generation CLI commands
 - A calibrated visible point cloud.
 - Camera intrinsics and the point-cloud-to-camera transform.
 
-The generator constructs one `FramePerceptionPrimitives` instance per frame. It owns MoonDream and
+The generator accepts either explicit CLI flags or a reproducible JSON specification through
+`dimos vqa generate --spec <generation.json>`. It writes the resolved generation request and
+aggregate counts to `run.json` at the dataset root. The generator constructs one
+`FramePerceptionPrimitives` instance per frame. It owns MoonDream and
 EdgeTAM calls, intermediate-result caches, grounded masks, and the accepted ground-plane fit.
 Projected visible point-cloud samples establish whether a mask has enough foreground support to
 become a grounded object. The generation runtime writes complete frame directories, so multi-frame
