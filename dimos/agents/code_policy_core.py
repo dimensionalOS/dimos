@@ -23,7 +23,7 @@ import queue
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,6 +34,7 @@ MAX_EXECUTION_TIMEOUT_S = 600.0
 DEFAULT_OUTPUT_LIMIT = 32_000
 _SUBMISSION_URL_ENV = "DIMOS_CODE_POLICY_SUBMISSION_URL"
 _SUBMISSION_TOKEN_ENV = "DIMOS_CODE_POLICY_SUBMISSION_TOKEN"
+_RECORDING_PATH_ENV = "DIMOS_CODE_POLICY_RECORDING_PATH"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _TRUNCATION_MARKER = "\n... [output truncated]"
 _CREDENTIAL_NAME_RE = re.compile(
@@ -42,10 +43,22 @@ _CREDENTIAL_NAME_RE = re.compile(
 )
 
 
-class CodePolicySessionConfig(BaseModel):
+class SubmissionEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["submission"] = "submission"
     submission_url: str = Field(min_length=1)
     submission_token: str = Field(min_length=1)
+
+
+class LiveDimosEnvironment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["live_dimos"] = "live_dimos"
+    recording_path: str = Field(min_length=1)
+
+
+class CodePolicySessionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    environment: SubmissionEnvironment | LiveDimosEnvironment
     output_limit: int = Field(default=DEFAULT_OUTPUT_LIMIT, ge=0)
     startup_timeout_s: float = Field(default=10.0, gt=0)
     interrupt_grace_s: float = Field(default=2.0, gt=0)
@@ -99,10 +112,19 @@ def _load_kernel_manager() -> type[Any]:
     return KernelManager
 
 
-def _bootstrap_source() -> str:
-    return """
+def _bootstrap_source(environment: SubmissionEnvironment | LiveDimosEnvironment) -> str:
+    if isinstance(environment, SubmissionEnvironment):
+        return """
 from dimos.agents.code_policy_core import submit_policy
 from dimos.porcelain.dimos import Dimos
+"""
+    return f"""
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.porcelain.dimos import Dimos
+
+memory = SqliteStore(path={environment.recording_path!r}, must_exist=True, read_only=True)
+memory.start()
+app = Dimos.connect()
 """
 
 
@@ -111,8 +133,11 @@ def _kernel_environment(config: CodePolicySessionConfig) -> dict[str, str]:
     result = {
         name: value for name, value in os.environ.items() if not _CREDENTIAL_NAME_RE.search(name)
     }
-    result[_SUBMISSION_URL_ENV] = config.submission_url
-    result[_SUBMISSION_TOKEN_ENV] = config.submission_token
+    if isinstance(config.environment, SubmissionEnvironment):
+        result[_SUBMISSION_URL_ENV] = config.environment.submission_url
+        result[_SUBMISSION_TOKEN_ENV] = config.environment.submission_token
+    else:
+        result[_RECORDING_PATH_ENV] = config.environment.recording_path
     return result
 
 
@@ -258,7 +283,7 @@ class CodePolicySession:
                 client.start_channels()
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,
@@ -297,7 +322,7 @@ class CodePolicySession:
                 manager.restart_kernel(now=True)
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,

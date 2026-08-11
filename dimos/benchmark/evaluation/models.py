@@ -34,8 +34,16 @@ class EvaluationReference(EvaluationModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class RuntimeCondition(EvaluationModel):
+    """Model-backed policy condition selected for one immutable run."""
+
+    model: str = Field(min_length=1)
+    thinking_level: str = Field(min_length=1)
+
+
 class EvaluationRunSpecification(EvaluationModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
+    runtime: RuntimeCondition
     evaluation: EvaluationReference
 
 
@@ -90,7 +98,7 @@ class EvaluationIdentity(EvaluationModel):
 
 
 class RuntimeIdentity(EvaluationModel):
-    profile: Literal["code-policy-v1"] = "code-policy-v1"
+    profile: Literal["code-policy-v1", "live-agent-v1"]
     driver: Literal["pi"] = "pi"
     driver_version: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -104,7 +112,7 @@ class EvaluationRunError(EvaluationModel):
 
 
 class EvaluationRun(EvaluationModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     run_id: str = Field(min_length=1)
     specification: EvaluationRunSpecification
     evaluation: EvaluationIdentity

@@ -35,13 +35,21 @@ from dimos.agents.code_policy_core import (
     MAX_EXECUTION_TIMEOUT_S,
     CodePolicySession,
     CodePolicySessionConfig,
+    LiveDimosEnvironment,
+    SubmissionEnvironment,
 )
 from dimos.benchmark.evaluation.protocol import TrialRun
 
-PYTHON_EXEC_DESCRIPTION = """Execute Python in a persistent trusted, unsandboxed session.
+SUBMISSION_PYTHON_EXEC_DESCRIPTION = """Execute Python in a persistent trusted, unsandboxed session.
 
 Imports, functions, and variables persist between calls. Define a typed
 `policy(app: Dimos) -> None` and call `submit_policy(policy)` to run a fresh trial.
+"""
+
+LIVE_PYTHON_EXEC_DESCRIPTION = """Execute Python in the live DimOS episode.
+
+Imports, functions, and variables persist between calls. The session provides
+`app` for DimOS RPCs and `memory` for read-only public observations.
 """
 
 SubmissionHandler = Callable[[str, bytes], TrialRun]
@@ -53,19 +61,32 @@ _NOISY_MCP_TRANSPORT_LOGGERS = (
 
 
 class CodePolicyMcpServer:
-    """Own the exploration kernel and its evaluator-owned submission callback."""
+    """Own a persistent evaluation kernel and its single Python tool."""
 
-    def __init__(self, submission_handler: SubmissionHandler, *, host: str = "127.0.0.1") -> None:
+    def __init__(
+        self,
+        submission_handler: SubmissionHandler | None = None,
+        *,
+        live_recording_path: str | None = None,
+        host: str = "127.0.0.1",
+    ) -> None:
+        if (submission_handler is None) == (live_recording_path is None):
+            raise ValueError("configure exactly one submission or live DimOS environment")
         self.host = host
         self.port = 0
         self.submission_handler = submission_handler
+        self.live_recording_path = live_recording_path
         self.submission_token = secrets.token_urlsafe(32)
         self.session: CodePolicySession | None = None
         self.mcp = MCPServer(name="dimos-code-policy", version="1.0.0")
 
         @self.mcp.tool(
             name="python_exec",
-            description=PYTHON_EXEC_DESCRIPTION,
+            description=(
+                SUBMISSION_PYTHON_EXEC_DESCRIPTION
+                if submission_handler is not None
+                else LIVE_PYTHON_EXEC_DESCRIPTION
+            ),
             structured_output=False,
         )
         async def python_exec(code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S) -> str:
@@ -94,6 +115,8 @@ class CodePolicyMcpServer:
         if request.headers.get("authorization") != f"Bearer {self.submission_token}":
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         try:
+            if self.submission_handler is None:
+                return JSONResponse({"error": "policy submission is disabled"}, status_code=404)
             body = await request.json()
             source = str(body["source"])
             serialized = base64.b64decode(str(body["serialized"]), validate=True)
@@ -132,8 +155,14 @@ class CodePolicyMcpServer:
         self._socket = sock
         self.session = CodePolicySession(
             CodePolicySessionConfig(
-                submission_url=f"http://{self.host}:{self.port}/submit-policy",
-                submission_token=self.submission_token,
+                environment=(
+                    SubmissionEnvironment(
+                        submission_url=f"http://{self.host}:{self.port}/submit-policy",
+                        submission_token=self.submission_token,
+                    )
+                    if self.submission_handler is not None
+                    else LiveDimosEnvironment(recording_path=str(self.live_recording_path))
+                )
             )
         )
         self.session.start()

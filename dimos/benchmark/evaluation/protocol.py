@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from dimos.benchmark.evaluation.models import EvaluationReport
+from dimos.benchmark.evaluation.models import (
+    ArtifactReference,
+    EvaluationReport,
+    RuntimeIdentity,
+)
 from dimos.benchmark.evaluation.progress import ProgressSink
 
 if TYPE_CHECKING:
@@ -93,6 +97,20 @@ class TrialRun:
 DebugTrialSubmitter = Callable[[PolicyArtifact, int, Path], TrialRun]
 
 
+@runtime_checkable
+class EvaluationRuntime(Protocol):
+    """Evaluated-behavior runtime selected by an Evaluation."""
+
+    @property
+    def identity(self) -> RuntimeIdentity: ...
+
+    @property
+    def prompt_evidence(self) -> tuple[ArtifactReference, ...]: ...
+
+    @property
+    def runtime_artifacts(self) -> tuple[ArtifactReference, ...]: ...
+
+
 @dataclass(frozen=True)
 class ExplorationOutcome:
     status: Literal["valid", "invalid"]
@@ -104,8 +122,38 @@ class ExplorationOutcome:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class LiveAgentOutcome:
+    final_text: str
+    tool_call_count: int
+    duration_seconds: float
+
+
 @runtime_checkable
-class CodePolicyRuntime(Protocol):
+class LiveAgentExecutionHandle(Protocol):
+    """A prepared live model session waiting behind an evaluator start gate."""
+
+    def start(self) -> None: ...
+
+    def failure(self) -> BaseException | None: ...
+
+    def finish(self) -> LiveAgentOutcome: ...
+
+
+@runtime_checkable
+class LiveAgentRuntime(EvaluationRuntime, Protocol):
+    def prepare(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+        memory_path: Path,
+        episode_timeout_s: float,
+    ) -> LiveAgentExecutionHandle: ...
+
+
+@runtime_checkable
+class CodePolicyRuntime(EvaluationRuntime, Protocol):
     """Fixed Pi runtime injected into complete native evaluations."""
 
     def explore(
@@ -130,7 +178,7 @@ class EvaluationContext:
     run_id: str
     spec_dir: Path
     workspace: Path
-    runtime: CodePolicyRuntime
+    runtime: EvaluationRuntime
     progress: ProgressSink | None
 
 
@@ -139,6 +187,7 @@ class Evaluation(Protocol):
     """A complete benchmark integration with native result semantics."""
 
     name: str
+    runtime_profile: Literal["code-policy-v1", "live-agent-v1"]
     config_model: type[BaseModel]
 
     def run(self, config: BaseModel, context: EvaluationContext) -> EvaluationReport: ...

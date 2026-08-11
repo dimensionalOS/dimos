@@ -21,6 +21,7 @@ import queue
 import cloudpickle
 import pytest
 
+from dimos.benchmark.evaluation.models import RuntimeCondition
 from dimos.benchmark.evaluation.pi_process import PiRunError, PiRunResult
 from dimos.benchmark.evaluation.protocol import PolicyArtifact, TrialOutcome, TrialRun
 import dimos.benchmark.evaluation.runtime as runtime_module
@@ -155,7 +156,11 @@ def test_explore_freezes_last_of_five_debug_submissions(mocker, tmp_path: Path) 
     mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
     mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
     mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
-    runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
+    runtime = CodePolicyRuntimeFactory(
+        api_key="secret",
+        workspace=tmp_path,
+        condition=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+    )
 
     outcome = runtime.explore(
         evaluation_protocol="Use normal DimOS information.",
@@ -188,7 +193,11 @@ def test_explore_publishes_jsonl_and_rendered_transcript(mocker, tmp_path: Path)
     mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
     mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
     mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
-    runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
+    runtime = CodePolicyRuntimeFactory(
+        api_key="secret",
+        workspace=tmp_path,
+        condition=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+    )
 
     outcome = runtime.explore(
         evaluation_protocol="Use normal DimOS information.",
@@ -224,7 +233,11 @@ def test_explore_retains_transcript_when_pi_fails(mocker, tmp_path: Path) -> Non
     mocker.patch.object(runtime_module, "CodePolicyMcpServer", _FakeCodePolicyServer)
     mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
     mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
-    runtime = CodePolicyRuntimeFactory(api_key="secret", workspace=tmp_path)
+    runtime = CodePolicyRuntimeFactory(
+        api_key="secret",
+        workspace=tmp_path,
+        condition=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+    )
 
     with pytest.raises(PiRunError, match="agent stopped"):
         runtime.explore(
@@ -259,7 +272,10 @@ def test_transcript_export_failure_is_diagnostic_only(mocker, tmp_path: Path) ->
     mocker.patch.object(runtime_module, "PiCliRunner", FakePiRunner)
     mocker.patch.object(runtime_module, "_pi_paths", return_value=(marker, marker))
     runtime = CodePolicyRuntimeFactory(
-        api_key="secret", workspace=tmp_path, progress=progress.append
+        api_key="secret",
+        workspace=tmp_path,
+        condition=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+        progress=progress.append,
     )
 
     outcome = runtime.explore(

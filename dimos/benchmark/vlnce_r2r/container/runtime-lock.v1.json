@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "base_image": "docker.io/mambaorg/micromamba:1.5.8-jammy",
+  "base_manifest_digest": "sha256:0d2870c1159dfb0c285e1c942c68385cd1110255cc9551838a29e48793e21af1",
+  "python": "3.6",
+  "numerical_dependencies": {
+    "numpy": "1.19.5",
+    "numba": "0.53.1",
+    "scipy": "1.5.2",
+    "pytorch": "1.10.2=py3.6_cpu_0"
+  },
+  "habitat_sim": {
+    "version": "0.1.7",
+    "build": "headless",
+    "channels": ["aihabitat", "conda-forge"],
+    "revision": "856d4b08c1a2632626bf0d205bf46471a99502b7"
+  },
+  "habitat_lab": {
+    "revision": "d6ed1c0a0e786f16f261de2beafe347f4186d0d8"
+  },
+  "vlnce": {
+    "revision": "729d141b2ee10628061ada74dd3a5b9f70faeba5"
+  },
+  "gateway_dependencies": {
+    "dtw": "1.4.0",
+    "fastdtw": "0.3.4",
+    "grpcio": "1.48.2",
+    "protobuf": "3.19.6",
+    "gym": "0.17.3",
+    "networkx": "2.5.1",
+    "opencv-python": "4.5.5.64",
+    "pickle5": "0.0.12",
+    "yacs": "0.1.8",
+    "dataclasses": "0.8"
+  },
+  "protocol_codegen": {
+    "schema": "vlnce_public_v1.proto",
+    "grpcio_tools": "1.48.2",
+    "protoc": "libprotoc 3.19.5",
+    "runtime_compatibility": "protobuf 3.19.6"
+  }
+}

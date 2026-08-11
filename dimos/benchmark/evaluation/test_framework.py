@@ -36,6 +36,7 @@ class HarnessConfig(BaseModel):
 
 class NativeHarnessEvaluation:
     name = "native-harness"
+    runtime_profile = "code-policy-v1"
     config_model: type[BaseModel] = HarnessConfig
 
     def run(self, config: BaseModel, context: EvaluationContext) -> EvaluationReport:
@@ -57,6 +58,7 @@ class FakeRuntime:
     @property
     def identity(self) -> RuntimeIdentity:
         return RuntimeIdentity(
+            profile="code-policy-v1",
             driver_version="test",
             model="gpt-5.6-luna",
             thinking_level="medium",
@@ -68,7 +70,11 @@ def _write_spec(tmp_path: Path) -> Path:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "1.0",
+                "schema_version": "2.0",
+                "runtime": {
+                    "model": "gpt-5.6-luna",
+                    "thinking_level": "medium",
+                },
                 "evaluation": {
                     "name": "native-harness",
                     "config": {"expected": 7},
@@ -79,9 +85,15 @@ def _write_spec(tmp_path: Path) -> Path:
     return path
 
 
-def test_native_evaluation_owns_result_and_uses_fixed_runtime(monkeypatch, tmp_path: Path) -> None:
+def test_native_evaluation_uses_declared_runtime_and_specified_condition(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
-    monkeypatch.setattr(runner, "CodePolicyRuntimeFactory", FakeRuntime)
+
+    def factory(**kwargs) -> FakeRuntime:
+        return FakeRuntime(**kwargs)
+
+    monkeypatch.setattr(runner, "CodePolicyRuntimeFactory", factory)
     monkeypatch.setattr(
         runner,
         "resolve_evaluation",
@@ -102,7 +114,7 @@ def test_native_evaluation_owns_result_and_uses_fixed_runtime(monkeypatch, tmp_p
     assert json.loads((output / "run.json").read_text())["runtime"]["driver"] == "pi"
 
 
-def test_run_specification_rejects_agent_customization(tmp_path: Path) -> None:
+def test_run_specification_rejects_legacy_agent_customization(tmp_path: Path) -> None:
     specification = json.loads(_write_spec(tmp_path).read_text())
     specification["agent"] = {"model": "another-model"}
     path = tmp_path / "custom.json"
