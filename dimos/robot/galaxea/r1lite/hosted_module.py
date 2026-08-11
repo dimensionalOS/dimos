@@ -26,6 +26,7 @@ the validated local feel.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import time
@@ -51,6 +52,15 @@ logger = setup_logger()
 
 class R1LiteHostedTeleopConfig(R1LiteQuestTeleopConfig):
     cmd_stale_after_sec: float = 0.5
+    # Hand-gesture chassis drive: the hosted arm pipeline transmits full
+    # Quest Joy frames but zero-fills the thumbstick axes, so the sticks
+    # cannot drive remotely. Holding a secondary button (Y/B) turns that
+    # hand into a virtual joystick instead: displacement from the press
+    # anchor maps to velocity — left hand translates, right hand yaws —
+    # with release-to-zero as the dead-man. Real stick input, if it ever
+    # arrives, takes priority automatically.
+    drive_gesture_full_scale_m: float = 0.15
+    drive_gesture_deadband_m: float = 0.03
 
 
 class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
@@ -74,6 +84,11 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
         self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
+        # Per-hand drive-gesture anchor (robot-frame x, y at press time)
+        self._drive_anchor: dict[Hand, tuple[float, float] | None] = {
+            Hand.LEFT: None,
+            Hand.RIGHT: None,
+        }
 
     # No local WebSocket server — the operator connects through the broker.
     def _start_server(self) -> None:
@@ -180,10 +195,55 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
                 if self._is_engaged[hand]:
                     self._disengage(hand)
             return
-        super()._handle_engage()
+        # A driving hand cannot hold (or gain) an arm engagement: its
+        # primary is masked so the parent logic sees a released button,
+        # disengages, and requires a fresh press — and with it a fresh
+        # baseline — after the steering ends. No arm jump from the
+        # distance the hand traveled while driving.
+        masked: dict[Hand, QuestControllerState] = {}
+        for hand in Hand:
+            controller = self._controllers.get(hand)
+            if controller is not None and controller.secondary and controller.primary:
+                masked[hand] = controller
+                self._controllers[hand] = dataclasses.replace(controller, primary=False)
+        try:
+            super()._handle_engage()
+        finally:
+            for hand, controller in masked.items():
+                self._controllers[hand] = controller
 
     def _should_publish(self, hand: Hand) -> bool:
+        # A hand that is driving the chassis must not stream arm targets.
+        if self._drive_held(hand):
+            return False
         return not self._estopped and super()._should_publish(hand)
+
+    # ─── Hand-gesture chassis drive ───────────────────────────────────
+
+    def _drive_held(self, hand: Hand) -> bool:
+        controller = self._controllers.get(hand)
+        return controller is not None and controller.secondary
+
+    def _gesture_axis(self, delta: float) -> float:
+        deadband = self.config.drive_gesture_deadband_m
+        span = max(1e-6, self.config.drive_gesture_full_scale_m - deadband)
+        magnitude = abs(delta)
+        if magnitude <= deadband:
+            return 0.0
+        scaled = (magnitude - deadband) / span
+        return math.copysign(min(1.0, scaled), delta)
+
+    def _gesture_deltas(self, hand: Hand, now: float) -> tuple[float, float] | None:
+        """Anchor-relative robot-frame hand displacement while driving."""
+        pose = self._current_poses.get(hand)
+        if pose is None or not self._drive_held(hand) or not self._fresh(hand, now):
+            self._drive_anchor[hand] = None
+            return None
+        anchor = self._drive_anchor[hand]
+        if anchor is None:
+            self._drive_anchor[hand] = (pose.position.x, pose.position.y)
+            return (0.0, 0.0)
+        return (pose.position.x - anchor[0], pose.position.y - anchor[1])
 
     def _chassis_twist(
         self,
@@ -192,8 +252,31 @@ class R1LiteHostedTeleopModule(R1LiteQuestTeleopModule):
         now: float,
     ) -> Twist:
         if self._estopped:
+            self._drive_anchor[Hand.LEFT] = None
+            self._drive_anchor[Hand.RIGHT] = None
             return Twist.zero()
-        return super()._chassis_twist(left, right, now)
+        # Real stick input wins whenever the client provides it.
+        for hand, controller in ((Hand.LEFT, left), (Hand.RIGHT, right)):
+            if (
+                controller is not None
+                and self._fresh(hand, now)
+                and (
+                    abs(controller.thumbstick.x) > self.config.deadzone
+                    or abs(controller.thumbstick.y) > self.config.deadzone
+                )
+            ):
+                return super()._chassis_twist(left, right, now)
+        twist = super()._chassis_twist(left, right, now)
+        left_drive = self._gesture_deltas(Hand.LEFT, now)
+        if left_drive is not None:
+            dx, dy = left_drive
+            twist.linear.x = self._gesture_axis(dx) * self.config.linear_speed
+            twist.linear.y = self._gesture_axis(dy) * self.config.linear_speed
+        right_drive = self._gesture_deltas(Hand.RIGHT, now)
+        if right_drive is not None:
+            _, dy = right_drive
+            twist.angular.z = self._gesture_axis(dy) * self.config.angular_speed
+        return twist
 
     # ─── E-STOP / operator-loss hooks ─────────────────────────────────
 

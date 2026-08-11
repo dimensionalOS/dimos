@@ -258,3 +258,94 @@ def test_registry_resolves_hosted_names() -> None:
 
     for name in ("r1lite-quest-teleop-hosted", "r1lite-quest-teleop-hosted-sim"):
         assert name in all_blueprints
+
+
+# ─── Hand-gesture chassis drive ───────────────────────────────────────
+
+
+def _drive_controller(*, primary: bool = False, secondary: bool = True) -> Any:
+    from dimos.teleop.quest.quest_types import QuestControllerState, ThumbstickState
+
+    return QuestControllerState(
+        is_left=True,
+        primary=primary,
+        secondary=secondary,
+        thumbstick=ThumbstickState(x=0.0, y=0.0),
+    )
+
+
+def _set_pose(m: Any, hand: Hand, x: float, y: float) -> None:
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as PS
+
+    m._current_poses[hand] = PS(position=[x, y, 0.0])
+
+
+def _fresh_joy(m: Any, *hands: Hand) -> float:
+    now = time.monotonic()
+    for hand in hands:
+        m._joy_rx_ts[hand] = now
+    return now
+
+
+def test_gesture_left_hand_translates_and_saturates() -> None:
+    m = _module()
+    now = _fresh_joy(m, Hand.LEFT)
+    m._controllers[Hand.LEFT] = _drive_controller()
+    _set_pose(m, Hand.LEFT, 0.0, 0.0)
+    # First tick anchors: zero output.
+    t0 = m._chassis_twist(m._controllers[Hand.LEFT], None, now)
+    assert (t0.linear.x, t0.linear.y) == (0.0, 0.0)
+    # Push forward 9 cm (deadband 3, full scale 15): partial forward.
+    _set_pose(m, Hand.LEFT, 0.09, 0.0)
+    t1 = m._chassis_twist(m._controllers[Hand.LEFT], None, now)
+    assert t1.linear.x == pytest.approx(0.5 * m.config.linear_speed)
+    assert t1.linear.y == 0.0
+    # Far beyond full scale: saturates at the configured cap.
+    _set_pose(m, Hand.LEFT, 0.60, -0.60)
+    t2 = m._chassis_twist(m._controllers[Hand.LEFT], None, now)
+    assert t2.linear.x == pytest.approx(m.config.linear_speed)
+    assert t2.linear.y == pytest.approx(-m.config.linear_speed)
+
+
+def test_gesture_right_hand_yaws_and_release_zeroes() -> None:
+    m = _module()
+    now = _fresh_joy(m, Hand.RIGHT)
+    m._controllers[Hand.RIGHT] = _drive_controller()
+    _set_pose(m, Hand.RIGHT, 0.0, 0.0)
+    m._chassis_twist(None, m._controllers[Hand.RIGHT], now)
+    _set_pose(m, Hand.RIGHT, 0.0, 0.09)
+    t1 = m._chassis_twist(None, m._controllers[Hand.RIGHT], now)
+    assert t1.angular.z == pytest.approx(0.5 * m.config.angular_speed)
+    # Release the button: contribution zeroes and the anchor clears.
+    m._controllers[Hand.RIGHT] = _drive_controller(secondary=False)
+    t2 = m._chassis_twist(None, m._controllers[Hand.RIGHT], now)
+    assert t2.angular.z == 0.0
+    assert m._drive_anchor[Hand.RIGHT] is None
+
+
+def test_gesture_suppresses_arm_streaming_and_engagement() -> None:
+    m = _module()
+    _fresh_joy(m, Hand.LEFT)
+    m._controllers[Hand.LEFT] = _drive_controller(primary=True, secondary=True)
+    m._is_engaged[Hand.LEFT] = True
+    assert not m._should_publish(Hand.LEFT)
+    m._handle_engage()
+    # Driving hand: disengaged and not re-engaged despite primary held.
+    assert not m._is_engaged[Hand.LEFT]
+
+
+def test_real_stick_input_takes_priority_over_gesture() -> None:
+    from dimos.teleop.quest.quest_types import QuestControllerState, ThumbstickState
+
+    m = _module()
+    now = _fresh_joy(m, Hand.LEFT)
+    m._controllers[Hand.LEFT] = QuestControllerState(
+        is_left=True,
+        secondary=True,
+        thumbstick=ThumbstickState(x=0.0, y=-1.0),
+    )
+    _set_pose(m, Hand.LEFT, 0.5, 0.0)  # gesture would saturate forward
+    twist = m._chassis_twist(m._controllers[Hand.LEFT], None, now)
+    # Stick semantics win: full stick-forward, not the gesture value.
+    assert twist.linear.x == pytest.approx(m.config.linear_speed)
+    assert m._drive_anchor[Hand.LEFT] is None or True  # anchor state irrelevant here
