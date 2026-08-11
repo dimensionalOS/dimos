@@ -755,6 +755,11 @@ main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
 
 
+from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
+
+main.add_typer(nav_eval_app, name="nav-eval")
+
+
 dataprep_app = typer.Typer(help="Build and inspect learning datasets from recordings")
 main.add_typer(dataprep_app, name="dataprep")
 

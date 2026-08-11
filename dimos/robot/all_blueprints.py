@@ -90,7 +90,6 @@ all_blueprints = {
     "openarm-mock-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.planner:openarm_mock_planner_coordinator",
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.planner:openarm_planner_coordinator",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
-    "path-planner-eval": "dimos.navigation.nav_3d.evaluator.blueprints:path_planner_eval",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
     "teleop-hosted-xarm6": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm6",
