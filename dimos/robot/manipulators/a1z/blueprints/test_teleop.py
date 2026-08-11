@@ -19,7 +19,10 @@ import pytest
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
+from dimos.robot.manipulators.a1z.blueprints.teleop import (
+    coordinator_teleop_a1z,
+    keyboard_teleop_a1z,
+)
 from dimos.robot.manipulators.a1z.config import a1z_hardware
 from dimos.teleop.quest.blueprints import teleop_quest_a1z
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
@@ -27,6 +30,14 @@ from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     return next(atom.kwargs for atom in blueprint.blueprints if atom.module is ControlCoordinator)
+
+
+@pytest.mark.parametrize("blueprint", [keyboard_teleop_a1z, coordinator_teleop_a1z])
+def test_gripper_joint_has_one_configured_owner(blueprint: Blueprint) -> None:
+    tasks = cast("list[TaskConfig]", _coordinator_kwargs(blueprint)["tasks"])
+    owners = [task for task in tasks if "arm/gripper" in task.joint_names]
+
+    assert [(task.name, task.type) for task in owners] == [("arm_gripper", "gripper")]
 
 
 def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:

@@ -87,7 +87,7 @@ def test_openyam_planner_blueprint_preserves_model_config() -> None:
     assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
 
 
-def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
+def test_openyam_trajectory_owns_arm_joints_but_not_gripper() -> None:
     blueprint = coordinator_openyam
     kwargs = _coordinator_kwargs(blueprint)
     assert len(kwargs["hardware"]) == 1

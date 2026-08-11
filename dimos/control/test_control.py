@@ -187,7 +187,6 @@ class TestJointStateSnapshot:
 
 class TestConnectedHardware:
     def test_gripper_rides_the_one_array_without_conversion(self, mock_adapter):
-        """GRIPPER-SPEC R25: the wrapper performs no unit conversion."""
         mock_adapter.read_joint_positions.return_value = [0.0] * 6 + [0.035]
         mock_adapter.read_joint_velocities.return_value = [0.0] * 7
         mock_adapter.read_joint_efforts.return_value = [0.0] * 7
@@ -202,10 +201,12 @@ class TestConnectedHardware:
         assert hardware.read_state()["arm/gripper"].position == pytest.approx(0.035)
 
         # Write: one call carrying arm and gripper, gripper value untouched.
-        hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
-        sent = mock_adapter.write_joint_positions.call_args.args[0]
-        assert len(sent) == 7
-        assert sent[-1] == pytest.approx(0.07)
+        assert hardware.write_command({"arm/gripper": 0.07}, ControlMode.POSITION)
+        mock_adapter.write_joint_positions.assert_called_once_with([0.0] * 6 + [0.07])
+
+        # Velocity commands use the same complete joint order and zero omitted joints.
+        assert hardware.write_command({"arm/joint1": 0.5}, ControlMode.VELOCITY)
+        mock_adapter.write_joint_velocities.assert_called_once_with([0.5] + [0.0] * 6)
 
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names

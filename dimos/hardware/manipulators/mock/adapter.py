@@ -177,7 +177,7 @@ class MockAdapter:
 
     def write_stop(self) -> bool:
         """Stop mock motion."""
-        self._velocities = [0.0] * (self._dof + self._gripper_dof)
+        self._velocities = [0.0] * self._dof
         return True
 
     def write_enable(self, enable: bool) -> bool:

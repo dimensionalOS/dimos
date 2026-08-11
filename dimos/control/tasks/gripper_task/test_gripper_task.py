@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
-
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import TaskConfig
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTask,
     GripperControlTaskConfig,
     create_task,
 )
+from dimos.hardware.manipulators.spec import JointLimits, ManipulatorAdapter
 from dimos.msgs.std_msgs.Bool import Bool
 
 
@@ -79,37 +81,36 @@ def test_bool_input_routes_through_normalized_command() -> None:
     assert output.positions == [850.0]
 
 
-def _hardware(limit_len: int = 7) -> dict[str, SimpleNamespace]:
+def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedHardware]:
     component = HardwareComponent(
         hardware_id="arm",
         hardware_type=HardwareType.MANIPULATOR,
         joints=[*make_joints("arm", 6), "arm/tool_joint"],
     )
-    adapter = SimpleNamespace(
-        get_limits=lambda: SimpleNamespace(
-            position_lower=[0.0] * limit_len,
-            position_upper=[*([3.14] * 6), 0.08][:limit_len],
-            velocity_max=[1.0] * limit_len,
-        )
+    adapter = mocker.Mock(spec=ManipulatorAdapter)
+    adapter.get_limits.return_value = JointLimits(
+        position_lower=[0.0] * limit_len,
+        position_upper=[*([3.14] * 6), 0.08][:limit_len],
+        velocity_max=[1.0] * limit_len,
     )
-    return {"arm": SimpleNamespace(component=component, adapter=adapter)}
+    return {"arm": ConnectedHardware(adapter, component)}
 
 
-def _cfg(joints: list[str]) -> SimpleNamespace:
-    return SimpleNamespace(name="tool", joint_names=joints, priority=20, params={})
+def _cfg(joints: list[str]) -> TaskConfig:
+    return TaskConfig(name="tool", type="gripper", joint_names=joints, priority=20)
 
 
-def test_limits_resolve_by_joint_name_in_all_joints() -> None:
-    task = create_task(_cfg(["arm/joint2", "arm/tool_joint"]), _hardware())
+def test_limits_resolve_by_joint_name_in_adapter_order(mocker: MockerFixture) -> None:
+    task = create_task(_cfg(["arm/joint2", "arm/tool_joint"]), _hardware(mocker))
     assert task.set_normalized([0.5, 0.5])
     output = task.compute(_state())
     assert output is not None
     assert output.positions == pytest.approx([1.57, 0.04])
 
 
-def test_limit_resolution_requires_full_adapter_arrays() -> None:
+def test_limit_resolution_requires_full_adapter_arrays(mocker: MockerFixture) -> None:
     with pytest.raises(ValueError, match="7 entries"):
-        create_task(_cfg(["arm/tool_joint"]), _hardware(limit_len=6))
+        create_task(_cfg(["arm/tool_joint"]), _hardware(mocker, limit_len=6))
 
 
 @pytest.mark.parametrize("limits", [[(0.0, 0.0)], [(float("-inf"), 1.0)]])
