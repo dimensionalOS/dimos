@@ -16,15 +16,16 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    make_gripper_joints,
     make_joints,
 )
 from dimos.core.global_config import global_config
+from dimos.hardware.manipulators.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -76,12 +77,19 @@ def make_piper_hardware(
     kwargs = _adapter_kwargs(home_joints)
     if adapter_kwargs:
         kwargs.update(adapter_kwargs)
-    gripper_joints = make_gripper_joints(hw_id) if gripper else []
+    gripper_joints = [f"{hw_id}/gripper"] if gripper else []
+    if gripper and isinstance(kwargs.get("initial_positions"), list):
+        kwargs["initial_positions"] = [*kwargs["initial_positions"], 0.0]
+    if adapter_type == "mock":
+        kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * 6), *([0.08] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
         all_joints=[*make_joints(hw_id, 6), *gripper_joints],
-        gripper_dof=len(gripper_joints),
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,

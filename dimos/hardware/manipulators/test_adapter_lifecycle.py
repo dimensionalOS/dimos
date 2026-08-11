@@ -90,7 +90,7 @@ def test_piper_explicit_stop_uses_motion_ctrl_1(piper_sdk: Any) -> None:
 def test_piper_connect_initializes_recovery_enable_zero_pose_and_gripper(
     piper_sdk: Any,
 ) -> None:
-    adapter = PiperAdapter()
+    adapter = PiperAdapter(dof=7)
 
     assert adapter.connect()
     assert piper_sdk.ConnectPort.called
@@ -141,10 +141,10 @@ def test_piper_connect_joint_failure_cleans_up_without_gripper(
 
 def test_piper_gripper_uses_sdk_units_and_clamps(piper_sdk: Any) -> None:
     """The gripper is the trailing entry of the joint array, in metres."""
-    adapter = _LifecyclePiperAdapter(gripper_dof=1)
+    adapter = _LifecyclePiperAdapter(dof=7)
     adapter.use_sdk(piper_sdk)
 
-    assert adapter.get_gripper_dof() == 1
+    assert adapter.get_dof() == 7
     assert adapter.get_limits().position_upper[-1] == 0.08  # metres, declared
 
     # 0.1 m exceeds the 0.08 m stroke and clamps at the SDK boundary.

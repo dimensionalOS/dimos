@@ -65,14 +65,13 @@ def xarm_hardware(monkeypatch: pytest.MonkeyPatch) -> tuple[ConnectedHardware, _
 
     monkeypatch.setattr(xarm_adapter, "XArmAPI", _FakeXArmSDK)
 
-    adapter = xarm_adapter.XArmAdapter(address="127.0.0.1", dof=7, gripper_dof=1)
+    adapter = xarm_adapter.XArmAdapter(address="127.0.0.1", dof=8, arm_dof=7)
     assert adapter.connect()
 
     component = HardwareComponent(
         hardware_id="arm",
         hardware_type=HardwareType.MANIPULATOR,
         all_joints=[*make_joints("arm", 7), "arm/gripper"],
-        gripper_dof=1,
         adapter_type="xarm",
     )
     return ConnectedHardware(adapter, component), adapter._arm
@@ -117,17 +116,16 @@ class TestSection35Regression:
 
 class TestArrayShapeAcrossAdapters:
     @pytest.mark.parametrize("name", _LOCAL_ADAPTERS)
-    @pytest.mark.parametrize("gripper_dof", [0, 1])
-    def test_array_lengths_agree(self, name: str, gripper_dof: int) -> None:
-        """Reads and limits cover all joints; get_dof() is arm-only."""
+    @pytest.mark.parametrize("dof", [6, 7])
+    def test_array_lengths_agree(self, name: str, dof: int) -> None:
+        """Reads and limits cover the total configured joint count."""
         from dimos.hardware.manipulators.registry import adapter_registry
 
-        adapter = adapter_registry.create(name, dof=6, gripper_dof=gripper_dof)
+        adapter = adapter_registry.create(name, dof=dof)
         adapter.connect()
-        total = 6 + gripper_dof
+        total = dof
 
-        assert adapter.get_dof() == 6, "get_dof() must stay arm-only (R8)"
-        assert adapter.get_gripper_dof() == gripper_dof
+        assert adapter.get_dof() == total
 
         assert len(adapter.read_joint_positions()) == total
         assert len(adapter.read_joint_velocities()) == total, "reads stay index-aligned"
@@ -142,7 +140,7 @@ class TestArrayShapeAcrossAdapters:
     def test_deleted_scalar_gripper_api_is_gone(self, name: str) -> None:
         from dimos.hardware.manipulators.registry import adapter_registry
 
-        adapter = adapter_registry.create(name, dof=6, gripper_dof=1)
+        adapter = adapter_registry.create(name, dof=7)
         assert not hasattr(adapter, "read_gripper_position")
         assert not hasattr(adapter, "write_gripper_position")
 
@@ -156,7 +154,6 @@ class TestArrayShapeAcrossAdapters:
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
             all_joints=[*make_joints("arm", 6), "arm/gripper"],
-            gripper_dof=1,
         )
         hardware = ConnectedHardware(adapter, component)
 

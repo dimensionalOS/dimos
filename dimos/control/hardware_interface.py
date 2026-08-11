@@ -134,20 +134,26 @@ class ConnectedHardware:
         Returns:
             True if command was sent successfully
         """
-        # Initialize on first write if needed
-        if not self._initialized:
+        if mode != ControlMode.VELOCITY and not self._initialized:
             self._initialize_last_commanded()
 
-        # Update last commanded for joints we received
-        for joint_name, value in commands.items():
-            if joint_name in self._joint_names:
-                self._last_commanded[joint_name] = value
-            elif joint_name not in self._warned_unknown_joints:
-                logger.warning(
-                    f"Hardware {self.hardware_id} received command for unknown joint "
-                    f"{joint_name}. Valid joints: {self._joint_names}"
-                )
-                self._warned_unknown_joints.add(joint_name)
+        unknown = set(commands) - set(self._joint_names)
+        for joint_name in unknown - self._warned_unknown_joints:
+            logger.warning(
+                "Hardware received command for unknown joint",
+                hardware_id=self.hardware_id,
+                joint_name=joint_name,
+                valid_joints=self._joint_names,
+            )
+        self._warned_unknown_joints.update(unknown)
+
+        if mode == ControlMode.VELOCITY:
+            ordered = [commands.get(name, 0.0) for name in self._joint_names]
+        else:
+            for joint_name, value in commands.items():
+                if joint_name in self._joint_names:
+                    self._last_commanded[joint_name] = value
+            ordered = self._build_ordered_command()
 
         # Switch control mode if needed
         if mode != self._current_mode:
@@ -158,9 +164,9 @@ class ConnectedHardware:
 
         match mode:
             case ControlMode.POSITION | ControlMode.SERVO_POSITION:
-                return self._adapter.write_joint_positions(self._build_ordered_command())
+                return self._adapter.write_joint_positions(ordered)
             case ControlMode.VELOCITY:
-                return self._adapter.write_joint_velocities(self._build_ordered_command())
+                return self._adapter.write_joint_velocities(ordered)
             case ControlMode.TORQUE:
                 logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
                 return False

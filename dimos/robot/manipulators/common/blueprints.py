@@ -54,6 +54,7 @@ class PinkControlIKOverrides(TypedDict, total=False):
 def trajectory_task(
     hardware: HardwareComponent,
     *additional_hardware: HardwareComponent,
+    joint_names: Sequence[str] | None = None,
     name: str | None = None,
     priority: int = 10,
     start_position_tolerance: float = 0.05,
@@ -67,9 +68,9 @@ def trajectory_task(
             else DEFAULT_TRAJECTORY_TASK_NAME
         ),
         type="trajectory",
-        joint_names=[
-            joint_name for component in hardware_components for joint_name in component.arm_joints
-        ],
+        joint_names=list(joint_names)
+        if joint_names is not None
+        else [joint for component in hardware_components for joint in component.all_joints],
         priority=priority,
         params={"start_position_tolerance": start_position_tolerance},
     )
@@ -81,7 +82,7 @@ def _resolve_control_ik(
     control_ik: PinkControlIKOverrides | None,
 ) -> dict[str, Any]:
     coordinator_joints = robot_model.get_coordinator_joint_names()
-    if hardware.arm_joints != coordinator_joints:
+    if not set(coordinator_joints) <= set(hardware.all_joints):
         raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
     payload = dict(control_ik or {})
     payload["robot_model"] = robot_model
@@ -105,7 +106,7 @@ def cartesian_ik_task(
     return TaskConfig(
         name=name,
         type="cartesian_ik",
-        joint_names=hardware.arm_joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params={
             "control_ik": resolved_control_ik,
@@ -143,7 +144,7 @@ def eef_twist_task(
     return TaskConfig(
         name=name,
         type="eef_twist",
-        joint_names=hardware.arm_joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params=task_params,
     )
@@ -176,7 +177,7 @@ def teleop_ik_task(
     return TaskConfig(
         name=name,
         type="teleop_ik",
-        joint_names=hardware.arm_joints,
+        joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params=task_params,
     )

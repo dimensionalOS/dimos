@@ -45,10 +45,14 @@ keyboard_teleop_a1z = autoconnect(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=_a1z_keyboard_hw.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
             ),
-            trajectory_task(_a1z_keyboard_hw, priority=20),
+            trajectory_task(
+                _a1z_keyboard_hw,
+                joint_names=_a1z_model.get_coordinator_joint_names(),
+                priority=20,
+            ),
         ],
     ),
     ManipulationModule.blueprint(
@@ -76,11 +80,14 @@ coordinator_teleop_a1z = autoconnect(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=_a1z_quest_hw.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
                 params={"hand": "left"},
             ),
-            trajectory_task(_a1z_quest_hw),
+            trajectory_task(
+                _a1z_quest_hw,
+                joint_names=_a1z_quest_model.get_coordinator_joint_names(),
+            ),
         ],
     ),
     ManipulationModule.blueprint(

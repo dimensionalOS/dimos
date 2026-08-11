@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import attrs
@@ -23,7 +24,6 @@ import attrs
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    make_gripper_joints,
     make_joints,
 )
 from dimos.core.global_config import global_config
@@ -31,6 +31,7 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
     A1ZConfig,
     A1ZGripperConfig,
 )
+from dimos.hardware.manipulators.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -59,34 +60,38 @@ A1Z_PACKAGE_PATHS: dict[str, Path] = {
 def a1z_hardware(
     hw_id: str = "arm",
     *,
-    has_gripper: bool = True,
     dynamics_urdf_path: Path | None = None,
     adapter_config: A1ZConfig | None = None,
 ) -> HardwareComponent:
     """Configure mock A1Z hardware unless an explicit CAN port selects the real adapter."""
+    resolved_config = adapter_config or A1ZConfig(gripper=A1ZGripperConfig())
+    gripper = resolved_config.gripper
     adapter_type = "mock"
     address = None
     adapter_kwargs: dict[str, object] = {}
     if not global_config.simulation and global_config.can_port:
         adapter_type = "galaxea_a1z"
         address = global_config.can_port
-        resolved_config = adapter_config or A1ZConfig(
-            gripper=A1ZGripperConfig() if has_gripper else None,
-        )
-        if (resolved_config.gripper is not None) != has_gripper:
-            raise ValueError("has_gripper must match adapter_config.gripper")
         if dynamics_urdf_path is not None:
             # Preserve LfsPath laziness: the adapter resolves the model only when
             # connect() constructs the vendor robot.
             resolved_config = attrs.evolve(resolved_config, urdf_path=dynamics_urdf_path)
         adapter_kwargs["config"] = resolved_config
 
-    gripper_joints = make_gripper_joints(hw_id) if has_gripper else []
+    gripper_joints = [f"{hw_id}/gripper"] if gripper is not None else []
+    if adapter_type == "mock":
+        adapter_kwargs["limits"] = JointLimits(
+            position_lower=[*([-math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
+            position_upper=[
+                *([math.pi] * A1Z_DOF),
+                *([gripper.max_opening_m] if gripper is not None else []),
+            ],
+            velocity_max=[*([math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
         all_joints=[*make_joints(hw_id, A1Z_DOF), *gripper_joints],
-        gripper_dof=len(gripper_joints),
         adapter_type=adapter_type,
         address=address,
         auto_enable=True,

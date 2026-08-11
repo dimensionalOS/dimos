@@ -195,7 +195,6 @@ class TestConnectedHardware:
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
             all_joints=[*make_joints("arm", 6), "arm/gripper"],
-            gripper_dof=1,
         )
         hardware = ConnectedHardware(mock_adapter, component)
 

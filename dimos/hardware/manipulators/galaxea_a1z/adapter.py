@@ -139,19 +139,18 @@ class GalaxeaA1ZAdapter:
         address: str = "a1zcan",
         *,
         config: A1ZConfig | None = None,
-        gripper_dof: int = 0,
+        dof: int = _A1Z_DOF,
     ) -> None:
         if not address:
             raise ValueError("A1Z CAN interface must not be empty")
-        if gripper_dof not in (0, 1):
-            raise ValueError(f"A1Z supports 0 or 1 gripper joints (got {gripper_dof})")
         self._config = config or A1ZConfig()
-        if gripper_dof and self._config.gripper is None:
+        expected_dof = _A1Z_DOF + int(self._config.gripper is not None)
+        if dof != expected_dof:
             raise ValueError(
-                "A1Z was given gripper_dof=1 but no gripper in its adapter config; "
-                "the gripper's travel comes from config.gripper.max_opening_m"
+                f"A1Z joint count must match its device configuration (got {dof}, expected {expected_dof})"
             )
-        self._gripper_dof = gripper_dof
+        self._dof = dof
+        self._gripper_dof = dof - _A1Z_DOF
         self._can_channel = address
         self._transport: Literal["gs_usb", "socketcan"] = (
             "gs_usb" if platform.system() == "Darwin" else "socketcan"
@@ -246,15 +245,11 @@ class GalaxeaA1ZAdapter:
 
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info."""
-        return ManipulatorInfo(vendor="Galaxea", model="A1Z", dof=_A1Z_DOF)
+        return ManipulatorInfo(vendor="Galaxea", model="A1Z", dof=self._dof)
 
     def get_dof(self) -> int:
-        """Arm joints only."""
-        return _A1Z_DOF
-
-    def get_gripper_dof(self) -> int:
-        """1 when a gripper is fitted, else 0."""
-        return self._gripper_dof
+        """Total joints owned by this adapter."""
+        return self._dof
 
     def get_limits(self) -> JointLimits:
         """Arm limits in radians, then the gripper's jaw opening in metres."""
@@ -349,6 +344,8 @@ class GalaxeaA1ZAdapter:
             velocity: Speed as fraction of max planned speed (0-1)
         """
         if not self._connected or not self._robot.is_running or self._robot.is_estopped:
+            return False
+        if len(positions) != self._dof:
             return False
 
         arm = positions[:_A1Z_DOF]
@@ -764,8 +761,8 @@ def create_galaxea_a1z_adapter(
     *,
     address: str | None = None,
     config: A1ZConfig | None = None,
-    gripper_dof: int = 0,
+    dof: int = _A1Z_DOF,
     **_: object,
 ) -> GalaxeaA1ZAdapter:
     """Create the fixed six-axis A1Z adapter from coordinator metadata."""
-    return GalaxeaA1ZAdapter(address=address or "a1zcan", config=config, gripper_dof=gripper_dof)
+    return GalaxeaA1ZAdapter(address=address or "a1zcan", config=config, dof=dof)

@@ -287,8 +287,7 @@ class ControlCoordinator(Module):
 
         return adapter_registry.create(
             component.adapter_type,
-            dof=len(component.arm_joints),
-            gripper_dof=component.gripper_dof,
+            dof=len(component.all_joints),
             address=component.address,
             hardware_id=component.hardware_id,
             **component.adapter_kwargs,

@@ -23,6 +23,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tasks.registry import control_task_registry
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
+from dimos.hardware.manipulators.spec import JointLimits
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
@@ -58,9 +59,12 @@ def _fake_hardware(components) -> dict[str, ConnectedHardware]:
     hardware = {}
     for component in components:
         adapter = MockAdapter(
-            dof=len(component.arm_joints),
-            gripper_dof=component.gripper_dof,
-            gripper_limits=(0.0, 0.08),
+            dof=len(component.all_joints),
+            limits=JointLimits(
+                position_lower=[-3.14] * (len(component.all_joints) - 1) + [0.0],
+                position_upper=[3.14] * (len(component.all_joints) - 1) + [0.08],
+                velocity_max=[1.0] * len(component.all_joints),
+            ),
         )
         adapter.connect()
         hardware[component.hardware_id] = ConnectedHardware(adapter, component)
@@ -73,7 +77,9 @@ def test_no_task_config_declares_a_gripper_joint_but_the_gripper_task(
 ) -> None:
     """Static half: every blueprint, including ones whose tasks need assets."""
     kwargs = _coordinator_kwargs(_blueprint(module, name))
-    gripper_joints = {j for c in kwargs["hardware"] for j in c.gripper_joints}
+    gripper_joints = {
+        joint for cfg in kwargs["tasks"] if cfg.type == "gripper" for joint in cfg.joint_names
+    }
     if not gripper_joints:
         pytest.skip(f"{name} has no gripper")
 
@@ -91,7 +97,9 @@ def test_gripper_joints_have_exactly_one_runtime_claimant(module: str, name: str
     """Runtime half: unbuildable tasks must be structurally unable to claim."""
     kwargs = _coordinator_kwargs(_blueprint(module, name))
     components = kwargs["hardware"]
-    gripper_joints = {j for c in components for j in c.gripper_joints}
+    gripper_joints = {
+        joint for cfg in kwargs["tasks"] if cfg.type == "gripper" for joint in cfg.joint_names
+    }
     if not gripper_joints:
         pytest.skip(f"{name} has no gripper")
 
@@ -185,7 +193,7 @@ class TestTheOldPathsAreGone:
         members = dict(inspect.getmembers(ManipulatorAdapter))
         assert "read_gripper_position" not in members
         assert "write_gripper_position" not in members
-        assert "get_gripper_dof" in members
+        assert "get_gripper_dof" not in members
 
 
 class TestSkillRoundTrip:
@@ -199,16 +207,22 @@ class TestSkillRoundTrip:
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
             all_joints=[*make_joints("arm", 6), "arm/gripper"],
-            gripper_dof=1,
         )
-        adapter = MockAdapter(dof=6, gripper_dof=1, gripper_limits=(0.0, 0.08))
+        adapter = MockAdapter(
+            dof=7,
+            limits=JointLimits(
+                position_lower=[-3.14] * 6 + [0.0],
+                position_upper=[3.14] * 6 + [0.08],
+                velocity_max=[1.0] * 7,
+            ),
+        )
         adapter.connect()
         hardware = ConnectedHardware(adapter, component)
         task = create_task(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=component.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
             ),
             {"arm": hardware},
@@ -231,19 +245,16 @@ class TestSkillRoundTrip:
     @pytest.mark.parametrize("fraction", [0.0, 0.25, 0.5, 1.0])
     def test_normalized_in_normalized_out(self, fraction: float) -> None:
         task, hardware, _ = self._wired()
-        lo, hi = task.get_state()["limits"][0]
-
         task.set_normalized([fraction], t_now=0.0)
         native = self._apply(task, hardware)
 
-        # What ManipulationModule.get_gripper() computes from the stream.
-        assert (native - lo) / (hi - lo) == pytest.approx(fraction)
+        assert native / 0.08 == pytest.approx(fraction)
 
     def test_open_and_close_land_on_the_sweep_endpoints(self) -> None:
         task, hardware, _ = self._wired()
 
-        task.set_sweep(0.0, t_now=0.0)  # close_gripper()
+        task.set_normalized([0.0], t_now=0.0)
         assert self._apply(task, hardware) == pytest.approx(0.0)
 
-        task.set_sweep(1.0, t_now=0.0)  # open_gripper()
+        task.set_normalized([1.0], t_now=0.0)
         assert self._apply(task, hardware) == pytest.approx(0.08)

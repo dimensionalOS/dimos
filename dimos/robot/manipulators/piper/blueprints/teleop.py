@@ -57,10 +57,13 @@ keyboard_teleop_piper = autoconnect(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=_piper_keyboard_hw.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
             ),
-            trajectory_task(_piper_keyboard_hw),
+            trajectory_task(
+                _piper_keyboard_hw,
+                joint_names=_piper_model.get_coordinator_joint_names(),
+            ),
         ],
     ),
     ManipulationModule.blueprint(
@@ -101,18 +104,21 @@ coordinator_teleop_piper = autoconnect(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=_piper_teleop_hw.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
                 params={"hand": "left"},
             ),
-            trajectory_task(_piper_teleop_hw),
+            trajectory_task(
+                _piper_teleop_hw,
+                joint_names=_piper_model.get_coordinator_joint_names(),
+            ),
         ],
     ),
     ManipulationModule.blueprint(
         robots=[_piper_model],
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.arm_joints)),
+    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_model.joint_names)),
 )
 
 _piper_cartesian_hw = make_piper_hardware(

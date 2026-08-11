@@ -19,6 +19,7 @@ from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tasks.gripper_task.gripper_task import create_task
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.manipulators.mock.adapter import MockAdapter
+from dimos.hardware.manipulators.spec import JointLimits
 from dimos.msgs.std_msgs.Bool import Bool
 
 _KEYBOARD_BLUEPRINTS = ["a1z", "piper"]
@@ -48,13 +49,13 @@ class TestBothKeyboardBlueprintsMigrated:
         gripper = [t for t in tasks if t.type == "gripper"]
         assert len(gripper) == 1, f"{name}: expected exactly one gripper task"
         assert gripper[0].name == "arm_gripper"
-        assert gripper[0].joint_names == hardware.gripper_joints == ["arm/gripper"]
+        assert gripper[0].joint_names == ["arm/gripper"]
+        assert set(gripper[0].joint_names) <= set(hardware.all_joints)
 
     @pytest.mark.parametrize("name", _KEYBOARD_BLUEPRINTS)
     def test_no_servo_task_claims_a_gripper_joint(self, name: str) -> None:
         kwargs = _coordinator_kwargs(_load(name))
-        hardware = kwargs["hardware"][0]
-        gripper_joints = set(hardware.gripper_joints)
+        gripper_joints = {"arm/gripper"}
 
         for task in cast("list[TaskConfig]", kwargs["tasks"]):
             if task.type == "gripper":
@@ -67,9 +68,7 @@ class TestBothKeyboardBlueprintsMigrated:
     @pytest.mark.parametrize("name", _KEYBOARD_BLUEPRINTS)
     def test_gripper_joint_has_exactly_one_claimant(self, name: str) -> None:
         kwargs = _coordinator_kwargs(_load(name))
-        hardware = kwargs["hardware"][0]
-
-        for joint in hardware.gripper_joints:
+        for joint in ["arm/gripper"]:
             claimants = [t.name for t in kwargs["tasks"] if joint in t.joint_names]
             assert claimants == ["arm_gripper"], f"{name}: {joint} claimed by {claimants}"
 
@@ -83,10 +82,16 @@ class TestKeyboardReachesTheAdapter:
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
             all_joints=[*make_joints("arm", 6), "arm/gripper"],
-            gripper_dof=1,
             adapter_type="mock",
         )
-        adapter = MockAdapter(dof=6, gripper_dof=1, gripper_limits=(0.0, 0.08))
+        adapter = MockAdapter(
+            dof=7,
+            limits=JointLimits(
+                position_lower=[-3.14] * 6 + [0.0],
+                position_upper=[3.14] * 6 + [0.08],
+                velocity_max=[1.0] * 7,
+            ),
+        )
         adapter.connect()
         hardware = ConnectedHardware(adapter, component)
 
@@ -94,7 +99,7 @@ class TestKeyboardReachesTheAdapter:
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=component.gripper_joints,
+                joint_names=["arm/gripper"],
                 priority=20,
             ),
             {"arm": hardware},
@@ -134,10 +139,6 @@ class TestKeyboardReachesTheAdapter:
 
         assert task.get_position() == [pytest.approx(0.042)]
         assert state.joints.get_position("arm/gripper") == pytest.approx(0.042)
-
-    def test_the_task_resolved_its_range_from_the_adapter(self, wired: Any) -> None:
-        task, _hardware, _adapter = wired
-        assert task.get_state()["limits"] == [(0.0, 0.08)]
 
 
 def _snapshot(hardware: ConnectedHardware) -> Any:

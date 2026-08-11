@@ -76,16 +76,16 @@ class PiperAdapter(ManipulatorAdapter):
         address: str = "can0",
         dof: int = 6,
         gripper_speed: int = DEFAULT_GRIPPER_SPEED,
-        gripper_dof: int = 0,
         **_: object,
     ) -> None:
-        if dof != 6:
-            raise ValueError(f"PiperAdapter only supports 6 DOF (got {dof})")
-        if gripper_dof not in (0, 1):
-            raise ValueError(f"PiperAdapter supports 0 or 1 gripper joints (got {gripper_dof})")
+        if dof not in (6, 7):
+            raise ValueError(
+                f"PiperAdapter supports 6 arm joints and one optional joint (got {dof})"
+            )
         self._can_port = address
         self._dof = dof
-        self._gripper_dof = gripper_dof
+        self._arm_dof = 6
+        self._gripper_dof = dof - self._arm_dof
         self._gripper_speed = gripper_speed
         self._sdk: C_PiperInterface_V2 | None = None
         self._connected: bool = False
@@ -151,11 +151,12 @@ class PiperAdapter(ManipulatorAdapter):
             logger.exception("Failed to command Piper startup zero pose")
             return False
 
-        try:
-            sdk.GripperCtrl(0, DEFAULT_GRIPPER_SPEED, 0x01, 0)
-            self._gripper_initialized = True
-        except Exception:
-            logger.warning("Piper gripper startup command failed; continuing arm startup")
+        if self._gripper_dof:
+            try:
+                sdk.GripperCtrl(0, DEFAULT_GRIPPER_SPEED, 0x01, 0)
+                self._gripper_initialized = True
+            except Exception:
+                logger.warning("Piper gripper startup command failed; continuing arm startup")
 
         time.sleep(STARTUP_ZERO_WAIT)
         return True
@@ -282,19 +283,15 @@ class PiperAdapter(ManipulatorAdapter):
         )
 
     def get_dof(self) -> int:
-        """Arm joints only."""
+        """Total joints owned by this adapter."""
         return self._dof
-
-    def get_gripper_dof(self) -> int:
-        """1 when a gripper is fitted, else 0."""
-        return self._gripper_dof
 
     def get_limits(self) -> JointLimits:
         """Arm limits in radians, then the gripper's jaw opening in metres."""
         # Piper joint limits (approximate, in radians)
         lower = [-3.14, -2.35, -2.35, -3.14, -2.35, -3.14]
         upper = [3.14, 2.35, 2.35, 3.14, 2.35, 3.14]
-        max_vel = [math.pi] * self._dof  # ~180 deg/s
+        max_vel = [math.pi] * self._arm_dof  # ~180 deg/s
 
         return JointLimits(
             position_lower=lower + [0.0] * self._gripper_dof,
@@ -358,14 +355,14 @@ class PiperAdapter(ManipulatorAdapter):
         Note: Piper doesn't provide real-time velocity feedback.
         Returns zeros. For velocity estimation, use finite differences.
         """
-        return [0.0] * (self._dof + self._gripper_dof)
+        return [0.0] * self._dof
 
     def read_joint_efforts(self) -> list[float]:
         """Read joint efforts/torques.
 
         Note: Piper doesn't provide torque feedback by default.
         """
-        return [0.0] * (self._dof + self._gripper_dof)
+        return [0.0] * self._dof
 
     def read_state(self) -> dict[str, int]:
         """Read robot state."""
@@ -430,8 +427,10 @@ class PiperAdapter(ManipulatorAdapter):
         """
         if not self._sdk:
             return False
+        if len(positions) != self._dof:
+            return False
 
-        arm, grip = positions[: self._dof], positions[self._dof :]
+        arm, grip = positions[: self._arm_dof], positions[self._arm_dof :]
 
         # Convert radians to Piper units (0.001 degrees)
         piper_joints = [round(rad * RAD_TO_MILLIDEG) for rad in arm]

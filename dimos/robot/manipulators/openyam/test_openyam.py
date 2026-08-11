@@ -55,21 +55,22 @@ def test_openyam_mock_hardware_has_gripper() -> None:
     hardware = make_openyam_hardware("arm")
 
     assert hardware.adapter_type == "mock"
-    assert hardware.arm_joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert hardware.gripper_joints == ["arm/gripper"]
+    assert hardware.all_joints == [
+        *[f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)],
+        "arm/gripper",
+    ]
 
 
 def test_openyam_mock_adapter_set_get_behavior() -> None:
     positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    adapter = MockAdapter(dof=OPENYAM_DOF, gripper_dof=1, initial_positions=positions)
+    adapter = MockAdapter(dof=OPENYAM_DOF + 1, initial_positions=[*positions, 0.0])
 
     # The array covers arm + gripper; an arm-length seed pads the gripper.
     assert adapter.read_joint_positions() == [*positions, 0.0]
     updated = [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6, 0.25]
     assert adapter.write_joint_positions(updated)
     assert adapter.read_joint_positions() == updated
-    assert adapter.get_dof() == OPENYAM_DOF  # arm only
-    assert adapter.get_gripper_dof() == 1
+    assert adapter.get_dof() == OPENYAM_DOF + 1
 
 
 def test_openyam_planner_blueprint_preserves_model_config() -> None:
@@ -90,5 +91,5 @@ def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
     blueprint = coordinator_openyam
     kwargs = _coordinator_kwargs(blueprint)
     assert len(kwargs["hardware"]) == 1
-    assert len(kwargs["hardware"][0].arm_joints) == OPENYAM_DOF
-    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].arm_joints
+    assert len(kwargs["hardware"][0].all_joints) == OPENYAM_DOF + 1
+    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].all_joints[:-1]

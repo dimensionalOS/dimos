@@ -53,7 +53,12 @@ xarm7_planner_coordinator = autoconnect(
     planner(robots=[make_xarm7_model_config(name="arm", add_gripper=True)]),
     coordinator(
         hardware=[_xarm7_hw],
-        tasks=[trajectory_task(_xarm7_hw)],
+        tasks=[
+            trajectory_task(
+                _xarm7_hw,
+                joint_names=_xarm7_model.get_coordinator_joint_names(),
+            )
+        ],
     ),
 )
 
@@ -64,7 +69,7 @@ coordinator_xarm7 = autoconnect(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.arm_joints)),
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
@@ -74,7 +79,7 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw)],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.arm_joints)),
+    *mujoco_if_sim(XARM6_SIM_PATH, 6),
 )
 
 _xarm7_left = xarm7_hardware("left_arm")
@@ -86,7 +91,7 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=[*_xarm7_left.arm_joints, *_xarm6_right.arm_joints],
+            joint_names=[*_xarm7_left.all_joints, *_xarm6_right.all_joints],
             priority=10,
         ),
     ],

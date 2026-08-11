@@ -43,18 +43,20 @@ class A750Adapter:
         self,
         address: str = "/dev/ttyACM0",
         dof: int = 6,
-        gripper_dof: int = 0,
         initial_positions: list[float] | None = None,
         **_: object,
     ) -> None:
-        if dof != 6:
-            raise ValueError(f"A750Adapter only supports 6 DOF (got {dof})")
-        if gripper_dof not in (0, 1):
-            raise ValueError(f"A750Adapter supports 0 or 1 gripper joints (got {gripper_dof})")
+        if dof not in (6, 7):
+            raise ValueError(
+                f"A750Adapter supports 6 arm joints and one optional joint (got {dof})"
+            )
         self._device_path = address or "/dev/ttyACM0"
         self._dof = dof
-        self._gripper_dof = gripper_dof
+        self._arm_dof = 6
+        self._gripper_dof = dof - self._arm_dof
         self._positions = list(initial_positions) if initial_positions is not None else [0.0] * dof
+        if len(self._positions) != dof:
+            raise ValueError(f"A750Adapter initial_positions must contain {dof} entries")
         self._connected = False
         self._enabled = False
         self._control_mode = ControlMode.POSITION
@@ -113,13 +115,9 @@ class A750Adapter:
         return ManipulatorInfo(vendor="Dobkin", model="A-750", dof=self._dof)
 
     def get_dof(self) -> int:
-        """Arm joints only."""
+        """Total joints owned by this adapter."""
         self._trace("get_dof")
         return self._dof
-
-    def get_gripper_dof(self) -> int:
-        """1 when a gripper is fitted, else 0."""
-        return self._gripper_dof
 
     def get_limits(self) -> JointLimits:
         """Arm limits in radians, then the gripper's finger travel in metres.
@@ -129,9 +127,9 @@ class A750Adapter:
         """
         self._trace("get_limits")
         return JointLimits(
-            position_lower=[-math.pi] * self._dof + [0.0] * self._gripper_dof,
-            position_upper=[math.pi] * self._dof + [GRIPPER_MAX_OPENING_M] * self._gripper_dof,
-            velocity_max=[math.pi] * self._dof + [0.0] * self._gripper_dof,
+            position_lower=[-math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
+            position_upper=[math.pi] * self._arm_dof + [GRIPPER_MAX_OPENING_M] * self._gripper_dof,
+            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -215,19 +213,20 @@ class A750Adapter:
         velocity: float = 1.0,
     ) -> bool:
         """Command every joint this adapter owns, gripper last (metres)."""
-        assert len(positions) == self._dof + self._gripper_dof
+        if len(positions) != self._dof:
+            return False
 
         if not self._enabled:
             return False
 
-        arm, grip = positions[: self._dof], positions[self._dof :]
+        arm, grip = positions[: self._arm_dof], positions[self._arm_dof :]
         self._robot.command_joint_positions(arm, velocity)
         return self._write_gripper(grip[0]) if grip else True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command joint velocities; the gripper entry is ignored."""
+        """Reject velocity commands; this scaffold has no velocity interface."""
         self._trace("write_joint_velocities", velocities=velocities)
-        return self._connected and len(velocities) == self._dof + self._gripper_dof
+        return False
 
     def write_stop(self) -> bool:
         """Stop all motion."""

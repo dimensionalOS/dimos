@@ -34,7 +34,7 @@ coordinator_mock = ControlCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=_mock_hw.arm_joints,
+            joint_names=_mock_hw.all_joints,
             priority=10,
         )
     ],
@@ -67,7 +67,7 @@ coordinator_dual_mock = _DualMockCoordinator.blueprint(
         TaskConfig(
             name="traj_arm",
             type="trajectory",
-            joint_names=[*_mock_left.arm_joints, *_mock_right.arm_joints],
+            joint_names=[*_mock_left.all_joints, *_mock_right.all_joints],
             priority=10,
         ),
     ],

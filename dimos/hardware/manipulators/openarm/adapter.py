@@ -220,10 +220,6 @@ class OpenArmAdapter:
     def get_dof(self) -> int:
         return self._dof
 
-    def get_gripper_dof(self) -> int:
-        """OpenArm ships no gripper."""
-        return 0
-
     def get_limits(self) -> JointLimits:
         if self._side == "left":
             lower, upper = _V10_POS_LOWER_LEFT, _V10_POS_UPPER_LEFT

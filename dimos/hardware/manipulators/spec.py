@@ -55,7 +55,7 @@ class ControlMode(Enum):
 
 @dataclass
 class ManipulatorInfo:
-    """Information about the manipulator."""
+    """Manipulator information; ``dof`` is the total owned joint count."""
 
     vendor: str
     model: str
@@ -66,19 +66,7 @@ class ManipulatorInfo:
 
 @dataclass
 class JointLimits:
-    """Limits for every joint the adapter owns, gripper entries trailing.
-
-    Entries follow the adapter's array order (see ``write_joint_positions``),
-    so the length is ``get_dof() + get_gripper_dof()`` — deliberately *not*
-    ``get_dof()``, which stays arm-only.
-
-    Arm entries are radians and rad/s. A gripper entry is in whatever unit
-    that gripper's adapter actually speaks: metres for a sliding jaw, radians
-    for a rotating knuckle, or the vendor's own scale where the SDK is
-    dimensionless (the xArm's ``0-850``). This is the single authoritative
-    declaration of a gripper's travel — nothing above the hardware layer may
-    hard-code an endpoint.
-    """
+    """Limits in the adapter's complete joint-array order."""
 
     position_lower: list[float]
     position_upper: list[float]
@@ -97,12 +85,8 @@ def default_base_transform() -> Transform:
 class ManipulatorAdapter(Protocol):
     """Protocol for hardware-specific IO.
 
-    Implement this per vendor SDK. All methods use SI units:
-    - Angles: radians
-    - Angular velocity: rad/s
-    - Torque: Nm
-    - Position: meters
-    - Force: Newtons
+    Rotational joints use radians and linear joints use metres where the SDK
+    exposes physical units. Vendor-native scales are declared by JointLimits.
     """
 
     def connect(self) -> bool:
@@ -130,24 +114,11 @@ class ManipulatorAdapter(Protocol):
         ...
 
     def get_dof(self) -> int:
-        """Get degrees of freedom — **arm joints only**.
-
-        A caller wanting the total adds ``get_gripper_dof()``. This is
-        therefore not the length of ``get_limits()`` or of the joint arrays,
-        which cover every joint.
-        """
-        ...
-
-    def get_gripper_dof(self) -> int:
-        """How many trailing joints are the gripper. 0 when there is none.
-
-        Supplied at construction from the component's ``gripper_dof``; an
-        adapter never infers it from an array length.
-        """
+        """Get the total number of joints owned by this adapter."""
         ...
 
     def get_limits(self) -> JointLimits:
-        """Limits for every joint this adapter owns, gripper entries last."""
+        """Limits for every joint this adapter owns, in adapter order."""
         ...
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -207,17 +178,13 @@ class ManipulatorAdapter(Protocol):
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Command all joints, gripper entries trailing in their declared units.
-
-        Adapters must not rescale the gripper entry. Returns success.
-        """
+        """Command all joints in adapter order and units. Returns success."""
         ...
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command velocities for all joints, gripper last. Returns success.
+        """Command velocities for all joints in adapter order.
 
-        Adapters without gripper velocity control ignore or refuse the
-        trailing entries.
+        Unsupported entries may be ignored only when zero.
         """
         ...
 

@@ -21,9 +21,9 @@ from pathlib import Path
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    make_gripper_joints,
     make_joints,
 )
+from dimos.hardware.manipulators.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators._modeling import (
@@ -48,12 +48,16 @@ def make_openyam_hardware(
     """Create OpenYAM hardware, defaulting to the generic mock adapter."""
     adapter_kwargs: dict[str, object] = {}
     if home_joints is not None:
-        adapter_kwargs["initial_positions"] = home_joints
+        adapter_kwargs["initial_positions"] = [*home_joints, 0.0]
+    adapter_kwargs["limits"] = JointLimits(
+        position_lower=[*([-3.14] * OPENYAM_DOF), 0.0],
+        position_upper=[*([3.14] * OPENYAM_DOF), 1.0],
+        velocity_max=[*([1.0] * OPENYAM_DOF), 0.0],
+    )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        all_joints=[*make_joints(hw_id, OPENYAM_DOF), *make_gripper_joints(hw_id)],
-        gripper_dof=1,
+        all_joints=[*make_joints(hw_id, OPENYAM_DOF), f"{hw_id}/gripper"],
         adapter_type="mock",
         address=None,
         auto_enable=auto_enable,

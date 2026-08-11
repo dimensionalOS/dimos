@@ -256,9 +256,7 @@ def _connected_adapter(module: ModuleType, **kwargs: Any) -> tuple[Any, _FakeArm
         teaching=teaching,
     )
     assert not kwargs
-    adapter = module.GalaxeaA1ZAdapter(
-        address="can0", config=config, gripper_dof=1 if gripper_enabled else 0
-    )
+    adapter = module.GalaxeaA1ZAdapter(address="can0", config=config, dof=6 + int(gripper_enabled))
     assert adapter.connect()
     return adapter, _FakeArmRobot.instances[-1]
 
@@ -515,9 +513,9 @@ def test_gripper_round_trips_meters_to_normalized(
     assert robot.factory_kwargs["with_gripper"] is True
     assert adapter.activate()
 
-    assert adapter.get_gripper_dof() == 1
+    assert adapter.get_dof() == 7
     limits = adapter.get_limits()
-    assert len(limits.position_upper) == adapter.get_dof() + 1
+    assert len(limits.position_upper) == adapter.get_dof()
     assert limits.position_upper[-1] == pytest.approx(0.1)  # metres, declared
 
     assert adapter.write_joint_positions([0.0] * 6 + [0.05])  # half open

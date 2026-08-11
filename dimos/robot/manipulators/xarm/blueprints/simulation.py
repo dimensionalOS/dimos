@@ -29,11 +29,12 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
+_xarm7_sim_model = make_xarm7_sim_robot_config()
 _xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[make_xarm7_sim_robot_config()],
+        robots=[_xarm7_sim_model],
         planning_timeout=10.0,
         visualization={"backend": "meshcat"},
     ),
@@ -41,7 +42,11 @@ xarm_perception_sim = autoconnect(
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
-        tasks=[trajectory_task(_xarm7_sim_hw)],
+        tasks=[
+            trajectory_task(
+                _xarm7_sim_hw, joint_names=_xarm7_sim_model.get_coordinator_joint_names()
+            )
+        ],
     ),
     RerunBridgeModule.blueprint(),
 )

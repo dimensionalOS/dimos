@@ -51,7 +51,7 @@ def writer(shm_key, monkeypatch):
 def writer_with_gripper(shm_key, monkeypatch):
     monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
     w = ManipShmWriter(shm_key)
-    w.signal_ready(num_joints=ARM_DOF + 1)
+    w.signal_ready(num_joints=ARM_DOF + 1, arm_joints=ARM_DOF)
     # The sim module publishes the gripper joint's MJCF range at startup so the
     # adapter can declare it through get_limits() (GRIPPER-SPEC R13a).
     w.write_gripper_range(0.0, 0.85)
@@ -69,7 +69,7 @@ def adapter(writer):
 
 @pytest.fixture
 def adapter_with_gripper(writer_with_gripper):
-    a = ShmMujocoAdapter(dof=ARM_DOF, gripper_dof=1, address="/fake/scene.xml")
+    a = ShmMujocoAdapter(dof=ARM_DOF + 1, address="/fake/scene.xml")
     assert a.connect() is True
     yield a
     a.disconnect()
@@ -167,11 +167,10 @@ class TestWriteCommand:
 class TestGripper:
     def test_gripper_count_comes_from_config_not_joint_counting(self, adapter_with_gripper):
         """R7: the adapter is told its gripper count, it does not infer one."""
-        assert adapter_with_gripper.get_gripper_dof() == 1
-        assert adapter_with_gripper.get_dof() == ARM_DOF  # arm only
+        assert adapter_with_gripper.get_dof() == ARM_DOF + 1
 
     def test_no_gripper_when_not_declared(self, adapter):
-        assert adapter.get_gripper_dof() == 0
+        assert adapter.get_dof() == ARM_DOF
 
     def test_limits_declare_the_mjcf_range(self, adapter_with_gripper):
         """R13a: the model file is the single declaration of the sim's unit."""

@@ -56,7 +56,7 @@ _joint_array_size = MAX_JOINTS * _FLOAT_BYTES  # float64 array
 _GRP_SLOTS = 4
 
 # Element counts for control and sequence arrays.
-_NUM_CTRL_FIELDS = 4  # [ready, stop, command_mode, num_joints]
+_NUM_CTRL_FIELDS = 5  # [ready, stop, command_mode, num_joints, arm_joints]
 _NUM_SEQ_COUNTERS = 12  # one per buffer type (manipulator + WB additions)
 
 # Buffer sizes (in bytes).
@@ -99,6 +99,7 @@ CTRL_READY = 0
 CTRL_STOP = 1
 CTRL_COMMAND_MODE = 2
 CTRL_NUM_JOINTS = 3
+CTRL_ARM_JOINTS = 4
 
 # Command modes.
 CMD_MODE_POSITION = 0
@@ -312,9 +313,10 @@ class ManipShmWriter:
         arr = self._array(self.shm.tau_t, MAX_JOINTS, np.float64)
         return arr[:num_joints].copy()
 
-    def signal_ready(self, num_joints: int) -> None:
+    def signal_ready(self, num_joints: int, arm_joints: int | None = None) -> None:
         ctrl = self._control()
         ctrl[CTRL_NUM_JOINTS] = num_joints
+        ctrl[CTRL_ARM_JOINTS] = num_joints if arm_joints is None else arm_joints
         ctrl[CTRL_READY] = 1
 
     def signal_stop(self) -> None:
@@ -482,6 +484,9 @@ class ManipShmReader:
 
     def num_joints(self) -> int:
         return int(self._control()[CTRL_NUM_JOINTS])
+
+    def arm_joints(self) -> int:
+        return int(self._control()[CTRL_ARM_JOINTS])
 
     def signal_stop(self) -> None:
         self._control()[CTRL_STOP] = 1

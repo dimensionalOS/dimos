@@ -123,10 +123,10 @@ def test_activate_prepares_xarm_for_safe_commanded_motion(
 def test_joint_position_commands_use_degrees_for_xarm_sdk(
     xarm_adapter_module: ModuleType,
 ) -> None:
-    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=3)
+    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=6)
     assert adapter.connect()
 
-    assert adapter.write_joint_positions([math.pi / 2, -math.pi / 4, math.pi])
+    assert adapter.write_joint_positions([math.pi / 2, -math.pi / 4, math.pi, 0.0, 0.0, 0.0])
 
     arm = _FakeXArmSdk.instances[-1]
-    assert arm.servo_joint_commands[-1] == pytest.approx([90.0, -45.0, 180.0])
+    assert arm.servo_joint_commands[-1] == pytest.approx([90.0, -45.0, 180.0, 0.0, 0.0, 0.0])

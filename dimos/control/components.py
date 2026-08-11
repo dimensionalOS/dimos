@@ -56,16 +56,13 @@ class JointState:
 class HardwareComponent:
     """Configuration for a hardware component.
 
-    ``all_joints`` is the stored list and is the adapter's array order;
-    ``arm_joints`` and ``gripper_joints`` are derived views.
+    ``all_joints`` is the adapter's complete array order. Joint semantics
+    belong to tasks and concrete adapters, not this shared component model.
 
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
         hardware_type: Type of hardware (MANIPULATOR, BASE)
-        all_joints: Every joint name in adapter order, gripper entries last
-            (e.g., ["arm/joint1", ..., "arm/joint6", "arm/gripper"])
-        gripper_dof: How many trailing entries of ``all_joints`` are the
-            gripper. 0 means no gripper.
+        all_joints: Every joint name in adapter order.
         adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
@@ -84,58 +81,12 @@ class HardwareComponent:
     hardware_id: HardwareId
     hardware_type: HardwareType
     all_joints: list[JointName] = field(default_factory=list)
-    gripper_dof: int = 0
     adapter_type: str = "mock"
     address: str | Path | None = None
     auto_enable: bool = True
     domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
     wb_config: WholeBodyConfig | None = None
-
-    def __post_init__(self) -> None:
-        if self.gripper_dof < 0:
-            raise ValueError(
-                f"HardwareComponent '{self.hardware_id}': gripper_dof must be >= 0, "
-                f"got {self.gripper_dof}"
-            )
-        if self.gripper_dof > len(self.all_joints):
-            raise ValueError(
-                f"HardwareComponent '{self.hardware_id}': gripper_dof {self.gripper_dof} "
-                f"exceeds all_joints length {len(self.all_joints)}"
-            )
-
-    @property
-    def _gripper_start(self) -> int:
-        # len - gripper_dof, never negative slicing: -0 == 0 would report a
-        # gripper-less arm as having no arm joints.
-        return len(self.all_joints) - self.gripper_dof
-
-    @property
-    def arm_joints(self) -> list[JointName]:
-        """The non-gripper joints, in adapter order."""
-        return self.all_joints[: self._gripper_start]
-
-    @property
-    def gripper_joints(self) -> list[JointName]:
-        """The trailing gripper joints, in adapter order. Empty without a gripper."""
-        return self.all_joints[self._gripper_start :]
-
-
-def make_gripper_joints(hardware_id: HardwareId, count: int = 1) -> list[JointName]:
-    """Create gripper joint names for a hardware device.
-
-    Args:
-        hardware_id: The hardware identifier (e.g., "arm")
-        count: Number of actuated gripper joints
-
-    Returns:
-        ``["arm/gripper"]``, or ``["hand/gripper1", ..., "hand/gripperN"]``
-    """
-    if count < 1:
-        raise ValueError(f"make_gripper_joints({hardware_id!r}): count must be >= 1, got {count}")
-    if count == 1:
-        return [f"{hardware_id}/gripper"]
-    return [f"{hardware_id}/gripper{i + 1}" for i in range(count)]
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:

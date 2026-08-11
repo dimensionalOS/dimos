@@ -63,14 +63,20 @@ class XArmAdapter(ManipulatorAdapter):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(self, address: str, dof: int = 6, gripper_dof: int = 0, **_: object) -> None:
+    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
         if not address:
             raise ValueError("address (IP) is required for XArmAdapter")
-        if gripper_dof not in (0, 1):
-            raise ValueError(f"XArmAdapter supports 0 or 1 gripper joints (got {gripper_dof})")
+        resolved_arm_dof = dof if arm_dof is None else arm_dof
+        extra_dof = dof - resolved_arm_dof
+        if resolved_arm_dof not in (6, 7) or extra_dof not in (0, 1):
+            raise ValueError(
+                "XArmAdapter requires 6 or 7 arm axes and at most one additional joint "
+                f"(got dof={dof}, arm_dof={resolved_arm_dof})"
+            )
         self._ip = address
         self._dof = dof
-        self._gripper_dof = gripper_dof
+        self._arm_dof = resolved_arm_dof
+        self._gripper_dof = extra_dof
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False
@@ -109,26 +115,22 @@ class XArmAdapter(ManipulatorAdapter):
         """Get XArm information."""
         return ManipulatorInfo(
             vendor="UFACTORY",
-            model=f"xArm{self._dof}",
+            model=f"xArm{self._arm_dof}",
             dof=self._dof,
         )
 
     def get_dof(self) -> int:
-        """Arm joints only."""
+        """Total joints owned by this adapter."""
         return self._dof
-
-    def get_gripper_dof(self) -> int:
-        """1 when a gripper is fitted, else 0."""
-        return self._gripper_dof
 
     def get_limits(self) -> JointLimits:
         """Arm limits in radians, then the gripper's own 0-850 scale."""
         # XArm typical joint limits (varies by joint, using conservative values)
         limit = 2 * math.pi
         return JointLimits(
-            position_lower=[-limit] * self._dof + [XARM_GRIPPER_MIN] * self._gripper_dof,
-            position_upper=[limit] * self._dof + [XARM_GRIPPER_MAX] * self._gripper_dof,
-            velocity_max=[math.pi] * self._dof + [0.0] * self._gripper_dof,
+            position_lower=[-limit] * self._arm_dof + [XARM_GRIPPER_MIN] * self._gripper_dof,
+            position_upper=[limit] * self._arm_dof + [XARM_GRIPPER_MAX] * self._gripper_dof,
+            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -172,7 +174,7 @@ class XArmAdapter(ManipulatorAdapter):
         _, angles = self._arm.get_servo_angle()
         if not angles:
             raise RuntimeError("Failed to read joint positions")
-        positions = [math.radians(a) for a in angles[: self._dof]]
+        positions = [math.radians(a) for a in angles[: self._arm_dof]]
         if self._gripper_dof:
             positions.append(self._read_gripper())
         return positions
@@ -184,18 +186,18 @@ class XArmAdapter(ManipulatorAdapter):
         Returns zeros. For velocity estimation, use finite differences
         on positions in the driver.
         """
-        return [0.0] * (self._dof + self._gripper_dof)
+        return [0.0] * self._dof
 
     def read_joint_efforts(self) -> list[float]:
         """Read joint torques in Nm; the gripper reports 0.0 (no feedback)."""
         gripper = [0.0] * self._gripper_dof
         if not self._arm:
-            return [0.0] * self._dof + gripper
+            return [0.0] * self._arm_dof + gripper
 
         code, torques = self._arm.get_joints_torque()
         if code == 0 and torques:
-            return list(torques[: self._dof]) + gripper
-        return [0.0] * self._dof + gripper
+            return list(torques[: self._arm_dof]) + gripper
+        return [0.0] * self._arm_dof + gripper
 
     def read_state(self) -> dict[str, int]:
         """Read robot state."""
@@ -236,7 +238,9 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
-        arm, grip = positions[: self._dof], positions[self._dof :]
+        if len(positions) != self._dof:
+            return False
+        arm, grip = positions[: self._arm_dof], positions[self._arm_dof :]
 
         # Convert radians to degrees
         angles = [math.degrees(p) for p in arm]
@@ -297,9 +301,9 @@ class XArmAdapter(ManipulatorAdapter):
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
-        if self._dof == 6:
+        if self._arm_dof == 6:
             return _XARM6_INITIAL_JOINTS_DEG
-        if self._dof == 7:
+        if self._arm_dof == 7:
             return _XARM7_INITIAL_JOINTS_DEG
         return None
 
@@ -323,9 +327,13 @@ class XArmAdapter(ManipulatorAdapter):
         """
         if not self._arm:
             return False
+        if len(velocities) != self._dof:
+            return False
 
         # Arm entries only; the xArm gripper has no velocity interface.
-        speeds = [math.degrees(v) for v in velocities[: self._dof]]
+        if any(value != 0.0 for value in velocities[self._arm_dof :]):
+            return False
+        speeds = [math.degrees(v) for v in velocities[: self._arm_dof]]
         code: int = self._arm.vc_set_joint_velocity(speeds)
         return code == 0
 

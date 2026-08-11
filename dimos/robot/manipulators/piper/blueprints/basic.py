@@ -30,10 +30,10 @@ coordinator_piper = autoconnect(
             TaskConfig(
                 name="traj_piper",
                 type="trajectory",
-                joint_names=_piper_hw.arm_joints,
+                joint_names=_piper_model.get_coordinator_joint_names(),
                 priority=10,
             )
         ],
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_hw.arm_joints)),
+    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_model.joint_names)),
 )

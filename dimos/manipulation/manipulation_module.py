@@ -1678,6 +1678,11 @@ class ManipulationModule(Module):
             position: 0.0 = fully closed, 1.0 = fully open.
             robot_name: Robot to control (only needed for multi-arm setups).
         """
+        if not math.isfinite(position) or not 0.0 <= position <= 1.0:
+            return SkillResult.fail(
+                "INVALID_INPUT",
+                f"Gripper position must be finite and between 0.0 and 1.0; got {position}",
+            )
         if self._gripper_invoke("set_normalized", {"values": [position]}, robot_name):
             return SkillResult.ok(f"Gripper set to {position:.0%} open")
         return SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position")
@@ -1689,7 +1694,7 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
-        if self._gripper_invoke("set_sweep", {"value": 1.0}, robot_name):
+        if self._gripper_invoke("set_normalized", {"values": [1.0]}, robot_name):
             return SkillResult.ok("Gripper opened")
         return SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper")
 
@@ -1700,7 +1705,7 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
-        if self._gripper_invoke("set_sweep", {"value": 0.0}, robot_name):
+        if self._gripper_invoke("set_normalized", {"values": [0.0]}, robot_name):
             return SkillResult.ok("Gripper closed")
         return SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper")
 
