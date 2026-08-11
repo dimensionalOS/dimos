@@ -80,8 +80,9 @@ def _apply_overrides(cfg: EvalConfig, overrides: list[str]) -> EvalConfig:
     return cfg
 
 
-def _score_cell(outcome: PlanOutcome) -> str:
-    return "x" if not outcome.planned and not outcome.success else f"{outcome.spl:.2f}"
+def _no_plan(outcome: PlanOutcome) -> bool:
+    """No path came back and refusing was not the right answer."""
+    return not outcome.planned and not outcome.success
 
 
 def _clearance_cell(outcome: PlanOutcome) -> str:
@@ -90,29 +91,33 @@ def _clearance_cell(outcome: PlanOutcome) -> str:
 
 def _print_report(report: Report) -> None:
     header = (
-        f"{'case':<28} {'dataset':<22} {'inc':>5} {'fin':>5} "
+        f"{'case':<28} {'dataset':<22} {'inc':^3} {'fin':^3} "
+        f"{'inc_spl':>7} {'fin_spl':>7} "
         f"{'len':>6} {'ref':>6} {'clr':>6} {'ms':>7}"
     )
     print(header)
     print("-" * len(header))
     for d in report.datasets:
         for c in d.cases:
-            inc = "-" if c.final_only else _score_cell(c.online)
-            no_path = not c.online.planned and not c.online.success
+            no_path = _no_plan(c.online)
+            inc_fail = "x" if no_path and not c.final_only else ""
+            fin_fail = "x" if _no_plan(c.final) else ""
+            inc_spl = "-" if c.final_only else f"{c.online.spl:.2f}"
             length = "x" if no_path else f"{c.online.length:.1f}"
             print(
                 f"{c.id:<28} {c.dataset:<22} "
-                f"{inc:>5} {_score_cell(c.final):>5} "
+                f"{inc_fail:^3} {fin_fail:^3} "
+                f"{inc_spl:>7} {c.final.spl:>7.2f} "
                 f"{length:>6} {c.l_ref:>6.1f} "
                 f"{_clearance_cell(c.online):>6} {c.online.plan_ms:>7.1f}"
             )
     print("-" * len(header))
     for d in report.datasets:
         print(f"{d.dataset}: {d.frames} frames")
-    print(f"\n{'by tag':<12} {'inc':>5} {'fin':>5} {'n':>4}")
+    print(f"\n{'by tag':<12} {'inc_spl':>7} {'fin_spl':>7} {'n':>4}")
     for tag, s in report.by_tag.items():
         inc = f"{s.inc_score:.2f}" if s.n_online else "-"
-        print(f"{tag:<12} {inc:>5} {s.fin_score:>5.2f} {s.n:>4}")
+        print(f"{tag:<12} {inc:>7} {s.fin_score:>7.2f} {s.n:>4}")
     print(
         f"\nscore {report.score:.3f} | "
         f"final {report.final_score:.3f} | "
@@ -120,6 +125,7 @@ def _print_report(report: Report) -> None:
         f"fin {report.n_success_final}/{report.n_cases} | "
         f"outcomes {report.outcome_counts} | "
         f"plan p95 {report.plan_ms['p95']:.1f}ms | "
+        f"map sync p95 {report.map_sync_ms['p95']:.1f}ms | "
         f"ingest p95 {report.map_update_ms['p95']:.1f}ms/frame"
     )
     inc_only = [

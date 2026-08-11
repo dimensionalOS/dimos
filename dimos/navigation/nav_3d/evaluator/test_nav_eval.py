@@ -247,6 +247,9 @@ class _StubPipeline:
     def add_frame(self, points: NDArray[np.float32], origin: Point, ts: float) -> None:
         self.frames += 1
 
+    def sync_map(self) -> None:
+        pass
+
     def plan(self, start: Point, goal: Point) -> NDArray[np.float32] | None:
         self.frames_at_plan.append(self.frames)
         return self._routes.get((start, goal)) if self._routes is not None else self._waypoints

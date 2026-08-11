@@ -60,7 +60,9 @@ class PlanOutcome:
     # robot can, or for an infeasible case, that the planner refused.
     success: bool
     length: float
+    # Search only. The map rebuild it would otherwise hide is map_sync_ms.
     plan_ms: float
+    map_sync_ms: float
     spl: float
     # Body-surface distance to the nearest occupied voxel, None without a plan.
     min_clearance: float | None
@@ -136,6 +138,9 @@ class Report:
     # effect on each terrain class is visible next to the aggregate.
     by_tag: dict[str, TagStats]
     plan_ms: dict[str, float]
+    # Rebuilding the planner's map from ingested frames, paid by the first case
+    # to plan after any ingest. Zero for the rest, which reuse that rebuild.
+    map_sync_ms: dict[str, float]
     map_update_ms: dict[str, float]
     datasets: list[DatasetResult]
     config: dict[str, object] = field(default_factory=dict)
@@ -175,10 +180,13 @@ def _run_plan(
     occupancy: Occupancy | None = None,
 ) -> PlanOutcome:
     t0 = perf_counter()
+    pipeline.sync_map()
+    t1 = perf_counter()
     waypoints = pipeline.plan(case.start, case.goal)
-    plan_ms = (perf_counter() - t0) * 1000
+    plan_ms = (perf_counter() - t1) * 1000
+    sync_ms = (t1 - t0) * 1000
     if waypoints is None or len(waypoints) == 0:
-        return _no_plan(plan_ms)
+        return _no_plan(plan_ms, sync_ms)
 
     reached = metrics.goal_reached(waypoints, case.goal, cfg.goal_tolerance)
     gate = metrics.check_path(waypoints, occupancy.keys, cfg) if occupancy else None
@@ -200,6 +208,7 @@ def _run_plan(
         success=success,
         length=length,
         plan_ms=plan_ms,
+        map_sync_ms=sync_ms,
         spl=metrics.spl(success, l_ref, length),
         min_clearance=gate.min_clearance_m if gate else None,
         waypoints=waypoints.tolist(),
@@ -209,7 +218,7 @@ def _run_plan(
     )
 
 
-def _no_plan(plan_ms: float) -> PlanOutcome:
+def _no_plan(plan_ms: float, sync_ms: float) -> PlanOutcome:
     return PlanOutcome(
         planned=False,
         reached=False,
@@ -218,6 +227,7 @@ def _no_plan(plan_ms: float) -> PlanOutcome:
         success=False,
         length=0.0,
         plan_ms=plan_ms,
+        map_sync_ms=sync_ms,
         spl=0.0,
         min_clearance=None,
         waypoints=[],
@@ -506,6 +516,9 @@ def _build_report(datasets: list[DatasetResult], cfg: EvalConfig) -> Report:
         outcome_counts=outcome_counts,
         by_tag=by_tag,
         plan_ms=metrics.timing_stats([c.online.plan_ms for c in online]),
+        map_sync_ms=metrics.timing_stats(
+            [c.online.map_sync_ms for c in online if c.online.map_sync_ms]
+        ),
         # Worst dataset's per-frame ingest cost: the budget asks whether any
         # pipeline failed to keep up with the sensor, not what the average was.
         map_update_ms={

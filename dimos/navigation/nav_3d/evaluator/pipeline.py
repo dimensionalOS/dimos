@@ -36,6 +36,13 @@ class NavPipeline(Protocol):
         """Take one world-frame lidar cloud and the sensor origin it was shot from."""
         ...
 
+    def sync_map(self) -> None:
+        """Fold everything ingested since the last plan into the planner's map.
+
+        Called outside the plan timer, so map work is never scored as search.
+        """
+        ...
+
     def plan(self, start: Point, goal: Point) -> NDArray[np.float32] | None:
         """Foot-level waypoints from start to goal, or None when there is no route."""
         ...
@@ -71,13 +78,17 @@ class MLSPipeline:
         self._mapper.add_frame(points, origin)
         self._pending = True
 
+    def sync_map(self) -> None:
+        if not self._pending:
+            return
+        occupied = self._mapper.global_map()
+        if len(occupied):
+            self._planner.update_global_map(occupied)
+            self._mapped = True
+        self._pending = False
+
     def plan(self, start: Point, goal: Point) -> NDArray[np.float32] | None:
-        if self._pending:
-            occupied = self._mapper.global_map()
-            if len(occupied):
-                self._planner.update_global_map(occupied)
-                self._mapped = True
-            self._pending = False
+        self.sync_map()
         if not self._mapped:
             return None
         return self._planner.plan(start, goal)
