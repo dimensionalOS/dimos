@@ -92,6 +92,16 @@ _DEPTH_CAMERAS: dict[str, str] = {
 }
 
 
+def _selected_cameras(streams: dict[str, str], config: Any) -> list[tuple[str, str]]:
+    """The (stream, topic) pairs this config actually decodes."""
+    if not config.enable_cameras:
+        return []
+    wanted = config.camera_streams
+    if wanted is None:
+        return list(streams.items())
+    return [(name, topic) for name, topic in streams.items() if name in wanted]
+
+
 class ConnectionState(enum.Enum):
     CREATED = "created"
     STARTING = "starting"
@@ -195,6 +205,12 @@ class R1LiteConnectionConfig(ModuleConfig):
     tracking_speed: float = Field(default=0.5)
     # Camera decode costs real CPU (four JPEG streams); teleop turns it off.
     enable_cameras: bool = Field(default=True)
+    # With cameras enabled, decode only these streams (None = all).
+    # Hosted teleop streams a single head camera to the operator; decoding
+    # the other five starved the pose path in the shared worker process
+    # (hardware session 2026-08-11: loop_gap 20→60 ms, pose lag past the
+    # freshness guard).
+    camera_streams: list[str] | None = Field(default=None)
     publish_odom: bool = Field(default=True)
     acc_limit_x: float = Field(default=0.5)
     acc_limit_y: float = Field(default=0.5)
@@ -652,7 +668,7 @@ class R1LiteConnection(Module):
         self._sensor_executor.add_node(self._sensor_node)
         self._cleanup_stack.append(("sensor_executor", self._release_sensor_executor))
 
-        camera_items = _COMPRESSED_CAMERAS.items() if self.config.enable_cameras else ()
+        camera_items = _selected_cameras(_COMPRESSED_CAMERAS, self.config)
         for stream_name, ros_topic in camera_items:
             cam_q: queue.Queue[Any] = queue.Queue(maxsize=1)
             self._cam_queues[stream_name] = cam_q
@@ -671,7 +687,7 @@ class R1LiteConnection(Module):
                 )
             )
 
-        depth_items = _DEPTH_CAMERAS.items() if self.config.enable_cameras else ()
+        depth_items = _selected_cameras(_DEPTH_CAMERAS, self.config)
         for stream_name, ros_topic in depth_items:
             depth_q: queue.Queue[Any] = queue.Queue(maxsize=1)
             self._depth_queues[stream_name] = depth_q

@@ -1238,3 +1238,27 @@ def test_no_ros_import_at_module_level() -> None:
         else:
             continue
         assert not (names & banned), f"module-level ROS import: {names & banned}"
+
+
+def test_camera_streams_selects_decode_pipelines() -> None:
+    """Hosted teleop decodes only the operator-facing stream; the other
+    five pipelines cost CPU the pose path needs (2026-08-11 hardware)."""
+    from dimos.robot.galaxea.r1lite.connection import (
+        _COMPRESSED_CAMERAS,
+        _DEPTH_CAMERAS,
+        R1LiteConnectionConfig,
+        _selected_cameras,
+    )
+
+    all_on = R1LiteConnectionConfig()
+    assert len(_selected_cameras(_COMPRESSED_CAMERAS, all_on)) == len(_COMPRESSED_CAMERAS)
+    assert len(_selected_cameras(_DEPTH_CAMERAS, all_on)) == len(_DEPTH_CAMERAS)
+
+    head_only = R1LiteConnectionConfig(camera_streams=["head_left_color"])
+    assert _selected_cameras(_COMPRESSED_CAMERAS, head_only) == [
+        ("head_left_color", _COMPRESSED_CAMERAS["head_left_color"])
+    ]
+    assert _selected_cameras(_DEPTH_CAMERAS, head_only) == []
+
+    off = R1LiteConnectionConfig(enable_cameras=False, camera_streams=["head_left_color"])
+    assert _selected_cameras(_COMPRESSED_CAMERAS, off) == []

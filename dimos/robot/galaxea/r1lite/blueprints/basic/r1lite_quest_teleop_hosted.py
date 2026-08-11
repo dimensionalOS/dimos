@@ -76,7 +76,14 @@ r1lite_quest_teleop_hosted = (
             # Head camera on for the operator's view; watch TELEM for
             # control-loop pressure (the local blueprint keeps cameras
             # off for exactly that reason).
-            connection_kwargs={"tracking_speed": 3.5, "enable_cameras": True},
+            # Decode ONLY the stream the operator sees: the other five
+            # camera pipelines starved the pose path in the shared
+            # worker process (loop_gap 20→60 ms on hardware).
+            connection_kwargs={
+                "tracking_speed": 3.5,
+                "enable_cameras": True,
+                "camera_streams": ["head_left_color"],
+            },
         ),
     )
     .remappings(
