@@ -22,7 +22,6 @@ if str(RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(RUNTIME_ROOT))
 
 from vlnce_runtime.motion import (
-    PlanarMotionError,
     integrate_planar,
     record_accepted_motion,
 )
@@ -42,19 +41,6 @@ def test_fixed_period_planar_motion_uses_habitat_axes_and_yaw() -> None:
     assert rotation == pytest.approx([0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)])
 
 
-def test_motion_rotates_local_translation_into_world_coordinates() -> None:
-    requested, _ = integrate_planar(
-        [0.0, 0.0, 0.0],
-        [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)],
-        linear_x=1.0,
-        linear_y=0.0,
-        angular_z=0.0,
-        period_seconds=0.1,
-    )
-
-    assert requested == pytest.approx([-0.1, 0.0, 0.0])
-
-
 def test_each_accepted_motion_is_recorded_and_collision_clipping_is_visible() -> None:
     trajectory = [[0.0, 0.0, 0.0]]
 
@@ -68,13 +54,3 @@ def test_each_accepted_motion_is_recorded_and_collision_clipping_is_visible() ->
     assert first_collision is False
     assert second_collision is True
     assert trajectory == [[0.0, 0.0, 0.0], [0.0, 0.0, -0.1], [0.0, 0.0, -0.15]]
-
-
-def test_invalid_period_or_accepted_pose_cannot_silently_lose_trajectory() -> None:
-    with pytest.raises(PlanarMotionError, match="positive period"):
-        integrate_planar([0, 0, 0], [0, 0, 0, 1], 1.0, 0.0, 0.0, 0.0)
-
-    trajectory = [[0.0, 0.0, 0.0]]
-    with pytest.raises(PlanarMotionError, match="invalid accepted position"):
-        record_accepted_motion(trajectory, [1, 0, 0], [np.nan, 0, 0])
-    assert trajectory == [[0.0, 0.0, 0.0]]

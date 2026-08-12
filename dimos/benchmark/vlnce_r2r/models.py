@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -108,10 +107,6 @@ class VlnceEpisodeSource(VlnceModel):
     scene_asset_id: NonEmpty
     scene_path: NonEmpty
     navmesh_path: NonEmpty
-    robot_profile: NonEmpty
-    dimos_blueprint: NonEmpty
-    protocol_revision: NonEmpty
-    result_schema_revision: NonEmpty
     condition_label: NonEmpty
     preparation: ExternalBenchmarkPreparationRef
 
@@ -144,26 +139,7 @@ class BenchmarkInstruction(VlnceModel):
 
 class LiveAgentInteraction(VlnceModel):
     kind: Literal["live_agent"] = "live_agent"
-    driver_revision: NonEmpty
-    session_lifetime: Literal["one_attempt"] = "one_attempt"
-    completion: Literal["agent_or_native_terminal"] = "agent_or_native_terminal"
     timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
-
-
-class BenchmarkNativeResultValidator(VlnceModel):
-    kind: Literal["benchmark_native_result"] = "benchmark_native_result"
-    revision: NonEmpty
-    result_filename: NonEmpty
-    result_schema_sha256: Sha256
-    success_metric: Literal["SUCCESS"] = "SUCCESS"
-    identity_fields: tuple[NonEmpty, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def result_contract_is_safe(self) -> BenchmarkNativeResultValidator:
-        _validate_relative_path(self.result_filename, "result filename")
-        if len(self.identity_fields) != len(set(self.identity_fields)):
-            raise ValueError("result identity fields must be unique")
-        return self
 
 
 class VlnceTaskManifest(VlnceModel):
@@ -171,24 +147,6 @@ class VlnceTaskManifest(VlnceModel):
     source: VlnceEpisodeSource
     task: BenchmarkInstruction
     interaction: LiveAgentInteraction
-    validator: BenchmarkNativeResultValidator
-    fingerprint: Sha256
-
-    @model_validator(mode="after")
-    def fingerprint_matches(self) -> VlnceTaskManifest:
-        payload = {
-            "case_id": self.case_id,
-            "source": self.source.model_dump(mode="json"),
-            "task": self.task.model_dump(mode="json"),
-            "interaction": self.interaction.model_dump(mode="json"),
-            "validator": self.validator.model_dump(mode="json"),
-        }
-        encoded = json.dumps(
-            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
-        if hashlib.sha256(encoded).hexdigest() != self.fingerprint:
-            raise ValueError("VLN-CE task fingerprint does not match its contracts")
-        return self
 
 
 class VlnceConfig(BaseModel):

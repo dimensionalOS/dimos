@@ -40,8 +40,8 @@ the container. Later runs reuse the content-addressed cache.
 The evaluator always asks Habitat to record `native-render.mp4`. Rendering is
 presentation evidence: a renderer failure appears in `native-render.v1.json`
 but does not change official scoring. The container writes the authoritative
-`terminal-private/vlnce-result.v1.json`; the host checks its pinned schema and
-attempt identity without rescoring it.
+`terminal-private/vlnce-result.v1.json`; the host checks its strict result shape
+and attempt identity without rescoring it.
 
 ## Interpret the result
 
@@ -54,4 +54,5 @@ The repository stores URLs, identities, instructions, and checksums. It does
 not redistribute scene meshes, episode archives, semantic annotations,
 reference paths, or trained models. VLN-CE code is MIT licensed; R2R and
 Matterport3D-derived assets have separate terms. See
-`upstream-manifest.v1.json` for pinned sources and license links.
+[VLN-CE's license](https://github.com/jacobkrantz/VLN-CE/blob/master/LICENSE)
+and the [Matterport terms](https://niessner.github.io/Matterport/).

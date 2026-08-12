@@ -73,10 +73,6 @@ class VlnceObservationRecorder(Recorder):
 def vlnce_r2r_eval_blueprint(
     *,
     socket_path: str | Path,
-    attempt_id: str,
-    case_id: str,
-    episode_id: str,
-    protocol_revision: str = "vlnce-public.v1",
     recording_path: str | Path = DEFAULT_RECORDING_PATH,
 ) -> Blueprint:
     """Compose a public-only navigation stack bound to one benchmark attempt."""
@@ -86,13 +82,7 @@ def vlnce_r2r_eval_blueprint(
     return (
         autoconnect(
             vis_module(viewer_backend=global_config.viewer),
-            VlnceConnection.blueprint(
-                socket_path=str(socket_path),
-                attempt_id=attempt_id,
-                case_id=case_id,
-                episode_id=episode_id,
-                protocol_revision=protocol_revision,
-            ),
+            VlnceConnection.blueprint(socket_path=str(socket_path)),
             # Habitat's navmesh is already eroded by the simulated agent's
             # radius. Inflating its traversable-center projection again closes
             # valid doors and can isolate the episode's starting position.
@@ -110,7 +100,14 @@ def vlnce_r2r_eval_blueprint(
             VlnceObservationRecorder.blueprint(
                 db_path=recording_path,
                 on_existing=OnExisting.OVERWRITE,
+                record_tf=False,
                 stream_codecs={"depth_image": "pickle"},
+                stream_sample_intervals={
+                    "color_image": 1.0,
+                    "depth_image": 1.0,
+                    "depth_pointcloud": 1.0,
+                    "odom": 1.0,
+                },
             ),
         )
         .remappings(

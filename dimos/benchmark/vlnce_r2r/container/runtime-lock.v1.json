@@ -27,6 +27,7 @@
     "grpcio": "1.48.2",
     "protobuf": "3.19.6",
     "gym": "0.17.3",
+    "imageio-ffmpeg": "0.4.9",
     "networkx": "2.5.1",
     "opencv-python": "4.5.5.64",
     "pickle5": "0.0.12",

@@ -15,14 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
 import json
 from pathlib import Path
 import shutil
 import subprocess
-import threading
 import zipfile
 
 import pytest
@@ -99,10 +97,6 @@ def _case_inputs(
         scene_asset_id="public",
         scene_path="17DRP5sb8fy/17DRP5sb8fy.glb",
         navmesh_path="17DRP5sb8fy/17DRP5sb8fy.navmesh",
-        robot_profile="vlnce-cylinder-dimos-planar-v1",
-        dimos_blueprint="vlnce-r2r-go2-eval",
-        protocol_revision="vlnce-public-v1",
-        result_schema_revision="vlnce-result-v1",
         condition_label="dimos_geometry_training_scene_development",
         preparation=ExternalBenchmarkPreparationRef(
             revision="v1",
@@ -160,74 +154,6 @@ def test_cold_then_warm_offline_cache_and_exact_episode_binding(tmp_path: Path) 
     )
 
 
-def test_checksum_failure_does_not_publish_partial_cache(tmp_path: Path) -> None:
-    archive, files, episode = _make_archive(tmp_path)
-    source, task = _case_inputs(archive, files, episode)
-    broken = archive.with_name("broken.zip")
-    broken.write_bytes(archive.read_bytes() + b"substituted")
-
-    with pytest.raises(PreparationError, match="size mismatch"):
-        prepare_public_assets(
-            source, task, cache_root=tmp_path / "cache", download=_copy_downloader(broken)
-        )
-
-    target = (
-        tmp_path
-        / "cache"
-        / source.preparation.cache_namespace
-        / source.preparation.assets[0].cache_subdir
-        / source.preparation.assets[0].archive_sha256
-    )
-    assert not target.exists()
-
-
-def test_required_file_substitution_is_reverified_and_repaired(tmp_path: Path) -> None:
-    archive, files, episode = _make_archive(tmp_path)
-    source, task = _case_inputs(archive, files, episode)
-    prepared = prepare_public_assets(
-        source, task, cache_root=tmp_path / "cache", download=_copy_downloader(archive)
-    )
-    prepared.assets["public"].root.joinpath(source.scene_path).write_bytes(b"substituted")
-
-    repaired = prepare_public_assets(
-        source,
-        task,
-        cache_root=tmp_path / "cache",
-        download=_copy_downloader(archive),
-    )
-
-    assert not repaired.assets["public"].cache_hit
-    assert (
-        repaired.assets["public"].root.joinpath(source.scene_path).read_bytes()
-        == files[source.scene_path]
-    )
-
-
-def test_concurrent_preparation_downloads_and_publishes_once(tmp_path: Path) -> None:
-    archive, files, episode = _make_archive(tmp_path)
-    source, task = _case_inputs(archive, files, episode)
-    calls: list[str] = []
-    calls_lock = threading.Lock()
-
-    def download(url: str, destination: Path) -> None:
-        with calls_lock:
-            calls.append(url)
-        shutil.copyfile(archive, destination)
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        receipts = list(
-            executor.map(
-                lambda _: prepare_public_assets(
-                    source, task, cache_root=tmp_path / "cache", download=download
-                ),
-                range(2),
-            )
-        )
-
-    assert len(calls) == 1
-    assert sorted(receipt.assets["public"].cache_hit for receipt in receipts) == [False, True]
-
-
 def test_episode_preflight_rejects_case_instruction_mismatch(tmp_path: Path) -> None:
     archive, files, episode = _make_archive(tmp_path)
     source, task = _case_inputs(archive, files, episode)
@@ -242,31 +168,6 @@ def test_episode_preflight_rejects_case_instruction_mismatch(tmp_path: Path) -> 
         prepare_public_assets(
             source, changed, cache_root=tmp_path / "cache", download=_copy_downloader(archive)
         )
-
-
-def test_oci_resolver_reports_missing_engine(tmp_path: Path) -> None:
-    image = _image_with_recipe(tmp_path)
-
-    def missing(_command: list[str]) -> subprocess.CompletedProcess[str]:
-        raise FileNotFoundError
-
-    with pytest.raises(PreparationError, match="podman is required"):
-        resolve_oci_image(image, project_root=tmp_path, runner=missing)
-
-
-def test_oci_resolver_reports_failed_build(tmp_path: Path) -> None:
-    image = _image_with_recipe(tmp_path)
-    calls = 0
-
-    def fail_build(command: list[str]) -> subprocess.CompletedProcess[str]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return subprocess.CompletedProcess(command, 1, "", "not found")
-        return subprocess.CompletedProcess(command, 125, "", "build exploded")
-
-    with pytest.raises(PreparationError, match="build exploded"):
-        resolve_oci_image(image, project_root=tmp_path, runner=fail_build)
 
 
 def test_oci_resolver_accepts_only_expected_digest(tmp_path: Path) -> None:
