@@ -35,7 +35,15 @@ HEAD_CAMERA_INFO_YAML = Path(__file__).resolve().parent / "artifacts" / "head_ca
 # Must match the captured intrinsics exactly: marker detection skips any frame
 # whose size differs from CameraInfo, silently. tool_dump_camera_info prints
 # this unit's real modes if librealsense rejects these.
-CAMERA_STREAM_CONFIG = {"width": 848, "height": 480, "fps": 15, "enable_depth": False}
+CAMERA_STREAM_CONFIG = {
+    "width": 848,
+    "height": 480,
+    "fps": 15,
+    "enable_depth": False,
+    # A leftover process from a previous run can still hold the USB device.
+    # Retry instead of aborting the deployment and taking DDS and control down.
+    "start_retry_seconds": 5.0,
+}
 
 
 def head_camera_info() -> CameraInfo | None:
