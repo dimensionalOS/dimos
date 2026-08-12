@@ -14,10 +14,8 @@
 
 """Native DimOS module for the benchmark's public one-episode UDS stream."""
 
-from collections.abc import Iterator
 import math
-from queue import Queue
-from threading import Event, Lock, Thread
+from threading import Lock
 import time
 from typing import Any
 
@@ -28,7 +26,6 @@ from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
 from dimos.agents.annotation import skill
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -47,12 +44,19 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 from .protocol import vlnce_public_v1_pb2 as pb
-from .protocol.contract import expected_handshake
+from .protocol.contract import (
+    BASE_FRAME,
+    CAMERA_FRAME,
+    CONTROL_PERIOD_SECONDS,
+    MAX_ANGULAR_Z,
+    MAX_LINEAR_X,
+    MAX_LINEAR_Y,
+    WORLD_FRAME,
+)
 from .protocol.vlnce_public_v1_pb2_grpc import VlncePublicGatewayStub
 
 logger = setup_logger()
 
-_CLOSED = object()
 _HABITAT_TO_DIMOS = np.array(
     [
         [0.0, 0.0, -1.0],
@@ -70,12 +74,7 @@ class VlnceConnectionError(RuntimeError):
 
 class VlnceConnectionConfig(ModuleConfig):
     socket_path: str
-    attempt_id: str
-    case_id: str
-    episode_id: str
-    protocol_revision: str = "vlnce-public.v1"
     connect_timeout_seconds: float = Field(default=30.0, gt=0.0)
-    command_queue_capacity: int = Field(default=2, ge=1, le=8)
 
 
 class VlnceConnection(Module):
@@ -97,33 +96,15 @@ class VlnceConnection(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._requests: Queue[pb.ClientMessage | object] = Queue(
-            maxsize=self.config.command_queue_capacity
-        )
-        self._expected = expected_handshake(
-            {
-                "attempt_id": self.config.attempt_id,
-                "case_id": self.config.case_id,
-                "episode_id": self.config.episode_id,
-                "protocol_revision": self.config.protocol_revision,
-            }
-        )
-        self._ready = Event()
-        self._begun = Event()
-        self._submitted = Event()
-        self._closed = Event()
-        self._command_ready = Event()
         self._state_lock = Lock()
         self._state = "created"
         self._last_observation_sequence = 0
-        self._next_command_sequence = 1
         self._observation_count = 0
         self._accepted_control_count = 0
         self._rejected_control_count = 0
         self._last_control: dict[str, float] | None = None
-        self._failure: Exception | None = None
         self._channel: grpc.Channel | None = None
-        self._thread: Thread | None = None
+        self._stub: VlncePublicGatewayStub | None = None
         self._wall_minus_monotonic = time.time() - time.monotonic()
 
     @rpc
@@ -131,17 +112,16 @@ class VlnceConnection(Module):
         super().start()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
         self._channel = grpc.insecure_channel(f"unix://{self.config.socket_path}")
-        self._thread = Thread(target=self._run_stream, name="vlnce-public-stream", daemon=True)
-        self._thread.start()
+        self._stub = VlncePublicGatewayStub(self._channel)
 
     @rpc
     def stop(self) -> None:
         try:
             if self._state in {"ready", "running"}:
-                self.cancel()
-            self._enqueue(_CLOSED)
-            if self._thread is not None:
-                self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                try:
+                    self.cancel()
+                except VlnceConnectionError:
+                    logger.info("VLN-CE gateway already stopped")
             if self._channel is not None:
                 self._channel.close()
         finally:
@@ -149,13 +129,18 @@ class VlnceConnection(Module):
 
     @rpc
     def wait_ready(self, timeout_seconds: float | None = None) -> bool:
-        """Wait for an exact compatible public handshake."""
+        """Wait for the attempt-local UDS gateway."""
 
         timeout = timeout_seconds or self.config.connect_timeout_seconds
-        if not self._ready.wait(timeout=timeout):
-            self._raise_if_failed("benchmark gateway did not become ready")
-            raise VlnceConnectionError("benchmark gateway did not become ready")
-        self._raise_if_failed("benchmark gateway failed during readiness")
+        if self._channel is None:
+            raise VlnceConnectionError("benchmark gateway channel is unavailable")
+        try:
+            grpc.channel_ready_future(self._channel).result(timeout=timeout)
+        except grpc.FutureTimeoutError as error:
+            raise VlnceConnectionError("benchmark gateway did not become ready") from error
+        with self._state_lock:
+            if self._state == "created":
+                self._state = "ready"
         return True
 
     @rpc
@@ -164,16 +149,16 @@ class VlnceConnection(Module):
 
         self.wait_ready()
         with self._state_lock:
-            if self._state != "ready":
+            if self._state != "ready" or self._stub is None:
                 raise VlnceConnectionError("episode can begin only once after readiness")
-            self._state = "starting"
-        self._enqueue(
-            pb.ClientMessage(lifecycle=pb.LifecycleCommand(kind=pb.LifecycleCommand.BEGIN))
-        )
-        if not self._begun.wait(timeout=self.config.connect_timeout_seconds):
-            self._raise_if_failed("benchmark did not publish its initial observation")
-            raise VlnceConnectionError("benchmark did not publish its initial observation")
-        self._raise_if_failed("benchmark failed while beginning the episode")
+            try:
+                observation = self._stub.Start(
+                    pb.StartRequest(), timeout=self.config.connect_timeout_seconds
+                )
+            except grpc.RpcError as error:
+                raise VlnceConnectionError("benchmark rejected episode start") from error
+            self._publish_observation(observation)
+            self._state = "running"
         return True
 
     @rpc
@@ -181,12 +166,13 @@ class VlnceConnection(Module):
         """Cancel transport without submitting a route for official scoring."""
 
         with self._state_lock:
-            if self._state not in {"ready", "starting", "running"}:
+            if self._state not in {"ready", "running"} or self._stub is None:
                 return False
+            try:
+                self._stub.Cancel(pb.CancelRequest(), timeout=self.config.connect_timeout_seconds)
+            except grpc.RpcError as error:
+                raise VlnceConnectionError("benchmark rejected cancellation") from error
             self._state = "cancelled"
-        self._enqueue(
-            pb.ClientMessage(lifecycle=pb.LifecycleCommand(kind=pb.LifecycleCommand.CANCEL))
-        )
         return True
 
     @rpc
@@ -199,36 +185,35 @@ class VlnceConnection(Module):
         if not all(math.isfinite(value) for value in values):
             raise VlnceConnectionError("planar velocity must be finite")
         if (
-            abs(twist.linear.x) > self._expected.max_linear_x
-            or abs(twist.linear.y) > self._expected.max_linear_y
-            or abs(twist.angular.z) > self._expected.max_angular_z
+            abs(twist.linear.x) > MAX_LINEAR_X
+            or abs(twist.linear.y) > MAX_LINEAR_Y
+            or abs(twist.angular.z) > MAX_ANGULAR_Z
         ):
             raise VlnceConnectionError("planar velocity exceeds the negotiated limit")
         with self._state_lock:
-            if self._state != "running" or not self._command_ready.is_set():
+            if self._state != "running" or self._stub is None:
                 self._rejected_control_count += 1
                 return False
-            command_sequence = self._next_command_sequence
-            self._next_command_sequence += 1
-            observation_sequence = self._last_observation_sequence
-            self._command_ready.clear()
+            request = pb.PlanarControl(
+                observation_sequence=self._last_observation_sequence,
+                linear_x=twist.linear.x,
+                linear_y=twist.linear.y,
+                angular_z=twist.angular.z,
+            )
+            try:
+                observation = self._stub.StepPlanar(
+                    request, timeout=self.config.connect_timeout_seconds
+                )
+            except grpc.RpcError as error:
+                self._rejected_control_count += 1
+                raise VlnceConnectionError("benchmark rejected planar control") from error
+            self._publish_observation(observation)
             self._accepted_control_count += 1
             self._last_control = {
                 "linear_x": twist.linear.x,
                 "linear_y": twist.linear.y,
                 "angular_z": twist.angular.z,
             }
-        self._enqueue(
-            pb.ClientMessage(
-                control=pb.PlanarControl(
-                    command_sequence=command_sequence,
-                    observation_sequence=observation_sequence,
-                    linear_x=twist.linear.x,
-                    linear_y=twist.linear.y,
-                    angular_z=twist.angular.z,
-                )
-            )
-        )
         return True
 
     @skill
@@ -241,25 +226,16 @@ class VlnceConnection(Module):
         """
 
         with self._state_lock:
-            if self._state != "running" or not self._command_ready.is_set():
+            if self._state != "running" or self._stub is None:
                 raise VlnceConnectionError("route can be submitted only from a settled episode")
-            self._state = "submitting"
-            command_sequence = self._next_command_sequence
-            self._next_command_sequence += 1
-            observation_sequence = self._last_observation_sequence
-            self._command_ready.clear()
-        self._enqueue(
-            pb.ClientMessage(
-                submit_route=pb.SubmitRoute(
-                    command_sequence=command_sequence,
-                    observation_sequence=observation_sequence,
+            try:
+                self._stub.SubmitRoute(
+                    pb.SubmitRouteRequest(observation_sequence=self._last_observation_sequence),
+                    timeout=self.config.connect_timeout_seconds,
                 )
-            )
-        )
-        if not self._submitted.wait(timeout=self.config.connect_timeout_seconds):
-            self._raise_if_failed("route submission was not acknowledged")
-            raise VlnceConnectionError("route submission was not acknowledged")
-        self._raise_if_failed("benchmark failed during route submission")
+            except grpc.RpcError as error:
+                raise VlnceConnectionError("route submission was not acknowledged") from error
+            self._state = "submitted"
         return "Route submitted; the VLN-CE evaluation is ending."
 
     @rpc
@@ -277,97 +253,40 @@ class VlnceConnection(Module):
                 "last_control": self._last_control,
                 "route_submitted": self._state == "submitted",
                 "frames": {
-                    "world": self._expected.world_frame,
-                    "base": self._expected.base_frame,
-                    "camera": self._expected.camera_frame,
+                    "world": WORLD_FRAME,
+                    "base": BASE_FRAME,
+                    "camera": CAMERA_FRAME,
                 },
                 "control": {
-                    "period_seconds": self._expected.control_period_seconds,
-                    "max_linear_x": self._expected.max_linear_x,
-                    "max_linear_y": self._expected.max_linear_y,
-                    "max_angular_z": self._expected.max_angular_z,
+                    "period_seconds": CONTROL_PERIOD_SECONDS,
+                    "max_linear_x": MAX_LINEAR_X,
+                    "max_linear_y": MAX_LINEAR_Y,
+                    "max_angular_z": MAX_ANGULAR_Z,
                 },
             }
 
     def _on_cmd_vel(self, twist: Twist) -> None:
         bounded = Twist(
             linear=[
-                max(-self._expected.max_linear_x, min(self._expected.max_linear_x, twist.linear.x)),
-                max(-self._expected.max_linear_y, min(self._expected.max_linear_y, twist.linear.y)),
+                max(-MAX_LINEAR_X, min(MAX_LINEAR_X, twist.linear.x)),
+                max(-MAX_LINEAR_Y, min(MAX_LINEAR_Y, twist.linear.y)),
                 0.0,
             ],
             angular=[
                 0.0,
                 0.0,
                 max(
-                    -self._expected.max_angular_z,
-                    min(self._expected.max_angular_z, twist.angular.z),
+                    -MAX_ANGULAR_Z,
+                    min(MAX_ANGULAR_Z, twist.angular.z),
                 ),
             ],
         )
         if not self.move(bounded):
             logger.debug("VLN-CE command rejected while another command is in flight")
 
-    def _request_iterator(self) -> Iterator[pb.ClientMessage]:
-        yield pb.ClientMessage(handshake=self._expected)
-        while True:
-            request = self._requests.get()
-            if request is _CLOSED:
-                return
-            if not isinstance(request, pb.ClientMessage):
-                raise VlnceConnectionError("invalid internal request")
-            yield request
-
-    def _run_stream(self) -> None:
-        try:
-            if self._channel is None:
-                raise VlnceConnectionError("gRPC channel was not initialized")
-            responses = VlncePublicGatewayStub(self._channel).Stream(self._request_iterator())
-            for response in responses:
-                payload = response.WhichOneof("payload")
-                if payload == "ready":
-                    if response.ready.negotiated != self._expected:
-                        raise VlnceConnectionError("gateway negotiated an incompatible contract")
-                    with self._state_lock:
-                        if self._state != "created":
-                            raise VlnceConnectionError("duplicate gateway readiness")
-                        self._state = "ready"
-                    self._ready.set()
-                elif payload == "observation":
-                    self._publish_observation(response.observation)
-                elif payload == "acknowledgement":
-                    self._handle_acknowledgement(response.acknowledgement)
-                elif payload == "error":
-                    raise VlnceConnectionError(response.error.message)
-                else:
-                    raise VlnceConnectionError("gateway response has no public payload")
-        except Exception as error:
-            self._failure = error
-            self._ready.set()
-            self._begun.set()
-            self._submitted.set()
-        finally:
-            self._closed.set()
-
-    def _handle_acknowledgement(self, acknowledgement: pb.Acknowledgement) -> None:
-        if acknowledgement.kind == pb.Acknowledgement.ROUTE_SUBMITTED:
-            with self._state_lock:
-                if self._state != "submitting":
-                    raise VlnceConnectionError("unexpected route-submission acknowledgement")
-                self._state = "submitted"
-            self._submitted.set()
-
     def _publish_observation(self, observation: pb.Observation) -> None:
         if observation.sequence <= self._last_observation_sequence:
             raise VlnceConnectionError("observation sequence did not increase")
-        if (
-            observation.world_frame != self._expected.world_frame
-            or observation.base_frame != self._expected.base_frame
-            or observation.camera_frame != self._expected.camera_frame
-            or observation.rgb_encoding != self._expected.rgb_encoding
-            or observation.depth_encoding != self._expected.depth_encoding
-        ):
-            raise VlnceConnectionError("observation frames or encodings changed after negotiation")
         native = decode_observation(observation, self._wall_minus_monotonic)
         self.tf.publish(native["tf"])
         self.odometry.publish(native["odometry"])
@@ -380,23 +299,8 @@ class VlnceConnection(Module):
         occupancy = native["global_costmap"]
         if occupancy is not None:
             self.global_costmap.publish(occupancy)
-        with self._state_lock:
-            self._last_observation_sequence = observation.sequence
-            self._observation_count += 1
-            if self._state == "starting":
-                self._state = "running"
-                self._begun.set()
-            self._command_ready.set()
-
-    def _enqueue(self, request: pb.ClientMessage | object) -> None:
-        try:
-            self._requests.put(request, timeout=self.config.connect_timeout_seconds)
-        except Exception as error:
-            raise VlnceConnectionError("public command queue is unavailable") from error
-
-    def _raise_if_failed(self, message: str) -> None:
-        if self._failure is not None:
-            raise VlnceConnectionError(message) from self._failure
+        self._last_observation_sequence = observation.sequence
+        self._observation_count += 1
 
 
 def decode_observation(
@@ -515,8 +419,6 @@ def _base_from_camera(pose: pb.Pose, timestamp: float) -> Transform:
 
 
 def _decode_occupancy(occupancy: pb.OccupancyMap, timestamp: float) -> OccupancyGrid:
-    if occupancy.encoding != "uint8_traversable":
-        raise VlnceConnectionError("unsupported public occupancy encoding")
     habitat = np.frombuffer(occupancy.traversability, dtype=np.uint8)
     if habitat.size != occupancy.width * occupancy.height:
         raise VlnceConnectionError("public occupancy payload size is invalid")

@@ -20,14 +20,24 @@ import os
 import tempfile
 
 import habitat
+from habitat.config import Config
 from habitat.utils.visualizations import maps as habitat_maps
 from habitat_extensions import VLNCEDatasetV1, get_extended_config
 import numpy as np
-import quaternion
 
-from .motion import PlanarMotionError, integrate_planar, record_accepted_motion
+from .continuous_action import DimosPlanarAction
+from .motion import PlanarMotionError, record_accepted_motion
 
 TASK_CONFIG = "/opt/VLN-CE/habitat_extensions/config/vlnce_task.yaml"
+OFFICIAL_METRICS = (
+    "distance_to_goal",
+    "success",
+    "spl",
+    "ndtw",
+    "path_length",
+    "oracle_success",
+    "steps_taken",
+)
 
 
 class EpisodeEnvironmentError(RuntimeError):
@@ -67,6 +77,10 @@ class OfficialEpisodeEnvironment:
         return self._observations
 
     @property
+    def episode_id(self):
+        return self.private_case["episode_id"]
+
+    @property
     def trajectory(self):
         return list(self._trajectory)
 
@@ -101,53 +115,34 @@ class OfficialEpisodeEnvironment:
 
         if self._submitted:
             raise EpisodeEnvironmentError("motion is unavailable after route submission")
-        state = self._env.sim.get_agent_state()
-        start = np.array(state.position, dtype=np.float64)
         try:
-            requested, rotation_xyzw = integrate_planar(
-                start,
-                [state.rotation.x, state.rotation.y, state.rotation.z, state.rotation.w],
-                linear_x,
-                linear_y,
-                angular_z,
-                period_seconds,
+            self._observations = self._env.step(
+                {
+                    "action": "DIMOS_PLANAR",
+                    "action_args": {
+                        "linear_x": linear_x,
+                        "linear_y": linear_y,
+                        "angular_z": angular_z,
+                        "period_seconds": period_seconds,
+                    },
+                }
             )
-        except PlanarMotionError as error:
+        except (PlanarMotionError, RuntimeError) as error:
             raise EpisodeEnvironmentError(str(error))
-        accepted = np.array(self._env.sim.pathfinder.try_step(start, requested))
-        rotation = quaternion.quaternion(
-            rotation_xyzw[3],
-            rotation_xyzw[0],
-            rotation_xyzw[1],
-            rotation_xyzw[2],
-        )
-        observations = self._env.sim.get_observations_at(
-            accepted.tolist(),
-            rotation,
-            keep_agent_at_new_pose=True,
-        )
-        if observations is None:
-            raise EpisodeEnvironmentError("Habitat rejected a collision-filtered pose")
-        action = {"action": "DIMOS_PLANAR"}
-        self._env.task._is_episode_active = self._env.task._check_episode_is_active(
-            observations=observations,
-            action=action,
-            episode=self._env.current_episode,
-        )
-        self._env.task.measurements.update_measures(
-            episode=self._env.current_episode,
-            action=action,
-            task=self._env.task,
-        )
-        self._env._update_step_stats()
-        self._observations = observations
-        self._validate_observations(observations)
+        self._validate_observations(self._observations)
+        action = self._env.task.actions["DIMOS_PLANAR"]
+        if not isinstance(action, DimosPlanarAction):
+            raise EpisodeEnvironmentError("Habitat registered the wrong planar action")
+        requested = action.requested_position
+        accepted = action.accepted_position
+        if requested is None or accepted is None:
+            raise EpisodeEnvironmentError("Habitat planar action published no accepted pose")
         try:
             collided = record_accepted_motion(self._trajectory, requested, accepted)
         except PlanarMotionError as error:
             raise EpisodeEnvironmentError(str(error))
         return {
-            "collided": collided,
+            "collided": bool(collided),
             "requested_position": requested.tolist(),
             "accepted_position": accepted.tolist(),
         }
@@ -164,6 +159,10 @@ class OfficialEpisodeEnvironment:
     def metrics(self):
         """Return values produced by Habitat/VLN-CE's configured measures."""
 
+        values = self._env.get_metrics()
+        return {name: values[name] for name in OFFICIAL_METRICS}
+
+    def visualization_info(self):
         return self._env.get_metrics()
 
     def close(self):
@@ -189,6 +188,15 @@ def _official_config(private_case, dataset_path, scenes_dir, gt_path):
     config.TASK.NDTW.GT_PATH = str(gt_path)
     config.TASK.NDTW.SPLIT = private_case["split"]
     config.TASK.SENSORS = ["INSTRUCTION_SENSOR"]
+    config.TASK.POSSIBLE_ACTIONS.append("DIMOS_PLANAR")
+    config.TASK.ACTIONS.DIMOS_PLANAR = Config()
+    config.TASK.ACTIONS.DIMOS_PLANAR.TYPE = "DimosPlanarAction"
+    config.TASK.MEASUREMENTS.append("TOP_DOWN_MAP")
+    config.TASK.TOP_DOWN_MAP.DRAW_SOURCE = False
+    config.TASK.TOP_DOWN_MAP.DRAW_SHORTEST_PATH = False
+    config.TASK.TOP_DOWN_MAP.DRAW_VIEW_POINTS = False
+    config.TASK.TOP_DOWN_MAP.DRAW_GOAL_POSITIONS = False
+    config.TASK.TOP_DOWN_MAP.DRAW_GOAL_AABBS = False
     config.ENVIRONMENT.MAX_EPISODE_STEPS = 0
     config.ENVIRONMENT.MAX_EPISODE_SECONDS = 0
     config.SIMULATOR.AGENT_0.HEIGHT = 1.5

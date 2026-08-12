@@ -5,14 +5,13 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-episode public UDS gateway for the private VLN-CE runtime."""
+"""Synchronous public UDS interface for one container-owned VLN-CE episode."""
 
 from concurrent import futures
 import math
@@ -26,14 +25,11 @@ import numpy as np
 
 from .protocol import vlnce_public_v1_pb2 as pb
 from .protocol.contract import (
-    BASE_FRAME,
-    CAMERA_FRAME,
-    DEPTH_ENCODING,
-    RGB_ENCODING,
-    WORLD_FRAME,
-    expected_handshake,
+    CONTROL_PERIOD_SECONDS,
+    MAX_ANGULAR_Z,
+    MAX_LINEAR_X,
+    MAX_LINEAR_Y,
 )
-from .protocol.session import ProtocolViolationError, PublicSession
 from .protocol.vlnce_public_v1_pb2_grpc import (
     VlncePublicGatewayServicer,
     add_VlncePublicGatewayServicer_to_server,
@@ -45,8 +41,6 @@ class GatewayRuntimeError(RuntimeError):
 
 
 class _EnvironmentAction:
-    """One bounded request executed only by Habitat's owning main thread."""
-
     def __init__(self, kind, payload=None):
         self.kind = kind
         self.payload = payload
@@ -56,84 +50,84 @@ class _EnvironmentAction:
 
 
 class EpisodeGateway(VlncePublicGatewayServicer):
-    """Own one public stream and translate accepted actions into Habitat steps."""
+    """Serialize public calls onto Habitat's owning main thread."""
 
-    def __init__(self, private_case, environment, renderer=None):
+    def __init__(self, _private_case, environment, renderer=None):
         self.environment = environment
         self.renderer = renderer
-        self.session = PublicSession(expected_handshake(private_case))
         self.finished = Event()
         self.begun = Event()
         self.terminal_reason = None
         self.native_metrics = None
         self.failure = None
-        self._stream_claimed = False
-        self._stream_lock = Lock()
+        self._state = "ready"
+        self._rpc_lock = Lock()
         self._next_observation_sequence = 1
+        self._last_observation_sequence = 0
         self._map_published = False
         self._environment_actions = Queue(maxsize=1)
 
-    def Stream(self, request_iterator, context):
-        with self._stream_lock:
-            if self._stream_claimed:
-                context.abort(grpc.StatusCode.ALREADY_EXISTS, "episode stream already claimed")
-            self._stream_claimed = True
-        try:
-            for request in request_iterator:
-                reply = self.session.accept(request)
-                payload = request.WhichOneof("payload")
-                if payload == "control":
-                    accepted = self.session.commands.take()
-                    if accepted is None:
-                        raise GatewayRuntimeError("accepted control was not queued")
-                    observation = self._perform("control", accepted.control)
-                    yield reply
-                    yield pb.ServerMessage(observation=observation)
-                elif payload == "submit_route":
-                    accepted = self.session.commands.take()
-                    if accepted is None:
-                        raise GatewayRuntimeError("accepted submission was not queued")
-                    self.native_metrics = self._perform("submit")
-                    self.terminal_reason = "submitted"
-                    yield reply
-                    self.finished.set()
-                    return
-                elif payload == "lifecycle" and request.lifecycle.kind == pb.LifecycleCommand.BEGIN:
-                    observation = self._perform("observe")
-                    yield reply
-                    yield pb.ServerMessage(observation=observation)
-                    self.begun.set()
-                elif (
-                    payload == "lifecycle" and request.lifecycle.kind == pb.LifecycleCommand.CANCEL
-                ):
-                    self.terminal_reason = "cancelled"
-                    yield reply
-                    self.finished.set()
-                    return
-                else:
-                    yield reply
-        except ProtocolViolationError as error:
-            self.failure = error
+    def Start(self, _request, context):
+        with self._rpc_lock:
+            if self._state != "ready":
+                context.abort(grpc.StatusCode.FAILED_PRECONDITION, "episode already started")
+            try:
+                observation = self._perform("observe")
+            except Exception as error:
+                self._abort(context, error)
+            self._state = "running"
+            self.begun.set()
+            return observation
+
+    def StepPlanar(self, request, context):
+        with self._rpc_lock:
+            self._require_running(request.observation_sequence, context)
+            values = (request.linear_x, request.linear_y, request.angular_z)
+            limits = (MAX_LINEAR_X, MAX_LINEAR_Y, MAX_ANGULAR_Z)
+            if not all(math.isfinite(value) for value in values):
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "planar velocity must be finite")
+            if any(abs(value) > limit for value, limit in zip(values, limits)):  # noqa: B905
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "planar velocity exceeds limit")
+            try:
+                return self._perform("control", request)
+            except Exception as error:
+                self._abort(context, error)
+
+    def SubmitRoute(self, request, context):
+        with self._rpc_lock:
+            self._require_running(request.observation_sequence, context)
+            self._state = "submitting"
+            try:
+                self.native_metrics = self._perform("submit")
+            except Exception as error:
+                self._abort(context, error)
+            self.terminal_reason = "submitted"
+            self._state = "submitted"
             self.finished.set()
-            context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(error))
-        except Exception as error:
-            self.failure = error
+            return pb.Acknowledgement(observation_sequence=self._last_observation_sequence)
+
+    def Cancel(self, _request, context):
+        with self._rpc_lock:
+            if self._state not in ("ready", "running"):
+                context.abort(grpc.StatusCode.FAILED_PRECONDITION, "episode is terminal")
+            self._state = "cancelled"
+            self.terminal_reason = "cancelled"
             self.finished.set()
-            context.abort(grpc.StatusCode.INTERNAL, "benchmark runtime failed")
+            return pb.Acknowledgement(observation_sequence=self._last_observation_sequence)
 
     def finish_timeout(self):
-        """Finalize a healthy elapsed timeout through official STOP scoring."""
-
-        if self.finished.is_set():
-            return
-        self.native_metrics = self.environment.submit_route()
-        if self.renderer is not None:
-            self.renderer.capture_terminal("timeout")
-        self.terminal_reason = "timeout"
-        self.finished.set()
+        with self._rpc_lock:
+            if self.finished.is_set():
+                return
+            self.native_metrics = self.environment.submit_route()
+            if self.renderer is not None:
+                self.renderer.capture_terminal("timeout")
+            self.terminal_reason = "timeout"
+            self._state = "timed_out"
+            self.finished.set()
 
     def process_pending(self, timeout=0.0):
-        """Execute at most one queued action from Habitat's owning thread."""
+        """Execute at most one queued request from Habitat's owning thread."""
 
         try:
             action = self._environment_actions.get(timeout=timeout)
@@ -150,7 +144,7 @@ class EpisodeGateway(VlncePublicGatewayServicer):
                     control.linear_x,
                     control.linear_y,
                     control.angular_z,
-                    self.session.expected.control_period_seconds,
+                    CONTROL_PERIOD_SECONDS,
                 )
                 action.result = self._observation()
                 if self.renderer is not None:
@@ -175,12 +169,23 @@ class EpisodeGateway(VlncePublicGatewayServicer):
         try:
             self._environment_actions.put_nowait(action)
         except Full as error:
-            raise ProtocolViolationError("environment action queue is full") from error
+            raise GatewayRuntimeError("environment action is already in flight") from error
         if not action.done.wait(timeout=30.0):
             raise GatewayRuntimeError("environment action timed out")
         if action.error is not None:
             raise action.error
         return action.result
+
+    def _require_running(self, observation_sequence, context):
+        if self._state != "running":
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, "episode is not running")
+        if observation_sequence != self._last_observation_sequence:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, "observation is stale")
+
+    def _abort(self, context, error):
+        self.failure = error
+        self.finished.set()
+        context.abort(grpc.StatusCode.INTERNAL, "benchmark runtime failed")
 
     def _observation(self):
         observations = self.environment.observations
@@ -191,9 +196,6 @@ class EpisodeGateway(VlncePublicGatewayServicer):
         message = pb.Observation(
             sequence=self._next_observation_sequence,
             monotonic_time_ns=int(time.monotonic() * 1000000000),
-            world_frame=WORLD_FRAME,
-            base_frame=BASE_FRAME,
-            camera_frame=CAMERA_FRAME,
             world_from_base=pb.Pose(
                 x=float(state.position[0]),
                 y=float(state.position[1]),
@@ -203,30 +205,23 @@ class EpisodeGateway(VlncePublicGatewayServicer):
                 qz=float(rotation.z),
                 qw=float(rotation.w),
             ),
-            # Habitat's sensor looks down -Z with +Y up. A pi rotation about X
-            # expresses the conventional optical frame (+Z forward, +Y down).
             base_from_camera=pb.Pose(y=1.25, qx=1.0),
             rgb_calibration=_calibration(rgb.shape[1], rgb.shape[0]),
             rgb=rgb.tobytes(order="C"),
-            rgb_encoding=RGB_ENCODING,
             depth_calibration=_calibration(depth.shape[1], depth.shape[0]),
             depth=depth.tobytes(order="C"),
-            depth_encoding=DEPTH_ENCODING,
         )
         if not self._map_published:
             message.static_map.CopyFrom(_occupancy_message(self.environment.static_occupancy()))
             self._map_published = True
-        self.session.record_observation(message.sequence)
+        self._last_observation_sequence = message.sequence
         self._next_observation_sequence += 1
         return message
 
 
 class GatewayServer:
-    """Bounded gRPC server lifecycle for one benchmark UDS endpoint."""
-
     def __init__(self, socket_path, gateway):
         self.socket_path = str(socket_path)
-        self.gateway = gateway
         self._executor = futures.ThreadPoolExecutor(max_workers=2)
         self._server = grpc.server(self._executor)
         add_VlncePublicGatewayServicer_to_server(gateway, self._server)
@@ -237,14 +232,12 @@ class GatewayServer:
             raise GatewayRuntimeError("public socket directory does not exist")
         if os.path.exists(self.socket_path):
             raise GatewayRuntimeError("public socket path already exists")
-        address = f"unix://{self.socket_path}"
-        if self._server.add_insecure_port(address) != 1:
+        if self._server.add_insecure_port(f"unix://{self.socket_path}") != 1:
             raise GatewayRuntimeError("could not bind public UDS endpoint")
         self._server.start()
 
     def stop(self, grace_seconds=2.0):
-        stopped = self._server.stop(grace_seconds)
-        stopped.wait(timeout=grace_seconds + 1.0)
+        self._server.stop(grace_seconds).wait(timeout=grace_seconds + 1.0)
         self._executor.shutdown(wait=True)
         if os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
@@ -268,11 +261,9 @@ def _occupancy_message(occupancy):
     if traversability.shape != expected_shape:
         raise GatewayRuntimeError("static occupancy dimensions are inconsistent")
     return pb.OccupancyMap(
-        frame_id=WORLD_FRAME,
         resolution=occupancy["resolution"],
         width=occupancy["width"],
         height=occupancy["height"],
         origin=pb.Pose(x=occupancy["origin_x"], z=occupancy["origin_z"], qw=1.0),
         traversability=traversability.tobytes(order="C"),
-        encoding="uint8_traversable",
     )

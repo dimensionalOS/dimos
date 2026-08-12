@@ -17,62 +17,41 @@
 import gzip
 import hashlib
 import json
-import re
 
 SCHEMA_VERSION = "vlnce-private-case.v1"
-BENCHMARK = "vlnce_r2r"
-IDENTITY_FIELDS = (
-    "attempt_id",
-    "case_id",
-    "case_fingerprint",
-    "upstream_revision",
-    "dataset_revision",
-    "split",
-    "episode_id",
-    "episode_sha256",
-    "scene_id",
-    "instruction",
-    "instruction_sha256",
-    "runtime_image_digest",
-    "protocol_revision",
-    "result_schema_revision",
-    "condition_label",
-)
-REQUIRED_FIELDS = frozenset(("schema_version", "benchmark", "timeout_seconds", *IDENTITY_FIELDS))
-SHA256_FIELDS = frozenset(
+REQUIRED_FIELDS = frozenset(
     (
-        "case_fingerprint",
+        "schema_version",
+        "attempt_id",
+        "case_id",
+        "episode_id",
         "episode_sha256",
-        "instruction_sha256",
-        "runtime_image_digest",
+        "scene_id",
+        "split",
+        "instruction",
+        "timeout_seconds",
     )
 )
-SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class PrivateCaseError(RuntimeError):
     """The private case or mounted episode is inconsistent with the attempt."""
 
 
-def load_private_case(path, episode_dataset_path, expected_identity):
-    """Load and verify every private identity before creating a simulator."""
+def load_private_case(path, episode_dataset_path):
+    """Load the attempt binding and verify it against the mounted episode."""
 
     document = _load_json(path, "private case")
     if not isinstance(document, dict) or frozenset(document) != REQUIRED_FIELDS:
         raise PrivateCaseError("private case fields do not match the v1 contract")
     if document["schema_version"] != SCHEMA_VERSION:
         raise PrivateCaseError("unsupported private case schema")
-    if document["benchmark"] != BENCHMARK:
-        raise PrivateCaseError("private case benchmark does not match the runtime")
-
-    for field in IDENTITY_FIELDS:
+    for field in ("attempt_id", "case_id", "episode_id", "scene_id", "split", "instruction"):
         value = document[field]
         if not isinstance(value, str) or not value:
             raise PrivateCaseError(f"private case field {field!r} must be a non-empty string")
-        if field in SHA256_FIELDS and SHA256_PATTERN.match(value) is None:
-            raise PrivateCaseError(f"private case field {field!r} must be a SHA-256 digest")
-        if expected_identity.get(field) != value:
-            raise PrivateCaseError(f"private case field {field!r} does not match the attempt")
+    if not isinstance(document["episode_sha256"], str) or len(document["episode_sha256"]) != 64:
+        raise PrivateCaseError("private case episode_sha256 must be a SHA-256 digest")
 
     timeout_seconds = document["timeout_seconds"]
     if (
@@ -81,10 +60,6 @@ def load_private_case(path, episode_dataset_path, expected_identity):
         or timeout_seconds <= 0
     ):
         raise PrivateCaseError("private case timeout_seconds must be positive")
-
-    instruction_digest = hashlib.sha256(document["instruction"].encode("utf-8")).hexdigest()
-    if instruction_digest != document["instruction_sha256"]:
-        raise PrivateCaseError("private case instruction digest does not match its text")
 
     episode = _select_episode(episode_dataset_path, document["episode_id"])
     if episode.get("scene_id") != document["scene_id"]:

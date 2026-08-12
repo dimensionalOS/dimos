@@ -278,6 +278,9 @@ class RecorderConfig(MemoryModuleConfig):
     # not compatible with the type's default codec (for example float depth
     # images cannot be JPEG encoded).
     stream_codecs: dict[str, str] = Field(default_factory=dict)
+    # Per-port minimum interval between persisted observations. The first
+    # observation is stored immediately.
+    stream_sample_intervals: dict[str, float] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)
 
@@ -412,6 +415,11 @@ class Recorder(MemoryModule):
 
         # Stamp arrival time before the coalescing dispatch queue.
         stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
+        interval = self.config.stream_sample_intervals.get(name)
+        if interval is not None:
+            if interval <= 0:
+                raise ValueError(f"stream sample interval for {name!r} must be positive")
+            stamped = stamped.pipe(ops.throttle_first(interval))
         self.process_observable(stamped, on_msg)
 
     def _prepare_streams(self) -> None:

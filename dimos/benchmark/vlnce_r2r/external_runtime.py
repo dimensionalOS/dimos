@@ -33,24 +33,6 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.porcelain.dimos import Dimos
 
-_IDENTITY_FIELDS = (
-    "attempt_id",
-    "case_id",
-    "case_fingerprint",
-    "upstream_revision",
-    "dataset_revision",
-    "split",
-    "episode_id",
-    "episode_sha256",
-    "scene_id",
-    "instruction",
-    "instruction_sha256",
-    "runtime_image_digest",
-    "protocol_revision",
-    "result_schema_revision",
-    "condition_label",
-)
-
 
 class ExternalRuntimeError(RuntimeError):
     """The owned OCI/DimOS runtime could not honor its attempt contract."""
@@ -110,22 +92,13 @@ class VlnceExternalRuntime:
             "dict[str, JsonValue]",
             {
                 "schema_version": "vlnce-private-case.v1",
-                "benchmark": self.source.benchmark,
                 "attempt_id": self.attempt_id,
                 "case_id": self.case.case_id,
-                "case_fingerprint": self.case.fingerprint,
-                "upstream_revision": self.source.upstream_revision,
-                "dataset_revision": self.source.dataset_revision,
-                "split": self.source.split,
                 "episode_id": self.source.episode_id,
                 "episode_sha256": self.source.episode_sha256,
                 "scene_id": self.source.scene_id,
+                "split": self.source.split,
                 "instruction": self.task.prompt,
-                "instruction_sha256": self.task.instruction_sha256,
-                "runtime_image_digest": self.source.preparation.image.image_digest,
-                "protocol_revision": self.source.protocol_revision,
-                "result_schema_revision": self.source.result_schema_revision,
-                "condition_label": self.source.condition_label,
                 "timeout_seconds": self.interaction.timeout_seconds,
             },
         )
@@ -135,11 +108,8 @@ class VlnceExternalRuntime:
 
         self._make_directories()
         private_case = self.private_case()
-        expected_identity = {field: private_case[field] for field in _IDENTITY_FIELDS}
         private_path = self.private_dir / "private-case.json"
-        identity_path = self.private_dir / "expected-identity.json"
         _write_json(private_path, private_case)
-        _write_json(identity_path, expected_identity)
         cdi_global_args, cdi_run_args = self._prepare_cdi()
         command = self._container_command(cdi_global_args, cdi_run_args)
         self._log_handle = self.log_path.open("xb")
@@ -159,10 +129,6 @@ class VlnceExternalRuntime:
         global_config.update(robot_model="vlnce_habitat_cylinder")
         blueprint = vlnce_r2r_eval_blueprint(
             socket_path=self.socket_path,
-            attempt_id=self.attempt_id,
-            case_id=self.case.case_id,
-            episode_id=self.source.episode_id,
-            protocol_revision=self.source.protocol_revision,
             recording_path=self.memory_path,
         )
         self._coordinator = ModuleCoordinator.build(blueprint)
@@ -192,21 +158,9 @@ class VlnceExternalRuntime:
                 "module_count": len(modules),
                 "required_modules": sorted(required),
                 "handshake_ready": True,
-                "initial_observation_ready": False,
-                "memory_ready": False,
-                "porcelain_ready": True,
                 "container_isolation": {
                     "network": "none",
                     "no_new_privileges": True,
-                    "image_id": self.image_id,
-                    "mounts": {
-                        "scene": "read_only",
-                        "episode": "read_only",
-                        "private_identity": "read_only",
-                        "public_gateway": "read_write",
-                        "terminal_result": "read_write",
-                        "runtime_work": "read_write",
-                    },
                 },
                 "public_diagnostics": connection.public_diagnostics(),
             },
@@ -390,8 +344,6 @@ class VlnceExternalRuntime:
                 "serve",
                 "--private-case",
                 "/private/private-case.json",
-                "--expected-identity",
-                "/private/expected-identity.json",
                 "--dataset",
                 str(dataset_path),
                 "--scenes-dir",

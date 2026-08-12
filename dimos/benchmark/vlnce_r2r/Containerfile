@@ -28,7 +28,7 @@ RUN git init /opt/habitat-lab \
         -e /opt/habitat-lab \
         dtw==1.4.0 fastdtw==0.3.4 grpcio==1.48.2 protobuf==3.19.6 \
         gym==0.17.3 networkx==2.5.1 opencv-python==4.5.5.64 \
-        pickle5==0.0.12 yacs==0.1.8
+        imageio-ffmpeg==0.4.9 pickle5==0.0.12 yacs==0.1.8
 
 RUN git init /opt/VLN-CE \
     && git -C /opt/VLN-CE remote add origin https://github.com/jacobkrantz/VLN-CE.git \
@@ -46,12 +46,10 @@ ENV PATH=/opt/conda/envs/vlnce/bin:$PATH \
     HABITAT_SIM_LOG=quiet
 
 COPY container/runtime/ /runtime/
-COPY protocol/__init__.py \
-     protocol/vlnce_public_v1.proto \
+COPY protocol/vlnce_public_v1.proto \
      protocol/vlnce_public_v1_pb2.py \
      protocol/vlnce_public_v1_pb2_grpc.py \
      protocol/contract.py \
-     protocol/session.py \
      /runtime/vlnce_runtime/protocol/
 COPY container/runtime-lock.v1.json /runtime/runtime-lock.v1.json
 WORKDIR /runtime

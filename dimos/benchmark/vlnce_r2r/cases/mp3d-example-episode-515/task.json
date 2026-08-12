@@ -16,10 +16,6 @@
     "scene_asset_id": "mp3d_example_v1_1",
     "scene_path": "17DRP5sb8fy/17DRP5sb8fy.glb",
     "navmesh_path": "17DRP5sb8fy/17DRP5sb8fy.navmesh",
-    "robot_profile": "vlnce-cylinder-dimos-planar-v1",
-    "dimos_blueprint": "vlnce-r2r-go2-eval",
-    "protocol_revision": "vlnce-public-v1",
-    "result_schema_revision": "vlnce-result.v1",
     "condition_label": "dimos_geometry_training_scene_development",
     "preparation": {
       "schema_version": "1.0",
@@ -71,9 +67,9 @@
       "image": {
         "schema_version": "1.0",
         "image_name": "localhost/dimos-vlnce-r2r:dev",
-        "image_digest": "a6048c7b15ed9b7a6d8e3e9818a9a4a2490fad2229558a5e122c5689c4318198",
+        "image_digest": "ffea0ccbe088f825e5b9826fc4ec49743ca4465d97fc5d35d6b107b9c428d560",
         "build_context": "dimos/benchmark/vlnce_r2r",
-        "build_recipe_sha256": "0d2deeceddeae7bfecabdf4f86cdf94f68dad5dfc2c219421760274a6a3e7b56",
+        "build_recipe_sha256": "d0edc539d8579b1944029c84d20b2d63dc5eb11c43cce04150df43531c9b7f5d",
         "base_image": "docker.io/mambaorg/micromamba",
         "base_image_digest": "0d2870c1159dfb0c285e1c942c68385cd1110255cc9551838a29e48793e21af1"
       }
@@ -89,32 +85,6 @@
   "interaction": {
     "schema_version": "1.0",
     "kind": "live_agent",
-    "driver_revision": "live-agent-v1",
-    "session_lifetime": "one_attempt",
-    "completion": "agent_or_native_terminal",
     "timeout_seconds": 600.0
-  },
-  "validator": {
-    "schema_version": "1.0",
-    "kind": "benchmark_native_result",
-    "revision": "official-vlnce-r2r-v1",
-    "result_filename": "terminal-private/vlnce-result.v1.json",
-    "result_schema_sha256": "063e90fc75545f7ee1e00ebf8e7a71bfcc89c4e09efdb0d81acef5a13b6140b1",
-    "success_metric": "SUCCESS",
-    "identity_fields": [
-      "attempt_id",
-      "case_id",
-      "case_fingerprint",
-      "upstream_revision",
-      "dataset_revision",
-      "split",
-      "episode_id",
-      "scene_id",
-      "runtime_image_digest",
-      "protocol_revision",
-      "result_schema_revision",
-      "condition_label"
-    ]
-  },
-  "fingerprint": "a1e135efb106c6a27589e969ecd75bad286ac79ef7db263b528da1065d7f9d1e"
+  }
 }

@@ -134,22 +134,10 @@ def test_live_agent_starts_after_runtime_barrier_and_native_score_survives_rende
 
 
 def _native_result(manifest: VlnceTaskManifest, attempt_id: str) -> dict[str, object]:
-    source = manifest.source
     return {
         "schema_version": "vlnce-result.v1",
         "attempt_id": attempt_id,
         "case_id": manifest.case_id,
-        "case_fingerprint": manifest.fingerprint,
-        "benchmark": "vlnce_r2r",
-        "dataset_revision": source.dataset_revision,
-        "split": source.split,
-        "episode_id": source.episode_id,
-        "scene_id": source.scene_id,
-        "upstream_revision": source.upstream_revision,
-        "runtime_image_digest": source.preparation.image.image_digest,
-        "protocol_revision": source.protocol_revision,
-        "result_schema_revision": source.result_schema_revision,
-        "condition_label": source.condition_label,
         "terminal_reason": "submitted",
         "duration_seconds": 12.0,
         "trajectory": {"sha256": "a" * 64, "points": 2},
