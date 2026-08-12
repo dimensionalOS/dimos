@@ -46,6 +46,12 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      # The image builds release-grade wheels (CIBUILDWHEEL=1), which
+      # require web/cockpit/dist in the build context — same step the
+      # release workflow runs.
+      - name: Build the Cockpit
+        uses: ./.github/actions/build-cockpit
+
       - name: Compute tags
         id: tag
         run: |
