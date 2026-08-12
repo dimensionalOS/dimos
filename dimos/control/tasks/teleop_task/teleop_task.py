@@ -72,6 +72,48 @@ class TeleopIKTaskConfig(CartesianIKTaskConfig):
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
+    workspace_min: tuple[float, float, float] | None = None
+    workspace_max: tuple[float, float, float] | None = None
+    max_reach_m: float | None = None
+    max_orientation_delta_rad: float | None = None
+    home_orientation_rpy: tuple[float, float, float] | None = None
+    max_home_orientation_delta_rpy: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if (self.workspace_min is None) != (self.workspace_max is None):
+            raise ValueError("Teleop workspace bounds must be configured together")
+        if self.workspace_min is not None and self.workspace_max is not None:
+            lower = np.asarray(self.workspace_min, dtype=np.float64)
+            upper = np.asarray(self.workspace_max, dtype=np.float64)
+            if (
+                not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower > upper)
+            ):
+                raise ValueError("Teleop workspace bounds must be finite and ordered")
+        if self.max_reach_m is not None and (
+            not np.isfinite(self.max_reach_m) or self.max_reach_m <= 0.0
+        ):
+            raise ValueError("Teleop maximum reach must be positive and finite")
+        if self.max_orientation_delta_rad is not None and (
+            not np.isfinite(self.max_orientation_delta_rad) or self.max_orientation_delta_rad <= 0.0
+        ):
+            raise ValueError("Teleop maximum orientation delta must be positive and finite")
+        if (self.home_orientation_rpy is None) != (self.max_home_orientation_delta_rpy is None):
+            raise ValueError("Teleop home orientation limits must be configured together")
+        if (
+            self.home_orientation_rpy is not None
+            and self.max_home_orientation_delta_rpy is not None
+        ):
+            home = np.asarray(self.home_orientation_rpy, dtype=np.float64)
+            maximum = np.asarray(self.max_home_orientation_delta_rpy, dtype=np.float64)
+            if (
+                not np.all(np.isfinite(home))
+                or not np.all(np.isfinite(maximum))
+                or np.any(maximum <= 0.0)
+            ):
+                raise ValueError("Teleop home orientation limits must be finite and positive")
 
 
 class TeleopIKTask(CartesianIKTask):
@@ -153,6 +195,37 @@ class TeleopIKTask(CartesianIKTask):
             delta.rotation @ baseline.rotation,
             baseline.translation + delta.translation,
         )
+        if self._config.workspace_min is not None:
+            target.translation = np.clip(
+                target.translation,
+                np.asarray(self._config.workspace_min, dtype=np.float64),
+                np.asarray(self._config.workspace_max, dtype=np.float64),
+            )
+        if self._config.max_reach_m is not None:
+            reach = np.linalg.norm(target.translation)
+            if reach > self._config.max_reach_m:
+                target.translation *= self._config.max_reach_m / reach
+        if self._config.max_orientation_delta_rad is not None:
+            rotation_vector = pinocchio.log3(delta.rotation)
+            angle = np.linalg.norm(rotation_vector)
+            if angle > self._config.max_orientation_delta_rad:
+                target.rotation = (
+                    pinocchio.exp3(
+                        rotation_vector * (self._config.max_orientation_delta_rad / angle)
+                    )
+                    @ baseline.rotation
+                )
+        if self._config.home_orientation_rpy is not None:
+            home_rotation = pinocchio.rpy.rpyToMatrix(
+                np.asarray(self._config.home_orientation_rpy, dtype=np.float64)
+            )
+            relative_rpy = pinocchio.rpy.matrixToRpy(target.rotation @ home_rotation.T)
+            bounded_rpy = np.clip(
+                relative_rpy,
+                -np.asarray(self._config.max_home_orientation_delta_rpy, dtype=np.float64),
+                np.asarray(self._config.max_home_orientation_delta_rpy, dtype=np.float64),
+            )
+            target.rotation = pinocchio.rpy.rpyToMatrix(bounded_rpy) @ home_rotation
         values = np.concatenate((target.translation, target.rotation.reshape(-1)))
         if not np.all(np.isfinite(values)):
             return None
@@ -268,6 +341,12 @@ class TeleopIKTaskParams(CartesianIKTaskParams):
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
+    workspace_min: tuple[float, float, float] | None = None
+    workspace_max: tuple[float, float, float] | None = None
+    max_reach_m: float | None = None
+    max_orientation_delta_rad: float | None = None
+    home_orientation_rpy: tuple[float, float, float] | None = None
+    max_home_orientation_delta_rpy: tuple[float, float, float] | None = None
 
 
 def create_task(cfg: TaskConfig, hardware: object) -> TeleopIKTask:
@@ -288,5 +367,11 @@ def create_task(cfg: TaskConfig, hardware: object) -> TeleopIKTask:
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
             gripper_closed_pos=params.gripper_closed_pos,
+            workspace_min=params.workspace_min,
+            workspace_max=params.workspace_max,
+            max_reach_m=params.max_reach_m,
+            max_orientation_delta_rad=params.max_orientation_delta_rad,
+            home_orientation_rpy=params.home_orientation_rpy,
+            max_home_orientation_delta_rpy=params.max_home_orientation_delta_rpy,
         ),
     )

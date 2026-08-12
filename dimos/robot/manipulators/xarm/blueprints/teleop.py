@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import cast
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -160,6 +161,17 @@ _xarm6_teleop_hw = xarm6_hardware(
 _xarm7_teleop_model = make_xarm7_model_config(add_gripper=True)
 _xarm6_teleop_model = make_xarm6_model_config(add_gripper=True)
 
+# Conservative end-effector envelopes in the arm base frame. Adjust these to
+# the installed table and tooling before operating on hardware.
+_xarm6_teleop_workspace_min = (0.10, -0.40, 0.12)
+_xarm6_teleop_workspace_max = (0.58, 0.40, 0.55)
+_xarm6_teleop_max_reach_m = 0.62
+_xarm7_teleop_workspace_min = (0.10, -0.45, 0.12)
+_xarm7_teleop_workspace_max = (0.63, 0.45, 0.60)
+_xarm7_teleop_max_reach_m = 0.68
+_xarm_home_orientation_rpy = (math.pi, 0.0, 0.0)
+_xarm_max_home_orientation_delta_rpy = (math.pi / 2.0, math.pi / 2.0, math.pi / 2.0)
+
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
 # higher priority; when VR is idle the always-active eef_twist holds/drives.
 # While engaged, VR also owns the gripper joint (trigger), so the browser
@@ -183,6 +195,11 @@ coordinator_teleop_xarm7 = autoconnect(
                 robot_model=_xarm7_control_model,
                 priority=20,
                 params=_xarm_gripper_params,
+                workspace_min=_xarm7_teleop_workspace_min,
+                workspace_max=_xarm7_teleop_workspace_max,
+                max_reach_m=_xarm7_teleop_max_reach_m,
+                home_orientation_rpy=_xarm_home_orientation_rpy,
+                max_home_orientation_delta_rpy=_xarm_max_home_orientation_delta_rpy,
             ),
             eef_twist_task(
                 _xarm7_teleop_hw,
@@ -190,8 +207,13 @@ coordinator_teleop_xarm7 = autoconnect(
                 priority=10,
                 timeout=0.0,
                 params=_xarm_gripper_params,
+                workspace_min=_xarm7_teleop_workspace_min,
+                workspace_max=_xarm7_teleop_workspace_max,
+                max_reach_m=_xarm7_teleop_max_reach_m,
+                home_orientation_rpy=_xarm_home_orientation_rpy,
+                max_home_orientation_delta_rpy=_xarm_max_home_orientation_delta_rpy,
             ),
-            trajectory_task(_xarm7_teleop_hw),
+            trajectory_task(_xarm7_teleop_hw, priority=30),
         ],
     ),
     ManipulationModule.blueprint(
@@ -212,6 +234,11 @@ coordinator_teleop_xarm6 = autoconnect(
                 robot_model=_xarm6_control_model,
                 priority=20,
                 params=_xarm_gripper_params,
+                workspace_min=_xarm6_teleop_workspace_min,
+                workspace_max=_xarm6_teleop_workspace_max,
+                max_reach_m=_xarm6_teleop_max_reach_m,
+                home_orientation_rpy=_xarm_home_orientation_rpy,
+                max_home_orientation_delta_rpy=_xarm_max_home_orientation_delta_rpy,
             ),
             eef_twist_task(
                 _xarm6_teleop_hw,
@@ -219,8 +246,13 @@ coordinator_teleop_xarm6 = autoconnect(
                 priority=10,
                 timeout=0.0,
                 params=_xarm_gripper_params,
+                workspace_min=_xarm6_teleop_workspace_min,
+                workspace_max=_xarm6_teleop_workspace_max,
+                max_reach_m=_xarm6_teleop_max_reach_m,
+                home_orientation_rpy=_xarm_home_orientation_rpy,
+                max_home_orientation_delta_rpy=_xarm_max_home_orientation_delta_rpy,
             ),
-            trajectory_task(_xarm6_teleop_hw),
+            trajectory_task(_xarm6_teleop_hw, priority=30),
         ],
     ),
     ManipulationModule.blueprint(

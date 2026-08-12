@@ -195,6 +195,75 @@ def test_delta_is_composed_with_one_measured_engagement_baseline(
     assert (first_dt, second_dt) == (0.03, 0.02)
 
 
+def test_workspace_reach_and_orientation_limits_clamp_the_absolute_target(
+    tmp_path: Path, fake_ik: _FakePinkIK
+) -> None:
+    task = TeleopIKTask(
+        "teleop_arm",
+        TeleopIKTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2"],
+            control_ik=_pink_config(tmp_path / "unused.urdf"),
+            hand="right",
+            workspace_min=(0.0, 0.0, 0.1),
+            workspace_max=(1.2, 2.2, 0.6),
+            max_reach_m=10.0,
+            max_orientation_delta_rad=0.2,
+        ),
+    )
+    _engage(task)
+    assert task.on_cartesian_command(_delta((0.6, 0.4, -0.5), angle=0.5), t_now=1.0)
+
+    assert task.compute(_state(1.01, (1.0, 2.0))) is not None
+
+    target = fake_ik.solve_calls[0][0]
+    assert np.allclose(target.translation, [1.2, 2.2, 0.1])
+    assert np.allclose(target.rotation, pinocchio.exp3(np.array([0.0, 0.0, 0.4])))
+
+
+def test_maximum_reach_projects_target_toward_the_base(
+    tmp_path: Path, fake_ik: _FakePinkIK
+) -> None:
+    task = TeleopIKTask(
+        "teleop_arm",
+        TeleopIKTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2"],
+            control_ik=_pink_config(tmp_path / "unused.urdf"),
+            hand="right",
+            max_reach_m=0.5,
+        ),
+    )
+    _engage(task)
+    assert task.on_cartesian_command(_delta((0.6, 0.0, 0.0)), t_now=1.0)
+
+    assert task.compute(_state(1.01)) is not None
+
+    target = fake_ik.solve_calls[0][0]
+    assert np.linalg.norm(target.translation) == pytest.approx(0.5)
+    assert np.allclose(target.translation, np.array([0.6, 0.0, 0.3]) * (0.5 / np.sqrt(0.45)))
+
+
+def test_home_relative_rpy_limits_bound_each_axis(tmp_path: Path, fake_ik: _FakePinkIK) -> None:
+    task = TeleopIKTask(
+        "teleop_arm",
+        TeleopIKTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2"],
+            control_ik=_pink_config(tmp_path / "unused.urdf"),
+            hand="right",
+            home_orientation_rpy=(np.pi, 0.0, 0.0),
+            max_home_orientation_delta_rpy=(0.2, 0.2, 0.2),
+        ),
+    )
+    _engage(task)
+    assert task.on_cartesian_command(_delta(angle=2.0), t_now=1.0)
+
+    assert task.compute(_state(1.01)) is not None
+
+    target = fake_ik.solve_calls[0][0]
+    home = pinocchio.rpy.rpyToMatrix(np.array([np.pi, 0.0, 0.0]))
+    relative_rpy = pinocchio.rpy.matrixToRpy(target.rotation @ home.T)
+    assert np.all(np.abs(relative_rpy) <= 0.2 + 1e-9)
+
+
 def test_release_timeout_stop_and_clear_force_fresh_baselines(
     task: TeleopIKTask, fake_ik: _FakePinkIK
 ) -> None:

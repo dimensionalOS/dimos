@@ -42,6 +42,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
+    _xarm6_teleop_hw,
+    _xarm7_teleop_hw,
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
@@ -162,7 +164,11 @@ class WristCamera(RealSenseCamera):
 
 teleop_hosted_xarm6 = (
     autoconnect(
-        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        ArmCommandModule.blueprint(
+            task_names={"right": "teleop_xarm"},
+            home_joint_names=_xarm6_teleop_hw.joints,
+            home_joint_positions=[0.0] * len(_xarm6_teleop_hw.joints),
+        ),
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm6,
@@ -194,7 +200,11 @@ teleop_hosted_xarm6 = (
 
 teleop_hosted_xarm7 = (
     autoconnect(
-        ArmCommandModule.blueprint(task_names={"right": "teleop_xarm"}),
+        ArmCommandModule.blueprint(
+            task_names={"right": "teleop_xarm"},
+            home_joint_names=_xarm7_teleop_hw.joints,
+            home_joint_positions=[0.0] * len(_xarm7_teleop_hw.joints),
+        ),
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm7,

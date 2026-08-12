@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+import pinocchio
 import pytest
 
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
@@ -129,8 +130,8 @@ def _state(
     )
 
 
-def _twist(x: float = 0.1) -> TwistStamped:
-    return TwistStamped(frame_id="eef", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+def _twist(x: float = 0.1, angular_z: float = 0.0) -> TwistStamped:
+    return TwistStamped(frame_id="eef", linear=[x, 0.0, 0.0], angular=[0.0, 0.0, angular_z])
 
 
 def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_position(
@@ -146,6 +147,48 @@ def test_first_nonzero_command_activates_seeds_from_fk_and_outputs_servo_positio
     assert output.joint_names == ["arm/joint1", "arm/joint2", "arm/joint3"]
     assert output.positions == [0.01, 0.02, 0.03]
     assert fake_ik.solve_calls[0].translation[0] > 0.0
+
+
+def test_workspace_reach_and_orientation_limits_constrain_twist_target(fake_ik: FakeIK) -> None:
+    task = EEFTwistTask(
+        "eef",
+        EEFTwistTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
+            workspace_min=(0.1, -0.2, 0.1),
+            workspace_max=(0.55, 0.2, 0.5),
+            max_reach_m=0.6,
+            max_orientation_delta_rad=0.2,
+        ),
+    )
+    assert task.on_ee_twist_command(_twist(x=100.0, angular_z=100.0), t_now=1.0)
+
+    assert task.compute(_state(1.01, positions=[0.5, 0.0, 0.3])) is not None
+
+    target = fake_ik.solve_calls[0]
+    assert np.linalg.norm(target.translation) == pytest.approx(0.6)
+    assert target.translation[2] > 0.1
+    np.testing.assert_allclose(target.rotation, pinocchio.exp3(np.array([0.0, 0.0, 0.2])))
+
+
+def test_home_relative_rpy_limits_bound_each_axis(fake_ik: FakeIK) -> None:
+    task = EEFTwistTask(
+        "eef",
+        EEFTwistTaskConfig(
+            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            control_ik=PinkControlIKConfig(robot_model=_fake_robot_model()),
+            home_orientation_rpy=(np.pi, 0.0, 0.0),
+            max_home_orientation_delta_rpy=(0.2, 0.2, 0.2),
+        ),
+    )
+    assert task.on_ee_twist_command(_twist(angular_z=100.0), t_now=1.0)
+
+    assert task.compute(_state(1.01)) is not None
+
+    target = fake_ik.solve_calls[0]
+    home = pinocchio.rpy.rpyToMatrix(np.array([np.pi, 0.0, 0.0]))
+    relative_rpy = pinocchio.rpy.matrixToRpy(target.rotation @ home.T)
+    assert np.all(np.abs(relative_rpy) <= 0.2 + 1e-9)
 
 
 def test_twist_task_rejects_cartesian_commands_without_activation(task: EEFTwistTask) -> None:

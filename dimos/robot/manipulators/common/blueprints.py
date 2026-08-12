@@ -136,6 +136,12 @@ def eef_twist_task(
     max_tracking_error_deg: float = 10.0,
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
+    workspace_min: tuple[float, float, float] | None = None,
+    workspace_max: tuple[float, float, float] | None = None,
+    max_reach_m: float | None = None,
+    max_orientation_delta_rad: float | None = None,
+    home_orientation_rpy: tuple[float, float, float] | None = None,
+    max_home_orientation_delta_rpy: tuple[float, float, float] | None = None,
     control_ik: PinkControlIKOverrides | None = None,
     robot_model: RobotModelConfig,
     params: GripperTaskOverrides | None = None,
@@ -148,6 +154,12 @@ def eef_twist_task(
         "max_tracking_error_deg": max_tracking_error_deg,
         "min_dt": min_dt,
         "max_dt": max_dt,
+        "workspace_min": workspace_min,
+        "workspace_max": workspace_max,
+        "max_reach_m": max_reach_m,
+        "max_orientation_delta_rad": max_orientation_delta_rad,
+        "home_orientation_rpy": home_orientation_rpy,
+        "max_home_orientation_delta_rpy": max_home_orientation_delta_rpy,
     }
     if params:
         task_params.update(params)
@@ -172,6 +184,12 @@ def teleop_ik_task(
     max_tracking_error_deg: float = 10.0,
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
+    workspace_min: tuple[float, float, float] | None = None,
+    workspace_max: tuple[float, float, float] | None = None,
+    max_reach_m: float | None = None,
+    max_orientation_delta_rad: float | None = None,
+    home_orientation_rpy: tuple[float, float, float] | None = None,
+    max_home_orientation_delta_rpy: tuple[float, float, float] | None = None,
     control_ik: PinkControlIKOverrides | None = None,
     params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
@@ -184,6 +202,12 @@ def teleop_ik_task(
         "max_tracking_error_deg": max_tracking_error_deg,
         "min_dt": min_dt,
         "max_dt": max_dt,
+        "workspace_min": workspace_min,
+        "workspace_max": workspace_max,
+        "max_reach_m": max_reach_m,
+        "max_orientation_delta_rad": max_orientation_delta_rad,
+        "home_orientation_rpy": home_orientation_rpy,
+        "max_home_orientation_delta_rpy": max_home_orientation_delta_rpy,
     }
     if params:
         task_params.update(params)

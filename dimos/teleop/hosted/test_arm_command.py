@@ -32,6 +32,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -54,6 +58,9 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
             task_names={"right": "teleop_xarm"},
             control_loop_hz=50.0,
             cmd_stale_after_sec=0.5,
+            home_joint_names=["arm/joint1", "arm/joint2"],
+            home_joint_positions=[0.0, 0.0],
+            home_duration_sec=5.0,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
@@ -285,6 +292,41 @@ def test_operator_lost_disengages(module: ArmCommandModule) -> None:
     module._on_state_json(b'{"type": "operator_lost"}')
     assert not module._is_engaged[Hand.RIGHT]
     assert not module._estopped  # loss is not an estop; re-engage allowed
+
+
+def test_go_home_sends_a_current_to_home_trajectory(module: ArmCommandModule) -> None:
+    module.coordinator.get_joint_positions.return_value = {"arm/joint1": 0.4, "arm/joint2": -0.2}
+    module.coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.ACCEPTED
+    )
+
+    assert module.go_home()
+
+    trajectory = module.coordinator.execute_trajectory.call_args.args[0]
+    assert trajectory.joint_names == ["arm/joint1", "arm/joint2"]
+    assert trajectory.points[0].positions == [0.4, -0.2]
+    assert trajectory.points[1].positions == [0.0, 0.0]
+    assert trajectory.points[1].time_from_start == 5.0
+    assert module._homing
+
+
+def test_go_home_rejects_estop_or_invalid_configuration(module: ArmCommandModule) -> None:
+    module._estopped = True
+    assert not module.go_home()
+    module._estopped = False
+    module.config.home_joint_positions = [0.0]
+    assert not module.go_home()
+    module.coordinator.execute_trajectory.assert_not_called()
+
+
+def test_operator_twist_cancels_home_trajectory(module: ArmCommandModule) -> None:
+    module._homing = True
+    module.coordinator.cancel_trajectory.return_value = SimpleNamespace(safe=True)
+
+    module._on_cmd_raw(_twist_bytes(0.2))
+
+    module.coordinator.cancel_trajectory.assert_called_once()
+    assert not module._homing
 
 
 # ─── State plane: robot_state telemetry ────────────────────────────────

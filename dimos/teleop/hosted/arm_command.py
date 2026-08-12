@@ -25,14 +25,18 @@ import time
 from typing import Any
 
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.quest.quest_extensions import ArmTeleopConfig, ArmTeleopModule
@@ -45,6 +49,9 @@ logger = setup_logger()
 
 class ArmCommandConfig(ArmTeleopConfig):
     cmd_stale_after_sec: float = 0.5
+    home_joint_names: list[str] = Field(default_factory=list)
+    home_joint_positions: list[float] = Field(default_factory=list)
+    home_duration_sec: float = 5.0
 
 
 class ArmCommandModule(ArmTeleopModule):
@@ -72,6 +79,8 @@ class ArmCommandModule(ArmTeleopModule):
         self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
+        self._homing = False
+        self._home_waiting_for_release = False
 
         self._decoders[LCMTwistStamped._get_packed_fingerprint()] = self._on_twist_bytes
 
@@ -166,6 +175,8 @@ class ArmCommandModule(ArmTeleopModule):
         if ts <= self._last_twist_ts:  # out-of-order
             return
         self._last_twist_ts = ts
+        if self._homing and (any(msg.linear) or any(msg.angular)):
+            self._cancel_home()
         self.coordinator_ee_twist_command.publish(
             TwistStamped(
                 frame_id=EEF_TWIST_TASK_NAME,
@@ -212,12 +223,98 @@ class ArmCommandModule(ArmTeleopModule):
                 if self._is_engaged[hand]:
                     self._disengage(hand)
             return
+        if self._homing:
+            primary_held = any(
+                controller is not None and controller.primary
+                for controller in self._controllers.values()
+            )
+            if self._home_waiting_for_release:
+                if not primary_held:
+                    self._home_waiting_for_release = False
+                return
+            if primary_held:
+                self._cancel_home()
         super()._handle_engage()
 
     def _should_publish(self, hand: Hand) -> bool:
         # Belt to _handle_engage's braces: the latch can flip mid-iteration
         # (subscriber thread), so gate the publish path too.
-        return not self._estopped and super()._should_publish(hand)
+        return not self._estopped and not self._homing and super()._should_publish(hand)
+
+    @rpc
+    def go_home(self) -> bool:
+        """Move the arm through the coordinator's trajectory task to its configured home joints."""
+        if self._estopped:
+            logger.warning("home command rejected: E-STOP latched")
+            return False
+        if not self.config.home_joint_names or len(self.config.home_joint_names) != len(
+            self.config.home_joint_positions
+        ):
+            logger.error("home command rejected: home joint configuration is invalid")
+            return False
+        if self.config.home_duration_sec <= 0.0 or not all(
+            math.isfinite(position) for position in self.config.home_joint_positions
+        ):
+            logger.error("home command rejected: home target is invalid")
+            return False
+        try:
+            current_positions = self.coordinator.get_joint_positions()
+            start = [current_positions[name] for name in self.config.home_joint_names]
+        except Exception:
+            logger.warning(
+                "home command rejected: current arm positions unavailable", exc_info=True
+            )
+            return False
+
+        with self._lock:
+            self._homing = True
+            self._home_waiting_for_release = any(
+                controller is not None and controller.primary
+                for controller in self._controllers.values()
+            )
+            self._disengage()
+        self.coordinator_ee_twist_command.publish(
+            TwistStamped(
+                frame_id=EEF_TWIST_TASK_NAME, linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]
+            )
+        )
+        trajectory = JointTrajectory(
+            joint_names=self.config.home_joint_names,
+            points=[
+                TrajectoryPoint(positions=start, time_from_start=0.0),
+                TrajectoryPoint(
+                    positions=self.config.home_joint_positions,
+                    time_from_start=self.config.home_duration_sec,
+                ),
+            ],
+        )
+        try:
+            result = self.coordinator.execute_trajectory(trajectory)
+        except Exception:
+            logger.exception("home trajectory request failed")
+            with self._lock:
+                self._homing = False
+            return False
+        if result.status is not TrajectoryExecutionStatus.ACCEPTED:
+            logger.warning("home trajectory rejected: %s", result.message)
+            with self._lock:
+                self._homing = False
+            return False
+        logger.info("home trajectory accepted", duration=self.config.home_duration_sec)
+        return True
+
+    def _cancel_home(self) -> None:
+        """Return command authority to the operator after an explicit new input."""
+        if not self._homing:
+            return
+        try:
+            result = self.coordinator.cancel_trajectory()
+        except Exception:
+            logger.exception("failed to cancel home trajectory")
+            return
+        if result.safe:
+            self._homing = False
+            self._home_waiting_for_release = False
 
     # ─── E-STOP / operator-loss hooks ─────────────────────────────────
 
@@ -225,6 +322,8 @@ class ArmCommandModule(ArmTeleopModule):
         """Latch FIRST (gates operator input), disengage, then latch the
         coordinator off-thread; the ack carries the coordinator result."""
         self._estopped = True
+        self._homing = False
+        self._home_waiting_for_release = False
         logger.warning("E-STOP latched by operator")
         with self._lock:
             self._disengage()
