@@ -71,9 +71,9 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
-    # Publish color as JPEG CompressedImage on ``color_compressed`` instead of
-    # raw Image on ``color_image``. Off by default: every color consumer in the
-    # repo takes In[Image], so flipping this without a decode path starves them.
+    # Additionally publish JPEG on ``color_compressed``. Additive, never a
+    # replacement: ``color_image`` keeps flowing for the many In[Image]
+    # consumers, while remote viewers can take the ~20x smaller stream.
     compress_color: bool = False
     jpeg_quality: int = 75
 
@@ -305,12 +305,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
+                self.color_image.publish(color_img)
                 if self.config.compress_color:
                     self.color_compressed.publish(
                         CompressedImage.from_image(color_img, quality=self.config.jpeg_quality)
                     )
-                else:
-                    self.color_image.publish(color_img)
 
             # Process depth
             depth_img = None

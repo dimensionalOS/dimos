@@ -24,6 +24,7 @@ if global_config.simulation:
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_water_demo import unitree_g1_water_demo
 
 CAMERA = "realsensecamera"
@@ -38,6 +39,11 @@ def _stream(instance: str, port: str) -> str:
     return unitree_g1_water_demo.remapping_map.get((instance, port), port)
 
 
+def camera_streams() -> list:
+    (camera,) = [a for a in unitree_g1_water_demo.active_blueprints if a.name == CAMERA]
+    return list(camera.streams)
+
+
 def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
     names = {atom.name for atom in unitree_g1_water_demo.active_blueprints}
     assert names == {
@@ -45,10 +51,45 @@ def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
         "ControlCoordinator",
         "realsensecamera",
         "manipulationmodule",
+        "g1headcameratf",
+        "markerdetectionstreammodule",
+        "markertfmodule",
+        "markerlatchmodule",
         "rerunbridgemodule",
         "rerunwebsocketserver",
         "websocketvismodule",
     }
+
+
+def test_plant_pose_reaches_the_object_pose_contract() -> None:
+    # Perception must publish the same message sim publishes from SimBodyPose,
+    # so nothing downstream can tell the two apart.
+    assert _stream("markerlatchmodule", "object_pose") == "object_pose"
+    assert _stream("markerdetectionstreammodule", "color_image") == "color_image"
+    assert _stream("markerlatchmodule", "detections") == "detections"
+
+
+def test_marker_pipeline_matches_the_printed_tags() -> None:
+    detector = _kwargs("markerdetectionstreammodule")
+    assert detector["marker_length_m"] == 0.15
+    latch = _kwargs("markerlatchmodule")
+    assert latch["marker_ids"] == [0, 1, 2]
+
+
+def test_poses_are_base_relative() -> None:
+    # No odometry runs, so there is no world frame to latch into; every stage
+    # must agree on the pelvis or the pot lands somewhere arbitrary.
+    assert _kwargs("markerdetectionstreammodule")["world_frame"] == "pelvis"
+    assert _kwargs("markertfmodule")["world_frame"] == "pelvis"
+    assert _kwargs("markerlatchmodule")["frame_id"] == "pelvis"
+    assert _kwargs("g1headcameratf")["base_frame"] == "pelvis"
+
+
+def test_camera_tf_chain_connects_to_the_urdf_mount() -> None:
+    # G1HeadCameraTf publishes pelvis->d435_link; the camera hangs its own
+    # optical chain off that same link. A mismatch drops every frame silently.
+    assert _kwargs("g1headcameratf")["camera_frame"] == "d435_link"
+    assert _kwargs(CAMERA)["base_frame_id"] == "d435_link"
 
 
 def test_arm_trajectory_task_sits_above_the_servo_hold() -> None:
@@ -76,11 +117,15 @@ def test_camera_publishes_compressed_color() -> None:
     compressed = [s for s in camera.streams if s.type is CompressedImage]
     assert [s.name for s in compressed] == ["color_compressed"]
     # Depth and pointcloud would swamp the Jetson; the demo only needs color.
-    assert _kwargs(CAMERA) == {
-        "enable_depth": False,
-        "enable_pointcloud": False,
-        "compress_color": True,
-    }
+    camera = _kwargs(CAMERA)
+    assert camera["compress_color"] is True
+    assert camera["enable_depth"] is False
+    assert camera["enable_pointcloud"] is False
+    # Compression is additive: marker detection still needs the raw pixels.
+    assert [s.name for s in camera_streams() if s.type is Image] == [
+        "color_image",
+        "depth_image",
+    ]
 
 
 def test_camera_has_a_2d_view_to_render_into() -> None:

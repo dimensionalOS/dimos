@@ -20,8 +20,15 @@ Viser off, and the head RealSense publishing JPEG color for the Rerun
 stream. Comes up unarmed + dry-run with the base blueprint's 10 s
 activation ramp.
 
-The plant pose arrives on ``/object_pose`` from perception (the same message
-sim publishes from ``SimBodyPose``); this blueprint does not publish it yet.
+The head camera also feeds AprilTag detection: tags 0/1/2 mark pot plants,
+and the first one seen consistently is latched and republished on
+``/object_pose`` — the same message sim publishes from ``SimBodyPose``, so
+nothing downstream can tell perception from ground truth. Poses are
+pelvis-relative because no odometry runs; the robot latches the pot from
+where it is standing, which is what the walk-up-then-pour sequence needs.
+
+Marker detection stays silent until this robot's camera intrinsics are
+captured — see ``tool_dump_camera_info``.
 
 Driving is the viewer's own teleop, wired straight through: the viewer's
 ``tele_cmd_vel`` is remapped onto ``cmd_vel``, which is the coordinator's
@@ -46,6 +53,9 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
+from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _backend,
     _G1GrootCoordinator,
@@ -56,6 +66,12 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     _ARM_TRAJECTORY_TASK,
     g1_manipulation,
 )
+from dimos.robot.unitree.g1.head_camera import (
+    HEAD_CAMERA_MOUNT_FRAME,
+    HEAD_CAMERA_NAME,
+    head_camera_info,
+)
+from dimos.robot.unitree.g1.head_camera_tf import G1HeadCameraTf
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -74,6 +90,31 @@ _demo_remappings = [
 ]
 
 _CAMERA_ENTITY = "world/color_compressed"
+
+# All three tags mark pot plants at different spots; the first one the robot
+# sees consistently becomes the target. Physical black-border edge, printed at
+# 100% from `dimos apriltag --ids 0,1,2 --size-mm 150`.
+_PLANT_MARKER_IDS = [0, 1, 2]
+_MARKER_LENGTH_M = 0.15
+# Poses are pelvis-relative: no odometry runs, so there is no world frame to
+# put them in. The robot latches the pot from where it is standing.
+_BASE_FRAME = "pelvis"
+
+
+def _plant_perception() -> Any:
+    """Head camera -> AprilTag detections -> one latched pot pose."""
+    return autoconnect(
+        G1HeadCameraTf.blueprint(base_frame=_BASE_FRAME, camera_frame=HEAD_CAMERA_MOUNT_FRAME),
+        MarkerDetectionStreamModule.blueprint(
+            marker_length_m=_MARKER_LENGTH_M,
+            # Detection resolves poses in this frame, so it is what the
+            # latched pose ends up expressed in.
+            world_frame=_BASE_FRAME,
+            camera_info=head_camera_info(),
+        ),
+        MarkerTfModule.blueprint(world_frame=_BASE_FRAME),
+        MarkerLatchModule.blueprint(marker_ids=_PLANT_MARKER_IDS, frame_id=_BASE_FRAME),
+    )
 
 
 def _water_demo_rerun_blueprint() -> Any:
@@ -115,14 +156,22 @@ unitree_g1_water_demo = (
     autoconnect(
         _backend,
         g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
-        # JPEG over the wire and straight into Rerun as an EncodedImage: the
-        # robot never decodes, and raw color would cost ~18 MB/s of egress.
-        RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False, compress_color=True),
+        # Raw color feeds marker detection on-robot; the JPEG copy is what
+        # crosses the network, logged to Rerun as an EncodedImage so the robot
+        # never decodes and raw color never costs ~18 MB/s of egress.
+        RealSenseCamera.blueprint(
+            camera_name=HEAD_CAMERA_NAME,
+            base_frame_id=HEAD_CAMERA_MOUNT_FRAME,
+            enable_depth=False,
+            enable_pointcloud=False,
+            compress_color=True,
+        ),
+        _plant_perception(),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))
     # One worker per module: the connection pump, the 100 Hz tick, the camera
-    # capture loop and the Rerun bridge each need their own process.
-    .global_config(robot_model="unitree_g1", n_workers=7)
+    # capture loop, marker detection and the Rerun bridge each need their own.
+    .global_config(robot_model="unitree_g1", n_workers=11)
 )
