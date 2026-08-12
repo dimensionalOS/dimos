@@ -20,9 +20,23 @@ Given the pot's pose, the robot decides where to stand (the reach map in
 adopts that stance as its planning base, checks the pour actually plans
 from there, pours, and puts the arm back.
 
-The pot's pose arrives on ``/object_pose`` -- privileged body state in sim,
-perception on hardware -- so nothing here is simulator-specific except the
-ground-truth measurements printed at the end.
+Where the pot is comes from a different place on each target, and that is
+the only difference between them:
+
+``--target sim``
+    ``/object_pose`` is the prop's privileged body state in the world frame,
+    and ``/odom`` says where the robot is standing in that same world.
+
+``--target hardware``
+    There is no odometry at all -- the G1's DDS link carries motor states and
+    the pelvis IMU, nothing more -- so the world is the floor under the
+    pelvis: the robot is the origin, facing +x, at the nominal standing
+    height the planning model is already placed at. AprilTag detections are
+    resolved in the pelvis frame, which under that convention *is* the world
+    frame, so the tag's pose needs no transform and the planning base needs
+    no latch. Steering runs on live detections rather than the latched
+    ``/object_pose``: the latch is frozen at the sighting, so approaching on
+    it would drive at a pot that never appears to get closer.
 
 Run the sim first::
 
@@ -35,7 +49,15 @@ then, from the repo root::
     .venv/bin/python -m dimos.robot.unitree.g1.debug.demo_pour_sequence status
     .venv/bin/python -m dimos.robot.unitree.g1.debug.demo_pour_sequence approach
 
+On the robot, against ``unitree-g1-water-demo``::
+
+    .venv/bin/python -m dimos.robot.unitree.g1.debug.demo_pour_sequence \\
+        --target hardware status
+
 Ctrl-C stops the robot and hands control back at any point.
+
+Teleop writes the same twist topic this drives, so the last message wins:
+do not drive while the servo is running.
 """
 
 from __future__ import annotations
@@ -55,6 +77,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.robot.unitree.g1.manip_last_mile import Twist2D, arrived, servo_step
 from dimos.robot.unitree.g1.manip_stance import (
     POUR_Z,
@@ -69,6 +92,11 @@ ROBOT = "g1"
 GROUP = "g1/right_arm"
 SERVO_HZ = 10.0
 SERVO_TIMEOUT = 90.0
+# The tags the water demo prints for pot plants.
+PLANT_MARKER_IDS = (0, 1, 2)
+# The last-mile controller is a P loop on a live sighting; steering on a stale
+# one walks the robot at where the pot used to be.
+SIGHTING_TIMEOUT = 2.0
 # The gait keeps stepping after the command stops; let it settle before
 # latching a base pose the planner will trust for the rest of the sequence.
 SETTLE_SECONDS = 3.0
@@ -76,46 +104,104 @@ HOLD_SECONDS = 3.0
 
 
 class _Sightings:
-    """Latest pot pose and robot odometry, latched off their topics.
+    """Where the pot is, and where the robot is standing.
 
     The LCM callback thread is shared by every subscription on its instance,
     so it only ever stores the message; the control loop does the work.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, hardware: bool) -> None:
+        self._hardware = hardware
         self._lock = threading.Lock()
         self._pot: PoseStamped | None = None
         self._odom: PoseStamped | None = None
-        self._pot_transport = LCMTransport("/object_pose", PoseStamped)
-        self._odom_transport = LCMTransport("/odom", PoseStamped)
-        self._pot_transport.subscribe(self._on_pot)
-        self._odom_transport.subscribe(self._on_odom)
+        self._seen_at = 0.0
+        self._frozen: tuple[float, float] | None = None
+        if hardware:
+            self._det_transport: LCMTransport[Detection3DArray] = LCMTransport(
+                "/detections", Detection3DArray
+            )
+            self._det_transport.subscribe(self._on_detections)
+        else:
+            self._pot_transport: LCMTransport[PoseStamped] = LCMTransport(
+                "/object_pose", PoseStamped
+            )
+            self._odom_transport: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
+            self._pot_transport.subscribe(self._on_pot)
+            self._odom_transport.subscribe(self._on_odom)
 
     def _on_pot(self, msg: PoseStamped) -> None:
         with self._lock:
             self._pot = msg
+            self._seen_at = time.time()
 
     def _on_odom(self, msg: PoseStamped) -> None:
         with self._lock:
             self._odom = msg
 
+    def _on_detections(self, msg: Detection3DArray) -> None:
+        for detection in msg.detections[: msg.detections_length]:
+            try:
+                marker_id = int(str(detection.id).strip())
+            except (TypeError, ValueError):
+                continue
+            if marker_id not in PLANT_MARKER_IDS:
+                continue
+            with self._lock:
+                self._pot = PoseStamped(
+                    position=[
+                        float(detection.bbox.center.position.x),
+                        float(detection.bbox.center.position.y),
+                        float(detection.bbox.center.position.z),
+                    ],
+                    frame_id="world",
+                )
+                self._seen_at = time.time()
+            return
+
     def wait(self, timeout: float = 10.0) -> None:
         deadline = time.time() + timeout
         while time.time() < deadline:
             with self._lock:
-                if self._pot is not None and self._odom is not None:
+                if self._pot is not None and (self._hardware or self._odom is not None):
                     return
             time.sleep(0.1)
-        raise SystemExit("no pot pose or odometry yet - is the sim running?")
+        raise SystemExit(
+            "no tag detections yet - is the robot looking at one?"
+            if self._hardware
+            else "no pot pose or odometry yet - is the sim running?"
+        )
+
+    @property
+    def hardware(self) -> bool:
+        return self._hardware
+
+    def freeze(self) -> None:
+        """Stop tracking: hold the pot where it was last seen.
+
+        The arm goes where the camera was looking, so the tag is usually
+        occluded by the time the pour starts.
+        """
+        self._frozen = self.pot_xy
 
     @property
     def pot_xy(self) -> tuple[float, float]:
+        if self._frozen is not None:
+            return self._frozen
         with self._lock:
             assert self._pot is not None
-            return float(self._pot.position.x), float(self._pot.position.y)
+            age = time.time() - self._seen_at
+            pot = (float(self._pot.position.x), float(self._pot.position.y))
+        if self._hardware and age > SIGHTING_TIMEOUT:
+            raise _SightingLostError(f"last tag sighting was {age:.1f} s ago")
+        return pot
 
     @property
     def base(self) -> tuple[float, float, float]:
+        # Hardware has no odometry: the robot *is* the origin, and the pot is
+        # already measured relative to it.
+        if self._hardware:
+            return 0.0, 0.0, 0.0
         with self._lock:
             assert self._odom is not None
             odom = self._odom
@@ -132,11 +218,15 @@ class _Sightings:
         return pot_in_base_frame(self.pot_xy, (x, y), yaw)
 
 
+class _SightingLostError(RuntimeError):
+    """The tag stopped being visible while the robot was steering at it."""
+
+
 class _Driver:
     """Publishes twists, and guarantees a stop on the way out."""
 
-    def __init__(self) -> None:
-        self._transport = LCMTransport("/cmd_vel", Twist)
+    def __init__(self, topic: str) -> None:
+        self._transport: LCMTransport[Twist] = LCMTransport(topic, Twist)
         self._transport.start()
 
     def send(self, twist: Twist2D) -> None:
@@ -177,18 +267,22 @@ def approach(
 
     deadline = time.time() + SERVO_TIMEOUT
     period = 1.0 / SERVO_HZ
-    while time.time() < deadline:
-        seen = sight.seen_offset()
-        twist = servo_step(seen, stance.offset, reach)
-        if twist.is_stop:
+    try:
+        while time.time() < deadline:
+            seen = sight.seen_offset()
+            twist = servo_step(seen, stance.offset, reach)
+            if twist.is_stop:
+                driver.stop()
+                print(f"arrived: pot at ({seen[0]:+.2f}, {seen[1]:+.2f}) in the base frame")
+                break
+            driver.send(twist)
+            time.sleep(period)
+        else:
             driver.stop()
-            print(f"arrived: pot at ({seen[0]:+.2f}, {seen[1]:+.2f}) in the base frame")
-            break
-        driver.send(twist)
-        time.sleep(period)
-    else:
+            raise SystemExit("last-mile servo timed out")
+    except _SightingLostError as lost:
         driver.stop()
-        raise SystemExit("last-mile servo timed out")
+        raise SystemExit(f"lost the tag mid-approach ({lost}) - stopped where it stands") from lost
 
     time.sleep(SETTLE_SECONDS)
     return sight.seen_offset()
@@ -207,7 +301,13 @@ def latch_and_verify(module: Any, sight: _Sightings, reach: PourReachMap, driver
     through, with the tool already hanging over the pot.
     """
     for attempt in range(3):
-        print("latch ->", module.latch_base_pose(), "|", module.describe_base_pose())
+        if sight.hardware:
+            # The planning base is already the pelvis-anchored world this
+            # target is measured in, so there is nothing to re-place; a latch
+            # here would rebuild the scene around the same pose.
+            print("latch -> skipped (pelvis-anchored) |", module.describe_base_pose())
+        else:
+            print("latch ->", module.latch_base_pose(), "|", module.describe_base_pose())
         seen = sight.seen_offset()
         _, _, base_yaw = sight.base
         pot = sight.pot_xy
@@ -240,6 +340,7 @@ def latch_and_verify(module: Any, sight: _Sightings, reach: PourReachMap, driver
 
 def pour(module: Any, sight: _Sightings) -> bool:
     """Hold the tool over the pot, tip it, then put the arm back."""
+    sight.freeze()
     seen = sight.seen_offset()
     _, _, base_yaw = sight.base
     pot = sight.pot_xy
@@ -304,10 +405,14 @@ def status(module: Any, sight: _Sightings, reach: PourReachMap) -> None:
     print(f"module: {module.get_state()} | {module.describe_base_pose()}")
 
 
-def run(command: str) -> int:
+def run(command: str, target: str) -> int:
+    hardware = target == "hardware"
+    # The coordinator's twist_command is bound to a different topic on each.
+    cmd_vel_topic = "/g1/cmd_vel" if hardware else "/cmd_vel"
+    print(f"target: {target} | driving {cmd_vel_topic}")
     module = RPCClient(None, ManipulationModule)
-    sight = _Sightings()
-    driver = _Driver()
+    sight = _Sightings(hardware=hardware)
+    driver = _Driver(cmd_vel_topic)
     reach = PourReachMap.load()
     sight.wait()
 
@@ -342,7 +447,9 @@ def main() -> None:
     parser.add_argument(
         "command", nargs="?", default="demo", choices=("demo", "status", "approach")
     )
-    raise SystemExit(run(parser.parse_args().command))
+    parser.add_argument("--target", default="sim", choices=("sim", "hardware"))
+    args = parser.parse_args()
+    raise SystemExit(run(args.command, args.target))
 
 
 if __name__ == "__main__":
