@@ -90,18 +90,6 @@ _demo_remappings = [
     (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
 ]
 
-# Pinned here, not inherited: the base blueprint resolves these from an
-# import-time `global_config.simulation` branch, and a robot that picks the sim
-# values arms itself milliseconds after launch. The policy then holds a full
-# standing pose, so the robot slams into it the moment it leaves damping.
-# The operator arms explicitly, once the robot is standing and settled.
-_HARDWARE_SAFETY = {
-    "auto_arm": False,
-    "auto_dry_run": True,
-    "default_ramp_seconds": 10.0,
-    "decimation": 2,  # 100 Hz tick / 2 = the 50 Hz the policy was trained at
-}
-
 _CAMERA_ENTITY = "world/color_compressed"
 
 # All three tags mark pot plants at different spots; the first one the robot
@@ -168,7 +156,7 @@ _demo_rerun_config: dict[str, Any] = {
 unitree_g1_water_demo = (
     autoconnect(
         _backend,
-        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,), policy_params=_HARDWARE_SAFETY),
+        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
         # Raw color feeds marker detection on-robot; the JPEG copy is what
         # crosses the network, logged to Rerun as an EncodedImage so the robot
         # never decodes and raw color never costs ~18 MB/s of egress.

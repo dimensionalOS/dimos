@@ -112,17 +112,6 @@ def test_policy_comes_up_unarmed_and_dry_run() -> None:
     assert groot.params["default_ramp_seconds"] == 10.0
 
 
-def test_policy_never_arms_itself() -> None:
-    # Pinned rather than inherited: the base blueprint resolves these from an
-    # import-time simulation branch, and a robot that picks up auto_arm=True
-    # holds a standing pose from launch, then slams into it when damping ends.
-    (groot,) = [t for t in _kwargs("ControlCoordinator")["tasks"] if t.name == "groot_wbc"]
-    assert groot.params["auto_arm"] is False
-    assert groot.params["auto_dry_run"] is True
-    assert groot.params["default_ramp_seconds"] == 10.0
-    assert groot.params["decimation"] == 2
-
-
 def test_camera_publishes_compressed_color() -> None:
     (camera,) = [a for a in unitree_g1_water_demo.active_blueprints if a.name == CAMERA]
     compressed = [s for s in camera.streams if s.type is CompressedImage]
