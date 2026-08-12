@@ -81,6 +81,10 @@ class GlobalConfig(BaseSettings):
     scene_package: str | None = None
     robot_model: str | None = None
     robot_id: str | None = None
+    # Whole-body gravity-feedforward multiplier. None keeps the blueprint's
+    # own value; set it to step the scale during a hardware droop calibration
+    # without editing the blueprint.
+    gravity_ff_scale: float | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0

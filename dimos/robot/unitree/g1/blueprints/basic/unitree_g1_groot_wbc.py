@@ -283,6 +283,8 @@ if global_config.simulation == "mujoco":
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
     _n_workers = 2  # sim: keep the default worker count
+    # Calibrated against measured sag in sim, where URDF masses run ~30% heavy.
+    _gravity_ff_scale = 0.7
     _arm_holder = TaskConfig(
         name="servo_arms",
         type="servo",
@@ -330,6 +332,11 @@ else:
     _auto_dry_run = True
     _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
+    # Off until calibrated on this plant. Sim's 0.7 is not transferable: real
+    # joint friction already holds part of the arm's weight, so the same
+    # feedforward over-supports and walks the arm up. Step it with
+    # --gravity-ff-scale against measured droop, one step per armed run.
+    _gravity_ff_scale = 0.0
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 10
     # Real hardware needs the arms held -- kd damping alone would let
@@ -521,16 +528,17 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
                     kp=tuple(G1_GROOT_KP),
                     kd=tuple(G1_GROOT_KD),
                     # Cancels arm self-weight sag (D1) without touching the
-                    # GR00T-trained gain contract. Sim-validated only; H1
-                    # re-checks hardware torque limits before enabling there.
+                    # GR00T-trained gain contract. The scale is per-plant --
+                    # see _gravity_ff_scale above; torques are clamped to this
+                    # model's own effort limits either way.
                     gravity_ff_model=str(LfsPath("g1_urdf/g1.urdf")),
                     gravity_ff_joint_map=tuple(
                         (name, f"{name.removeprefix('g1/')}_joint") for name in g1_joints
                     ),
                     gravity_ff_joints=tuple(g1_arms),
-                    # Calibrated against measured sag in sim (URDF masses run
-                    # ~30% heavy); recalibrate on hardware in H1.
-                    gravity_ff_scale=0.7,
+                    gravity_ff_scale=_gravity_ff_scale
+                    if global_config.gravity_ff_scale is None
+                    else global_config.gravity_ff_scale,
                 ),
             ),
         ],
