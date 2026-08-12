@@ -47,6 +47,7 @@ fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
 
 #[native_config]
 #[validate(schema(function = "validate_config"))]
+#[derive(Clone)]
 pub struct Config {
     #[validate(range(exclusive_min = 0.0))]
     pub voxel_size: f32,

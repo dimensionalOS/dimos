@@ -110,6 +110,11 @@ def main(
     from_time: float | None = typer.Option(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
+    viewer_memory: str = typer.Option(
+        "25%",
+        "--viewer-memory",
+        help="Spawned viewer memory limit before it drops old frames, e.g. 4GB or 25%",
+    ),
 ) -> None:
     import rerun as rr
 
@@ -122,7 +127,7 @@ def main(
     if out is not None:
         rr.save(str(out))
     else:
-        rr.spawn()
+        rr.spawn(memory_limit=viewer_memory)
 
     rr.log(
         "world/robot/axes",
@@ -163,9 +168,10 @@ def main(
             if obs.pose_tuple is None:
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
-            pts = obs.data.points_f32()
+            # Sensor-frame cloud: the mapper registers it by the odom pose.
+            raw = obs.data.points_f32()
             for mapper in mappers.values():
-                mapper.add_frame(pts, (x, y, z))
+                pts = mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1
 
             if count % emit_every != 0:

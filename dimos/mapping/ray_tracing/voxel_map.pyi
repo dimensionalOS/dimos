@@ -39,9 +39,21 @@ class VoxelRayMapper:
     def add_frame(
         self,
         points: NDArray[np.float32],
-        origin: tuple[float, float, float],
-    ) -> None:
-        """Update the map with a frame of lidar points. Shape (N, 3) float32."""
+        position: tuple[float, float, float],
+        orientation: tuple[float, float, float, float],
+    ) -> NDArray[np.float32]:
+        """Register a sensor-frame cloud by the pose and fold it into the map.
+
+        Points are (N, 3) float32. Orientation is an (x, y, z, w) quaternion.
+        Returns the registered world-frame points.
+        """
+        ...
+
+    def take_local_bounds(self) -> tuple[float, float, float, float, float]:
+        """Cylinder over the frames batched since the last call.
+
+        Returns (cx, cy, radius, z_min, z_max) and consumes the batch.
+        """
         ...
 
     def global_map(self) -> NDArray[np.float32]:
