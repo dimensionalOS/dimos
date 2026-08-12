@@ -24,7 +24,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from dimos.cli.bake import BakeError
+from dimos.cli.bake.errors import BakeError
 
 BUILDERS = ("cargo", "cross", "zigbuild")
 
@@ -46,13 +46,24 @@ def build_command(builder: str, *, target: str | None = None, debug: bool = Fals
     return cmd
 
 
+def target_dir_name(target: str) -> str:
+    """The directory cargo writes for `target`.
+
+    `cargo zigbuild` accepts a glibc version glued to the triple
+    (`aarch64-unknown-linux-gnu.2.31`, meaning "link against 2.31 so an older
+    robot can run it") but writes its artifact under the bare triple. Triples
+    carry no dots of their own, so the suffix is what follows the first one.
+    """
+    return target.split(".", 1)[0]
+
+
 def artifact_path(
     crate_dir: Path, host: str, *, target: str | None = None, debug: bool = False
 ) -> Path:
     profile = "debug" if debug else "release"
     out = crate_dir / "target"
     if target:
-        out = out / target
+        out = out / target_dir_name(target)
     return out / profile / host
 
 

@@ -84,12 +84,13 @@ def crate_dir(host: str, root: Path | None = None) -> Path:
 
 def _dependencies(modules: Sequence[ModuleInfo], root: Path) -> str:
     lines = [f'dimos-module = {{ path = "{root / "native" / "rust" / "dimos-module"}" }}']
-    for module in modules:
+    # keyed by crate, not by module: one crate may register several ids (the
+    # adapter registers motion_planner and trajectory_follower), and naming it
+    # once per module is a duplicate key cargo refuses to parse
+    for crate_name, crate_dir in dict.fromkeys((m.crate_name, m.crate_dir) for m in modules):
         # default-features off drops pyo3, whose libpython symbols would break a
         # static link and are dead weight in a host either way.
-        lines.append(
-            f'{module.crate_name} = {{ path = "{module.crate_dir}", default-features = false }}'
-        )
+        lines.append(f'{crate_name} = {{ path = "{crate_dir}", default-features = false }}')
     return "\n".join(lines)
 
 

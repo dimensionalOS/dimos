@@ -18,13 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from dimos.cli.bake import BakeError
 from dimos.cli.bake.discovery import (
     discover_modules,
     parse_manifest,
     render_registry,
     select_modules,
 )
+from dimos.cli.bake.errors import BakeError
 
 MANIFEST = """
 [package]

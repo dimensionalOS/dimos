@@ -29,7 +29,7 @@ from typing import Any
 
 import tomllib
 
-from dimos.cli.bake import BakeError
+from dimos.cli.bake.errors import BakeError
 
 # Directories that never hold a source manifest, and that are expensive to walk.
 _PRUNE = {

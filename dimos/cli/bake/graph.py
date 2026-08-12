@@ -25,8 +25,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dimos.cli.bake import BakeError
 from dimos.cli.bake.discovery import ModuleInfo, normalize_id
+from dimos.cli.bake.errors import BakeError
 
 Kind = Literal["internal", "external_input", "external_output"]
 

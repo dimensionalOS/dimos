@@ -24,10 +24,10 @@ from typing import Any, get_type_hints
 
 import typer
 
-from dimos.cli.bake import BakeError
 from dimos.cli.bake.build import BUILDERS, build_host, install
 from dimos.cli.bake.codegen import generate_crate
 from dimos.cli.bake.discovery import ModuleInfo, discover_modules, render_registry, select_modules
+from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
 
 
@@ -136,7 +136,11 @@ def _bake(
 
     if emit_config_to is not None:
         emit_config_to.parent.mkdir(parents=True, exist_ok=True)
-        emit_config_to.write_text(json.dumps(emit_config(graph, selected), indent=2) + "\n")
+        # One line, like NativeModule._stdin_blob writes: the host reads its
+        # config with a single read_line, so a pretty-printed blob is parsed as
+        # the bare `{` of its first line and the host exits before it subscribes
+        # to anything. `jq .` if you want to read it.
+        emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
         typer.echo(f"Wrote {emit_config_to}")
 
     if dry_run:
