@@ -80,6 +80,28 @@ def test_scale_multiplies_torque(tmp_path):
     assert ff.tau({"r/shoulder": 0.0})["r/shoulder"] == pytest.approx(-0.7 * M * G * L, rel=1e-6)
 
 
+def test_torque_is_clamped_to_the_model_effort_limit(tmp_path):
+    # 20x the ~9.8 Nm holding torque is well past the joint's 100 Nm limit.
+    ff = pendulum(tmp_path, scale=20.0)
+    assert ff.tau({"r/shoulder": 0.0})["r/shoulder"] == pytest.approx(-100.0)
+    # Under the limit the scale still applies untouched.
+    assert ff.tau({"r/shoulder": 1.4})["r/shoulder"] == pytest.approx(
+        20.0 * -M * G * L * math.cos(1.4), rel=1e-6
+    )
+
+
+def test_joint_without_an_effort_limit_is_not_clamped(tmp_path):
+    urdf = tmp_path / "unlimited.urdf"
+    urdf.write_text(PENDULUM_URDF.replace('effort="100"', 'effort="0"'))
+    ff = GravityFeedforward(
+        model_path=str(urdf),
+        joint_map={"r/shoulder": "shoulder"},
+        ff_joints=("r/shoulder",),
+        scale=20.0,
+    )
+    assert ff.tau({"r/shoulder": 0.0})["r/shoulder"] == pytest.approx(20.0 * -M * G * L, rel=1e-6)
+
+
 def test_unknown_joint_and_frame_raise(tmp_path):
     urdf = tmp_path / "pendulum.urdf"
     urdf.write_text(PENDULUM_URDF)

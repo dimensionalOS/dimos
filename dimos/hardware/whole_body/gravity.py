@@ -16,9 +16,14 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
+
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 _GRAVITY = 9.81
 
@@ -30,6 +35,11 @@ class GravityFeedforward:
     acceleration), plus ``J^T (0, 0, m g)`` per payload frame. The model root
     is assumed gravity-aligned; base tilt is not compensated. URDF and MJCF
     models are supported; in sim, use the sim's own MJCF so masses match.
+
+    Output is clamped to each joint's model effort limit. Feedforward torque
+    is added open-loop on top of the PD term, so a scale calibrated against
+    one payload can exceed a weaker joint's motor at another configuration --
+    the G1's wrists take 5 Nm against the shoulders' 25.
     """
 
     def __init__(
@@ -46,6 +56,7 @@ class GravityFeedforward:
         self._payloads = tuple(payloads)
         self._scale = scale
         self._model: Any = None
+        self._clamped: set[str] = set()
 
     def _ensure_model(self) -> None:
         if self._model is not None:
@@ -75,6 +86,13 @@ class GravityFeedforward:
             if not model.existFrame(frame):
                 raise ValueError(f"Gravity FF payload frame '{frame}' not in {self._model_path}")
             self._payload_frames.append((model.getFrameId(frame), mass))
+        # MJCF joints often carry no effort limit; those read 0 or inf here
+        # and are left unclamped rather than pinned to zero torque.
+        self._effort_limit: dict[str, float] = {}
+        for name in self._ff_joints:
+            limit = float(model.effortLimit[self._idx_v[name]])
+            if np.isfinite(limit) and limit > 0.0:
+                self._effort_limit[name] = limit
 
     def tau(self, positions: dict[str, float]) -> dict[str, float]:
         """Holding torque for the feedforward joints at measured ``positions``."""
@@ -92,4 +110,23 @@ class GravityFeedforward:
                 self._model, self._data, q, frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
             )
             torques = torques + jac[:3].T @ np.array([0.0, 0.0, mass * _GRAVITY])
-        return {name: self._scale * float(torques[self._idx_v[name]]) for name in self._ff_joints}
+        return {
+            name: self._clamp(name, self._scale * float(torques[self._idx_v[name]]))
+            for name in self._ff_joints
+        }
+
+    def _clamp(self, name: str, tau: float) -> float:
+        limit = self._effort_limit.get(name)
+        if limit is None or abs(tau) <= limit:
+            return tau
+        if name not in self._clamped:
+            self._clamped.add(name)
+            logger.warning(
+                "Gravity feedforward exceeds the joint's model effort limit; clamping. "
+                "Lower gravity_ff_scale, or drop the payload.",
+                joint=name,
+                requested_nm=round(tau, 2),
+                limit_nm=limit,
+                scale=self._scale,
+            )
+        return math.copysign(limit, tau)
