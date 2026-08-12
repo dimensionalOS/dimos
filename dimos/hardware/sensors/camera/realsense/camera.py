@@ -160,9 +160,26 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             logger.info("RealSenseCamera opened on retry; streaming resumed")
             return
 
+    def _release_pipeline(self) -> None:
+        """Drop a half-opened pipeline so the next attempt starts clean.
+
+        ``rs.pipeline()`` claims the device as soon as it is constructed, so a
+        failed ``start()`` that leaves the object alive makes every later
+        attempt fail against our own handle rather than the real holder.
+        """
+        if self._pipeline is None:
+            return
+        try:
+            self._pipeline.stop()
+        except Exception:
+            pass  # never started; constructing it is what has to be undone
+        self._pipeline = None
+        self._profile = None
+
     def _open_pipeline(self) -> None:
         import pyrealsense2 as rs
 
+        self._release_pipeline()
         self._pipeline = rs.pipeline()
         config = rs.config()
 
