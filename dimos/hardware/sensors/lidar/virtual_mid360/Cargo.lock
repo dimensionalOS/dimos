@@ -562,7 +562,6 @@ dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
- "libc",
  "nalgebra",
  "serde",
  "serde_json",

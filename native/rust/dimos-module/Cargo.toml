@@ -18,10 +18,6 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 zenoh = { version = "1", features = ["unstable"] }
 
-[target.'cfg(unix)'.dependencies]
-# setpriority for the optional per-module `nice` in a baked host
-libc = "0.2"
-
 [dev-dependencies]
 tracing-test = "0.2"
 

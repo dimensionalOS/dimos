@@ -100,8 +100,6 @@ def _entries(modules: Sequence[ModuleInfo]) -> str:
         call = f'    ModuleEntry::new::<{module.rust_path}>("{module.id}")'
         if module.threads != 1:
             call += f".threads({module.threads})"
-        if module.nice is not None:
-            call += f".nice({module.nice})"
         lines.append(call + ",")
     return "\n".join(lines)
 

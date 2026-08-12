@@ -34,7 +34,6 @@ name = "demo-crate"
 path = "demo::module::Demo"
 python = "dimos.demo.module:Demo"
 threads = 2
-nice = 5
 
 [package.metadata.dimos.module.demo.inputs]
 lidar = "sensor_msgs.PointCloud2"
@@ -58,7 +57,6 @@ def test_parses_a_registered_module(tmp_path):
     assert info.rust_path == "demo::module::Demo"
     assert info.python_ref == "dimos.demo.module:Demo"
     assert info.threads == 2
-    assert info.nice == 5
     assert info.inputs == {"lidar": "sensor_msgs.PointCloud2"}
     assert info.outputs == {"global_map": "sensor_msgs.PointCloud2"}
 
@@ -69,10 +67,9 @@ def test_a_crate_without_the_metadata_table_is_not_a_module(tmp_path):
 
 
 def test_threads_defaults_to_one(tmp_path):
-    manifest = MANIFEST.replace("threads = 2\n", "").replace("nice = 5\n", "")
+    manifest = MANIFEST.replace("threads = 2\n", "")
     (info,) = parse_manifest(write_crate(tmp_path, "dimos/demo/rust", manifest))
     assert info.threads == 1
-    assert info.nice is None
 
 
 def test_a_missing_required_key_is_an_error(tmp_path):

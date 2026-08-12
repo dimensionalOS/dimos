@@ -63,7 +63,6 @@ class ModuleInfo:
     # `pkg.mod:Class` of the python NativeModule wrapper, for `--emit-config`.
     python_ref: str
     threads: int
-    nice: int | None
     inputs: Mapping[str, str]
     outputs: Mapping[str, str]
 
@@ -118,9 +117,6 @@ def parse_manifest(path: Path) -> list[ModuleInfo]:
         threads = entry.get("threads", 1)
         if not isinstance(threads, int) or threads < 1:
             raise BakeError(f"{where}: `threads` must be a positive integer")
-        nice = entry.get("nice")
-        if nice is not None and not isinstance(nice, int):
-            raise BakeError(f"{where}: `nice` must be an integer")
         found.append(
             ModuleInfo(
                 id=normalize_id(raw_id),
@@ -129,7 +125,6 @@ def parse_manifest(path: Path) -> list[ModuleInfo]:
                 rust_path=entry["path"],
                 python_ref=entry["python"],
                 threads=threads,
-                nice=nice,
                 inputs=_str_table(entry, "inputs", where),
                 outputs=_str_table(entry, "outputs", where),
             )
