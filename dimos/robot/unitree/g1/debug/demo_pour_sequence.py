@@ -137,8 +137,9 @@ class _Sightings:
     so it only ever stores the message; the control loop does the work.
     """
 
-    def __init__(self, hardware: bool) -> None:
+    def __init__(self, hardware: bool, sighting_timeout: float = SIGHTING_TIMEOUT) -> None:
         self._hardware = hardware
+        self._timeout = sighting_timeout
         self._lock = threading.Lock()
         self._pot: PoseStamped | None = None
         self._odom: PoseStamped | None = None
@@ -219,9 +220,14 @@ class _Sightings:
             assert self._pot is not None
             age = time.time() - self._seen_at
             pot = (float(self._pot.position.x), float(self._pot.position.y))
-        if self._hardware and age > SIGHTING_TIMEOUT:
+        if self._hardware and age > self._timeout:
             raise _SightingLostError(f"last tag sighting was {age:.1f} s ago")
         return pot
+
+    @property
+    def sighting_age(self) -> float:
+        with self._lock:
+            return time.time() - self._seen_at
 
     @property
     def pot_z(self) -> float:
@@ -298,16 +304,28 @@ def approach(
         f"({stance.margin_cells} cells inside the region)"
     )
 
-    deadline = time.time() + SERVO_TIMEOUT
+    started = time.time()
+    deadline = started + SERVO_TIMEOUT
     period = 1.0 / SERVO_HZ
     try:
         while time.time() < deadline:
             seen = sight.seen_offset()
+            # One line per tick: when the sightings stop, this is what says
+            # whether the robot had moved at all and what it was doing.
+            print(
+                f"  t={time.time() - started:5.1f}s  pot {math.hypot(*seen):.2f} m "
+                f"@ {math.degrees(math.atan2(seen[1], seen[0])):+5.1f} deg  "
+                f"sighting {sight.sighting_age:4.1f}s old",
+                flush=True,
+            )
             twist = servo_step(seen, stance.offset, reach)
             if twist.is_stop:
                 driver.stop()
                 print(f"arrived: pot at ({seen[0]:+.2f}, {seen[1]:+.2f}) in the base frame")
                 break
+            print(
+                f"         -> vx {twist.vx:+.2f} vy {twist.vy:+.2f} wz {twist.wz:+.2f}", flush=True
+            )
             driver.send(twist)
             time.sleep(period)
         else:
@@ -436,26 +454,32 @@ def status(module: Any, sight: _Sightings, reach: PourReachMap) -> None:
     print(f"pot:   {sight.pot_xy} | seen at ({seen[0]:+.2f}, {seen[1]:+.2f}) in the base frame")
     print(f"reach: margin {reach.margin(seen)} cells, arrived={arrived(seen, reach)}")
     if sight.hardware:
-        # The head camera is pitched ~48 deg down, so it sees a band of floor
-        # ahead of the robot: a low tag drops out of the bottom of the frame
-        # before the robot is close enough to pour. Range at this height is
-        # what says whether the approach can stay closed-loop to the end.
+        # The head camera is pitched ~48 deg down, so it watches a band of
+        # floor rather than the scene ahead. Everything here is measured off
+        # the detection itself: how far the tag sits below the camera is what
+        # sets the range it stays in frame over, and the floor never enters it.
         near, far = _visible_range(sight.pot_z)
         print(
-            f"tag:   {sight.pot_z + BASE_Z:+.2f} m above the floor, "
-            f"{math.hypot(*seen):.2f} m away | visible from {near:.2f} to {far:.2f} m"
-            f"{'' if near <= REACH_DISTANCE else '  <-- LOST before the pour stance'}"
+            f"tag:   {_CAM_Z - sight.pot_z:.2f} m below the camera, "
+            f"{math.hypot(*seen):.2f} m away | in frame from {near:.2f} to {far:.2f} m"
+            f"{'' if near <= REACH_DISTANCE else '  <-- leaves frame before the pour stance'}"
+        )
+        # The planner places the base at a nominal standing height. If the tag
+        # is on the floor, this is what the pelvis actually stands at, and the
+        # difference shifts every world-frame z target the pour commands.
+        print(
+            f"       pelvis measures {-sight.pot_z:.2f} m over a floor-level tag (planner assumes {BASE_Z:.2f})"
         )
     print(f"module: {module.get_state()} | {module.describe_base_pose()}")
 
 
-def run(command: str, target: str) -> int:
+def run(command: str, target: str, sighting_timeout: float = SIGHTING_TIMEOUT) -> int:
     hardware = target == "hardware"
     # The coordinator's twist_command is bound to a different topic on each.
     cmd_vel_topic = "/g1/cmd_vel" if hardware else "/cmd_vel"
     print(f"target: {target} | driving {cmd_vel_topic}")
     module = RPCClient(None, ManipulationModule)
-    sight = _Sightings(hardware=hardware)
+    sight = _Sightings(hardware=hardware, sighting_timeout=sighting_timeout)
     driver = _Driver(cmd_vel_topic)
     reach = PourReachMap.load()
     sight.wait()
@@ -492,8 +516,14 @@ def main() -> None:
         "command", nargs="?", default="demo", choices=("demo", "status", "approach")
     )
     parser.add_argument("--target", default="sim", choices=("sim", "hardware"))
+    parser.add_argument(
+        "--sighting-timeout",
+        type=float,
+        default=SIGHTING_TIMEOUT,
+        help="seconds without a tag sighting before the approach gives up",
+    )
     args = parser.parse_args()
-    raise SystemExit(run(args.command, args.target))
+    raise SystemExit(run(args.command, args.target, args.sighting_timeout))
 
 
 if __name__ == "__main__":
