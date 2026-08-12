@@ -6,25 +6,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import typer
 
-from dimos.benchmark.vqa.generation.adapters import (
-    EdgeTamObjectSegmenter,
-    MoondreamObjectDetector,
+from dimos.benchmark.vqa.generation.specification import (
+    VqaGenerationSpecification,
+    VqaGroundingSpecification,
 )
-from dimos.benchmark.vqa.generation.dataset import write_dataset_manifest, write_frame_record
-from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
-from dimos.benchmark.vqa.generation.oracle import create_openai_oracle
-from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
-from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.question_agent import (
-    OpenAIFreeformQuestionAuthor,
-    OpenAIQuestionAgent,
-)
-from dimos.benchmark.vqa.generation.recording import load_go2_frame
-from dimos.benchmark.vqa.generation.specification import VqaGenerationSpecification
 from dimos.benchmark.vqa.models import (
     AcceptedOracleResult,
     CalibratedFrame,
@@ -35,11 +24,10 @@ from dimos.benchmark.vqa.models import (
     RejectedOracleResult,
 )
 from dimos.constants import STATE_DIR
-from dimos.models.base import default_local_model_device
-from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.models.vl.openai import OpenAIVlModel
 from dimos.utils.data import resolve_named_path
+
+if TYPE_CHECKING:
+    from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
 
 app = typer.Typer(help="Generate point-cloud-grounded VQA benchmark examples")
 QUESTION_MODEL = "gpt-4o-mini"
@@ -59,11 +47,35 @@ def single_frame(
     output = output or (
         STATE_DIR / "datasets" / "vqa" / f"{Path(recording).stem}-frame-{frame_index:06d}"
     )
-    if output.exists():
-        raise typer.BadParameter("output must not already exist")
+    from dimos.benchmark.vqa.generation.dataset import frame_audit_path
+
+    if (frame_audit_path(output, frame_index) / "frame.json").exists():
+        raise typer.BadParameter("completed output frame already exists")
+    if output.exists() and not output.is_dir():
+        raise typer.BadParameter("output must be a directory")
     _validate_question_mode(question_mode)
     _require_openai_for_question_author()
     _require_edgetam_cuda()
+    from dimos.benchmark.vqa.generation.adapters import (
+        EdgeTamObjectSegmenter,
+        MoondreamObjectDetector,
+    )
+    from dimos.benchmark.vqa.generation.dataset import (
+        frame_audit_path,
+        write_dataset_manifest,
+        write_frame_record,
+    )
+    from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+    from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+    from dimos.benchmark.vqa.generation.question_agent import (
+        OpenAIFreeformQuestionAuthor,
+        OpenAIQuestionAgent,
+    )
+    from dimos.benchmark.vqa.generation.recording import load_go2_frame
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.models.vl.moondream import MoondreamVlModel
+    from dimos.models.vl.openai import OpenAIVlModel
+
     typer.echo(f"Loading frame {frame_index} from {recording}")
     frame = load_go2_frame(str(resolve_named_path(recording, ".db")), frame_index)
     model = MoondreamVlModel()
@@ -73,9 +85,10 @@ def single_frame(
     try:
         typer.echo(f"Proposing questions with {QUESTION_MODEL}")
         intents: list[QuestionIntent] | list[QuestionProposal] = (
-            OpenAIFreeformQuestionAuthor(OpenAIVlModel(model_name=QUESTION_MODEL)).propose(
-                frame.image
-            )
+            OpenAIFreeformQuestionAuthor(
+                OpenAIVlModel(model_name=QUESTION_MODEL),
+                answerability_model=OpenAIVlModel(model_name=QUESTION_MODEL),
+            ).propose(frame.image)
             if question_mode == "agentic"
             else question_agent.propose(frame.image)
         )
@@ -126,6 +139,7 @@ def single_frame(
             },
         },
     )
+    write_dataset_manifest(output)
     typer.echo(f"Wrote {len(examples)} examples to {output}")
 
 
@@ -170,6 +184,26 @@ def generate(
     _require_openai_for_question_author()
     output.mkdir(parents=True, exist_ok=True)
     _require_edgetam_cuda()
+    from dimos.benchmark.vqa.generation.adapters import (
+        EdgeTamObjectSegmenter,
+        MoondreamObjectDetector,
+    )
+    from dimos.benchmark.vqa.generation.dataset import (
+        frame_audit_path,
+        write_dataset_manifest,
+        write_frame_record,
+    )
+    from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+    from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+    from dimos.benchmark.vqa.generation.question_agent import (
+        OpenAIFreeformQuestionAuthor,
+        OpenAIQuestionAgent,
+    )
+    from dimos.benchmark.vqa.generation.recording import load_go2_frame
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.models.vl.moondream import MoondreamVlModel
+    from dimos.models.vl.openai import OpenAIVlModel
+
     frame_indices = range(start_index, stop_index, stride)
     typer.echo(f"Generating {len(frame_indices)} sampled frames from {recording} into {output}")
     model = MoondreamVlModel()
@@ -180,8 +214,16 @@ def generate(
         segmenter = EdgeTamObjectSegmenter(EdgeTAMImageSegmenter())
         question_agent = OpenAIQuestionAgent(OpenAIVlModel(model_name=QUESTION_MODEL))
         for frame_number, frame_index in enumerate(frame_indices, start=1):
-            frame_output = output / f"frame-{frame_index:06d}"
+            frame_output = frame_audit_path(output, frame_index)
             if (frame_output / "frame.json").is_file():
+                _validate_completed_frame(
+                    frame_output,
+                    recording,
+                    frame_index,
+                    question_mode,
+                    min_mask_area_px,
+                    min_foreground_points,
+                )
                 typer.echo(
                     f"Skipping completed frame {frame_number}/{len(frame_indices)}: {frame_index}"
                 )
@@ -192,9 +234,10 @@ def generate(
             frame = load_go2_frame(str(resolve_named_path(recording, ".db")), frame_index)
             typer.echo(f"Frame {frame_index}: proposing questions with {QUESTION_MODEL}")
             intents: list[QuestionIntent] | list[QuestionProposal] = (
-                OpenAIFreeformQuestionAuthor(OpenAIVlModel(model_name=QUESTION_MODEL)).propose(
-                    frame.image
-                )
+                OpenAIFreeformQuestionAuthor(
+                    OpenAIVlModel(model_name=QUESTION_MODEL),
+                    answerability_model=OpenAIVlModel(model_name=QUESTION_MODEL),
+                ).propose(frame.image)
                 if question_mode == "agentic"
                 else question_agent.propose(frame.image)
             )
@@ -221,7 +264,7 @@ def generate(
                 )
             )
             write_frame_record(
-                frame_output,
+                output,
                 frame,
                 recording,
                 frame_index,
@@ -241,7 +284,7 @@ def generate(
                     },
                 },
             )
-            typer.echo(f"Generated {frame_output}")
+            typer.echo(f"Generated frame {frame_index}")
     finally:
         model.stop()
     summary = write_dataset_manifest(output)
@@ -272,6 +315,9 @@ def _answer_agentic(
     frame: CalibratedFrame,
     proposals: list[QuestionProposal],
 ) -> list[AcceptedOracleResult | RejectedOracleResult]:
+    from dimos.benchmark.vqa.generation.oracle import create_openai_oracle
+    from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
+
     oracle = create_openai_oracle(ORACLE_MODEL)
     results: list[AcceptedOracleResult | RejectedOracleResult] = []
     for number, proposal in enumerate(proposals, start=1):
@@ -321,19 +367,23 @@ def _resolve_generation_spec(
             raise typer.BadParameter(f"invalid generation specification: {exc}") from exc
     if recording is None or stop_index is None:
         raise typer.BadParameter("--recording and --stop-index are required without --spec")
+    if question_mode is not None and question_mode not in ("constrained", "agentic"):
+        raise typer.BadParameter("question mode must be constrained or agentic")
+    resolved_question_mode = cast(
+        "Literal['constrained', 'agentic']",
+        "constrained" if question_mode is None else question_mode,
+    )
     try:
         return VqaGenerationSpecification(
             recording=recording,
             start_index=0 if start_index is None else start_index,
             stop_index=stop_index,
             stride=1 if stride is None else stride,
-            question_mode="constrained" if question_mode is None else question_mode,
-            grounding={
-                "min_mask_area_px": 128 if min_mask_area_px is None else min_mask_area_px,
-                "min_foreground_points": 3
-                if min_foreground_points is None
-                else min_foreground_points,
-            },
+            question_mode=resolved_question_mode,
+            grounding=VqaGroundingSpecification(
+                min_mask_area_px=128 if min_mask_area_px is None else min_mask_area_px,
+                min_foreground_points=3 if min_foreground_points is None else min_foreground_points,
+            ),
             output=str(output) if output is not None else None,
         )
     except ValueError as exc:
@@ -358,7 +408,39 @@ def _write_generation_run(
         },
         "summary": summary,
     }
-    (output / "run.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    audit = output / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    (audit / "run.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _validate_completed_frame(
+    output: Path,
+    recording: str,
+    frame_index: int,
+    question_mode: str,
+    min_mask_area_px: int,
+    min_foreground_points: int,
+) -> None:
+    """Reject completed frame records created by a different generation request."""
+    try:
+        payload = json.loads((output / "frame.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"invalid completed frame marker: {output}") from exc
+    expected_source = "agentic_image_author" if question_mode == "agentic" else "openai_image_agent"
+    grounding = payload.get("grounding")
+    if (
+        payload.get("recording") != recording
+        or payload.get("frame_index") != frame_index
+        or payload.get("question_source") != expected_source
+        or payload.get("question_model") != QUESTION_MODEL
+        or payload.get("oracle_model") != (ORACLE_MODEL if question_mode == "agentic" else None)
+        or not isinstance(grounding, dict)
+        or grounding.get("min_mask_area_px") != min_mask_area_px
+        or grounding.get("min_foreground_points") != min_foreground_points
+    ):
+        raise typer.BadParameter(
+            f"completed frame {output.name} was generated with different settings"
+        )
 
 
 def _require_openai_for_question_author() -> None:
@@ -367,6 +449,8 @@ def _require_openai_for_question_author() -> None:
 
 
 def _require_edgetam_cuda() -> None:
+    from dimos.models.base import default_local_model_device
+
     if default_local_model_device() != "cuda":
         raise typer.BadParameter(
             "VQA generation requires an installed PyTorch CUDA build that supports this GPU for EdgeTAM"

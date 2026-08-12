@@ -23,14 +23,14 @@ recording + calibration + point cloud
                 v
        private generation runtime
                 |
-                +-- public: image.jpg, cases.jsonl
-                +-- private: labels.jsonl, ground_truth.json
+                +-- public: assets/, cases.jsonl
+                +-- private: labels.jsonl, audit/
                 |
                 v
        image-only evaluation runtime
                 |
                 v
-       run.json + vqa-results.json
+       audit/run.json + vqa-results.json
 ```
 
 ## Package Layout
@@ -67,12 +67,13 @@ dimos/cli/vqa.py              generation CLI commands
 
 The generator accepts either explicit CLI flags or a reproducible JSON specification through
 `dimos vqa generate --spec <generation.json>`. It writes the resolved generation request and
-aggregate counts to `run.json` at the dataset root. The generator constructs one
+aggregate counts to `audit/run.json`. The generator constructs one
 `FramePerceptionPrimitives` instance per frame. It owns MoonDream and
 EdgeTAM calls, intermediate-result caches, grounded masks, and the accepted ground-plane fit.
 Projected visible point-cloud samples establish whether a mask has enough foreground support to
 become a grounded object. The generation runtime writes complete frame directories, so multi-frame
-generation can skip completed frames after an interrupted run.
+generation can skip frames whose `frame.json` completion marker was atomically written last after an
+interrupted run. Partial directories without that marker are safely rewritten.
 
 ### Shared Perception Primitives
 
@@ -84,7 +85,7 @@ are immutable and scoped to one frozen frame.
 detect_objects(query)
 -> segment_detection(detection_id)
 -> ground_mask(mask_id)
--> object_id / pose / supported point set
+-> frame-scoped canonical object_id / pose / supported point set
 -> fit_ground_plane()
 -> fitted planes and reusable geometric measurements
 ```
@@ -119,16 +120,19 @@ are retained as private rejected records rather than exported as evaluation case
 
 ## Dataset Assembly
 
-Each completed frame retains the public `image.jpg`, resumability metadata, private generation
-audit, and temporary per-frame case/label rows. `write_dataset_manifest()` aggregates those rows
-into root `cases.jsonl` and `labels.jsonl` files.
+Each public image is stored once under root `assets/`. The corresponding `audit/frame-*` directory
+retains an atomically published `frame.json` completion marker, private generation audit, and
+resumable per-frame case/label rows. `write_dataset_manifest()` aggregates those rows into root
+`cases.jsonl` and `labels.jsonl` files.
 
 The root dataset is deliberately minimal:
 
 ```text
 cases.jsonl     public case ID, image path, question, and choices
 labels.jsonl    private case ID and expected choice
-frame-*/image.jpg
+assets/frame-*.jpg
+audit/frame-*/frame.json
+audit/frame-*/ground_truth.json
 ```
 
 `ground_truth.json` is not an evaluator dependency. It exists solely to make generated labels
@@ -138,7 +142,7 @@ auditable.
 
 `point-cloud-vqa` is registered in the shared evaluation framework and is invoked through:
 
-```bash
+```bash skip
 dimos eval run <specification.json> --output <directory>
 ```
 

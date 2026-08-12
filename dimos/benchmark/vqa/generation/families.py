@@ -306,7 +306,7 @@ def measure_opening_width(
 ) -> GroundTruthResult:
     primitives.detect_objects(intent.object_query)
     masks = primitives.segment_detections(intent.object_query)
-    trace = (
+    trace: tuple[ToolTrace, ...] = (
         ToolTrace("detect_objects", intent.object_query),
         ToolTrace("segment_detections", f"count={len(masks)}"),
     )

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
-import cv2
 import numpy as np
 
 from dimos.benchmark.vqa.generation.geometry import project_visible_points
@@ -36,6 +36,7 @@ class ForwardCorridorMeasurement:
 
     ground_band_counts: tuple[int, int, int]
     obstacle_count: int
+    largest_obstacle_cluster_count: int
     point_count: int
     rejection_reason: str | None = None
 
@@ -85,7 +86,7 @@ def estimate_ground_plane(frame: CalibratedFrame) -> PlaneFitResult:
         return PlaneFitResult(None, ("high_plane_residual",), "residual_too_high")
     return PlaneFitResult(
         GroundPlaneEstimate(
-            tuple(float(value) for value in normal),
+            (float(normal[0]), float(normal[1]), float(normal[2])),
             float(offset),
             len(candidates),
             int(inliers.sum()),
@@ -112,6 +113,8 @@ def points_in_mask(frame: CalibratedFrame, mask: np.ndarray) -> np.ndarray:
 
 def points_around_mask(frame: CalibratedFrame, mask: np.ndarray, radius_px: int = 12) -> np.ndarray:
     """Return visible points in an annulus surrounding one foreground mask."""
+    import cv2
+
     if radius_px < 1:
         raise ValueError("mask ring radius must be positive")
     if mask.shape != (frame.image.height, frame.image.width):
@@ -160,7 +163,7 @@ def fit_surface_plane(points: np.ndarray) -> PlaneFitResult:
         return PlaneFitResult(None, ("high_surface_residual",), "residual_too_high")
     return PlaneFitResult(
         GroundPlaneEstimate(
-            tuple(float(value) for value in normal),
+            (float(normal[0]), float(normal[1]), float(normal[2])),
             float(offset),
             len(points),
             int(inliers.sum()),
@@ -186,12 +189,12 @@ def measure_relative_plane_angle(
 
 def classify_forward_corridor(
     points: np.ndarray, ground: GroundPlaneEstimate
-) -> tuple[str | None, tuple[str, ...], str | None]:
+) -> tuple[Literal["clear", "blocked"] | None, tuple[str, ...], str | None]:
     """Classify a visible camera-forward corridor as clear or blocked."""
     measured = measure_forward_corridor(points, ground)
     if measured.rejection_reason is not None:
         return None, (), measured.rejection_reason
-    if measured.obstacle_count >= 4:
+    if measured.largest_obstacle_cluster_count >= 4:
         return "blocked", ("visible_forward_obstacle", "forward_ground_supported"), None
     if measured.obstacle_count:
         return None, (), "ambiguous_forward_obstacle"
@@ -203,32 +206,55 @@ def measure_forward_corridor(
 ) -> ForwardCorridorMeasurement:
     """Measure private floor and elevated-obstacle support in the camera-forward corridor."""
     if len(points) == 0:
-        return ForwardCorridorMeasurement((0, 0, 0), 0, 0, "insufficient_forward_support")
+        return ForwardCorridorMeasurement((0, 0, 0), 0, 0, 0, "insufficient_forward_support")
     depth = points[:, 2]
-    lateral_limit = depth * np.tan(np.radians(20.0))
-    corridor = points[(depth >= 0.5) & (depth <= 3.0) & (np.abs(points[:, 0]) <= lateral_limit)]
+    corridor = points[(depth > 0.0) & (depth <= 2.0) & (np.abs(points[:, 0]) <= 0.5)]
     if len(corridor) < 12:
         return ForwardCorridorMeasurement(
-            (0, 0, 0), 0, len(corridor), "insufficient_forward_support"
+            (0, 0, 0), 0, 0, len(corridor), "insufficient_forward_support"
         )
     elevation = corridor @ np.asarray(ground.normal) + ground.offset_m
     ground_points = corridor[np.abs(elevation) <= 0.08]
-    bands = tuple(
+    band_counts = [
         int(((ground_points[:, 2] >= start) & (ground_points[:, 2] < stop)).sum())
-        for start, stop in ((0.5, 1.33), (1.33, 2.16), (2.16, 3.0))
-    )
+        for start, stop in ((0.0, 2 / 3), (2 / 3, 4 / 3), (4 / 3, 2.01))
+    ]
+    bands = (band_counts[0], band_counts[1], band_counts[2])
     if any(count < 3 for count in bands):
         return ForwardCorridorMeasurement(
-            bands, 0, len(corridor), "incomplete_forward_ground_support"
+            bands, 0, 0, len(corridor), "incomplete_forward_ground_support"
         )
-    obstacle_count = int((elevation > 0.15).sum())
-    return ForwardCorridorMeasurement(bands, obstacle_count, len(corridor))
+    obstacles = corridor[(elevation > 0.15) & (elevation <= 2.0)]
+    obstacle_count = len(obstacles)
+    largest_cluster = _largest_radius_cluster(obstacles, radius_m=0.2)
+    return ForwardCorridorMeasurement(bands, obstacle_count, largest_cluster, len(corridor))
+
+
+def _largest_radius_cluster(points: np.ndarray, radius_m: float) -> int:
+    if len(points) == 0:
+        return 0
+    distances = np.linalg.norm(points[:, np.newaxis, :] - points[np.newaxis, :, :], axis=2)
+    unvisited = set(range(len(points)))
+    largest = 0
+    while unvisited:
+        pending = [unvisited.pop()]
+        size = 0
+        while pending:
+            index = pending.pop()
+            size += 1
+            neighbors = {item for item in unvisited if distances[index, item] <= radius_m}
+            unvisited.difference_update(neighbors)
+            pending.extend(neighbors)
+        largest = max(largest, size)
+    return largest
 
 
 def measure_opening_width(
     frame: CalibratedFrame, mask: np.ndarray, ground: GroundPlaneEstimate
 ) -> OpeningGeometryResult:
     """Measure a ground-connected vertical aperture from its silhouette and surrounding wall plane."""
+    import cv2
+
     if mask.shape != (frame.image.height, frame.image.width):
         raise ValueError("segmentation mask dimensions must match the image")
     component_count, labels, stats, _ = cv2.connectedComponentsWithStats(

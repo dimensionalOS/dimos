@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 
 class MoondreamObjectDetector:
@@ -31,7 +34,7 @@ class MoondreamObjectDetector:
     def detect(self, image: Image, query: str) -> ImageDetections2D:
         return self._model.query_detections(image, query)
 
-    def locate(self, image: Image, query: str) -> ImageDetections2D:
+    def locate(self, image: Image, query: str) -> ImageDetections2D[Detection2DPoint]:
         points = self._model.query_points(image, f"center of the {query}")
         for point in points:
             point.name = query
@@ -47,5 +50,5 @@ class EdgeTamObjectSegmenter:
     def segment(self, detections: ImageDetections2D) -> ImageDetections2D:
         return self._segmenter.segment(detections)
 
-    def segment_points(self, points: ImageDetections2D) -> ImageDetections2D:
-        return self._segmenter.segment_points(points)
+    def segment_points(self, points: ImageDetections2D[Detection2DPoint]) -> ImageDetections2D:
+        return self._segmenter.segment_points(cast("Any", points))

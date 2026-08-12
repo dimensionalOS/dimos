@@ -147,16 +147,37 @@ class PrivateToolCallingOracle:
                 if calls >= self._max_tool_calls:
                     break
                 name = call.get("name")
+                call_id = call.get("id")
+                if not isinstance(call_id, str) or not call_id:
+                    return _rejected(proposal, "malformed_tool_call_id", registry.results, trace)
                 tool = next((item for item in tools if item.name == name), None)
+                calls += 1
                 if tool is None:
-                    return _rejected(proposal, "unsupported_tool", registry.results, trace)
+                    trace.append(OracleTrace("tool_error", f"unsupported_tool:{name}"))
+                    messages.append(
+                        ToolMessage(
+                            content=json.dumps(
+                                {"status": "error", "error": "unsupported_tool", "tool": name}
+                            ),
+                            tool_call_id=call_id,
+                        )
+                    )
+                    continue
                 try:
                     output = tool.invoke(call.get("args", {}))
-                except (TypeError, ValueError) as exc:
-                    return _rejected(proposal, f"tool_error:{exc}", registry.results, trace)
-                calls += 1
+                except Exception as exc:
+                    trace.append(OracleTrace("tool_error", f"{name}:{exc}"))
+                    messages.append(
+                        ToolMessage(
+                            content=json.dumps(
+                                {"status": "error", "error": "tool_error", "detail": str(exc)}
+                            ),
+                            tool_call_id=call_id,
+                        )
+                    )
+                    continue
                 trace.append(OracleTrace("tool", str(name)))
-                messages.append(ToolMessage(content=str(output), tool_call_id=call["id"]))
+                messages.append(ToolMessage(content=str(output), tool_call_id=call_id))
         return _rejected(proposal, "tool_call_limit", registry.results, trace)
 
 
@@ -199,9 +220,10 @@ def _resolve_oracle_answer(
         raise ValueError("answer cites unknown evidence")
     contract = proposal.answer_contract
     if isinstance(contract, BooleanAnswerContract):
-        if answer not in ("yes", "no"):
+        normalized = _normalize_boolean_answer(answer)
+        if normalized is None:
             raise ValueError("boolean answer must be yes or no")
-        return str(answer), contract
+        return normalized, contract
     if isinstance(contract, ChoiceAnswerContract):
         if not isinstance(answer, str) or answer not in contract.choices:
             raise ValueError("choice answer is not allowed")
@@ -226,9 +248,24 @@ def _resolve_oracle_answer(
         ]
         if len(height_results) != 1:
             raise ValueError("deferred height answer requires exactly one cited height measurement")
-        choices, choice = height_choice_window(height_results[0].measurement.value)
+        measurement = height_results[0].measurement
+        if measurement is None:
+            raise ValueError("deferred height answer requires a height measurement")
+        choices, choice = height_choice_window(measurement.value)
         return choice, ChoiceAnswerContract(choices)
     raise ValueError("unsupported answer contract")
+
+
+def _normalize_boolean_answer(answer: Any) -> str | None:
+    if isinstance(answer, bool):
+        return "yes" if answer else "no"
+    if isinstance(answer, str):
+        normalized = answer.strip().casefold()
+        if normalized in ("yes", "true"):
+            return "yes"
+        if normalized in ("no", "false"):
+            return "no"
+    return None
 
 
 def _validated_result(

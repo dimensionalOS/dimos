@@ -18,6 +18,7 @@ from dimos.benchmark.vqa.generation.primitives.contracts import (
     OpeningWidthResult,
 )
 from dimos.benchmark.vqa.generation.primitives.geometry import (
+    ForwardCorridorMeasurement,
     PlaneFitResult,
     classify_forward_corridor,
     estimate_ground_plane,
@@ -39,6 +40,7 @@ from dimos.benchmark.vqa.models import (
     OracleMeasurement,
     PointObjectSegmenter,
 )
+from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
@@ -58,6 +60,10 @@ class FramePerceptionPrimitives:
     ) -> None:
         if config.min_mask_area_px < 1 or config.min_foreground_points < 1:
             raise ValueError("grounding thresholds must be positive")
+        if not 0 < config.duplicate_mask_iou_threshold <= 1:
+            raise ValueError("duplicate mask IoU threshold must be in (0, 1]")
+        if config.duplicate_range_tolerance_m < 0:
+            raise ValueError("duplicate range tolerance must be non-negative")
         self.frame = frame
         self._detector = detector
         self._segmenter = segmenter
@@ -69,7 +75,9 @@ class FramePerceptionPrimitives:
         self._masks: dict[str, list[Detection2DSeg]] = {}
         self._points: dict[str, list[Detection2DPoint]] = {}
         self._groundings: dict[str, list[GroundedObject]] = {}
+        self._objects: dict[str, GroundedObject] = {}
         self._object_masks: dict[str, Detection2DSeg] = {}
+        self._next_object_id = 0
         self._plane_fit: PlaneFitResult | None = None
 
     def detect_objects(self, query: str) -> ImageDetections2D:
@@ -86,14 +94,15 @@ class FramePerceptionPrimitives:
         if query in self._segmented_queries:
             return self._masks.get(query, [])
         detections = self.detect_objects(query)
+        segmented: list[Detection2D] = []
         if len(detections):
-            segmented = self._segmenter.segment(detections)
+            segmented.extend(self._segmenter.segment(detections))
         elif self._localizer is not None and self._point_segmenter is not None:
             points = self._localizer.locate(self.frame.image, query)
             self._points[query] = [item for item in points if isinstance(item, Detection2DPoint)]
-            segmented = self._point_segmenter.segment_points(points)
+            segmented.extend(self._point_segmenter.segment_points(points))
         else:
-            segmented = detections
+            segmented.extend(detections)
         masks = [
             item
             for item in segmented
@@ -117,16 +126,14 @@ class FramePerceptionPrimitives:
             and int((item.mask > 0).sum()) >= self._config.min_mask_area_px
         ]
 
-    def ground_mask(self, mask: Detection2DSeg, object_id: str) -> GroundedObject | None:
-        """Ground one selected segmentation mask under a caller-owned opaque object ID."""
+    def ground_mask(self, mask: Detection2DSeg) -> GroundedObject | None:
+        """Ground one mask and resolve it to a frame-scoped canonical object."""
         objects = ground_segmented_objects(
             self.frame, [mask], min_foreground_points=self._config.min_foreground_points
         )
         if len(objects) != 1:
             return None
-        object = replace(objects[0], id=object_id)
-        self._object_masks[object.id] = mask
-        return object
+        return self._canonicalize_object(objects[0], mask)
 
     def ground_masks(self, query: str) -> list[GroundedObject]:
         """Project visible point-cloud support through accepted masks."""
@@ -137,12 +144,17 @@ class FramePerceptionPrimitives:
         objects = ground_segmented_objects(
             self.frame, masks, min_foreground_points=self._config.min_foreground_points
         )
+        canonical: list[GroundedObject] = []
+        seen_ids: set[str] = set()
         for item in objects:
             index = _object_mask_index(item)
             if index < len(masks):
-                self._object_masks[item.id] = masks[index]
-        self._groundings[query] = objects
-        return objects
+                object = self._canonicalize_object(item, masks[index])
+                if object.id not in seen_ids:
+                    canonical.append(object)
+                    seen_ids.add(object.id)
+        self._groundings[query] = canonical
+        return canonical
 
     def used_point_localization(self, query: str) -> bool:
         """Return whether segmentation for a query used positive-point localization."""
@@ -446,7 +458,7 @@ class FramePerceptionPrimitives:
             "m",
             result.tolerance_m,
             result.quality_flags,
-            (f"frame:{self.frame.id}", f"opening-mask:v1:{query}"),
+            (f"frame:{self.frame.id}", f"opening-mask:v1:{self.frame.id}:{mask.name}"),
         )
         return OpeningWidthResult(
             measurement,
@@ -468,7 +480,7 @@ class FramePerceptionPrimitives:
         state, flags, reason = classify_forward_corridor(points, ground_fit.estimate)
         return ForwardPathResult(state, len(points), flags, reason)
 
-    def measure_forward_corridor(self, plane: GroundPlaneEstimate):
+    def measure_forward_corridor(self, plane: GroundPlaneEstimate) -> ForwardCorridorMeasurement:
         """Measure visible forward corridor support against an accepted ground plane."""
         projected = project_visible_points(self.frame)
         points = np.asarray(projected.camera_points, dtype=np.float64)
@@ -481,9 +493,52 @@ class FramePerceptionPrimitives:
         points = points_in_mask(self.frame, mask.mask)
         return points if len(points) >= 6 else None
 
+    def _canonicalize_object(
+        self, candidate: GroundedObject, mask: Detection2DSeg
+    ) -> GroundedObject:
+        for object_id, existing in self._objects.items():
+            existing_mask = self._object_masks[object_id]
+            if self._is_duplicate_object(candidate, mask, existing, existing_mask):
+                return existing
+
+        self._next_object_id += 1
+        object = replace(
+            candidate,
+            id=f"object:v1:{self.frame.id}:{self._next_object_id:04d}",
+        )
+        self._objects[object.id] = object
+        self._object_masks[object.id] = mask
+        return object
+
+    def _is_duplicate_object(
+        self,
+        candidate: GroundedObject,
+        candidate_mask: Detection2DSeg,
+        existing: GroundedObject,
+        existing_mask: Detection2DSeg,
+    ) -> bool:
+        if abs(candidate.range_m - existing.range_m) > self._config.duplicate_range_tolerance_m:
+            return False
+        return (
+            _mask_iou(candidate_mask.mask, existing_mask.mask)
+            >= self._config.duplicate_mask_iou_threshold
+        )
+
 
 def _object_mask_index(item: GroundedObject) -> int:
     try:
         return int(item.id.rsplit("-", 1)[1])
     except (IndexError, ValueError) as exc:
         raise ValueError(f"grounded object ID lacks mask index: {item.id}") from exc
+
+
+def _mask_iou(first: np.ndarray, second: np.ndarray) -> float:
+    if first.shape != second.shape:
+        return 0.0
+    first_foreground = first > 0
+    second_foreground = second > 0
+    union = int(np.logical_or(first_foreground, second_foreground).sum())
+    if union == 0:
+        return 0.0
+    intersection = int(np.logical_and(first_foreground, second_foreground).sum())
+    return intersection / union

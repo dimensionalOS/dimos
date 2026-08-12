@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 import re
 
-import cv2
 from pydantic import BaseModel, ConfigDict, Field
 
 from dimos.benchmark.evaluation.models import (
@@ -48,12 +47,17 @@ class MultipleChoiceVqaEvaluation:
             dataset = context.spec_dir / dataset
         dataset = dataset.resolve()
         cases = _load_jsonl(dataset / "cases.jsonl")
-        labels = {item["id"]: item["answer"] for item in _load_jsonl(dataset / "labels.jsonl")}
+        labels = _load_labels(_load_jsonl(dataset / "labels.jsonl"))
+        case_ids = [_required_string(item, "id") for item in cases]
+        if len(set(case_ids)) != len(case_ids):
+            raise ValueError("VQA cases must have unique IDs")
+        if set(case_ids) != set(labels):
+            raise ValueError("VQA case and label IDs must match exactly")
         model = self._vision_factory(config.model)
         results = [_evaluate_case(dataset, model, case, labels) for case in cases]
         artifact = context.workspace / "vqa-results.json"
         artifact.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
-        passed = sum(item["passed"] for item in results)
+        passed = sum(1 for item in results if item["passed"] is True)
         total = len(results)
         return EvaluationReport(
             summary=(
@@ -83,6 +87,8 @@ class MultipleChoiceVqaEvaluation:
 def _evaluate_case(
     dataset: Path, model: OpenAIVlModel, case: dict[str, object], labels: dict[str, str]
 ) -> dict[str, object]:
+    import cv2
+
     case_id = _required_string(case, "id")
     choices = _choices(case)
     expected = labels.get(case_id)
@@ -115,6 +121,16 @@ def _load_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _load_labels(rows: list[dict[str, object]]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for row in rows:
+        identifier = _required_string(row, "id")
+        if identifier in labels:
+            raise ValueError(f"duplicate VQA label ID: {identifier}")
+        labels[identifier] = _required_string(row, "answer")
+    return labels
+
+
 def _required_string(item: dict[str, object], key: str) -> str:
     value = item.get(key)
     if not isinstance(value, str) or not value:
@@ -137,8 +153,10 @@ def _parse_choice(response: str, choices: tuple[str, ...]) -> str | None:
     match = re.search(r"^ANSWER:\s*(.+?)\s*$", response, re.MULTILINE)
     if match is None:
         return None
-    answer = match.group(1)
-    return answer if answer in choices else None
+    answer = match.group(1).strip().casefold()
+    aliases = {"true": "yes", "false": "no"} if set(choices) == {"yes", "no"} else {}
+    answer = aliases.get(answer, answer)
+    return next((choice for choice in choices if choice.casefold() == answer), None)
 
 
 point_cloud_vqa = MultipleChoiceVqaEvaluation()

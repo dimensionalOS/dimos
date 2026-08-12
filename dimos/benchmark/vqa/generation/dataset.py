@@ -5,10 +5,9 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 from typing import Any
-
-import cv2
 
 from dimos.benchmark.vqa.models import (
     AcceptedOracleResult,
@@ -30,48 +29,64 @@ def write_frame_record(
     results: list[GroundTruthResult | AcceptedOracleResult | RejectedOracleResult],
     metadata: dict[str, Any],
 ) -> None:
-    """Write one frame's public cases alongside its private generation audit record."""
-    output.mkdir(parents=True, exist_ok=False)
-    image_path = output / "image.jpg"
-    if not cv2.imwrite(str(image_path), frame.image.data):
-        raise RuntimeError(f"failed to write {image_path}")
+    """Write one public image and its private resumable frame audit record."""
+    import cv2
+
+    frame_output = frame_audit_path(output, frame_index)
+    if (frame_output / "frame.json").exists():
+        raise FileExistsError(f"completed frame record already exists: {frame_output}")
+    frame_output.mkdir(parents=True, exist_ok=True)
+    assets = output / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    image_name = f"frame-{frame_index:06d}.jpg"
+    image_path = assets / image_name
+    image_temp = assets / f".{image_name}.tmp.jpg"
+    try:
+        if not cv2.imwrite(str(image_temp), frame.image.data):
+            raise RuntimeError(f"failed to write {image_path}")
+        os.replace(image_temp, image_path)
+    finally:
+        image_temp.unlink(missing_ok=True)
     accepted = [result for result in results if _is_accepted(result)]
     cases, labels = _evaluation_rows(frame.id, accepted)
-    _write_json(
-        output / "frame.json",
+    cases = [{**case, "image": f"assets/{image_name}"} for case in cases]
+    _write_json_atomic(
+        frame_output / "ground_truth.json", [_private_result(item) for item in results]
+    )
+    _write_json_atomic(frame_output / "cases.json", cases)
+    _write_json_atomic(frame_output / "labels.json", labels)
+    _write_json_atomic(
+        frame_output / "frame.json",
         {
             "schema_version": "1.0",
             "frame_id": frame.id,
             "recording": recording,
             "frame_index": frame_index,
-            "image": image_path.name,
+            "image": f"assets/{image_name}",
             "question_count": len(intents),
             "accepted_question_count": len(accepted),
             "rejected_question_count": len(results) - len(accepted),
             **metadata,
         },
     )
-    _write_json(output / "ground_truth.json", [_private_result(item) for item in results])
-    _write_json(output / "cases.json", cases)
-    _write_json(output / "labels.json", labels)
 
 
 def write_dataset_manifest(output: Path) -> dict[str, int]:
     """Build aggregate public cases and private labels from completed frame records."""
-    frames = sorted(path for path in output.glob("frame-*") if (path / "frame.json").is_file())
+    frames = sorted(
+        path for path in (output / "audit").glob("frame-*") if (path / "frame.json").is_file()
+    )
     case_rows: list[dict[str, Any]] = []
     label_rows: list[dict[str, Any]] = []
     accepted = 0
     rejected = 0
     for path in frames:
         frame = json.loads((path / "frame.json").read_text())
-        case_rows.extend(
-            {**case, "image": f"{path.name}/{case['image']}"}
-            for case in json.loads((path / "cases.json").read_text())
-        )
+        case_rows.extend(json.loads((path / "cases.json").read_text()))
         label_rows.extend(json.loads((path / "labels.json").read_text()))
         accepted += frame["accepted_question_count"]
         rejected += frame["rejected_question_count"]
+    _validate_evaluation_rows(case_rows, label_rows)
     _write_jsonl(output / "cases.jsonl", case_rows)
     _write_jsonl(output / "labels.jsonl", label_rows)
     return {
@@ -79,6 +94,11 @@ def write_dataset_manifest(output: Path) -> dict[str, int]:
         "accepted_question_count": accepted,
         "rejected_question_count": rejected,
     }
+
+
+def frame_audit_path(output: Path, frame_index: int) -> Path:
+    """Return the private resumable audit directory for one sampled frame."""
+    return output / "audit" / f"frame-{frame_index:06d}"
 
 
 def _is_accepted(result: GroundTruthResult | AcceptedOracleResult | RejectedOracleResult) -> bool:
@@ -95,6 +115,7 @@ def _evaluation_rows(
     for result in results:
         if isinstance(result, RejectedOracleResult):
             continue
+        answer: str | None
         if isinstance(result, AcceptedOracleResult):
             contract = result.answer_contract
             choices = (
@@ -114,7 +135,31 @@ def _evaluation_rows(
             {"id": case_id, "image": "image.jpg", "question": question, "choices": choices}
         )
         labels.append({"id": case_id, "answer": answer})
+    _validate_evaluation_rows(cases, labels)
     return cases, labels
+
+
+def _validate_evaluation_rows(
+    cases: list[dict[str, Any]], labels: list[dict[str, Any]] | list[dict[str, str]]
+) -> None:
+    case_ids = _unique_row_ids(cases, "case")
+    label_ids = _unique_row_ids(labels, "label")
+    missing = sorted(case_ids - label_ids)
+    orphaned = sorted(label_ids - case_ids)
+    if missing or orphaned:
+        raise ValueError(f"VQA case/label ID mismatch: missing={missing}, orphaned={orphaned}")
+
+
+def _unique_row_ids(rows: list[dict[str, Any]] | list[dict[str, str]], kind: str) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        identifier = row.get("id")
+        if not isinstance(identifier, str) or not identifier:
+            raise ValueError(f"VQA {kind} requires a non-empty string ID")
+        if identifier in identifiers:
+            raise ValueError(f"duplicate VQA {kind} ID: {identifier}")
+        identifiers.add(identifier)
+    return identifiers
 
 
 def _private_result(
@@ -143,6 +188,15 @@ def _private_result(
 
 def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        _write_json(temporary, payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:

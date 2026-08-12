@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+    from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ class GroundingConfig:
 
     min_mask_area_px: int = 128
     min_foreground_points: int = 3
+    duplicate_mask_iou_threshold: float = 0.95
+    duplicate_range_tolerance_m: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,7 @@ class ProjectedPoints:
 
 @dataclass(frozen=True)
 class GroundedObject:
-    """One semantic object with foreground point-cloud support."""
+    """One frame-scoped physical-object hypothesis with point-cloud support."""
 
     id: str
     label: str
@@ -271,10 +275,10 @@ class ObjectSegmenter(Protocol):
 class ObjectPointLocalizer(Protocol):
     """Locates a queried object with positive image points."""
 
-    def locate(self, image: Image, query: str) -> ImageDetections2D: ...
+    def locate(self, image: Image, query: str) -> ImageDetections2D[Detection2DPoint]: ...
 
 
 class PointObjectSegmenter(Protocol):
     """Creates foreground masks from positive image-point prompts."""
 
-    def segment_points(self, points: ImageDetections2D) -> ImageDetections2D: ...
+    def segment_points(self, points: ImageDetections2D[Detection2DPoint]) -> ImageDetections2D: ...

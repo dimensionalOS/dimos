@@ -6,7 +6,7 @@ title: "VQA Generation Pipeline"
 
 ## 1. Run Generation
 
-```bash
+```bash skip
 dimos vqa generate \
   --recording <recording.db> \
   --start-index <first-frame> \
@@ -23,7 +23,8 @@ Flags:
 - `--question-mode`: `constrained` or `agentic`; default is `constrained`.
 - `--min-mask-area-px`: minimum accepted segmentation-mask area; default `128`.
 - `--min-foreground-points`: minimum point-cloud support inside a mask; default `3`.
-- `--output`: dataset root; completed frame directories are skipped on rerun.
+- `--output`: dataset root; frames with a completed `frame.json` marker are skipped, while partial
+  frame directories are safely rewritten on rerun.
 
 `dimos vqa single-frame` accepts the same generation settings and uses `--frame-index` instead of frame bounds.
 
@@ -48,14 +49,14 @@ output flags. A specification is a reproducible generation request:
 }
 ```
 
-Generation writes the resolved request, model IDs, and aggregate counts to the dataset root's
-private `run.json`. This is an output record, not the input specification.
+Generation writes the resolved request, model IDs, and aggregate counts to private
+`audit/run.json`. This is an output record, not the input specification.
 
 ## 2. Create Questions
 
 ### Constrained
 
-The image author inspects the scene and returns up to five structured intents. It selects only
+The image author inspects the scene and returns up to 15 structured intents. It selects only
 families likely to be useful for the visible arrangement, rather than expanding every object into
 every family. Private grounding still rejects unsupported or ambiguous candidates.
 
@@ -64,7 +65,7 @@ every family. Private grounding still rejects unsupported or ambiguous candidate
 | Presence | `Is there a chair in the image?` | `yes`, `no` |
 | Horizontal direction | `Where is the nearest chair?` | `left`, `center`, `right` |
 | Distance threshold | `Is the nearest chair within 3 meters?` | `yes`, `no` |
-| Visible count | `How many chairs are visible?` | `1-2`, `3-4`, `5-7`, `8+` |
+| Visible count | `How many chairs are visible?` | `0`, `1-2`, `3-4`, `5-7`, `8+` |
 | Camera range | `How far is the nearest chair from the camera?` | `under 1 m`, `1 to under 2 m`, `2 to under 4 m`, `4 m or more` |
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
 | Pairwise left/right | `Is the chair to the left or right of the table?` | `left`, `right` |
@@ -99,12 +100,15 @@ reject the proposal with the missing evidence.
 
 ## 3. Pre-Answer Grounding Checks
 
-All referenced objects need a detected mask with enough visible 3D point support.
+All referenced objects need a detected mask with enough visible 3D point support. Questions are
+authored from RGB only so the public question is visually answerable; private LiDAR evidence may
+establish the gold answer but does not make a hidden or ambiguous question acceptable.
 
 - Height: one grounded object and an accepted ground plane.
 - Door state: a door plane and nearby surrounding plane with a clear relative angle.
 - Closest object: one grounded target and one grounded instance per candidate.
-- Count and range: accepted grounded instances only.
+- Count and range: accepted grounded instances only. `0` is an exhaustive distractor; empty detector,
+  segmenter, or grounding output is unverified absence and rejects rather than producing a zero label.
 - Left/right and height comparison: one grounded instance per named object with clear separation.
 - Object on support: contact or clear separation relative to the support plane.
 - Opening width: one ground-connected aperture and stable surrounding-wall geometry.
@@ -160,7 +164,8 @@ compare_nearest_by_side(A)
 ```text
 visible_count(A)
 -> ground(A)
--> bucket accepted instance count: 1-2 / 3-4 / 5-7 / 8+
+-> bucket accepted instance count: 0 / 1-2 / 3-4 / 5-7 / 8+
+-> empty perception output: reject, never infer 0
 ```
 
 ```text
@@ -228,19 +233,21 @@ door_state(A)
 forward_path()
 -> fit_ground_plane()
 -> classify_forward_corridor(visible camera points, ground plane)
+-> inspect the fixed camera-frame corridor within 2 m and 0.5 m on either side
 -> require ground support across each forward distance band
--> supported elevated points: blocked; no supported obstacle: clear; otherwise reject
+-> coherent elevated cluster: blocked; no supported obstacle: clear; scattered points: reject
 ```
 
 ### Agentic
 
-The private oracle chooses a sequence from the same read-only primitives used by constrained recipes:
+The private oracle calls only read-only perception and geometry primitives shared with constrained
+recipes. It interprets their measurements and selects an answer itself:
 
-| Tool | Input | Output |
+| Primitive tool | Input | Output |
 |---|---|---|
 | `detect_objects` | semantic query | Individual opaque detection IDs and confidence. |
 | `segment_detection` | detection ID | Individual opaque mask IDs. |
-| `ground_mask` | mask ID | One grounded object ID and citable support evidence. |
+| `ground_mask` | mask ID | One frame-scoped canonical object ID and citable support evidence. Near-identical masks with matching range reuse the same object ID. |
 | `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
 | `get_object_pose` | object ID | Camera-frame grounding evidence: range, side, support count. |
 | `fit_object_surface_plane` | object ID | Plane ID from one object's visible support. |
@@ -271,22 +278,20 @@ Tool failures, quality-gate failures, invalid citations, invalid answer format, 
 
 ## 6. Write Dataset Artifacts
 
-Each `frame-*` directory contains:
+The generated root is directly evaluable while retaining private audit state:
 
 ```text
-image.jpg                 public rectified image
-frame.json                frame metadata and accepted/rejected counts
-ground_truth.json         private tool evidence, checks, answers, and rejections
-cases.json                public per-frame image/question/choice rows
-labels.json               private per-frame correct-choice rows
-```
-
-The dataset root aggregates:
-
-```text
-cases.jsonl               public id, image path, question, choices
-labels.jsonl              private id and expected choice
-run.json                  private resolved generation request and aggregate counts
+cases.jsonl                         public id, image path, question, choices
+labels.jsonl                        private id and expected choice
+assets/
+  frame-000040.jpg                  public rectified image, stored once
+audit/
+  run.json                          private resolved request and aggregate counts
+  frame-000040/
+    frame.json                      completion marker, written last
+    ground_truth.json               private evidence, measurements, and traces
+    cases.json                      resumable per-frame evaluation rows
+    labels.json                     resumable per-frame expected answers
 ```
 
 Each line in `cases.jsonl` is one public evaluation case. Formatted for readability, one record is:
@@ -294,7 +299,7 @@ Each line in `cases.jsonl` is one public evaluation case. Formatted for readabil
 ```json
 {
   "id": "go2-40-chair-height",
-  "image": "frame-000040/image.jpg",
+  "image": "assets/frame-000040.jpg",
   "question": "How tall is the chair?",
   "choices": [
     "under 0.2 m",

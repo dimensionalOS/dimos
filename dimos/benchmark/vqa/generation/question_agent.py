@@ -7,6 +7,7 @@ import json
 import re
 from typing import Any
 
+from dimos.benchmark.vqa.generation.primitives.choices import COUNT_CHOICES
 from dimos.benchmark.vqa.models import (
     AnswerContract,
     BooleanAnswerContract,
@@ -31,7 +32,9 @@ compare_nearest_by_side only when at least two visible instances of the same obj
 opposite image sides; emit horizontal_direction only for a visible object; and prefer relational
 or directional intents over presence. Emit door_state only for a clearly visible door with nearby
 visible structure. Diversify object classes and question families when the scene supports them.
-Emit visible_count only when at least one repeated visible object is present. Emit camera_range only
+Use grammatically correct object names and questions. Emit visible_count only when at least one
+repeated visible object is clearly present. The zero choice is only an exhaustive distractor; never
+propose a count for an absent class. Emit camera_range only
 for a visible object. Emit compare_height only for two distinct visible upright object types resting
 on the visible ground; comparison_query must name the other object type. Emit compare_left_right only
 for two distinct visible object types; comparison_query must name the other object type. Emit closest_object only when
@@ -54,8 +57,10 @@ Prioritize questions that a private point-cloud oracle can validate. For the hei
 object resting on visible ground, use deferred_height_choice. Its choices are generated privately
 from a successful height measurement. Aim for a diverse set of questions that use the visible scene
 composition: relative left/center/right position, which listed object is closest to a named target,
-and height for an upright grounded object. For a visibly repeated object, count questions must use exactly
-["1-2", "3-4", "5-7", "8+"]; camera-distance questions must use exactly ["under 1 m",
+and height for an upright grounded object. Use grammatical singular object queries and complete concise
+questions. For a visibly repeated object, count questions must use exactly
+["0", "1-2", "3-4", "5-7", "8+"]; zero is an exhaustive distractor, not permission to ask about
+an absent class. Camera-distance questions must use exactly ["under 1 m",
 "1 to under 2 m", "2 to under 4 m", "4 m or more"]. For a pairwise left/right range question,
 use exactly ["left", "right"]. For an A/B left-right relation question, use exactly ["left", "right"]
 and name both objects. For a pairwise height question, use the two distinct object types as the choices.
@@ -64,11 +69,21 @@ mutually exclusive fixed choices with two to four options. For a clearly visible
 structure, you may ask whether it is open or closed with exactly ["open", "closed"]. Use the fixed choices
 ["clear", "blocked"] only for a visibly supported local path directly ahead.
 Use object_queries for every referenced object. The private oracle chooses its own sequence of reusable
-perception and geometry tools; do not prescribe an answer-level tool sequence. Use visibility/presence questions
+perception and geometry primitives; no answer-level composite tools are available. For counts, enumerate,
+segment, and ground every returned detection for the named query, cite every grounded instance, and reject
+if completeness is uncertain. Use visibility/presence questions
 only when no stronger geometric question is available.
 Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
 metric distances without a supplied choice contract. Use only visible objects. Do not include
 answers, explanations, Markdown, or background surfaces."""
+
+RGB_ANSWERABILITY_PROMPT = """Independently review these proposed VQA questions against only the
+supplied RGB image. Return JSON only: an array with exactly one object per proposal containing its id,
+answerable, and reason. Set answerable true only when every named referent is visibly present and the
+question and choices can reasonably be understood and answered from visible pixels. Reject hidden-part,
+ambiguous, malformed, color/material/text, and non-visible-reference questions. Do not answer questions.
+Proposals:
+"""
 
 _UNSUPPORTED_QUERIES = {"background", "ceiling", "floor", "ground", "room", "wall"}
 
@@ -118,7 +133,10 @@ class OpenAIQuestionAgent:
                 "forward_path",
             ):
                 continue
-            if not isinstance(query, str) or not query:
+            if not isinstance(query, str) or not query.strip():
+                continue
+            query = query.strip()
+            if query.lower() in _UNSUPPORTED_QUERIES:
                 continue
             if kind == "within_distance" and (
                 not isinstance(threshold, (int, float)) or threshold <= 0
@@ -147,9 +165,15 @@ class OpenAIQuestionAgent:
 class OpenAIFreeformQuestionAuthor:
     """Image-only author for generic public questions and answer contracts."""
 
-    def __init__(self, model: OpenAIVlModel, max_questions: int = 15) -> None:
+    def __init__(
+        self,
+        model: OpenAIVlModel,
+        max_questions: int = 15,
+        answerability_model: OpenAIVlModel | None = None,
+    ) -> None:
         self._model = model
         self._max_questions = max_questions
+        self._answerability_model = answerability_model
 
     def propose(self, image: Image) -> list[QuestionProposal]:
         try:
@@ -170,7 +194,42 @@ class OpenAIFreeformQuestionAuthor:
             raise errors[0]
         if len({item.id for item in proposals}) != len(proposals):
             raise ValueError("question ids must be unique")
+        if self._answerability_model is not None:
+            proposals = self._filter_rgb_answerable(image, proposals)
         return proposals
+
+    def _filter_rgb_answerable(
+        self, image: Image, proposals: list[QuestionProposal]
+    ) -> list[QuestionProposal]:
+        validator = self._answerability_model
+        if validator is None:
+            return proposals
+        prompt = RGB_ANSWERABILITY_PROMPT + json.dumps(
+            [
+                {
+                    "id": item.id,
+                    "question": item.question,
+                    "choices": getattr(item.answer_contract, "choices", ()),
+                    "object_queries": item.object_queries,
+                }
+                for item in proposals
+            ]
+        )
+        try:
+            payload: Any = _parse_json_array(validator.query(image, prompt))
+        except json.JSONDecodeError as exc:
+            raise ValueError("RGB answerability validator did not return JSON") from exc
+        verdicts: dict[str, bool] = {}
+        if isinstance(payload, list):
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                identifier, answerable = item.get("id"), item.get("answerable")
+                if isinstance(identifier, str) and isinstance(answerable, bool):
+                    verdicts[identifier] = answerable
+        if set(verdicts) != {item.id for item in proposals}:
+            raise ValueError("RGB answerability validator must review every proposal exactly once")
+        return [item for item in proposals if verdicts[item.id]]
 
 
 def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
@@ -193,11 +252,24 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
         choices = _string_tuple(contract.get("choices"), "choices")
         if len(choices) < 2:
             raise ValueError("choice contract requires at least two choices")
+        if len(set(choices)) != len(choices):
+            raise ValueError("choice contract choices must be unique")
         answer_contract = ChoiceAnswerContract(choices)
     elif kind == "deferred_height_choice" and contract.get("strategy") == "height-window-v1":
         answer_contract = DeferredHeightChoiceContract()
     else:
         raise ValueError("unsupported answer contract")
+    is_count = (
+        re.match(r"^\s*(?:how many|what (?:is )?the number of|what number of)\b", question, re.I)
+        is not None
+    )
+    if isinstance(answer_contract, ChoiceAnswerContract) and is_count:
+        if not queries:
+            raise ValueError("count questions require visible object queries")
+        if answer_contract.choices != COUNT_CHOICES:
+            raise ValueError("count questions require the fixed exhaustive count choices")
+    elif isinstance(answer_contract, ChoiceAnswerContract) and len(answer_contract.choices) > 4:
+        raise ValueError("choice contracts support at most four choices")
     return QuestionProposal(identifier, question, answer_contract, queries, hints)
 
 

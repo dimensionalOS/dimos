@@ -333,7 +333,10 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
 
     assert result.status == "answered"
     assert result.answer == "left"
-    assert result.question.object_ids == ("frame-1-chair-0", "frame-1-chair-1")
+    assert result.question.object_ids == (
+        "object:v1:frame-1:0001",
+        "object:v1:frame-1:0002",
+    )
 
 
 def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None:
@@ -366,7 +369,7 @@ def test_ground_truth_agent_buckets_visible_count_and_camera_range() -> None:
     camera_range = agent.answer(frame, QuestionIntent(kind="camera_range", object_query="chair"))
 
     assert count.answer == "1-2"
-    assert count.question.allowed_answers == ("1-2", "3-4", "5-7", "8+")
+    assert count.question.allowed_answers == ("0", "1-2", "3-4", "5-7", "8+")
     assert camera_range.answer == "1 to under 2 m"
     assert camera_range.question.allowed_answers == (
         "under 1 m",

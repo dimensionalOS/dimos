@@ -3,20 +3,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from dimos.benchmark.vqa.generation.primitives.choices import (
-    CAMERA_RANGE_CHOICES,
-    COUNT_CHOICES,
-    camera_range_choice,
-    count_choice,
-)
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.geometry import ForwardCorridorMeasurement
-from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import (
     GroundedObject,
     GroundPlaneEstimate,
@@ -160,12 +154,7 @@ class LocalOracleToolRegistry:
         if handle is None:
             return self._record_rejection("ground_mask", "", [], "unknown_mask_id")
         query, mask = handle
-        object_id = self._id("object")
-        if hasattr(self._primitives, "ground_mask"):
-            object = self._primitives.ground_mask(mask, object_id)
-        else:
-            objects = self._primitives.ground_masks(query)
-            object = objects[0] if objects else None
+        object = self._primitives.ground_mask(mask)
         if object is None:
             return self._record_rejection(
                 "ground_mask", query, [], "insufficient_foreground_support"
@@ -279,6 +268,10 @@ class LocalOracleToolRegistry:
             return self._record_rejection(
                 "measure_object_pair_distance", "", [], "unknown_object_id"
             )
+        if first.id == second.id:
+            return self._record_rejection(
+                "measure_object_pair_distance", first.label, [], "duplicate_object_id"
+            )
         measurement = self._primitives.measure_object_pair_distance(first, second)
         if measurement is None:
             return self._record_rejection(
@@ -314,6 +307,10 @@ class LocalOracleToolRegistry:
         if object is None or support is None:
             return self._record_rejection(
                 "measure_object_plane_relation", "", [], "unknown_object_id"
+            )
+        if object.id == support.id:
+            return self._record_rejection(
+                "measure_object_plane_relation", object.label, [], "duplicate_object_id"
             )
         if plane is None or ground is None or ground_plane_id not in self._ground_planes:
             return self._record_rejection(
@@ -421,158 +418,15 @@ class LocalOracleToolRegistry:
                 ("ground_band_2_count", float(measured.ground_band_counts[1])),
                 ("ground_band_3_count", float(measured.ground_band_counts[2])),
                 ("elevated_obstacle_count", float(measured.obstacle_count)),
+                (
+                    "largest_obstacle_cluster_count",
+                    float(measured.largest_obstacle_cluster_count),
+                ),
                 ("corridor_point_count", float(measured.point_count)),
             ),
         )
         self._results.append(result)
         return json.dumps(_tool_payload(result))
-
-    def select_nearest_object(self, object_ids: list[str], side: str | None = None) -> str:
-        """Select one opaque grounded object by private point-cloud range."""
-        selected: list[GroundedObject] = []
-        for object_id in object_ids:
-            item = self._objects.get(object_id)
-            if item is None:
-                return self._record_rejection(
-                    "select_nearest_object", object_id, [], "unknown_object_id"
-                )
-            selected.append(item)
-        nearest = select_nearest_object(selected, side)
-        if nearest is None:
-            return self._record_rejection("select_nearest_object", "", [], "no_object_matches_side")
-        result = OracleToolResult(
-            "select_nearest_object", nearest.label, (_grounding_evidence(nearest),)
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result, object_id=nearest.id))
-
-    def count_grounded_objects(self, object_ids: list[str]) -> str:
-        """Count unique grounded object IDs into fixed public count choices."""
-        objects = self._lookup_objects("count_grounded_objects", object_ids)
-        if objects is None:
-            return self._record_rejection(
-                "count_grounded_objects", "", [], "unknown_or_duplicate_object_id"
-            )
-        if not objects:
-            return self._record_rejection("count_grounded_objects", "", [], "no_grounded_object")
-        result = OracleToolResult(
-            "count_grounded_objects",
-            objects[0].label,
-            tuple(_grounding_evidence(item) for item in objects),
-            choice=count_choice(len(objects)),
-            choices=COUNT_CHOICES,
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result))
-
-    def bucket_camera_range(self, object_id: str) -> str:
-        """Map one grounded object's camera-origin range into fixed public choices."""
-        object = self._objects.get(object_id)
-        if object is None:
-            return self._record_rejection("bucket_camera_range", object_id, [], "unknown_object_id")
-        measurement = OracleMeasurement(
-            object.range_m,
-            "m",
-            0.0,
-            ("camera_origin_euclidean_range",),
-            (f"grounding:v1:{object.id}",),
-        )
-        result = OracleToolResult(
-            "bucket_camera_range",
-            object.label,
-            (_grounding_evidence(object),),
-            measurement=measurement,
-            choice=camera_range_choice(object.range_m),
-            choices=CAMERA_RANGE_CHOICES,
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result))
-
-    def compare_nearest_by_side(self, object_ids: list[str]) -> str:
-        """Compare the nearest left and right grounded objects by camera range."""
-        objects = self._lookup_objects("compare_nearest_by_side", object_ids)
-        if objects is None:
-            return self._record_rejection(
-                "compare_nearest_by_side", "", [], "unknown_or_duplicate_object_id"
-            )
-        left = select_nearest_object(objects, "left")
-        right = select_nearest_object(objects, "right")
-        if left is None or right is None:
-            return self._record_rejection(
-                "compare_nearest_by_side", "", [], "missing_grounded_side"
-            )
-        if left.range_m == right.range_m:
-            return self._record_rejection(
-                "compare_nearest_by_side", "", [], "ambiguous_nearest_by_side"
-            )
-        choice = "left" if left.range_m < right.range_m else "right"
-        result = OracleToolResult(
-            "compare_nearest_by_side",
-            left.label,
-            (_grounding_evidence(left), _grounding_evidence(right)),
-            choice=choice,
-            choices=("left", "right"),
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result, left_object_id=left.id, right_object_id=right.id))
-
-    def compare_left_right(self, first_object_id: str, second_object_id: str) -> str:
-        """Classify one grounded object's left/right relation to another grounded object."""
-        first = self._objects.get(first_object_id)
-        second = self._objects.get(second_object_id)
-        if first is None or second is None:
-            return self._record_rejection("compare_left_right", "", [], "unknown_object_id")
-        relation = self._primitives.classify_horizontal_relation(first, second)
-        if relation.relation is None:
-            return self._record_rejection(
-                "compare_left_right",
-                f"{first.label},{second.label}",
-                list(relation.quality_flags),
-                relation.rejection_reason,
-            )
-        result = OracleToolResult(
-            "compare_left_right",
-            f"{first.label},{second.label}",
-            (_grounding_evidence(first), _grounding_evidence(second)),
-            choice=relation.relation,
-            choices=("left", "right"),
-            quality_flags=relation.quality_flags,
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result))
-
-    def select_closest_object(self, target_id: str, candidate_ids: list[str]) -> str:
-        """Select one candidate closest to a target by private 3D support-point proximity."""
-        target = self._objects.get(target_id)
-        if target is None:
-            return self._record_rejection(
-                "select_closest_object", target_id, [], "unknown_target_id"
-            )
-        candidates: list[GroundedObject] = []
-        for candidate_id in candidate_ids:
-            candidate = self._objects.get(candidate_id)
-            if candidate is None:
-                return self._record_rejection(
-                    "select_closest_object", candidate_id, [], "unknown_candidate_id"
-                )
-            candidates.append(candidate)
-        selected = self._primitives.select_closest_object(target, candidates)
-        if selected.object is None:
-            return self._record_rejection(
-                "select_closest_object",
-                target.label,
-                list(selected.quality_flags),
-                selected.rejection_reason,
-            )
-        result = OracleToolResult(
-            "select_closest_object",
-            target.label,
-            (_grounding_evidence(target), _grounding_evidence(selected.object)),
-            choice=selected.object.label,
-            quality_flags=selected.quality_flags,
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result, object_id=selected.object.id))
 
     def measure_height(self, object_id: str, plane_id: str) -> str:
         """Measure one grounded object against one previously accepted plane."""
@@ -580,8 +434,10 @@ class LocalOracleToolRegistry:
         plane = self._planes.get(plane_id)
         if object is None:
             return self._record_rejection("measure_height", object_id, [], "unknown_object_id")
-        if plane is None:
-            return self._record_rejection("measure_height", object_id, [], "unknown_plane_id")
+        if plane is None or plane_id not in self._ground_planes:
+            return self._record_rejection(
+                "measure_height", object_id, [], "unknown_ground_plane_id"
+            )
         measured = self._primitives.measure_height(object, plane)
         if measured.measurement is None:
             return self._record_rejection(
@@ -591,6 +447,7 @@ class LocalOracleToolRegistry:
                 measured.rejection_reason,
             )
         measurement = measured.measurement
+        measurement = replace(measurement, provenance_ids=(*measurement.provenance_ids, plane_id))
         evidence = _height_evidence(object, measurement)
         result = OracleToolResult(
             "measure_height",
@@ -603,154 +460,12 @@ class LocalOracleToolRegistry:
         self._results.append(result)
         return json.dumps(_tool_payload(result))
 
-    def compare_heights(self, first_object_id: str, second_object_id: str, plane_id: str) -> str:
-        """Choose the taller object only when one shared-plane measurement is unambiguous."""
-        first = self._objects.get(first_object_id)
-        second = self._objects.get(second_object_id)
-        plane = self._planes.get(plane_id)
-        if first is None or second is None:
-            return self._record_rejection("compare_heights", "", [], "unknown_object_id")
-        if first.id == second.id:
-            return self._record_rejection("compare_heights", first.label, [], "duplicate_object_id")
-        if plane is None:
-            return self._record_rejection("compare_heights", "", [], "unknown_plane_id")
-        first_height = self._primitives.measure_height(first, plane)
-        second_height = self._primitives.measure_height(second, plane)
-        if first_height.measurement is None or second_height.measurement is None:
-            return self._record_rejection(
-                "compare_heights",
-                "",
-                [*first_height.quality_flags, *second_height.quality_flags],
-                first_height.rejection_reason
-                or second_height.rejection_reason
-                or "height_measurement_rejected",
-            )
-        first_measurement = first_height.measurement
-        second_measurement = second_height.measurement
-        first_lower = first_measurement.value - first_measurement.tolerance
-        second_lower = second_measurement.value - second_measurement.tolerance
-        first_upper = first_measurement.value + first_measurement.tolerance
-        second_upper = second_measurement.value + second_measurement.tolerance
-        if first_lower <= second_upper and second_lower <= first_upper:
-            return self._record_rejection("compare_heights", "", [], "ambiguous_height_comparison")
-        choice = first.label if first_lower > second_upper else second.label
-        result = OracleToolResult(
-            "compare_heights",
-            f"{first.label},{second.label}",
-            (
-                _height_evidence(first, first_measurement),
-                _height_evidence(second, second_measurement),
-            ),
-            choice=choice,
-            choices=(first.label, second.label),
-            plane=plane,
-            quality_flags=(*first_height.quality_flags, *second_height.quality_flags),
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result))
-
-    def classify_object_on_support(self, object_id: str, support_id: str) -> str:
-        """Verify that one grounded object directly rests on another grounded object."""
-        object = self._objects.get(object_id)
-        support = self._objects.get(support_id)
-        if object is None or support is None:
-            return self._record_rejection("classify_object_on_support", "", [], "unknown_object_id")
-        result = self._primitives.classify_object_on_support(object, support)
-        if result.answer is None:
-            return self._record_rejection(
-                "classify_object_on_support",
-                f"{object.label},{support.label}",
-                list(result.quality_flags),
-                result.rejection_reason,
-            )
-        tool_result = OracleToolResult(
-            "classify_object_on_support",
-            f"{object.label},{support.label}",
-            (_grounding_evidence(object), _grounding_evidence(support)),
-            choice=result.answer,
-            choices=("yes", "no"),
-            quality_flags=result.quality_flags,
-        )
-        self._results.append(tool_result)
-        return json.dumps(_tool_payload(tool_result))
-
-    def measure_opening_width(self, mask_id: str) -> str:
-        """Measure one earlier segmented doorway/opening mask in metres."""
-        handle = self._masks.get(mask_id)
-        if handle is None:
-            return self._record_rejection("measure_opening_width", "", [], "unknown_mask_id")
-        query = handle[0] if isinstance(handle, tuple) else handle
-        result = self._primitives.measure_opening_width(query)
-        if result.measurement is None:
-            return self._record_rejection(
-                "measure_opening_width", query, list(result.quality_flags), result.rejection_reason
-            )
-        evidence = OracleEvidence(
-            f"opening-width:v1:{self._primitives.frame.id}:{mask_id}",
-            "v1",
-            mask_id,
-            query,
-            0.0,
-            "n/a",
-            0,
-            result.measurement,
-        )
-        tool_result = OracleToolResult(
-            "measure_opening_width",
-            query,
-            (evidence,),
-            measurement=result.measurement,
-            quality_flags=result.quality_flags,
-        )
-        self._results.append(tool_result)
-        return json.dumps(_tool_payload(tool_result))
-
-    def classify_forward_path(self) -> str:
-        """Classify the observed local corridor directly ahead of the camera."""
-        result = self._primitives.classify_forward_path()
-        if result.state is None:
-            return self._record_rejection(
-                "classify_forward_path",
-                "",
-                list(result.quality_flags),
-                result.rejection_reason,
-            )
-        evidence = OracleEvidence(
-            f"forward-path:v1:{self._primitives.frame.id}",
-            "v1",
-            "forward-path",
-            "forward path",
-            0.0,
-            "center",
-            result.point_count,
-        )
-        tool_result = OracleToolResult(
-            "classify_forward_path",
-            "forward path",
-            (evidence,),
-            choice=result.state,
-            quality_flags=result.quality_flags,
-        )
-        self._results.append(tool_result)
-        return json.dumps(_tool_payload(tool_result))
-
     def _record_rejection(self, tool: str, query: str, flags: list[str], reason: str | None) -> str:
         result = OracleToolResult(
             tool, query, (), quality_flags=tuple(flags), rejection_reason=reason
         )
         self._results.append(result)
         return json.dumps(_tool_payload(result))
-
-    def _lookup_objects(self, tool: str, object_ids: list[str]) -> list[GroundedObject] | None:
-        if len(set(object_ids)) != len(object_ids):
-            return None
-        objects: list[GroundedObject] = []
-        for object_id in object_ids:
-            object = self._objects.get(object_id)
-            if object is None:
-                return None
-            objects.append(object)
-        return objects
 
     def _id(self, kind: str) -> str:
         self._next_id += 1
