@@ -310,3 +310,25 @@ def test_suites_importable() -> None:
 
     for module in (examples, go2_smoke, go2_vqa, dimsim_house):
         assert module.SUITE, module.__name__
+
+
+def test_instruct_delivers_over_real_transport() -> None:
+    """EvalRunner.instruct publishes on /human_input and tears down immediately;
+    the message must still reach an already-subscribed listener (PR #3411 review:
+    no flush sleep needed — LCM publish is a synchronous send)."""
+    import threading
+
+    from dimos.core.transport_factory import make_transport
+    from dimos.evals.runner import EvalRunner
+
+    got = threading.Event()
+    received: list[str] = []
+    listener = make_transport("/human_input")
+    unsubscribe = listener.subscribe(lambda msg: (received.append(msg), got.set()))
+    try:
+        EvalRunner().instruct("go to the bed")
+        assert got.wait(timeout=5.0), "instruct() message never arrived"
+        assert received == ["go to the bed"]
+    finally:
+        unsubscribe()
+        listener.stop()

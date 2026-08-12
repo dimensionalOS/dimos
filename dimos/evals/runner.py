@@ -344,15 +344,14 @@ class EvalRunner(Configurable, CompositeResource):
         return McpAdapter(self.config.mcp_url).wait_for_ready(timeout=timeout, interval=2.0)
 
     def instruct(self, text: str) -> None:
-        from dimos.core.transport import pLCMTransport
+        from dimos.core.transport_factory import make_transport
 
-        transport: pLCMTransport[str] = pLCMTransport("/human_input")
-        transport.lcm.start()
+        transport = make_transport("/human_input")
+        transport.start()
         try:
             transport.publish(text)
-            time.sleep(0.5)  # let LCM flush before teardown
         finally:
-            transport.lcm.stop()
+            transport.stop()
 
     def sample(
         self, score: Callable[[Store], float], interval_s: float, timeout_s: float
