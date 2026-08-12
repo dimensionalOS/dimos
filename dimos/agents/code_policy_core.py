@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any, Literal, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from dimos.core.global_config import global_config
+
 if TYPE_CHECKING:
     from dimos.benchmark.evaluation.protocol import TrialRun
 
@@ -133,6 +135,7 @@ def _kernel_environment(config: CodePolicySessionConfig) -> dict[str, str]:
     result = {
         name: value for name, value in os.environ.items() if not _CREDENTIAL_NAME_RE.search(name)
     }
+    result["DIMOS_TRANSPORT"] = global_config.transport
     if isinstance(config.environment, SubmissionEnvironment):
         result[_SUBMISSION_URL_ENV] = config.environment.submission_url
         result[_SUBMISSION_TOKEN_ENV] = config.environment.submission_token

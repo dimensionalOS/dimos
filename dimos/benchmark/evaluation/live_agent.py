@@ -173,6 +173,7 @@ class _LiveAgentExecution:
         self.cancel = threading.Event()
         self.thread: threading.Thread | None = None
         self.result: PiRunResult | None = None
+        self.transcript_path: Path | None = None
         self.error: BaseException | None = None
         self.started_at = 0.0
         self.server.start()
@@ -194,8 +195,8 @@ class _LiveAgentExecution:
                 run_dir=self.path,
                 cancel=self.cancel,
             )
-        except PiRunCancelledError:
-            pass
+        except PiRunCancelledError as exc:
+            self.transcript_path = exc.transcript_path
         except BaseException as exc:
             self.error = exc
 
@@ -204,42 +205,61 @@ class _LiveAgentExecution:
 
     def finish(self) -> LiveAgentOutcome:
         self.cancel.set()
-        if self.thread is not None:
-            self.thread.join(timeout=10)
-            if self.thread.is_alive():
-                raise TimeoutError("live Pi session did not stop")
-        self.server.stop()
-        if self.error is not None:
-            raise RuntimeError(f"live Pi failed: {type(self.error).__name__}: {self.error}")
-        result = self.result
-        if result is not None and result.transcript_path is not None:
-            target = self.path / "pi-transcript.jsonl"
-            shutil.copy2(result.transcript_path, target)
+        try:
+            if self.thread is not None:
+                self.thread.join(timeout=10)
+                if self.thread.is_alive():
+                    raise TimeoutError("live Pi session did not stop")
+            if self.error is not None:
+                raise RuntimeError(f"live Pi failed: {type(self.error).__name__}: {self.error}")
+            result = self.result
+            transcript_path = (
+                result.transcript_path if result is not None else self.transcript_path
+            )
+            if transcript_path is not None:
+                target = self.path / "pi-transcript.jsonl"
+                shutil.copy2(transcript_path, target)
+                self.record_artifact(
+                    _artifact(
+                        self.relative / target.name,
+                        "Pi transcript",
+                        "application/x-ndjson",
+                    )
+                )
+                viewer = self.path / "pi-transcript.html"
+                self.runner.export_transcript(
+                    transcript_path=transcript_path,
+                    output_path=viewer,
+                    mcp_url=self.server.mcp_url,
+                    api_key=self.api_key,
+                )
+                self.record_artifact(
+                    _artifact(self.relative / viewer.name, "Pi transcript viewer", "text/html")
+                )
+            manifest = self.path / "live-agent.json"
+            outcome = LiveAgentOutcome(
+                final_text=result.final_text if result is not None else "",
+                tool_call_count=result.tool_call_count if result is not None else 0,
+                duration_seconds=(
+                    max(0.0, time.monotonic() - self.started_at) if self.started_at else 0.0
+                ),
+            )
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "final_text_sha256": hashlib.sha256(outcome.final_text.encode()).hexdigest(),
+                        "tool_call_count": outcome.tool_call_count,
+                        "duration_seconds": outcome.duration_seconds,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             self.record_artifact(
-                _artifact(self.relative / target.name, "Pi transcript", "application/x-ndjson")
+                _artifact(self.relative / manifest.name, "Live agent outcome", "application/json")
             )
-        manifest = self.path / "live-agent.json"
-        outcome = LiveAgentOutcome(
-            final_text=result.final_text if result is not None else "",
-            tool_call_count=result.tool_call_count if result is not None else 0,
-            duration_seconds=(
-                max(0.0, time.monotonic() - self.started_at) if self.started_at else 0.0
-            ),
-        )
-        manifest.write_text(
-            json.dumps(
-                {
-                    "final_text_sha256": hashlib.sha256(outcome.final_text.encode()).hexdigest(),
-                    "tool_call_count": outcome.tool_call_count,
-                    "duration_seconds": outcome.duration_seconds,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        self.record_artifact(
-            _artifact(self.relative / manifest.name, "Live agent outcome", "application/json")
-        )
-        return outcome
+            return outcome
+        finally:
+            self.server.stop()
