@@ -39,6 +39,10 @@ No nav stack at all: no lidar, no voxel map, no costmap, no planner. Nothing
 publishes odometry, so the Rerun robot mesh (rooted under ``world/odometry``)
 sits at the origin — the camera and joint streams are what this demo shows.
 
+The onboard computer (measured 2026-08-12): NVIDIA Orin NX Developer Kit,
+8 cores, 15 GiB RAM + 7 GiB swap, kernel 5.10.104-tegra. The worker count
+and camera caps below are sized against it.
+
 Usage (on the G1; ``--rerun-open none`` because it has no display):
     dimos --rerun-open none --rerun-host 0.0.0.0 run unitree-g1-water-demo
 Laptop viewer:
