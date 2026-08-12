@@ -73,8 +73,6 @@ pub struct ModuleEntry {
     /// loop. Always a multi-thread runtime: zenoh refuses to run on a
     /// current_thread scheduler.
     pub threads: usize,
-    /// `setpriority` niceness for the module's threads. `None` leaves it alone.
-    pub nice: Option<i32>,
     prepare: fn(&Value) -> io::Result<Prepared>,
 }
 
@@ -83,18 +81,12 @@ impl ModuleEntry {
         Self {
             name,
             threads: 1,
-            nice: None,
             prepare: prepare_module::<M>,
         }
     }
 
     pub const fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
-        self
-    }
-
-    pub const fn nice(mut self, nice: i32) -> Self {
-        self.nice = Some(nice);
         self
     }
 }
@@ -310,34 +302,12 @@ fn thread_name(module: &str) -> String {
     name
 }
 
-#[cfg(unix)]
-fn apply_nice(module: &str, nice: i32) {
-    // PRIO_PROCESS with who=0 is "the calling thread" on Linux, which is what
-    // we want: each module's priority, not the whole host's.
-    let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, nice) };
-    if rc != 0 {
-        warn!(module, nice, error = %io::Error::last_os_error(), "could not set niceness");
-    }
-}
-
-#[cfg(not(unix))]
-fn apply_nice(module: &str, nice: i32) {
-    warn!(module, nice, "niceness is not supported on this platform");
-}
-
 /// The module's own runtime. Multi-thread even for a single worker: zenoh
 /// panics on a current_thread scheduler, and every module shares its session.
 fn build_runtime(entry: &ModuleEntry) -> io::Result<tokio::runtime::Runtime> {
-    let name = entry.name;
-    let nice = entry.nice;
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(entry.threads.max(1))
         .thread_name(thread_name(entry.name))
-        .on_thread_start(move || {
-            if let Some(nice) = nice {
-                apply_nice(name, nice);
-            }
-        })
         .enable_all()
         .build()
 }

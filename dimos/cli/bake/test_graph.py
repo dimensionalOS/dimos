@@ -34,7 +34,6 @@ def module(module_id, inputs, outputs, threads=1):
         rust_path=f"{module_id}::module::Thing",
         python_ref=f"dimos.{module_id}:Thing",
         threads=threads,
-        nice=None,
         inputs=inputs,
         outputs=outputs,
     )
