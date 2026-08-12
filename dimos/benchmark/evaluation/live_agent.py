@@ -213,9 +213,7 @@ class _LiveAgentExecution:
             if self.error is not None:
                 raise RuntimeError(f"live Pi failed: {type(self.error).__name__}: {self.error}")
             result = self.result
-            transcript_path = (
-                result.transcript_path if result is not None else self.transcript_path
-            )
+            transcript_path = result.transcript_path if result is not None else self.transcript_path
             if transcript_path is not None:
                 target = self.path / "pi-transcript.jsonl"
                 shutil.copy2(transcript_path, target)
@@ -247,7 +245,9 @@ class _LiveAgentExecution:
             manifest.write_text(
                 json.dumps(
                     {
-                        "final_text_sha256": hashlib.sha256(outcome.final_text.encode()).hexdigest(),
+                        "final_text_sha256": hashlib.sha256(
+                            outcome.final_text.encode()
+                        ).hexdigest(),
                         "tool_call_count": outcome.tool_call_count,
                         "duration_seconds": outcome.duration_seconds,
                     },
