@@ -184,6 +184,22 @@ def test_uncertain_dispatch_faults_and_consumes_plan(module_factory) -> None:
     assert "timed out" in module.get_error()
 
 
+def test_safe_cancel_clears_uncertain_dispatch_fault(module_factory) -> None:
+    coordinator = _coordinator()
+    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    module = _module_with_coordinator(coordinator, module_factory)
+    module._last_plan = _plan()
+    module.execute(blocking=False)
+
+    result = module.cancel()
+    snapshot = module.get_state()
+
+    assert result.status is ExecutionStatus.NO_EXECUTION
+    assert snapshot.operation_status.name == "IDLE"
+    assert snapshot.execution_status is ExecutionStatus.IDLE
+    assert snapshot.error is None
+
+
 def test_uncertain_cancel_faults_module(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")

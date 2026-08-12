@@ -79,9 +79,8 @@ def _wait_for_trajectory_completion(
     raise TimeoutError(f"Trajectory did not complete; active={last_active}")
 
 
-def _wait_for_manipulation_state(
+def _wait_for_manipulation_ready(
     client: RPCClient,
-    state_name: str,
     *,
     timeout: float = 10.0,
 ) -> None:
@@ -90,10 +89,10 @@ def _wait_for_manipulation_state(
     while time.time() < deadline:
         snapshot = client.get_state()
         last_state = snapshot.operation_status.name
-        if last_state == state_name:
+        if last_state in {"IDLE", "COMPLETED"}:
             return
         time.sleep(0.1)
-    raise TimeoutError(f"ManipulationModule did not reach {state_name}; last={last_state}")
+    raise TimeoutError(f"ManipulationModule did not become ready; last={last_state}")
 
 
 def _wait_for_current_joints(
@@ -121,14 +120,12 @@ def _wait_for_current_joints(
 
 
 def _prepare_for_planning(client: RPCClient, group_ids: tuple[str, ...]) -> None:
-    client.reset()
-    _wait_for_manipulation_state(client, "IDLE")
     _wait_for_current_joints(client, group_ids)
     # Robot info and joint-state topics can become available just before the
     # manipulation module finishes finalizing world monitors. Require a stable
     # ready state after joint state is flowing to avoid command-readiness flakes.
     time.sleep(0.25)
-    _wait_for_manipulation_state(client, "IDLE")
+    _wait_for_manipulation_ready(client)
 
 
 def _offset_target(snapshot: ManipulationSnapshot, group_id: str, delta: float) -> JointState:

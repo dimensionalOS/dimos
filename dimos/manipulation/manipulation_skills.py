@@ -90,15 +90,6 @@ class ManipulationSkills(Module):
         return self._execution_result(self.manipulation.execute(blocking=True))
 
     @skill
-    def reset(self) -> SkillResult[ManipulationSkillError]:
-        """Reset recoverable manipulation state after an error."""
-
-        result = self.manipulation.reset()
-        if result.succeeded:
-            return SkillResult.ok(result.message)
-        return SkillResult.fail("INVALID_STATE", result.message)
-
-    @skill
     def get_robot_state(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:

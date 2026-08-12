@@ -41,7 +41,7 @@ Plan/visualization state
 
 Execution
   execute                      execute_plan(plan)
-  cancel                       reset
+  cancel
 
 Gripper/skills
   get_gripper                  set_gripper
@@ -151,8 +151,6 @@ class ManipulationSpec(Spec, Protocol):
     ) -> CommandResult: ...
 
     def cancel(self) -> ExecutionResult: ...
-
-    def reset(self) -> CommandResult: ...
 ```
 
 Public group and state types:

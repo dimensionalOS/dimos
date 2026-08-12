@@ -155,7 +155,6 @@ def test_manipulation_module_exposes_only_primitive_and_obstacle_rpcs() -> None:
         "plan_to_joints",
         "plan_to_poses",
         "remove_obstacle",
-        "reset",
         "set_gripper_position",
         "update_obstacle",
         "update_obstacle_pose",

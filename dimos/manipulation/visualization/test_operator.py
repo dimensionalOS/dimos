@@ -17,12 +17,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos.manipulation.manipulation_spec import (
-    CommandResult,
-    CommandStatus,
-    ExecutionResult,
-    ExecutionStatus,
-)
+from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -120,7 +115,6 @@ class FakeModule:
         self.execute_success = True
         self.cancel_success = True
         self.clear_success = True
-        self.reset_success = True
         self.topology_calls = 0
         self.telemetry_calls = 0
 
@@ -212,11 +206,6 @@ class FakeModule:
 
     def clear_planned_path(self) -> bool:
         return self.clear_success
-
-    def reset(self) -> CommandResult:
-        if self.reset_success:
-            return CommandResult(CommandStatus.SUCCEEDED, "reset")
-        return CommandResult(CommandStatus.FAILED, "no reset")
 
 
 class FakeWorldMonitor:
@@ -446,7 +435,6 @@ def test_actions_return_typed_results_and_cancel_fallback_ownership() -> None:
     assert operator.preview(module.plan, 0.5) is True
     assert operator.execute(module.plan) is True
     assert operator.clear_plan() is True
-    assert operator.reset() is True
     cancel_result = operator.cancel()
     assert cancel_result is True
     assert monitor.cancel_preview_calls == 0

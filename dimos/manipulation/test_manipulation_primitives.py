@@ -189,6 +189,5 @@ def test_skills_are_exposed_only_by_adapter() -> None:
         "move_to_joints",
         "move_to_pose",
         "open_gripper",
-        "reset",
         "set_gripper",
     }

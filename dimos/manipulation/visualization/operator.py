@@ -218,10 +218,6 @@ class ManipulationOperator:
     def clear_plan(self) -> bool:
         return self._module.clear_planned_path()
 
-    def reset(self) -> bool:
-        result = self._module.reset()
-        return result.succeeded
-
     def _validate_joint_request(
         self, request: JointTargetRequest
     ) -> tuple[tuple[PlanningGroup, ...] | None, TargetEvaluationResult | None]:

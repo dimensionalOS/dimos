@@ -485,10 +485,13 @@ class ManipulationModule(Module):
         """Cancel planning or the active trajectory."""
         with self._lock:
             is_planning = self._state == ManipulationState.PLANNING
+            is_fault = self._state == ManipulationState.FAULT
             if is_planning:
                 self._planning_epoch += 1
             plan = self._last_plan
             self._last_plan = None
+        with self._execution_condition:
+            is_uncertain_fault = is_fault and self._execution_status is ExecutionStatus.UNCERTAIN
 
         cancellation = self._execution_manager.cancel()
         if plan is not None:
@@ -513,30 +516,15 @@ class ManipulationModule(Module):
             if result.status is ExecutionStatus.UNCERTAIN:
                 self._state = ManipulationState.FAULT
                 self._error_message = result.message
-            elif is_planning:
+            elif is_planning or is_uncertain_fault:
                 self._state = ManipulationState.IDLE
                 self._error_message = ""
+        if is_uncertain_fault and result.status is not ExecutionStatus.UNCERTAIN:
+            with self._execution_condition:
+                self._execution_status = ExecutionStatus.IDLE
+                self._latest_execution_result = None
+                self._execution_active = False
         return result
-
-    @rpc
-    def reset(self) -> CommandResult:
-        """Clear recoverable module error and execution bookkeeping state."""
-        with self._lock:
-            if self._state == ManipulationState.EXECUTING:
-                return CommandResult(
-                    CommandStatus.REJECTED,
-                    "Cannot reset while executing; cancel first",
-                )
-            if self._state == ManipulationState.PLANNING:
-                self._planning_epoch += 1
-            self._state = ManipulationState.IDLE
-            self._error_message = ""
-            self._last_plan = None
-        with self._execution_condition:
-            self._execution_status = ExecutionStatus.IDLE
-            self._latest_execution_result = None
-            self._execution_active = False
-        return CommandResult(CommandStatus.SUCCEEDED, "Reset to IDLE")
 
     def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
         """Get current joint positions.
@@ -598,6 +586,7 @@ class ManipulationModule(Module):
             self._planning_epoch += 1
             self._last_plan = None
             self._planning_speed_scale = self.config.default_speed_scale
+            self._error_message = ""
             self._state = ManipulationState.PLANNING
         return robot[0], robot[1]
 
@@ -617,6 +606,7 @@ class ManipulationModule(Module):
             self._planning_epoch += 1
             self._last_plan = None
             self._planning_speed_scale = float(resolved_speed)
+            self._error_message = ""
             self._state = ManipulationState.PLANNING
             return self._planning_epoch
 
@@ -674,6 +664,7 @@ class ManipulationModule(Module):
                 return None
             self._last_plan = plan
             self._state = ManipulationState.COMPLETED
+            self._error_message = ""
         return plan
 
     def _plan_selected_path(
@@ -718,10 +709,11 @@ class ManipulationModule(Module):
             self._dismiss_preview(plan.group_ids)
 
     def _fail(self, msg: str) -> bool:
-        """Set FAULT state with error message."""
+        """Finish a planning request with an error while remaining retryable."""
         self._record_error(msg)
         with self._lock:
-            self._state = ManipulationState.FAULT
+            self._last_plan = None
+            self._state = ManipulationState.IDLE
         return False
 
     def _fail_planning_epoch(self, planning_epoch: int, msg: str) -> bool:
@@ -732,7 +724,7 @@ class ManipulationModule(Module):
                 return False
             logger.warning(msg)
             self._last_plan = None
-            self._state = ManipulationState.FAULT
+            self._state = ManipulationState.IDLE
             self._error_message = msg
             return False
 

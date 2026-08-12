@@ -185,7 +185,7 @@ class ExecutionResult:
 
 @dataclass(frozen=True, repr=False)
 class CommandResult:
-    """Typed result for gripper and reset commands."""
+    """Typed result for non-motion manipulation commands."""
 
     status: CommandStatus
     message: str = ""
@@ -295,5 +295,3 @@ class ManipulationSpec(Spec, Protocol):
     ) -> CommandResult: ...
 
     def cancel(self) -> ExecutionResult: ...
-
-    def reset(self) -> CommandResult: ...

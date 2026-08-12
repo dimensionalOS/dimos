@@ -35,7 +35,6 @@ from dimos.manipulation.manipulation_module import (
     ManipulationState,
 )
 from dimos.manipulation.manipulation_spec import (
-    CommandStatus,
     ExecutionStatus,
     PlanStatus,
 )
@@ -331,29 +330,14 @@ class TestStateMachine:
         assert result.status is ExecutionStatus.NO_EXECUTION
         coordinator.cancel_trajectory.assert_called_once_with()
 
-    def test_reset_not_during_execution(self, module_factory):
-        """Reset works in any state except EXECUTING."""
-        module = module_factory()
-
-        module._state = ManipulationState.FAULT
-        module._error_message = "Error"
-        result = module.reset()
-        assert result.status is CommandStatus.SUCCEEDED
-        assert module._state == ManipulationState.IDLE
-        assert module._error_message == ""
-
-        module._state = ManipulationState.EXECUTING
-        result = module.reset()
-        assert result.status is CommandStatus.REJECTED
-
-    def test_fail_sets_fault_state(self, module_factory):
-        """_fail helper sets FAULT state and message."""
+    def test_planning_error_remains_retryable(self, module_factory):
+        """Planning errors preserve the message without latching FAULT."""
         module = module_factory()
         module._state = ManipulationState.PLANNING
 
         result = module._fail("Test error")
         assert result is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._error_message == "Test error"
 
     def test_begin_planning_state_checks(self, robot_config, module_factory):
@@ -817,7 +801,7 @@ class TestPlanningGroupApis:
         )
 
         assert success is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
 
@@ -993,8 +977,8 @@ class TestPlanningGroupApis:
 
 
 class TestPlanningDiagnostics:
-    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
-        """Planning diagnostics include the backend message."""
+    def test_planner_failure_preserves_detail_and_allows_retry(self, robot_config, module_factory):
+        """Planning diagnostics remain visible until the next planning request."""
         module = module_factory()
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
@@ -1019,7 +1003,13 @@ class TestPlanningDiagnostics:
 
         assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.IDLE
+
+        retry_epoch = module._begin_group_planning()
+
+        assert retry_epoch is not None
+        assert module._state == ManipulationState.PLANNING
+        assert module.get_error() == ""
 
 
 class TestExecute:

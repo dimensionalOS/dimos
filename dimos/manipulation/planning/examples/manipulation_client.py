@@ -121,11 +121,6 @@ def cancel() -> ExecutionResult:
     return _client.cancel()
 
 
-def reset() -> CommandResult:
-    """Clear recoverable manipulation state."""
-    return _client.reset()
-
-
 def _select_group(
     planning_group: str | None,
     *,
