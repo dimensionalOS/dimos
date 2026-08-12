@@ -14,6 +14,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -24,9 +25,12 @@ from dimos.benchmark.vlnce_r2r.blueprint import (
     vlnce_r2r_eval_blueprint,
 )
 from dimos.benchmark.vlnce_r2r.connection import VlnceConnection
+from dimos.benchmark.vlnce_r2r.evaluation import SYSTEM_PROMPT
 from dimos.benchmark.vlnce_r2r.models import VlnceTaskManifest
 from dimos.benchmark.vlnce_r2r.prompt import vlnce_task_prompt
 from dimos.core.global_config import global_config
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -54,6 +58,7 @@ def test_case_bound_blueprint_contains_only_public_navigation_stack(tmp_path) ->
 
     connection = next(atom for atom in blueprint.blueprints if atom.module is VlnceConnection)
     spatial_memory = next(atom for atom in blueprint.blueprints if atom.module is SpatialMemory)
+    recorder = next(atom for atom in blueprint.blueprints if atom.module is VlnceObservationRecorder)
     assert connection.kwargs["socket_path"] == str(tmp_path / "public.sock")
     assert connection.kwargs["attempt_id"] == "attempt-1"
     assert connection.kwargs["episode_id"] == "515"
@@ -62,6 +67,7 @@ def test_case_bound_blueprint_contains_only_public_navigation_stack(tmp_path) ->
         tmp_path / "spatial-memory/visual-memory.pkl"
     )
     assert spatial_memory.kwargs["output_dir"] == str(tmp_path / "spatial-memory")
+    assert recorder.kwargs["stream_codecs"] == {"depth_image": "pickle"}
     assert blueprint.global_config_overrides["robot_model"] == "vlnce_habitat_cylinder"
     assert blueprint.global_config_overrides["transport"] == "zenoh"
     assert blueprint.global_config_overrides["configure_system"] is False
@@ -80,7 +86,11 @@ def test_blueprint_wires_static_map_motion_and_public_recording(tmp_path) -> Non
         blueprint.remapping_map[(ReplanningAStarPlanner.name, "odometry")]
         == "unused_benchmark_odometry"
     )
-    assert blueprint.remapping_map[(VlnceObservationRecorder.name, "global_map")] == "pointcloud"
+    assert (
+        blueprint.remapping_map[(VlnceObservationRecorder.name, "depth_pointcloud")]
+        == "pointcloud"
+    )
+    assert (VlnceObservationRecorder.name, "global_map") not in blueprint.remapping_map
 
 
 def test_task_prompt_preserves_instruction_and_explains_submission() -> None:
@@ -93,6 +103,31 @@ def test_task_prompt_preserves_instruction_and_explains_submission() -> None:
     assert "VLN-CE STOP" in prompt
     assert "irreversible" in prompt
     assert "does not reveal whether the route succeeded" in prompt
+
+
+def test_system_prompt_names_observation_streams_and_requires_closed_loop_evidence() -> None:
+    assert "`color_image`" in SYSTEM_PROMPT
+    assert "`global_costmap`" in SYSTEM_PROMPT
+    assert "`depth_pointcloud` is only" in SYSTEM_PROMPT
+    assert "Never issue a long or unbounded movement loop" in SYSTEM_PROMPT
+    assert "without a duration" in SYSTEM_PROMPT
+    assert "fresh RGB evidence" in SYSTEM_PROMPT
+    assert "is_goal_reached()" in SYSTEM_PROMPT
+
+
+def test_depth_image_pickle_codec_preserves_metric_values(tmp_path: Path) -> None:
+    depth = Image(
+        data=np.array([[0.25, 1.5]], dtype=np.float32),
+        format=ImageFormat.DEPTH,
+    )
+
+    with SqliteStore(path=str(tmp_path / "recording.db")) as store:
+        stream = store.stream("depth_image", Image, codec="pickle")
+        stream.append(depth)
+        restored = stream.last().data
+
+    assert restored.format is ImageFormat.DEPTH
+    np.testing.assert_array_equal(restored.data, depth.data)
 
 
 @pytest.mark.parametrize(("viewer", "has_rerun"), [("none", False), ("rerun", True)])

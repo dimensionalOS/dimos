@@ -30,6 +30,7 @@ from dimos.benchmark.evaluation.pi_process import (
     PI_VERSION,
     PiCliRunner,
     PiRunCancelledError,
+    PiRunError,
     PiRunResult,
 )
 from dimos.benchmark.evaluation.progress import ProgressSink
@@ -173,7 +174,6 @@ class _LiveAgentExecution:
         self.cancel = threading.Event()
         self.thread: threading.Thread | None = None
         self.result: PiRunResult | None = None
-        self.transcript_path: Path | None = None
         self.error: BaseException | None = None
         self.started_at = 0.0
         self.server.start()
@@ -196,7 +196,22 @@ class _LiveAgentExecution:
                 cancel=self.cancel,
             )
         except PiRunCancelledError as exc:
-            self.transcript_path = exc.transcript_path
+            self.result = PiRunResult(
+                final_text="",
+                tool_call_count=exc.tool_call_count,
+                duration_seconds=exc.duration_seconds,
+                transcript_path=exc.transcript_path,
+                stderr=exc.stderr,
+            )
+        except PiRunError as exc:
+            self.result = PiRunResult(
+                final_text="",
+                tool_call_count=exc.tool_call_count,
+                duration_seconds=exc.duration_seconds,
+                transcript_path=exc.transcript_path,
+                stderr=exc.stderr,
+            )
+            self.error = exc
         except BaseException as exc:
             self.error = exc
 
@@ -210,10 +225,8 @@ class _LiveAgentExecution:
                 self.thread.join(timeout=10)
                 if self.thread.is_alive():
                     raise TimeoutError("live Pi session did not stop")
-            if self.error is not None:
-                raise RuntimeError(f"live Pi failed: {type(self.error).__name__}: {self.error}")
             result = self.result
-            transcript_path = result.transcript_path if result is not None else self.transcript_path
+            transcript_path = result.transcript_path if result is not None else None
             if transcript_path is not None:
                 target = self.path / "pi-transcript.jsonl"
                 shutil.copy2(transcript_path, target)
@@ -260,6 +273,8 @@ class _LiveAgentExecution:
             self.record_artifact(
                 _artifact(self.relative / manifest.name, "Live agent outcome", "application/json")
             )
+            if self.error is not None:
+                raise RuntimeError(f"live Pi failed: {type(self.error).__name__}: {self.error}")
             return outcome
         finally:
             self.server.stop()

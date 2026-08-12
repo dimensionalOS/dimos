@@ -26,6 +26,7 @@ from dimos.core.stream import In
 from dimos.memory2.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
@@ -45,8 +46,10 @@ class VlnceObservationRecorder(Recorder):
     """Record only observations exposed through the public benchmark boundary."""
 
     color_image: In[Image]
+    depth_image: In[Image]
     odom: In[PoseStamped]
-    global_map: In[PointCloud2]
+    depth_pointcloud: In[PointCloud2]
+    global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     config: VlnceObservationRecorderConfig
     _last_odom_pose: Pose | None = None
@@ -56,7 +59,13 @@ class VlnceObservationRecorder(Recorder):
         self._last_odom_pose = message
         return message
 
-    @pose_setter_for("global_map", "goal_reached")
+    @pose_setter_for(
+        "color_image",
+        "depth_image",
+        "depth_pointcloud",
+        "global_costmap",
+        "goal_reached",
+    )
     async def _robot_pose(self, _message: object) -> Pose | None:
         return self._last_odom_pose
 
@@ -98,13 +107,14 @@ def vlnce_r2r_eval_blueprint(
             VlnceObservationRecorder.blueprint(
                 db_path=recording_path,
                 on_existing=OnExisting.OVERWRITE,
+                stream_codecs={"depth_image": "pickle"},
             ),
         )
         .remappings(
             [
                 (ReplanningAStarPlanner, "nav_cmd_vel", "cmd_vel"),
                 (ReplanningAStarPlanner, "odometry", "unused_benchmark_odometry"),
-                (VlnceObservationRecorder, "global_map", "pointcloud"),
+                (VlnceObservationRecorder, "depth_pointcloud", "pointcloud"),
             ]
         )
         .global_config(

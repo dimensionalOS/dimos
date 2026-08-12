@@ -26,6 +26,7 @@ import threading
 import time
 
 from mcp.server.mcpserver import MCPServer
+from mcp_types import CallToolResult, ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -89,10 +90,23 @@ class CodePolicyMcpServer:
             ),
             structured_output=False,
         )
-        async def python_exec(code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S) -> str:
+        async def python_exec(
+            code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S
+        ) -> CallToolResult:
             if self.session is None:
-                return "CodePolicy session is stopped"
-            return await asyncio.to_thread(self.session.python_exec, code, timeout_s)
+                return CallToolResult(
+                    content=[TextContent(type="text", text="CodePolicy session is stopped")]
+                )
+            result = await asyncio.to_thread(self.session.python_exec, code, timeout_s)
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=result.text),
+                    *(
+                        ImageContent(type="image", data=image.data, mimeType=image.mime_type)
+                        for image in result.images
+                    ),
+                ]
+            )
 
         self.app = self.mcp.streamable_http_app(
             streamable_http_path="/mcp",

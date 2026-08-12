@@ -42,7 +42,7 @@ class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
-    _similarity_threshold: float = 0.23
+    _similarity_threshold: float = 0.30
 
     _spatial_memory: SpatialMemorySpec
     _navigation: NavigationInterfaceSpec
@@ -169,7 +169,13 @@ class NavigationSkillContainer(Module):
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
-        self._navigation.set_goal(pose)
+        if not self._navigation.set_goal(pose):
+            return f"{message} The navigation goal was rejected."
+        state = self._navigation.get_state()
+        if state == NavigationState.IDLE:
+            if self._navigation.is_goal_reached():
+                return f"{message} The robot is already at that position."
+            return f"{message} No navigable path was found; the robot did not start moving."
 
         return (
             f"{message}. Started navigating to that position. "

@@ -15,6 +15,8 @@
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.core import rpc
@@ -159,3 +161,30 @@ def test_go_to_semantic_location(agent_setup) -> None:
     )
 
     assert "success" in history[-1].content.lower()
+
+
+@pytest.fixture
+def navigation_container(mocker: MockerFixture):
+    mocker.patch("dimos.models.vl.qwen.QwenVlModel")
+    container = NavigationSkillContainer()
+    yield container
+    container.stop()
+
+
+def test_navigate_to_reports_synchronous_planner_failure(
+    mocker: MockerFixture,
+    navigation_container: NavigationSkillContainer,
+) -> None:
+    navigation = mocker.Mock()
+    navigation.set_goal.return_value = True
+    navigation.get_state.return_value = NavigationState.IDLE
+    navigation.is_goal_reached.return_value = False
+    navigation_container._navigation = navigation
+    goal = PoseStamped()
+
+    result = navigation_container._navigate_to(goal, "Found a semantic match.")
+
+    assert result == (
+        "Found a semantic match. No navigable path was found; the robot did not start moving."
+    )
+    navigation.set_goal.assert_called_once_with(goal)
