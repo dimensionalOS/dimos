@@ -48,7 +48,11 @@ jobs:
 
       # The image builds release-grade wheels (CIBUILDWHEEL=1), which
       # require web/cockpit/dist in the build context — same step the
-      # release workflow runs.
+      # release workflow runs. The self-hosted runner lacks unzip,
+      # which setup-deno needs to unpack its archive.
+      - name: Runner prerequisites for setup-deno
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unzip
+
       - name: Build the Cockpit
         uses: ./.github/actions/build-cockpit
 
