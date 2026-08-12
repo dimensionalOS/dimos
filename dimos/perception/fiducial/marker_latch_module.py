@@ -73,12 +73,14 @@ class MarkerLatchModule(Module):
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @rpc
     def start(self) -> None:
         super().start()
         self.detections.subscribe(self._on_detections)
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()
 
+    @rpc
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:

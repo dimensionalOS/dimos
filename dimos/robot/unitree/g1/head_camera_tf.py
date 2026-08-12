@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 from pydantic import Field
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -73,12 +74,14 @@ class G1HeadCameraTf(Module):
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @rpc
     def start(self) -> None:
         super().start()
         self.coordinator_joint_state.subscribe(self._on_joint_state)
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()
 
+    @rpc
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
