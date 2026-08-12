@@ -47,6 +47,7 @@ class RoboPlanCartesianPathConfig(BaseConfig):
     toppra_blend_deviation: float = 0.05
     position_limit_gain: float = Field(default=1.0, gt=0.0, le=1.0)
     max_attempts_per_step: int = Field(default=16, ge=1)
+    check_collision: bool = True
 
 
 class RoboPlanPathShortcuttingConfig(BaseConfig):

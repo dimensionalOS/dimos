@@ -70,6 +70,7 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -160,6 +161,7 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
+    trajectory_status: Out[TrajectoryStatus]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -970,6 +972,7 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
+            publish_trajectory_status_callback=self.trajectory_status.publish,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )

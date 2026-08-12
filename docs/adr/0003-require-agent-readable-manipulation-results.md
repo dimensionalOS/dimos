@@ -1,0 +1,3 @@
+# Require agent-readable manipulation results
+
+Structured results returned by the manipulation RPC interface must define a deliberate, bounded `__repr__` because Python REPLs display return values with `repr()`. Contract tests reject result types that inherit `object.__repr__`. Results retain typed public fields for programmatic inspection; their representation summarizes the operationally important fields without dumping large paths or trajectories. A successful planning result displays status, planning groups, waypoint count, trajectory duration, and planning time. Path length and iteration count remain inspectable fields but are omitted from the default display.

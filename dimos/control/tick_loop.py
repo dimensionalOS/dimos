@@ -40,6 +40,7 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -97,6 +98,7 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_trajectory_status_callback: Callable[[TrajectoryStatus], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -108,6 +110,7 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_trajectory_status_callback = publish_trajectory_status_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -187,6 +190,8 @@ class TickLoop:
 
         self._notify_preemptions(preemptions)
 
+        self._publish_trajectory_status(t_now)
+
         hw_commands = self._route_to_hardware(joint_commands)
 
         self._write_all_hardware(hw_commands)
@@ -205,6 +210,20 @@ class TickLoop:
                 f"{len(joint_states.joint_positions)} joints, "
                 f"{active} active tasks"
             )
+
+    def _publish_trajectory_status(self, t_now: float) -> None:
+        """Transport status produced by the registered trajectory task."""
+
+        if self._publish_trajectory_status_callback is None:
+            return
+        with self._task_lock:
+            for task in self._tasks.values():
+                take_status = getattr(task, "take_status", None)
+                if not callable(take_status):
+                    continue
+                status = take_status(t_now)
+                if status is not None:
+                    self._publish_trajectory_status_callback(status)
 
     def _read_all_hardware(
         self,

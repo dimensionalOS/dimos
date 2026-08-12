@@ -528,6 +528,24 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
+    def test_status_is_published_while_executing_and_terminal_once(
+        self, trajectory_task, simple_trajectory
+    ):
+        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
+
+        active = trajectory_task.take_status(10.25)
+        assert active is not None
+        assert active.state is TrajectoryState.EXECUTING
+        assert active.progress == pytest.approx(0.25)
+
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
+        terminal = trajectory_task.take_status(11.5)
+        assert terminal is not None
+        assert terminal.state is TrajectoryState.COMPLETED
+        assert terminal.progress == pytest.approx(1.0)
+        assert trajectory_task.take_status(11.6) is None
+
     def test_execute_partial_subset_and_claims_full_configuration(self, trajectory_task):
         trajectory = JointTrajectory(
             joint_names=["arm/joint2", "arm/joint3"],
@@ -692,12 +710,12 @@ class TestJointTrajectoryTask:
         )
         assert (
             trajectory_task.execute(second, trajectory_start_positions(second)).status
-            is TrajectoryExecutionStatus.ACCEPTED
+            is TrajectoryExecutionStatus.ALREADY_EXECUTING
         )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.0, dt=0.01))
         output = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.5, dt=0.01))
         assert output is not None
-        assert output.joint_names == ["arm/joint3"]
+        assert output.joint_names == ["arm/joint1"]
         assert trajectory_task.cancel().status is TrajectoryCancellationStatus.CANCELLED
         assert (
             trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=2.0, dt=0.01))

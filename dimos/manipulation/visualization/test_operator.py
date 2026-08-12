@@ -15,8 +15,14 @@
 """Focused tests for the manipulation visualization operator facade."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from dimos.agents.skill_result import SkillResult
+from dimos.manipulation.manipulation_spec import (
+    CommandResult,
+    CommandStatus,
+    ExecutionResult,
+    ExecutionStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -78,6 +84,7 @@ def _robot_config(
 
 class FakeModule:
     def __init__(self) -> None:
+        self.config = SimpleNamespace(default_speed_scale=1.0)
         self.state = "COMPLETED"
         self.error = ""
         self.has_plan = True
@@ -117,8 +124,8 @@ class FakeModule:
         self.topology_calls = 0
         self.telemetry_calls = 0
 
-    def get_state(self) -> str:
-        return self.state
+    def get_state(self) -> SimpleNamespace:
+        return SimpleNamespace(operation_status=SimpleNamespace(name=self.state))
 
     def get_error(self) -> str:
         return self.error
@@ -157,7 +164,9 @@ class FakeModule:
         return self.plan_success
 
     def generate_plan_to_joint_targets(
-        self, targets: dict[PlanningGroupID, JointState]
+        self,
+        targets: dict[PlanningGroupID, JointState],
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_joint_targets.append(targets)
         return self.plan if self.plan_success else None
@@ -174,6 +183,7 @@ class FakeModule:
         self,
         targets: dict[PlanningGroupID, PoseStamped],
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.plan_pose_targets.append((targets, auxiliary_groups))
         return self.plan if self.plan_success else None
@@ -183,6 +193,7 @@ class FakeModule:
         targets: dict[PlanningGroupID, tuple[PoseStamped, ...]],
         config: RoboPlanCartesianPathConfig,
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
+        speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         self.cartesian_targets.append((targets, config, auxiliary_groups))
         return self.plan if self.plan_success else None
@@ -192,19 +203,20 @@ class FakeModule:
     ) -> bool:
         return self.preview_success
 
-    def execute_plan(self, plan: GeneratedPlan | None = None) -> bool:
+    def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
         return self.execute_success
 
-    def cancel(self) -> bool:
-        return self.cancel_success
+    def cancel(self) -> ExecutionResult:
+        status = ExecutionStatus.ABORTED if self.cancel_success else ExecutionStatus.UNCERTAIN
+        return ExecutionResult(status)
 
     def clear_planned_path(self) -> bool:
         return self.clear_success
 
-    def reset(self) -> SkillResult[str]:
+    def reset(self) -> CommandResult:
         if self.reset_success:
-            return SkillResult.ok("reset")
-        return SkillResult.fail("ERR", "no reset")
+            return CommandResult(CommandStatus.SUCCEEDED, "reset")
+        return CommandResult(CommandStatus.FAILED, "no reset")
 
 
 class FakeWorldMonitor:

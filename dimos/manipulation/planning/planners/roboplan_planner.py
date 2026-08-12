@@ -217,7 +217,11 @@ class RoboPlanPlanner:
                     group,
                     trajectory,
                 )
-                collision_free = not path or self._combined_path_collision_free(ctx, path)
+                collision_free = (
+                    not config.check_collision
+                    or not path
+                    or self._combined_path_collision_free(ctx, path)
+                )
         except (KeyError, RuntimeError, ValueError) as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
