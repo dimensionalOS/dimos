@@ -177,6 +177,9 @@ fn is_option(ty: &Type) -> bool {
 const ONE_ATTR_ONLY: &str = "field has multiple module attributes; only one of #[input], \
                              #[output], #[io], #[config], #[tf] is allowed";
 
+/// What a `#[tf]` port carries, for the Cargo.toml registry cross-check.
+const TF_PAYLOAD_TYPE: &str = "TFMessage";
+
 enum FieldKind {
     Input {
         decode: Path,
@@ -410,11 +413,21 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
         .filter(|f| match f.kind {
             FieldKind::Input { .. } => want_input,
             FieldKind::Output { .. } => !want_input,
+            // A `#[tf]` field is a port like any other as far as the registry
+            // goes -- bake has to put the topic in the host's map or the module
+            // refuses to start. It lists under `inputs`: the graph has no io
+            // kind, and a host consumes tf far more often than it publishes it.
+            FieldKind::Tf => want_input,
             _ => false,
         })
         .map(|f| PortDecl {
             name: f.name.to_string(),
-            ty: port_payload_type(f.ty).unwrap_or_default(),
+            // `Tf` carries no generic payload; the port is TFMessage by
+            // construction.
+            ty: match f.kind {
+                FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
+                _ => port_payload_type(f.ty).unwrap_or_default(),
+            },
         })
         .collect()
 }
