@@ -45,13 +45,30 @@ PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
 
 COLORS = {
     "naive": [90, 200, 90],
-    "no_normal_gate": [235, 120, 60],
-    "defaults": [70, 170, 235],
-    "fine": [235, 210, 80],
 }
 
 # Variants whose normal gate is active, so their normals are worth drawing.
 NORMAL_VARIANTS = {"defaults"}
+
+# Z-gradient stops, all bright enough to read on the viewer's black background.
+# The low end buys its contrast with chroma, not darkness, so floor points stay
+# visible. The coarse map climbs the cool family (violet to ice) and the fine
+# map the warm one (red to pale yellow), keeping the clouds separable at every
+# height, including under red-green colorblindness.
+COARSE_RAMP = np.array(
+    [[150, 70, 255], [60, 130, 255], [70, 220, 255], [215, 250, 255]], np.float32
+)
+FINE_RAMP = np.array([[255, 60, 50], [255, 130, 30], [255, 200, 60], [255, 250, 170]], np.float32)
+# Normal arrows blend their voxel's gradient color toward magenta, the one hue
+# family neither ramp uses: still height-coded, never mistaken for a point.
+NORMAL_TINT = np.array([255, 60, 235], np.float32)
+NORMAL_TINT_BLEND = 0.45
+
+
+def _normal_colors(voxel_colors: np.ndarray) -> np.ndarray:
+    """Magenta-cast copies of the voxel colors for their normal arrows."""
+    mixed = (1.0 - NORMAL_TINT_BLEND) * voxel_colors + NORMAL_TINT_BLEND * NORMAL_TINT
+    return mixed.astype(np.uint8)
 
 
 def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
@@ -64,6 +81,27 @@ def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
     t = (z - z.min()) / span if span > 1e-6 else np.zeros(len(z), np.float32)
     brightness = 0.5 + 0.5 * t
     return (np.asarray(base, np.float32) * brightness[:, None]).astype(np.uint8)
+
+
+def _z_gradient(centers: np.ndarray, ramp: np.ndarray) -> np.ndarray:
+    """Color each point by height, interpolated along the ramp's stops.
+
+    Normalizes to the 2nd-98th height percentiles so a few stray points cannot
+    compress the bulk of the cloud into the middle of the ramp.
+    """
+    if len(centers) == 0:
+        return np.empty((0, 3), np.uint8)
+    z = centers[:, 2]
+    z_lo, z_hi = np.percentile(z, [2.0, 98.0])
+    span = float(z_hi - z_lo)
+    if span > 1e-6:
+        t = np.clip((z - z_lo) / span, 0.0, 1.0)
+    else:
+        t = np.zeros(len(z), np.float32)
+    pos = t * (len(ramp) - 1)
+    lo = np.minimum(pos.astype(np.int32), len(ramp) - 2)
+    frac = (pos - lo)[:, None]
+    return (ramp[lo] * (1.0 - frac) + ramp[lo + 1] * frac).astype(np.uint8)
 
 
 def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
@@ -146,7 +184,6 @@ def main(
             grace_depth=max_range,
             min_health=0,
         ),
-        "no_normal_gate": VoxelRayMapper(voxel_size=voxel_size, max_range=max_range, graze_cos=0.0),
         "defaults": VoxelRayMapper(
             voxel_size=voxel_size, max_range=max_range, fine_divisor=fine_divisor
         ),
@@ -192,13 +229,10 @@ def main(
                     )
                     continue
                 centers, normals = mapper.global_map_normals()
+                colors = _z_gradient(centers, COARSE_RAMP)
                 rr.log(
                     f"world/maps/{name}",
-                    rr.Points3D(
-                        centers,
-                        colors=_height_colors(centers, COLORS[name]),
-                        radii=render_voxel / 2,
-                    ),
+                    rr.Points3D(centers, colors=colors, radii=render_voxel / 2),
                 )
                 keep = np.any(normals != 0.0, axis=1)
                 origins, vectors = centers[keep], normals[keep]
@@ -209,7 +243,7 @@ def main(
                     rr.Arrows3D(
                         origins=origins,
                         vectors=vectors * normal_scale,
-                        colors=[COLORS[name]],
+                        colors=_normal_colors(colors[keep]),
                         radii=0.005,
                     ),
                 )
@@ -221,7 +255,7 @@ def main(
                     "world/maps/fine",
                     rr.Points3D(
                         fine_centers,
-                        colors=_height_colors(fine_centers, COLORS["fine"]),
+                        colors=_z_gradient(fine_centers, FINE_RAMP),
                         radii=render_voxel / (2 * fine_divisor),
                     ),
                 )
