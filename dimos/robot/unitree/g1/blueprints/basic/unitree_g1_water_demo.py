@@ -171,7 +171,9 @@ unitree_g1_water_demo = (
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))
-    # One worker per module: the connection pump, the 100 Hz tick, the camera
-    # capture loop, marker detection and the Rerun bridge each need their own.
-    .global_config(robot_model="unitree_g1", n_workers=11)
+    # Sized for the heavy modules only — the connection pump, the 100 Hz tick,
+    # the camera capture loop, marker detection, planning and the Rerun bridge.
+    # The rest share: every worker is a process that imports the whole stack,
+    # and one-per-module exhausted the Jetson's RAM (workers died with EOF).
+    .global_config(robot_model="unitree_g1", n_workers=7)
 )
