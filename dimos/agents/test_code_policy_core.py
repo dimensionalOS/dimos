@@ -19,7 +19,9 @@ from pathlib import Path
 
 import cloudpickle
 import pytest
+from pytest_mock import MockerFixture
 
+import dimos.agents.code_policy_core as code_policy_core
 from dimos.agents.code_policy_core import (
     CodePolicySessionConfig,
     LiveDimosEnvironment,
@@ -94,12 +96,14 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
 
 
 def test_live_repl_bootstraps_public_runtime_without_credentials(
+    mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     monkeypatch.setenv("ORDINARY_SETTING", "retained")
     environment = LiveDimosEnvironment(recording_path="/attempt/recording.db")
     config = CodePolicySessionConfig(environment=environment)
+    mocker.patch.object(code_policy_core.global_config, "transport", "zenoh")
 
     source = _bootstrap_source(environment)
     kernel_environment = _kernel_environment(config)
@@ -109,3 +113,4 @@ def test_live_repl_bootstraps_public_runtime_without_credentials(
     assert "submit_policy" not in source
     assert "OPENAI_API_KEY" not in kernel_environment
     assert kernel_environment["ORDINARY_SETTING"] == "retained"
+    assert kernel_environment["DIMOS_TRANSPORT"] == "zenoh"
