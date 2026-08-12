@@ -49,7 +49,7 @@ jobs:
       - base
     container:
       image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
-      options: --memory=6g --memory-swap=6g
+      options: --memory=6g --memory-swap=6g --cap-add PERFMON
       volumes:
         - /var/cache/dimos-nix:/nix
         - /var/cache/dimos-root-cache:/root/.cache
@@ -92,7 +92,6 @@ jobs:
           # exist here. No cpuset hooks either, so run unisolated — the job
           # already has the machine to itself.
           CODSPEED_ISOLATION: "false"
-          CODSPEED_PROFILER_ENABLED: "false"
         with:
           mode: walltime
           run: uv run pytest --codspeed -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
