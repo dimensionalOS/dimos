@@ -97,6 +97,33 @@ PLANT_MARKER_IDS = (0, 1, 2)
 # The last-mile controller is a P loop on a live sighting; steering on a stale
 # one walks the robot at where the pot used to be.
 SIGHTING_TIMEOUT = 2.0
+# Nominal standing pelvis height: the pelvis-anchored world's origin is the
+# floor beneath it, so this converts a pelvis-frame z to a height.
+BASE_Z = 0.74
+# Roughly how far from the tag the robot ends up when it stops to pour.
+REACH_DISTANCE = 0.40
+# Head camera mount, from the URDF: 0.474 m above the pelvis frame and
+# pitched 47.6 deg down, with a 43 deg vertical field of view.
+_CAM_Z = 0.474
+_CAM_PITCH = 0.8308
+_CAM_VFOV_HALF = 0.377
+# The whole tag has to be in frame for the detector, not just its centre.
+_TAG_GUARD = 0.12
+
+
+def _visible_range(tag_z: float) -> tuple[float, float]:
+    """Horizontal distances over which a tag at ``tag_z`` stays in frame."""
+    drop = _CAM_Z - tag_z
+    edges = []
+    for angle in (
+        _CAM_PITCH - _CAM_VFOV_HALF + _TAG_GUARD,
+        _CAM_PITCH + _CAM_VFOV_HALF - _TAG_GUARD,
+    ):
+        # Above the horizon the sightline never meets the tag's height.
+        edges.append(drop / math.tan(angle) if angle > 0.0 else float("inf"))
+    return min(edges), max(edges)
+
+
 # The gait keeps stepping after the command stops; let it settle before
 # latching a base pose the planner will trust for the rest of the sequence.
 SETTLE_SECONDS = 3.0
@@ -195,6 +222,12 @@ class _Sightings:
         if self._hardware and age > SIGHTING_TIMEOUT:
             raise _SightingLostError(f"last tag sighting was {age:.1f} s ago")
         return pot
+
+    @property
+    def pot_z(self) -> float:
+        with self._lock:
+            assert self._pot is not None
+            return float(self._pot.position.z)
 
     @property
     def base(self) -> tuple[float, float, float]:
@@ -402,6 +435,17 @@ def status(module: Any, sight: _Sightings, reach: PourReachMap) -> None:
     print(f"base:  ({x:+.2f}, {y:+.2f}) facing {math.degrees(yaw):+.0f} deg")
     print(f"pot:   {sight.pot_xy} | seen at ({seen[0]:+.2f}, {seen[1]:+.2f}) in the base frame")
     print(f"reach: margin {reach.margin(seen)} cells, arrived={arrived(seen, reach)}")
+    if sight.hardware:
+        # The head camera is pitched ~48 deg down, so it sees a band of floor
+        # ahead of the robot: a low tag drops out of the bottom of the frame
+        # before the robot is close enough to pour. Range at this height is
+        # what says whether the approach can stay closed-loop to the end.
+        near, far = _visible_range(sight.pot_z)
+        print(
+            f"tag:   {sight.pot_z + BASE_Z:+.2f} m above the floor, "
+            f"{math.hypot(*seen):.2f} m away | visible from {near:.2f} to {far:.2f} m"
+            f"{'' if near <= REACH_DISTANCE else '  <-- LOST before the pour stance'}"
+        )
     print(f"module: {module.get_state()} | {module.describe_base_pose()}")
 
 
