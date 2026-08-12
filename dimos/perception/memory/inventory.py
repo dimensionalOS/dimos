@@ -22,6 +22,12 @@ constraint, not a preference: propose (EdgeTAM automatic masks), lift
 score), and only then name (OWLv2, labels as metadata). Labels and
 appearance never enter association; position and same-frame co-occurrence
 decide everything, which is what keeps two identical objects two instances.
+
+Naming is passed by a caller and abstains: it reads the full per-box score row,
+groups surface strings under a canonical label, and reports that label only
+when it beats the runner-up group by a margin, at the frame and again over
+the frames of a track. The word list is not what makes the output safe, so
+it can be domain-specific, generic, or empty.
 """
 
 from __future__ import annotations
@@ -62,51 +68,50 @@ logger = setup_logger()
 KEYFRAME_STRIDE = 2.5  # s - proposal keyframe grid
 MAX_PROPOSALS_PER_FRAME = 40
 NAME_FRAMES_PER_INSTANCE = 5
-NAME_SCORE_FLOOR = 0.18
 # An attachment must be the detector drawing a box around this member, not a
 # box that merely crosses it.
 NAME_ATTACH_IOU = 0.45
-# Post-processing reports one label per box per request, so chunking is what
-# lets a box carry more than one label. It changes no score.
-NAME_PROMPT_CAP = 10
 SUPPRESS_SCORE = 0.25
 SUPPRESS_OVERLAP = 0.35
 UNGROUNDED_TRACK_IOU = 0.40
 
-# Naming vocabulary: a generic list of common tabletop and household objects,
-# batched into one capped OWLv2 prompt. The vocabulary is a naming-pass
-# concern only - existence is geometric and an instance that matches nothing
-# here keeps its unknown-N name with score 0.
-GENERIC_VOCABULARY = [
-    "pen",
-    "pencil",
-    "marker",
-    "highlighter",
-    "eraser",
-    "book",
-    "notebook",
-    "sticky notes",
-    "sheet of paper",
-    "roll of tape",
-    "scissors",
-    "stapler",
-    "ruler",
-    "laptop",
-    "computer keyboard",
-    "computer mouse",
-    "mobile phone",
-    "cup",
-    "bottle",
-    "drink can",
-    "bowl",
-    "cardboard box",
-    "cable",
-    "remote control",
-    "glasses",
-    "headphones",
-    "wallet",
-    "toy block",
-]
+# Groups of surface strings for one thing, canonical label first. Only groups
+# compete, so near-synonyms reinforce instead of splitting a box's score. A
+# string in two groups pins their margin at zero and both refuse.
+NamingVocabulary = tuple[tuple[str, ...], ...]
+
+# Candidate names for callers with no domain list of their own.
+DEFAULT_VOCABULARY: NamingVocabulary = (
+    ("pen", "ballpoint pen", "ink pen"),
+    ("pencil", "wooden pencil", "mechanical pencil"),
+    ("marker", "marker pen", "felt-tip pen", "permanent marker"),
+    ("highlighter", "highlighter pen"),
+    ("eraser", "rubber eraser"),
+    ("book", "hardcover book", "paperback book", "textbook"),
+    ("notebook", "spiral notebook", "notepad", "writing pad"),
+    ("sticky notes", "post-it notes", "sticky note pad", "pad of sticky notes"),
+    ("sheet of paper", "piece of paper", "printed page", "document"),
+    ("roll of tape", "adhesive tape", "sticky tape", "roll of duct tape"),
+    ("scissors", "pair of scissors", "shears"),
+    ("stapler", "desk stapler"),
+    ("ruler", "measuring ruler", "straightedge"),
+    ("laptop", "laptop computer", "notebook computer"),
+    ("computer keyboard", "keyboard", "laptop keyboard"),
+    ("computer mouse", "mouse", "wireless mouse"),
+    ("mobile phone", "smartphone", "cell phone"),
+    ("cup", "mug", "coffee mug", "drinking cup"),
+    ("bottle", "water bottle", "plastic bottle"),
+    ("drink can", "soda can", "aluminum can"),
+    ("bowl", "small bowl", "cereal bowl"),
+    ("cardboard box", "carton", "small box"),
+    ("cable", "power cable", "usb cable", "cord"),
+    ("remote control", "tv remote", "remote"),
+    ("glasses", "eyeglasses", "pair of glasses", "spectacles"),
+    ("headphones", "earphones", "headset"),
+    ("wallet", "billfold", "leather wallet"),
+    ("toy block", "building block", "foam block"),
+)
+# An existence policy, not a candidate name: its own request, its own accept.
 SUPPRESS_QUERIES = ["person", "human hand", "human arm"]
 
 
@@ -532,9 +537,25 @@ def _view_coverage(members: list[SupportObservation]) -> tuple[float, tuple[bool
     return coverage, observed  # type: ignore[return-value]
 
 
-def _build_instance(index: int, track: _Track, grounded: bool = True) -> Instance:
+def _aggregated_label(labels: tuple[tuple[str, float], ...], policy: InventoryPolicy) -> str | None:
+    """The track's name: its best canonical group, if the margin holds again.
+
+    The per-frame margin referees only candidates competing inside one view.
+    Two views can each accept a different group cleanly, and that
+    disagreement would otherwise reach ``primary_label`` unrefereed.
+    """
+    if not labels:
+        return None
+    if len(labels) > 1 and labels[0][1] - labels[1][1] < policy.name_refusal_margin:
+        return None
+    return labels[0][0]
+
+
+def _build_instance(
+    index: int, track: _Track, policy: InventoryPolicy, grounded: bool = True
+) -> Instance:
     labels = tuple(sorted(track.labels.items(), key=lambda kv: -kv[1]))
-    primary = labels[0][0] if labels else None
+    primary = _aggregated_label(labels, policy)
     latest = track.latest
     coverage, axes_observed = _view_coverage(track.members)
     lo, hi = track.aabb
@@ -594,16 +615,47 @@ def _naming_picks(track: _Track) -> list[SupportObservation]:
     return picks
 
 
+def _flatten(vocabulary: NamingVocabulary) -> tuple[list[str], np.ndarray, list[str]]:
+    """Group table to a query list, the group start offsets, and the canonicals."""
+    queries = [surface for group in vocabulary for surface in group]
+    starts = np.cumsum([0] + [len(group) for group in vocabulary[:-1]])
+    return queries, starts, [group[0] for group in vocabulary]
+
+
+def _accepted_groups(
+    scores: np.ndarray, starts: np.ndarray, policy: InventoryPolicy
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per box, the winning group and its score - or -1 where the margin refuses.
+
+    A group's claim is its best surface string, since strings of one group
+    have unequal detector affinity. The accept floor is already applied: it
+    is the threshold the request was made with.
+    """
+    groups = np.maximum.reduceat(scores, starts, axis=1)
+    best = groups.argmax(axis=1)
+    top = groups[np.arange(len(groups)), best]
+    if groups.shape[1] == 1:
+        return best, top
+    runner_up = np.partition(groups, -2, axis=1)[:, -2]
+    return np.where(top - runner_up >= policy.name_refusal_margin, best, -1), top
+
+
 def _name_and_suppress(
     tracks: list[_Track],
     tracks_2d: list[_Track2D],
     store: Any,
+    vocabulary: NamingVocabulary,
+    policy: InventoryPolicy,
 ) -> None:
     """OWLv2 naming per instance on keyframes, person/hand suppressing observations.
 
     Runs after association by construction: association consumed unnamed
     supports, so per-view label instability cannot starve existence or split
     an instance. A naming failure degrades names, never counts.
+
+    Naming reads whole score rows, so one request per frame carries every
+    candidate name. Suppression is an existence decision and keeps its own
+    request, which runs whether or not there is a vocabulary.
     """
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
@@ -619,54 +671,51 @@ def _name_and_suppress(
     if not frame_members and not frame_members_2d:
         return
 
+    queries, starts, canonical = _flatten(vocabulary)
     owl = Owlv2Detector()
-    chunks = [
-        GENERIC_VOCABULARY[i : i + NAME_PROMPT_CAP]
-        for i in range(0, len(GENERIC_VOCABULARY), NAME_PROMPT_CAP)
-    ]
-    chunks.append(list(SUPPRESS_QUERIES))
-    suppress_set = set(SUPPRESS_QUERIES)
     all_ts = sorted(set(frame_members) | set(frame_members_2d))
     logger.info(
         f"naming: OWLv2 over {len(all_ts)} keyframes, "
-        f"{len(chunks)} prompts of <= {NAME_PROMPT_CAP} classes"
+        f"{len(canonical)} groups of {len(queries)} queries"
     )
     for ts in all_ts:
         try:
             image = store.streams.color_image.at(ts, 0.05).first().data
         except LookupError:
             continue
-        detections = [
-            det
-            for chunk in chunks
-            for det in owl.query_detections(image, chunk, threshold=NAME_SCORE_FLOOR)
-        ]
-        for det in detections:
-            if det.name in suppress_set:
-                if det.confidence < SUPPRESS_SCORE:
+
+        if queries:
+            boxes, scores = owl.query_score_rows(image, queries, threshold=policy.name_accept_score)
+            winners, top = _accepted_groups(scores, starts, policy)
+            for box, group, score in zip(boxes, winners, top, strict=True):
+                if group < 0:
                     continue
+                bbox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+                best_target: Any = None
+                best_iou = NAME_ATTACH_IOU
                 for track, member in frame_members.get(ts, []):
                     if member.bbox is None:
                         continue
-                    inside = _mask_overlap_fraction_bbox(member.bbox, det.bbox)
-                    if inside >= SUPPRESS_OVERLAP and member in track.members:
-                        track.members.remove(member)
-                continue
-            best_target: Any = None
-            best_iou = NAME_ATTACH_IOU
+                    iou = _bbox_iou(member.bbox, bbox)
+                    if iou > best_iou:
+                        best_target, best_iou = track, iou
+                for track2d, det2d in frame_members_2d.get(ts, []):
+                    iou = _bbox_iou(det2d.bbox, bbox)
+                    if iou > best_iou:
+                        best_target, best_iou = track2d, iou
+                if best_target is not None:
+                    label = canonical[group]
+                    best_target.labels[label] = max(
+                        best_target.labels.get(label, 0.0), float(score)
+                    )
+
+        for det in owl.query_detections(image, SUPPRESS_QUERIES, threshold=SUPPRESS_SCORE):
             for track, member in frame_members.get(ts, []):
                 if member.bbox is None:
                     continue
-                iou = _bbox_iou(member.bbox, det.bbox)
-                if iou > best_iou:
-                    best_target, best_iou = track, iou
-            for track2d, det2d in frame_members_2d.get(ts, []):
-                iou = _bbox_iou(det2d.bbox, det.bbox)
-                if iou > best_iou:
-                    best_target, best_iou = track2d, iou
-            if best_target is not None:
-                previous = best_target.labels.get(det.name, 0.0)
-                best_target.labels[det.name] = max(previous, det.confidence)
+                inside = _mask_overlap_fraction_bbox(member.bbox, det.bbox)
+                if inside >= SUPPRESS_OVERLAP and member in track.members:
+                    track.members.remove(member)
     owl.stop()
 
 
@@ -685,6 +734,7 @@ def _mask_overlap_fraction_bbox(
 def inventory(
     store: Any,
     *,
+    naming_vocabulary: NamingVocabulary,
     after: float | None = None,
     before: float | None = None,
     include_ungrounded: bool = False,
@@ -702,6 +752,11 @@ def inventory(
     object that moved between rest positions inside the window registers
     once per rest position; linking rest positions of one object is
     cross-time identity and out of scope here.
+
+    ``naming_vocabulary`` supplies candidate names and nothing else: an
+    instance whose best canonical group misses the refusal margin keeps its
+    ``unknown-N`` name. The empty tuple is a supported mode - discovery and
+    suppression run and every instance is ``unknown-N``.
 
     ``log_progress`` enables per-keyframe discovery lines
     (``discovery: i/n  ts_offset=…  prop=…  scope=…  …s``). Off by default.
@@ -812,14 +867,14 @@ def inventory(
     tracks_2d = _track_ungrounded(frames_ungrounded) if include_ungrounded else []
     logger.info(f"association: {len(tracks)} grounded instances")
 
-    _name_and_suppress(tracks, tracks_2d, store)
+    _name_and_suppress(tracks, tracks_2d, store, naming_vocabulary, policy)
     tracks = [t for t in tracks if len(t.members) >= policy.min_member_observations]
 
     tracks.sort(key=lambda t: min(m.ts for m in t.members))
     instances: list[Instance] = []
     unknown = 0
     for index, track in enumerate(tracks):
-        instance = _build_instance(index, track)
+        instance = _build_instance(index, track, policy)
         if instance.primary_label is None:
             instance.primary_label = f"unknown-{unknown}"
             unknown += 1
@@ -828,7 +883,7 @@ def inventory(
     if include_ungrounded:
         for track2d in tracks_2d:
             labels = tuple(sorted(track2d.labels.items(), key=lambda kv: -kv[1]))
-            primary = labels[0][0] if labels else None
+            primary = _aggregated_label(labels, policy)
             if primary is None:
                 primary = f"unknown-{unknown}"
                 unknown += 1

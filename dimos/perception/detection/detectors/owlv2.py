@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from functools import cached_property
 
+import numpy as np
 from PIL import Image as PILImage
 import torch
 
@@ -105,6 +106,42 @@ class Owlv2Detector(HuggingFaceModel):
                 detections.append(det)
 
         return ImageDetections2D(image=image, detections=detections)
+
+    def query_score_rows(
+        self,
+        image: Image,
+        queries: list[str],
+        threshold: float = 0.1,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Score every query against every kept box; no argmax, no label.
+
+        Same forward pass and same per-box threshold as
+        ``query_detections()``, which reports one label per box because
+        post-processing maxes over the query axis. Here the whole
+        ``(n_boxes, n_queries)`` block survives, so a caller can rank
+        queries and refuse. Returns pixel ``(x1, y1, x2, y2)`` boxes and
+        their score rows.
+        """
+        pil = PILImage.fromarray(image.to_rgb().data)
+        with torch.inference_mode():
+            inputs = self._processor(text=[queries], images=pil, return_tensors="pt").to(
+                self.config.device
+            )
+            outputs = self._model(**inputs)
+            results = self._processor.post_process_grounded_object_detection(
+                outputs=outputs,
+                target_sizes=torch.tensor([(pil.height, pil.width)]),
+                threshold=threshold,
+            )[0]
+            # sigmoid is monotonic, so this mask is the one post-processing
+            # applied to its max-over-queries scores: the same boxes, in order.
+            scores = torch.sigmoid(outputs.logits[0])
+            kept = scores[scores.max(dim=-1).values > threshold].float().cpu().numpy()
+
+        boxes = results["boxes"].float().cpu().numpy()
+        boxes[:, 0::2] = boxes[:, 0::2].clip(0.0, float(pil.width))
+        boxes[:, 1::2] = boxes[:, 1::2].clip(0.0, float(pil.height))
+        return boxes, kept
 
     def stop(self) -> None:
         if "_processor" in self.__dict__:

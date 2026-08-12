@@ -128,11 +128,13 @@ class LocalizePolicy:
 
 @dataclass(frozen=True)
 class InventoryPolicy:
-    """Physical thresholds for discovery, validity, scope and association.
+    """Thresholds for discovery, validity, scope, association and naming.
 
-    Every quantity is metric (meters, seconds, pixels, IoU) - a claim that
-    can be checked against the recording, unlike an appearance-similarity
-    threshold.
+    Every geometric quantity is metric (meters, seconds, pixels, IoU) - a
+    claim that can be checked against the recording. The two naming numbers
+    are detector scores and decide whether a name is reported, never whether
+    an instance exists. The candidate names are data and travel as a call
+    argument, not as policy.
     """
 
     min_mask_area_px: int = 400
@@ -155,6 +157,12 @@ class InventoryPolicy:
     # A support observed in a single keyframe is unconfirmed - nothing saw it
     # from a second pose or moment, so it never becomes an instance.
     min_member_observations: int = 2
+
+    # Naming abstention: a name is reported only when it clears the accept
+    # floor and beats the runner-up canonical group by the margin, at the
+    # frame and again over a track. Otherwise the instance stays unknown-N.
+    name_accept_score: float = 0.18
+    name_refusal_margin: float = 0.06
 
     include_object_parts: bool = False
     include_surfaces: bool = False

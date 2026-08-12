@@ -15,7 +15,15 @@
 """Enumerate deduplicated object instances in a recording window.
 
 Run: uv run python -m dimos.perception.memory.tool_inventory
-         [--from <s>] [--duration <s>] [--include-ungrounded] [--log-progress]
+         [--from <s>] [--duration <s>] [--labels <group> ...] [--no-vocabulary]
+         [--include-ungrounded] [--log-progress]
+
+``--labels`` replaces the candidate names with the caller's own. Each token
+is one group: the first phrase is the canonical label, and ``|`` separates
+synonyms (``"pen|ballpoint pen|ink pen"``). With none given the run uses
+``DEFAULT_VOCABULARY``, and ``--no-vocabulary`` names nothing. Naming
+abstains either way: a name is reported only when it beats its runner-up by
+``InventoryPolicy.name_refusal_margin``, else the instance is ``unknown-N``.
 
 Stdout contract: a summary line ``instances: N`` followed by one line per
 instance: ``<i>  id=<run_local_id>  name=<str>  xyz=(x,y,z)  ts_offset=<s>
@@ -41,8 +49,23 @@ from pathlib import Path
 import sys
 
 from dimos.memory2.store.sqlite import SqliteStore
-from dimos.perception.memory.inventory import inventory
+from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
 from dimos.utils.data import get_data
+
+
+def labels_to_vocabulary(tokens: list[str]) -> NamingVocabulary:
+    """Parse ``--labels`` tokens into synonym groups.
+
+    Each token is one group. Phrases inside a token are separated by ``|``.
+    The first non-empty phrase is the canonical label.
+    """
+    groups: list[tuple[str, ...]] = []
+    for token in tokens:
+        surfaces = tuple(part.strip() for part in token.split("|") if part.strip())
+        if not surfaces:
+            raise ValueError(f"empty --labels group: {token!r}")
+        groups.append(surfaces)
+    return tuple(groups)
 
 
 def main() -> int:
@@ -54,6 +77,22 @@ def main() -> int:
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
     )
     parser.add_argument("--duration", type=float, default=None, help="how much to parse (s)")
+    vocab = parser.add_mutually_exclusive_group()
+    vocab.add_argument(
+        "--labels",
+        nargs="+",
+        metavar="GROUP",
+        help=(
+            "candidate name groups; each token is one group, "
+            "'|' separates synonyms (first phrase is canonical); "
+            "default is DEFAULT_VOCABULARY"
+        ),
+    )
+    vocab.add_argument(
+        "--no-vocabulary",
+        action="store_true",
+        help="name nothing: every instance stays unknown-N",
+    )
     parser.add_argument(
         "--include-ungrounded",
         action="store_true",
@@ -75,8 +114,16 @@ def main() -> int:
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else None
 
+    if args.no_vocabulary:
+        naming_vocabulary: NamingVocabulary = ()
+    elif args.labels:
+        naming_vocabulary = labels_to_vocabulary(args.labels)
+    else:
+        naming_vocabulary = DEFAULT_VOCABULARY
+
     instances = inventory(
         store,
+        naming_vocabulary=naming_vocabulary,
         after=after,
         before=before,
         include_ungrounded=args.include_ungrounded,
