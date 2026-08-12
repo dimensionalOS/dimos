@@ -58,7 +58,9 @@ def test_case_bound_blueprint_contains_only_public_navigation_stack(tmp_path) ->
 
     connection = next(atom for atom in blueprint.blueprints if atom.module is VlnceConnection)
     spatial_memory = next(atom for atom in blueprint.blueprints if atom.module is SpatialMemory)
-    recorder = next(atom for atom in blueprint.blueprints if atom.module is VlnceObservationRecorder)
+    recorder = next(
+        atom for atom in blueprint.blueprints if atom.module is VlnceObservationRecorder
+    )
     assert connection.kwargs["socket_path"] == str(tmp_path / "public.sock")
     assert connection.kwargs["attempt_id"] == "attempt-1"
     assert connection.kwargs["episode_id"] == "515"
@@ -87,8 +89,7 @@ def test_blueprint_wires_static_map_motion_and_public_recording(tmp_path) -> Non
         == "unused_benchmark_odometry"
     )
     assert (
-        blueprint.remapping_map[(VlnceObservationRecorder.name, "depth_pointcloud")]
-        == "pointcloud"
+        blueprint.remapping_map[(VlnceObservationRecorder.name, "depth_pointcloud")] == "pointcloud"
     )
     assert (VlnceObservationRecorder.name, "global_map") not in blueprint.remapping_map
 

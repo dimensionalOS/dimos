@@ -282,9 +282,7 @@ class CodePolicySession:
                 )
             except Exception as exc:
                 self._shutdown_kernel()
-                return CodePolicyOutput(
-                    f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
-                )
+                return CodePolicyOutput(f"CodePolicy execution failed: {type(exc).__name__}: {exc}")
             content = reply.get("content", {})
             body = output.text().rstrip()
             if not body and content.get("status") != "ok":
