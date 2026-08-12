@@ -46,7 +46,7 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -493,8 +493,25 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
-    """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
+def g1_groot_coordinator(
+    extra_tasks: Sequence[TaskConfig] = (),
+    policy_params: Mapping[str, Any] | None = None,
+) -> Any:
+    """GR00T WBC coordinator blueprint.
+
+    ``extra_tasks`` lets variants add tasks. ``policy_params`` overrides the
+    groot task's params; hardware-only variants pin the safety values there
+    rather than inheriting whatever the import-time sim branch resolved.
+    """
+    groot_params: dict[str, Any] = {
+        "model_path": _GROOT_MODEL_DIR,
+        "hardware_id": "g1",
+        "auto_arm": _auto_arm,
+        "auto_dry_run": _auto_dry_run,
+        "default_ramp_seconds": _default_ramp_seconds,
+        "decimation": _decimation,
+        **(policy_params or {}),
+    }
     return _G1GrootCoordinator.blueprint(
         instance_name="ControlCoordinator",
         publish_robot_joint_states=True,
@@ -530,14 +547,7 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
                 joint_names=g1_legs_waist,
                 priority=50,
                 auto_start=True,
-                params={
-                    "model_path": _GROOT_MODEL_DIR,
-                    "hardware_id": "g1",
-                    "auto_arm": _auto_arm,
-                    "auto_dry_run": _auto_dry_run,
-                    "default_ramp_seconds": _default_ramp_seconds,
-                    "decimation": _decimation,
-                },
+                params=groot_params,
             ),
             *([_arm_holder] if _arm_holder is not None else []),
             *extra_tasks,
