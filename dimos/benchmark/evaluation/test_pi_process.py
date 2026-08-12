@@ -227,8 +227,47 @@ def test_stock_cli_exports_transcript_through_rpc_with_extension(mocker, tmp_pat
     extension = tmp_path / "extension.js"
     transcript = tmp_path / "pi-transcript.jsonl"
     output = tmp_path / "pi-transcript.html"
-    for path in (cli, extension, transcript, output):
-        path.touch()
+    cli.touch()
+    extension.touch()
+    image_data = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "/x8AAusB9Y9Z4HkAAAAASUVORK5CYII="
+    )
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-1|python",
+                    "content": [
+                        {"type": "text", "text": "<PIL.Image.Image>"},
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "data": image_data,
+                        },
+                        {
+                            "type": "image",
+                            "mimeType": "image/svg+xml",
+                            "data": "PHN2Zz48L3N2Zz4=",
+                        },
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "data": "not base64",
+                        },
+                    ],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output.write_text(
+        '<html><body><div id="tool-call-call-1|python"></div></body></html>',
+        encoding="utf-8",
+    )
     process = mocker.Mock(returncode=0)
     process.stdin = mocker.Mock()
     process.stdout = StringIO(
@@ -275,6 +314,13 @@ def test_stock_cli_exports_transcript_through_rpc_with_extension(mocker, tmp_pat
         "outputPath": str(output),
     }
     process.stdin.close.assert_called_once_with()
+    rendered = output.read_text(encoding="utf-8")
+    assert rendered.count('id="dimos-transcript-images"') == 1
+    assert image_data in rendered
+    assert "image/svg+xml" not in rendered
+    assert "not base64" not in rendered
+    assert "new MutationObserver(attachImages)" in rendered
+    assert rendered.index('id="dimos-transcript-images"') < rendered.index("</body>")
 
 
 def test_transcript_export_reports_redacted_startup_error(mocker, tmp_path: Path) -> None:
