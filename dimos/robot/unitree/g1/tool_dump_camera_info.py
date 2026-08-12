@@ -29,14 +29,40 @@ import sys
 import yaml
 
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.robot.unitree.g1.head_camera import HEAD_CAMERA_INFO_YAML
+from dimos.robot.unitree.g1.head_camera import CAMERA_STREAM_CONFIG, HEAD_CAMERA_INFO_YAML
 
-_TIMEOUT_S = 15.0
+
+def _print_supported_color_modes() -> None:
+    """What the attached camera actually offers, for fixing the blueprint."""
+    import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
+
+    for device in rs.context().query_devices():
+        name = device.get_info(rs.camera_info.name)
+        serial = device.get_info(rs.camera_info.serial_number)
+        print(f"\n{name} (serial {serial}) supported color modes:", file=sys.stderr)
+        modes = set()
+        for sensor in device.query_sensors():
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() != rs.stream.color:
+                    continue
+                video = profile.as_video_stream_profile()
+                if video is not None:
+                    modes.add((video.width(), video.height(), profile.fps()))
+        for width, height, fps in sorted(modes):
+            print(f"  {width}x{height} @ {fps}", file=sys.stderr)
 
 
 def main() -> int:
-    camera = RealSenseCamera(enable_depth=False, enable_pointcloud=False)
-    camera.start()
+    camera = RealSenseCamera(**CAMERA_STREAM_CONFIG, enable_pointcloud=False)
+    try:
+        camera.start()
+    except RuntimeError as error:
+        # librealsense says "Couldn't resolve requests" when the width/height/fps
+        # combination the blueprint asks for is not one this unit offers.
+        print(f"Camera failed to start: {error}", file=sys.stderr)
+        _print_supported_color_modes()
+        return 1
+
     try:
         info = camera.get_color_camera_info()
     finally:

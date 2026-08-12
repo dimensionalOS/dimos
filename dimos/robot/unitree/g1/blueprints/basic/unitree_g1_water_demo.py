@@ -67,6 +67,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     g1_manipulation,
 )
 from dimos.robot.unitree.g1.head_camera import (
+    CAMERA_STREAM_CONFIG,
     HEAD_CAMERA_MOUNT_FRAME,
     HEAD_CAMERA_NAME,
     head_camera_info,
@@ -162,9 +163,9 @@ unitree_g1_water_demo = (
         RealSenseCamera.blueprint(
             camera_name=HEAD_CAMERA_NAME,
             base_frame_id=HEAD_CAMERA_MOUNT_FRAME,
-            enable_depth=False,
             enable_pointcloud=False,
             compress_color=True,
+            **CAMERA_STREAM_CONFIG,
         ),
         _plant_perception(),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),

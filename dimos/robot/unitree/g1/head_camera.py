@@ -32,6 +32,11 @@ HEAD_CAMERA_MOUNT_FRAME = "d435_link"
 
 HEAD_CAMERA_INFO_YAML = Path(__file__).resolve().parent / "artifacts" / "head_camera_info.yaml"
 
+# Must match the captured intrinsics exactly: marker detection skips any frame
+# whose size differs from CameraInfo, silently. tool_dump_camera_info prints
+# this unit's real modes if librealsense rejects these.
+CAMERA_STREAM_CONFIG = {"width": 848, "height": 480, "fps": 15, "enable_depth": False}
+
 
 def head_camera_info() -> CameraInfo | None:
     """Intrinsics captured from this robot's own camera, or None if uncaptured.

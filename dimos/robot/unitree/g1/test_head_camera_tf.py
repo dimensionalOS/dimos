@@ -32,6 +32,19 @@ def test_lifecycle_methods_stay_rpc(module_cls):
         assert getattr(module_cls, name).__rpc__, f"{module_cls.__name__}.{name} must be @rpc"
 
 
+def test_stream_size_matches_the_captured_intrinsics():
+    # Marker detection skips any frame whose size differs from CameraInfo, with
+    # no error — the camera looks alive and detection just never fires.
+    from dimos.robot.unitree.g1.head_camera import CAMERA_STREAM_CONFIG, head_camera_info
+
+    info = head_camera_info()
+    assert info is not None, "intrinsics artifact should be committed"
+    assert (info.width, info.height) == (
+        CAMERA_STREAM_CONFIG["width"],
+        CAMERA_STREAM_CONFIG["height"],
+    )
+
+
 def test_camera_transform_tracks_the_waist():
     mod = G1HeadCameraTf()
     try:

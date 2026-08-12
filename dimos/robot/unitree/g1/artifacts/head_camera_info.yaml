@@ -1,0 +1,55 @@
+image_width: 848
+image_height: 480
+camera_name: g1_head_d435
+distortion_model: plumb_bob
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 606.5584716796875
+  - 0.0
+  - 436.1102600097656
+  - 0.0
+  - 606.0797729492188
+  - 248.73013305664062
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 606.5584716796875
+  - 0.0
+  - 436.1102600097656
+  - 0.0
+  - 0.0
+  - 606.0797729492188
+  - 248.73013305664062
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
