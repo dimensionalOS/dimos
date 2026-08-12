@@ -73,6 +73,9 @@ struct CuvslamConfig {
     std::vector<std::string> camera_frames;
     /// Images arrive rectified: no distortion, rows aligned.
     bool rectified;
+    /// Off runs the tracker on the CPU. Needs a libcuvslam built with ENFORCE_GPU=OFF
+    /// (the jeff-hykin/cuVSLAM fork build); NVIDIA's stock SDK binaries are GPU-only.
+    bool use_gpu;
     std::string odom_frame;
     std::string base_frame;
     /// Frame the cuVSLAM rig is expressed in. Empty means base_frame. Setting it to a camera's
@@ -455,6 +458,7 @@ private:
 
         cuvslam::Odometry::Config odometry_cfg = cuvslam::Odometry::GetDefaultConfig();
         odometry_cfg.odometry_mode = odometry_mode();
+        odometry_cfg.use_gpu = cfg_.use_gpu;
         // cuVSLAM rejects this outright unless the rig has a stereo pair: "Rectified
         // stereo camera mode only works with 1+ stereo cameras".
         odometry_cfg.rectified_stereo_camera = cfg_.rectified && mode_ == Mode::Stereo;
@@ -478,6 +482,7 @@ private:
         if (cfg_.enable_slam) {
             cuvslam::Slam::Config slam_cfg = cuvslam::Slam::GetDefaultConfig();
             slam_cfg.sync_mode = !cfg_.slam_async;
+            slam_cfg.use_gpu = cfg_.use_gpu;
             slam_cfg.max_map_size = static_cast<std::uint32_t>(cfg_.slam_max_poses);
             slam_cfg.throttling_time_ms = static_cast<std::uint32_t>(cfg_.slam_throttling_ms);
             slam_.emplace(rig, tracker_->GetPrimaryCameras(), slam_cfg);
