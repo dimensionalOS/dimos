@@ -33,10 +33,21 @@ from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
 # Small lift so graph artifacts render visibly above the surface points instead of z-fighting.
 _GRAPH_Z_LIFT = 0.05
+
+TIGHT_COLOR = (4.0, 8.0, 48.0)
+OPEN_COLOR = (150.0, 200.0, 255.0)
+
+
+def clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
+    """Blue ramp from tight to open, saturating at clamp_m of clearance."""
+    norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
+    tight, open_ = np.array(TIGHT_COLOR), np.array(OPEN_COLOR)
+    return np.asarray(tight + norm[:, None] * (open_ - tight), dtype=np.uint8)
 
 
 def render_surface_map(
@@ -58,13 +69,9 @@ def render_surface_map(
         return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
     passable = clearance >= wall_clearance_m
     pts, clearance = pts[passable], clearance[passable]
-    norm = np.clip(np.nan_to_num(clearance / clearance_clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
-    tight = np.array([4.0, 8.0, 48.0])
-    open_ = np.array([150.0, 200.0, 255.0])
-    colors = (tight + norm[:, None] * (open_ - tight)).astype(np.uint8)
     return rr.Points3D(
         positions=pts,
-        colors=colors,
+        colors=clearance_colors(clearance, clearance_clamp_m),
         radii=voxel_size * 0.5,
     )
 
