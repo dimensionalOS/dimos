@@ -354,14 +354,14 @@ class VlnceConnection(Module):
         ):
             raise VlnceConnectionError("observation frames or encodings changed after negotiation")
         native = decode_observation(observation, self._wall_minus_monotonic)
+        self.tf.publish(native["tf"])
+        self.odometry.publish(native["odometry"])
+        self.odom.publish(native["odom"])
         self.color_image.publish(native["color_image"])
         self.depth_image.publish(native["depth_image"])
         self.camera_info.publish(native["camera_info"])
         self.depth_camera_info.publish(native["depth_camera_info"])
         self.pointcloud.publish(native["pointcloud"])
-        self.odometry.publish(native["odometry"])
-        self.odom.publish(native["odom"])
-        self.tf.publish(native["tf"])
         occupancy = native["global_costmap"]
         if occupancy is not None:
             self.global_costmap.publish(occupancy)

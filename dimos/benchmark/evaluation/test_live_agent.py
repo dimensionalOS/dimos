@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from pathlib import Path
 
+import pytest
 from pytest_mock import MockerFixture
 
 import dimos.benchmark.evaluation.live_agent as live_agent
 from dimos.benchmark.evaluation.live_agent import LiveAgentRuntimeFactory
 from dimos.benchmark.evaluation.models import RuntimeCondition
-from dimos.benchmark.evaluation.pi_process import PiRunCancelledError, PiRunResult
+from dimos.benchmark.evaluation.pi_process import PiRunCancelledError, PiRunError, PiRunResult
 
 
 def test_live_runtime_waits_for_start_and_records_selected_condition(
@@ -113,6 +115,8 @@ def test_live_runtime_exports_transcript_before_stopping_server(
                 "Pi was cancelled by the evaluator",
                 stderr="",
                 transcript_path=transcript,
+                tool_call_count=37,
+                duration_seconds=12.0,
             )
 
         def export_transcript(self, **kwargs: object) -> None:
@@ -139,10 +143,77 @@ def test_live_runtime_exports_transcript_before_stopping_server(
     )
 
     execution.start()
-    execution.finish()
+    outcome = execution.finish()
 
     output = tmp_path / "runtime" / "live-agent"
     assert events == ["server.start", "pi.export", "server.stop"]
+    assert outcome.tool_call_count == 37
     assert (output / "pi-transcript.html").read_text() == "<html>rendered</html>"
     artifacts = {artifact.path: artifact.media_type for artifact in runtime.runtime_artifacts}
     assert artifacts["runtime/live-agent/pi-transcript.html"] == "text/html"
+
+
+def test_live_runtime_exports_partial_transcript_before_reporting_timeout(
+    mocker: MockerFixture,
+    tmp_path: Path,
+) -> None:
+    class FakeServer:
+        mcp_url = "http://127.0.0.1:1/mcp"
+
+        def __init__(self, *, live_recording_path: str) -> None:
+            del live_recording_path
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class FakeRunner:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **kwargs: object) -> PiRunResult:
+            run_dir = kwargs["run_dir"]
+            assert isinstance(run_dir, Path)
+            transcript = run_dir / "pi-session" / "session.jsonl"
+            transcript.parent.mkdir()
+            transcript.write_text('{"type":"session"}\n')
+            raise PiRunError(
+                "Pi timed out after 300s",
+                transcript_path=transcript,
+                tool_call_count=69,
+                duration_seconds=300.0,
+            )
+
+        def export_transcript(self, **kwargs: object) -> None:
+            output_path = kwargs["output_path"]
+            assert isinstance(output_path, Path)
+            output_path.write_text("<html>partial</html>")
+
+    marker = tmp_path / "marker"
+    marker.touch()
+    mocker.patch.object(live_agent, "CodePolicyMcpServer", FakeServer)
+    mocker.patch.object(live_agent, "PiCliRunner", FakeRunner)
+    mocker.patch.object(live_agent, "_pi_paths", return_value=(marker, marker))
+    runtime = LiveAgentRuntimeFactory(
+        api_key="secret",
+        workspace=tmp_path,
+        condition=RuntimeCondition(model="gpt-5.6-luna", thinking_level="medium"),
+    )
+    execution = runtime.prepare(
+        prompt="follow the route",
+        system_prompt="use python_exec",
+        memory_path=tmp_path / "recording.db",
+        episode_timeout_s=300.0,
+    )
+
+    execution.start()
+    with pytest.raises(RuntimeError, match="Pi timed out after 300s"):
+        execution.finish()
+
+    output = tmp_path / "runtime" / "live-agent"
+    assert (output / "pi-transcript.jsonl").is_file()
+    assert (output / "pi-transcript.html").read_text() == "<html>partial</html>"
+    manifest = output / "live-agent.json"
+    assert json.loads(manifest.read_text())["tool_call_count"] == 69

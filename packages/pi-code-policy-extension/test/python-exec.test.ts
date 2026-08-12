@@ -34,7 +34,12 @@ test("registers one tool that calls MCP directly", async () => {
         name: "python_exec",
         arguments: { code: "1 + 1", timeout_s: 3 },
       });
-      return { content: [{ type: "text", text: "2" }] } as CallToolResult;
+      return {
+        content: [
+          { type: "text", text: "2" },
+          { type: "image", data: "cG5n", mimeType: "image/png" },
+        ],
+      } as CallToolResult;
     },
     async close() {
       closed = true;
@@ -68,7 +73,10 @@ test("registers one tool that calls MCP directly", async () => {
   assert.equal(renderResult(false), `Python result\n${recorded}`);
   assert.equal(renderResult(true), `Python result\n${recorded}`);
   const result = await tool!.execute("call-1", { code: "1 + 1", timeout_s: 3 }, undefined, undefined, {} as never);
-  assert.deepEqual(result.content, [{ type: "text", text: "2" }]);
+  assert.deepEqual(result.content, [
+    { type: "text", text: "2" },
+    { type: "image", data: "cG5n", mimeType: "image/png" },
+  ]);
   await shutdown!();
   assert.equal(closed, true);
 });

@@ -57,10 +57,14 @@ class PiRunError(RuntimeError):
         *,
         stderr: str = "",
         transcript_path: Path | None = None,
+        tool_call_count: int = 0,
+        duration_seconds: float = 0.0,
     ) -> None:
         super().__init__(message)
         self.stderr = stderr
         self.transcript_path = transcript_path
+        self.tool_call_count = tool_call_count
+        self.duration_seconds = duration_seconds
 
 
 class PiExportError(RuntimeError):
@@ -244,36 +248,46 @@ class PiCliRunner:
 
         stderr = "".join(stderr_parts)
         transcript_path = _latest_transcript(session_dir)
+        duration = time.monotonic() - started
         if cancelled:
             raise PiRunCancelledError(
                 "Pi was cancelled by the evaluator",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         if timed_out:
             raise PiRunError(
                 f"Pi timed out after {self.timeout_s:g}s",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
-        duration = time.monotonic() - started
         if process.returncode != 0:
             raise PiRunError(
                 f"Pi exited with status {process.returncode}",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         if events.stop_error is not None:
             raise PiRunError(
                 events.stop_error,
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         if events.final_text is None:
             raise PiRunError(
                 "Pi produced no final assistant response",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         return PiRunResult(
             final_text=events.final_text,

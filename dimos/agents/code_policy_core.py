@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import inspect
 import os
 import queue
@@ -66,12 +67,25 @@ class CodePolicySessionConfig(BaseModel):
     interrupt_grace_s: float = Field(default=2.0, gt=0)
 
 
+@dataclass(frozen=True)
+class CodePolicyImage:
+    data: str
+    mime_type: Literal["image/png", "image/jpeg"]
+
+
+@dataclass(frozen=True)
+class CodePolicyOutput:
+    text: str
+    images: tuple[CodePolicyImage, ...] = ()
+
+
 class _BoundedOutput:
     def __init__(self, limit: int) -> None:
         self.limit = limit
         self.parts: list[str] = []
         self.length = 0
         self.truncated = False
+        self.images: list[CodePolicyImage] = []
 
     def __call__(self, message: dict[str, Any]) -> None:
         message_type = message.get("header", {}).get("msg_type")
@@ -80,7 +94,13 @@ class _BoundedOutput:
         if message_type == "stream":
             value = str(content.get("text", ""))
         elif message_type in {"execute_result", "display_data"}:
-            value = str(content.get("data", {}).get("text/plain", ""))
+            data = content.get("data", {})
+            value = str(data.get("text/plain", ""))
+            for mime_type in ("image/png", "image/jpeg"):
+                encoded = data.get(mime_type)
+                if isinstance(encoded, str):
+                    self.images.append(CodePolicyImage(data=encoded, mime_type=mime_type))
+                    break
         elif message_type == "error":
             traceback = content.get("traceback", [])
             value = "\n".join(str(line) for line in traceback)
@@ -222,22 +242,26 @@ class CodePolicySession:
     def start(self) -> None:
         self._stopped = False
 
-    def python_exec(self, code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S) -> str:
+    def python_exec(
+        self, code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S
+    ) -> CodePolicyOutput:
         if self._stopped:
-            return "CodePolicy session is stopped"
+            return CodePolicyOutput("CodePolicy session is stopped")
         if not code:
-            return "python_exec code must be non-empty"
+            return CodePolicyOutput("python_exec code must be non-empty")
         if not 0 < timeout_s <= MAX_EXECUTION_TIMEOUT_S:
-            return f"timeout_s must be in (0, {MAX_EXECUTION_TIMEOUT_S:g}]"
+            return CodePolicyOutput(f"timeout_s must be in (0, {MAX_EXECUTION_TIMEOUT_S:g}]")
         if not self._execution_lock.acquire(blocking=False):
-            return "CodePolicy session is busy"
+            return CodePolicyOutput("CodePolicy session is busy")
         started = time.monotonic()
         self.execution_count += 1
         try:
             try:
                 client = self._ensure_kernel()
             except Exception as exc:
-                return f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                return CodePolicyOutput(
+                    f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                )
             output = _BoundedOutput(self.config.output_limit)
             try:
                 reply = client.execute_interactive(
@@ -249,14 +273,18 @@ class CodePolicySession:
                 )
             except (TimeoutError, queue.Empty):
                 if self._interrupt_and_recover():
-                    return f"Execution timed out after {timeout_s:.1f}s and was interrupted"
-                return (
+                    return CodePolicyOutput(
+                        f"Execution timed out after {timeout_s:.1f}s and was interrupted"
+                    )
+                return CodePolicyOutput(
                     f"Execution timed out after {timeout_s:.1f}s; "
                     "the kernel was restarted and its namespace was reset"
                 )
             except Exception as exc:
                 self._shutdown_kernel()
-                return f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
+                return CodePolicyOutput(
+                    f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
+                )
             content = reply.get("content", {})
             body = output.text().rstrip()
             if not body and content.get("status") != "ok":
@@ -264,7 +292,10 @@ class CodePolicySession:
             if not body:
                 body = "(completed)"
             state = "completed" if content.get("status") == "ok" else "failed"
-            return f"In [{content.get('execution_count', '?')}] {state}\n\n{body}"
+            return CodePolicyOutput(
+                text=f"In [{content.get('execution_count', '?')}] {state}\n\n{body}",
+                images=tuple(output.images),
+            )
         finally:
             self.execution_duration_s += time.monotonic() - started
             self._execution_lock.release()
