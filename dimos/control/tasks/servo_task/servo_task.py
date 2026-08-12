@@ -55,12 +55,17 @@ class JointServoTaskConfig:
             length if provided. Useful for "hold at this pose" tasks
             (e.g. arms during whole-body locomotion). Pair with
             timeout=0.0 to hold indefinitely.
+        hold_measured_on_start: Latch the hold target from the first
+            measured state instead of a configured pose. Startup is then
+            bumpless: a configured pose would snap the joints there from
+            wherever the robot actually is, at full stiffness.
     """
 
     joint_names: list[str]
     priority: int = 10
     timeout: float = 0.5  # 500ms default timeout
     default_positions: list[float] | None = None
+    hold_measured_on_start: bool = False
 
 
 class JointServoTask(BaseControlTask):
@@ -134,7 +139,20 @@ class JointServoTask(BaseControlTask):
     def is_active(self) -> bool:
         """Check if task should run this tick."""
         with self._lock:
+            if self._active and self._config.hold_measured_on_start and self._target is None:
+                # No target yet, but compute() will latch one from measured
+                # state; stay active so it gets the chance.
+                return True
             return self._active and self._target is not None
+
+    def _latch_measured(self, state: CoordinatorState) -> bool:
+        """Adopt measured positions as the hold target. False until all arrive."""
+        positions = [state.joints.joint_positions.get(name) for name in self._joint_names_list]
+        if any(position is None for position in positions):
+            return False
+        self._target = [float(position) for position in positions]  # type: ignore[arg-type]
+        logger.info(f"JointServoTask {self._name} holding measured start pose")
+        return True
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Output current target positions.
@@ -146,8 +164,16 @@ class JointServoTask(BaseControlTask):
             JointCommandOutput with positions, or None if inactive/timed out
         """
         with self._lock:
-            if not self._active or self._target is None:
+            if not self._active:
                 return None
+            if self._target is None:
+                # Latching from measured keeps startup bumpless: commanding a
+                # configured pose here would snap the joints there from
+                # wherever the robot actually is, at full stiffness.
+                if not self._config.hold_measured_on_start or not self._latch_measured(state):
+                    return None
+            target = self._target
+            assert target is not None  # narrowed by the latch above
 
             if self._preempted_joints:
                 # Bumpless handoff: while a higher-priority task drives some of
@@ -157,7 +183,7 @@ class JointServoTask(BaseControlTask):
                 for name in self._preempted_joints:
                     position = state.joints.joint_positions.get(name)
                     if position is not None:
-                        self._target[self._name_to_index[name]] = position
+                        target[self._name_to_index[name]] = position
                 self._preempted_joints.clear()
                 # Preemption defers the timeout: the joints are actively
                 # driven, and the hold must be alive when they are released.
@@ -179,7 +205,7 @@ class JointServoTask(BaseControlTask):
 
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
-                positions=list(self._target),
+                positions=list(target),
                 mode=ControlMode.SERVO_POSITION,
             )
 
@@ -295,6 +321,7 @@ class JointServoTask(BaseControlTask):
 class JointServoTaskParams(BaseConfig):
     timeout: float | None = None
     default_positions: list[float] | None = None
+    hold_measured_on_start: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> JointServoTask:
@@ -308,5 +335,8 @@ def create_task(cfg: Any, hardware: Any) -> JointServoTask:
     if params.default_positions is not None:
         kwargs["default_positions"] = params.default_positions
         # Zero timeout pairs naturally with default-hold.
+        kwargs.setdefault("timeout", 0.0)
+    if params.hold_measured_on_start:
+        kwargs["hold_measured_on_start"] = True
         kwargs.setdefault("timeout", 0.0)
     return JointServoTask(cfg.name, JointServoTaskConfig(**kwargs))  # type: ignore[arg-type]
