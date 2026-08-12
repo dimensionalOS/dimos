@@ -269,7 +269,14 @@ def test_teleop_tasks_use_arm_slices_and_pink() -> None:
 
 
 def test_sim_planner_models_have_matching_trajectory_tasks() -> None:
-    tasks = {task.name: task for task in _coordinator_tasks(r1lite_quest_teleop_sim)}
+    """The coordinator allows exactly one JointTrajectoryTask; planned
+    execution routes per-robot via joint_name_mapping, so the single task
+    must span every planner robot's coordinator joints."""
+    tasks = [
+        task for task in _coordinator_tasks(r1lite_quest_teleop_sim) if task.type == "trajectory"
+    ]
+    assert len(tasks) == 1
+    trajectory_joints = set(tasks[0].joint_names)
     planner_kwargs = next(
         atom.kwargs
         for atom in r1lite_quest_teleop_sim.blueprints
@@ -277,11 +284,7 @@ def test_sim_planner_models_have_matching_trajectory_tasks() -> None:
     )
 
     for robot in planner_kwargs["robots"]:
-        task_name = robot.coordinator_task_name
-        assert task_name is not None
-        task = tasks[task_name]
-        assert task.type == "trajectory"
-        assert task.joint_names == robot.get_coordinator_joint_names()
+        assert set(robot.get_coordinator_joint_names()) <= trajectory_joints
 
 
 def test_sim_planner_models_render_grippers_and_target_their_eef() -> None:

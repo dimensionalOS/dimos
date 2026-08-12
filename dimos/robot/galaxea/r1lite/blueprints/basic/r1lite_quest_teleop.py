@@ -221,19 +221,20 @@ def _sim_arm_model(side: str, y_offset: float) -> RobotModelConfig:
         joint_name_mapping={
             f"r1lite/{side}_arm_joint{i}": f"arm_joint{i}" for i in range(1, cfg.ARM_DOF + 1)
         },
-        coordinator_task_name=f"traj_{side}_arm",
     )
 
 
 def _sim_trajectory_tasks() -> list[TaskConfig]:
+    # The coordinator supports exactly one JointTrajectoryTask; planned
+    # execution routes per-robot through joint_name_mapping (the merged
+    # execution-manager architecture), so one task spans both arms.
     return [
         TaskConfig(
-            name=f"traj_{side}_arm",
+            name="traj_arms",
             type="trajectory",
-            joint_names=list(cfg.LEFT_ARM_JOINTS if side == "left" else cfg.RIGHT_ARM_JOINTS),
+            joint_names=list(cfg.R1LITE_ARM_JOINTS),
             priority=10,
         )
-        for side in ("left", "right")
     ]
 
 
