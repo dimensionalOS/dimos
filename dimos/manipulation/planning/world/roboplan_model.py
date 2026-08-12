@@ -33,10 +33,14 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.transform_utils import pose_to_matrix
 
+ROBOPLAN_WORLD_FRAME = "dimos_world"
+
 _MAX_COMPOSITE_GROUPS = 64
-_ROOT_LINK = "dimos_world"
+_ROOT_LINK = ROBOPLAN_WORLD_FRAME
 _ROOT_JOINT = "dimos_world_joint"
 _FREE_ROOTS = {"world", "map", _ROOT_LINK}
+# TODO: Remove this global fallback when formal per-joint acceleration overrides are available.
+_DEFAULT_ACCELERATION_LIMIT = 2.0
 _REFERENCE_ATTRIBUTES = (
     "reference",
     "frame",
@@ -178,6 +182,7 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
         root = ET.parse(path).getroot()
         if _tag(root.tag) != "robot":
             raise ValueError(f"Prepared model for '{config.name}' is not a URDF robot")
+        _add_missing_acceleration_limits(root)
         mapping = _name_map(root, config.name, composite)
         mapped_names = {
             value
@@ -232,6 +237,15 @@ def _compose(prepared: Sequence[tuple[_BuildRobot, Path]], composite: bool) -> _
         maps,
         tuple(adjacent),
     )
+
+
+def _add_missing_acceleration_limits(root: ET.Element) -> None:
+    for joint in root.iter():
+        if _tag(joint.tag) != "joint" or joint.get("type") == "fixed":
+            continue
+        limit = next((child for child in joint if _tag(child.tag) == "limit"), None)
+        if limit is not None and limit.get("acceleration") is None:
+            limit.set("acceleration", str(_DEFAULT_ACCELERATION_LIMIT))
 
 
 def _name_map(root: ET.Element, robot_name: RobotName, prefix: bool) -> _NameMap:

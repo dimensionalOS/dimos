@@ -56,6 +56,14 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     replay_db: str = "go2_short"
     new_memory: bool = False
+    # Discover zenoh peers across the network.
+    # Toggling off drops back to loopback-only discovery:
+    # Sibling worker processes still find each other,
+    # remote peers come solely from the connect endpoints derived from --robot-ip
+    zenoh_scouting: bool = False
+    # Seconds ZenohService.start() blocks for the configured connect endpoints to
+    # link before giving up and continuing. 0 disables the wait.
+    zenoh_connect_timeout: float = 1.0
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB

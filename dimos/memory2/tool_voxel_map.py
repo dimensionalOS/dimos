@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data

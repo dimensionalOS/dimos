@@ -62,7 +62,7 @@ keyboard_teleop_piper = autoconnect(
                 priority=20,
                 params={"timeout": 0.0, "default_positions": [0.0]},
             ),
-            trajectory_task(_piper_keyboard_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_keyboard_hw),
         ],
     ),
     ManipulationModule.blueprint(
@@ -83,6 +83,7 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
 
 _piper_teleop_hw = piper_hardware("arm", gripper_open_position=0.07, gripper_closed_position=0.0)
 
+
 coordinator_teleop_piper = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_piper_teleop_hw],
@@ -98,7 +99,7 @@ coordinator_teleop_piper = autoconnect(
                     "gripper_closed_pos": 0.0,
                 },
             ),
-            trajectory_task(_piper_teleop_hw, name=_piper_model.coordinator_task_name),
+            trajectory_task(_piper_teleop_hw),
         ],
     ),
     ManipulationModule.blueprint(

@@ -36,10 +36,7 @@ mock_right = openarm_hardware(side="right")
 
 coordinator_openarm_mock = ControlCoordinator.blueprint(
     hardware=[mock_left, mock_right],
-    tasks=[
-        openarm_task(mock_left),
-        openarm_task(mock_right),
-    ],
+    tasks=[trajectory_task(mock_left, mock_right)],
 )
 
 left_hw = openarm_hardware(
@@ -67,8 +64,5 @@ coordinator_openarm_right = ControlCoordinator.blueprint(
 
 coordinator_openarm_bimanual = ControlCoordinator.blueprint(
     hardware=[left_hw, right_hw],
-    tasks=[
-        openarm_task(left_hw),
-        openarm_task(right_hw),
-    ],
+    tasks=[trajectory_task(left_hw, right_hw)],
 )

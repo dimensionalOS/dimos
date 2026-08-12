@@ -4,7 +4,7 @@
 // Session/transport handling lives in session.ts, registration + routing in
 // registry.ts; this file owns the listeners and process-level wiring.
 import { PROTOCOL_VERSION } from "@dimos/shared";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeEphemeralCert } from "./cert.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
@@ -20,6 +20,12 @@ export interface RelayOptions {
   host?: string;
   /** Directory served over HTTP. Defaults to ./static next to this module. */
   staticDir?: string;
+  /**
+   * Built Cockpit app (web/cockpit/dist). When set, / serves its index.html
+   * and files resolve here first, with staticDir as the fallback (so
+   * /debug.html keeps working). Without it, / serves the debug page.
+   */
+  cockpitDir?: string;
 }
 
 export interface RelayHandle {
@@ -40,6 +46,62 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
 };
 
+function resolveDirUrl(dir: string, label: string): URL {
+  // Canonical (realPath) so serveFrom compares symlink-free paths (macOS /tmp
+  // is itself a symlink); href must end with "/" so new URL(name, root)
+  // resolves under it. Fail with a clear labeled error on a bad path: the
+  // raw NotFound is cryptic, and a plain file would "start" fine and then
+  // 404 every request.
+  let real: string;
+  try {
+    real = Deno.realPathSync(dir);
+  } catch {
+    throw new Error(`${label} does not exist: ${dir}`);
+  }
+  if (!Deno.statSync(real).isDirectory) {
+    throw new Error(`${label} is not a directory: ${dir}`);
+  }
+  return pathToFileURL(real.endsWith("/") ? real : real + "/");
+}
+
+/**
+ * Serve `name` from under `root` (canonical, via resolveDirUrl): a 400 for
+ * path traversal or symlink escape, null when the file does not exist
+ * (callers fall through to the next root or a 404).
+ */
+async function serveFrom(root: URL, name: string): Promise<Response | null> {
+  // Resolve the request to a real path and confirm it stays under the root. A
+  // leading "/" or "\" makes `new URL(name, root)` jump to the filesystem
+  // root; fileURLToPath additionally throws on encoded slashes.
+  let filePath: string;
+  try {
+    filePath = fileURLToPath(new URL(name, root));
+  } catch {
+    return new Response("bad path", { status: 400 });
+  }
+  const rootPath = fileURLToPath(root);
+  if (!filePath.startsWith(rootPath)) return new Response("bad path", { status: 400 });
+  // The lexical check cannot see symlinks: canonicalize (realPath follows
+  // them) and require the target to still be under the root, so a link
+  // inside a served tree cannot expose files outside it.
+  let realPath: string;
+  try {
+    realPath = await Deno.realPath(filePath);
+  } catch {
+    return null; // absent (or a dangling link)
+  }
+  if (!realPath.startsWith(rootPath)) return new Response("bad path", { status: 400 });
+  try {
+    const data = await Deno.readFile(realPath);
+    const ext = name.slice(name.lastIndexOf("."));
+    return new Response(data, {
+      headers: { "content-type": MIME[ext] ?? "application/octet-stream" },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function installUnhandledRejectionGuard(): void {
   // deno#28406: WT sessions leak unhandled rejections on disconnect/idle
   // timeout; without this guard the relay dies ~30 s after a tab closes.
@@ -54,6 +116,16 @@ export function installUnhandledRejectionGuard(): void {
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
+
+  // Resolve the served roots before binding anything so a bad path fails
+  // fast, without a QUIC endpoint or timer left behind.
+  const staticRoot = resolveDirUrl(
+    options.staticDir ?? fileURLToPath(new URL("./static/", import.meta.url)),
+    "staticDir",
+  );
+  const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
+  const roots = cockpitRoot !== null ? [cockpitRoot, staticRoot] : [staticRoot];
+
   const cert = await makeEphemeralCert();
 
   // QUIC always binds an ephemeral port; clients discover it via the ready
@@ -105,16 +177,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     // listener stopped (shutdown)
   });
 
-  const staticRoot = options.staticDir
-    ? new URL(
-      options.staticDir.endsWith("/") ? options.staticDir : options.staticDir + "/",
-      `file://${Deno.cwd()}/`,
-    )
-    : new URL("./static/", import.meta.url);
-  // Resolved filesystem prefix every served path must stay under (href ends
-  // with "/", so the path does too).
-  const staticRootPath = fileURLToPath(staticRoot);
-
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/api/info") {
@@ -127,26 +189,14 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     if (url.pathname === "/api/stats") {
       return Response.json(registry.stats());
     }
-    const name = url.pathname === "/" ? "debug.html" : url.pathname.slice(1);
-    // Resolve the request to a real path and confirm it stays under the static
-    // root. A leading "/" or "\" makes `new URL(name, root)` jump to the
-    // filesystem root; fileURLToPath additionally throws on encoded slashes.
-    let filePath: string;
-    try {
-      filePath = fileURLToPath(new URL(name, staticRoot));
-    } catch {
-      return new Response("bad path", { status: 400 });
+    const name = url.pathname === "/"
+      ? (cockpitRoot !== null ? "index.html" : "debug.html")
+      : url.pathname.slice(1);
+    for (const root of roots) {
+      const resp = await serveFrom(root, name);
+      if (resp !== null) return resp;
     }
-    if (!filePath.startsWith(staticRootPath)) return new Response("bad path", { status: 400 });
-    try {
-      const data = await Deno.readFile(filePath);
-      const ext = name.slice(name.lastIndexOf("."));
-      return new Response(data, {
-        headers: { "content-type": MIME[ext] ?? "application/octet-stream" },
-      });
-    } catch {
-      return new Response("not found", { status: 404 });
-    }
+    return new Response("not found", { status: 404 });
   }
 
   const httpServer = Deno.serve(

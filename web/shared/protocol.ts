@@ -5,16 +5,27 @@
 // Framing (see web/README.md for the upstream-bug rationale):
 // - Control stream frame: u32-LE length | UTF-8 JSON.
 // - Datagram: raw UTF-8 JSON, no length prefix.
-// - Data frame (one message per stream): u32-LE headerLen | u32-LE payloadLen
-//   | header JSON | payload. Receivers count bytes and must never treat
-//   stream EOF as a message boundary (Deno 2.6.x delays FIN by up to ~1 s).
+// - Data frame: u32-LE headerLen | u32-LE payloadLen | header JSON | payload.
+//   Latest channels send one frame per stream; a reliable channel packs its
+//   frames back to back on one persistent stream. Receivers count bytes and
+//   must never treat stream EOF as a message boundary (Deno 2.6.x delays FIN
+//   by up to ~1 s, and a persistent stream has no EOF between frames).
 //
 // Validation policy (mirrored in protocol.py): decoders validate shape
 // strictly, and receivers drop invalid or unknown messages -- a peer's bytes
 // must never kill a session. Framing-level corruption (absurd length
 // prefixes) throws and kills only the affected stream.
 
-export const PROTOCOL_VERSION = 1;
+import { type ChannelSpec, type Delivery, isChannelSpec } from "./manifest.ts";
+
+// Channel/manifest domain types live in manifest.ts; re-exported so protocol
+// consumers keep a single import surface.
+export type { ChannelSpec, Delivery } from "./manifest.ts";
+
+// v2: a reliable channel packs all its frames onto one persistent stream (v1
+// carried one frame per stream), which a v1 receiver would misread as a
+// single frame. Bump on any change an old peer would silently misparse.
+export const PROTOCOL_VERSION = 2;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -24,22 +35,11 @@ export const MAX_HEADER_LEN = 65536;
 export const MAX_DATA_FRAME_BYTES = 64 * 1024 * 1024;
 
 export type Role = "robot" | "viewer";
-export type Delivery = "latest" | "reliable";
 
 export interface RobotInfo {
   id: string;
   name: string;
   model: string;
-}
-
-// One robot->viewer stream: encoding names the payload format (e.g. jpeg.v1,
-// pose.json.v1), delivery picks the relay's forwarding policy, maxHz is the
-// bridge's advertised send cap (informational for viewers).
-export interface ChannelSpec {
-  ch: string;
-  encoding: string;
-  delivery: Delivery;
-  maxHz: number;
 }
 
 export interface RobotManifest {
@@ -189,16 +189,6 @@ function isRobotInfo(value: unknown): value is RobotInfo {
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.model === "string"
-  );
-}
-
-function isChannelSpec(value: unknown): value is ChannelSpec {
-  return (
-    isRecord(value) &&
-    typeof value.ch === "string" &&
-    typeof value.encoding === "string" &&
-    (value.delivery === "latest" || value.delivery === "reliable") &&
-    typeof value.maxHz === "number"
   );
 }
 
@@ -353,28 +343,93 @@ export function concatBytes(chunks: Uint8Array[], limit: number): Uint8Array {
 }
 
 /**
- * Incremental reader for a single-message stream. Returns the frame as soon
- * as headerLen + payloadLen bytes have arrived; never waits for EOF. Bytes
- * past the frame are ignored. Chunks are held by reference and copied once
- * at completion (a per-push merge is quadratic at multi-MB frame sizes).
+ * Framing/header corruption on a data-frame stream. `frames` carries the
+ * frames decoded before the corrupt one so the caller can still deliver them
+ * before dropping the stream (framing is unrecoverable mid-stream).
  */
-export class DataFrameReader {
-  #chunks: Uint8Array[] = [];
-  #size = 0;
-  #lens: { headerLen: number; payloadLen: number; total: number } | null = null;
-  #done = false;
+export class DataFrameStreamError extends Error {
+  constructor(message: string, readonly frames: DataFrame[]) {
+    super(message);
+    this.name = "DataFrameStreamError";
+  }
+}
 
-  push(chunk: Uint8Array): DataFrame | null {
-    if (this.#done) return null;
-    this.#chunks.push(chunk);
-    this.#size += chunk.byteLength;
-    if (this.#lens === null && this.#size >= 8) {
-      this.#lens = peekDataFrameLengths(concatBytes(this.#chunks, 8));
+/**
+ * Incremental reader for a stream carrying sequential data frames (a reliable
+ * channel's persistent stream; a latest stream is the one-frame case). Frames
+ * are returned as soon as their bytes have arrived; EOF is never a boundary.
+ *
+ * Chunks are queued behind a read cursor, never concatenated: a completed
+ * frame is copied out exactly once, so a 64 MiB frame arriving in 64 KiB
+ * chunks costs 64 MiB of copying, not gigabytes. On corruption push() throws
+ * DataFrameStreamError (with the frames decoded before it) and the reader
+ * rejects all further input.
+ */
+export class DataFrameStreamReader {
+  #chunks: Uint8Array[] = [];
+  #head = 0; // index of the chunk holding the read cursor
+  #cursor = 0; // byte offset into #chunks[#head]
+  #size = 0; // unread bytes across all queued chunks
+  #failed: string | null = null;
+
+  push(chunk: Uint8Array): DataFrame[] {
+    if (this.#failed !== null) throw new DataFrameStreamError(this.#failed, []);
+    if (chunk.byteLength > 0) {
+      this.#chunks.push(chunk);
+      this.#size += chunk.byteLength;
     }
-    if (this.#lens === null || this.#size < this.#lens.total) return null;
-    this.#done = true;
-    const frame = decodeDataFrame(concatBytes(this.#chunks, this.#lens.total));
-    this.#chunks = [];
-    return frame;
+    const frames: DataFrame[] = [];
+    try {
+      while (this.#size >= 8) {
+        const lens = peekDataFrameLengths(this.#peek(8))!;
+        if (this.#size < lens.total) break;
+        frames.push(decodeDataFrame(this.#take(lens.total)));
+      }
+    } catch (e) {
+      this.#failed = (e as Error).message;
+      throw new DataFrameStreamError(this.#failed, frames);
+    } finally {
+      this.#chunks.splice(0, this.#head);
+      this.#head = 0;
+    }
+    return frames;
+  }
+
+  /** First `n` unread bytes without consuming them (requires #size >= n). */
+  #peek(n: number): Uint8Array {
+    const first = this.#chunks[this.#head];
+    if (first.byteLength - this.#cursor >= n) {
+      return first.subarray(this.#cursor, this.#cursor + n);
+    }
+    const out = new Uint8Array(n);
+    let off = 0;
+    let cursor = this.#cursor;
+    for (let i = this.#head; off < n; i++) {
+      const chunk = this.#chunks[i];
+      const step = Math.min(chunk.byteLength - cursor, n - off);
+      out.set(chunk.subarray(cursor, cursor + step), off);
+      off += step;
+      cursor = 0;
+    }
+    return out;
+  }
+
+  /** Consume `n` unread bytes into one fresh buffer (requires #size >= n). */
+  #take(n: number): Uint8Array {
+    const out = new Uint8Array(n);
+    let off = 0;
+    while (off < n) {
+      const chunk = this.#chunks[this.#head];
+      const step = Math.min(chunk.byteLength - this.#cursor, n - off);
+      out.set(chunk.subarray(this.#cursor, this.#cursor + step), off);
+      off += step;
+      this.#cursor += step;
+      if (this.#cursor === chunk.byteLength) {
+        this.#head++;
+        this.#cursor = 0;
+      }
+    }
+    this.#size -= n;
+    return out;
   }
 }

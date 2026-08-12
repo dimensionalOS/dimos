@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.cli.plot import bar
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:

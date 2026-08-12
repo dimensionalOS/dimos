@@ -23,12 +23,16 @@ target/
 dist/
 build/
 *.so
+/web/cockpit/.build.lock
+/web/cockpit/.dist-*
 
 # Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)
 .direnv/
 .envrc
-**/cpp/result
-**/rust/result
+
+# Nix build output symlinks
+result
+result-*
 
 # Editor and OS files
 .vscode/
