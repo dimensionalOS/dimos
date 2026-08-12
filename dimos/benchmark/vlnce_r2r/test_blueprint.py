@@ -57,6 +57,7 @@ def test_case_bound_blueprint_contains_only_public_navigation_stack(tmp_path) ->
     assert all("runtime.vlnce_runtime" not in module.__module__ for module in modules)
 
     connection = next(atom for atom in blueprint.blueprints if atom.module is VlnceConnection)
+    planner = next(atom for atom in blueprint.blueprints if atom.module is ReplanningAStarPlanner)
     spatial_memory = next(atom for atom in blueprint.blueprints if atom.module is SpatialMemory)
     recorder = next(
         atom for atom in blueprint.blueprints if atom.module is VlnceObservationRecorder
@@ -64,6 +65,8 @@ def test_case_bound_blueprint_contains_only_public_navigation_stack(tmp_path) ->
     assert connection.kwargs["socket_path"] == str(tmp_path / "public.sock")
     assert connection.kwargs["attempt_id"] == "attempt-1"
     assert connection.kwargs["episode_id"] == "515"
+    assert planner.kwargs["robot_width"] == 0.0
+    assert planner.kwargs["robot_rotation_diameter"] == 0.0
     assert spatial_memory.kwargs["db_path"] == str(tmp_path / "spatial-memory/chromadb")
     assert spatial_memory.kwargs["visual_memory_path"] == str(
         tmp_path / "spatial-memory/visual-memory.pkl"
@@ -112,8 +115,12 @@ def test_system_prompt_names_observation_streams_and_requires_closed_loop_eviden
     assert "`depth_pointcloud` is only" in SYSTEM_PROMPT
     assert "Never issue a long or unbounded movement loop" in SYSTEM_PROMPT
     assert "without a duration" in SYSTEM_PROMPT
+    assert "navigate_to_position(x, y)" in SYSTEM_PROMPT
+    assert "navigation_status()" in SYSTEM_PROMPT
+    assert "ordered phase checklist" in SYSTEM_PROMPT
+    assert "do not return to the bedroom" in SYSTEM_PROMPT
     assert "fresh RGB evidence" in SYSTEM_PROMPT
-    assert "is_goal_reached()" in SYSTEM_PROMPT
+    assert "submit immediately" in SYSTEM_PROMPT
 
 
 def test_depth_image_pickle_codec_preserves_metric_values(tmp_path: Path) -> None:

@@ -188,3 +188,47 @@ def test_navigate_to_reports_synchronous_planner_failure(
         "Found a semantic match. No navigable path was found; the robot did not start moving."
     )
     navigation.set_goal.assert_called_once_with(goal)
+
+
+def test_navigate_to_position_builds_world_frame_goal(
+    mocker: MockerFixture,
+    navigation_container: NavigationSkillContainer,
+) -> None:
+    navigation = mocker.Mock()
+    navigation.set_goal.return_value = True
+    navigation.get_state.return_value = NavigationState.FOLLOWING_PATH
+    navigation_container._navigation = navigation
+    navigation_container._skill_started = True
+    navigation_container._latest_odom = PoseStamped(position=[0.25, -2.5, 0.5])
+
+    result = navigation_container.navigate_to_position(1.25, -2.5)
+
+    goal = navigation.set_goal.call_args.args[0]
+    assert goal.frame_id == "map"
+    assert (goal.position.x, goal.position.y, goal.position.z) == (1.25, -2.5, 0.5)
+    assert goal.yaw == pytest.approx(0.0)
+    assert "Started navigating" in result
+
+
+@pytest.mark.parametrize(
+    ("state", "reached", "expected"),
+    [
+        (NavigationState.FOLLOWING_PATH, False, "FOLLOWING_PATH"),
+        (NavigationState.IDLE, True, "was reached"),
+        (NavigationState.IDLE, False, "without reaching"),
+    ],
+)
+def test_navigation_status_reports_goal_outcome(
+    mocker: MockerFixture,
+    navigation_container: NavigationSkillContainer,
+    state: NavigationState,
+    reached: bool,
+    expected: str,
+) -> None:
+    navigation = mocker.Mock()
+    navigation.get_state.return_value = state
+    navigation.is_goal_reached.return_value = reached
+    navigation_container._navigation = navigation
+    navigation_container._skill_started = True
+
+    assert expected in navigation_container.navigation_status()

@@ -6,7 +6,7 @@ This package runs one official VLN-CE R2R episode through the standard
 
 The case measures a live agent. Pi remains in the runtime loop for the full
 episode and can repeatedly inspect Memory2 observations and call ordinary DimOS
-RPCs through `python_exec`. The episode and Pi share a 300-second wall-clock
+RPCs through `python_exec`. The episode and Pi share a 600-second wall-clock
 horizon. The agent ends the route with
 `app.VlnceConnection.submit_route()`; point-to-point navigation completion does
 not submit the route.
