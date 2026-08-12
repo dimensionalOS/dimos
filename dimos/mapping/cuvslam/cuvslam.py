@@ -166,6 +166,9 @@ class CuvslamConfig(NativeModuleConfig):
     camera_frames: list[str] = Field(default_factory=list)
     # Asserts the images arrive rectified: no distortion, rows already aligned.
     rectified: bool = True
+    # Off runs the tracker on the CPU (deterministic, no CUDA). Needs a libcuvslam built
+    # with ENFORCE_GPU=OFF (the jeff-hykin/cuVSLAM fork); NVIDIA's stock SDK is GPU-only.
+    use_gpu: bool = True
 
     map_frame: str = "map"
     odom_frame: str = "odom"
