@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, update_map, Config, LocalBounds, VoxelMap,
+    batch_local_bounds, emit_points, emit_points_fine, update_map, Config, LocalBounds, VoxelMap,
 };
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
@@ -38,6 +38,9 @@ struct RayTracingVoxelMap {
 
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
+
+    #[output(encode = PointCloud2::encode)]
+    local_map_fine: Output<PointCloud2>,
 
     // Cylinder bounds of the local map. Position is the center, orientation holds
     // radius, z_min, z_max. Stamped like local_map so consumers pair them.
@@ -113,17 +116,18 @@ impl RayTracingVoxelMap {
 
         let live = update_map(&mut self.map, origin, &points, &self.config);
 
-        // The batch only feeds the local region bounds, so skip it when the local
-        // map is disabled.
-        if self.config.emit_every > 0 {
+        // The batch only feeds the local region bounds, so skip it when both
+        // local maps are disabled.
+        if self.config.emit_every > 0 || self.config.fine_emit_every > 0 {
             self.batch_points.extend_from_slice(&points);
             self.batch_origins.push(origin);
         }
 
         self.frame_count += 1;
         let local_due = emit_due(self.frame_count, self.config.emit_every);
+        let fine_due = emit_due(self.frame_count, self.config.fine_emit_every);
 
-        let cylinder = if local_due {
+        let cylinder = if local_due || fine_due {
             let margin = self.config.shadow_depth + voxel_size;
             let (cx, cy, radius, z_min, z_max) = batch_local_bounds(
                 &self.batch_points,
@@ -134,32 +138,35 @@ impl RayTracingVoxelMap {
             self.batch_points.clear();
             self.batch_origins.clear();
 
-            let bounds_msg = PoseStamped {
-                header: Header {
-                    seq: 0,
-                    stamp: msg.header.stamp.clone(),
-                    frame_id: out_frame_id.to_string(),
-                },
-                pose: Pose {
-                    position: Point {
-                        x: cx as f64,
-                        y: cy as f64,
-                        z: 0.0,
+            // Bounds pair with local_map by stamp, so publish them on its cadence.
+            if local_due {
+                let bounds_msg = PoseStamped {
+                    header: Header {
+                        seq: 0,
+                        stamp: msg.header.stamp.clone(),
+                        frame_id: out_frame_id.to_string(),
                     },
-                    orientation: Quaternion {
-                        x: radius as f64,
-                        y: z_min as f64,
-                        z: z_max as f64,
-                        w: 0.0,
+                    pose: Pose {
+                        position: Point {
+                            x: cx as f64,
+                            y: cy as f64,
+                            z: 0.0,
+                        },
+                        orientation: Quaternion {
+                            x: radius as f64,
+                            y: z_min as f64,
+                            z: z_max as f64,
+                            w: 0.0,
+                        },
                     },
-                },
-            };
-            if let Err(e) = self.region_bounds.publish(&bounds_msg).await {
-                error_throttled!(
-                    Duration::from_secs(1),
-                    error = %e,
-                    "Region bounds failed to publish",
-                );
+                };
+                if let Err(e) = self.region_bounds.publish(&bounds_msg).await {
+                    error_throttled!(
+                        Duration::from_secs(1),
+                        error = %e,
+                        "Region bounds failed to publish",
+                    );
+                }
             }
             Some(LocalBounds {
                 origin_x: cx,
@@ -177,14 +184,31 @@ impl RayTracingVoxelMap {
         let stamp = msg.header.stamp;
         let support_min = self.config.support_min;
         if global_due {
-            let points = emit_points(&self.map, voxel_size, None, 0, &live);
+            let points = emit_points(&self.map, voxel_size, None, 0, &live.coarse);
             let global = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(cyl) = &cylinder {
-            let points = emit_points(&self.map, voxel_size, Some(cyl), support_min, &live);
-            let local = points_to_cloud(&points, out_frame_id, stamp);
-            publish_cloud(&self.local_map, &local).await;
+            if local_due {
+                let points =
+                    emit_points(&self.map, voxel_size, Some(cyl), support_min, &live.coarse);
+                let local = points_to_cloud(&points, out_frame_id, stamp.clone());
+                publish_cloud(&self.local_map, &local).await;
+            }
+            if fine_due {
+                if let Some((divisor, _)) = self.config.fine_layer() {
+                    let points = emit_points_fine(
+                        &self.map,
+                        voxel_size,
+                        divisor,
+                        Some(cyl),
+                        support_min,
+                        &live.fine,
+                    );
+                    let fine = points_to_cloud(&points, out_frame_id, stamp);
+                    publish_cloud(&self.local_map_fine, &fine).await;
+                }
+            }
         }
     }
 }

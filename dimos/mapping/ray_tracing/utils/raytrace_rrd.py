@@ -47,6 +47,7 @@ COLORS = {
     "naive": [90, 200, 90],
     "no_normal_gate": [235, 120, 60],
     "defaults": [70, 170, 235],
+    "fine": [235, 210, 80],
 }
 
 # Variants whose normal gate is active, so their normals are worth drawing.
@@ -90,6 +91,12 @@ def main(
     align_tol: float = typer.Option(0.05, "--align-tol", help="Lidar/odom alignment tolerance (s)"),
     voxel_size: float = typer.Option(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
+    ),
+    fine_divisor: int = typer.Option(
+        0,
+        "--fine-divisor",
+        help="Fine cells per voxel edge; logs the defaults variant's fine map when set. "
+        "Zero disables it",
     ),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     emit_every: int = typer.Option(1, "--emit-every", help="Log the maps every N frames"),
@@ -135,7 +142,9 @@ def main(
             min_health=0,
         ),
         "no_normal_gate": VoxelRayMapper(voxel_size=voxel_size, max_range=max_range, graze_cos=0.0),
-        "defaults": VoxelRayMapper(voxel_size=voxel_size, max_range=max_range),
+        "defaults": VoxelRayMapper(
+            voxel_size=voxel_size, max_range=max_range, fine_divisor=fine_divisor
+        ),
     }
 
     store = SqliteStore(path=str(db_path))
@@ -196,6 +205,18 @@ def main(
                         vectors=vectors * normal_scale,
                         colors=[COLORS[name]],
                         radii=0.005,
+                    ),
+                )
+            if fine_divisor:
+                fine_centers = mappers["defaults"].local_map_fine(
+                    (x, y, z), max_range, z - 50.0, z + 50.0
+                )
+                rr.log(
+                    "world/maps/fine",
+                    rr.Points3D(
+                        fine_centers,
+                        colors=_height_colors(fine_centers, COLORS["fine"]),
+                        radii=render_voxel / (2 * fine_divisor),
                     ),
                 )
             rr.log("world/raw_points", rr.Points3D(pts, colors=[[90, 90, 90]], radii=0.01))

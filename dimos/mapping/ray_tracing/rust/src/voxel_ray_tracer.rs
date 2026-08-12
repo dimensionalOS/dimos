@@ -46,10 +46,15 @@ fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
 }
 
 #[native_config]
-#[validate(schema(function = "validate_health_range"))]
+#[validate(schema(function = "validate_config"))]
 pub struct Config {
     #[validate(range(exclusive_min = 0.0))]
     pub voxel_size: f32,
+    /// Fine cells per voxel edge for the fine emission layer: fine cell size =
+    /// `voxel_size / fine_divisor`. 2 to 4 (divisor^3 occupancy bits per voxel
+    /// must fit in a u64). Zero disables the layer.
+    #[validate(range(min = 0, max = 4))]
+    pub fine_divisor: u32,
     #[validate(range(min = 0.0))]
     pub max_range: f32,
     #[validate(range(min = 1))]
@@ -75,17 +80,63 @@ pub struct Config {
     /// Publish the global map every Nth frame. Zero disables it.
     #[validate(range(min = 0))]
     pub global_emit_every: u32,
+    /// Publish the fine local map every Nth frame. Zero disables it.
+    #[validate(range(min = 0))]
+    pub fine_emit_every: u32,
     /// Size the local region to this percentile of batch point distances, so a
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
 }
 
-fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
+fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
     if cfg.min_health >= cfg.max_health {
         return Err(ValidationError::new("min_health_lt_max_health"));
     }
+    if cfg.fine_divisor == 1 {
+        return Err(ValidationError::new("fine_divisor_min_2"));
+    }
+    if cfg.fine_emit_every > 0 && cfg.fine_divisor == 0 {
+        return Err(ValidationError::new("fine_emit_requires_fine_divisor"));
+    }
     Ok(())
+}
+
+impl Config {
+    /// The enabled fine layer as (divisor, fine cell size), or None when off.
+    pub fn fine_layer(&self) -> Option<(u32, f32)> {
+        (self.fine_divisor >= 2).then(|| {
+            (
+                self.fine_divisor,
+                self.voxel_size / self.fine_divisor as f32,
+            )
+        })
+    }
+}
+
+/// Split a fine key into its voxel key and flat child index.
+#[inline]
+fn split_fine_key(fine_key: VoxelKey, divisor: i32) -> (VoxelKey, usize) {
+    let coarse = (
+        fine_key.0.div_euclid(divisor),
+        fine_key.1.div_euclid(divisor),
+        fine_key.2.div_euclid(divisor),
+    );
+    let lx = fine_key.0.rem_euclid(divisor);
+    let ly = fine_key.1.rem_euclid(divisor);
+    let lz = fine_key.2.rem_euclid(divisor);
+    (coarse, ((lx * divisor + ly) * divisor + lz) as usize)
+}
+
+/// Rebuild a fine key from its voxel key and flat child index.
+#[inline]
+fn join_fine_key(coarse: VoxelKey, index: usize, divisor: i32) -> VoxelKey {
+    let i = index as i32;
+    (
+        coarse.0 * divisor + i / (divisor * divisor),
+        coarse.1 * divisor + (i / divisor) % divisor,
+        coarse.2 * divisor + i % divisor,
+    )
 }
 
 #[derive(Default)]
@@ -113,6 +164,24 @@ impl VoxelMap {
             .entry(key)
             .or_default()
             .observe(Vector3::new(point.0, point.1, point.2) - center);
+    }
+
+    /// Mark a return's fine cell occupied. The voxel key uses the same coarse
+    /// quantization as hits and `accumulate` (a fine-grid float path can
+    /// disagree at cell boundaries and would plant phantom entries that break
+    /// `record_hit`'s new-voxel semantics). The fine offset is computed within
+    /// that cell and clamped to it.
+    fn observe_fine(&mut self, point: (f32, f32, f32), divisor: i32, voxel_size: f32) {
+        let coarse = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
+        let inv_fine = divisor as f32 / voxel_size;
+        let local = |p: f32, k: i32| {
+            (((p - k as f32 * voxel_size) * inv_fine).floor() as i32).clamp(0, divisor - 1)
+        };
+        let lx = local(point.0, coarse.0);
+        let ly = local(point.1, coarse.1);
+        let lz = local(point.2, coarse.2);
+        let index = (lx * divisor + ly) * divisor + lz;
+        self.voxels.entry(coarse).or_default().fine |= 1 << index;
     }
 
     /// Move a voxel in or out of the healthy-chunk index on a health-sign crossing.
@@ -298,6 +367,8 @@ pub struct Voxel {
     /// Count of this voxel's 26 neighbors that currently exist and are healthy,
     /// maintained incrementally by `VoxelMap` instead of rescanned per query.
     support: u32,
+    /// Fine voxel occupancy within a macro voxel is stored with this bitmask.
+    fine: u64,
     num_pts: u32,
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
@@ -309,6 +380,7 @@ impl Default for Voxel {
         Self {
             health: 0,
             support: 0,
+            fine: 0,
             num_pts: 0,
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
@@ -668,6 +740,78 @@ pub fn emit_points(
     out
 }
 
+/// Points for a fine emitted cloud: observed fine cells inside healthy voxels
+/// clearing `support_min`, within `bounds` (all when `None`), plus this frame's
+/// `live_fine` cells whose voxel is not yet healthy, within `bounds`. Mirrors
+/// `emit_points`: once a voxel is healthy, the support gate alone decides its
+/// visibility and live cells never override it.
+pub fn emit_points_fine(
+    map: &VoxelMap,
+    voxel_size: f32,
+    fine_divisor: u32,
+    bounds: Option<&LocalBounds>,
+    support_min: i32,
+    live_fine: &AHashSet<VoxelKey>,
+) -> Vec<(f32, f32, f32)> {
+    let divisor = fine_divisor as i32;
+    let fine_size = voxel_size / fine_divisor as f32;
+    let mut out = Vec::new();
+
+    let emit_children = |key: VoxelKey, out: &mut Vec<(f32, f32, f32)>| {
+        let Some(v) = map.voxels.get(&key) else {
+            return;
+        };
+        if support_min > 0 && v.support < support_min as u32 {
+            return;
+        }
+        let mut bits = v.fine;
+        while bits != 0 {
+            let i = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let (x, y, z) = voxel_center(join_fine_key(key, i, divisor), fine_size);
+            if bounds.is_none_or(|b| b.contains(x, y, z)) {
+                out.push((x, y, z));
+            }
+        }
+    };
+
+    match bounds {
+        Some(b) => {
+            let (lo, hi) = chunk_range_for_bounds(b, voxel_size);
+            for cx in lo.0..=hi.0 {
+                for cy in lo.1..=hi.1 {
+                    for cz in lo.2..=hi.2 {
+                        let Some(keys) = map.healthy_chunks.get(&(cx, cy, cz)) else {
+                            continue;
+                        };
+                        for &key in keys {
+                            emit_children(key, &mut out);
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+            for &key in map.healthy_chunks.values().flatten() {
+                emit_children(key, &mut out);
+            }
+        }
+    }
+
+    for &fine_key in live_fine.iter() {
+        let (coarse, _) = split_fine_key(fine_key, divisor);
+        if matches!(map.voxels.get(&coarse), Some(v) if v.health > 0) {
+            continue;
+        }
+        let (x, y, z) = voxel_center(fine_key, fine_size);
+        if !bounds.is_none_or(|b| b.contains(x, y, z)) {
+            continue;
+        }
+        out.push((x, y, z));
+    }
+    out
+}
+
 fn live_voxels(points: &[(f32, f32, f32)], voxel_size: f32) -> AHashSet<VoxelKey> {
     let inv = 1.0_f32 / voxel_size;
     let mut out: AHashSet<VoxelKey> = AHashSet::with_capacity(points.len());
@@ -677,12 +821,22 @@ fn live_voxels(points: &[(f32, f32, f32)], voxel_size: f32) -> AHashSet<VoxelKey
     out
 }
 
+/// One frame's hit sets from `update_map`.
+#[derive(Default)]
+pub struct FrameHits {
+    /// Hit voxels at map resolution, the live merge for `emit_points`.
+    pub coarse: AHashSet<VoxelKey>,
+    /// Hit fine cells, the live merge for `emit_points_fine`. Empty when the
+    /// fine layer is off.
+    pub fine: AHashSet<VoxelKey>,
+}
+
 pub fn update_map(
     map: &mut VoxelMap,
     origin: (f32, f32, f32),
     points: &[(f32, f32, f32)],
     cfg: &Config,
-) -> AHashSet<VoxelKey> {
+) -> FrameHits {
     let inv = 1.0_f32 / cfg.voxel_size;
     let max_range_sq = if cfg.max_range > 0.0 {
         cfg.max_range * cfg.max_range
@@ -743,8 +897,12 @@ pub fn update_map(
         map.record_hit(v, cfg.min_health, cfg.max_health);
     }
 
+    let fine = cfg.fine_layer().map(|(d, size)| (d as i32, size));
     for &p in points {
         map.accumulate(p, cfg.voxel_size);
+        if let Some((divisor, _)) = fine {
+            map.observe_fine(p, divisor, cfg.voxel_size);
+        }
     }
 
     let mut removed: Vec<VoxelKey> = Vec::new();
@@ -756,7 +914,12 @@ pub fn update_map(
 
     refresh_voxels(map, &hits, &removed, cfg.voxel_size);
 
-    hits
+    FrameHits {
+        coarse: hits,
+        fine: fine.map_or_else(AHashSet::new, |(_, fine_size)| {
+            live_voxels(points, fine_size)
+        }),
+    }
 }
 
 #[inline]
@@ -908,6 +1071,7 @@ mod tests {
     fn basic_config() -> Config {
         Config {
             voxel_size: 1.0,
+            fine_divisor: 0,
             max_range: 100.0,
             ray_subsample: 1,
             shadow_depth: 2.0,
@@ -918,6 +1082,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         }
     }
@@ -1115,6 +1280,7 @@ mod tests {
         let lidar_height = 1.0_f32;
         let cfg = Config {
             voxel_size,
+            fine_divisor: 0,
             max_range: 50.0,
             ray_subsample: 1,
             shadow_depth: 0.2,
@@ -1125,6 +1291,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
@@ -1270,6 +1437,7 @@ mod tests {
         let half = voxel_size * 0.5;
         let cfg = Config {
             voxel_size,
+            fine_divisor: 0,
             max_range: 50.0,
             ray_subsample: 1,
             shadow_depth: 0.2,
@@ -1280,6 +1448,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
 
@@ -1344,6 +1513,7 @@ mod tests {
         let half = voxel_size * 0.5;
         let cfg = Config {
             voxel_size,
+            fine_divisor: 0,
             max_range: 50.0,
             ray_subsample: 1,
             shadow_depth: 0.2,
@@ -1354,6 +1524,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
 
@@ -1406,6 +1577,7 @@ mod tests {
         let half = voxel_size * 0.5;
         let cfg = |graze_cos| Config {
             voxel_size,
+            fine_divisor: 0,
             max_range: 50.0,
             ray_subsample: 1,
             shadow_depth: 0.2,
@@ -1416,6 +1588,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
 
@@ -1537,6 +1710,7 @@ mod tests {
 
         let cfg = Config {
             voxel_size,
+            fine_divisor: 0,
             max_range: 50.0,
             ray_subsample: 1,
             shadow_depth: 0.2,
@@ -1547,6 +1721,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
@@ -1819,5 +1994,167 @@ mod tests {
             3,
             "new voxel must count its 3 pre-existing healthy neighbors"
         );
+    }
+
+    fn fine_config(divisor: u32) -> Config {
+        Config {
+            fine_divisor: divisor,
+            ..basic_config()
+        }
+    }
+
+    #[test]
+    fn fine_key_split_join_round_trip() {
+        for divisor in [2_i32, 3, 4] {
+            for fine_key in [(0, 0, 0), (5, -7, 2), (-1, -2, -3), (-9, 8, -27)] {
+                let (coarse, index) = split_fine_key(fine_key, divisor);
+                assert!(index < (divisor * divisor * divisor) as usize);
+                assert_eq!(
+                    join_fine_key(coarse, index, divisor),
+                    fine_key,
+                    "divisor={divisor} fine_key={fine_key:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn config_rejects_bad_fine_settings() {
+        use validator::Validate;
+        let mut cfg = basic_config();
+        assert!(cfg.validate().is_ok());
+        cfg.fine_divisor = 1;
+        assert!(cfg.validate().is_err(), "divisor 1 duplicates the map");
+        cfg.fine_divisor = 5;
+        assert!(cfg.validate().is_err(), "divisor^3 bits must fit in a u64");
+        cfg.fine_divisor = 0;
+        cfg.fine_emit_every = 1;
+        assert!(cfg.validate().is_err(), "fine emit needs a fine grid");
+        cfg.fine_divisor = 2;
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn fine_layer_off_stores_no_counts() {
+        let cfg = basic_config();
+        let mut map = VoxelMap::default();
+        let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
+        assert!(hits.fine.is_empty());
+        assert!(map.voxels.values().all(|v| v.fine == 0));
+    }
+
+    #[test]
+    fn fine_emission_nests_inside_healthy_voxels() {
+        let cfg = fine_config(2);
+        let mut map = VoxelMap::default();
+        update_map(
+            &mut map,
+            (0.0, 0.0, 0.0),
+            &[(5.1, 0.1, 0.1), (5.6, 0.6, 0.6)],
+            &cfg,
+        );
+        let no_live = AHashSet::new();
+        let got = sort_points(emit_points_fine(&map, 1.0, 2, None, 0, &no_live));
+        assert_eq!(got, vec![(5.25, 0.25, 0.25), (5.75, 0.75, 0.75)]);
+    }
+
+    #[test]
+    fn cleared_voxel_drops_fine_detail() {
+        let cfg = fine_config(2);
+        let mut map = VoxelMap::default();
+        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+
+        // A ray through voxel (5, 0, 0) clears it, taking its fine counts along.
+        update_map(&mut map, (0.0, 0.0, 0.0), &[(8.5, 0.5, 0.5)], &cfg);
+        assert!(!map.voxels.contains_key(&(5, 0, 0)));
+
+        // Re-observing the voxel starts fresh instead of resurrecting old detail.
+        update_map(&mut map, (0.0, 0.0, 0.0), &[(5.6, 0.6, 0.6)], &cfg);
+        let no_live = AHashSet::new();
+        let got = emit_points_fine(&map, 1.0, 2, None, 0, &no_live);
+        assert!(got.contains(&(5.75, 0.75, 0.75)));
+        assert!(
+            !got.contains(&(5.25, 0.25, 0.25)),
+            "cleared fine detail must not resurface"
+        );
+    }
+
+    #[test]
+    fn live_fine_cells_emit_before_confirmation() {
+        let cfg = Config {
+            min_health: -1,
+            ..fine_config(2)
+        };
+        let mut map = VoxelMap::default();
+        let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+        assert_eq!(map.health((5, 0, 0)), Some(0), "not yet healthy");
+
+        let no_live = AHashSet::new();
+        assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
+        assert_eq!(
+            emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine),
+            vec![(5.25, 0.25, 0.25)],
+            "this frame's returns show through the live merge"
+        );
+
+        // Once the voxel confirms healthy the gated path covers the live cell.
+        let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+        assert_eq!(
+            emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine),
+            vec![(5.25, 0.25, 0.25)],
+            "a covered live cell is not emitted twice"
+        );
+    }
+
+    #[test]
+    fn fine_emission_applies_support_min() {
+        let mut map = VoxelMap::default();
+        for x in 0..3 {
+            for y in 0..3 {
+                map.set_health((x, y, 0), 1);
+                map.observe_fine((x as f32 + 0.5, y as f32 + 0.5, 0.5), 2, 1.0);
+            }
+        }
+        map.set_health((20, 20, 0), 1);
+        map.observe_fine((20.5, 20.5, 0.5), 2, 1.0);
+
+        let no_live = AHashSet::new();
+        assert_eq!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).len(), 10);
+        let gated = emit_points_fine(&map, 1.0, 2, None, 3, &no_live);
+        assert_eq!(gated.len(), 9, "isolated voxel's fine cell is gated out");
+    }
+
+    /// Binning fine-emitted points by the divisor recovers exactly the healthy
+    /// voxel set: every fine child nests inside its parent and every healthy
+    /// voxel that saw returns emits at least one child.
+    #[test]
+    fn fine_children_bin_exactly_to_their_parents() {
+        let mut state = 2891336453748303025_u64;
+        let mut next_u64 = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut next_coord = move || (next_u64() % 1600) as f32 / 100.0 - 8.0;
+
+        let cfg = fine_config(3);
+        let mut map = VoxelMap::default();
+        let points: Vec<(f32, f32, f32)> = (0..200)
+            .map(|_| (next_coord(), next_coord(), next_coord()))
+            .collect();
+        update_map(&mut map, (20.0, 20.0, 20.0), &points, &cfg);
+
+        let no_live = AHashSet::new();
+        let fine = emit_points_fine(&map, 1.0, 3, None, 0, &no_live);
+        let binned: AHashSet<VoxelKey> = fine
+            .iter()
+            .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
+            .collect();
+        let healthy: AHashSet<VoxelKey> = emit_points(&map, 1.0, None, 0, &no_live)
+            .iter()
+            .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
+            .collect();
+        assert_eq!(binned, healthy);
     }
 }

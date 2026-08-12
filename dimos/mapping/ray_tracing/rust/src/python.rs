@@ -18,11 +18,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use ahash::AHashSet;
-
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, iter_global_normals, update_map, Config, LocalBounds,
-    VoxelKey, VoxelMap,
+    batch_local_bounds, emit_points, emit_points_fine, iter_global_normals, update_map, Config,
+    FrameHits, LocalBounds, VoxelMap,
 };
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
@@ -65,8 +63,8 @@ fn local_bounds(
 pub struct VoxelRayMapper {
     config: Config,
     map: VoxelMap,
-    // Voxels hit in current lidar frame
-    live: AHashSet<VoxelKey>,
+    // Voxels and fine cells hit in current lidar frame
+    live: FrameHits,
 }
 
 #[pymethods]
@@ -76,6 +74,7 @@ impl VoxelRayMapper {
         *,
         voxel_size,
         max_range,
+        fine_divisor = 0,
         ray_subsample = 1,
         shadow_depth = 0.1,
         grace_depth = 0.2,
@@ -88,6 +87,7 @@ impl VoxelRayMapper {
     fn new(
         voxel_size: f32,
         max_range: f32,
+        fine_divisor: u32,
         ray_subsample: u32,
         shadow_depth: f32,
         grace_depth: f32,
@@ -98,6 +98,7 @@ impl VoxelRayMapper {
     ) -> PyResult<Self> {
         let config = Config {
             voxel_size,
+            fine_divisor,
             max_range,
             ray_subsample,
             shadow_depth,
@@ -108,6 +109,7 @@ impl VoxelRayMapper {
             support_min,
             emit_every: 1,
             global_emit_every: 1,
+            fine_emit_every: 0,
             region_percentile: 95.0,
         };
         config
@@ -116,7 +118,7 @@ impl VoxelRayMapper {
         Ok(Self {
             config,
             map: VoxelMap::default(),
-            live: AHashSet::new(),
+            live: FrameHits::default(),
         })
     }
 
@@ -150,7 +152,7 @@ impl VoxelRayMapper {
         let live = &self.live;
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
-            for (x, y, z) in emit_points(map, voxel_size, None, 0, live) {
+            for (x, y, z) in emit_points(map, voxel_size, None, 0, &live.coarse) {
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -213,7 +215,8 @@ impl VoxelRayMapper {
         let live = &self.live;
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::new();
-            for (x, y, z) in emit_points(map, voxel_size, Some(&bounds), support_min, live) {
+            for (x, y, z) in emit_points(map, voxel_size, Some(&bounds), support_min, &live.coarse)
+            {
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -226,13 +229,58 @@ impl VoxelRayMapper {
             .into_pyarray(py)
     }
 
+    /// Fine-cell centers inside the cylinder as (M, 3) float32.
+    fn local_map_fine<'py>(
+        &self,
+        py: Python<'py>,
+        origin: (f32, f32, f32),
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let Some((divisor, _)) = self.config.fine_layer() else {
+            return Err(PyValueError::new_err("fine_divisor is not set"));
+        };
+        let bounds = LocalBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
+            r_xy_max_sq: radius * radius,
+            z_min,
+            z_max,
+        };
+        let voxel_size = self.config.voxel_size;
+        let support_min = self.config.support_min;
+        let map = &self.map;
+        let live = &self.live;
+        let positions: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::new();
+            for (x, y, z) in emit_points_fine(
+                map,
+                voxel_size,
+                divisor,
+                Some(&bounds),
+                support_min,
+                &live.fine,
+            ) {
+                out.push(x);
+                out.push(y);
+                out.push(z);
+            }
+            out
+        });
+        let n = positions.len() / 3;
+        Ok(Array2::from_shape_vec((n, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py))
+    }
+
     fn voxel_count(&self) -> usize {
         self.map.healthy_count()
     }
 
     fn clear(&mut self) {
         self.map.clear();
-        self.live.clear();
+        self.live = FrameHits::default();
     }
 
     fn __len__(&self) -> usize {
