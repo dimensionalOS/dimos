@@ -15,167 +15,131 @@
 """CodSpeed simulation benchmark: the go2 replay compute pipeline, one process.
 
 The single-process complement to test_replay_benchmark.py. Simulation mode
-counts instructions in one process under Valgrind, so this runs the pipeline's
-computational core in-process: GO2Connection (replay decode: JPEG frames,
-lidar, odom) -> VoxelGridMapper -> CostMapper. The planners/patrol/movement
-modules are omitted — with no goals published they are idle in the e2e run
-too, so this covers the same work that actually executes there, minus worker
-processes and UDP transports.
+counts instructions under Valgrind in one process, so this drives the
+pipeline's compute directly and fully synchronously: decode the replay
+window's frames (JPEG images, lidar pointclouds, odometry) and pull the lidar
+through VoxelMapTransformer -> CostMapper._calculate_costmap — the same work
+the e2e blueprint performs (its planner/patrol/movement modules idle without
+goals), minus worker processes, transports, and schedulers.
 
-Modules are constructed directly (no coordinator, no workers) and wired with
-a synchronous in-test LocalTransport shared per topic, so delivery is
-lossless and the end condition is exact: the run completes when every frame
-of the replay window has been observed. Deterministic enough for instruction
-counting; also runs as a plain self_hosted test for coverage.
+Deliberately no Module/rx machinery in the measured region: the timed replay's
+shared wall-clock anchor skips late subscribers at high speed (fatal under
+Valgrind's dilation), and module RPC/loop threads pollute the count. Pure
+iterator pulls make completion exact by construction. Also runs as a plain
+self_hosted test for coverage.
 
 Local smoke (small bundled recording):
 
-    DIMOS_SIM_BENCH_REPLAY_DB=go2_short DIMOS_SIM_BENCH_DURATION=5 \
+    DIMOS_SIM_BENCH_DURATION=5 \
         uv run pytest dimos/robot/unitree/go2/test_replay_pipeline_benchmark.py \
         -m self_hosted --no-cov -v
 """
 
-from collections.abc import Callable
+from collections.abc import Iterator
 import os
-import threading
-import time
 from typing import Any
 
 import pytest
 from pytest_codspeed import BenchmarkFixture
 
 from dimos.core.global_config import global_config
-from dimos.core.transport import PubSubTransport
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.robot.unitree.go2.test_replay_benchmark import _expected_counts
 
 REPLAY_DB = os.environ.get("DIMOS_SIM_BENCH_REPLAY_DB", "go2_short")
 DURATION = float(os.environ.get("DIMOS_SIM_BENCH_DURATION", 10))
-SPEED = 1000.0  # every emission delay clamps to 0: a pure CPU-bound drain
-DRAIN_TIMEOUT = 420.0  # start+drain deadline, inside the test timeout
 
 
-class LocalTransport(PubSubTransport[Any]):
-    """Synchronous in-process pub/sub: broadcast() calls subscribers inline.
+class _NoRpc(RPCSpec):
+    """Disables the module RPC service (ModuleBase catches this ValueError).
 
-    Lossless and deterministic — no sockets, no queues, no threads of its
-    own — which is what makes exact-count completion and instruction
-    counting under Valgrind meaningful.
+    The benchmark only needs CostMapper for its configured compute; an RPC
+    service would add zenoh/LCM threads (and hangs zenoh setup on macOS).
     """
 
-    def __init__(self, topic: str) -> None:
-        super().__init__(topic)
-        self._subscribers: list[Callable[[Any], Any]] = []
-
-    def broadcast(self, stream: Any, msg: Any) -> None:
-        for callback in list(self._subscribers):
-            callback(msg)
-
-    def subscribe(
-        self, callback: Callable[[Any], Any], selfstream: Any = None
-    ) -> Callable[[], None]:
-        self._subscribers.append(callback)
-        return lambda: self._subscribers.remove(callback)
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        self._subscribers.clear()
+    def __init__(self, **_kwargs: Any) -> None:
+        raise ValueError("module RPC disabled for the benchmark")
 
 
 @pytest.mark.self_hosted
 @pytest.mark.timeout(600)
 def test_go2_pipeline_simulation(benchmark: BenchmarkFixture) -> None:
-    """Drain a replay window through decode -> voxel map -> costmap, in-process."""
+    """Decode a replay window and pull it through voxel map -> costmap."""
     from dimos.mapping.costmapper import CostMapper
-    from dimos.mapping.voxels.module import VoxelGridMapper
+    from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory2.replay import resolve_db_path
-    from dimos.robot.unitree.go2.connection import GO2Connection
+    from dimos.memory2.store.sqlite import SqliteStore
 
     saved = global_config.model_dump()
-    global_config.update(
-        replay=True,
-        replay_db=REPLAY_DB,
-        replay_speed=SPEED,
-        replay_duration=DURATION,
-        viewer="none",
-    )
-    modules: list[Any] = []
+    global_config.update(viewer="none")
+    cost = None
+    store = None
     try:
         db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss
         expected = _expected_counts(db_path, duration=DURATION)
         assert all(count > 0 for count in expected.values()), f"empty window: {expected}"
 
-        go2 = GO2Connection(g=global_config)
-        voxel = VoxelGridMapper(g=global_config, emit_every=5, device="CPU:0")
-        cost = CostMapper(g=global_config)
-        modules = [go2, voxel, cost]
+        store = SqliteStore(path=db_path, must_exist=True)
+        store.start()
+        replay = store.replay(duration=DURATION)
+        available = replay.list_streams()
+        lidar_name = "go2_lidar" if "go2_lidar" in available else "lidar"
+        odom_name = "go2_odom" if "go2_odom" in available else "odom"
+        window_end = replay.first_ts() + DURATION  # type: ignore[operator]
 
-        # One shared transport per topic; producer Out and consumer In point
-        # at the same object, exactly like the transport-pinning pattern in
-        # test_basic_deployment — just with in-process dispatch.
-        topics = {
-            name: LocalTransport(name)
-            for name in (
-                "odom",
-                "lidar",
-                "color_image",
-                "camera_info",
-                "pointcloud",
-                "tf",
-                "cmd_vel",
-                "global_map",
-                "merged_map",
-                "global_costmap",
+        def windowed(name: str) -> Any:
+            # The duration-only window of Replay._base_stream: everything
+            # before recording start + duration, in timestamp order.
+            return store.stream(name).before(window_end).order_by("ts")
+
+        # Only the config'd compute is used (never started as a module).
+        cost = CostMapper(g=global_config, rpc_transport=_NoRpc)
+        # Suppressed rpc setup never assigns the attribute; _close_rpc guards
+        # on truthiness, so seed it for a clean _close_module in the finally.
+        cost.rpc = None
+
+        counts = {"odom": 0, "lidar": 0, "color_image": 0}
+        produced = {"global_map": 0, "global_costmap": 0}
+
+        def counted(observations: Iterator[Any], key: str) -> Iterator[Any]:
+            for obs in observations:
+                counts[key] += 1
+                yield obs
+
+        def drain() -> None:
+            # The blueprint's voxel pipeline: accumulate every lidar frame,
+            # emit the global map every 5th, costmap each emitted map.
+            transformer = VoxelMapTransformer(
+                emit_every=5,
+                voxel_size=0.05,
+                block_count=2_000_000,
+                device="CPU:0",
+                carve_columns=True,
+                frame_id="world",
             )
-        }
-        go2.odom.transport = topics["odom"]
-        go2.lidar.transport = topics["lidar"]
-        go2.color_image.transport = topics["color_image"]
-        go2.camera_info.transport = topics["camera_info"]
-        go2.pointcloud.transport = topics["pointcloud"]
-        go2.tf.transport = topics["tf"]
-        go2.cmd_vel.transport = topics["cmd_vel"]
-        voxel.lidar.transport = topics["lidar"]
-        voxel.global_map.transport = topics["global_map"]
-        cost.global_map.transport = topics["global_map"]
-        cost.merged_map.transport = topics["merged_map"]  # no producer: stays silent
-        cost.global_costmap.transport = topics["global_costmap"]
-
-        counts = {"odom": 0, "lidar": 0, "color_image": 0, "global_costmap": 0}
-        lock = threading.Lock()
-
-        def record(name: str) -> None:
-            with lock:
-                counts[name] += 1
-
-        for name in counts:
-            topics[name].subscribe(lambda _msg, _name=name: record(_name))
-
-        def start_and_drain() -> None:
-            # Consumers first so no frame is emitted before its subscriber
-            # exists; the replay starts inside go2.start().
-            voxel.start()
-            cost.start()
-            go2.start()
-            deadline = time.monotonic() + DRAIN_TIMEOUT
-            while time.monotonic() < deadline:
-                with lock:
-                    done = (
-                        counts["odom"] >= expected["odom"]
-                        and counts["lidar"] >= expected["lidar"]
-                        and counts["color_image"] >= expected["color_image"]
-                        and counts["global_costmap"] > 0
-                    )
-                if done:
-                    return
-                time.sleep(0.05)
-            pytest.fail(f"window did not drain: counts={counts}, expected={expected}")
+            for map_obs in transformer(counted(iter(windowed(lidar_name)), "lidar")):
+                produced["global_map"] += 1
+                cost._calculate_costmap(map_obs.data)
+                produced["global_costmap"] += 1
+            # Decode odom and camera frames like GO2Connection does; their
+            # consumers idle in the e2e too.
+            for obs in counted(iter(windowed(odom_name)), "odom"):
+                _ = obs.data
+            for obs in counted(iter(windowed("color_image")), "color_image"):
+                _ = obs.data
+            if counts != expected or produced["global_costmap"] == 0:
+                pytest.fail(f"incomplete drain: counts={counts}, expected={expected}, {produced}")
 
         def teardown() -> None:
-            for module in reversed(modules):
-                module.stop()
+            for key in counts:
+                counts[key] = 0
+            for key in produced:
+                produced[key] = 0
 
-        benchmark.pedantic(start_and_drain, teardown=teardown, rounds=1, warmup_rounds=0)
+        benchmark.pedantic(drain, teardown=teardown, rounds=1, warmup_rounds=0)
     finally:
+        if cost is not None:
+            cost._close_module()
+        if store is not None:
+            store.stop()
         global_config.update(**saved)
