@@ -55,7 +55,7 @@ def test_live_agent_starts_after_runtime_barrier_and_native_score_survives_rende
 
         def prepare(self, **kwargs: object) -> FakeExecution:
             events.append("agent.prepare")
-            assert kwargs["episode_timeout_s"] == 300.0
+            assert kwargs["episode_timeout_s"] == 600.0
             return FakeExecution()
 
     class FakeBenchmarkRuntime:

@@ -290,7 +290,22 @@ class VlnceConnection(Module):
             }
 
     def _on_cmd_vel(self, twist: Twist) -> None:
-        if not self.move(twist):
+        bounded = Twist(
+            linear=[
+                max(-self._expected.max_linear_x, min(self._expected.max_linear_x, twist.linear.x)),
+                max(-self._expected.max_linear_y, min(self._expected.max_linear_y, twist.linear.y)),
+                0.0,
+            ],
+            angular=[
+                0.0,
+                0.0,
+                max(
+                    -self._expected.max_angular_z,
+                    min(self._expected.max_angular_z, twist.angular.z),
+                ),
+            ],
+        )
+        if not self.move(bounded):
             logger.debug("VLN-CE command rejected while another command is in flight")
 
     def _request_iterator(self) -> Iterator[pb.ClientMessage]:

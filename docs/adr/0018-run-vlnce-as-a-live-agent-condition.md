@@ -7,7 +7,7 @@ navigability map, and ordinary DimOS navigation RPCs. The private container
 retains the reference path, privileged metrics, and terminal result.
 
 The evaluator prepares Habitat, DimOS, Memory2, and the live Pi session before
-crossing one start barrier. Habitat and Pi then share the case's 300-second
+crossing one start barrier. Habitat and Pi then share the case's 600-second
 wall-clock horizon. Pi may make repeated `python_exec` calls in one persistent
 workspace. Only `submit_route()` represents VLN-CE STOP; reaching an internal
 waypoint does not end the route. Timeout also invokes official STOP scoring.

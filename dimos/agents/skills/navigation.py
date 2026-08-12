@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 from typing import Any
 
@@ -149,6 +150,54 @@ class NavigationSkillContainer(Module):
             return success_msg
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
+
+    @skill(uses=[CAP_MOVEMENT])
+    def navigate_to_position(self, x: float, y: float) -> str:
+        """Start planner-driven navigation to a world-frame map position.
+
+        Use this for a free waypoint selected from a global occupancy grid. The
+        call is non-blocking; query ``navigation_status`` until it reports that
+        navigation stopped, then inspect fresh sensor observations before
+        choosing another waypoint.
+
+        Args:
+            x: World-frame X coordinate in meters.
+            y: World-frame Y coordinate in meters.
+        """
+
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        z = self._latest_odom.position.z if self._latest_odom is not None else 0.0
+        yaw = 0.0
+        if self._latest_odom is not None:
+            dx = x - self._latest_odom.position.x
+            dy = y - self._latest_odom.position.y
+            yaw = (
+                math.atan2(dy, dx)
+                if not math.isclose(dx, 0.0) or not math.isclose(dy, 0.0)
+                else self._latest_odom.yaw
+            )
+        goal = PoseStamped(
+            position=make_vector3(x, y, z),
+            orientation=Quaternion.from_euler(make_vector3(0, 0, yaw)),
+            frame_id="map",
+        )
+        return self._navigate_to(goal, f"Selected map waypoint ({x:.2f}, {y:.2f})")
+
+    @skill
+    def navigation_status(self) -> str:
+        """Report whether planner-driven navigation is active or has stopped."""
+
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        state = self._navigation.get_state()
+        if state == NavigationState.IDLE:
+            if self._navigation.is_goal_reached():
+                return "IDLE: the latest navigation goal was reached."
+            return "IDLE: navigation stopped without reaching the latest goal."
+        return f"{state.value.upper()}: planner-driven navigation is active."
 
     def _navigate_by_tagged_location(self, query: str) -> str | None:
         robot_location = self._spatial_memory.query_tagged_location(query)

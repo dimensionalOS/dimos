@@ -93,9 +93,12 @@ def vlnce_r2r_eval_blueprint(
                 episode_id=episode_id,
                 protocol_revision=protocol_revision,
             ),
+            # Habitat's navmesh is already eroded by the simulated agent's
+            # radius. Inflating its traversable-center projection again closes
+            # valid doors and can isolate the episode's starting position.
             ReplanningAStarPlanner.blueprint(
-                robot_width=0.2,
-                robot_rotation_diameter=0.2,
+                robot_width=0.0,
+                robot_rotation_diameter=0.0,
             ),
             SpatialMemory.blueprint(
                 db_path=str(memory_root / "chromadb"),

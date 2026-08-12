@@ -130,7 +130,7 @@ repeated `python_exec` calls while the native environment advances. The native
 terminal condition or evaluator timeout stops Pi and closes the workspace.
 
 VLN-CE R2R uses this profile because navigation requires new decisions as
-observations arrive. Its checked-in case shares a 300-second wall-clock horizon
+observations arrive. Its checked-in case shares a 600-second wall-clock horizon
 between Habitat and Pi and ends only when the agent calls
 `app.VlnceConnection.submit_route()` or the horizon expires. See
 `dimos/benchmark/vlnce_r2r/README.md` for its condition and evidence contract.

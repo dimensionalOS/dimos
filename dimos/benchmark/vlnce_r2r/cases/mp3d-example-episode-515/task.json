@@ -92,7 +92,7 @@
     "driver_revision": "live-agent-v1",
     "session_lifetime": "one_attempt",
     "completion": "agent_or_native_terminal",
-    "timeout_seconds": 300.0
+    "timeout_seconds": 600.0
   },
   "validator": {
     "schema_version": "1.0",
@@ -116,5 +116,5 @@
       "condition_label"
     ]
   },
-  "fingerprint": "6a1b363b63406b7985b875774c5f4e6671767ded1c2380bba0521c4afd37ef7c"
+  "fingerprint": "a1e135efb106c6a27589e969ecd75bad286ac79ef7db263b528da1065d7f9d1e"
 }

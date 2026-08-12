@@ -161,6 +161,42 @@ def test_submit_route_is_a_benchmark_scoped_skill_without_arguments() -> None:
     assert "VLN-CE STOP" in VlnceConnection.submit_route.__doc__
 
 
+def test_planner_commands_are_bounded_to_the_public_contract(tmp_path) -> None:
+    connection = VlnceConnection(
+        socket_path=str(tmp_path / "public.sock"),
+        attempt_id="attempt-1",
+        case_id="case-1",
+        episode_id="515",
+    )
+    connection._state = "running"
+    connection._command_ready.set()
+    try:
+        connection._on_cmd_vel(Twist(linear=[2.0, -3.0, 4.0], angular=[5.0, 6.0, -7.0]))
+
+        request = connection._requests.get_nowait()
+        assert isinstance(request, pb.ClientMessage)
+        assert request.control.linear_x == connection._expected.max_linear_x
+        assert request.control.linear_y == -connection._expected.max_linear_y
+        assert request.control.angular_z == -connection._expected.max_angular_z
+    finally:
+        connection.stop()
+
+
+def test_direct_control_rejects_values_outside_the_public_contract(tmp_path) -> None:
+    connection = VlnceConnection(
+        socket_path=str(tmp_path / "public.sock"),
+        attempt_id="attempt-1",
+        case_id="case-1",
+        episode_id="515",
+    )
+
+    try:
+        with pytest.raises(VlnceConnectionError, match="exceeds the negotiated limit"):
+            connection.move(Twist(angular=[0.0, 0.0, 1.1]))
+    finally:
+        connection.stop()
+
+
 def test_connection_runs_begin_control_and_submission_over_real_uds(tmp_path) -> None:
     socket_path = tmp_path / "public.sock"
     connection = VlnceConnection(
