@@ -701,4 +701,8 @@ ignore = [
     "dimos/manipulation/manipulation_module.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
+    # TEMPORARY (2026-08-12): vendored mini4pro Android tree. This hook is always_run
+    # with pass_filenames: false, so the top-level exclude in .pre-commit-config.yaml
+    # does not reach it and the path needs listing here too. Remove both together.
+    "dimos/robot/drone/mini4pro/*",
 ]

@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Reach the phone's adb while its USB port belongs to the RC.
+#
+#   eval "$(tools/phoneadb env)"   # export ADB_SERVER_SOCKET into this shell
+#   tools/phoneadb up              # bring the tunnel up and attach the phone
+#   tools/phoneadb status          # is it working right now?
+#   tools/phoneadb down            # close the tunnel (the phone stays paired)
+#   tools/phoneadb <anything else> # run an adb command through the tunnel
+#
+# Why this exists: the phone has ONE USB-C port and the RC owns it during any
+# flight or measurement, so USB adb and flying are mutually exclusive. Wireless
+# adb straight from this laptop does not work either — laptop<->phone unicast is
+# blackholed by the AP (wifi-fix.md), which is the same reason MAVLink goes
+# through a relay on hyper1. Every path involving a wired host is reliable, so
+# adb takes the same detour the telemetry does:
+#
+#   laptop --ssh tunnel--> hyper1 (adb server) --wifi--> phone
+#
+# hyper1 runs the adb server and holds its own authorised key; this laptop is a
+# client of that server over SSH. Nothing listens on the LAN — an adb server
+# reachable from the network is a shell on the phone for anyone who finds it,
+# which is why the port is forwarded over SSH instead of bound to 0.0.0.0.
+#
+# Deliberately not a systemd service: the tunnel exists for as long as someone is
+# working, and a boot-enabled path to a shell on the phone is not something to
+# leave running unattended.
+set -euo pipefail
+
+# Both names have been correct at different times today: `.mv` is the local DNS
+# suffix and stops resolving whenever the resolver changes underneath us (a
+# Tailscale exit node was enough), while the short name keeps working. Try each
+# and use whichever answers, rather than making the operator remember which
+# network they are on. Override with PHONEADB_HOST.
+pick_host() {
+    for h in "$@"; do
+        if ssh -o ConnectTimeout=5 -o BatchMode=yes "$h" true >/dev/null 2>&1; then
+            echo "$h"; return 0
+        fi
+    done
+    # Nothing answered: return the first so the caller fails with a real message
+    # naming a host, rather than with an empty string.
+    echo "$1"
+}
+HOST=${PHONEADB_HOST:-$(pick_host hyper1 hyper1.mv)}
+# The flight phone as of 2026-07-30 is the Samsung A26 (SM-A266B) at .171; the old
+# .15 handset is still paired to hyper1 and reachable with PHONEADB_PHONE=10.55.1.15.
+PHONE=${PHONEADB_PHONE:-10.55.1.171}
+LOCAL_PORT=${PHONEADB_LOCAL_PORT:-5038}
+# Google's platform-tools, not Debian's: bookworm ships adb 29.0.6, which predates
+# wireless debugging entirely (no `adb pair`, no TLS connect).
+RADB=${PHONEADB_RADB:-\~/platform-tools/adb}
+
+sock="tcp:localhost:${LOCAL_PORT}"
+
+tunnel_up() {
+    # -f would background before the forward is ready; setsid keeps the tunnel
+    # alive when the shell that started it goes away.
+    if ss -tln 2>/dev/null | grep -q "127.0.0.1:${LOCAL_PORT}"; then return 0; fi
+    setsid nohup ssh -N -L "${LOCAL_PORT}:localhost:5037" "$HOST" \
+        >/dev/null 2>&1 </dev/null &
+    for _ in $(seq 20); do
+        sleep 0.25
+        ss -tln 2>/dev/null | grep -q "127.0.0.1:${LOCAL_PORT}" && return 0
+    done
+    echo "phoneadb: tunnel to $HOST did not come up" >&2
+    return 1
+}
+
+# The wireless-debugging port is random and changes whenever the phone toggles
+# the feature or reboots, so it is discovered rather than configured. mDNS would
+# be the documented way; it does not cross this network, hence the scan.
+#
+# **Every hit, not the first one.** Wireless debugging opens more than one port —
+# the TLS-connect port, the pairing port while that dialog is up, and whatever
+# else the phone happens to be listening on — and which is which is not visible
+# from a TCP handshake. On 2026-07-27 the first hit (42755) was a port that
+# accepted a connection and then refused every `adb connect`, while the real one
+# (45889) was third in the list; taking hits[0] made a working phone look
+# unreachable and cost a manual debug in the middle of a bench session. So the
+# ports are returned in order and the caller tries each until one attaches.
+find_ports() {
+    ssh "$HOST" "python3 - <<'EOF'
+import socket, concurrent.futures as cf
+def probe(p):
+    s = socket.socket(); s.settimeout(0.3)
+    try:
+        s.connect(('${PHONE}', p)); s.close(); return p
+    except Exception:
+        return None
+with cf.ThreadPoolExecutor(300) as ex:
+    hits = [p for p in ex.map(probe, range(30000, 50000)) if p]
+print(' '.join(str(p) for p in hits))
+EOF"
+}
+
+case "${1:-}" in
+env)
+    echo "export ADB_SERVER_SOCKET=${sock}"
+    ;;
+up)
+    tunnel_up
+    if ADB_SERVER_SOCKET="$sock" adb devices 2>/dev/null | grep -q "${PHONE}:.*device"; then
+        echo "phoneadb: already attached"
+        ADB_SERVER_SOCKET="$sock" adb devices | tail -n +2
+        exit 0
+    fi
+    ports=$(find_ports)
+    if [ -z "$ports" ]; then
+        # Almost always this: wireless debugging is off. It cannot be switched on
+        # from here, because the only way in is the thing that is off.
+        echo "phoneadb: no adb port open on ${PHONE}." >&2
+        echo "  Turn on Settings > Developer options > Wireless debugging," >&2
+        echo "  or plug USB in and run: adb shell settings put global adb_wifi_enabled 1" >&2
+        exit 1
+    fi
+    # A port that once worked and has since died stays in the server's table as
+    # `offline` and will shadow a good one, so each candidate is dropped before it
+    # is tried. Dropping a port that is not there is harmless.
+    attached=""
+    for port in $ports; do
+        ssh "$HOST" "$RADB disconnect ${PHONE}:${port}" >/dev/null 2>&1 || true
+        if ssh "$HOST" "$RADB connect ${PHONE}:${port}" 2>&1 | grep -q "^connected"; then
+            attached="$port"
+            break
+        fi
+    done
+    if [ -z "$attached" ]; then
+        echo "phoneadb: ${PHONE} has ports open (${ports}) but none of them accepted adb." >&2
+        echo "  The phone is usually paired to a different host, or pairing was revoked." >&2
+        echo "  Re-pair from Wireless debugging > Pair device with pairing code, then:" >&2
+        echo "    ssh ${HOST} '${RADB} pair ${PHONE}:<pairing-port> <code>'" >&2
+        exit 1
+    fi
+    echo "phoneadb: attached on ${PHONE}:${attached}"
+    sleep 1
+    ADB_SERVER_SOCKET="$sock" adb devices | tail -n +2
+    ;;
+status)
+    if ! ss -tln 2>/dev/null | grep -q "127.0.0.1:${LOCAL_PORT}"; then
+        echo "tunnel: down"
+    else
+        echo "tunnel: up (localhost:${LOCAL_PORT} -> ${HOST}:5037)"
+        ADB_SERVER_SOCKET="$sock" adb devices | tail -n +2
+    fi
+    ;;
+down)
+    pkill -f "ssh -N -L ${LOCAL_PORT}:localhost:5037" || true
+    echo "phoneadb: tunnel closed (the phone stays paired to ${HOST})"
+    ;;
+"")
+    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+*)
+    tunnel_up
+    ADB_SERVER_SOCKET="$sock" exec adb "$@"
+    ;;
+esac

@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Two intrinsics this project has only ever assumed, measured from a tag already flown.
+
+    tools/tagoptics tmp/corners-25hz.csv datasets/.../20260727-192417.001.jsonl
+
+`tools/memexport` publishes `fx == fy` and a principal point at the image centre. Both are
+assumptions labelled as such in `camera_info`'s `provenance`. This measures them from the corner
+tracks `tools/tagcorners` writes, on flights recorded for something else.
+
+1. **Square pixels.** A square tag on level ground under a nadir gimbal projects to a square, so
+   with `A` the matrix of its two edge vectors, `A @ A.T` is diagonal and the ratio of its
+   entries is `(fx/fy)^2` — free of the tag's heading, the aircraft's yaw and the height.
+2. **The principal point, from a descent.** The tag slides outward along a ray as it grows;
+   extrapolate to zero scale and the intercept is the image of a tag infinitely far away.
+   `--no-drift` refits without the sideways-drift correction, so the gap between the two shows
+   how much of the answer rests on the position record.
+
+**Read the second one with the caveat that comes with it**: a gimbal off true nadir by `delta`
+is algebraically indistinguishable from a principal point offset by `f*tan(delta)`, and two
+flights disagreed by 82 px. Neither number replaces a chessboard.
+
+Full rationale: `docs/tools/camera-intrinsics.md`. The findings:
+`docs/measurements/2026-07-28-camera-intrinsics-prior.md`.
+"""
+
+import argparse
+import json
+import math
+import sys
+
+import numpy as np
+
+TAG_M = 0.075
+EARTH_R = 6378137.0
+
+
+def load_corners(path):
+    rows = []
+    with open(path) as fh:
+        next(fh)
+        for line in fh:
+            v = line.strip().split(",")
+            rows.append(
+                (
+                    int(v[0]),
+                    float(v[1]),
+                    int(v[2]),
+                    np.array([float(x) for x in v[5:13]]).reshape(4, 2),
+                    float(v[13]),
+                )
+            )
+    return rows
+
+
+def affine(p):
+    """The tag's affine part: columns are the two edge vectors, opposite edges averaged."""
+    e1 = ((p[1] - p[0]) + (p[2] - p[3])) / 2.0
+    e2 = ((p[3] - p[0]) + (p[2] - p[1])) / 2.0
+    return np.stack([e1, e2], axis=1)
+
+
+def load_state(path):
+    """Camera position and attitude per record time, carrying delta-encoded fields forward.
+
+    `dji_state` omits a field when it has not changed, so a naive reader sees a sparse series
+    and a careless one sees zeros. Carrying forward is what `replay/` does and is what the
+    field actually means.
+    """
+    out, cur = [], {}
+    with open(path) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("k") != "dji_state":
+                continue
+            for key in ("lat", "lon", "relalt", "yaw", "roll", "pitch"):
+                if key in o:
+                    cur[key] = o[key]
+            if {"lat", "lon", "relalt"} <= cur.keys():
+                out.append((o["t"], dict(cur)))
+    return out
+
+
+def load_gimbal(path):
+    """Gimbal attitude per record time, carried forward like `dji_state`."""
+    out, cur = [], {}
+    with open(path) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("k") != "gimbal":
+                continue
+            for key in ("p", "r", "y"):
+                if key in o:
+                    cur[key] = o[key]
+            if cur:
+                out.append((o["t"], dict(cur)))
+    return out
+
+
+def at(states, t):
+    lo, hi = 0, len(states) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if states[mid][0] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    return states[max(0, lo - 1)][1]
+
+
+def lstsq_report(X, y, names):
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    resid = y - X @ beta
+    dof = max(1, len(y) - X.shape[1])
+    s2 = float(resid @ resid) / dof
+    cov = s2 * np.linalg.pinv(X.T @ X)
+    se = np.sqrt(np.diag(cov))
+    return beta, se, float(np.sqrt(s2))
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("corners")
+    ap.add_argument("record")
+    ap.add_argument("--width", type=int, default=1920)
+    ap.add_argument("--height", type=int, default=1080)
+    ap.add_argument(
+        "--min-edge",
+        type=float,
+        default=45.0,
+        help="ignore detections whose longest edge is below this, px",
+    )
+    ap.add_argument(
+        "--gimbal-tol",
+        type=float,
+        default=0.5,
+        help="drop detections where the recorded gimbal is further than this many "
+        "degrees from nadir",
+    )
+    ap.add_argument(
+        "--no-drift",
+        action="store_true",
+        help="fit the principal point without the drift correction",
+    )
+    args = ap.parse_args()
+
+    rows = [r for r in load_corners(args.corners) if r[4] >= args.min_edge]
+    if len(rows) < 30:
+        sys.exit("only %d detections above %.0f px" % (len(rows), args.min_edge))
+    states = load_state(args.record)
+    cx0, cy0 = args.width / 2.0, args.height / 2.0
+
+    # **Both flights end by returning the gimbal to level, and both do it while the tag is
+    # still in frame and at its largest.** Every geometric claim below assumes the camera is
+    # looking straight down at a plane parallel to the sensor; a frame taken mid-sweep breaks
+    # that assumption completely, and those frames carry the most weight because the tag is
+    # nearest. Gating on the recorded gimbal attitude is not tidying, it is the difference
+    # between a measurement and an average of one.
+    gim = load_gimbal(args.record)
+    kept = []
+    for r in rows:
+        g = at(gim, r[1]) if gim else {}
+        if (
+            abs(g.get("p", -90.0) + 90.0) > args.gimbal_tol
+            or abs(g.get("r", 0.0)) > args.gimbal_tol
+        ):
+            continue
+        kept.append(r)
+    dropped, rows = len(rows) - len(kept), kept
+    if len(rows) < 30:
+        sys.exit("only %d detections left after the gimbal gate" % len(rows))
+
+    print(
+        "%d detections at or above %.0f px, t = %.2f .. %.2f s  (%d dropped: gimbal "
+        "further than %.1f deg from nadir)"
+        % (len(rows), args.min_edge, rows[0][1], rows[-1][1], dropped, args.gimbal_tol)
+    )
+
+    # ── 1. square pixels ─────────────────────────────────────────────────────
+    ratios, skews, scales = [], [], []
+    for _, _, _, p, _ in rows:
+        A = affine(p)
+        M = A @ A.T
+        ratios.append(math.sqrt(M[0, 0] / M[1, 1]))
+        skews.append(M[0, 1] / math.sqrt(M[0, 0] * M[1, 1]))
+        scales.append(math.sqrt(abs(np.linalg.det(A))))
+    ratios, skews, scales = np.array(ratios), np.array(skews), np.array(scales)
+    med = float(np.median(ratios))
+    mad = 1.4826 * float(np.median(np.abs(ratios - med)))
+    se = mad / math.sqrt(len(ratios))
+    sk = float(np.median(skews))
+    f0 = 0.7589 * args.width
+    print("\n1. SQUARE PIXELS   from the shape of A A^T")
+    print(
+        "   axis-aligned ratio sqrt(M00/M11) = %.5f   sd %.5f   se %.5f   n=%d"
+        % (med, mad, se, len(ratios))
+    )
+    print(f"   off-diagonal (skew) = {sk:+.5f} = {math.degrees(math.asin(sk)):+.3f} deg")
+
+    # ── the discriminator ────────────────────────────────────────────────────
+    #
+    # Read naively, the ratio above IS fx/fy and the answer is "0.3 % off square". That reading
+    # is wrong, and the skew is what says so.
+    #
+    # A pixel-aspect anisotropy is diag(fx, fy): it stretches along the IMAGE AXES and can
+    # produce no off-diagonal term at all, ever. A tilted target plane also makes A A^T
+    # anisotropic, but along whatever direction the plane happens to be tilted about, which is
+    # generally not an image axis and therefore does show up as skew.
+    #
+    # So diagonalise the observed M and look at where its principal axis points. Near 0 or 90
+    # degrees is consistent with pixel aspect; anything else cannot be pixel aspect and is a
+    # tilted plane — the gimbal a degree or two off nadir, or ground that is not level, or the
+    # pallet the tag was sitting on.
+    M = np.array([[med**2, sk * med], [sk * med, 1.0]])
+    evals, evecs = np.linalg.eigh(M)
+    axis = math.degrees(math.atan2(evecs[1, -1], evecs[0, -1])) % 180.0
+    aniso = math.sqrt(evals[-1] / evals[0])
+    tilt = math.degrees(math.acos(min(1.0, 1.0 / aniso)))
+    print(f"   total anisotropy {aniso:.4f} along an axis {axis:.1f} deg from image x")
+    print(
+        "   pixel aspect can only act at 0 or 90 deg; {:.1f} deg is {}".format(
+            axis,
+            "consistent with it"
+            if min(axis, abs(axis - 90), abs(axis - 180)) < 15
+            else "NOT pixel aspect — this is a tilted target plane",
+        )
+    )
+    print(f"   a plane tilted {tilt:.1f} deg reproduces the whole of it")
+    print(
+        "   -> fx/fy = 1 is consistent with these corners; the axis-aligned %+.3f %% is a"
+        % (100 * (1 / med - 1))
+    )
+    print(
+        "      projection of the tilt, and %+.1f px on fy is its worst case if it is not"
+        % (f0 / med - f0)
+    )
+
+    # ── 2. principal point ───────────────────────────────────────────────────
+    lat0 = at(states, rows[0][1])["lat"]
+    lon0 = at(states, rows[0][1])["lon"]
+    Xc, Yc, _cols_u, _cols_v, u, v, yaws = [], [], [], [], [], [], []
+    for _, t, _, p, _ in rows:
+        st = at(states, t)
+        e = math.radians(st["lon"] - lon0) * EARTH_R * math.cos(math.radians(lat0))
+        n = math.radians(st["lat"] - lat0) * EARTH_R
+        Xc.append(e)
+        Yc.append(n)
+        yaws.append(st.get("yaw", float("nan")))
+        c = p.mean(axis=0)
+        u.append(c[0])
+        v.append(c[1])
+    Xc, Yc = np.array(Xc), np.array(Yc)
+    u, v, s = np.array(u), np.array(v), scales
+    one = np.ones_like(s)
+
+    if args.no_drift:
+        X = np.stack([one, s], axis=1)
+        names = ["c", "d"]
+    else:
+        X = np.stack([one, s, s * Xc, s * Yc], axis=1)
+        names = ["c", "d", "mE", "mN"]
+
+    bu, seu, ru = lstsq_report(X, u, names)
+    bv, sev, rv = lstsq_report(X, v, names)
+    print("\n2. PRINCIPAL POINT   intercept of the tag track extrapolated to zero scale")
+    print(
+        f"   scale s = {s.min():.1f} .. {s.max():.1f} px (lever {s.max() / s.min():.1f}x);  drift over the fit: E {np.ptp(Xc):.2f} m, N {np.ptp(Yc):.2f} m"
+    )
+    print(
+        f"   cx = {bu[0]:8.2f} +/- {seu[0]:5.2f}   (image centre {cx0:.1f}, offset {bu[0] - cx0:+.2f} px, {100 * (bu[0] - cx0) / args.width:+.2f} % of width)"
+    )
+    print(
+        f"   cy = {bv[0]:8.2f} +/- {sev[0]:5.2f}   (image centre {cy0:.1f}, offset {bv[0] - cy0:+.2f} px, {100 * (bv[0] - cy0) / args.height:+.2f} % of height)"
+    )
+    print(f"   fit residual: {ru:.2f} px in u, {rv:.2f} px in v")
+
+    if not args.no_drift:
+        # The recovered drift-to-image matrix must be a rotation scaled by f/(S*H)-free terms;
+        # what is checkable without any of that is its ANGLE against the recorded yaw.
+        M = np.array([[bu[2], bu[3]], [bv[2], bv[3]]])
+        ang = math.degrees(math.atan2(M[1, 0] - M[0, 1], M[0, 0] + M[1, 1]))
+        norms = (math.hypot(*M[0]), math.hypot(*M[1]))
+        yy = np.array([y for y in yaws if y == y])
+        print(
+            f"   drift matrix angle {ang:+.1f} deg, row norms {norms[0]:.1f} / {norms[1]:.1f} (equal if a rotation)"
+        )
+        if len(yy):
+            print(
+                f"   recorded yaw over the fit: {yy.min():.1f} .. {yy.max():.1f} deg (median {float(np.median(yy)):.1f})"
+            )
+
+
+if __name__ == "__main__":
+    main()

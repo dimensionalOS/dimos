@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Landscape, mounted on the RC, read at arm's length. Two consequences shape
+  everything here.
+
+  **Vertical space is the scarce thing.** Every row of chrome above the log
+  steals from the only part of the screen with detail in it, so the chrome is
+  one strip and the controls float beside it rather than stacking. The GCS
+  address moved into a settings dialog for the same reason: it is set once a
+  session and then only ever read, so it belongs in the status strip as text,
+  not in an EditText that costs a permanent row.
+
+  **The right edge belongs to Android.** In landscape the navigation bar sits
+  there, and a control under it is a control you cannot press — the interlock
+  spent a day half-hidden behind the home button. The activity now goes
+  immersive (MainActivity.hideSystemBars), and the buttons keep a margin anyway,
+  because immersive mode is a request that a swipe undoes.
+
+  **The picture is the background, not a panel.** The situation view is the first
+  child and fills the frame, so the status text sits directly on top of it. That
+  is Ivan's ask verbatim — "smoothly in the background of the terminal" — and it
+  is also the only layout that costs the log nothing: a map given its own half of
+  a landscape phone would halve the one part of this screen with detail in it.
+  Everything the view draws is dim and mostly unfilled for the same reason; the
+  words stay the operator's primary channel and the picture is context under them.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/terminal_bg">
+
+    <com.dimensional.mini4pro.SituationView
+        android:id="@+id/situation"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!--
+          The interlock and the state banner share one strip: the switch decides
+          whether QGC may move the aircraft, the text says what that currently
+          means and where the telemetry is going, and the colour carries the same
+          ranking a third time. Control and consequence as one object.
+
+          The thumb is FIRST so it never lands under the navigation bar, and the
+          end margin keeps the text clear of the floating buttons.
+        -->
+        <LinearLayout
+            android:id="@+id/commandRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="152dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp">
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/commands"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="false" />
+
+            <TextView
+                android:id="@+id/banner"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:fontFamily="monospace"
+                android:textColor="@color/chrome_fg"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:text="…" />
+        </LinearLayout>
+
+        <!--
+          **The at-a-glance block, above the scrolling log and outside it.**
+
+          Everything below scrolls, which means everything below can be scrolled
+          away from. These three lines are the ones an operator wants without
+          looking for them — how much battery is left, where the aircraft is
+          relative to where it started, and whether the camera can see the tag —
+          so they sit still while the log moves underneath.
+        -->
+        <TextView
+            android:id="@+id/vitals"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="6dp"
+            android:fontFamily="monospace"
+            android:textColor="@color/chrome_fg"
+            android:textSize="13sp"
+            android:text="battery —   pos —" />
+
+        <TextView
+            android:id="@+id/tagVitals"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="4dp"
+            android:fontFamily="monospace"
+            android:textColor="@color/tag_seen"
+            android:textSize="13sp"
+            android:text="tag —" />
+
+        <ScrollView
+            android:id="@+id/statusScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:paddingTop="8dp">
+
+            <TextView
+                android:id="@+id/status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/terminal_fg"
+                android:text="starting…"
+                android:textSize="13sp" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!--
+      Floating, top-right, over the log. The end margin clears the navigation
+      bar even when immersive mode has been swiped away; the buttons are narrow
+      and stacked so they cost no vertical space from the log at all.
+    -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="6dp"
+        android:layout_marginEnd="40dp"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/toggle"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Start bridge" />
+
+        <Button
+            android:id="@+id/simulator"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Simulator…" />
+
+        <Button
+            android:id="@+id/settings"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Settings…" />
+
+        <Button
+            android:id="@+id/replay"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Replay…" />
+
+        <!--
+          **Video recording, and deliberately over here rather than beside the
+          interlock.** It writes ~625 kB/s to the phone and cannot move an
+          aircraft; the switch top-left arms flight commands. Nothing that only
+          costs disk belongs next to the thing that costs altitude.
+        -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/videoRecord"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:checked="true"
+            android:textSize="11sp"
+            android:textColor="@color/chrome_fg"
+            android:text="Record video" />
+
+        <!--
+          **The tag detector, beside video recording and for the same reason.** It
+          cannot move an aircraft; what it costs is CPU and therefore heat, on a
+          phone clamped to a controller in the sun. Measured on the aircraft: 0.06
+          cores attached and disarmed, 0.68 over the floor while running.
+
+          Three states on one control, because the common case is to leave it
+          alone: tap toggles between AUTO and OFF, long-press forces it on for a
+          bench experiment. The label always says which — see
+          MainActivity.wireTagDetector.
+        -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/tagDetect"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:checked="true"
+            android:textSize="11sp"
+            android:textColor="@color/tag_seen"
+            android:text="Tags: auto" />
+
+        <!--
+          **The phone's own Take off** — above the descent control it exists to serve
+          (take off to 10 m, camera to nadir at DJI's handback, so the tag work below
+          has a camera that TagWorld will believe), and deliberately NOT in the
+          withdrawals corner, for that corner's own rule: a hand reaching to stop an
+          aircraft must not land on something that launches one.
+
+          GONE during a replay and without a connected aircraft (MainActivity
+          .renderTakeoff): a launch control with nothing to launch is a button that can
+          only refuse. Arming asks first — the interlock's confirm-to-enable asymmetry,
+          the descend button's dialog pattern — and a press with the interlock off is
+          refused by naming the interlock, on screen.
+        -->
+        <Button
+            android:id="@+id/takeOff"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:visibility="gone"
+            android:text="Take off…" />
+
+        <!--
+          **M3 Stage D: the tag-descent arm control** — beside the tag switch it depends on,
+          and deliberately NOT in the withdrawals corner: that corner's whole argument is that
+          a hand reaching to stop an aircraft must not land on something that arms one.
+
+          GONE until a tag is latched (MainActivity.renderDescend): an arm control for a
+          descent with no sensor is a button that can only refuse, and the brief's rule is
+          that the option appears only when the tag is there. Arming asks first (the
+          interlock's confirm-to-enable asymmetry); disarming — the same button while armed —
+          is immediate, like every withdrawal.
+        -->
+        <Button
+            android:id="@+id/descendTag"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:visibility="gone"
+            android:text="Descend on tag…" />
+
+        <!--
+          **Stage C: the full-autoland option** — a separate, explicit toggle beside the arm
+          control it modifies, **ON at every start** and never remembered, because "this descent
+          will put the aircraft on the ground" is a decision the operator takes per arm, not a
+          preference. Read once, at the moment of the arm press (MainActivity.wireTagDescent);
+          flipping it mid-descent changes nothing, which the engine guarantees by pinning the
+          option into the run. Visible exactly when the arm control is (renderDescend), so the
+          two are read together: plain Stage B stops holding ~0.6 m above the tag; with this
+          on, the same arm continues past the hold to touchdown.
+
+          The default was OFF until 2026-07-30, when Ivan asked for it on ("can we make this
+          last stretch autoland the default toggled on in the app?") after thirteen recorded
+          descents and a landing that flew itself. Only the DEFAULT moved: the toggle is still
+          read at the arm, the arm still puts up the "Arm FULL AUTOLAND?" dialog naming where
+          the flight ends, and every gate the engine applies is untouched. The state is always
+          in the caption (android:text must agree with android:checked, because the listener
+          only fires on a change and would leave a first-run label lying).
+        -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/fullAutoland"
+            android:layout_width="136dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:checked="true"
+            android:textSize="11sp"
+            android:textColor="@color/tag_seen"
+            android:visibility="gone"
+            android:text="Autoland: ON" />
+    </LinearLayout>
+
+    <!--
+      **The shadow comparison instrument** — two velocity arrows, the operator's sticks and
+      the shadow controller's would-be command, in an oblique projection so the descent
+      component is visible. Bottom-centre, away from both the interlock corner and the
+      withdrawal corner: it is a display, and it must not sit where a hand in a hurry lands.
+      GONE except during a shadow segment (MainActivity.renderShadowCompare) — its absence is
+      the truthful signal that no shadow is running.
+    -->
+    <com.dimensional.mini4pro.ShadowCompareView
+        android:id="@+id/shadowCompare"
+        android:layout_width="170dp"
+        android:layout_height="140dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="10dp"
+        android:visibility="gone" />
+
+    <!--
+      **The withdrawal controls, bottom-left — as far from the interlock switch
+      as this screen goes.**
+
+      The interlock lives top-left and is a small switch. These are large blocky
+      buttons at the opposite corner, in a different colour, with one-word labels.
+      Nothing about them reads like the switch, which is the point: a hand
+      reaching in a hurry must land on the right thing without a decision, and
+      the failure mode of confusing them is arming an aircraft while trying to
+      stop one.
+
+      STOP is the outermost and the larger of the two, because it is the one
+      wanted in the worst moment. PAUSE sits above it. Both are always present
+      and greyed when there is nothing to withdraw — a control that moves or
+      appears is a control that has to be found first.
+
+      There is deliberately no Start here. M4-2 puts mission Start in QGC; adding
+      one would be a new decision (docs/decisions/2026-07-27-m4-eighteen-answers.md).
+    -->
+    <LinearLayout
+        android:id="@+id/withdrawals"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="8dp"
+        android:orientation="vertical">
+
+        <Button
+            android:id="@+id/pauseManoeuvre"
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:minHeight="0dp"
+            android:paddingVertical="10dp"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:text="PAUSE" />
+
+        <Button
+            android:id="@+id/stopManoeuvre"
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:minHeight="0dp"
+            android:paddingVertical="16dp"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:text="STOP" />
+    </LinearLayout>
+
+    <!--
+      The replay strip. Hidden entirely when nothing is being replayed, so it can
+      never be a thing on screen that is merely inactive — its presence *is* the
+      statement that what you are looking at is not the aircraft. The picture
+      behind it is watermarked at the same time and the command strip changes
+      wording and colour; three independent indicators, because any one of them
+      is a thing an operator can miss.
+    -->
+    <LinearLayout
+        android:id="@+id/replayBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="40dp"
+        android:layout_marginBottom="8dp"
+        android:background="@color/state_replay"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/replayLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:text="REPLAY" />
+
+        <Button
+            android:id="@+id/replayPlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:minWidth="72dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Play" />
+
+        <Button
+            android:id="@+id/replayClose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:minWidth="72dp"
+            android:minHeight="0dp"
+            android:paddingVertical="6dp"
+            android:textSize="12sp"
+            android:text="Close" />
+    </LinearLayout>
+</FrameLayout>

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Compile and run `ZenohParity` against the app's own compiled Kotlin classes.
+#
+#     tools/zenohparity/run > tmp/kotlin-parity.jsonl
+#
+# The counterpart of `tools/kotlinframes/run`, and a copy of it in every mechanical detail — the
+# offline gradle build, the classpath, the stdlib hunt, the recompile-only-when-stale rule. What
+# differs is what it drives: `KotlinFrames` runs a *record* through `ZenohReplay`, and the three
+# streams this project just grew cannot go through that path because a `ReplaySample` carries
+# neither a gimbal nor a video geometry. This drives `ZenohTelemetryEncoder` directly, on planted
+# inputs, which is what is left and is enough — both sides are pure functions of those numbers.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+classes="$repo/android/app/build/tmp/kotlin-classes/debug"
+out="$repo/tmp/zenohparity-classes"
+
+if [ "${SKIP_GRADLE:-0}" != "1" ]; then
+    (cd "$repo/android" && ./gradlew --offline -q :app:compileDebugKotlin)
+fi
+
+if [ ! -d "$classes" ]; then
+    echo "no compiled Kotlin at $classes -- run android/gradlew :app:compileDebugKotlin" >&2
+    exit 1
+fi
+
+stdlib="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2*.jar' 2>/dev/null | head -1)"
+if [ -z "$stdlib" ]; then
+    echo "kotlin-stdlib jar not found under ~/.gradle/caches" >&2
+    exit 1
+fi
+
+mkdir -p "$out"
+if [ ! -f "$out/ZenohParity.class" ] || [ "$here/ZenohParity.java" -nt "$out/ZenohParity.class" ] \
+   || [ "$classes" -nt "$out/ZenohParity.class" ]; then
+    javac -nowarn -cp "$classes:$stdlib" -d "$out" "$here/ZenohParity.java"
+fi
+
+exec java -cp "$out:$classes:$stdlib" ZenohParity "$@"

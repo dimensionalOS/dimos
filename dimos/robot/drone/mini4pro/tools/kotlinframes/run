@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Compile and run `KotlinFrames` against the app's own compiled Kotlin classes.
+#
+#     tools/kotlinframes/run <out.jsonl> <record.jsonl> [more parts...]
+#
+# Why this exists: `tools/memexport` and `tools/zenohreplay` are Python re-derivations of
+# rules that live in Kotlin, and a re-derivation is only evidence if something checks it
+# against the original. This is the shortest path to the original's actual bytes -- it
+# runs `ZenohReplay`/`ZenohTelemetryEncoder` bytecode, not a description of them.
+#
+# It builds the app's debug Kotlin (offline, so it never reaches the network) and puts
+# `app/build/tmp/kotlin-classes/debug` plus kotlin-stdlib on the classpath. The replay and
+# zenoh packages import nothing from Android or the DJI SDK -- checked, and the reason the
+# whole thing runs on a desktop JVM at all -- so no android.jar is needed.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+classes="$repo/android/app/build/tmp/kotlin-classes/debug"
+out="$repo/tmp/kotlinframes-classes"
+
+if [ "${SKIP_GRADLE:-0}" != "1" ]; then
+    (cd "$repo/android" && ./gradlew --offline -q :app:compileDebugKotlin)
+fi
+
+if [ ! -d "$classes" ]; then
+    echo "no compiled Kotlin at $classes -- run android/gradlew :app:compileDebugKotlin" >&2
+    exit 1
+fi
+
+stdlib="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2*.jar' 2>/dev/null | head -1)"
+if [ -z "$stdlib" ]; then
+    echo "kotlin-stdlib jar not found under ~/.gradle/caches" >&2
+    exit 1
+fi
+
+mkdir -p "$out"
+# Recompile only when the source is newer than the class, so a repeated cross-check in a
+# --selftest loop costs nothing.
+if [ ! -f "$out/KotlinFrames.class" ] || [ "$here/KotlinFrames.java" -nt "$out/KotlinFrames.class" ] \
+   || [ "$classes" -nt "$out/KotlinFrames.class" ]; then
+    javac -nowarn -cp "$classes:$stdlib" -d "$out" "$here/KotlinFrames.java"
+fi
+
+exec java -cp "$out:$classes:$stdlib" KotlinFrames "$@"

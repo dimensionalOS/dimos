@@ -1,0 +1,1934 @@
+#!/usr/bin/env python3
+"""Validate a MAVLink stream with pymavlink — independently of our own encoder.
+
+Our JUnit tests encode with `io.dronefleet.mavlink` and assert with the same library, so they
+prove our arithmetic matches our intent and nothing more. mavverify is the second opinion: it
+decodes with **pymavlink** and checks the wire (framing, CRCs, sequence continuity, MAVLink 2,
+sysid/compid), the measured per-message rates, physical plausibility, and unit agreement
+*between our own messages* — a 1000x (mm vs m) or 100x (cdeg vs deg) disagreement no test that
+restates the implementation can notice. With `--expect-*` it adds the one check no software
+test can substitute for: the stream against the aircraft's real measured position.
+
+    tools/mavverify capture.jsonl                      # a mavcapture-1 file
+    tools/mavverify --port 14550 --seconds 20          # live, sitting where QGC sits
+    tools/mavcapture --from-pcap tap.pcap --out tap.jsonl && tools/mavverify tap.jsonl
+                                                       # a read-only tcpdump tap at the relay,
+                                                       # the way to verify without disturbing QGC
+    tools/mavverify capture.jsonl --require-set none   # wire+units only, no schedule
+    tools/mavverify capture.jsonl --expect-site ground-probe        # ground truth
+    tools/mavverify capture.jsonl --expect-lat 37.99386 --expect-lon 23.72533 \
+                                 --expect-amsl 103.2 --tolerance-m 50
+    tools/mavverify --list-checks                      # every check + its provenance
+    tools/mavverify --show-limits                      # every declared limit + source
+
+Exits non-zero on any FAIL (and on WARN with --strict), so it works as a pre-flight gate. Run
+inside the nix dev shell — it provides pymavlink.
+
+Full rationale — the four layers, what each cannot catch, and the pre-flight procedure:
+`docs/verification.md`.
+"""
+
+import argparse
+import bisect
+import collections
+import itertools
+import json
+import math
+import socket
+import sys
+import time
+
+from pymavlink.dialects.v20 import ardupilotmega as mav2
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Declared limits. Every value here is either a MAVLink spec statement or a
+# reading measured off the real aircraft — never a guess. Override on the command
+# line with --limit NAME=VALUE; print the whole table with --show-limits.
+#
+# Provenance keys used below:
+#   [probe]  docs/measurements/2026-07-25-ground-probe.md — real aircraft, on the
+#            ground, 2026-07-25.
+#   [spec]   MAVLink common.xml field units / sentinel documentation.
+#   [plan]   PLAN.md or docs/architecture.md project decision.
+# ─────────────────────────────────────────────────────────────────────────────
+LIMITS = {
+    # identity
+    "sysid": (1, "[plan] PLAN.md M1: verified sysid 1, compid 1 on the wire"),
+    "compid": (1, "[plan] PLAN.md M1: verified sysid 1, compid 1 on the wire"),
+    # position
+    "lat_abs_max_deg": (90.0, "[spec] GLOBAL_POSITION_INT.lat is degE7, WGS84"),
+    "lon_abs_max_deg": (180.0, "[spec] GLOBAL_POSITION_INT.lon is degE7, WGS84"),
+    "dege7_min_abs": (
+        1000.0,
+        "[spec] a raw degE7 field below 1e3 means |deg| < 1e-4 — i.e. the "
+        "×1e7 scaling was forgotten, not a real position",
+    ),
+    "amsl_min_m": (-500.0, "[spec] plausible Earth surface AMSL (Dead Sea ≈ -430 m)"),
+    "amsl_max_m": (9000.0, "[spec] plausible AMSL ceiling; Mini 4 Pro ceiling is far lower"),
+    "amsl_zero_band_m": (
+        1.0,
+        "[probe] the site AMSL datum is ~103 m (KeyTakeoffLocationAltitude); "
+        "an |alt| below this means KeyAltitude was sent unshifted, i.e. "
+        "takeoff-relative altitude mislabelled as AMSL",
+    ),
+    "rel_alt_abs_max_m": (500.0, "[plan] Mini 4 Pro legal/practical altitude envelope"),
+    # attitude — MAVLink ATTITUDE is radians; DJI's keys are degrees
+    "roll_abs_max_rad": (math.pi, "[spec] ATTITUDE.roll units rad, range -pi..pi"),
+    "pitch_abs_max_rad": (math.pi / 2, "[spec] ATTITUDE.pitch units rad, range -pi/2..pi/2"),
+    "yaw_abs_max_rad": (math.pi, "[spec] ATTITUDE.yaw units rad, range -pi..pi"),
+    # heading
+    "hdg_max_cdeg": (35999.0, "[spec] GLOBAL_POSITION_INT.hdg cdeg 0..35999, UINT16_MAX unknown"),
+    # gps
+    "sats_max": (40.0, "[probe] 14–19 satellites seen with a LEVEL_5 fix; >40 is not real"),
+    "sats_min_for_3d_fix": (4.0, "[spec] a 3D fix needs at least four satellites"),
+    "sats_many": (
+        10.0,
+        "[probe] this many satellites alongside fix_type<=1 was read as an unmapped "
+        "fix_type until 2026-07-26, when the aircraft was watched doing exactly that "
+        "with a correctly mapped fix (px4-reverify §'DJI withdrew the GPS fix'). It "
+        "is now the threshold for an INFO note, not for a failure",
+    ),
+    # battery — 2S pack, whole-pack mV and per-cell mV measured
+    "cells_expected": (2, "[probe] BatteryKey.KeyNumberOfCells = 2"),
+    "cell_min_mv": (2800.0, "[probe] LiPo cell floor; measured cells were 4186/4183 mV"),
+    "cell_max_mv": (4400.0, "[probe] LiPo cell ceiling (4.35 V charge limit + margin)"),
+    "cell_sum_tolerance_mv": (
+        100.0,
+        "[probe] KeyVoltage 8371 mV vs cells 4186+4183 = 8369 mV — "
+        "2 mV apart, so 100 mV is generous",
+    ),
+    "current_max_ca": (
+        3000.0,
+        "[probe] idle draw was 905 mA; 30 A is far above any Mini 4 Pro draw",
+    ),
+    "current_idle_max_ca": (
+        300.0,
+        "[probe] KeyCurrent was -905 mA (0.9 A) with the aircraft powered, "
+        "motors off; 3 A is generous for a disarmed aircraft, and a "
+        "milliamp value mistakenly sent as centiamps reads as 9 A",
+    ),
+    "battery_temp_min_cdeg": (-2000.0, "[probe] KeyBatteryTemperature 37.5 C; cdegC on the wire"),
+    "battery_temp_max_cdeg": (8000.0, "[probe] KeyBatteryTemperature 37.5 C; cdegC on the wire"),
+    # cross-message agreement tolerances
+    "pair_window_s": (0.5, "[plan] widest sensible pairing window at our slowest emitter rate"),
+    "alt_agree_m": (
+        1.0,
+        "[probe] the AMSL datum drifts ~0.7 m while stationary, so two messages "
+        "built from the same sample must agree far tighter than that",
+    ),
+    "hdg_agree_deg": (2.0, "[spec] cdeg vs deg rounding is <0.01 deg; 2 deg is slack"),
+    "speed_agree_ms": (0.2, "[spec] cm/s vs m/s rounding is 0.005 m/s"),
+    "climb_agree_ms": (0.2, "[spec] cm/s vs m/s rounding is 0.005 m/s"),
+    "motion_threshold_ms": (
+        0.5,
+        "below this the aircraft is at rest and a sign convention "
+        "cannot be discriminated at all — reported, never silently passed",
+    ),
+    "voltage_agree_mv": (100.0, "[probe] same source key, so only rounding should differ"),
+    # rates
+    "rate_tolerance": (0.30, "[plan] fixed-rate emitters on a phone; 30% covers scheduler jitter"),
+    "rate_gap_factor": (3.0, "a gap of 3 expected periods is a stalled emitter, not jitter"),
+}
+
+# Declared emitter schedule. Only HEARTBEAT is measured; the rest is the project
+# schedule and is intentionally a WARN, not a FAIL, until it is fixed in code.
+#
+# Every number below is read off Bridge.tick(): BASE_PERIOD_MS = 200 ms, and each
+# message is emitted on a divisor of that base — EVERY_TICK = 5 Hz, TICKS_2HZ = 2.5
+# Hz, TICKS_1HZ = 1 Hz. If you change one here, read the emitter first; the table
+# said ATTITUDE was 10 Hz for a day after the code said 5, and warned on a healthy
+# stream (docs/measurements/2026-07-26-px4-reverify.md).
+#
+# HOME_POSITION and GPS_GLOBAL_ORIGIN are deliberately absent: they are *event*
+# messages (Bridge.emitEventMessagesIfChanged / HomeEventGate), not scheduled ones,
+# so they have no declared rate to measure against.
+EXPECTED_RATES = {
+    "HEARTBEAT": (1.0, "[plan] PLAN.md M1: verified at exactly 1.00 Hz; MAVLink convention"),
+    "SYS_STATUS": (2.5, "[plan] Bridge.TICKS_2HZ — every 2nd 200 ms tick"),
+    "EXTENDED_SYS_STATE": (2.5, "[plan] Bridge.TICKS_2HZ — every 2nd 200 ms tick"),
+    "GLOBAL_POSITION_INT": (5.0, "[plan] Bridge.EVERY_TICK; DJI source ~10 Hz [probe]"),
+    "GPS_RAW_INT": (5.0, "[plan] Bridge.EVERY_TICK"),
+    "ATTITUDE": (
+        5.0,
+        "[plan] Bridge.EVERY_TICK; note KeyAircraftAttitude only fired ~1.9 Hz in "
+        "the ground probe, so extra frames repeat cached values",
+    ),
+    "VFR_HUD": (5.0, "[plan] Bridge.EVERY_TICK"),
+    "BATTERY_STATUS": (1.0, "[plan] Bridge.TICKS_1HZ — every 5th 200 ms tick"),
+}
+
+REQUIRE_SETS = {
+    "none": (),
+    "heartbeat": ("HEARTBEAT",),
+    "qgc-min": (
+        "HEARTBEAT",
+        "SYS_STATUS",
+        "GLOBAL_POSITION_INT",
+        "GPS_RAW_INT",
+        "ATTITUDE",
+        "VFR_HUD",
+        "BATTERY_STATUS",
+    ),
+}
+
+# Ground-truth presets. Physical values, not software expectations.
+SITES = {
+    "ground-probe": {
+        "lat": 37.9938612,
+        "lon": 23.7253298,
+        "amsl": 103.2,  # KeyTakeoffLocationAltitude 103.1696 + KeyAltitude 0
+        "yaw": -121.1,  # KeyCompassHeading, signed [-180,180]
+        "sats_min": 14,
+        "cells": 2,
+        "pack_mv": 8371,
+        "_prov": "docs/measurements/2026-07-25-ground-probe.md, aircraft on the ground "
+        "2026-07-25, GPS LEVEL_5, 14-19 sats",
+    },
+}
+
+# check id -> (what it asserts, where the expectation comes from)
+CHECKS = {
+    "wire.parse": (
+        "every datagram decodes to whole frames, nothing left over",
+        "[spec] MAVLink 2 framing, validated by pymavlink's parser",
+    ),
+    "wire.bad_data": (
+        "no BAD_DATA: no bad CRC, unknown message id or garbage",
+        "[spec] per-message CRC_EXTRA; a dialect mismatch shows up here",
+    ),
+    "wire.one_frame_per_datagram": (
+        "each vehicle datagram carries exactly one frame",
+        "[plan] architecture.md: send() = write+flush, so the UDP "
+        "adapter must emit one datagram per message",
+    ),
+    "wire.version": (
+        "vehicle frames use MAVLink 2 framing (magic 0xFD)",
+        "[plan] PLAN.md: MAVLink 2 out, dronefleet 1.1.11",
+    ),
+    "wire.incompat_flags": (
+        "incompat_flags is 0 (unsigned frames)",
+        "[spec] a receiver MUST drop frames with unknown incompat flags",
+    ),
+    "wire.seq": (
+        "sequence numbers advance by 1 (mod 256) per sysid/compid",
+        "[spec] MAVLink seq semantics; gaps mean dropped or mis-generated frames",
+    ),
+    "wire.ids": (
+        "exactly one vehicle sysid/compid, and it is the expected one",
+        "[plan] PLAN.md M1: verified sysid 1, compid 1",
+    ),
+    "rate.present": (
+        "every required message type appears at least once",
+        "[plan] the set QGC needs for a usable telemetry display",
+    ),
+    "rate.hz": (
+        "measured Hz per message type matches the declared schedule",
+        "[plan] EXPECTED_RATES; only HEARTBEAT is a measured value",
+    ),
+    "rate.gap": (
+        "no emitter stalls (no gap beyond rate_gap_factor x its period)",
+        "[plan] a blocked KeyManager listener or a wedged scheduler looks like this",
+    ),
+    "hb.autopilot": (
+        "HEARTBEAT.autopilot is MAV_AUTOPILOT_PX4",
+        "[plan] docs/decisions/2026-07-25-autopilot-identity.md: we emulate PX4. "
+        "ArduPilot (3) was tried first and demanded ~30 calibration parameters DJI "
+        "never exposes; GENERIC (0) left QGC with no command buttons at all",
+    ),
+    "hb.type": (
+        "HEARTBEAT.type is a multirotor",
+        "[plan] the aircraft is a quadrotor; QGC picks its UI from this",
+    ),
+    "hb.custom_mode": (
+        "HEARTBEAT.base_mode has CUSTOM_MODE_ENABLED",
+        "[plan] the PX4 main/sub flight mode lives in custom_mode (telemetry/"
+        "Px4Mode.kt); without the flag QGC will not read it",
+    ),
+    "sys.motor_outputs_bit": (
+        "SYS_STATUS does not advertise MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS",
+        "[plan] PLAN.md / QGC Vehicle.cc:1291 — on APM firmware QGC "
+        "prefers that sensor bit over the heartbeat for armed state, so "
+        "advertising it silently breaks arm detection",
+    ),
+    "pos.nonzero": (
+        "GLOBAL_POSITION_INT lat/lon are never exactly 0",
+        "[plan] architecture.md: null means no reading, never zero. 0/0 is the "
+        "classic unknown-encoded-as-zero bug and reads as a fix off Africa. This "
+        "message has no fix_type to disambiguate it, so TelemetryEncoder."
+        "globalPositionIntOrNull suppresses it instead; GPS_RAW_INT is the "
+        "documented exception and is checked by gps.zero_only_no_fix",
+    ),
+    "pos.range": (
+        "lat within +-90 deg, lon within +-180 deg once descaled from degE7",
+        "[spec] WGS84",
+    ),
+    "pos.dege7": (
+        "lat/lon magnitudes are consistent with degE7, not raw degrees",
+        "[spec] a forgotten x1e7 leaves a value of order 1e1, not 1e8",
+    ),
+    "pos.amsl_not_zero": (
+        "GLOBAL_POSITION_INT.alt is a real AMSL, not ~0",
+        "[probe] AMSL = KeyTakeoffLocationAltitude (~103 m) + KeyAltitude; "
+        "~0 means the datum was never added",
+    ),
+    "pos.amsl_vs_relative": (
+        "alt and relative_alt are not identical for the whole stream",
+        "[probe] they differ by the takeoff AMSL datum (~103 m); "
+        "identical means the datum was never added",
+    ),
+    "pos.amsl_range": ("alt is a plausible terrestrial altitude", "[spec] see amsl_min/max_m"),
+    "pos.rel_alt_range": (
+        "relative_alt is inside the aircraft's altitude envelope",
+        "[plan] see rel_alt_abs_max_m",
+    ),
+    "pos.time_boot_ms": (
+        "time_boot_ms is non-zero, non-decreasing and not frozen",
+        "[spec] QGC uses it to order and age samples",
+    ),
+    "pos.gps_agreement": (
+        "GPS_RAW_INT lat/lon matches GLOBAL_POSITION_INT lat/lon",
+        "[probe] both come from the single KeyAircraftLocation3D reading",
+    ),
+    "pos.hdg_range": (
+        "GLOBAL_POSITION_INT.hdg is 0..35999 cdeg, or 65535 for unknown",
+        "[spec] uint16 cdeg; the DJI compass is signed [-180,180], so a "
+        "wrapped negative lands outside this range",
+    ),
+    "xscale.alt": (
+        "GLOBAL_POSITION_INT.alt (mm) and VFR_HUD.alt (m) agree once scaled",
+        "[spec] alt is mm, VFR_HUD.alt is m — a 1000x disagreement is the bug",
+    ),
+    "xscale.hdg": (
+        "GLOBAL_POSITION_INT.hdg (cdeg) and VFR_HUD.heading (deg) agree once scaled",
+        "[spec] cdeg vs deg — a 100x disagreement is the bug",
+    ),
+    "xscale.climb": (
+        "VFR_HUD.climb (m/s, up) is the negation of vz (cm/s, down)",
+        "[spec] GLOBAL_POSITION_INT.vz is positive down, VFR_HUD.climb positive up",
+    ),
+    "xscale.groundspeed": (
+        "VFR_HUD.groundspeed equals hypot(vx,vy) scaled from cm/s",
+        "[spec] vx/vy are cm/s, groundspeed is m/s",
+    ),
+    "xscale.battery_pct": (
+        "SYS_STATUS and BATTERY_STATUS report the same remaining percent",
+        "[probe] one source key, KeyChargeRemainingInPercent",
+    ),
+    "xscale.battery_v": (
+        "SYS_STATUS.voltage_battery equals the summed BATTERY_STATUS cells",
+        "[probe] KeyVoltage 8371 mV = cells 4186+4183",
+    ),
+    "att.radians": (
+        "ATTITUDE roll/pitch/yaw are radians in range, not degrees",
+        "[spec] rad; [probe] the DJI keys are degrees (yaw -121.1), so a missing "
+        "conversion lands far outside the radian range",
+    ),
+    "att.yaw_vs_hdg": (
+        "ATTITUDE.yaw (rad, signed) and hdg (cdeg, 0..360) agree",
+        "[probe] KeyCompassHeading is signed [-180,180] and must be wrapped "
+        "to 0..360 for hdg; this catches the missing wrap",
+    ),
+    "bat.cell_count": (
+        "exactly the expected number of cell slots are populated",
+        "[probe] KeyNumberOfCells = 2",
+    ),
+    "bat.cell_sentinel": (
+        "unpopulated voltages[] slots are 65535, never 0",
+        "[spec] BATTERY_STATUS.voltages: UINT16_MAX means 'not used'; 0 "
+        "means a real, dead cell and QGC will believe it",
+    ),
+    "bat.cell_range": (
+        "populated cell voltages are plausible LiPo millivolts",
+        "[probe] cells read 4186/4183 mV",
+    ),
+    "bat.cell_sum": (
+        "cells sum to the pack voltage",
+        "[probe] KeyVoltage 8371 mV vs 4186+4183 = 8369 mV",
+    ),
+    "bat.current_sign": (
+        "current_battery is positive (draw) for a discharging aircraft",
+        "[spec] BATTERY_STATUS.current_battery is cA, positive for draw, "
+        "-1 unknown; [probe] KeyCurrent is -905 mA discharging, so the sign "
+        "must be inverted and divided by 10 (RosettaDrone multiplies)",
+    ),
+    "bat.current_range": ("current magnitude is plausible", "[probe] 905 mA idle draw"),
+    "bat.current_idle": (
+        "a disarmed aircraft draws no more than current_idle_max_ca",
+        "[probe] KeyCurrent -905 mA powered with motors off; this is the only "
+        "check that separates a milliamp-as-centiamp error from real flight "
+        "current, which is plausible at 9 A",
+    ),
+    "bat.remaining_range": ("battery_remaining is 0..100, or -1 for unknown", "[spec]"),
+    "bat.temp": (
+        "BATTERY_STATUS.temperature is plausible cdegC",
+        "[probe] KeyBatteryTemperature 37.5 C",
+    ),
+    "gps.fix_vs_sats": (
+        "a claimed 3D fix is backed by enough satellites",
+        "[spec] a 3D fix needs >=4 sats. The converse is NOT checked: "
+        "docs/measurements/2026-07-26-px4-reverify.md caught DJI dropping "
+        "gpsSignalLevel 5 -> 0 while still reporting 13-17 satellites, three "
+        "times in ten minutes. Signal level and satellite count are independent "
+        "keys on this airframe, so many-sats-with-no-fix is reported as INFO",
+    ),
+    "gps.zero_only_no_fix": (
+        "GPS_RAW_INT carries lat/lon 0/0 only behind a no-fix fix_type",
+        "[plan] TelemetryEncoder.kt:614-619 — 0/0 is deliberate here and "
+        "only here, because this message carries fix_type (NO_GPS/NO_FIX) "
+        "and QGC discards a GPS_RAW_INT position below 3D_FIX. The bug "
+        "this catches is 0/0 sent *alongside a claimed fix*, which is a "
+        "position in the Gulf of Guinea that a GCS will plot",
+    ),
+    "gps.sats_range": ("satellites_visible is plausible, or 255 for unknown", "[spec] [probe]"),
+    "gcs.inventory": (
+        "inventory of GCS->vehicle messages seen (informational)",
+        "the regression corpus for command handling that is not written yet",
+    ),
+    "truth.position": (
+        "the reported position is within --tolerance-m of the real one",
+        "physical ground truth — the only check that catches a "
+        "self-consistent but wrong coordinate transform",
+    ),
+    "truth.amsl": (
+        "the reported AMSL is within --tolerance-alt-m of the real one",
+        "physical ground truth",
+    ),
+    "truth.heading": (
+        "the reported heading is within --tolerance-deg of the real one",
+        "physical ground truth",
+    ),
+    "truth.pack_mv": (
+        "the reported pack voltage matches the measured one",
+        "physical ground truth",
+    ),
+}
+
+FAIL, WARN, INFO, SKIP, PASS = "FAIL", "WARN", "INFO", "SKIP", "PASS"
+ORDER = {FAIL: 0, WARN: 1, SKIP: 2, INFO: 3, PASS: 4}
+
+
+def L(name, args=None):
+    if args and name in args.limit_override:
+        return args.limit_override[name]
+    return LIMITS[name][0]
+
+
+class Report:
+    def __init__(self):
+        self.findings = []  # (severity, check_id, detail)
+
+    def add(self, sev, cid, detail=""):
+        assert cid in CHECKS, cid
+        self.findings.append((sev, cid, detail))
+
+    def ok(self, cid, detail=""):
+        self.add(PASS, cid, detail)
+
+    def count(self, sev):
+        return sum(1 for s, _, _ in self.findings if s == sev)
+
+    def render(self, out, quiet=False):
+        seen = set()
+        for sev, cid, detail in sorted(self.findings, key=lambda f: (ORDER[f[0]], f[1])):
+            if quiet and sev in (PASS, INFO):
+                continue
+            head = f"{sev:<4} {cid:<28}"
+            title = "" if cid in seen else CHECKS[cid][0]
+            seen.add(cid)
+            out.write(f"{head} {detail or title}\n")
+            if detail and title:
+                out.write(f"{'':<4} {'':<28} ({title})\n")
+            if sev == FAIL:
+                out.write(f"{'':<4} {'':<28} expectation: {CHECKS[cid][1]}\n")
+
+
+# ─────────────────────────── input ───────────────────────────
+
+
+def read_capture(path):
+    """Yield (t, dir, src, payload) from a mavcapture-1 JSONL file."""
+    with open(path, "rb") as probe:
+        if probe.read(4) in (
+            b"\xd4\xc3\xb2\xa1",
+            b"\xa1\xb2\xc3\xd4",
+            b"\x4d\x3c\xb2\xa1",
+            b"\xa1\xb2\x3c\x4d",
+            b"\x0a\x0d\x0d\x0a",
+        ):
+            raise SystemExit(
+                f"{path}: this is a pcap, not a mavcapture-1 capture. Reframe it "
+                f"first:\n    tools/mavcapture --from-pcap {path} --out out.jsonl"
+            )
+    with open(path) as f:
+        first = f.readline()
+        if not first.strip():
+            raise SystemExit(f"{path}: empty")
+        try:
+            head = json.loads(first)
+        except json.JSONDecodeError:
+            raise SystemExit(
+                f"{path}: first line is not JSON — this is not a mavcapture-1 "
+                "capture. Record one with tools/mavcapture."
+            )
+        if head.get("format") != "mavcapture-1":
+            raise SystemExit(f"{path}: not a mavcapture-1 file (got {head.get('format')!r})")
+        enc = head.get("encoding", "hex")
+        for n, line in enumerate(f, start=2):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise SystemExit(
+                    f"{path}:{n}: malformed record ({e}) — a capture truncated "
+                    "mid-line can be salvaged by deleting the last line"
+                )
+            if enc == "hex":
+                payload = bytes.fromhex(r["hex"])
+            else:
+                import base64
+
+                payload = base64.b64decode(r["b64"])
+            yield r["t"], r["dir"], r.get("src"), payload
+        return
+
+
+def read_live(port, seconds, bind="0.0.0.0"):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((bind, port))
+    except OSError as e:
+        raise SystemExit(
+            f"cannot bind {bind}:{port} — {e}\n"
+            "QGroundControl holds 14550 exclusively; see `ss -lunp | grep 14550`."
+        )
+    s.settimeout(0.5)
+    sys.stderr.write(f"listening on udp://{bind}:{port} for {seconds:g}s …\n")
+    started = time.monotonic()
+    while time.monotonic() - started < seconds:
+        try:
+            data, src = s.recvfrom(65535)
+        except TimeoutError:
+            continue
+        yield time.monotonic() - started, "up", f"{src[0]}:{src[1]}", data
+
+
+def decode(source):
+    """Decode datagrams with pymavlink. Returns (records, stats).
+
+    One parser per direction, and its buffer is reset between datagrams: our UDP
+    adapter promises one whole frame per datagram (architecture.md), so anything
+    left over is a truncated frame and worth failing on rather than silently
+    reassembling across packets.
+    """
+    parsers = {}
+    recs = []
+    stats = {
+        "datagrams": collections.Counter(),
+        "bytes": collections.Counter(),
+        "frames_per_datagram": collections.Counter(),
+        "bad_data": [],  # (t, dir, reason)
+        "leftover": [],  # (t, dir, nbytes)
+        "empty": [],  # (t, dir, nbytes) datagram yielding no frame
+    }
+    for t, direction, _src, payload in source:
+        stats["datagrams"][direction] += 1
+        stats["bytes"][direction] += len(payload)
+        p = parsers.get(direction)
+        if p is None:
+            p = mav2.MAVLink(None)
+            p.robust_parsing = True
+            parsers[direction] = p
+        p.buf = bytearray()
+        p.buf_index = 0
+        msgs = p.parse_buffer(payload) or []
+        left = len(p.buf) - p.buf_index
+        if left:
+            stats["leftover"].append((t, direction, left))
+        good = 0
+        for m in msgs:
+            if m.get_type() == "BAD_DATA":
+                stats["bad_data"].append((t, direction, getattr(m, "reason", "?")))
+                continue
+            good += 1
+            buf = m.get_msgbuf()
+            h = m.get_header()
+            recs.append(
+                {
+                    "t": t,
+                    "dir": direction,
+                    "name": m.get_type(),
+                    "msg": m,
+                    "magic": buf[0],
+                    "seq": h.seq,
+                    "sys": m.get_srcSystem(),
+                    "comp": m.get_srcComponent(),
+                    "incompat": getattr(h, "incompat_flags", 0),
+                    "compat": getattr(h, "compat_flags", 0),
+                }
+            )
+        stats["frames_per_datagram"][good] += 1
+        if good == 0 and not stats["bad_data"][-1:]:
+            stats["empty"].append((t, direction, len(payload)))
+    return recs, stats
+
+
+# ─────────────────────────── helpers ───────────────────────────
+
+
+def series(recs, name, direction="up"):
+    return [(r["t"], r["msg"]) for r in recs if r["name"] == name and r["dir"] == direction]
+
+
+def pair(a, b, window):
+    """Match each sample of a with the nearest-in-time sample of b."""
+    if not a or not b:
+        return []
+    ts = [t for t, _ in b]
+    out = []
+    for t, ma in a:
+        i = bisect.bisect_left(ts, t)
+        best, bestd = None, None
+        for j in (i - 1, i, i + 1):
+            if 0 <= j < len(ts):
+                d = abs(ts[j] - t)
+                if bestd is None or d < bestd:
+                    best, bestd = j, d
+        if best is not None and bestd <= window:
+            out.append((t, ma, b[best][1]))
+    return out
+
+
+def ratio_note(got, want):
+    """Name the constant factor between two values that should be equal."""
+    if abs(want) < 1e-9:
+        return ""
+    r = got / want
+    for f, txt in (
+        (1000, "1000x too large — millimetres where metres are wanted"),
+        (100, "100x too large — centi-units where whole units are wanted"),
+        (10, "10x too large"),
+        (0.001, "1000x too small — metres where millimetres are wanted"),
+        (0.01, "100x too small — whole units where centi-units are wanted"),
+        (0.1, "10x too small"),
+        (-1, "sign inverted"),
+    ):
+        if abs(r / f - 1) < 0.2:
+            return f"; ratio {r:.5g} — {txt}"
+    return f"; ratio {r:.5g}"
+
+
+def worst(pairs, f):
+    """Largest |error| over paired samples: returns (err, t, got, want, n_bad, n)."""
+    hi = None
+    n_bad = 0
+    tol_hits = []
+    for t, ma, mb in pairs:
+        got, want, tol = f(ma, mb)
+        e = abs(got - want)
+        if e > tol:
+            n_bad += 1
+        if hi is None or e > hi[0]:
+            hi = (e, t, got, want)
+        tol_hits.append(tol)
+    return hi, n_bad, len(pairs), (tol_hits[0] if tol_hits else 0)
+
+
+def haversine_m(lat1, lon1, lat2, lon2):
+    r = 6371008.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(h)))
+
+
+# ─────────────────────────── layer 1: wire ───────────────────────────
+
+
+def check_wire(rep, recs, stats, args):
+    up = [r for r in recs if r["dir"] == "up"]
+
+    if stats["leftover"]:
+        n = len(stats["leftover"])
+        biggest = max(x[2] for x in stats["leftover"])
+        rep.add(
+            FAIL,
+            "wire.parse",
+            f"{n} datagram(s) ended mid-frame ({biggest} B left over at most) — "
+            "truncated write, or a frame split across datagrams",
+        )
+    elif stats["empty"]:
+        rep.add(FAIL, "wire.parse", f"{len(stats['empty'])} datagram(s) produced no frame at all")
+    else:
+        rep.ok(
+            "wire.parse",
+            f"{sum(stats['datagrams'].values())} datagrams -> {len(recs)} frames, no residue",
+        )
+
+    if stats["bad_data"]:
+        reasons = collections.Counter(r for _, _, r in stats["bad_data"])
+        top = "; ".join(f"{k} (x{v})" for k, v in reasons.most_common(4))
+        rep.add(
+            FAIL,
+            "wire.bad_data",
+            f"{len(stats['bad_data'])} BAD_DATA of {len(recs) + len(stats['bad_data'])} "
+            f"frames: {top}",
+        )
+    else:
+        rep.ok("wire.bad_data", f"0 BAD_DATA in {len(recs)} frames — every CRC valid")
+
+    multi = {k: v for k, v in stats["frames_per_datagram"].items() if k > 1}
+    if multi:
+        sev = INFO if args.allow_coalesced else WARN
+        rep.add(
+            sev,
+            "wire.one_frame_per_datagram",
+            f"{sum(multi.values())} datagram(s) carried >1 frame {dict(multi)} — legal "
+            "MAVLink, but our UDP adapter is supposed to flush one message per datagram",
+        )
+    else:
+        rep.ok("wire.one_frame_per_datagram")
+
+    v1 = [r for r in up if r["magic"] == 0xFE]
+    if v1:
+        rep.add(
+            FAIL,
+            "wire.version",
+            f"{len(v1)}/{len(up)} vehicle frames are MAVLink 1 (magic 0xFE): "
+            + ", ".join(sorted({r["name"] for r in v1})[:6]),
+        )
+    elif up:
+        rep.ok("wire.version", f"all {len(up)} vehicle frames are MAVLink 2 (0xFD)")
+    else:
+        rep.add(SKIP, "wire.version", "no vehicle-side frames")
+
+    bad_flags = [r for r in up if r["incompat"]]
+    if bad_flags:
+        rep.add(
+            FAIL,
+            "wire.incompat_flags",
+            f"{len(bad_flags)} frames set incompat_flags="
+            f"{sorted({r['incompat'] for r in bad_flags})} — a GCS must discard these",
+        )
+    elif up:
+        rep.ok("wire.incompat_flags")
+
+    # sequence continuity, per (sysid, compid), per direction
+    gaps, dups = [], []
+    last = {}
+    for r in recs:
+        k = (r["dir"], r["sys"], r["comp"])
+        prev = last.get(k)
+        if prev is not None:
+            expect = (prev + 1) % 256
+            if r["seq"] != expect:
+                delta = (r["seq"] - expect) % 256
+                (dups if delta > 128 else gaps).append((r["t"], k, prev, r["seq"], r["name"]))
+        last[k] = r["seq"]
+    if len(gaps) > args.allow_seq_gaps or dups:
+        detail = f"{len(gaps)} gap(s), {len(dups)} repeat/regression(s) over {len(recs)} frames"
+        if gaps:
+            t, k, prev, got, name = gaps[0]
+            detail += f"; first at t={t:.3f}s {k[1]}/{k[2]}: {prev} -> {got} ({name})"
+        if args.live:
+            detail += " — NOTE: on a live capture UDP loss is indistinguishable from an emitter bug"
+        rep.add(FAIL, "wire.seq", detail)
+    elif len(recs) > 1:
+        rep.ok(
+            "wire.seq",
+            f"{len(recs)} frames, continuous"
+            + (f" ({len(gaps)} gap(s) within --allow-seq-gaps)" if gaps else ""),
+        )
+
+    ids = sorted({(r["sys"], r["comp"]) for r in up})
+    want = (int(L("sysid", args)), int(L("compid", args)))
+    if not ids:
+        rep.add(SKIP, "wire.ids", "no vehicle-side frames")
+    elif ids == [want]:
+        rep.ok("wire.ids", f"vehicle is sysid {want[0]}, compid {want[1]}")
+    else:
+        rep.add(FAIL, "wire.ids", f"expected only {want}, saw {ids}")
+
+
+# ─────────────────────────── layer 2: rates ───────────────────────────
+
+
+def measure_rates(recs, direction="up"):
+    first, last, count = {}, {}, collections.Counter()
+    for r in recs:
+        if r["dir"] != direction:
+            continue
+        n = r["name"]
+        count[n] += 1
+        first.setdefault(n, r["t"])
+        last[n] = r["t"]
+    out = {}
+    for n, c in count.items():
+        span = last[n] - first[n]
+        out[n] = (c, (c - 1) / span if c > 1 and span > 0 else float("nan"), span)
+    return out
+
+
+def check_rates(rep, recs, args):
+    rates = measure_rates(recs)
+    required = list(REQUIRE_SETS[args.require_set]) + list(args.require)
+    missing = [n for n in required if n not in rates]
+    if missing:
+        rep.add(
+            FAIL,
+            "rate.present",
+            f"absent: {', '.join(missing)} (required set '{args.require_set}'; pass "
+            "--require-set none to run wire and units checks only)",
+        )
+    elif required:
+        rep.ok("rate.present", f"all {len(required)} required types present")
+    else:
+        rep.add(SKIP, "rate.present", "no required set selected")
+
+    tol = L("rate_tolerance", args)
+    expected = dict(EXPECTED_RATES)
+    expected.update(args.expect_rate)
+    off = []
+    for name, (count, hz, span) in sorted(rates.items()):
+        if name not in expected:
+            continue
+        want = expected[name][0] if isinstance(expected[name], tuple) else expected[name]
+        if math.isnan(hz):
+            rep.add(
+                WARN,
+                "rate.hz",
+                f"{name}: only {count} sample(s) in {span:.1f}s — "
+                f"cannot measure a rate (expected {want:g} Hz)",
+            )
+            continue
+        if abs(hz - want) > tol * want:
+            off.append((name, hz, want, count))
+    for name, hz, want, count in off:
+        sev = FAIL if name == "HEARTBEAT" else WARN
+        rep.add(
+            sev,
+            "rate.hz",
+            f"{name}: {hz:.2f} Hz measured, {want:g} Hz expected "
+            f"(+-{tol:.0%}, n={count}){ratio_note(hz, want)}",
+        )
+    if rates and not off:
+        rep.ok("rate.hz", f"{len(rates)} message types, all within +-{tol:.0%} of schedule")
+
+    # stalls
+    gapf = L("rate_gap_factor", args)
+    for name, (count, hz, span) in sorted(rates.items()):
+        if count < 3 or name not in expected:
+            continue
+        want = expected[name][0] if isinstance(expected[name], tuple) else expected[name]
+        ts = [t for t, _ in series(recs, name)]
+        biggest = max(b - a for a, b in itertools.pairwise(ts))
+        if biggest > gapf / want:
+            rep.add(
+                WARN,
+                "rate.gap",
+                f"{name}: {biggest:.2f}s gap, more than {gapf:g}x the {1 / want:.2f}s "
+                "expected period — a stalled emitter, not jitter",
+            )
+    if not any(f[1] == "rate.gap" for f in rep.findings):
+        rep.ok("rate.gap")
+
+
+# ─────────────────────────── layer 3: plausibility / units ───────────────────────────
+
+
+def check_heartbeat(rep, recs, args):
+    hb = series(recs, "HEARTBEAT")
+    if not hb:
+        rep.add(SKIP, "hb.autopilot", "no HEARTBEAT")
+        return
+    ap = {m.autopilot for _, m in hb}
+    if ap == {mav2.MAV_AUTOPILOT_PX4}:
+        rep.ok(
+            "hb.autopilot",
+            f"MAV_AUTOPILOT_PX4 ({mav2.MAV_AUTOPILOT_PX4}) on all {len(hb)} heartbeats",
+        )
+    else:
+        rep.add(
+            FAIL,
+            "hb.autopilot",
+            f"autopilot={sorted(ap)}, expected {mav2.MAV_AUTOPILOT_PX4} (MAV_AUTOPILOT_PX4)",
+        )
+    rotor = {
+        mav2.MAV_TYPE_QUADROTOR,
+        mav2.MAV_TYPE_HEXAROTOR,
+        mav2.MAV_TYPE_OCTOROTOR,
+        mav2.MAV_TYPE_TRICOPTER,
+    }
+    ty = {m.type for _, m in hb}
+    if ty <= rotor:
+        rep.ok("hb.type", f"type={sorted(ty)}")
+    else:
+        rep.add(FAIL, "hb.type", f"type={sorted(ty)} is not a multirotor")
+    flagged = [m for _, m in hb if m.base_mode & mav2.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED]
+    if len(flagged) == len(hb):
+        rep.ok("hb.custom_mode")
+    else:
+        rep.add(
+            FAIL,
+            "hb.custom_mode",
+            f"{len(hb) - len(flagged)}/{len(hb)} heartbeats lack "
+            f"MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (0x{mav2.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED:x})",
+        )
+
+
+def check_sys_status(rep, recs, args):
+    ss = series(recs, "SYS_STATUS")
+    if not ss:
+        rep.add(SKIP, "sys.motor_outputs_bit", "no SYS_STATUS")
+        return
+    bit = mav2.MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS
+    hit = [
+        m
+        for _, m in ss
+        if (m.onboard_control_sensors_present | m.onboard_control_sensors_enabled) & bit
+    ]
+    if hit:
+        rep.add(
+            FAIL,
+            "sys.motor_outputs_bit",
+            f"{len(hit)}/{len(ss)} SYS_STATUS advertise MOTOR_OUTPUTS (0x{bit:x}) — QGC on "
+            "APM firmware then takes armed state from its health bit, not the heartbeat",
+        )
+    else:
+        rep.ok("sys.motor_outputs_bit", f"bit 0x{bit:x} absent from all {len(ss)} SYS_STATUS")
+
+    rem = [m.battery_remaining for _, m in ss]
+    bad = [v for v in rem if not (0 <= v <= 100 or v == -1)]
+    if bad:
+        rep.add(FAIL, "bat.remaining_range", f"SYS_STATUS.battery_remaining {sorted(set(bad))[:5]}")
+
+
+def check_position(rep, recs, args):
+    gpi = series(recs, "GLOBAL_POSITION_INT")
+    gps = series(recs, "GPS_RAW_INT")
+    if not gpi and not gps:
+        for cid in (
+            "pos.nonzero",
+            "pos.range",
+            "pos.dege7",
+            "pos.amsl_not_zero",
+            "pos.amsl_vs_relative",
+            "pos.hdg_range",
+        ):
+            rep.add(SKIP, cid, "no GLOBAL_POSITION_INT or GPS_RAW_INT")
+        return
+
+    raws = [("GLOBAL_POSITION_INT", t, m.lat, m.lon) for t, m in gpi] + [
+        ("GPS_RAW_INT", t, m.lat, m.lon) for t, m in gps
+    ]
+
+    # GLOBAL_POSITION_INT only. GPS_RAW_INT is allowed 0/0 behind a no-fix
+    # fix_type by decision (TelemetryEncoder.kt:614-619) and is checked, with its
+    # disambiguator, by gps.zero_only_no_fix in check_gps.
+    zero = [t for t, m in gpi if m.lat == 0 or m.lon == 0]
+    if zero:
+        rep.add(
+            FAIL,
+            "pos.nonzero",
+            f"{len(zero)}/{len(gpi)} GLOBAL_POSITION_INT have lat or lon exactly 0 "
+            f"(first at t={zero[0]:.3f}s) — an unknown position encoded as zero, which a "
+            "GCS reads as a valid fix in the Gulf of Guinea. This message carries no "
+            "fix_type, so it must be suppressed instead (globalPositionIntOrNull)",
+        )
+    elif gpi:
+        rep.ok("pos.nonzero", f"{len(gpi)} GLOBAL_POSITION_INT, none zero")
+    else:
+        rep.add(SKIP, "pos.nonzero", "no GLOBAL_POSITION_INT")
+
+    bad = [
+        (n, t, la / 1e7, lo / 1e7)
+        for n, t, la, lo in raws
+        if abs(la / 1e7) > L("lat_abs_max_deg", args) or abs(lo / 1e7) > L("lon_abs_max_deg", args)
+    ]
+    if bad:
+        rep.add(
+            FAIL,
+            "pos.range",
+            f"{len(bad)} out-of-range, e.g. {bad[0][0]} lat={bad[0][2]:.5f} lon={bad[0][3]:.5f}",
+        )
+    else:
+        rep.ok("pos.range")
+
+    small = [
+        (n, t, la, lo)
+        for n, t, la, lo in raws
+        if 0 < abs(la) < L("dege7_min_abs", args) or 0 < abs(lo) < L("dege7_min_abs", args)
+    ]
+    if small:
+        rep.add(
+            FAIL,
+            "pos.dege7",
+            f"{len(small)} samples have raw lat/lon of order 1e1, e.g. lat={small[0][2]} "
+            f"lon={small[0][3]} — that is degrees, not degE7; the x1e7 was forgotten",
+        )
+    else:
+        rep.ok("pos.dege7")
+
+    if gpi:
+        alts_m = [m.alt / 1000.0 for _, m in gpi]
+        rels_m = [m.relative_alt / 1000.0 for _, m in gpi]
+        band = L("amsl_zero_band_m", args)
+        near_zero = [a for a in alts_m if abs(a) < band]
+        if len(near_zero) == len(alts_m):
+            rep.add(
+                FAIL,
+                "pos.amsl_not_zero",
+                f"every GLOBAL_POSITION_INT.alt is within +-{band:g} m of zero "
+                f"(max |alt| {max(abs(a) for a in alts_m):.3f} m) — the takeoff AMSL datum "
+                "(~103 m at the probe site) was never added",
+            )
+        elif near_zero:
+            rep.add(
+                WARN,
+                "pos.amsl_not_zero",
+                f"{len(near_zero)}/{len(alts_m)} samples have |alt| < {band:g} m",
+            )
+        else:
+            rep.ok("pos.amsl_not_zero", f"alt spans {min(alts_m):.2f}..{max(alts_m):.2f} m AMSL")
+
+        if all(a == r for a, r in zip(alts_m, rels_m, strict=False)):
+            rep.add(
+                FAIL,
+                "pos.amsl_vs_relative",
+                f"alt == relative_alt in all {len(alts_m)} samples — AMSL and "
+                "takeoff-relative altitude cannot be the same number unless the takeoff "
+                "point is at sea level",
+            )
+        else:
+            rep.ok(
+                "pos.amsl_vs_relative",
+                f"median offset {sorted(a - r for a, r in zip(alts_m, rels_m, strict=False))[len(alts_m) // 2]:.2f} m",
+            )
+
+        oob = [a for a in alts_m if not L("amsl_min_m", args) <= a <= L("amsl_max_m", args)]
+        if oob:
+            rep.add(
+                FAIL,
+                "pos.amsl_range",
+                f"{len(oob)} samples outside "
+                f"[{L('amsl_min_m', args):g}, {L('amsl_max_m', args):g}] m, e.g. {oob[0]:.1f}",
+            )
+        else:
+            rep.ok("pos.amsl_range")
+
+        oob = [r for r in rels_m if abs(r) > L("rel_alt_abs_max_m", args)]
+        if oob:
+            rep.add(
+                FAIL,
+                "pos.rel_alt_range",
+                f"{len(oob)} samples exceed +-{L('rel_alt_abs_max_m', args):g} m, e.g. {oob[0]:.1f}",
+            )
+        else:
+            rep.ok("pos.rel_alt_range")
+
+        hdgs = [m.hdg for _, m in gpi]
+        oob = [h for h in hdgs if not (0 <= h <= L("hdg_max_cdeg", args) or h == 65535)]
+        if oob:
+            rep.add(
+                FAIL,
+                "pos.hdg_range",
+                f"{len(oob)}/{len(hdgs)} hdg values outside 0..{int(L('hdg_max_cdeg', args))} "
+                f"cdeg, e.g. {oob[0]} (= {oob[0] / 100:.1f} deg). A signed compass heading "
+                "cast to uint16 wraps to exactly this range",
+            )
+        else:
+            rep.ok("pos.hdg_range", f"hdg {min(hdgs)}..{max(hdgs)} cdeg")
+
+        tb = [m.time_boot_ms for _, m in gpi]
+        if all(v == 0 for v in tb):
+            rep.add(FAIL, "pos.time_boot_ms", "time_boot_ms is 0 in every sample")
+        elif len(set(tb)) == 1 and len(tb) > 2:
+            rep.add(
+                FAIL, "pos.time_boot_ms", f"time_boot_ms frozen at {tb[0]} across {len(tb)} samples"
+            )
+        elif any(b < a for a, b in itertools.pairwise(tb)):
+            n = sum(1 for a, b in itertools.pairwise(tb) if b < a)
+            rep.add(FAIL, "pos.time_boot_ms", f"time_boot_ms goes backwards {n} time(s)")
+        else:
+            rep.ok("pos.time_boot_ms", f"{tb[0]} .. {tb[-1]} ms, monotonic")
+
+    if gpi and gps:
+        # Only GPS_RAW_INT samples that actually carry a position: a 0/0 behind
+        # NO_FIX is the documented "no reading" (see gps.zero_only_no_fix), and
+        # pairing one against the last real GLOBAL_POSITION_INT inside the 0.5 s
+        # window reads as a 4873 km disagreement.
+        gps_fixed = [(t, m) for t, m in gps if not (m.lat == 0 and m.lon == 0)]
+        pairs = pair(gps_fixed, gpi, L("pair_window_s", args))
+        hi, n_bad, n, _ = worst(
+            pairs,
+            lambda a, b: (
+                haversine_m(a.lat / 1e7, a.lon / 1e7, b.lat / 1e7, b.lon / 1e7),
+                0.0,
+                1.0,
+            ),
+        )
+        if n and n_bad:
+            rep.add(
+                FAIL,
+                "pos.gps_agreement",
+                f"{n_bad}/{n} paired samples disagree by more than 1 m "
+                f"(worst {hi[0]:.1f} m at t={hi[1]:.3f}s) — they share one source reading",
+            )
+        elif n:
+            rep.ok("pos.gps_agreement", f"{n} pairs, worst {hi[0]:.2f} m apart")
+        else:
+            rep.add(SKIP, "pos.gps_agreement", "no samples close enough in time to pair")
+
+
+def check_cross_scale(rep, recs, args):
+    gpi = series(recs, "GLOBAL_POSITION_INT")
+    vfr = series(recs, "VFR_HUD")
+    w = L("pair_window_s", args)
+
+    if not (gpi and vfr):
+        for cid in ("xscale.alt", "xscale.hdg", "xscale.climb", "xscale.groundspeed"):
+            rep.add(SKIP, cid, "needs both GLOBAL_POSITION_INT and VFR_HUD")
+    else:
+        pairs = pair(vfr, gpi, w)
+        if not pairs:
+            for cid in ("xscale.alt", "xscale.hdg", "xscale.climb", "xscale.groundspeed"):
+                rep.add(SKIP, cid, f"no samples within {w:g}s of each other")
+        else:
+            # alt: mm vs m
+            tol = L("alt_agree_m", args)
+            hi, nb, n, _ = worst(pairs, lambda a, b: (a.alt, b.alt / 1000.0, tol))
+            if nb:
+                rep.add(
+                    FAIL,
+                    "xscale.alt",
+                    f"{nb}/{n} pairs disagree: worst VFR_HUD.alt={hi[2]:.3f} m vs "
+                    f"GLOBAL_POSITION_INT.alt={hi[3] * 1000:.0f} mm (= {hi[3]:.3f} m)"
+                    f"{ratio_note(hi[2], hi[3])}",
+                )
+            else:
+                rep.ok("xscale.alt", f"{n} pairs agree within {tol:g} m")
+
+            # hdg: cdeg vs deg (compare on the circle)
+            tol = L("hdg_agree_deg", args)
+
+            def hdgpair(a, b):
+                if b.hdg == 65535:
+                    return (0.0, 0.0, tol)
+                d = (a.heading - b.hdg / 100.0 + 180) % 360 - 180
+                return (d, 0.0, tol)
+
+            hi, nb, n, _ = worst(pairs, hdgpair)
+            if nb:
+                bad = [
+                    (t, a.heading, b.hdg)
+                    for t, a, b in pairs
+                    if b.hdg != 65535 and abs((a.heading - b.hdg / 100.0 + 180) % 360 - 180) > tol
+                ]
+                t, h_deg, h_cdeg = bad[0]
+                rep.add(
+                    FAIL,
+                    "xscale.hdg",
+                    f"{nb}/{n} pairs disagree: VFR_HUD.heading={h_deg} deg vs "
+                    f"GLOBAL_POSITION_INT.hdg={h_cdeg} cdeg (= {h_cdeg / 100:.2f} deg) at "
+                    f"t={t:.3f}s{ratio_note(float(h_deg), h_cdeg / 100.0)}",
+                )
+            else:
+                rep.ok("xscale.hdg", f"{n} pairs agree within {tol:g} deg")
+
+            # climb vs vz: opposite sign conventions
+            tol = L("climb_agree_ms", args)
+            moving = [p for p in pairs if abs(p[2].vz) / 100.0 >= L("motion_threshold_ms", args)]
+            hi, nb, n, _ = worst(pairs, lambda a, b: (a.climb, -b.vz / 100.0, tol))
+            if nb:
+                rep.add(
+                    FAIL,
+                    "xscale.climb",
+                    f"{nb}/{n} pairs disagree: worst VFR_HUD.climb={hi[2]:.3f} m/s vs "
+                    f"-vz/100={hi[3]:.3f} m/s{ratio_note(hi[2], hi[3])}",
+                )
+            elif not moving:
+                rep.add(
+                    INFO,
+                    "xscale.climb",
+                    f"{n} pairs agree, but |vz| never reached "
+                    f"{L('motion_threshold_ms', args):g} m/s — a sign inversion is "
+                    "indistinguishable from zero at rest, so this passed vacuously",
+                )
+            else:
+                rep.ok(
+                    "xscale.climb",
+                    f"{n} pairs agree within {tol:g} m/s ({len(moving)} with real vertical motion)",
+                )
+
+            # groundspeed vs vx,vy
+            tol = L("speed_agree_ms", args)
+            fast = [
+                p
+                for p in pairs
+                if math.hypot(p[2].vx, p[2].vy) / 100.0 >= L("motion_threshold_ms", args)
+            ]
+            hi, nb, n, _ = worst(
+                pairs, lambda a, b: (a.groundspeed, math.hypot(b.vx, b.vy) / 100.0, tol)
+            )
+            if nb:
+                rep.add(
+                    FAIL,
+                    "xscale.groundspeed",
+                    f"{nb}/{n} pairs disagree: worst groundspeed={hi[2]:.3f} m/s vs "
+                    f"hypot(vx,vy)/100={hi[3]:.3f} m/s{ratio_note(hi[2], hi[3])}",
+                )
+            elif not fast:
+                rep.add(
+                    INFO,
+                    "xscale.groundspeed",
+                    f"{n} pairs agree, but the aircraft never exceeded "
+                    f"{L('motion_threshold_ms', args):g} m/s — a cm/s vs m/s error is "
+                    "invisible at rest, so this passed vacuously",
+                )
+            else:
+                rep.ok("xscale.groundspeed", f"{n} pairs agree within {tol:g} m/s")
+
+    ss = series(recs, "SYS_STATUS")
+    bs = series(recs, "BATTERY_STATUS")
+    if ss and bs:
+        pairs = pair(bs, ss, w)
+        # Both come from KeyChargeRemainingInPercent, but they are emitted on
+        # different ticks, and the key is whole percent. So when the charge ticks
+        # down between the two sends, the pair legitimately differs by exactly 1 —
+        # physics of an integer counter sampled twice, not a scaling error.
+        #
+        # A systematic fault looks nothing like that: a wrong source, a stale copy
+        # or an off-by-one would move most pairs, not one. So a single-point gap is
+        # tolerated only while it stays rare; more than a twentieth of the pairs
+        # drifting means the two are not tracking one reading and the check must
+        # still fail. Anything larger than 1 point fails immediately, however rare.
+        off_by_one = [
+            (t, a.battery_remaining, b.battery_remaining)
+            for t, a, b in pairs
+            if abs(a.battery_remaining - b.battery_remaining) == 1
+        ]
+        worse = [
+            (t, a.battery_remaining, b.battery_remaining)
+            for t, a, b in pairs
+            if abs(a.battery_remaining - b.battery_remaining) > 1
+        ]
+        drifting = pairs and len(off_by_one) > max(1, len(pairs) // 20)
+        if worse or drifting:
+            bad = worse or off_by_one
+            rep.add(
+                FAIL,
+                "xscale.battery_pct",
+                f"{len(bad)}/{len(pairs)} pairs disagree, e.g. BATTERY_STATUS="
+                f"{bad[0][1]}% vs SYS_STATUS={bad[0][2]}%",
+            )
+        elif off_by_one:
+            rep.ok(
+                "xscale.battery_pct",
+                f"{len(pairs)} pairs, {len(off_by_one)} differing by 1 across a tick",
+            )
+        elif pairs:
+            rep.ok("xscale.battery_pct", f"{len(pairs)} pairs identical")
+
+        tol = L("voltage_agree_mv", args)
+
+        def volt(a, b):
+            cells = [v for v in a.voltages if v != 65535]
+            return (float(sum(cells)), float(b.voltage_battery), tol)
+
+        hi, nb, n, _ = worst(pairs, volt)
+        if nb:
+            rep.add(
+                FAIL,
+                "xscale.battery_v",
+                f"{nb}/{n} pairs disagree: worst summed cells {hi[2]:.0f} mV vs "
+                f"SYS_STATUS.voltage_battery {hi[3]:.0f} mV{ratio_note(hi[2], hi[3])}",
+            )
+        elif n:
+            rep.ok("xscale.battery_v", f"{n} pairs agree within {tol:g} mV")
+    else:
+        for cid in ("xscale.battery_pct", "xscale.battery_v"):
+            rep.add(SKIP, cid, "needs both SYS_STATUS and BATTERY_STATUS")
+
+
+def check_attitude(rep, recs, args):
+    att = series(recs, "ATTITUDE")
+    if not att:
+        rep.add(SKIP, "att.radians", "no ATTITUDE")
+        rep.add(SKIP, "att.yaw_vs_hdg", "no ATTITUDE")
+        return
+    bad = []
+    for t, m in att:
+        for field, lim in (
+            ("roll", "roll_abs_max_rad"),
+            ("pitch", "pitch_abs_max_rad"),
+            ("yaw", "yaw_abs_max_rad"),
+        ):
+            v = getattr(m, field)
+            if not math.isfinite(v) or abs(v) > L(lim, args):
+                bad.append((t, field, v, L(lim, args)))
+    if bad:
+        t, field, v, lim = bad[0]
+        rep.add(
+            FAIL,
+            "att.radians",
+            f"{len(bad)} field(s) out of radian range, e.g. {field}={v:.4g} at t={t:.3f}s "
+            f"(limit {lim:.4f} rad = {math.degrees(lim):.0f} deg). {v:.4g} rad is "
+            f"{math.degrees(v):.0f} deg — this is degrees passed through unconverted",
+        )
+    else:
+        rep.ok("att.radians", f"{len(att)} samples inside the radian ranges")
+
+    gpi = series(recs, "GLOBAL_POSITION_INT")
+    if not gpi:
+        rep.add(SKIP, "att.yaw_vs_hdg", "no GLOBAL_POSITION_INT")
+        return
+    pairs = pair(att, gpi, L("pair_window_s", args))
+    tol = L("hdg_agree_deg", args)
+    bad = []
+    for t, a, b in pairs:
+        if b.hdg == 65535:
+            continue
+        want = math.degrees(a.yaw) % 360
+        got = b.hdg / 100.0
+        if abs((got - want + 180) % 360 - 180) > tol:
+            bad.append((t, a.yaw, got, want))
+    if bad:
+        t, yaw, got, want = bad[0]
+        rep.add(
+            FAIL,
+            "att.yaw_vs_hdg",
+            f"{len(bad)}/{len(pairs)} pairs disagree: ATTITUDE.yaw={yaw:.4f} rad "
+            f"(= {math.degrees(yaw):.1f} deg, wrapped {want:.1f}) vs hdg={got:.1f} deg "
+            f"at t={t:.3f}s — check the signed[-180,180] -> 0..360 wrap",
+        )
+    elif pairs:
+        rep.ok("att.yaw_vs_hdg", f"{len(pairs)} pairs agree within {tol:g} deg")
+    else:
+        rep.add(SKIP, "att.yaw_vs_hdg", "no samples close enough to pair")
+
+
+def check_battery(rep, recs, args):
+    bs = series(recs, "BATTERY_STATUS")
+    if not bs:
+        for cid in (
+            "bat.cell_count",
+            "bat.cell_sentinel",
+            "bat.cell_range",
+            "bat.cell_sum",
+            "bat.current_sign",
+            "bat.current_range",
+            "bat.temp",
+        ):
+            rep.add(SKIP, cid, "no BATTERY_STATUS")
+        return
+
+    want_cells = int(
+        args.expect_cells if args.expect_cells is not None else L("cells_expected", args)
+    )
+    zeros, counts, oob = [], collections.Counter(), []
+    for t, m in bs:
+        v = list(m.voltages)
+        pop = [x for x in v if x != 65535]
+        # a zero anywhere is the bug: unused slots must be UINT16_MAX
+        for i, x in enumerate(v):
+            if x == 0:
+                zeros.append((t, i))
+        counts[len(pop)] += 1
+        for x in pop:
+            if x and not L("cell_min_mv", args) <= x <= L("cell_max_mv", args):
+                oob.append((t, x))
+
+    if zeros:
+        rep.add(
+            FAIL,
+            "bat.cell_sentinel",
+            f"{len(zeros)} voltages[] slot(s) are 0, first slot {zeros[0][1]} at "
+            f"t={zeros[0][0]:.3f}s — 0 mV is a real dead cell to a GCS; unused slots must "
+            "be 65535 (UINT16_MAX)",
+        )
+    else:
+        rep.ok("bat.cell_sentinel", f"{len(bs)} samples, unused slots all 65535")
+
+    if set(counts) == {want_cells}:
+        rep.ok("bat.cell_count", f"{want_cells} populated cell slots in all {len(bs)} samples")
+    else:
+        rep.add(
+            FAIL,
+            "bat.cell_count",
+            f"populated cell counts {dict(counts)}, expected {want_cells} "
+            "(--expect-cells to change)",
+        )
+
+    if oob:
+        rep.add(
+            FAIL,
+            "bat.cell_range",
+            f"{len(oob)} cell voltage(s) outside {L('cell_min_mv', args):g}.."
+            f"{L('cell_max_mv', args):g} mV, e.g. {oob[0][1]} mV at t={oob[0][0]:.3f}s",
+        )
+    else:
+        rep.ok("bat.cell_range")
+
+    # cells vs pack: BATTERY_STATUS has no pack field, so compare against SYS_STATUS
+    # when present (xscale.battery_v) and against --expect-pack-mv here.
+    sums = [sum(x for x in m.voltages if x != 65535) for _, m in bs]
+    rep.add(
+        INFO, "bat.cell_sum", f"summed cells {min(sums)}..{max(sums)} mV over {len(bs)} samples"
+    )
+
+    cur = [m.current_battery for _, m in bs] + [
+        m.current_battery for _, m in series(recs, "SYS_STATUS")
+    ]
+    neg = [c for c in cur if c < 0 and c != -1]
+    unknown = [c for c in cur if c == -1]
+    if neg:
+        rep.add(
+            FAIL,
+            "bat.current_sign",
+            f"{len(neg)}/{len(cur)} current samples are negative (e.g. {neg[0]} cA) — "
+            "negative means charging. DJI's KeyCurrent is negative while discharging, so "
+            "the encoder must divide by 10 and invert the sign",
+        )
+    elif unknown and len(unknown) == len(cur):
+        rep.add(
+            WARN,
+            "bat.current_sign",
+            "every current_battery is -1 (unknown) — no current is being reported at all",
+        )
+    else:
+        rep.ok("bat.current_sign", f"{len(cur)} samples, all positive (draw)")
+
+    big = [c for c in cur if abs(c) > L("current_max_ca", args)]
+    if big:
+        rep.add(
+            FAIL,
+            "bat.current_range",
+            f"{len(big)} sample(s) beyond +-{L('current_max_ca', args):g} cA, e.g. {big[0]} cA "
+            f"(= {big[0] / 100:.1f} A) — a milliamp value sent as centiamps looks like this",
+        )
+    else:
+        rep.ok("bat.current_range")
+
+    # A milliamp value sent as centiamps is 10x too big but still a plausible flight
+    # current, so it is only detectable while the aircraft is known to be idle.
+    hb = series(recs, "HEARTBEAT")
+    armed = any(m.base_mode & mav2.MAV_MODE_FLAG_SAFETY_ARMED for _, m in hb)
+    if not hb:
+        rep.add(SKIP, "bat.current_idle", "no HEARTBEAT, so armed state is unknown")
+    elif armed:
+        rep.add(
+            SKIP,
+            "bat.current_idle",
+            "the aircraft was armed in this capture, so a 10x current error is "
+            "indistinguishable from real flight draw — re-run this check on a "
+            "powered, disarmed aircraft",
+        )
+    else:
+        lim = L("current_idle_max_ca", args)
+        hot = [c for c in cur if c != -1 and abs(c) > lim]
+        if hot:
+            rep.add(
+                FAIL,
+                "bat.current_idle",
+                f"{len(hot)}/{len(cur)} samples draw more than {lim:g} cA while disarmed, "
+                f"e.g. {hot[0]} cA (= {hot[0] / 100:.2f} A) — measured idle draw is 0.9 A, so "
+                "this looks like milliamps sent as centiamps (divide by 10)",
+            )
+        else:
+            rep.ok("bat.current_idle", f"disarmed, max {max((abs(c) for c in cur), default=0)} cA")
+
+    rem = [m.battery_remaining for _, m in bs]
+    bad = [v for v in rem if not (0 <= v <= 100 or v == -1)]
+    if bad:
+        rep.add(
+            FAIL, "bat.remaining_range", f"BATTERY_STATUS.battery_remaining {sorted(set(bad))[:5]}"
+        )
+    elif not any(f[1] == "bat.remaining_range" for f in rep.findings):
+        rep.ok("bat.remaining_range", f"{min(rem)}..{max(rem)}%")
+
+    temps = [m.temperature for _, m in bs if m.temperature != 32767]
+    bad = [
+        v
+        for v in temps
+        if not L("battery_temp_min_cdeg", args) <= v <= L("battery_temp_max_cdeg", args)
+    ]
+    if bad:
+        rep.add(
+            FAIL,
+            "bat.temp",
+            f"{len(bad)} temperature(s) outside {L('battery_temp_min_cdeg', args):g}.."
+            f"{L('battery_temp_max_cdeg', args):g} cdegC, e.g. {bad[0]} "
+            f"(= {bad[0] / 100:.1f} C)",
+        )
+    elif temps:
+        rep.ok("bat.temp", f"{min(temps) / 100:.1f}..{max(temps) / 100:.1f} C")
+    else:
+        rep.add(
+            WARN,
+            "bat.temp",
+            "temperature is INT16_MAX (unknown) in every sample, but "
+            "KeyBatteryTemperature is available on this aircraft",
+        )
+
+
+def check_gps(rep, recs, args):
+    gps = series(recs, "GPS_RAW_INT")
+    if not gps:
+        for cid in ("gps.fix_vs_sats", "gps.sats_range", "gps.zero_only_no_fix"):
+            rep.add(SKIP, cid, "no GPS_RAW_INT")
+        return
+    bad_fix, bad_sats, nofix_many = [], [], []
+    for t, m in gps:
+        s = m.satellites_visible
+        if s != 255 and not 0 <= s <= L("sats_max", args):
+            bad_sats.append((t, s))
+        if m.fix_type >= 3 and s != 255 and s < L("sats_min_for_3d_fix", args):
+            bad_fix.append((t, m.fix_type, s, "3D fix claimed with too few satellites"))
+        # The converse is *not* a fault. DJI's GPSSignalLevel and its satellite
+        # count are independent keys and were watched disagreeing for 129 s while
+        # the mapping worked perfectly — worth reporting, never worth failing on.
+        if m.fix_type <= 1 and s != 255 and s >= L("sats_many", args):
+            nofix_many.append((t, m.fix_type, s))
+    if bad_sats:
+        rep.add(
+            FAIL,
+            "gps.sats_range",
+            f"{len(bad_sats)} implausible satellite count(s), e.g. {bad_sats[0][1]}",
+        )
+    else:
+        rep.ok(
+            "gps.sats_range",
+            f"{min(m.satellites_visible for _, m in gps)}.."
+            f"{max(m.satellites_visible for _, m in gps)} satellites",
+        )
+    if bad_fix:
+        t, fx, s, why = bad_fix[0]
+        rep.add(
+            FAIL,
+            "gps.fix_vs_sats",
+            f"{len(bad_fix)} inconsistent sample(s): fix_type={fx} with {s} satellites at "
+            f"t={t:.3f}s — {why}",
+        )
+    else:
+        rep.ok(
+            "gps.fix_vs_sats",
+            f"fix_type {sorted({m.fix_type for _, m in gps})}, every claimed 3D fix backed "
+            f"by >={int(L('sats_min_for_3d_fix', args))} satellites",
+        )
+    if nofix_many:
+        t, fx, s = nofix_many[0]
+        rep.add(
+            INFO,
+            "gps.fix_vs_sats",
+            f"{len(nofix_many)}/{len(gps)} sample(s) report fix_type={fx} while still seeing "
+            f"{s} satellites (first t={t:.3f}s) — expected on this airframe: DJI's "
+            "GPSSignalLevel drops independently of its satellite count",
+        )
+
+    # The documented 0/0 exception, and its one hard boundary.
+    zero_nofix = [t for t, m in gps if (m.lat == 0 or m.lon == 0) and m.fix_type <= 1]
+    zero_fixed = [(t, m.fix_type) for t, m in gps if (m.lat == 0 or m.lon == 0) and m.fix_type > 1]
+    if zero_fixed:
+        t, fx = zero_fixed[0]
+        rep.add(
+            FAIL,
+            "gps.zero_only_no_fix",
+            f"{len(zero_fixed)}/{len(gps)} GPS_RAW_INT carry lat/lon 0/0 while claiming "
+            f"fix_type={fx} (first t={t:.3f}s) — with a fix claimed, 0/0 is a position a GCS "
+            "will plot, off the coast of Africa",
+        )
+    elif zero_nofix:
+        rep.ok(
+            "gps.zero_only_no_fix",
+            f"{len(zero_nofix)}/{len(gps)} samples are 0/0, every one of them behind "
+            f"fix_type<=1 (no fix) — the documented exception, TelemetryEncoder.kt:614-619",
+        )
+    else:
+        rep.ok("gps.zero_only_no_fix", f"no 0/0 in {len(gps)} GPS_RAW_INT")
+
+
+def check_gcs(rep, recs, args):
+    down = [r for r in recs if r["dir"] == "down"]
+    if not down:
+        rep.add(
+            INFO,
+            "gcs.inventory",
+            "no GCS->vehicle traffic in this capture — run mavcapture with --forward to "
+            "record QGC's commands as a regression corpus for M2/M4",
+        )
+        return
+    inv = collections.Counter(r["name"] for r in down)
+    rep.add(
+        INFO,
+        "gcs.inventory",
+        f"{len(down)} inbound frames from {sorted({(r['sys'], r['comp']) for r in down})}: "
+        + ", ".join(f"{k} x{v}" for k, v in inv.most_common()),
+    )
+
+
+# ─────────────────────────── layer 4: ground truth ───────────────────────────
+
+
+def check_truth(rep, recs, args):
+    if args.expect_lat is not None and args.expect_lon is not None:
+        # GPS_RAW_INT's 0/0 behind a no-fix is the documented "no reading", not a
+        # position claim (TelemetryEncoder.kt:614-619, and gps.zero_only_no_fix is
+        # the check that polices it) — the same exclusion pos.gps_agreement makes
+        # above, and for the same reason: scored as a coordinate it reads as a
+        # 4873 km error and fails a healthy stream. A capture that loses its fix
+        # partway, which is the normal shape of a real session, would otherwise
+        # report this check as FAIL while the bridge behaved exactly as designed.
+        # GLOBAL_POSITION_INT needs no such filter: it is suppressed entirely when
+        # the position is unknown rather than sent with a placeholder.
+        samples = [
+            ("GLOBAL_POSITION_INT", t, m.lat, m.lon) for t, m in series(recs, "GLOBAL_POSITION_INT")
+        ] + [
+            ("GPS_RAW_INT", t, m.lat, m.lon)
+            for t, m in series(recs, "GPS_RAW_INT")
+            if not (m.lat == 0 and m.lon == 0)
+        ]
+        if not samples:
+            rep.add(FAIL, "truth.position", "expected a position but the stream carries none")
+        else:
+            d = [
+                (haversine_m(la / 1e7, lo / 1e7, args.expect_lat, args.expect_lon), n, t, la, lo)
+                for n, t, la, lo in samples
+            ]
+            worst_d = max(d)
+            if worst_d[0] > args.tolerance_m:
+                swapped = haversine_m(
+                    args.expect_lon, args.expect_lat, worst_d[3] / 1e7, worst_d[4] / 1e7
+                )
+                hint = ""
+                if swapped < args.tolerance_m:
+                    hint = " — lat and lon are transposed"
+                rep.add(
+                    FAIL,
+                    "truth.position",
+                    f"{sum(1 for x in d if x[0] > args.tolerance_m)}/{len(d)} samples off "
+                    f"target: worst {worst_d[0]:.1f} m (> {args.tolerance_m:g} m) at "
+                    f"{worst_d[3] / 1e7:.7f},{worst_d[4] / 1e7:.7f} vs expected "
+                    f"{args.expect_lat:.7f},{args.expect_lon:.7f}{hint}",
+                )
+            else:
+                rep.ok(
+                    "truth.position",
+                    f"{len(d)} samples, worst {worst_d[0]:.1f} m from "
+                    f"{args.expect_lat:.5f},{args.expect_lon:.5f} "
+                    f"(tolerance {args.tolerance_m:g} m)",
+                )
+    else:
+        rep.add(SKIP, "truth.position", "no --expect-lat/--expect-lon given (or --expect-site)")
+
+    if args.expect_amsl is not None:
+        gpi = series(recs, "GLOBAL_POSITION_INT")
+        if not gpi:
+            rep.add(FAIL, "truth.amsl", "expected an AMSL but there is no GLOBAL_POSITION_INT")
+        else:
+            errs = [(abs(m.alt / 1000.0 - args.expect_amsl), t, m.alt / 1000.0) for t, m in gpi]
+            e, t, got = max(errs)
+            if e > args.tolerance_alt_m:
+                rep.add(
+                    FAIL,
+                    "truth.amsl",
+                    f"worst alt {got:.2f} m vs expected {args.expect_amsl:g} m "
+                    f"(off by {e:.2f} m > {args.tolerance_alt_m:g} m) at t={t:.3f}s"
+                    f"{ratio_note(got, args.expect_amsl)}",
+                )
+            else:
+                rep.ok(
+                    "truth.amsl",
+                    f"{len(gpi)} samples, worst {e:.2f} m from {args.expect_amsl:g} m AMSL",
+                )
+    else:
+        rep.add(SKIP, "truth.amsl", "no --expect-amsl given")
+
+    if args.expect_yaw is not None:
+        gpi = series(recs, "GLOBAL_POSITION_INT")
+        want = args.expect_yaw % 360
+        if not gpi:
+            rep.add(FAIL, "truth.heading", "expected a heading but there is no GLOBAL_POSITION_INT")
+        else:
+            errs = [
+                (abs((m.hdg / 100.0 - want + 180) % 360 - 180), t, m.hdg / 100.0)
+                for t, m in gpi
+                if m.hdg != 65535
+            ]
+            if not errs:
+                rep.add(FAIL, "truth.heading", "hdg is UINT16_MAX (unknown) in every sample")
+            else:
+                e, t, got = max(errs)
+                if e > args.tolerance_deg:
+                    rep.add(
+                        FAIL,
+                        "truth.heading",
+                        f"worst hdg {got:.1f} deg vs expected {want:.1f} deg (off by "
+                        f"{e:.1f} deg > {args.tolerance_deg:g}) at t={t:.3f}s — a missing "
+                        "signed->0..360 wrap shows up as an error of exactly 2x the heading",
+                    )
+                else:
+                    rep.ok("truth.heading", f"worst {e:.1f} deg from {want:.1f} deg")
+    else:
+        rep.add(SKIP, "truth.heading", "no --expect-yaw given")
+
+    if args.expect_pack_mv is not None:
+        sums = [sum(x for x in m.voltages if x != 65535) for _, m in series(recs, "BATTERY_STATUS")]
+        sums += [m.voltage_battery for _, m in series(recs, "SYS_STATUS")]
+        if not sums:
+            rep.add(FAIL, "truth.pack_mv", "expected a pack voltage but none is reported")
+        else:
+            tol = L("cell_sum_tolerance_mv", args)
+            bad = [v for v in sums if abs(v - args.expect_pack_mv) > tol]
+            if bad:
+                rep.add(
+                    FAIL,
+                    "truth.pack_mv",
+                    f"{len(bad)}/{len(sums)} readings differ from the measured "
+                    f"{args.expect_pack_mv} mV by more than {tol:g} mV, e.g. {bad[0]} mV"
+                    f"{ratio_note(float(bad[0]), float(args.expect_pack_mv))}",
+                )
+            else:
+                rep.ok(
+                    "truth.pack_mv",
+                    f"{len(sums)} readings within {tol:g} mV of {args.expect_pack_mv} mV",
+                )
+    else:
+        rep.add(SKIP, "truth.pack_mv", "no --expect-pack-mv given")
+
+
+# ─────────────────────────── driver ───────────────────────────
+
+
+def rate_table(recs, overrides=None):
+    expected = {k: v[0] for k, v in EXPECTED_RATES.items()}
+    expected.update(overrides or {})
+    lines = [f"{'message':<24} {'count':>6} {'Hz':>7} {'want':>6} {'span s':>7}"]
+    for name, (count, hz, span) in sorted(measure_rates(recs).items()):
+        want = expected.get(name, float("nan"))
+        lines.append(f"{name:<24} {count:>6} {hz:>7.2f} {want:>6.2f} {span:>7.1f}")
+    return "\n".join(lines)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="strategy, layers and known gaps: docs/verification.md",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("capture", nargs="?", help="mavcapture-1 JSONL file (omit with --port)")
+    ap.add_argument(
+        "--port", type=int, help="listen live on this UDP port instead of reading a file"
+    )
+    ap.add_argument(
+        "--seconds", type=float, default=15.0, help="live capture duration (default 15)"
+    )
+    ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument(
+        "--dir",
+        dest="direction",
+        choices=("up", "down"),
+        default="up",
+        help="which recorded direction is the vehicle telemetry (default up)",
+    )
+    ap.add_argument(
+        "--require-set",
+        choices=sorted(REQUIRE_SETS),
+        default="qgc-min",
+        help="which message types must be present (default qgc-min)",
+    )
+    ap.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="additionally require this message type (repeatable)",
+    )
+    ap.add_argument(
+        "--expect-rate",
+        action="append",
+        default=[],
+        metavar="NAME=HZ",
+        help="override an expected rate (repeatable)",
+    )
+    ap.add_argument(
+        "--limit",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="override a declared limit (repeatable; see --show-limits)",
+    )
+    ap.add_argument(
+        "--allow-seq-gaps",
+        type=int,
+        default=0,
+        help="tolerate this many sequence gaps (UDP loss on a live capture)",
+    )
+    ap.add_argument(
+        "--allow-coalesced",
+        action="store_true",
+        help="do not warn when a datagram carries more than one frame",
+    )
+    ap.add_argument(
+        "--expect-site",
+        choices=sorted(SITES),
+        help="fill the ground-truth expectations from a measured site",
+    )
+    ap.add_argument("--expect-lat", type=float)
+    ap.add_argument("--expect-lon", type=float)
+    ap.add_argument("--expect-amsl", type=float, metavar="M")
+    ap.add_argument(
+        "--expect-yaw", type=float, metavar="DEG", help="true heading, signed or 0..360"
+    )
+    ap.add_argument("--expect-cells", type=int)
+    ap.add_argument("--expect-pack-mv", type=int)
+    ap.add_argument(
+        "--tolerance-m",
+        type=float,
+        default=50.0,
+        help="horizontal ground-truth tolerance (default 50 m)",
+    )
+    ap.add_argument(
+        "--tolerance-alt-m",
+        type=float,
+        default=5.0,
+        help="AMSL tolerance; the datum drifts ~0.7 m on its own (default 5 m)",
+    )
+    ap.add_argument(
+        "--tolerance-deg", type=float, default=10.0, help="heading tolerance (default 10 deg)"
+    )
+    ap.add_argument("--strict", action="store_true", help="treat WARN as failure")
+    ap.add_argument("--quiet", action="store_true", help="print only FAIL/WARN lines")
+    ap.add_argument("--json", action="store_true", help="emit findings as JSON on stdout")
+    ap.add_argument("--list-checks", action="store_true")
+    ap.add_argument("--show-limits", action="store_true")
+    args = ap.parse_args()
+
+    if args.list_checks:
+        for cid, (what, prov) in sorted(CHECKS.items()):
+            print(f"{cid}\n    {what}\n    provenance: {prov}")
+        return 0
+    if args.show_limits:
+        print("declared limits (override with --limit NAME=VALUE)\n")
+        for k, (v, prov) in LIMITS.items():
+            print(f"{k:<26} {v!r:<10} {prov}")
+        print("\nexpected rates (override with --expect-rate NAME=HZ)\n")
+        for k, (v, prov) in EXPECTED_RATES.items():
+            print(f"{k:<26} {v!r:<10} {prov}")
+        print("\nrequired sets\n")
+        for k, v in sorted(REQUIRE_SETS.items()):
+            print(f"{k:<26} {', '.join(v) or '(nothing)'}")
+        print("\nground-truth sites (--expect-site)\n")
+        for k, v in SITES.items():
+            print(f"{k:<26} {v}")
+        return 0
+
+    args.limit_override = {}
+    for spec in args.limit:
+        k, _, v = spec.partition("=")
+        if k not in LIMITS:
+            ap.error(f"unknown limit {k!r} (see --show-limits)")
+        args.limit_override[k] = float(v)
+    rates = {}
+    for spec in args.expect_rate:
+        k, _, v = spec.partition("=")
+        rates[k] = float(v)
+    args.expect_rate = rates
+
+    if args.expect_site:
+        s = SITES[args.expect_site]
+        for flag, key in (
+            ("expect_lat", "lat"),
+            ("expect_lon", "lon"),
+            ("expect_amsl", "amsl"),
+            ("expect_yaw", "yaw"),
+            ("expect_cells", "cells"),
+            ("expect_pack_mv", "pack_mv"),
+        ):
+            if getattr(args, flag) is None:
+                setattr(args, flag, s[key])
+        sys.stderr.write(f"ground truth from {args.expect_site}: {s['_prov']}\n")
+
+    args.live = args.port is not None
+    if args.live == bool(args.capture):
+        ap.error("give exactly one of a capture file or --port")
+
+    source = (
+        read_live(args.port, args.seconds, args.bind) if args.live else read_capture(args.capture)
+    )
+    recs, stats = decode(source)
+
+    if args.direction == "down":  # analyse the GCS side as if it were the vehicle
+        for r in recs:
+            r["dir"] = {"up": "down", "down": "up"}[r["dir"]]
+
+    if not recs and not stats["bad_data"]:
+        sys.stderr.write("no MAVLink decoded at all — nothing to verify\n")
+        return 2
+
+    rep = Report()
+    check_wire(rep, recs, stats, args)
+    check_rates(rep, recs, args)
+    check_heartbeat(rep, recs, args)
+    check_sys_status(rep, recs, args)
+    check_position(rep, recs, args)
+    check_cross_scale(rep, recs, args)
+    check_attitude(rep, recs, args)
+    check_battery(rep, recs, args)
+    check_gps(rep, recs, args)
+    check_gcs(rep, recs, args)
+    check_truth(rep, recs, args)
+
+    failed = rep.count(FAIL) or (args.strict and rep.count(WARN))
+
+    if args.json:
+        json.dump(
+            {
+                "source": args.capture or f"udp://{args.bind}:{args.port}",
+                "frames": len(recs),
+                "datagrams": dict(stats["datagrams"]),
+                "rates": {
+                    k: {"count": v[0], "hz": None if math.isnan(v[1]) else round(v[1], 3)}
+                    for k, v in measure_rates(recs).items()
+                },
+                "findings": [
+                    {
+                        "severity": s,
+                        "check": c,
+                        "detail": d,
+                        "asserts": CHECKS[c][0],
+                        "provenance": CHECKS[c][1],
+                    }
+                    for s, c, d in rep.findings
+                ],
+                "verdict": "FAIL" if failed else "PASS",
+            },
+            sys.stdout,
+            indent=1,
+        )
+        sys.stdout.write("\n")
+        return 1 if failed else 0
+
+    src = args.capture or f"udp://{args.bind}:{args.port}"
+    print(f"mavverify — {src}")
+    print(
+        f"pymavlink dialect ardupilotmega v2.0, {len(recs)} frames, "
+        f"{sum(stats['datagrams'].values())} datagrams\n"
+    )
+    print(rate_table(recs, args.expect_rate))
+    print()
+    rep.render(sys.stdout, quiet=args.quiet)
+    print(
+        f"\n{rep.count(FAIL)} FAIL  {rep.count(WARN)} WARN  {rep.count(SKIP)} SKIP  "
+        f"{rep.count(INFO)} INFO  {rep.count(PASS)} PASS"
+    )
+    print("VERDICT: " + ("FAIL" if failed else "PASS"))
+    if rep.count(SKIP):
+        print("(SKIP means the stream did not contain what the check needs — not a pass.)")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

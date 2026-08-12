@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Listen for MAVLink on UDP and report what the bridge is actually sending.
+
+A faster, more honest check than opening QGroundControl: it prints every
+distinct message type with its arrival rate, so a missing or mis-scaled field
+shows up immediately.
+
+    tools/mavlisten                 # bind 0.0.0.0:14550
+    tools/mavlisten --port 14550 --seconds 20
+    tools/mavlisten --dump GLOBAL_POSITION_INT   # print full fields for one type
+
+Run inside the nix dev shell (it provides pymavlink).
+"""
+
+import argparse
+import collections
+import time
+
+from pymavlink import mavutil
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=14550)
+    ap.add_argument("--seconds", type=float, default=15.0)
+    ap.add_argument(
+        "--dump", action="append", default=[], help="message type to print in full (repeatable)"
+    )
+    args = ap.parse_args()
+
+    conn = mavutil.mavlink_connection(f"udpin:0.0.0.0:{args.port}")
+    print(f"listening on udp://0.0.0.0:{args.port} for {args.seconds:g}s …")
+
+    counts = collections.Counter()
+    first = {}
+    last = {}
+    started = time.monotonic()
+    sysids = set()
+
+    while time.monotonic() - started < args.seconds:
+        msg = conn.recv_match(blocking=True, timeout=1.0)
+        if msg is None:
+            continue
+        name = msg.get_type()
+        if name == "BAD_DATA":
+            counts["BAD_DATA"] += 1
+            continue
+        now = time.monotonic()
+        counts[name] += 1
+        first.setdefault(name, now)
+        last[name] = now
+        sysids.add((msg.get_srcSystem(), msg.get_srcComponent()))
+        if name in args.dump:
+            print(f"  {name}: {msg.to_dict()}")
+
+    if not counts:
+        print(
+            "nothing received — check the phone's target address, the port, and "
+            "that both are on the same network"
+        )
+        return 1
+
+    print(f"\nsystems seen: {sorted(sysids)}")
+    print(f"{'message':<28} {'count':>6} {'Hz':>7}")
+    for name, n in counts.most_common():
+        span = last.get(name, 0) - first.get(name, 0)
+        hz = (n - 1) / span if n > 1 and span > 0 else float("nan")
+        print(f"{name:<28} {n:>6} {hz:>7.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

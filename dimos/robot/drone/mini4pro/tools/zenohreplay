@@ -1,0 +1,1138 @@
+#!/usr/bin/env python3
+"""Replay a mini4pro flight record through the Zenoh telemetry encoder, offline.
+
+Reads the `mini4pro-flightlog-1` JSONL the phone writes and answers: **if we had been
+publishing to DiMOS during this flight, what would have gone out — and what would have
+been withheld, and why?** The encoder withholds rather than zero-fills, so a channel with
+nothing on it and a channel with no data look identical from outside; the *reason* column
+is the whole value of this tool.
+
+    tools/zenohreplay session.001.jsonl                  # the summary
+    tools/zenohreplay 20260727-*.jsonl                   # all parts of a session
+    tools/zenohreplay s.jsonl --gaps                     # sampling gaps and signal ages
+    tools/zenohreplay s.jsonl --fields                   # what the fold found, and missed
+    tools/zenohreplay s.jsonl --frames out.jsonl         # write the encoded LCM frames
+    tools/zenohreplay --coverage                         # what a record cannot replay
+    tools/zenohreplay --selftest                         # against the committed fixture
+
+Two gates decide every dense channel, and confusing them is the way to misread the output:
+
+  FRESH  the reading arrived inside its own staleness limit. What `odom` requires on all
+         four inputs — an aircraft is never flown on a held value.
+  HELD   the reading exists and the link is alive **now**. What `pose`, `gps_location` and
+         `imu` use; they may repeat a held reading and withhold only when the reading was
+         never taken or `fcConnected` is false (reason `LINK_DOWN`).
+
+There is no `datum` channel; the origin is recovered by subtracting `pose` from
+`gps_location`. `--frames` needs DiMOS's generated bindings and says so if they are absent.
+Exits non-zero if a self-test fails, or if a record produced no samples at all.
+
+Full rationale: `docs/zenoh-replay-contract.md` (§3 encoding, §5 the gates, §8 what carries
+over to Android) and `docs/mem2-converter.md` §3.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import glob
+import importlib
+import itertools
+import json
+import math
+import os
+import sys
+
+FORMAT = "mini4pro-flightlog-1"
+FRAME_FORMAT = "mini4pro-zenohframes-1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The signals, and the only four whose age carries a freshness meaning.
+#
+# Mirrors `telemetry/Signal`: a limit is set only where the delivery cadence was
+# measured continuous. For the rest a long silence means "nothing changed", so a
+# limit would manufacture a warning out of normal operation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+STALE_AFTER_MS = {
+    "POSITION": 1000,
+    "ALTITUDE": 1000,
+    "TAKEOFF_ALTITUDE": 2000,
+    "ATTITUDE": 2000,
+    "VELOCITY": 2000,
+}
+
+# `dji_state`'s `age` members, and the signal each one is the age of.
+AGE_SIGNAL = {"pos": "POSITION", "relalt": "ALTITUDE", "att": "ATTITUDE", "vel": "VELOCITY"}
+
+# One entry per AircraftState field the record carries. Mirrors
+# `replay/FlightReplay.FIELD_MAP`; the names are `record/StateDelta.F`'s plus the one
+# `record/Recorder` subscribes to itself.
+FIELD_MAP = {
+    "fcConnected": ("fcConnected", "bool"),
+    "takeoffAltitudeAmsl": ("takeoffAltitudeAmsl", "float"),
+    "satelliteCount": ("satelliteCount", "int"),
+    "gpsSignalLevel": ("gpsSignalLevel", "int"),
+    "homeLatitude": ("homeLatitude", "float"),
+    "homeLongitude": ("homeLongitude", "float"),
+    "isHomeLocationSet": ("homeLocationSet", "bool"),
+    "isFlying": ("isFlying", "bool"),
+    "motorsOn": ("motorsOn", "bool"),
+    "flightMode": ("flightMode", "str"),
+    "notAllowMotorStart": ("notAllowMotorStart", "bool"),
+    "imuWarmingUp": ("imuWarmingUp", "bool"),
+    "inFailsafe": ("inFailsafe", "bool"),
+    "batteryPercent": ("batteryPercent", "int"),
+    "voltageMv": ("voltageMv", "int"),
+    "currentMa": ("currentMa", "int"),
+    "cellCount": ("cellCount", "int"),
+    "cellVoltagesMv": ("cellVoltagesMv", "intlist"),
+    "batteryTempC": ("batteryTempC", "float"),
+}
+
+# The AircraftState field no line of the record carries at all.
+UNRECORDED = ["goHomeHeightM"]
+
+CHANNELS = ["odom", "pose", "gps_location", "imu", "battery", "mode", "gimbal"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The frame tree, `docs/mem2-converter.md` §2. Ours, and namespaced under `drone/`
+# so that publishing onto a TF tree several processes own cannot collide.
+#
+#   drone/world                    takeoff origin, 0,0,0. GPS-anchored horizontally
+#   └── drone/base_link            and barometric vertically — two error models in
+#       └── drone/camera           one frame, and z is the one that drifts.
+#           └── drone/camera_optical
+#
+# The last two are the `tf` tree's leaves and no channel in this file emits them: a
+# record carries the commanded gimbal angle as `dji_call` pairs and folding it is not
+# done here yet (`docs/zenoh-replay-contract.md` §7). They are named so the tree is
+# readable in one place rather than only in the Kotlin.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FRAME_WORLD = "drone/world"
+FRAME_BASE_LINK = "drone/base_link"
+FRAME_CAMERA = "drone/camera"
+FRAME_CAMERA_OPTICAL = "drone/camera_optical"
+
+# telemetry/Geo. The cos(latitude) factor on east is a 21% error at 38N if dropped.
+METRES_PER_DEG = 111194.93
+
+MIN_SATS_FOR_FIX = 6
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reading
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `record/Json` writes non-finite floats as these three quoted strings, because bare
+# NaN is not JSON and a log we cannot `jq` is a log we will not read.
+NONFINITE = {"NaN": float("nan"), "Infinity": float("inf"), "-Infinity": float("-inf")}
+
+
+def num(v):
+    """A recorded value as a float, coercing the three quoted non-finites."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return NONFINITE.get(v)
+
+
+def read_records(paths):
+    """Parse every line of every path, in order. Returns (header, entries, bad)."""
+    header = None
+    entries = []
+    bad = 0
+    for path in paths:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except ValueError:
+                    bad += 1
+                    continue
+                k = o.get("k")
+                if k == "header":
+                    if header is None:
+                        header = o
+                elif k in ("dji_state", "dji_field", "event", "dji_health", "vs_state"):
+                    entries.append(o)
+    return header, entries, bad
+
+
+def parse_value(raw, kind):
+    """Invert the `toString()` / `Json.num` the recorder rendered a slow value with.
+
+    A value that will not parse becomes None rather than a default: "we cannot read
+    this" and "it was 0" are the two things this codebase refuses to confuse.
+    """
+    if raw is None:
+        return None
+    if kind == "bool":
+        return {"true": True, "false": False}.get(raw)
+    if kind == "str":
+        return raw
+    if kind == "intlist":
+        if raw == "":
+            return []
+        try:
+            return [int(p.strip()) for p in raw.split(",")]
+        except ValueError:
+            return None
+    try:
+        f = float(raw)
+    except ValueError:
+        return None
+    return round(f) if kind == "int" else f
+
+
+def build_samples(entries):
+    """Fold `dji_field` forward and merge with each `dji_state`.
+
+    Fields stamped at or before a sample were already true *in* it: `StateDelta`
+    derives them from the state it was handed and writes them after the sample line,
+    at the same `t`. Folding in file order would put every slow value 200 ms late.
+    """
+    states = [e for e in entries if e.get("k") == "dji_state"]
+    fields = [e for e in entries if e.get("k") == "dji_field"]
+    fold = {}
+    changed_at = {}
+    unmapped = collections.Counter()
+    samples = []
+    i = 0
+    for s in states:
+        while i < len(fields) and fields[i]["t"] <= s["t"]:
+            f = fields[i]
+            name = f.get("f")
+            binding = FIELD_MAP.get(name)
+            if binding is None:
+                unmapped[name] += 1
+            else:
+                attr, kind = binding
+                fold[attr] = parse_value(f.get("v"), kind)
+                changed_at[attr] = f["t"]
+            i += 1
+        samples.append((s, dict(fold), dict(changed_at)))
+    return samples, unmapped
+
+
+def age_ms(state, signal):
+    """Recorded delivery age, or None when the signal was never delivered."""
+    ages = state.get("age") or {}
+    for member, sig in AGE_SIGNAL.items():
+        if sig == signal:
+            return ages.get(member)
+    return None
+
+
+def is_fresh(state, signal):
+    a = age_ms(state, signal)
+    if a is None:
+        return False
+    limit = STALE_AFTER_MS.get(signal)
+    return True if limit is None else a <= limit
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The gates. `telemetry/Geo` and `zenoh/ZenohTelemetryEncoder`, from their rules.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def coordinate_or_none(lat, lon):
+    """A coordinate this bridge is willing to repeat, or None.
+
+    The range check is the load-bearing one: DJI's no-home filler is 4.583662361046586E7
+    in *both* fields, which is not a latitude at all. The equality check catches a
+    future filler that lands inside the bounds, and the exactly-0/0 pair with it.
+    """
+    if lat is None or lon is None:
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return None
+    if lat == lon:
+        return None
+    return lat, lon
+
+
+def enu_metres(from_lat, from_lon, to_lat, to_lon):
+    """ENU offset in metres as (east, north). The cos(latitude) is the landmine."""
+    north = (to_lat - from_lat) * METRES_PER_DEG
+    d_lon = to_lon - from_lon
+    if d_lon > 180.0:
+        d_lon -= 360.0
+    if d_lon < -180.0:
+        d_lon += 360.0
+    east = d_lon * METRES_PER_DEG * math.cos(math.radians(from_lat))
+    return east, north
+
+
+def enu_quaternion(roll_deg, pitch_deg, yaw_deg):
+    """DJI's FRD/NED attitude as the ENU/FLU rotation ROS wants, (x, y, z, w).
+
+    roll stays, pitch negates (Y flips right to left), yaw becomes 90 - yaw
+    (clockwise-from-north to counterclockwise-from-east).
+    """
+    hr = math.radians(roll_deg) / 2.0
+    hp = math.radians(-pitch_deg) / 2.0
+    hy = math.radians(90.0 - yaw_deg) / 2.0
+    cr, sr = math.cos(hr), math.sin(hr)
+    cp, sp = math.cos(hp), math.sin(hp)
+    cy, sy = math.cos(hy), math.sin(hy)
+    return (
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    )
+
+
+def finite(v):
+    return v is not None and math.isfinite(v)
+
+
+# The two gates. See the module docstring: the same reading is judged twice per sample,
+# and the two answers differ on purpose.
+FRESH = "FRESH"
+HELD = "HELD"
+
+
+def gated(state, fold, gate, signal, stale):
+    """The verdict a present reading gets under `gate`: published, stale, or link-down.
+
+    The missing/invalid checks are the caller's and are the same under both gates — a
+    value that was never read is not held, it is absent.
+    """
+    if gate == FRESH:
+        return "PUBLISHED" if is_fresh(state, signal) else stale
+    # HELD. `fcConnected` is folded from `dji_field`, so it is None until the first one
+    # arrives; AircraftState's own default is `false`, and "not yet heard from" is
+    # exactly the case where nothing vouches for a held reading.
+    return "PUBLISHED" if fold.get("fcConnected") is True else "LINK_DOWN"
+
+
+def position_reason(state, fold, gate=FRESH):
+    if coordinate_or_none(num(state.get("lat")), num(state.get("lon"))) is None:
+        return "POSITION_INVALID"
+    return gated(state, fold, gate, "POSITION", "POSITION_STALE")
+
+
+def altitude_reason(state, fold, gate=FRESH):
+    if not finite(num(state.get("relalt"))):
+        return "ALTITUDE_MISSING"
+    return gated(state, fold, gate, "ALTITUDE", "ALTITUDE_STALE")
+
+
+def attitude_reason(state, fold, gate=FRESH):
+    if not all(finite(num(state.get(k))) for k in ("roll", "pitch", "yaw")):
+        return "ATTITUDE_MISSING"
+    return gated(state, fold, gate, "ATTITUDE", "ATTITUDE_STALE")
+
+
+def velocity_reason(state, fold, gate=FRESH):
+    """Only ever asked FRESH: `odom` is the one channel that carries a velocity, and a
+    held twist publishes "not moving" on a dead feed. The parameter exists so the four
+    gates have one shape, not because anything passes HELD."""
+    if not all(finite(num(state.get(k))) for k in ("vn", "ve", "vd")):
+        return "VELOCITY_MISSING"
+    return gated(state, fold, gate, "VELOCITY", "VELOCITY_STALE")
+
+
+def first_withheld(*reasons):
+    """The first reason that is not PUBLISHED, or PUBLISHED. Precedence is the encoder's:
+    it reports the input it gave up on first, not the worst one."""
+    for r in reasons:
+        if r != "PUBLISHED":
+            return r
+    return "PUBLISHED"
+
+
+def takeoff_origin(samples):
+    """Where `drone/world`'s 0,0,0 sits on Earth: the first fix taken while DJI said the
+    motors were on.
+
+    **Fresh, not held**, and that is deliberate — this is the one reading the whole
+    flight's local frame hangs off. An origin taken from a cached fix anchors every local
+    metre afterwards to wherever the aircraft was the last time the GPS spoke, with no way
+    to see the error. Falls back to the first usable fix so a ground session still has a
+    frame.
+
+    Held in this process and **never published**: a consumer subtracts `pose` from
+    `gps_location` and recovers it from every sample instead.
+    """
+
+    def fix(state, fold):
+        c = coordinate_or_none(num(state["lat"]), num(state["lon"]))
+        return {"lat": c[0], "lon": c[1], "alt": fold.get("takeoffAltitudeAmsl"), "t": state["t"]}
+
+    for state, fold, _ in samples:
+        if fold.get("motorsOn") is not True:
+            continue
+        if position_reason(state, fold, FRESH) == "PUBLISHED":
+            return fix(state, fold)
+    for state, fold, _ in samples:
+        if position_reason(state, fold, FRESH) == "PUBLISHED":
+            return fix(state, fold)
+    return None
+
+
+def run(samples, origin):
+    """Per-channel (published, {reason: count}) plus the per-sample decisions."""
+    tally = {ch: collections.Counter() for ch in CHANNELS}
+    decisions = []
+    for state, fold, _ in samples:
+        # Each input under both rules, because different channels ask different questions
+        # of the same reading.
+        pos_fresh = position_reason(state, fold, FRESH)
+        alt_fresh = altitude_reason(state, fold, FRESH)
+        att_fresh = attitude_reason(state, fold, FRESH)
+        vel_fresh = velocity_reason(state, fold, FRESH)
+
+        pos_held = position_reason(state, fold, HELD)
+        alt_held = altitude_reason(state, fold, HELD)
+        att_held = attitude_reason(state, fold, HELD)
+
+        # pose: position + altitude + attitude + an origin, every one of them held.
+        pose = "NO_DATUM" if origin is None else first_withheld(pos_held, alt_held, att_held)
+        # odom: the same inputs plus velocity, and every one of them fresh.
+        odom = (
+            "NO_DATUM"
+            if origin is None
+            else first_withheld(pos_fresh, alt_fresh, att_fresh, vel_fresh)
+        )
+        # gps_location: the global fix, so no origin is needed. Held, like pose — there is
+        # no defensible reason for the two to disagree about whether a position is
+        # publishable when they are the same measurement.
+        gps = first_withheld(pos_held, alt_held)
+
+        pct = fold.get("batteryPercent")
+        battery = "PUBLISHED" if isinstance(pct, int) and 0 <= pct <= 100 else "BATTERY_MISSING"
+        mode_name = fold.get("flightMode")
+        mode = "PUBLISHED" if mode_name and mode_name.strip() else "MODE_MISSING"
+
+        row = {
+            "t": state["t"],
+            "odom": odom,
+            "pose": pose,
+            "gps_location": gps,
+            "imu": att_held,
+            "battery": battery,
+            "mode": mode,
+            "gimbal": "NOT_RECORDED",
+        }
+        for ch in CHANNELS:
+            tally[ch][row[ch]] += 1
+        decisions.append((row, state, fold))
+    return tally, decisions
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reporting
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def fmt_seconds(v):
+    return f"{v:.3f}"
+
+
+def print_summary(header, entries, samples, tally, origin, unmapped, bad):
+    kinds = collections.Counter(e.get("k") for e in entries)
+    states = [e for e in entries if e.get("k") == "dji_state"]
+    span = (states[-1]["t"] - states[0]["t"]) if len(states) > 1 else 0.0
+
+    print("session      %s" % ((header or {}).get("session") or "?"))
+    print("format       %s" % ((header or {}).get("format") or "?"))
+    meta = (header or {}).get("meta") or {}
+    rec = meta.get("recorder") or {}
+    dev = meta.get("device") or {}
+    if dev:
+        print(
+            "device       {} {}, Android {}".format(
+                dev.get("manufacturer"), dev.get("model"), dev.get("android_release")
+            )
+        )
+    print("state rate   {} Hz declared".format(rec.get("state_hz", "?")))
+    print("duration     %s s over %d samples" % (fmt_seconds(span), len(samples)))
+    if bad:
+        print("bad lines    %d (skipped)" % bad)
+    print()
+
+    print("entries")
+    for k, n in kinds.most_common():
+        print("  %-12s %6d" % (k, n))
+    print()
+
+    if origin is None:
+        print("origin       NONE — no fix good enough to anchor a local frame.")
+        print("             Every local channel is withheld for the whole flight.")
+    else:
+        print(
+            "origin       {:.7f}, {:.7f} (t={}) — {}'s 0,0,0".format(
+                origin["lat"], origin["lon"], fmt_seconds(origin["t"]), FRAME_WORLD
+            )
+        )
+        alt = origin.get("alt")
+        print(
+            "             takeoff altitude %s — pressure altitude, not AMSL"
+            % ((f"{alt:.3f} m") if alt is not None else "unknown (NaN on the wire)")
+        )
+        print("             never published: a consumer recovers it by subtracting")
+        print("             pose from gps_location over every sample carrying both")
+    print()
+
+    total = len(samples)
+    print("channels     %d samples" % total)
+    print("  %-13s %8s %6s   %s" % ("channel", "published", "%", "withheld, and why"))
+    for ch in CHANNELS:
+        c = tally[ch]
+        pub = c.get("PUBLISHED", 0)
+        why = ", ".join("%s %d" % (k.lower(), v) for k, v in c.most_common() if k != "PUBLISHED")
+        pct = (100.0 * pub / total) if total else 0.0
+        print("  %-13s %8d %5.1f%%   %s" % (ch, pub, pct, why or "—"))
+    print()
+
+    if unmapped:
+        print("unmapped dji_field names (recorded, not part of AircraftState)")
+        line = ", ".join("%s x%d" % (n, c) for n, c in unmapped.most_common())
+        for chunk in wrap(line, 74):
+            print("  " + chunk)
+        print()
+
+
+def wrap(text, width):
+    out, line = [], ""
+    for word in text.split(" "):
+        if line and len(line) + 1 + len(word) > width:
+            out.append(line)
+            line = word
+        else:
+            line = (line + " " + word).strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def print_gaps(samples, entries):
+    """Sampling gaps and per-signal age statistics — why a channel went quiet."""
+    states = [e for e in entries if e.get("k") == "dji_state"]
+    ts = [s["t"] for s in states]
+    deltas = [b - a for a, b in itertools.pairwise(ts)]
+    if deltas:
+        median = sorted(deltas)[len(deltas) // 2]
+        print(f"sampling     median {median:.3f} s, max {max(deltas):.3f} s")
+        gaps = [(a, b - a) for a, b in itertools.pairwise(ts) if b - a > 3 * median]
+        if gaps:
+            print("             %d gap(s) over 3x the period:" % len(gaps))
+            for at, d in gaps[:20]:
+                print(f"               t={fmt_seconds(at)}  {d:.3f} s")
+        else:
+            print("             no gap over 3x the period")
+    print()
+
+    print("signal ages  (recorded delivery age, ms — the freshness the encoder gates on)")
+    print("  %-10s %7s %7s %7s %7s %9s" % ("signal", "median", "p95", "max", "limit", "stale"))
+    for _member, sig in AGE_SIGNAL.items():
+        vals = sorted(a for a in (age_ms(s, sig) for s in states) if a is not None)
+        if not vals:
+            print("  %-10s %s" % (sig.lower(), "never delivered"))
+            continue
+        limit = STALE_AFTER_MS[sig]
+        stale = sum(1 for v in vals if v > limit)
+        print(
+            "  %-10s %7d %7d %7d %7d %5d/%d"
+            % (
+                sig.lower(),
+                vals[len(vals) // 2],
+                vals[int(0.95 * (len(vals) - 1))],
+                vals[-1],
+                limit,
+                stale,
+                len(vals),
+            )
+        )
+    print()
+
+
+def print_fields(samples, unmapped):
+    """What the fold actually found — the honest inventory behind every replay."""
+    seen = {}
+    for _, fold, _changed in samples:
+        for attr, v in fold.items():
+            if v is not None:
+                seen.setdefault(attr, v)
+    print("folded fields")
+    for wire, (attr, _kind) in FIELD_MAP.items():
+        if attr in seen:
+            print("  %-22s -> %-22s %s" % (wire, attr, seen[attr]))
+        else:
+            print("  %-22s -> %-22s NEVER RECORDED IN THIS SESSION" % (wire, attr))
+    print()
+    print("AircraftState fields no record carries at all")
+    for name in UNRECORDED:
+        print(f"  {name}")
+    print()
+    if unmapped:
+        print("recorded names outside AircraftState (context, not state)")
+        for n, c in unmapped.most_common():
+            print("  %-28s x%d" % (n, c))
+        print()
+
+
+COVERAGE = """\
+coverage — what a mini4pro-flightlog-1 record cannot replay into Zenoh
+
+  Six of the seven telemetry channels replay completely. One does not.
+
+  gimbal attitude (pitch/roll/yaw)      blocks: gimbal      NOT FOLDED HERE
+      Not in AircraftState and not in record/StateDelta.F, so no dji_field carries
+      it -- but the record does. LogEntry.Gimbal writes its own `gimbal` line, and
+      the 2026-07-27 flights carry 68 and 232 of them. This file reads only
+      dji_state/dji_field/event/dji_health/vs_state, so it does not see them.
+      Reported attitude is the wrong number for the tf tree in any case
+      (docs/mem2-converter.md 2.2): the edge is built from the COMMANDED angle,
+      and no record in this project carries one -- DjiOp.GIMBAL_ROTATE is declared
+      in record/Tap.kt and never used, because gimbal/MsdkGimbalAim aims without
+      going through DjiCalls. So the tf edge is blocked on one tap call in the
+      app, not on anything this tool could derive.
+
+  AircraftState.goHomeHeightM           blocks: nothing on Zenoh   ABSENT ENTIRELY
+      The only AircraftState field no recorder line emits. Nothing on the Zenoh
+      side reads it; RTL_RETURN_ALT on the MAVLink wire does, so a parameter
+      replay would report the wrong RTH altitude.
+
+  Signal.TAKEOFF_ALTITUDE delivery age  blocks: nothing            UNDER-RECORDED
+      The value is present but deadbanded at 0.25 m, so its stamps are change
+      times rather than delivery times. It is the only signal that both has a
+      staleness limit and is written on change. No consumer reads it today.
+      Fix: add age.takeoffalt beside the four ages already on dji_state.
+
+  event-driven signals' delivery ages   blocks: nothing   UNDER-RECORDED, HARMLESS
+      Signal.staleAfterMs is null for all of them, so isFresh asks only whether
+      the key was ever heard — which the record answers exactly.
+
+  NOT a gap, and worth saying: the four continuous ages (pos, relalt, att, vel)
+  are on every dji_state line. They are the only four the encoder ever reads, and
+  they are what makes a replay reproduce what the flight actually published rather
+  than what it could have.
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frames — encoded with DiMOS's own bindings, or not at all
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_lcm(dimos_lcm):
+    root = os.path.join(dimos_lcm, "generated", "python_lcm_msgs")
+    if not os.path.isdir(os.path.join(root, "lcm_msgs")):
+        return None, f"no lcm_msgs package under {root}"
+    sys.path.insert(0, root)
+    names = [
+        "std_msgs.Time",
+        "std_msgs.Header",
+        "std_msgs.String",
+        "geometry_msgs.Point",
+        "geometry_msgs.Vector3",
+        "geometry_msgs.Quaternion",
+        "geometry_msgs.Pose",
+        "geometry_msgs.PoseWithCovariance",
+        "geometry_msgs.Twist",
+        "geometry_msgs.TwistWithCovariance",
+        "geometry_msgs.PoseStamped",
+        "nav_msgs.Odometry",
+        "sensor_msgs.NavSatStatus",
+        "sensor_msgs.NavSatFix",
+        "sensor_msgs.Imu",
+        "sensor_msgs.BatteryState",
+    ]
+    mods = {}
+    try:
+        for n in names:
+            pkg, cls = n.split(".")
+            mods[n] = getattr(importlib.import_module(f"lcm_msgs.{pkg}.{cls}"), cls)
+    except ImportError as e:
+        return None, str(e)
+    return mods, None
+
+
+class Builder:
+    """Builds the DiMOS message objects. The one place the encoder's rules are applied."""
+
+    NAN = float("nan")
+
+    def __init__(self, mods, origin):
+        self.m = mods
+        self.origin = origin
+
+    def _time(self, unix_s):
+        t = self.m["std_msgs.Time"]()
+        t.sec = math.floor(unix_s)
+        t.nsec = int((unix_s - math.floor(unix_s)) * 1e9)
+        return t
+
+    def _header(self, unix_s, frame_id):
+        h = self.m["std_msgs.Header"]()
+        h.seq = 0
+        h.stamp = self._time(unix_s)
+        h.frame_id = frame_id
+        return h
+
+    def _point(self, x, y, z):
+        p = self.m["geometry_msgs.Point"]()
+        p.x, p.y, p.z = x, y, z
+        return p
+
+    def _vec3(self, x, y, z):
+        v = self.m["geometry_msgs.Vector3"]()
+        v.x, v.y, v.z = x, y, z
+        return v
+
+    def _quat(self, q):
+        o = self.m["geometry_msgs.Quaternion"]()
+        o.x, o.y, o.z, o.w = q
+        return o
+
+    def local_point(self, state):
+        east, north = enu_metres(
+            self.origin["lat"], self.origin["lon"], num(state["lat"]), num(state["lon"])
+        )
+        return self._point(east, north, num(state["relalt"]))
+
+    def orientation(self, state):
+        return self._quat(
+            enu_quaternion(num(state["roll"]), num(state["pitch"]), num(state["yaw"]))
+        )
+
+    def pose_stamped(self, state, unix_s):
+        ps = self.m["geometry_msgs.PoseStamped"]()
+        ps.header = self._header(unix_s, FRAME_WORLD)
+        pose = self.m["geometry_msgs.Pose"]()
+        pose.position = self.local_point(state)
+        pose.orientation = self.orientation(state)
+        ps.pose = pose
+        return ps
+
+    def odometry(self, state, unix_s):
+        od = self.m["nav_msgs.Odometry"]()
+        od.header = self._header(unix_s, FRAME_WORLD)
+        od.child_frame_id = FRAME_BASE_LINK
+        pose = self.m["geometry_msgs.Pose"]()
+        pose.position = self.local_point(state)
+        pose.orientation = self.orientation(state)
+        pwc = self.m["geometry_msgs.PoseWithCovariance"]()
+        pwc.pose = pose
+        pwc.covariance = [0.0] * 36
+        od.pose = pwc
+        tw = self.m["geometry_msgs.Twist"]()
+        # ENU from NED: x/y swap, z negates. The sign that ends in the ground.
+        tw.linear = self._vec3(num(state["ve"]), num(state["vn"]), -num(state["vd"]))
+        # No angular-rate feed on this airframe at all — NaN, never a confident zero.
+        tw.angular = self._vec3(self.NAN, self.NAN, self.NAN)
+        twc = self.m["geometry_msgs.TwistWithCovariance"]()
+        twc.twist = tw
+        twc.covariance = [0.0] * 36
+        od.twist = twc
+        return od
+
+    def nav_sat_status(self, fold):
+        s = self.m["sensor_msgs.NavSatStatus"]()
+        level = fold.get("gpsSignalLevel")
+        sats = fold.get("satelliteCount")
+        fixed = level is not None and level >= 3 and (sats is None or sats >= MIN_SATS_FOR_FIX)
+        s.status = 0 if fixed else -1  # STATUS_FIX / STATUS_NO_FIX, a signed int8
+        s.service = 1  # SERVICE_GPS
+        return s
+
+    def gps_location(self, state, fold, unix_s):
+        f = self.m["sensor_msgs.NavSatFix"]()
+        f.header = self._header(unix_s, FRAME_BASE_LINK)
+        f.status = self.nav_sat_status(fold)
+        f.latitude = num(state["lat"])
+        f.longitude = num(state["lon"])
+        # Metres above THIS flight's takeoff point, not the WGS-84 ellipsoid height
+        # ROS asks for. The barometric alternative moved 41.5 m between sessions.
+        f.altitude = num(state["relalt"])
+        f.position_covariance = [0.0] * 9
+        f.position_covariance_type = 0
+        return f
+
+    def imu(self, state, unix_s):
+        i = self.m["sensor_msgs.Imu"]()
+        i.header = self._header(unix_s, FRAME_BASE_LINK)
+        i.orientation = self.orientation(state)
+        i.orientation_covariance = [0.0] * 9
+        unreported = [-1.0] + [0.0] * 8  # ROS's own "this quantity is not reported"
+        i.angular_velocity = self._vec3(self.NAN, self.NAN, self.NAN)
+        i.angular_velocity_covariance = unreported
+        i.linear_acceleration = self._vec3(self.NAN, self.NAN, self.NAN)
+        i.linear_acceleration_covariance = list(unreported)
+        return i
+
+    def battery(self, fold, unix_s):
+        b = self.m["sensor_msgs.BatteryState"]()
+        b.header = self._header(unix_s, FRAME_BASE_LINK)
+        mv = fold.get("voltageMv")
+        b.voltage = self.NAN if mv is None else mv / 1000.0
+        t = fold.get("batteryTempC")
+        b.temperature = self.NAN if t is None else t
+        ma = fold.get("currentMa")
+        b.current = self.NAN if ma is None else ma / 1000.0
+        b.charge = self.NAN
+        b.capacity = self.NAN
+        b.design_capacity = self.NAN
+        b.percentage = fold["batteryPercent"] / 100.0  # 0..1, not 0..100
+        b.power_supply_status = 0 if ma is None else (2 if ma < 0 else (1 if ma > 0 else 3))
+        b.power_supply_health = 0
+        b.power_supply_technology = 3  # LIPO
+        b.present = True
+        cells = fold.get("cellVoltagesMv") or []
+        b.cell_voltage = [c / 1000.0 for c in cells]
+        b.cell_voltage_length = len(cells)
+        # DJI reports one pack temperature, not per-cell; an empty list is the honest length.
+        b.cell_temperature = []
+        b.cell_temperature_length = 0
+        b.location = ""
+        b.serial_number = ""
+        return b
+
+    def mode(self, fold):
+        s = self.m["std_msgs.String"]()
+        s.data = fold["flightMode"]
+        return s
+
+
+def write_frames(path, header, decisions, origin, mods):
+    """One JSON object per encoded frame: `{t, unix, ch, len, hex}`.
+
+    Hex rather than base64 because that is what `mavcapture-1` and the flight record
+    itself use, and a frame file you can grep for a channel name is worth the bytes.
+
+    The header carries `origin` — where `drone/world`'s 0,0,0 sat — as **metadata about
+    the file**, not as a frame anyone published. It replaces the old `datum` key, which
+    named a channel that no longer exists and carried a generation counter that no longer
+    exists either.
+    """
+    started = (header or {}).get("started_unix_ms")
+    builder = Builder(mods, origin) if origin else None
+    n = 0
+    with open(path, "w") as out:
+        out.write(
+            json.dumps(
+                {
+                    "format": FRAME_FORMAT,
+                    "session": (header or {}).get("session"),
+                    "started_unix_ms": started,
+                    "origin": origin,
+                    "note": "encoded with DiMOS's own lcm_encode() bindings",
+                }
+            )
+            + "\n"
+        )
+        for row, state, fold in decisions:
+            # Milliseconds, matching the record's own `t` resolution and
+            # `LcmTime.ofEpochSeconds`. Sub-millisecond precision here would be
+            # invented: the record stamps `t` to six decimals but the wall-clock
+            # anchor it is added to is a millisecond value.
+            # floor(x + 0.5), which is Java's Math.round — Python's round() is
+            # banker's rounding and disagrees on an exact half, which a 5 Hz
+            # record hits about twice a minute.
+            unix_s = math.floor(started + row["t"] * 1000.0 + 0.5) / 1000.0 if started else row["t"]
+            for ch in CHANNELS:
+                if row[ch] != "PUBLISHED":
+                    continue
+                if ch == "pose":
+                    msg = builder.pose_stamped(state, unix_s)
+                elif ch == "odom":
+                    msg = builder.odometry(state, unix_s)
+                elif ch == "gps_location":
+                    msg = builder.gps_location(state, fold, unix_s)
+                elif ch == "imu":
+                    msg = builder.imu(state, unix_s)
+                elif ch == "battery":
+                    msg = builder.battery(fold, unix_s)
+                elif ch == "mode":
+                    msg = builder.mode(fold)
+                else:
+                    continue
+                data = msg.lcm_encode()
+                out.write(
+                    json.dumps(
+                        {
+                            "t": round(row["t"], 6),
+                            "unix": round(unix_s, 6),
+                            "ch": ch,
+                            "len": len(data),
+                            "hex": data.hex(),
+                        }
+                    )
+                    + "\n"
+                )
+                n += 1
+    return n
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Self-test
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The numbers `OrbitReplayTest` pins on the same fixture, from the Kotlin encoder.
+# This tool derives them independently; the point of the check is that two
+# implementations of the same rules agree.
+#
+# What each one means on this flight — 1855 samples of session 20260727-102510:
+#
+#   odom 409       the strict conjunction. 870 ALTITUDE_STALE is KeyAltitude's cadence
+#                  (bursts every 5-6 s against a 1 s limit) and not a fault; 67
+#                  VELOCITY_STALE is KeyAircraftVelocity being change-driven; 509
+#                  POSITION_INVALID is an aircraft with no fix at all. POSITION_STALE is
+#                  pinned at 0 because KeyAircraftLocation3D delivered at rate throughout.
+#   pose 1346      = 1855 - 509. Under the liveness gate every remaining withholding is
+#   gps 1346       POSITION_INVALID: an aircraft with no fix, never one holding still.
+#                  ALTITUDE_STALE is pinned at 0 to catch a freshness gate creeping back
+#                  in, and LINK_DOWN at 0 because on this flight fcConnected went false
+#                  only at t=275.41, by which time the position was already invalid.
+#   imu 1377       = 1855 - 478 ATTITUDE_MISSING, the samples with no aircraft at all.
+#                  ATTITUDE_STALE 0 for the same reason ALTITUDE_STALE is 0.
+#   battery 1378   / mode 1377 — event-driven keys, no freshness gate, unchanged by any
+#                  of this and left in as a control: if these move, something else broke.
+#   gimbal 0       1855 NOT_RECORDED. The one channel a record cannot reproduce.
+#
+# Was, before 3b2d331: pose and gps 476, imu 1254 (123 ATTITUDE_STALE), plus a `datum`
+# channel at 334 published / 1521 rate-limited. The datum channel is deleted; the rest is
+# the liveness gate.
+SELFTEST_FIXTURE = "android/app/src/test/resources/replay/orbit-real-air.jsonl"
+SELFTEST_EXPECT = {
+    "samples": 1855,
+    "odom": {
+        "PUBLISHED": 409,
+        "ALTITUDE_STALE": 870,
+        "POSITION_INVALID": 509,
+        "VELOCITY_STALE": 67,
+        "POSITION_STALE": 0,
+    },
+    "pose": {"PUBLISHED": 1346, "POSITION_INVALID": 509, "ALTITUDE_STALE": 0, "LINK_DOWN": 0},
+    "gps_location": {
+        "PUBLISHED": 1346,
+        "POSITION_INVALID": 509,
+        "ALTITUDE_STALE": 0,
+        "LINK_DOWN": 0,
+    },
+    "imu": {"PUBLISHED": 1377, "ATTITUDE_MISSING": 478, "ATTITUDE_STALE": 0},
+    "battery": {"PUBLISHED": 1378, "BATTERY_MISSING": 477},
+    "mode": {"PUBLISHED": 1377, "MODE_MISSING": 478},
+    "gimbal": {"NOT_RECORDED": 1855},
+}
+
+
+def planted_faults(samples, origin):
+    """Two mutations of the fixture the gates must answer in opposite directions.
+
+    **`LINK_DOWN` never fires on any record this project holds.** Measured across the
+    fixture and both 2026-07-27 datasets: `fcConnected` does go false, but only once the
+    position has already become invalid, so `POSITION_INVALID` wins the precedence every
+    time and the branch that withholds a dense channel for a dead link is never reached.
+    The same is true in reverse for the liveness gate's whole purpose — no real sample has
+    a stale reading and a live link *and* a valid fix all at once often enough to be
+    obvious in the counts.
+
+    A check that has never been shown to catch a planted fault is not known to work, so
+    both directions are planted here, in memory, on a window of samples the unmutated
+    fixture publishes on every channel:
+
+      1. the link goes down while every reading stays fresh — `pose`, `gps_location` and
+         `imu` must withhold for exactly that window and for the reason `LINK_DOWN`, and
+         `odom` must not move at all, because it never consulted the link.
+      2. every reading goes stale while the link stays up — `odom` must lose exactly that
+         window, and the three dense channels must not move at all. This is the fault that
+         would silently undo 3b2d331: a freshness gate creeping back into `pose` looks
+         like nothing until an aircraft holds still.
+
+    Returns a list of failure strings.
+    """
+    window = [i for i, (_, _, _) in enumerate(samples)][:0]
+    tally, decisions = run(samples, origin)
+    window = [i for i, (row, _, _) in enumerate(decisions) if row["odom"] == "PUBLISHED"][:50]
+    failures = []
+    if len(window) < 50:
+        return ["planted faults need 50 fully-published samples, found %d" % len(window)]
+    chosen = set(window)
+
+    def mutate(fault):
+        out = []
+        for i, (state, fold, changed) in enumerate(samples):
+            if i in chosen:
+                state, fold = fault(dict(state), dict(fold))
+            out.append((state, fold, changed))
+        return run(out, origin)[0]
+
+    def link_down(state, fold):
+        fold["fcConnected"] = False
+        return state, fold
+
+    def all_stale(state, fold):
+        # Older than every limit in STALE_AFTER_MS, on all four ages at once.
+        state["age"] = {member: 9_999_999 for member in AGE_SIGNAL}
+        return state, fold
+
+    down = mutate(link_down)
+    for ch in ("pose", "gps_location", "imu"):
+        if down[ch].get("LINK_DOWN", 0) != len(window):
+            failures.append(
+                "fault 1: %s withheld LINK_DOWN %d times, expected %d"
+                % (ch, down[ch].get("LINK_DOWN", 0), len(window))
+            )
+        if down[ch]["PUBLISHED"] != tally[ch]["PUBLISHED"] - len(window):
+            failures.append(
+                "fault 1: %s published %d, expected %d — a dead link must"
+                " withhold a dense channel"
+                % (ch, down[ch]["PUBLISHED"], tally[ch]["PUBLISHED"] - len(window))
+            )
+    if down["odom"]["PUBLISHED"] != tally["odom"]["PUBLISHED"]:
+        failures.append(
+            "fault 1: odom moved %d -> %d — odom is gated on freshness alone"
+            % (tally["odom"]["PUBLISHED"], down["odom"]["PUBLISHED"])
+        )
+
+    stale = mutate(all_stale)
+    if stale["odom"]["PUBLISHED"] != tally["odom"]["PUBLISHED"] - len(window):
+        failures.append(
+            "fault 2: odom published %d, expected %d — odom must never carry"
+            " a held reading"
+            % (stale["odom"]["PUBLISHED"], tally["odom"]["PUBLISHED"] - len(window))
+        )
+    for ch in ("pose", "gps_location", "imu"):
+        if stale[ch]["PUBLISHED"] != tally[ch]["PUBLISHED"]:
+            failures.append(
+                "fault 2: %s moved %d -> %d — a stale reading on a live link is"
+                " quiet-because-unchanged, and the dense channels hold it"
+                % (ch, tally[ch]["PUBLISHED"], stale[ch]["PUBLISHED"])
+            )
+    return failures
+
+
+def selftest(repo):
+    path = os.path.join(repo, SELFTEST_FIXTURE)
+    if not os.path.exists(path):
+        print(f"selftest: fixture missing at {path}")
+        return 1
+    header, entries, bad = read_records([path])
+    samples, unmapped = build_samples(entries)
+    origin = takeoff_origin(samples)
+    tally, _ = run(samples, origin)
+
+    failures = []
+    if len(samples) != SELFTEST_EXPECT["samples"]:
+        failures.append("samples: %d, expected %d" % (len(samples), SELFTEST_EXPECT["samples"]))
+    if bad:
+        failures.append("%d unparseable lines in the fixture" % bad)
+    for ch, expect in SELFTEST_EXPECT.items():
+        if ch == "samples":
+            continue
+        for reason, n in expect.items():
+            got = tally[ch].get(reason, 0)
+            if got != n:
+                failures.append("%s %s: %d, expected %d" % (ch, reason.lower(), got, n))
+    # Every sample is accounted for on every channel: a reason that stopped being
+    # counted would otherwise hide behind the per-reason checks above.
+    for ch in CHANNELS:
+        total = sum(tally[ch].values())
+        if total != len(samples):
+            failures.append("%s: %d decisions over %d samples" % (ch, total, len(samples)))
+    if origin is None:
+        failures.append("no origin found")
+    elif abs(origin["t"] - 26.61) > 0.3:
+        failures.append("origin at t={:.2f}, expected 26.61".format(origin["t"]))
+    else:
+        failures.extend(planted_faults(samples, origin))
+
+    if failures:
+        print("selftest FAILED — this tool and OrbitReplayTest disagree:")
+        for f in failures:
+            print("  " + f)
+        return 1
+    print(
+        "selftest ok: %d samples, all %d channels agree with OrbitReplayTest,"
+        % (len(samples), len(CHANNELS))
+    )
+    print("             and both planted gate faults were caught on 50 samples.")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def main():
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(here)
+
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("paths", nargs="*", help="flight record .jsonl files or globs")
+    ap.add_argument("--gaps", action="store_true", help="sampling gaps and signal ages")
+    ap.add_argument("--fields", action="store_true", help="what the fold found, and missed")
+    ap.add_argument("--frames", metavar="FILE", help="write the encoded LCM frames")
+    ap.add_argument("--coverage", action="store_true", help="what a record cannot replay")
+    ap.add_argument("--selftest", action="store_true", help="check against the committed fixture")
+    ap.add_argument("--dimos-lcm", default=os.path.expanduser("~/coding/dimos-lcm"))
+    args = ap.parse_args()
+
+    if args.selftest:
+        return selftest(repo)
+    if args.coverage and not args.paths:
+        print(COVERAGE)
+        return 0
+    if not args.paths:
+        ap.print_help()
+        return 2
+
+    paths = []
+    for p in args.paths:
+        matched = sorted(glob.glob(p))
+        paths.extend(matched if matched else [p])
+
+    header, entries, bad = read_records(paths)
+    samples, unmapped = build_samples(entries)
+    if not samples:
+        print("no dji_state entries — nothing to replay.")
+        print("A session recorded before MSDK registration has no DJI half at all;")
+        print("check for an sdk_attached event.")
+        return 1
+
+    origin = takeoff_origin(samples)
+    tally, decisions = run(samples, origin)
+
+    print_summary(header, entries, samples, tally, origin, unmapped, bad)
+    if args.gaps:
+        print_gaps(samples, entries)
+    if args.fields:
+        print_fields(samples, unmapped)
+    if args.coverage:
+        print(COVERAGE)
+
+    if args.frames:
+        mods, err = load_lcm(args.dimos_lcm)
+        if mods is None:
+            print(f"frames NOT written: {err}")
+            print("  --frames encodes with DiMOS's own generated bindings so the bytes are")
+            print("  literally what DiMOS would receive. Point --dimos-lcm at the checkout,")
+            print("  or run tools/lcmfixtures/generate.py first to confirm it is usable.")
+            return 1
+        if origin is None:
+            print("frames NOT written: no origin, so no local channel can be expressed.")
+            return 1
+        n = write_frames(args.frames, header, decisions, origin, mods)
+        print("wrote %d frames to %s" % (n, args.frames))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

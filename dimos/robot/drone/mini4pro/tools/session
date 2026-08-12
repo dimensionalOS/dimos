@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# Drive one aircraft session end to end, so battery time is spent collecting data
+# rather than typing. Everything that does not need the aircraft happens first.
+#
+#   tools/session build        # build + install (no aircraft needed)
+#   tools/session verify       # telemetry correctness vs real site coordinates
+#   tools/session probe        # re-run the ambiguous-key probe
+#   tools/session sweep        # read-only sweep of every key
+#   tools/session video        # RTP passthrough; asserts tapFrames and rtpPkts
+#   tools/session logs         # pull flight records off the phone
+#   tools/session all          # build, verify, video
+#
+# Run inside the Nix dev shell (it provides adb, pymavlink, ffmpeg).
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO"
+
+# --- test rig, see docs/dev-environment.md -----------------------------------
+# Wireless debugging port, not the legacy 5555 (adb tcpip does not survive
+# unplugging on this phone). Rediscover with: adb mdns services
+PHONE="${PHONE:-10.55.1.15:46333}"
+GCS_HOST="${GCS_HOST:-10.55.1.12}"
+# Deliberately NOT 14550: QGroundControl holds that port, and two listeners on
+# one port is a confusing failure rather than an obvious one.
+VERIFY_PORT="${VERIFY_PORT:-14551}"
+# Video goes to the RELAY, deliberately NOT to $GCS_HOST. GCS_HOST defaults to the
+# laptop, and phone→laptop unicast is blackholed by this AP (wifi-fix.md) — the
+# same reason MAVLink relays. The relay carries :14550 and :5600 in one process.
+VIDEO_HOST="${VIDEO_HOST:-10.55.1.50}"
+VIDEO_PORT="${VIDEO_PORT:-5600}"
+# ssh target for the relay host, for the far-end counter check.
+RELAY="${RELAY:-hyper1}"
+APK="android/app/build/outputs/apk/debug/app-debug.apk"
+PKG="com.dimensional.mini4pro"
+# $ADB is exported by the flake and points at the SDK platform-tools adb.
+# Never fall back to a bare "adb" that might be a different build — mixing
+# adb versions makes a healthy device report as "offline".
+ADB=("${ADB:-adb}" -s "$PHONE")
+
+# Ground truth for the site, from docs/measurements/2026-07-25-ground-probe.md.
+# Lat/lon are what catch a coordinate transform that is self-consistent but wrong
+# — no amount of unit testing can. Override for a different location.
+EXPECT_LAT="${EXPECT_LAT:-37.99386}"
+EXPECT_LON="${EXPECT_LON:-23.72533}"
+# AMSL is deliberately NOT checked against a stored value. DJI's
+# KeyTakeoffLocationAltitude is a barometric estimate: it drifted 0.7 m within one
+# stationary session, and 7.7 m between two sessions hours apart (measured
+# 2026-07-25: 103.2 m then 110.8 m at the same spot). A cross-session absolute
+# expectation therefore tests the weather, not our arithmetic. What *does* verify
+# the AMSL composition is mavverify's own pos.amsl_not_zero and
+# pos.amsl_vs_relative, which confirm alt is a real AMSL and that
+# alt - relative_alt is a sane constant offset. Set EXPECT_AMSL only when you
+# have a same-session reading to compare against.
+EXPECT_AMSL="${EXPECT_AMSL:-}"
+
+# Progress goes to stderr, not stdout. This matters in the case it was written
+# for: these runs are long enough to want backgrounding with `> session.log`, and
+# progress on stdout then disappears into the redirect while the terminal shows
+# nothing — which is indistinguishable from a hang. stderr stays on the terminal.
+say() { printf '\n\033[1m── %s\033[0m\n' "$*" >&2; }
+note() { printf '%s' "$*" >&2; }
+fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Every adb call gets a hard timeout. Without this, a wedged adb server or a
+# phone whose WiFi has dozed makes the whole script hang silently — which is
+# exactly what happened on 2026-07-25 and sent us chasing the wrong fault.
+adb_t() { timeout "${ADB_TIMEOUT:-20}" "${ADB[@]}" "$@"; }
+
+require_device() {
+  if ! adb_t get-state >/dev/null 2>&1; then
+    printf 'adb not responding; attempting reconnect…\n'
+    timeout 15 adb disconnect "$PHONE" >/dev/null 2>&1
+    timeout 25 adb connect "$PHONE" >/dev/null 2>&1
+    # Deliberately does NOT suggest 'adb tcpip 5555': it does not survive
+    # unplugging on this phone, and chasing it wasted an aircraft session.
+    adb_t get-state >/dev/null 2>&1 || fail \
+      "phone $PHONE unreachable.
+Wireless debugging drops on WiFi sleep/reassociation, and its port changes when
+re-enabled. Recover with:
+  adb mdns services              # find the current _adb-tls-connect port
+  adb connect 10.55.1.15:<port>  # then re-run with PHONE=10.55.1.15:<port>
+Use the SDK platform-tools adb only (\$ADB) — a second adb build makes a healthy
+device report as 'offline'. See docs/dev-environment.md."
+  fi
+}
+
+# The screen sleeping stalls MSDK init at START_TO_INITIALIZE, which looks
+# exactly like a hang. DJI Fly competes for the aircraft link.
+prepare_phone() {
+  require_device
+  adb_t shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+  adb_t shell svc power stayon true >/dev/null 2>&1
+  adb_t shell am force-stop dji.go.v5 >/dev/null 2>&1
+  adb_t shell am force-stop "$PKG" >/dev/null 2>&1
+  adb_t logcat -c >/dev/null 2>&1
+}
+
+launch() { # launch <extras...>
+  adb_t shell am start -n "$PKG/.MainActivity" "$@" >/dev/null 2>&1
+}
+
+# Waits for the aircraft, and by default REFUSES TO CONTINUE without it.
+#
+# The earlier version warned and proceeded, which on 2026-07-25 produced a capture
+# straddling "no aircraft → aircraft": the first half was all-sentinel telemetry
+# and the second half real, so the rate and plausibility checks were computed over
+# two different regimes. A measurement that quietly spans a state transition is
+# worse than no measurement, because it looks like data.
+#
+# ALLOW_NO_AIRCRAFT=1 opts out, for deliberately testing the no-aircraft path.
+wait_for_aircraft() { # wait_for_aircraft <seconds>
+  local deadline=$((SECONDS + ${1:-40})) fails=0
+  note 'waiting for aircraft'
+  while (( SECONDS < deadline )); do
+    if adb_t logcat -d -s Msdk:V 2>/dev/null | grep -q 'product connected'; then
+      note $'\n'; say "aircraft connected"
+      # Let the keys settle before anything reads them. KeyProductType is known
+      # to report UNRECOGNIZED and only then DJI_MINI_4_PRO, so the first
+      # readings after connection are not the aircraft's real answers.
+      sleep "${SETTLE_SECONDS:-4}"
+      return 0
+    fi
+    if ! adb_t get-state >/dev/null 2>&1; then
+      fails=$((fails + 1))
+      note '!'
+      (( fails >= 3 )) && { note $'\n'; fail "adb stopped responding while waiting (3 consecutive failures)"; }
+    else
+      note '.'
+    fi
+    sleep 2
+  done
+  note $'\n'
+  if [[ -n "${ALLOW_NO_AIRCRAFT:-}" ]]; then
+    printf '\033[33mwarning: no "product connected" — continuing because ALLOW_NO_AIRCRAFT is set.\033[0m\n' >&2
+    return 1
+  fi
+  fail "no \"product connected\" within ${1:-40}s — aircraft powered? RC cabled? DJI Fly holding the link?
+Refusing to measure: a capture that starts before the aircraft connects mixes
+sentinel and real telemetry in one dataset. Set ALLOW_NO_AIRCRAFT=1 to override."
+}
+
+cmd_build() {
+  say "build"
+  nix develop --command bash -c "cd '$REPO/android' && ./gradlew :app:assembleDebug --no-daemon" \
+    || fail "build failed"
+  say "install (~166 MB over WiFi, takes a couple of minutes)"
+  require_device
+  ADB_TIMEOUT=300 adb_t install -r -t "$APK" || fail "install failed"
+}
+
+cmd_verify() {
+  say "telemetry verification against real site coordinates"
+  prepare_phone
+  # The note lands in the flight-log header, so a pulled file says what it was for.
+  launch --es host "$GCS_HOST" --ei port "$VERIFY_PORT" --ez autostart true \
+         --es note "tools/session verify — ground, expect $EXPECT_LAT,$EXPECT_LON"
+  wait_for_aircraft 40
+  say "listening on $VERIFY_PORT for 30 s"
+  # Ground truth is the whole point: a swapped lat/lon passes every wire, range
+  # and cross-message check and lands 2000 km away.
+  local amsl_arg=()
+  [[ -n "$EXPECT_AMSL" ]] && amsl_arg=(--expect-amsl "$EXPECT_AMSL")
+  # Declare our actual emitter schedule (see Bridge.kt) rather than accepting
+  # mavverify's ArduPilot-typical defaults, so a rate FAIL means we drifted from
+  # our own design instead of from someone else's convention.
+  nix develop --command bash -c \
+    "'$REPO/tools/mavverify' --port $VERIFY_PORT --seconds 30 \
+       --expect-lat $EXPECT_LAT --expect-lon $EXPECT_LON ${amsl_arg[*]} \
+       --expect-rate HEARTBEAT=1 --expect-rate SYS_STATUS=2.5 \
+       --expect-rate BATTERY_STATUS=1 --expect-rate ATTITUDE=5 \
+       --expect-rate GLOBAL_POSITION_INT=5 --expect-rate GPS_RAW_INT=5 \
+       --expect-rate VFR_HUD=5 \
+       --allow-seq-gaps"
+  local rc=$?
+  [[ $rc -eq 0 ]] || fail "mavverify reported problems (exit $rc) — do not fly on this build"
+  say "telemetry verified"
+  say "flight log is on the phone — 'tools/session logs' pulls it, 'tools/flightlog' reads it"
+}
+
+cmd_probe() {
+  say "ambiguous-key probe"
+  prepare_phone
+  launch --es host "$GCS_HOST" --ez probe true
+  sleep 25
+  adb_t logcat -d -s KeyProbe:V 2>/dev/null | tee tmp/probe-$(date +%H%M%S).log \
+    | sed 's/.*KeyProbe: //' | awk -F' = ' '!seen[$1]++'
+  printf '\nNote: this shows FIRST reading per key. Settling keys (e.g. ProductType)\n' >&2
+  printf 'need first AND last — see the methodology warning in the measurements doc.\n' >&2
+}
+
+cmd_sweep() {
+  say "read-only sweep of every key"
+  prepare_phone
+  launch --es host "$GCS_HOST" --ez sweep true
+  wait_for_aircraft 40
+  sleep 10
+  # One filename, computed once. Calling date twice produced a grep against a
+  # file that did not exist whenever the second differed — a silent zero.
+  local out="tmp/sweep-$(date +%H%M%S).log"
+  adb_t logcat -d -s KeySweep:V 2>/dev/null > "$out"
+  say "readable keys: $(grep -c 'supported=' "$out" 2>/dev/null || echo 0)"
+  say "saved to $out"
+}
+
+# Video is the RTP passthrough now, not MSDK's RTSP server. Two findings inverted
+# that choice (docs/video.md): the RTSP path re-encodes on the phone, and it has
+# to be *dialled into* — the direction this AP blackholes (wifi-fix.md). So this
+# command no longer looks for an rtsp:// URL, and no longer ffprobes the phone,
+# because on this network that could never have worked.
+#
+# What it checks instead is the pair of counters the failure table is built on:
+#
+#   tapFrames  the aircraft is delivering frames to us
+#   rtpPkts    we are putting them on the wire
+#
+# They fail independently and mean different things, so both are asserted
+# separately and the failure message says which half broke.
+cmd_video() {
+  say "video: RTP passthrough → $VIDEO_HOST:$VIDEO_PORT (the relay, not the laptop)"
+  prepare_phone
+  # --ez video true was passed here for weeks before anything read it. It is a
+  # real extra now: MainActivity folds it into the saved setting, and video comes
+  # up with the bridge. --es videoHost is explicit rather than inherited from
+  # GCS_HOST, because GCS_HOST defaults to the laptop and phone→laptop unicast is
+  # blackholed — video must go to the relay.
+  launch --es host "$GCS_HOST" --ez autostart true \
+         --ez video true --es videoHost "$VIDEO_HOST" --ei videoPort "$VIDEO_PORT" \
+         --es note "tools/session video — RTP passthrough to $VIDEO_HOST:$VIDEO_PORT"
+  wait_for_aircraft 40
+  say "letting the stream settle (10 s)"
+  sleep 10
+
+  local line
+  line=$(adb_t logcat -d -s Video:V 2>/dev/null | grep -E 'tapFrames=' | tail -1)
+  [[ -n "$line" ]] || fail "no Video status line in logcat — is video enabled? check 'Video:V'"
+  printf '%s\n' "$line" >&2
+
+  local phase tap pkts
+  phase=$(sed -E 's/.*Video: ([A-Z_]+).*/\1/' <<<"$line")
+  tap=$(grep -oE 'tapFrames=[0-9]+' <<<"$line" | cut -d= -f2)
+  pkts=$(grep -oE 'rtpPkts=[0-9]+' <<<"$line" | cut -d= -f2)
+
+  say "phase=$phase tapFrames=${tap:-?} rtpPkts=${pkts:-?}"
+  [[ "${tap:-0}" -gt 0 ]] || fail \
+    "tapFrames=0 — the AIRCRAFT is not delivering frames. This is not a network
+problem. Check the stream source is DEFAULT_CAMERA (MSDK #641: any other lens on
+a single-lens airframe yields zero frames with no error), and that the camera is
+not in playback mode. Full state: adb logcat -s Video:V VideoTap:V"
+  [[ "${pkts:-0}" -gt 0 ]] || fail \
+    "tapFrames=$tap but rtpPkts=0 — frames arrive and nothing is packetised.
+Read the verdict line in the status dump; the usual cause is a payload that is
+not H.264 Annex-B (check tap.mime for H265)."
+
+  # Independent confirmation from the far end. The phone's own counters cannot
+  # tell us the datagrams arrived anywhere — that is the whole point of checking
+  # at the relay rather than trusting rtpPkts alone.
+  if command -v ssh >/dev/null && ssh -o ConnectTimeout=5 "$RELAY" true 2>/dev/null; then
+    say "relay counters (video should be advancing)"
+    ssh "$RELAY" 'journalctl -u mavlink-relay -n 3 --no-pager -q' >&2
+  else
+    printf '\033[33mskipped the relay check: %s unreachable over ssh\033[0m\n' "$RELAY" >&2
+  fi
+
+  say "frames are leaving the phone — now set QGC: Settings → Video →
+  Source 'UDP h.264 Video Stream', UDP Port 0.0.0.0:$VIDEO_PORT.
+  Nothing else may hold $VIDEO_PORT on the laptop; a stray ffplay is the usual culprit."
+}
+
+# Compares every flight log on the phone against what actually landed here.
+#
+# A cut-short `adb pull` leaves a PREFIX of the file it was in the middle of, and
+# a prefix of a JSONL flight log is the worst possible artefact: it parses, it
+# reads end to end, tools/flightlog reports zero drops on it, and every question
+# asked of its last minute gets a confident wrong answer. On 2026-07-27 a 61.9 %
+# prefix of the first real mission's record was read as an unclean process death,
+# because the recorder_stop that is actually in the file was past the cut
+# (docs/measurements/2026-07-27-unclean-process-exits.md).
+#
+# Size, not checksum: adb pull is byte-exact for what it does copy, so a matching
+# size is sufficient, and a checksum of 33 MB per file over the tunnel is not.
+verify_pulled_logs() {
+  local remote="$1" size name path local_size bad=0
+  while read -r size name; do
+    [ -z "${name:-}" ] && continue
+    path=$(find tmp/session-logs -type f -name "$name" -print -quit)
+    if [ -z "$path" ]; then
+      printf '\033[31m  MISSING    %-34s %s B on the phone\033[0m\n' "$name" "$size" >&2
+      bad=1; continue
+    fi
+    local_size=$(stat -c%s "$path")
+    if [ "$local_size" != "$size" ]; then
+      printf '\033[31m  TRUNCATED  %-34s %s of %s B\033[0m\n' "$name" "$local_size" "$size" >&2
+      bad=1
+    fi
+  done < <(adb_t shell "cd $remote/flightlogs 2>/dev/null && stat -c '%s %n' * 2>/dev/null" | tr -d '\r')
+
+  if [ "$bad" = 0 ]; then
+    say "every flight log on the phone arrived whole"
+  else
+    say "at least one record above is INCOMPLETE. Re-run 'tools/session logs'.
+  Do not read a truncated file as a finished session — a missing recorder_stop
+  in one of these means nothing at all. A session that is still recording will
+  also show here, because it grew while we were copying it."
+  fi
+}
+
+cmd_logs() {
+  say "pulling records off the phone"
+  mkdir -p tmp/session-logs
+  local remote="/sdcard/Android/data/$PKG/files"
+  # Our own flight recorder output, if present.
+  adb_t shell "ls $remote 2>/dev/null" || true
+  # No `2>/dev/null || true` on the pull itself: the timeout it used to hide is
+  # exactly the thing that produces a silent prefix. 600 s because a session
+  # directory is now measured in hundreds of megabytes and 120 s was reached.
+  ADB_TIMEOUT=600 adb_t pull "$remote" tmp/session-logs/ ||
+    printf '\033[31mpull failed or timed out — treat every file below as possibly truncated\033[0m\n' >&2
+  verify_pulled_logs "$remote"
+  # DJI's own flight records are independent ground truth — see docs/flight-recording.md.
+  adb_t logcat -d > "tmp/session-logs/logcat-$(date +%H%M%S).log"
+  say "saved under tmp/session-logs/"
+}
+
+case "${1:-}" in
+  build)  cmd_build ;;
+  verify) cmd_verify ;;
+  probe)  cmd_probe ;;
+  sweep)  cmd_sweep ;;
+  video)  cmd_video ;;
+  logs)   cmd_logs ;;
+  all)    cmd_build && cmd_verify && cmd_video ;;
+  *)      sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ; exit 1 ;;
+esac

@@ -1,0 +1,43 @@
+# --- secrets: the DJI App Key must never be committed ---
+djikeys.md
+secrets.properties
+local.properties
+*.jks
+*.keystore
+
+# --- nix / direnv ---
+.direnv/
+result
+result-*
+
+# --- gradle / android ---
+.gradle/
+build/
+# CMake/ninja scratch for the vendored apriltag library — AGP puts it beside the module
+# rather than under build/, so `build/` above does not cover it.
+.cxx/
+captures/
+*.apk
+*.aab
+
+# --- IDE ---
+.idea/
+*.iml
+.kotlin/
+
+# --- reference clones (fetched upstream, not authored here) ---
+ref/
+Mobile-SDK-Android-V5/
+
+logs/
+tmp/
+
+# agent worktrees
+.claude/worktrees/
+
+# Flight datasets: too large for git, and deliberately NOT under tmp/ — these are
+# collected on purpose and are not disposable. Each has a README saying what it is.
+datasets/
+
+# python bytecode caches from tools/ imported as modules
+__pycache__/

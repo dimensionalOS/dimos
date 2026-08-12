@@ -1,0 +1,259 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// The DJI App Key is bound to the package name and must not be committed.
+// Real value lives in secrets.properties (untracked); gradle.properties holds
+// an empty default so the project still configures without it.
+def secrets = new Properties()
+def secretsFile = rootProject.file('secrets.properties')
+if (secretsFile.exists()) {
+    secretsFile.withInputStream { secrets.load(it) }
+}
+def aircraftApiKey = secrets.getProperty('AIRCRAFT_API_KEY') ?: project.AIRCRAFT_API_KEY
+
+android {
+    namespace 'com.dimensional.mini4pro'
+    compileSdk Integer.parseInt(project.ANDROID_COMPILE_SDK_VERSION)
+    // Must be pinned: AGP 8.7 would otherwise default to 34.0.0 and try to
+    // install it into the read-only Nix store SDK.
+    buildToolsVersion '35.0.0'
+
+    // Same reason as buildToolsVersion, and the same failure mode. AGP 8.7 defaults to NDK
+    // 26.1.10909125 and CMake 3.22.1; the flake provides 27.0.12077973 and 3.22.1, and a version
+    // AGP asks for that the store does not have is not downloaded, it is a build error. Whatever
+    // `flake.nix` composes must be named here.
+    ndkVersion '27.0.12077973'
+
+    // The only native code in the project: the vendored `apriltag` C library and its JNI shim,
+    // measured against OpenCV's ArUco in docs/measurements/2026-07-27-apriltag-c-vs-opencv.md.
+    // Sources sit outside `src/main` on purpose — see src/apriltag/CMakeLists.txt.
+    externalNativeBuild {
+        cmake {
+            path 'src/apriltag/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    defaultConfig {
+        applicationId 'com.dimensional.mini4pro'   // bound to the DJI App Key — do not rename
+        minSdk Integer.parseInt(project.ANDROID_MIN_SDK_VERSION)
+        targetSdk Integer.parseInt(project.ANDROID_TARGET_SDK_VERSION)
+        versionCode 1
+        versionName '0.1'
+
+        manifestPlaceholders['API_KEY'] = aircraftApiKey
+
+        // Only for `src/androidTest` — the on-phone profiler in `vision/`. Nothing in
+        // `src/main` is instrumented, and the runner is absent from the shipped APK.
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+
+        ndk {
+            //noinspection ChromeOsAbiSupport — MSDK ships arm64 only for our purposes
+            abiFilters 'arm64-v8a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                // Belt to the -O3 braces in CMakeLists.txt. AGP configures the debug variant's
+                // native build as CMAKE_BUILD_TYPE=Debug, and every timing in the comparison comes
+                // from a debug build because that is what the instrumented profiler installs.
+                arguments '-DCMAKE_BUILD_TYPE=Release'
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+        freeCompilerArgs += ['-Xjvm-default=all']
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    packagingOptions {
+        // Required because the manifest sets android:extractNativeLibs="true",
+        // which MSDK needs (its .so files must be extracted, not mapped).
+        jniLibs {
+            useLegacyPackaging true
+        }
+
+        // mrtc links c++_shared and so do other MSDK libs — pick one.
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+
+        // MSDK native libs must not be stripped or registration/flight fails.
+        doNotStrip '*/*/libconstants.so'
+        doNotStrip '*/*/libdji_innertools.so'
+        doNotStrip '*/*/libdjibase.so'
+        doNotStrip '*/*/libDJICSDKCommon.so'
+        doNotStrip '*/*/libDJIFlySafeCore-CSDK.so'
+        doNotStrip '*/*/libdjifs_jni-CSDK.so'
+        doNotStrip '*/*/libDJIRegister.so'
+        doNotStrip '*/*/libdjisdk_jni.so'
+        doNotStrip '*/*/libDJIUpgradeCore.so'
+        doNotStrip '*/*/libDJIUpgradeJNI.so'
+        doNotStrip '*/*/libDJIWaypointV2Core-CSDK.so'
+        doNotStrip '*/*/libdjiwpv2-CSDK.so'
+        doNotStrip '*/*/libFlightRecordEngine.so'
+        doNotStrip '*/*/libvideo-framing.so'
+        doNotStrip '*/*/libwaes.so'
+        doNotStrip '*/*/libagora-rtsa-sdk.so'
+        doNotStrip '*/*/libc++.so'
+        doNotStrip '*/*/libc++_shared.so'
+        doNotStrip '*/*/libmrtc_28181.so'
+        doNotStrip '*/*/libmrtc_agora.so'
+        doNotStrip '*/*/libmrtc_core.so'
+        doNotStrip '*/*/libmrtc_core.so.1'
+        doNotStrip '*/*/libmrtc_data.so'
+        doNotStrip '*/*/libmrtc_log.so'
+        doNotStrip '*/*/libmrtc_onvif.so'
+        doNotStrip '*/*/libmrtc_rtmp.so'
+        doNotStrip '*/*/libmrtc_rtsp.so'
+    }
+}
+
+dependencies {
+    implementation "com.dji:dji-sdk-v5-aircraft:${project.MSDK_VERSION}"
+    compileOnly "com.dji:dji-sdk-v5-aircraft-provided:${project.MSDK_VERSION}"
+    runtimeOnly "com.dji:dji-sdk-v5-networkImp:${project.MSDK_VERSION}"
+
+    // MAVLink wire format + ardupilotmega dialect. Source mirror in ref/mavlink.
+    implementation 'io.dronefleet.mavlink:mavlink:1.1.11'
+
+    // Zenoh, the live DiMOS transport. `docs/zenoh-android-transport.md` records what was
+    // measured before this line was written; the four facts that decided it:
+    //
+    //  - **The version is pinned to the router's.** hyper1 runs `eclipse/zenoh:1.9.0` and DiMOS
+    //    uses eclipse-zenoh 1.9.0, so 1.9.0 it is. Zenoh's wire protocol is not promised to be
+    //    compatible across minor versions and there is no reason to find out.
+    //  - **It brings no `libc++_shared.so`.** `readelf -d` on the shipped arm64 library gives
+    //    exactly three NEEDED entries — libdl, libm, libc — because it is Rust with no C++
+    //    runtime. That is the collision that killed the test APK on 2026-07-27 (see the OpenCV
+    //    note below) and it does not arise here; the `pickFirst` above is untouched by it.
+    //  - **It costs 13.2 MiB of APK**, measured end to end on `assembleDebug` one line apart:
+    //    177,612,957 -> 191,414,206 bytes. Of that, 9,715,008 is the deflated arm64
+    //    `libzenoh_jni.so` (22.7 MiB on disk) and the rest is dex for `kotlin-reflect` and the
+    //    coroutines and serialization runtimes it drags in. Against a 169 MiB baseline, ~7.8 %.
+    //  - **The AAR declares `minSdkVersion 30` and ours is 24.** Overridden in the manifest
+    //    rather than bumped, with a runtime refusal below API 30 — see
+    //    `zenoh/ZenohKotlinSink.SUPPORTED_SDK` and the `tools:overrideLibrary` in
+    //    `AndroidManifest.xml`. Bumping the whole app's floor for an optional, off-by-default
+    //    transport is Ivan's call, not this change's.
+    //
+    // `abiFilters 'arm64-v8a'` above already discards the other three ABIs the AAR carries,
+    // which is why the 37 MiB download is not a 37 MiB APK.
+    implementation 'org.eclipse.zenoh:zenoh-kotlin-android:1.9.0'
+
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
+
+    // JVM unit tests. Note the MSDK is compileOnly/implementation-only and is not
+    // on the unit-test runtime classpath, so anything under src/test must depend
+    // only on plain Kotlin + the MAVLink library — which is why the conversion
+    // layer takes primitives rather than DJI value types.
+    testImplementation 'junit:junit:4.13.2'
+
+    // **OpenCV was here and is gone.** `org.opencv:opencv:4.12.0` supplied `ArucoDetector` over
+    // the `DICT_APRILTAG_*` dictionaries and was the incumbent tag detector for one day.
+    //
+    // It lost the comparison on both axes at once — 108.8 ms against 182.0 at 1080p, and 100 %
+    // detection to 7 m where ArUco reached 3, a strict superset with zero frames ArUco found and
+    // apriltag missed across two flights (`docs/measurements/2026-07-27-apriltag-c-vs-opencv.md`).
+    // The vendored C library above costs **47 KB** against OpenCV's **9.96 MB**: 216× smaller,
+    // and it threads, which OpenCV's detector does not.
+    //
+    // So it is removed rather than demoted to `androidTestImplementation`, and that is deliberate:
+    // that configuration is *known broken here*. The AAR bundles its own `libc++_shared.so`, MSDK
+    // bundles one too, and two copies in one **process** — app APK plus test APK — is not
+    // something the `pickFirst` above can see. Measured 2026-07-27: MSDK's own JNI stopped
+    // resolving (`UnsatisfiedLinkError: dji.jni.JNIKeyValue.native_get_sync`) and the process died
+    // during `Msdk.init`. Moving it to the test scope to keep a finished comparison alive would
+    // reintroduce a process-killing collision for no measurement anyone still needs.
+    //
+    // To re-run the comparison: restore this line as `implementation`, and restore
+    // `vision/ArucoProbe.kt` and the `aruco` branch of `TagProfileTest.detect` from `54ef7dd`.
+
+    // On-phone measurement only. The profiler under src/androidTest is how decode and
+    // detection cost is measured on the actual device against recorded frames, with no
+    // aircraft in the loop — see vision/TagProfileTest.kt.
+    androidTestImplementation 'junit:junit:4.13.2'
+
+    // **compileOnly, and the word is load-bearing.** `vision/FrameListenerProbeTest` is the one
+    // instrumented test that needs an aircraft: it calls `ICameraStreamManager.addFrameListener`
+    // directly, because measuring what that callback costs and which thread it lands on is the
+    // whole point and a wrapper would measure the wrapper. Those types are only on the *app's*
+    // compile classpath (`compileOnly` above), and `compileOnly` is not inherited by the test
+    // variant, so they have to be named again here.
+    //
+    // It must stay `compileOnly` rather than becoming `androidTestImplementation`. The test APK
+    // and the app APK are loaded into one process, and a second copy of a native library in that
+    // process is exactly what killed MSDK's own JNI on 2026-07-27 when OpenCV was moved to the
+    // test scope (`UnsatisfiedLinkError: dji.jni.JNIKeyValue.native_get_sync`, process dead in
+    // `Msdk.init`). `compileOnly` contributes no artefact at runtime at all: the classes resolve
+    // against the app APK's copy, which is the one MSDK is already initialised from.
+    androidTestCompileOnly "com.dji:dji-sdk-v5-aircraft:${project.MSDK_VERSION}"
+    androidTestCompileOnly "com.dji:dji-sdk-v5-aircraft-provided:${project.MSDK_VERSION}"
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// An APK with no DJI App Key must not be packaged silently.
+//
+// `AIRCRAFT_API_KEY` in gradle.properties is deliberately empty; the real value lives in
+// `secrets.properties`, which is untracked. That combination builds cleanly and produces an
+// installable APK that fails only later, on the aircraft, with:
+//
+//     E/Msdk register failed: EMPTY_APP_KEY — The app key was not provided.
+//
+// **This happened on 2026-07-27.** An agent working in a git worktree built and installed such
+// an APK over the operator's app. A worktree does not carry untracked files, so `secrets.properties`
+// was absent and nothing said so — the build succeeded, the install succeeded, and the aircraft
+// could not be reached. The failure surfaced 40 minutes later in a logcat line.
+//
+// So the check is here, at packaging, rather than at compile: unit tests and `compileDebugKotlin`
+// have no business needing a credential, and making them need one would be its own kind of wrong.
+// `-PallowEmptyApiKey` is the deliberate escape hatch, for a build that genuinely never meets an
+// aircraft.
+// ─────────────────────────────────────────────────────────────────────────────
+tasks.configureEach { task ->
+    if (task.name ==~ /^package(Debug|Release)$/) {
+        task.doFirst {
+            if (!aircraftApiKey?.trim() && !project.hasProperty('allowEmptyApiKey')) {
+                throw new GradleException(
+                    "No DJI App Key: this APK would install and then fail on the aircraft with " +
+                    "EMPTY_APP_KEY.\n\n" +
+                    "  AIRCRAFT_API_KEY is empty in gradle.properties and android/secrets.properties " +
+                    "is absent.\n" +
+                    "  secrets.properties is untracked, so a fresh clone or a git worktree will not " +
+                    "have it.\n\n" +
+                    "  Fix: copy it in from wherever you keep it —\n" +
+                    "    cp <your-secrets-store>/secrets.properties android/\n\n" +
+                    "  Or, for a build that will never talk to an aircraft: -PallowEmptyApiKey"
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Mini4Pro" parent="Theme.AppCompat.NoActionBar" />
+</resources>

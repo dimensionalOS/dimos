@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One palette, chosen as a family rather than picked per-state, because the
+  status strip's whole job is that a glance tells you which state you are in.
+  Hues that do not belong together read as decoration; these are one step apart
+  in saturation and lightness, so the *difference* between them is the signal.
+
+  Deliberately dark and desaturated: this screen is read outdoors on a phone
+  strapped to a controller, where a bright panel is a mirror, and it sits under
+  a monospace log that would fight anything louder.
+
+  Colour is never the only channel — every state says the same thing in words
+  (MainActivity.renderBanner). Roughly one man in twelve cannot separate the red
+  from the green here, and this screen decides whether an aircraft can be moved.
+-->
+<resources>
+    <!-- Commands live: a ground station can move the aircraft. -->
+    <color name="state_armed">#B3261E</color>
+    <!-- Aircraft's flight controller is talking and the bridge is up. -->
+    <color name="state_live">#116149</color>
+    <!-- Something is attached but not the thing you want — RC without aircraft. -->
+    <color name="state_partial">#8A5300</color>
+    <!-- Nothing to report: no RC, or the SDK has not registered yet. -->
+    <color name="state_idle">#3A4550</color>
+    <!--
+      A recorded flight on screen. Deliberately outside the family above: every
+      other colour here answers "what is the aircraft doing", and this one answers
+      "you are not looking at the aircraft", which is a different question and must
+      not be read as a point on the same scale. Violet is the one hue no other
+      state uses, and it is never the only channel — the strip says REPLAY in
+      words, the picture is watermarked across its whole face, and the withdrawal
+      controls grey out.
+    -->
+    <color name="state_replay">#6A3D9A</color>
+
+    <!--
+      A tag the camera can see. Outside the state family above for the same reason
+      `state_replay` is: every other colour here answers "what is the aircraft doing",
+      and this answers "what can it see", which is a different question. Cyan is the
+      remaining hue no state uses.
+
+      Not the only channel: the line says the tag's id and its numbers in words, and
+      reads "not seen" when it is not, so the colour is confirmation rather than
+      information.
+    -->
+    <color name="tag_seen">#2AA198</color>
+
+    <!-- The log surface, and the chrome that floats over it. -->
+    <color name="terminal_bg">#12161A</color>
+    <color name="terminal_fg">#C6D0D8</color>
+    <color name="chrome_bg">#1C2329</color>
+    <color name="chrome_fg">#E4EAEF</color>
+</resources>

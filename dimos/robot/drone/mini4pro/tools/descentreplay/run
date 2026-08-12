@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Compile and run `DescentReplay` against the app's own compiled Kotlin classes, then
+# optionally compare its would-be commands against the human's recorded sticks.
+#
+#     tools/descentreplay/run <out.jsonl> <record.jsonl> [more parts...]
+#     tools/descentreplay/run --compare <out.jsonl>
+#
+# Why this exists: M3 Stage D's descent law must be judged against a real hand-flown tag
+# landing before anything arms it in the air, and a re-derivation of the law in a script
+# would be evidence about the script. This is `tools/kotlinframes`' pattern verbatim -- it
+# runs the COMPILED `guided.TagDescent` / `TagDescentGuidance` / `vision.TagLatch` /
+# `guided.StickMapping` bytecode over a flight record's own lines, so the commands it emits
+# are the shipping law's bytes and the human conversion is the shipping mapping.
+#
+# The guided and vision packages import nothing from Android or the DJI SDK -- the reason
+# the whole engine test suite runs on a desktop JVM -- so no android.jar is needed.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+
+if [ "${1:-}" = "--compare" ]; then
+    shift
+    exec python3 "$here/compare.py" "$@"
+fi
+
+classes="$repo/android/app/build/tmp/kotlin-classes/debug"
+out="$repo/tmp/descentreplay-classes"
+
+if [ "${SKIP_GRADLE:-0}" != "1" ]; then
+    (cd "$repo/android" && ./gradlew --offline -q :app:compileDebugKotlin)
+fi
+
+if [ ! -d "$classes" ]; then
+    echo "no compiled Kotlin at $classes -- run android/gradlew :app:compileDebugKotlin" >&2
+    exit 1
+fi
+
+stdlib="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2*.jar' 2>/dev/null | head -1)"
+if [ -z "$stdlib" ]; then
+    echo "kotlin-stdlib jar not found under ~/.gradle/caches" >&2
+    exit 1
+fi
+
+mkdir -p "$out"
+if [ ! -f "$out/DescentReplay.class" ] || [ "$here/DescentReplay.java" -nt "$out/DescentReplay.class" ] \
+   || [ "$classes" -nt "$out/DescentReplay.class" ]; then
+    javac -nowarn -cp "$classes:$stdlib" -d "$out" "$here/DescentReplay.java"
+fi
+
+exec java -cp "$out:$classes:$stdlib" DescentReplay "$@"

@@ -1,0 +1,1299 @@
+#!/usr/bin/env python3
+"""Query a mini4pro flight record, and fetch records off the phone.
+
+The post-flight loop this replaces: an ad-hoc python loop per question, per record,
+per night. A record is JSONL — one object per line, `t` seconds since recorder start,
+`k` the kind — and beyond those two fields the shapes are heterogeneous per kind, so
+this tool assumes nothing else and never silently drops a line it cannot parse.
+
+    tools/blackbox landing06 --events                        # the flight's story
+    tools/blackbox landing06 --around-event landing_commit   # everything ±2 s of it
+    tools/blackbox landing06 -k tag --fields t,px,margin --every 10
+    tools/blackbox landing06 -k stick_cmd --from 140 --to 148 --where "dji.throttle>0"
+    tools/blackbox landing06 --code landing_commit --json    # byte-faithful, quotable
+    tools/blackbox landing06 -k tag --count
+    tools/blackbox landing04 landing06 --diff-events         # same path as last time?
+    tools/blackbox landing06 --sql "SELECT count(*) FROM tag WHERE t < 100"
+    tools/blackbox ls                                        # datasets/ inventory
+    tools/blackbox ls --phone                                # what's on the phone
+    tools/blackbox pull latest --as landing07                # fetch a session, verified
+    tools/blackbox rm 20260728-111016 --yes                  # delete a ground stub
+    tools/blackbox --selftest                                # planted records, all flags
+
+A record is addressed by a .jsonl path (sibling parts join in), a glob, a dataset
+directory, or a bare dataset name under datasets/. One session per query — .001/.002
+are parts of one recorder run and concatenate with t continuous; a different
+timestamp prefix is a different recorder run, and two of those only ever meet in
+--diff-events / --diff-counts.
+
+Division of labour, on purpose: **blackbox queries, flightlog diagnoses.** There is
+no --summary here beyond a pointer — `tools/flightlog <record> --summary` is the
+session overview and health report, and duplicating it would fork it.
+
+Time flags: --from/--to are absolute seconds; --around T and --around-event CODE take
+±WINDOW seconds around the centre (default ±2.0 — note flightlog's --window is a full
+width; here it is the half-width, because "±2 s around landing_commit" is the sentence
+being typed). Reduction order is fixed: filters, then --every, then --tail, then
+--limit — so `--tail 10 --limit 5` is the first five of the last ten.
+
+Output: aligned table by default, with a footer counting matches, lines, files and
+unparseable lines; --json prints the matching lines byte-for-byte (that is what makes
+blackbox quotable in measurement docs); --csv for spreadsheets. --sql runs DuckDB over
+view `rec` (file, lineno, t, k, raw JSON) plus one view per kind whose JSON fields are
+real columns: `SELECT t, code, msg FROM event WHERE code='landing_commit'`, `sum(CASE
+WHEN px>=60 THEN 1 ELSE 0 END) FROM tag`. Nested objects are STRUCT columns under
+their own name — `f.vx` on mav_out reads the nested field directly; a field whose type
+varies across rows (the recorder writes non-finite floats as strings, e.g. tag.e2)
+stays JSON rather than being coerced. DuckDB lives in the DiMOS venv, and blackbox
+re-execs itself there for --sql only; every other mode is stdlib python3.
+
+Phone: records live on the phone under .../files/flightlogs, reachable ONLY through
+the tools/phoneadb tunnel (laptop↔phone adb is blackholed by the AP — wifi-fix.md).
+`pull` verifies every file's size against the phone afterwards, because a tunnel drop
+mid-pull truncates silently; `rm` lists what it will delete, requires --yes, and
+refuses `rm latest` by name.
+
+Exit codes: 0 matched something / succeeded, 1 matched nothing, 2 refusal or error.
+
+The Python API with the same powers: tools/blackbox_lib.py (this file is a thin
+shell over it).
+"""
+
+import argparse
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import blackbox_lib as bb
+
+# ─────────────────────────────── output helpers ───────────────────────────────
+
+
+def flatten(row):
+    """One display dict per row: nested objects become dotted columns (f.vx), and
+    anything deeper or list-shaped is shown as compact JSON rather than guessed at."""
+    out = {}
+    for k, v in row.items():
+        if isinstance(v, dict):
+            for k2, v2 in v.items():
+                out[f"{k}.{k2}"] = (
+                    json.dumps(v2, separators=(",", ":")) if isinstance(v2, (dict, list)) else v2
+                )
+        elif isinstance(v, list):
+            out[k] = json.dumps(v, separators=(",", ":"))
+        else:
+            out[k] = v
+    return out
+
+
+def fmt_cell(col, v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float):
+        return (f"{v:.3f}") if col == "t" else (f"{v:.6g}")
+    s = str(v)
+    return s if len(s) <= 48 else s[:47] + "…"
+
+
+def print_table(rows, fields, out):
+    if fields:
+        cols = fields
+        cells = [[fmt_cell(c, bb.field(r, c)) for c in cols] for r in rows]
+    else:
+        flat = [flatten(r) for r in rows]
+        cols, seen = [], set()
+        for head in ("t", "k"):
+            if any(head in f for f in flat):
+                cols.append(head)
+                seen.add(head)
+        for f in flat:
+            for c in f:
+                if c not in seen:
+                    seen.add(c)
+                    cols.append(c)
+        cells = [[fmt_cell(c, f.get(c)) for c in cols] for f in flat]
+    if not rows:
+        return
+    widths = [
+        max(len(c), max((len(row[i]) for row in cells), default=0)) for i, c in enumerate(cols)
+    ]
+    num = [
+        all(re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", row[i]) for row in cells if row[i] != "")
+        and any(row[i] != "" for row in cells)
+        for i in range(len(cols))
+    ]
+
+    def line(vals):
+        return "  ".join(
+            (v.rjust(w) if n else v.ljust(w)) for v, w, n in zip(vals, widths, num, strict=False)
+        ).rstrip()
+
+    out.write(line(cols) + "\n")
+    for row in cells:
+        out.write(line(row) + "\n")
+
+
+def footer(out, shown, matched, record):
+    extra = " (%d unparseable)" % len(record.bad) if record.bad else ""
+    if shown != matched:
+        out.write(
+            "%d shown of %d matched of %d lines across %d files%s\n"
+            % (shown, matched, record.total_lines, len(record.paths), extra)
+        )
+    else:
+        out.write(
+            "%d matched of %d lines across %d files%s\n"
+            % (matched, record.total_lines, len(record.paths), extra)
+        )
+
+
+SEV_MARK = {"error": "!!", "warn": " !"}
+
+
+def print_events(rows, out):
+    for e in rows:
+        t = e.get("t")
+        out.write(
+            "%s %9s  %-26s %s\n"
+            % (
+                SEV_MARK.get(e.get("sev"), "  "),
+                (f"{t:.3f}") if isinstance(t, (int, float)) else "?",
+                e.get("code", "?"),
+                e.get("msg") or "",
+            )
+        )
+
+
+# ─────────────────────────────── the query mode ───────────────────────────────
+
+
+def query_parser():
+    ap = argparse.ArgumentParser(
+        prog="blackbox",
+        description=__doc__,
+        epilog="subcommands: ls [--phone], pull <prefix|latest> --as NAME, "
+        "rm <prefix> --yes.  The recorder that writes these files is "
+        "android/app/src/main/java/com/dimensional/mini4pro/record/",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "records",
+        nargs="*",
+        help="record: .jsonl path, glob, dataset dir, or bare dataset "
+        "name; two records only with --diff-events/--diff-counts",
+    )
+    sel = ap.add_argument_group("selection")
+    sel.add_argument(
+        "-k",
+        "--kind",
+        action="append",
+        metavar="KIND",
+        help="keep these kinds (repeatable, or comma list)",
+    )
+    sel.add_argument(
+        "--code",
+        action="append",
+        metavar="CODE",
+        help="event shorthand: implies -k event, filters code (repeatable)",
+    )
+    sel.add_argument(
+        "--name",
+        action="append",
+        metavar="NAME",
+        help="mav shorthand: implies -k mav_in,mav_out unless -k narrows; "
+        "filters message name (repeatable)",
+    )
+    sel.add_argument("--from", dest="from_t", type=float, metavar="S", help="window start, seconds")
+    sel.add_argument("--to", dest="to_t", type=float, metavar="S", help="window end, seconds")
+    sel.add_argument("--around", type=float, metavar="T", help="keep rows with t in T±WINDOW")
+    sel.add_argument(
+        "--around-event",
+        metavar="CODE",
+        help="resolve the Nth event with this code, then window around "
+        "ITS t — '--around-event landing_commit' is the point of "
+        "this tool",
+    )
+    sel.add_argument(
+        "--nth",
+        type=int,
+        default=0,
+        metavar="N",
+        help="which occurrence for --around-event (0-based, default 0)",
+    )
+    sel.add_argument(
+        "--window",
+        type=float,
+        default=bb.DEFAULT_WINDOW,
+        metavar="S",
+        help="half-width: ±S seconds around --around/--around-event (default 2.0)",
+    )
+    sel.add_argument(
+        "--where",
+        metavar="EXPR",
+        help="row predicate over fields, e.g. 'px>60 and margin>100'; "
+        "dotted f.vx reaches nested fields; restricted evaluator, "
+        "refuses calls/subscripts by name",
+    )
+    red = ap.add_argument_group("reduction (applied in this order)")
+    red.add_argument(
+        "--every",
+        type=int,
+        metavar="N",
+        help="keep every Nth match (decimation for 8000-frame records)",
+    )
+    red.add_argument("--tail", type=int, metavar="N", help="keep the last N matches")
+    red.add_argument("--limit", type=int, metavar="N", help="keep the first N matches")
+    out = ap.add_argument_group("output")
+    out.add_argument(
+        "--fields", metavar="A,B,C", help="project these columns (dotted paths; missing -> empty)"
+    )
+    out.add_argument(
+        "--count",
+        action="store_true",
+        help="counts only: per kind, per code for events, per name for mav",
+    )
+    out.add_argument(
+        "--json",
+        action="store_true",
+        help="matching lines verbatim, byte-faithful — the quotable form",
+    )
+    out.add_argument("--csv", action="store_true", help="CSV of the same table")
+    out.add_argument(
+        "--events",
+        action="store_true",
+        help="curated event timeline (hides {})".format(",".join(sorted(bb.NOISE_CODES))),
+    )
+    out.add_argument(
+        "--all-events", action="store_true", help="with --events: include the noise codes too"
+    )
+    out.add_argument(
+        "--summary",
+        action="store_true",
+        help="not here, on purpose: prints the tools/flightlog command "
+        "(blackbox queries, flightlog diagnoses)",
+    )
+    ap.add_argument(
+        "--sql",
+        metavar="QUERY",
+        help="DuckDB over the record: view rec(file,lineno,t,k,raw) plus "
+        "one view per kind with the JSON fields as real columns "
+        "(nested objects are STRUCTs: f.vx on mav_out); re-execs "
+        "into the DiMOS venv",
+    )
+    ap.add_argument(
+        "--diff-events",
+        action="store_true",
+        help="two records: aligned curated-event timelines, unified-diff "
+        "style with per-row t and dt",
+    )
+    ap.add_argument(
+        "--diff-counts",
+        action="store_true",
+        help="two records: per-kind and per-event-code count deltas",
+    )
+    ap.add_argument(
+        "--selftest",
+        action="store_true",
+        help="planted records exercising every flag; real-record checks "
+        "when datasets/landing06 is present",
+    )
+    ap.add_argument(
+        "--selftest-real",
+        action="store_true",
+        help="only the real-record checks; fails if the dataset is absent",
+    )
+    return ap
+
+
+def ensure_duckdb():
+    """--sql only. DuckDB lives in the DiMOS venv; re-exec there, noisily —
+    memexport's pattern, because a tool that silently runs as another interpreter
+    is its own class of bug."""
+    try:
+        import duckdb  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    for cand in [
+        os.environ.get("BLACKBOX_PYTHON"),
+        os.path.expanduser("~/coding/dimos/.venv/bin/python"),
+    ]:
+        if not cand or not os.path.exists(cand):
+            continue
+        if os.path.realpath(cand) == os.path.realpath(sys.executable):
+            continue
+        if subprocess.run([cand, "-c", "import duckdb"], capture_output=True).returncode == 0:
+            sys.stderr.write(f"blackbox: no duckdb here; re-exec under {cand}\n")
+            os.execv(cand, [cand, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.stderr.write(
+        "blackbox: --sql needs DuckDB, which is not importable here.\n"
+        "  It lives in the DiMOS venv: ~/coding/dimos/.venv/bin/python\n"
+        "  (or point BLACKBOX_PYTHON at an interpreter that has it).\n"
+        "  Every other blackbox mode runs on stdlib python3.\n"
+    )
+    sys.exit(2)
+
+
+def run_query(args, out=sys.stdout):
+    if args.json and (args.csv or args.fields):
+        raise bb.Refusal(
+            "--json is the raw lines byte-for-byte; projecting or "
+            "reshaping them would forge the record. Use --csv or the "
+            "table for projections."
+        )
+    if args.diff_events or args.diff_counts:
+        if len(args.records) != 2:
+            raise bb.Refusal(
+                "--diff-events/--diff-counts compare exactly two "
+                "records; got %d." % len(args.records)
+            )
+        return run_diff(args, out)
+    if len(args.records) != 1:
+        if len(args.records) == 0:
+            raise bb.Refusal(
+                "give a record (dataset name, dir, glob or .jsonl), or "
+                "a subcommand (ls/pull/rm), or --selftest."
+            )
+        raise bb.Refusal(
+            "%d records given (%s) — multiple records only make sense "
+            "to --diff-events/--diff-counts. Query one at a time."
+            % (len(args.records), ", ".join(args.records))
+        )
+
+    if args.summary:
+        _, paths = bb.resolve(args.records[0])
+        out.write(
+            "blackbox queries; flightlog diagnoses. The session overview is:\n"
+            f"  tools/flightlog {paths[0]} --summary\n"
+        )
+        return 0
+
+    rec = bb.Record.open(args.records[0])
+
+    if args.sql:
+        for flag, name in (
+            (args.kind, "-k"),
+            (args.code, "--code"),
+            (args.name, "--name"),
+            (args.where, "--where"),
+            (args.events, "--events"),
+            (args.count, "--count"),
+        ):
+            if flag:
+                raise bb.Refusal(
+                    "--sql takes the whole record; put the {} filtering "
+                    "in the SQL itself (views: rec, {}).".format(
+                        name, ", ".join(sorted(rec.count()))
+                    )
+                )
+        ensure_duckdb()
+        cols, rows = rec.sql(args.sql)
+        print_table([dict(zip(cols, r, strict=False)) for r in rows], cols, out)
+        out.write("%d row(s)\n" % len(rows))
+        return 0 if rows else 1
+
+    kind = ",".join(args.kind) if args.kind else None
+    if args.events and kind is None:
+        kind = "event"
+    pred = bb.compile_where(args.where) if args.where else None
+    if args.events and not args.all_events:
+        # Curate BEFORE --every/--tail/--limit, so the reductions and the footer
+        # act on the timeline being shown, not on the hidden plumbing.
+        user_pred = pred
+
+        def pred(row, _u=user_pred):
+            if row.get("code") in bb.NOISE_CODES:
+                return False
+            return _u(row) if _u else True
+
+    q = rec.query(
+        kind=kind,
+        code=",".join(args.code) if args.code else None,
+        name=",".join(args.name) if args.name else None,
+        t=(args.from_t, args.to_t) if (args.from_t is not None or args.to_t is not None) else None,
+        around=args.around,
+        around_event=args.around_event,
+        nth=args.nth,
+        window=args.window,
+        where=pred,
+        limit=args.limit,
+        tail=args.tail,
+        every=args.every,
+    )
+    rows, matched = list(q), q.matched
+
+    if args.count:
+        kinds_present = {r.get("k") for r in rows}
+        if kinds_present <= {"event"} and rows:
+            _keyname, keyof = "code", lambda r: r.get("code") or "(no code)"
+        elif kinds_present <= {"mav_in", "mav_out"} and rows:
+            _keyname, keyof = "name", lambda r: r.get("name") or "(no name)"
+        else:
+            _keyname, keyof = (
+                "kind",
+                lambda r: (r.get("k") if isinstance(r.get("k"), str) else "(no k)"),
+            )
+        counts = {}
+        for r in rows:
+            counts[keyof(r)] = counts.get(keyof(r), 0) + 1
+        for key, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            out.write("%7d  %s\n" % (n, key))
+        footer(out, len(rows), matched, rec)
+        return 0 if rows else 1
+
+    if args.json:
+        w = getattr(out, "buffer", out)
+        for r in rows:
+            w.write(r.raw + b"\n")
+        return 0 if rows else 1
+
+    if args.csv:
+        cols = args.fields.split(",") if args.fields else None
+        if cols is None:
+            flat = [flatten(r) for r in rows]
+            cols, seen = [], set()
+            for f in flat:
+                for c in f:
+                    if c not in seen:
+                        seen.add(c)
+                        cols.append(c)
+        wr = csv.writer(out)
+        wr.writerow(cols)
+        for r in rows:
+            wr.writerow([bb.field(r, c, "") for c in cols])
+        return 0 if rows else 1
+
+    if args.events and not args.fields:
+        print_events(rows, out)
+    else:
+        print_table(rows, args.fields.split(",") if args.fields else None, out)
+    footer(out, len(rows), matched, rec)
+    return 0 if rows else 1
+
+
+def run_diff(args, out):
+    a = bb.Record.open(args.records[0])
+    b = bb.Record.open(args.records[1])
+    rc = 0
+    if args.diff_events:
+        out.write(f"--- {a.label}\n+++ {b.label}\n")
+        out.write("    %-26s %18s | %-18s\n" % ("code", a.label[:18], b.label[:18]))
+        for op, ra, rb in bb.diff_events(a, b):
+            code = (ra or rb)["code"]
+            msg = (rb or ra).get("msg") or ""
+
+            def side(r):
+                if r is None:
+                    return "%18s" % ""
+                t = "{:.3f}".format(r["t"]) if isinstance(r["t"], (int, float)) else "?"
+                dt = "+{:.2f}".format(r["dt"]) if isinstance(r["dt"], (int, float)) else "     "
+                return "%9s %8s" % (t, dt)
+
+            out.write("%s   %-26s %s | %s  %s\n" % (op, code, side(ra), side(rb), msg[:60]))
+            if op != " ":
+                rc = 1
+    if args.diff_counts:
+        d = bb.diff_counts(a, b)
+        out.write("counts   %-22s %10s %10s %8s\n" % ("", a.label[:10], b.label[:10], "delta"))
+        for section, rows in (("kind", d["kind"]), ("event code", d["event_code"])):
+            for key, na, nb in rows:
+                mark = "  " if na == nb else " *"
+                out.write("%s %-8s %-22s %10d %10d %+8d\n" % (mark, section, key, na, nb, nb - na))
+                if na != nb:
+                    rc = max(rc, 0)  # count deltas are informative, not a failure
+    return rc
+
+
+# ─────────────────────────────── subcommands ───────────────────────────────
+
+
+def human_mb(n):
+    return "%.1f" % (n / 1e6) if n is not None else "-"
+
+
+def sub_ls(argv, out=sys.stdout):
+    ap = argparse.ArgumentParser(
+        prog="blackbox ls",
+        description="inventory: datasets/ locally, or the phone's flightlogs with --phone",
+    )
+    ap.add_argument("--phone", action="store_true")
+    args = ap.parse_args(argv)
+
+    if args.phone:
+        phone = bb.Phone()
+        sessions = phone.sessions()
+        out.write(
+            "%-17s %5s %9s %9s  %-16s %s\n"
+            % ("session", "parts", "jsonl MB", "video MB", "modified", "")
+        )
+        for prefix, s in sessions.items():
+            note = "likely ground stub (no video sidecar)" if s.likely_ground_stub else ""
+            mt = time.strftime("%Y-%m-%d %H:%M", time.localtime(s.mtime)) if s.mtime else "-"
+            out.write(
+                "%-17s %5d %9s %9s  %-16s %s\n"
+                % (prefix, len(s.parts), human_mb(s.jsonl_bytes), human_mb(s.video_bytes), mt, note)
+            )
+        if not sessions:
+            out.write(f"nothing in {bb.PHONE_FLIGHTLOGS} on the phone\n")
+        return 0
+
+    root = bb.DATASETS
+    if not os.path.isdir(root):
+        raise bb.Refusal(
+            f"no datasets/ at {root} — run from a checkout that has the "
+            "flight datasets (they are deliberately not in git)"
+        )
+    out.write(
+        "%-38s %-17s %5s %9s %9s  %s\n"
+        % ("dataset", "session", "parts", "jsonl MB", "video MB", "db")
+    )
+    for name in sorted(os.listdir(root)):
+        d = os.path.join(root, name)
+        if not os.path.isdir(d):
+            continue
+        entries = [
+            (f, os.path.getsize(os.path.join(d, f)), os.path.getmtime(os.path.join(d, f)))
+            for f in sorted(os.listdir(d))
+            if os.path.isfile(os.path.join(d, f))
+        ]
+        has_db = "yes" if any(f.endswith(".db") for f, _, _ in entries) else "-"
+        sessions = bb.group_sessions(entries)
+        if not sessions:
+            out.write("%-38s %-17s %5s %9s %9s  %s\n" % (name, "-", "-", "-", "-", has_db))
+            continue
+        for prefix, s in sessions.items():
+            out.write(
+                "%-38s %-17s %5d %9s %9s  %s\n"
+                % (
+                    name,
+                    prefix,
+                    len(s.parts),
+                    human_mb(s.jsonl_bytes),
+                    human_mb(s.video_bytes),
+                    has_db,
+                )
+            )
+    return 0
+
+
+def sub_pull(argv, out=sys.stdout):
+    ap = argparse.ArgumentParser(
+        prog="blackbox pull",
+        description="pull ALL parts + video sidecars of one session off the phone "
+        "into datasets/<name>/, then verify every size against the "
+        "phone's (a tunnel drop truncates pulls silently)",
+    )
+    ap.add_argument(
+        "prefix", help="session prefix YYYYMMDD-HHMMSS, or 'latest' (newest prefix ON THE PHONE)"
+    )
+    ap.add_argument(
+        "--as",
+        dest="name",
+        required=True,
+        metavar="NAME",
+        help="dataset dir name to create under datasets/",
+    )
+    ap.add_argument(
+        "--into-existing",
+        action="store_true",
+        help="allow pulling into a non-empty dataset dir (off by default "
+        "so two sessions never share one dir by accident)",
+    )
+    args = ap.parse_args(argv)
+    dest = os.path.join(bb.DATASETS, args.name)
+    phone = bb.Phone()
+    prefix, names = bb.pull_session(
+        phone, args.prefix, dest, into_existing=args.into_existing, out=out
+    )
+    out.write("-> {} ({}: {})\n".format(dest, prefix, ", ".join(names)))
+    return 0
+
+
+def sub_rm(argv, out=sys.stdout):
+    ap = argparse.ArgumentParser(
+        prog="blackbox rm",
+        description="delete one session's files from the PHONE (all parts and "
+        "sidecars). Lists exactly what it will remove; requires --yes.",
+    )
+    ap.add_argument("prefix", help="session prefix — explicit; 'latest' is refused")
+    ap.add_argument("--yes", action="store_true", help="actually delete")
+    args = ap.parse_args(argv)
+    if args.prefix == "latest":
+        raise bb.Refusal(
+            "rm latest is refused: name the prefix explicitly "
+            "(blackbox ls --phone shows them) — 'latest' is one "
+            "flight-you-just-flew away from being a disaster."
+        )
+    phone = bb.Phone()
+    sessions = phone.sessions()
+    if args.prefix not in sessions:
+        raise bb.Refusal(
+            "no session {} on the phone. There: {}".format(
+                args.prefix, ", ".join(sessions) or "nothing"
+            )
+        )
+    sess = sessions[args.prefix]
+    out.write(f"session {args.prefix} on the phone:\n")
+    for n, size, _ in sess.parts + sess.videos + sess.other:
+        out.write("  %-40s %12s bytes\n" % (n, size if size is not None else "?"))
+    if not args.yes:
+        raise bb.Refusal(
+            "not deleting anything: re-run with --yes to remove the "
+            "%d file(s) above from the phone." % len(sess.all_names())
+        )
+    names = bb.rm_session(phone, args.prefix)
+    out.write("deleted %d file(s) of session %s from the phone\n" % (len(names), args.prefix))
+    return 0
+
+
+# ─────────────────────────────── self-test ───────────────────────────────
+#
+# Planted mini-records and a fake phoneadb, the flightlog pattern: every flag is
+# exercised against data whose right answer was planted, including the ugly cases —
+# a torn last line, a truncated pull, a predicate that must be refused.
+
+SESSION_A = "20990101-000000"
+SESSION_B = "20990102-111111"
+PHONE_FLIGHT = "20990103-121212"
+PHONE_STUB = "20990104-050505"
+
+
+def _plant_record(d):
+    """SESSION_A in two parts, t continuous across the seam, one torn last line,
+    one line with neither t nor k. Returns the tag lines' raw bytes for the --json
+    byte-fidelity check."""
+    tag_raw = []
+    p1 = [
+        json.dumps(
+            {
+                "t": 0.0,
+                "k": "header",
+                "format": "mini4pro-flightlog-1",
+                "session": SESSION_A,
+                "part": 1,
+            }
+        ),
+        json.dumps({"t": 1.0, "k": "event", "code": "alpha", "sev": "info", "msg": "first light"}),
+        json.dumps({"t": 2.0, "k": "event", "code": "zenoh_phase", "sev": "info", "msg": "noise"}),
+        json.dumps(
+            {"t": 2.5, "k": "event", "code": "goto_accepted", "sev": "info", "msg": "first"}
+        ),
+    ]
+    for i in range(10):
+        line = json.dumps(
+            {
+                "t": round(3.0 + 0.1 * i, 3),
+                "k": "tag",
+                "id": 0,
+                "px": 50 + 5 * i,
+                "margin": 90 + 5 * i,
+                "f": {"vx": i * 0.1},
+            }
+        )
+        p1.append(line)
+        tag_raw.append(line)
+    p1 += [
+        json.dumps({"t": 4.0, "k": "mav_in", "name": "HEARTBEAT", "sys": 255, "f": {"type": 6}}),
+        json.dumps({"t": 4.1, "k": "mav_out", "name": "HEARTBEAT", "sys": 1, "f": {"type": 2}}),
+        json.dumps({"t": 4.2, "k": "mav_in", "name": "GLOBAL_POSITION_INT", "f": {"vx": 100}}),
+        json.dumps({"weird": True}),
+    ]  # no t, no k — tolerated, counted
+    p2 = [
+        json.dumps(
+            {"t": 10.0, "k": "event", "code": "goto_accepted", "sev": "info", "msg": "second"}
+        )
+    ]
+    tag1 = json.dumps({"t": 11.5, "k": "tag", "id": 0, "px": 100, "margin": 200})
+    tag2 = json.dumps({"t": 13.9, "k": "tag", "id": 0, "px": 101})
+    p2 += [
+        tag1,
+        json.dumps(
+            {"t": 12.0, "k": "event", "code": "landing_commit", "sev": "info", "msg": "height=1.0"}
+        ),
+        tag2,
+        json.dumps(
+            {
+                "t": 14.5,
+                "k": "event",
+                "code": "beta",
+                "sev": "warn",
+                "msg": "outside the commit window",
+            }
+        ),
+    ]
+    tag_raw += [tag1, tag2]
+    with open(os.path.join(d, SESSION_A + ".001.jsonl"), "w") as f:
+        f.write("\n".join(p1) + "\n")
+    with open(os.path.join(d, SESSION_A + ".002.jsonl"), "w") as f:
+        f.write("\n".join(p2) + "\n")
+        f.write('{"t":15.0,"k":"ev')  # the torn last line, mid-object
+    return [line.encode() for line in tag_raw]
+
+
+def _plant_record_b(d):
+    """SESSION_B: same story as A's events except 'second' goto_accepted became a
+    tag_descent_denied — the diff must say exactly that and nothing else."""
+    lines = [
+        json.dumps({"t": 0.0, "k": "header", "session": SESSION_B, "part": 1}),
+        json.dumps({"t": 1.1, "k": "event", "code": "alpha", "sev": "info"}),
+        json.dumps(
+            {"t": 2.6, "k": "event", "code": "goto_accepted", "sev": "info", "msg": "first"}
+        ),
+        json.dumps(
+            {
+                "t": 10.5,
+                "k": "event",
+                "code": "tag_descent_denied",
+                "sev": "warn",
+                "msg": "planted divergence",
+            }
+        ),
+        json.dumps(
+            {"t": 12.4, "k": "event", "code": "landing_commit", "sev": "info", "msg": "height=1.1"}
+        ),
+        json.dumps({"t": 14.9, "k": "event", "code": "beta", "sev": "warn"}),
+    ]
+    with open(os.path.join(d, SESSION_B + ".001.jsonl"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+FAKE_PHONEADB = r"""#!/usr/bin/env bash
+# fake phoneadb for blackbox --selftest: answers like the tunnel, touches only
+# $FAKE_PHONE_DIR. Logs every call (with the pinned serial) to $FAKE_LOG.
+set -eu
+echo "SERIAL=${ANDROID_SERIAL:-} CMD=$*" >> "$FAKE_LOG"
+case "$1" in
+devices)
+    printf 'List of devices attached\n'
+    printf '10.55.1.15:39999\tdevice\n'
+    printf 'adb-2A171FDH-vWgJys._adb-tls-connect._tcp\tdevice\n'
+    ;;
+shell)
+    shift; cmd="$*"
+    case "$cmd" in
+    stat*)
+        for f in "$FAKE_PHONE_DIR"/*; do
+            [ -f "$f" ] || continue
+            sz=$(stat -c %s "$f"); mt=$(stat -c %Y "$f")
+            printf '%s %s /sdcard/fake/flightlogs/%s\n' "$sz" "$mt" "$(basename "$f")"
+        done
+        ;;
+    rm*)
+        for w in $cmd; do
+            case "$w" in /*) rm -f "$FAKE_PHONE_DIR/$(basename "$w")";; esac
+        done
+        ;;
+    esac
+    ;;
+pull)
+    src="$2"; dst="$3"
+    cp "$FAKE_PHONE_DIR/$(basename "$src")" "$dst"
+    if [ -n "${FAKE_TRUNCATE:-}" ] && [ "$(basename "$src")" = "$FAKE_TRUNCATE" ]; then
+        : > "$dst"; printf 'x' > "$dst"
+    fi
+    echo "$src: 1 file pulled, 0 skipped. 42.0 MB/s (fake)"
+    ;;
+*)
+    echo "fake phoneadb: unexpected: $*" >&2; exit 9
+    ;;
+esac
+"""
+
+
+def _plant_phone(d):
+    pdir = os.path.join(d, "phone")
+    os.makedirs(pdir)
+    for name, size in (
+        (PHONE_FLIGHT + ".001.jsonl", 400),
+        (PHONE_FLIGHT + ".002.jsonl", 200),
+        (PHONE_FLIGHT + ".v001.h264", 5000),
+        (PHONE_STUB + ".001.jsonl", 90),
+    ):
+        with open(os.path.join(pdir, name), "wb") as f:
+            f.write(b"x" * size)
+    fake = os.path.join(d, "phoneadb")
+    with open(fake, "w") as f:
+        f.write(FAKE_PHONEADB)
+    os.chmod(fake, 0o755)
+    return pdir, fake
+
+
+def _cli(args, binary=False):
+    """Run this very script as a subprocess — the flags are tested as typed, not as
+    internal calls."""
+    cp = subprocess.run([sys.executable, os.path.abspath(__file__), *args], capture_output=True)
+    o = cp.stdout if binary else cp.stdout.decode()
+    return cp.returncode, o, cp.stderr.decode()
+
+
+def _sql_available():
+    """Can a --sql check actually run — duckdb here, or a re-exec target that has it?
+    The --sql selftests go through _cli, so the CLI's own re-exec is part of what is
+    being tested; this only decides between running them and saying 'skipped'."""
+    try:
+        import duckdb  # noqa: F401
+
+        return True
+    except ImportError:
+        pass
+    for cand in (
+        os.environ.get("BLACKBOX_PYTHON"),
+        os.path.expanduser("~/coding/dimos/.venv/bin/python"),
+    ):
+        if cand and os.path.exists(cand):
+            return (
+                subprocess.run([cand, "-c", "import duckdb"], capture_output=True).returncode == 0
+            )
+    return False
+
+
+def selftest():
+    tmp = tempfile.mkdtemp(prefix="blackbox-selftest-")
+    part1 = os.path.join(tmp, SESSION_A + ".001.jsonl")
+    tag_raw = _plant_record(tmp)
+    _plant_record_b(tmp)
+    rec = bb.Record.open(part1)
+
+    checks = []
+
+    def check(name, ok, note=""):
+        checks.append((name, ok, note))
+
+    # ── the session model ──
+    check("multi-part: .001 pulls in .002", len(rec.paths) == 2, f"paths={rec.paths!r}")
+    ts = [r["t"] for r in rec.rows if "t" in r]
+    check(
+        "multi-part: t continuous and ordered across the seam",
+        ts == sorted(ts) and ts[0] == 0.0 and ts[-1] == 14.5,
+        f"ts={ts[-3:]!r}",
+    )
+    check(
+        "torn last line: tolerated and counted, not dropped",
+        len(rec.bad) == 1 and rec.bad[0][2] == b'{"t":15.0,"k":"ev',
+        f"bad={rec.bad!r}",
+    )
+    check(
+        "t/k-less line: parsed, counted under (no k)",
+        rec.count().get("(no k)") == 1,
+        f"count={rec.count()!r}",
+    )
+    g = bb.group_sessions(
+        [
+            SESSION_A + ".001.jsonl",
+            SESSION_A + ".002.jsonl",
+            SESSION_A + ".v001.h264",
+            SESSION_B + ".001.jsonl",
+        ]
+    )
+    check(
+        "grouping: parts+sidecar under one prefix, stub has no video",
+        set(g) == {SESSION_A, SESSION_B}
+        and len(g[SESSION_A].parts) == 2
+        and len(g[SESSION_A].videos) == 1
+        and not g[SESSION_A].likely_ground_stub
+        and g[SESSION_B].likely_ground_stub,
+    )
+    try:
+        bb.resolve(tmp)
+        check("two sessions in one dir: refused by name", False, "no refusal")
+    except bb.Refusal as e:
+        check(
+            "two sessions in one dir: refused by name",
+            SESSION_A in str(e) and SESSION_B in str(e),
+            str(e),
+        )
+
+    # ── selection ──
+    q = rec.query(around_event="landing_commit")
+    check(
+        "--around-event: ±2 s around the commit's own t",
+        [r["t"] for r in q] == [10.0, 11.5, 12.0, 13.9],
+        "got %r" % [r["t"] for r in q],
+    )
+    q = rec.query(around_event="goto_accepted", nth=1, window=0.5)
+    check(
+        "--around-event --nth 1: the second occurrence",
+        len(q) == 1 and q[0].get("msg") == "second",
+        f"got {list(q)!r}",
+    )
+    try:
+        rec.query(around_event="never_happened")
+        check("--around-event unknown code: refused by name", False, "no refusal")
+    except bb.Refusal as e:
+        check("--around-event unknown code: refused by name", "never_happened" in str(e), str(e))
+    q = rec.query(code="landing_commit")
+    check("--code implies -k event", len(q) == 1 and q[0]["k"] == "event", f"got {list(q)!r}")
+    q = rec.query(name="HEARTBEAT")
+    check(
+        "--name implies mav_in+mav_out",
+        len(q) == 2 and {r["k"] for r in q} == {"mav_in", "mav_out"},
+    )
+    q = rec.query(kind="tag", where="px>60 and margin>100")
+    check(
+        "--where: planted subset, missing field never matches",
+        len(q) == 8 and all(r["px"] > 60 for r in q) and all(r.get("margin", 0) > 100 for r in q),
+        "n=%d" % len(q),
+    )
+    q = rec.query(kind="tag", where="f.vx > 0.55")
+    check(
+        "--where: dotted f.vx reaches nested fields",
+        [r["px"] for r in q] == [80, 85, 90, 95],
+        "got %r" % [r.get("px") for r in q],
+    )
+    for expr, want in (
+        ("hypot(px,3)>1", "function call"),
+        ("px[0]>1", "subscript"),
+        ("2**30>1", "**"),
+    ):
+        try:
+            bb.compile_where(expr)
+            check(f"--where refuses {expr!r} by name", False, "no refusal")
+        except bb.Refusal as e:
+            check(f"--where refuses {expr!r} by name", want in str(e), str(e))
+
+    # ── reduction order ──
+    q = rec.query(kind="tag", tail=4, limit=2)
+    check(
+        "--tail 4 --limit 2 = first two of the last four",
+        [r["px"] for r in q] == [90, 95] and q.matched == 12,
+        "got %r matched=%d" % ([r.get("px") for r in q], q.matched),
+    )
+    q = rec.query(kind="tag", every=5)
+    check(
+        "--every 5: first kept, then every fifth",
+        [r["px"] for r in q] == [50, 75, 100],
+        "got %r" % [r.get("px") for r in q],
+    )
+
+    # ── output modes, as typed ──
+    code, out_b, err = _cli([part1, "--json", "-k", "tag"], binary=True)
+    want = hashlib.md5(b"".join(r + b"\n" for r in tag_raw)).hexdigest()
+    got = hashlib.md5(out_b).hexdigest()
+    check(
+        "--json: byte-faithful (md5 vs planted lines)",
+        code == 0 and got == want,
+        f"md5 {got} vs {want}; err={err}",
+    )
+    code, out_s, err = _cli([part1, "-k", "tag"])
+    check(
+        "footer: matched/lines/files/unparseable all stated",
+        "12 matched of 24 lines across 2 files (1 unparseable)" in out_s,
+        out_s.splitlines()[-1] if out_s else err,
+    )
+    code, out_s, _ = _cli([part1, "--events"])
+    check(
+        "--events: curated (noise hidden), sev-marked",
+        "alpha" in out_s and "zenoh_phase" not in out_s and "!" in out_s,
+        out_s,
+    )
+    code, out_s, _ = _cli([part1, "--events", "--all-events"])
+    check("--all-events: the plumbing comes back", "zenoh_phase" in out_s)
+    code, out_s, _ = _cli([part1, "--count"])
+    check("--count: per kind", re.search(r"12\s+tag", out_s) is not None, out_s)
+    code, out_s, _ = _cli([part1, "--count", "-k", "event"])
+    check("--count on events: per code", re.search(r"2\s+goto_accepted", out_s) is not None, out_s)
+    code, out_s, _ = _cli([part1, "--fields", "t,px,f.vx", "-k", "tag", "--limit", "2"])
+    check("--fields: dotted projection, missing -> empty", "0.1" in out_s and "px" in out_s, out_s)
+    code, out_s, _ = _cli([part1, "--csv", "-k", "tag", "--limit", "1"])
+    check("--csv", out_s.splitlines()[0].startswith("t,k,") if out_s else False, out_s)
+    code, out_s, _ = _cli([part1, "--where", "px>1e9"])
+    check("no matches exits 1", code == 1, "code=%d" % code)
+    code, out_s, err = _cli([part1, os.path.join(tmp, SESSION_B + ".001.jsonl")])
+    check(
+        "two records without --diff: refused by name",
+        code == 2 and "diff" in err,
+        "code=%d err=%s" % (code, err),
+    )
+    code, out_s, err = _cli([part1, "--json", "--fields", "t"])
+    check(
+        "--json with --fields: refused (raw lines are not to be reshaped)",
+        code == 2 and "byte" in err,
+        err,
+    )
+
+    # ── the SQL escape hatch: fields must be REAL columns, not just bookkeeping ──
+    # (count(*) alone once passed while every field query failed — never again.)
+    if _sql_available():
+        code, out_s, err = _cli(
+            [
+                part1,
+                "--sql",
+                "SELECT count(*) n, sum(CASE WHEN px>=60 THEN 1 ELSE 0 END) big FROM tag",
+            ]
+        )
+        # planted px: 50..95 step 5 (eight of them >=60) plus 100 and 101 -> big=10
+        check(
+            "--sql: JSON fields are real columns (px on tag)",
+            code == 0 and re.search(r"\b12\s+10\b", out_s) is not None,
+            f"out={out_s!r} err={err!r}",
+        )
+        code, out_s, err = _cli(
+            [part1, "--sql", "SELECT t, code, msg FROM event WHERE code='landing_commit'"]
+        )
+        check(
+            "--sql: t/code/msg on event",
+            code == 0 and "height=1.0" in out_s and "12.000" in out_s,
+            f"out={out_s!r} err={err!r}",
+        )
+        # nested + heterogeneous: mav_in rows carry f={type} and f={vx};
+        # union-by-name must make f a STRUCT where f.vx reads through.
+        code, out_s, err = _cli([part1, "--sql", "SELECT avg(f.vx) vx FROM mav_in"])
+        check(
+            "--sql: nested STRUCT field f.vx across heterogeneous rows",
+            code == 0 and re.search(r"\b100\b", out_s) is not None,
+            f"out={out_s!r} err={err!r}",
+        )
+    else:
+        check("--sql field checks skipped (no duckdb in any reachable interpreter)", True)
+
+    # ── diffing ──
+    rb = bb.Record.open(os.path.join(tmp, SESSION_B + ".001.jsonl"))
+    ops = bb.diff_events(rec, rb)
+    minus = [a["code"] for op, a, _ in ops if op == "-"]
+    plus = [b["code"] for op, _, b in ops if op == "+"]
+    check(
+        "diff_events: exactly the planted divergence",
+        minus == ["goto_accepted"] and plus == ["tag_descent_denied"],
+        f"minus={minus!r} plus={plus!r}",
+    )
+    dts = [a["dt"] for op, a, _ in ops if op == " " and a["code"] == "landing_commit"]
+    check(
+        "diff_events: dt is since the previous curated event, per record",
+        dts and abs(dts[0] - 2.0) < 1e-6,
+        f"dt={dts!r}",
+    )
+    d = bb.diff_counts(rec, rb)
+    ec = {k: (na, nb) for k, na, nb in d["event_code"]}
+    check(
+        "diff_counts: the same divergence in numbers",
+        ec.get("goto_accepted") == (2, 1) and ec.get("tag_descent_denied") == (0, 1),
+        f"ec={ec!r}",
+    )
+
+    # ── the phone, behind a fake phoneadb ──
+    pdir, fake = _plant_phone(tmp)
+    log = os.path.join(tmp, "fake.log")
+    os.environ["BLACKBOX_PHONEADB"] = fake
+    os.environ["FAKE_PHONE_DIR"] = pdir
+    os.environ["FAKE_LOG"] = log
+    os.environ.pop("FAKE_TRUNCATE", None)
+    try:
+        phone = bb.Phone()
+        serial = phone.attach()
+        check(
+            "phone: serial pinned to the 10.55.1.15 transport, not mDNS",
+            serial == "10.55.1.15:39999",
+            serial,
+        )
+        sessions = phone.sessions()
+        check(
+            "phone ls: grouped, sized, stub marked",
+            set(sessions) == {PHONE_FLIGHT, PHONE_STUB}
+            and sessions[PHONE_FLIGHT].jsonl_bytes == 600
+            and sessions[PHONE_FLIGHT].video_bytes == 5000
+            and not sessions[PHONE_FLIGHT].likely_ground_stub
+            and sessions[PHONE_STUB].likely_ground_stub,
+            "%r" % {k: (s.jsonl_bytes, s.video_bytes) for k, s in sessions.items()},
+        )
+        check(
+            "phone: pinned serial rides every later call",
+            "SERIAL=10.55.1.15:39999" in open(log).read(),
+        )
+        check("phone: latest = newest prefix", phone.latest() == PHONE_STUB)
+
+        dest = os.path.join(tmp, "pulled")
+        buf = io.StringIO()
+        bb.pull_session(phone, PHONE_FLIGHT, dest, out=buf)
+        pulled = sorted(os.listdir(dest))
+        check(
+            "pull: all parts + sidecars, sizes verified, memexport pointed at",
+            pulled
+            == sorted(
+                [
+                    PHONE_FLIGHT + ".001.jsonl",
+                    PHONE_FLIGHT + ".002.jsonl",
+                    PHONE_FLIGHT + ".v001.h264",
+                ]
+            )
+            and "memexport" in buf.getvalue(),
+            f"{pulled!r}",
+        )
+        try:
+            bb.pull_session(phone, PHONE_FLIGHT, dest, out=io.StringIO())
+            check("pull: refuses a non-empty dest by name", False, "no refusal")
+        except bb.Refusal as e:
+            check("pull: refuses a non-empty dest by name", "into-existing" in str(e), str(e))
+        os.environ["FAKE_TRUNCATE"] = PHONE_FLIGHT + ".002.jsonl"
+        try:
+            bb.pull_session(phone, PHONE_FLIGHT, os.path.join(tmp, "pulled2"), out=io.StringIO())
+            check("pull: a truncated transfer is caught by the size check", False, "no refusal")
+        except bb.Refusal as e:
+            check(
+                "pull: a truncated transfer is caught by the size check",
+                "truncated" in str(e) and ".002.jsonl" in str(e),
+                str(e),
+            )
+        del os.environ["FAKE_TRUNCATE"]
+
+        code, out_s, err = _cli(["rm", PHONE_STUB])
+        stub_file = os.path.join(pdir, PHONE_STUB + ".001.jsonl")
+        check(
+            "rm: lists the files and refuses without --yes",
+            code == 2 and "--yes" in err and PHONE_STUB in out_s and os.path.exists(stub_file),
+            "code=%d err=%s" % (code, err),
+        )
+        code, out_s, err = _cli(["rm", "latest", "--yes"])
+        check(
+            "rm latest: refused by name", code == 2 and "latest" in err and "explicit" in err, err
+        )
+        code, out_s, err = _cli(["rm", PHONE_STUB, "--yes"])
+        check(
+            "rm --yes: deletes exactly that session from the phone",
+            code == 0
+            and not os.path.exists(stub_file)
+            and os.path.exists(os.path.join(pdir, PHONE_FLIGHT + ".001.jsonl")),
+            "code=%d err=%s" % (code, err),
+        )
+    finally:
+        for k in ("BLACKBOX_PHONEADB", "FAKE_PHONE_DIR", "FAKE_LOG", "FAKE_TRUNCATE"):
+            os.environ.pop(k, None)
+
+    # ── report ──
+    failures = 0
+    width = max(len(n) for n, _, _ in checks)
+    print("blackbox self-test — %d checks against planted records and a fake phone\n" % len(checks))
+    for name, ok, note in checks:
+        print("%s %-*s" % ("ok  " if ok else "FAIL", width, name))
+        if not ok:
+            failures += 1
+            print(f"     {note}")
+    print(f"\nfixtures in {tmp}")
+
+    rc_real = selftest_real(required=False)
+    if failures:
+        print(
+            "%d check(s) FAILED — a query answered wrong on data whose answer "
+            "was planted." % failures
+        )
+    else:
+        print("every planted answer came back exact.")
+    return (1 if failures else 0) + rc_real
+
+
+def selftest_real(required=True):
+    """The known numbers of a real flight — datasets/landing06, the record whose
+    ad-hoc analysis this tool replaces. Counted independently the night it was flown:
+    321 tags, 125 events, landing_commit at t=147.636."""
+    d = os.path.join(bb.DATASETS, "landing06")
+    if not os.path.isdir(d):
+        msg = (
+            f"real-record checks skipped: no {d} (datasets are not in git; "
+            "run from the main checkout, or set BLACKBOX_DATASETS)"
+        )
+        if required:
+            print("FAIL " + msg)
+            return 1
+        print("\n" + msg)
+        return 0
+    rec = bb.Record.open("landing06")
+    t = rec.t_of("landing_commit")
+    checks = [
+        (
+            "landing06: 321 tags",
+            rec.count().get("tag") == 321,
+            "got {!r}".format(rec.count().get("tag")),
+        ),
+        (
+            "landing06: 125 events",
+            rec.count().get("event") == 125,
+            "got {!r}".format(rec.count().get("event")),
+        ),
+        (
+            "landing06: landing_commit at t=147.636",
+            t is not None and abs(t - 147.636) < 0.01,
+            f"got {t!r}",
+        ),
+        (
+            "landing06: ±2 s window around the commit is non-trivial",
+            len(rec.lines(around_event="landing_commit")) > 50,
+            "n=%d" % len(rec.lines(around_event="landing_commit")),
+        ),
+    ]
+    if _sql_available():
+        # px>=60 counted two independent ways on 2026-07-29: the stdlib --where
+        # path and SQL both say 73. NOT 59, and not the trusted-solve population
+        # either — landing06 has metric=true on 0 tags, so pixel size and trust
+        # are different gates. The check pins the measured 73 AND that both
+        # counting paths agree, through the CLI (re-exec included).
+        big_where = len(rec.lines(kind="tag", where="px>=60"))
+        code, out_s, err = _cli(
+            [
+                "landing06",
+                "--sql",
+                "SELECT count(*) n, sum(CASE WHEN px>=60 THEN 1 ELSE 0 END) big FROM tag",
+            ]
+        )
+        m = re.search(r"\b(\d+)\s+(\d+)\b", out_s or "")
+        checks.append(
+            (
+                "landing06: --sql field query (n=321, px>=60 -> 73, both paths agree)",
+                code == 0
+                and m is not None
+                and int(m.group(1)) == 321
+                and int(m.group(2)) == 73
+                and big_where == 73,
+                "where=%d out=%r err=%r" % (big_where, out_s, err),
+            )
+        )
+    else:
+        checks.append(
+            ("landing06: --sql checks skipped (no duckdb in any reachable interpreter)", True, "")
+        )
+    failures = 0
+    print("\nreal-record checks — datasets/landing06\n")
+    for name, ok, note in checks:
+        print("{} {}".format("ok  " if ok else "FAIL", name))
+        if not ok:
+            failures += 1
+            print(f"     {note}")
+    return 1 if failures else 0
+
+
+# ─────────────────────────────── driver ───────────────────────────────
+
+
+def main():
+    argv = sys.argv[1:]
+    try:
+        if argv and argv[0] == "ls":
+            return sub_ls(argv[1:])
+        if argv and argv[0] == "pull":
+            return sub_pull(argv[1:])
+        if argv and argv[0] == "rm":
+            return sub_rm(argv[1:])
+        args = query_parser().parse_args(argv)
+        if args.selftest:
+            return selftest()
+        if args.selftest_real:
+            return selftest_real(required=True)
+        return run_query(args)
+    except (bb.Refusal, bb.PhoneDown) as e:
+        sys.stderr.write(f"blackbox: {e}\n")
+        return 2
+    except BrokenPipeError:
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,1330 @@
+#!/usr/bin/env python3
+"""Put a recorded mini4pro flight on a live Zenoh bus, at the speed it happened.
+
+A black box replay: hand it a flight record and it goes on the bus, on the key expressions
+`docs/zenoh-topics.md` specifies, with the recorded wall-clock spacing — so DiMOS can be
+developed against a real flight with no aircraft, no phone and no Android build. Encoding
+happens on the way past by running `zenohreplay`, which is where every encoding decision
+lives; a frames file works too, for when you want to inspect the encoding rather than send it.
+
+    tools/zenohpublish flight.jsonl                   # to the router on hyper1
+    tools/zenohpublish flight.jsonl --local           # laptop only, nothing else running
+    tools/zenohpublish flight.jsonl --speed 10 --loop # a fast, endless drone
+    tools/zenohpublish flight.jsonl --start 60 --end 120  # just the orbit
+
+    tools/zenohpublish --spy                          # subscribe, decode, and say so
+    tools/zenohpublish f.jsonl --selftest             # publish->subscribe->decode, in one process
+    tools/zenohpublish --keys                         # the contract, printed
+
+What a consumer needs to know before reading the output:
+
+- **The gaps are the point.** The default is the recorded spacing, gaps included; `odom` was
+  withheld 78% of the time on this airframe and a replay that smoothed that over would be lying
+  about the hardest thing a consumer has to cope with. `--speed` scales the timeline, it does
+  not fill it in.
+- **Nothing is re-encoded.** A frame goes out exactly as `zenohreplay` encoded it, which is
+  byte-for-byte what the Kotlin encoder produced for the same flight. `--restamp` is the one
+  exception and says so on the tin.
+- **The frames are `drone/`-namespaced and there is no `datum` channel** — the origin is
+  recovered by subtracting `pose` from `gps_location`.
+
+This is a contract, not a script: the Android publisher replaces it in the live path and must
+produce the same stream. Full rationale: `docs/zenoh-replay-contract.md` (`--keys` prints §1).
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import collections
+import glob
+import importlib
+import json
+import math
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+FRAME_FORMAT = "mini4pro-zenohframes-1"
+RECORD_FORMAT = "mini4pro-flightlog-1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The catalogue. `docs/zenoh-topics.md` is the prose; this is the machine copy,
+# and the two are checked against each other by `--keys` being readable next to it.
+#
+# QoS names are DiMOS's own (`protocol/pubsub/impl/zenohpubsub.py:72-74`):
+#   NEVER_DROP  = reliable + block      LATEST_WINS = best_effort + drop
+#   None        = zenoh's publisher defaults, which are reliable + drop.
+#
+# Note what is NOT here: DiMOS assigns NEVER_DROP by *channel name* and its list is
+# ("human_input", "agent", "agent_idle", "command") matched against the name with the
+# prefix already stripped. Our channel is `drone/command`, not `command`, so that rule
+# does not fire and the QoS below is a decision this side has to make explicitly. See
+# the contract doc.
+# ─────────────────────────────────────────────────────────────────────────────
+
+NEVER_DROP = "NEVER_DROP"
+LATEST_WINS = "LATEST_WINS"
+
+# channel -> (lcm type, qos, carried by a frames file?)
+# `datum` was here until 2026-07-27, as a NEVER_DROP `sensor_msgs.NavSatFix`. It is
+# deleted, not deprecated in place: the origin it announced is recoverable by subtracting
+# `pose` from `gps_location`, and a message restating a derivable fact is a message that
+# can disagree with it. `docs/zenoh-frames-and-paths.md`.
+CATALOGUE = {
+    "odom": ("nav_msgs.Odometry", None, True),
+    "pose": ("geometry_msgs.PoseStamped", None, True),
+    "gps_location": ("sensor_msgs.NavSatFix", None, True),
+    "imu": ("sensor_msgs.Imu", None, True),
+    "battery": ("sensor_msgs.BatteryState", None, True),
+    "mode": ("std_msgs.String", None, True),
+    # Never in a replay: gimbal attitude is not in AircraftState and no recorder line
+    # carries it, so a flight record never says where the camera was pointing
+    # (`zenohreplay --coverage`). The live bridge publishes it; a replay cannot.
+    "gimbal": ("geometry_msgs.Vector3", None, False),
+    # Published by the bridge, but a flight record carries no reason column for them
+    # and `zenohreplay` therefore does not encode them. Listed so the key set a
+    # subscriber sees from a replay is honestly a subset of the live one, not a
+    # different one.
+    "status": ("std_msgs.String", NEVER_DROP, False),
+    "health": ("std_msgs.String", NEVER_DROP, False),
+    "command_ack": ("std_msgs.String", NEVER_DROP, False),
+    # 2026-07-29: the tag's world-frame belief and the commanded velocity. Published live
+    # (and derived offline by tools/memexport from `tag`/`stick_cmd` lines); `zenohreplay`
+    # does not encode them — a fix and a stick command are not AircraftStates — so no
+    # frames file carries them and a replayed key set stays an honest subset of the live one.
+    "tag_fix": ("vision_msgs.Detection3DArray", None, False),
+    "setpoint": ("geometry_msgs.TwistStamped", None, False),
+    # 2026-07-30: DJI's own wind estimate, m/s, as a bare Float32. Published live on key
+    # delivery (change-driven — silence means UNCHANGED, not stale) and derived offline by
+    # tools/memexport from `dji_field` windSpeedDmS lines; `zenohreplay` does not encode it —
+    # a key delivery is not an AircraftState, deliberately, so a replayed key set stays an
+    # honest subset of the live one.
+    "wind": ("std_msgs.Float32", None, False),
+}
+
+# The frame tree, `docs/mem2-converter.md` §2. Named here because `--selftest` asserts
+# them off decoded frames; the encoding itself is `zenohreplay`'s, and these two must not
+# become a second opinion about it.
+FRAME_WORLD = "drone/world"
+FRAME_BASE_LINK = "drone/base_link"
+
+# `header.frame_id` per channel. `odom` and `pose` are in the local frame; `gps_location`,
+# `imu` and `battery` are stamped with the sensor's own body frame, which is the ROS
+# convention and the reason an Imu's orientation is a rotation *into* drone/world.
+FRAME_EXPECTED = {
+    "odom": FRAME_WORLD,
+    "pose": FRAME_WORLD,
+    "gps_location": FRAME_BASE_LINK,
+    "imu": FRAME_BASE_LINK,
+    "battery": FRAME_BASE_LINK,
+}
+
+DEFAULT_PREFIX = "dimos/drone"
+DEFAULT_ROUTER = "10.55.1.50:7447"  # hyper1 — see docs/zenoh-dimos-transport.md 2.6
+ZENOH_PORT = 7447
+# `--local`'s private loopback bus. Deliberately not 7447: on this laptop that port
+# already belongs to an unrelated zenoh router, and a replay must not join a bus it
+# was not pointed at.
+LOCAL_ENDPOINT = "tcp/127.0.0.1:7452"
+
+
+def key_expr(prefix, channel):
+    """`<prefix>/<channel>/<pkg>.<Type>` — DiMOS's own shape, dot before the type."""
+    return f"{prefix}/{channel}/{CATALOGUE[channel][0]}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interpreter. zenoh lives wherever eclipse-zenoh was installed, which on this
+# machine is DiMOS's venv — the same interpreter that has DiMOS's decoders, so it
+# is also the one that can prove a frame arrived correctly.
+# ─────────────────────────────────────────────────────────────────────────────
+
+CANDIDATE_PYTHONS = [
+    os.environ.get("ZENOHPUBLISH_PYTHON"),
+    os.path.expanduser("~/coding/dimos/.venv/bin/python"),
+]
+
+
+def ensure_zenoh(reexec=True):
+    """Import zenoh, re-execing under an interpreter that has it if this one does not.
+
+    Explicit and noisy rather than clever: it prints which interpreter it moved to,
+    because "the tool silently ran as something else" is its own class of bug.
+    """
+    try:
+        import zenoh  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    if reexec:
+        for cand in CANDIDATE_PYTHONS:
+            if not cand or not os.path.exists(cand):
+                continue
+            if os.path.realpath(cand) == os.path.realpath(sys.executable):
+                continue
+            probe = os.system(f"{cand} -c 'import zenoh' 2>/dev/null")
+            if probe == 0:
+                sys.stderr.write(f"zenohpublish: no zenoh here; re-exec under {cand}\n")
+                os.execv(cand, [cand, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.stderr.write(
+        "zenohpublish: eclipse-zenoh is not importable.\n"
+        "  DiMOS pins zenoh 1.x and its venv already has it:\n"
+        "    ~/coding/dimos/.venv/bin/python tools/zenohpublish ...\n"
+        "  or make one:\n"
+        "    uv venv .venv && uv pip install eclipse-zenoh==1.9.0\n"
+        "  or point ZENOHPUBLISH_PYTHON at an interpreter that has it.\n"
+    )
+    sys.exit(2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Decoders — DiMOS's own, so that "it decoded" means DiMOS can read it
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_decoders(dimos_lcm):
+    """`{lcm type name: class}` from DiMOS itself, falling back to the raw bindings.
+
+    Two sources, deliberately in this order. `dimos.msgs` is what a DiMOS consumer
+    actually calls, so a decode there is the real acceptance test. The generated
+    `lcm_msgs` package under `dimos-lcm` is what `zenohreplay` encoded with, and is
+    the fallback for a machine that has the bindings but not DiMOS.
+    """
+    types = sorted({t for t, _, _ in CATALOGUE.values()})
+    try:
+        from dimos.msgs.helpers import resolve_msg_type
+
+        out = {}
+        for name in types:
+            cls = resolve_msg_type(name)
+            if cls is None:
+                raise ImportError(f"dimos cannot resolve {name}")
+            out[name] = cls
+        return out, "dimos.msgs (DiMOS's own consumer path)"
+    except ImportError:
+        pass
+    root = os.path.join(os.path.expanduser(dimos_lcm), "generated", "python_lcm_msgs")
+    if os.path.isdir(os.path.join(root, "lcm_msgs")):
+        sys.path.insert(0, root)
+        try:
+            out = {}
+            for name in types:
+                pkg, cls = name.split(".")
+                out[name] = getattr(importlib.import_module(f"lcm_msgs.{pkg}.{cls}"), cls)
+            return out, f"lcm_msgs under {root}"
+        except ImportError:
+            pass
+    return None, None
+
+
+def set_stamp(msg, unix_s):
+    """Move a message's header stamp to `unix_s`. True if there was one to move."""
+    if hasattr(msg, "ts"):
+        msg.ts = unix_s
+        return True
+    header = getattr(msg, "header", None)
+    stamp = getattr(header, "stamp", None)
+    if stamp is None:
+        return False
+    stamp.sec = math.floor(unix_s)
+    stamp.nsec = round((unix_s - math.floor(unix_s)) * 1e9)
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The frames file
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Frames:
+    def __init__(self, header, rows, path):
+        self.header = header
+        self.rows = rows
+        self.path = path
+
+    @property
+    def span(self):
+        return (self.rows[-1]["t"] - self.rows[0]["t"]) if len(self.rows) > 1 else 0.0
+
+    def counts(self):
+        return collections.Counter(r["ch"] for r in self.rows)
+
+
+def encode_record(path):
+    """A raw flight record in, a frames file out — by running `zenohreplay`, not by
+    reimplementing it.
+
+    Added 2026-07-27 after Ivan asked the obvious question: *"shouldn't this read the raw
+    recording directly?"* It should. Requiring a frames file made the user learn an
+    intermediate format that exists for our convenience, and the tool answered a raw record
+    with homework rather than doing it.
+
+    **It shells out rather than importing.** `zenohreplay` is where every encoding decision
+    lives — the two gates, the origin, the ENU conversion — and there must be exactly one
+    of each. Importing a sibling script by path is fragile, and copying any of it would create
+    a second encoder that drifts. A subprocess costs a temp file and a second of wall clock,
+    and it guarantees these two tools can never disagree about what a flight would have
+    published, which is the only property that matters here.
+
+    `--frames` is still there for when the intermediate is what you want: diffing it between
+    builds, counting it, decoding one line by hand.
+    """
+    replay = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zenohreplay")
+    if not os.path.exists(replay):
+        raise SystemExit(f"cannot encode {path}: {replay} is missing")
+    fd, out = tempfile.mkstemp(prefix="zenohframes-", suffix=".jsonl")
+    os.close(fd)
+    atexit.register(lambda: os.path.exists(out) and os.unlink(out))
+    sys.stderr.write(f"encoding {path} with zenohreplay ...\n")
+    r = subprocess.run([sys.executable, replay, path, "--frames", out], stdout=subprocess.DEVNULL)
+    if r.returncode != 0:
+        raise SystemExit("zenohreplay failed on %s (exit %d)" % (path, r.returncode))
+    return out
+
+
+def as_frames_path(path):
+    """Return a frames path for [path], encoding it first if it is a raw record."""
+    try:
+        with open(path) as fh:
+            header = json.loads(fh.readline())
+    except (OSError, ValueError):
+        return path  # read_frames reports it properly
+    return encode_record(path) if header.get("format") == RECORD_FORMAT else path
+
+
+def read_frames(path, start=None, end=None):
+    try:
+        fh = open(path)
+    except OSError as e:
+        raise SystemExit(
+            f"cannot read {path}: {e.strerror}\n"
+            "  This wants a frames file, which is made offline:\n"
+            f"    tools/zenohreplay <flight>.jsonl --frames {path}"
+        )
+    with fh:
+        first = fh.readline()
+        try:
+            header = json.loads(first)
+        except ValueError:
+            raise SystemExit(f"{path}: first line is not a {FRAME_FORMAT} header")
+        if header.get("format") != FRAME_FORMAT:
+            extra = ""
+            if header.get("format") == RECORD_FORMAT:
+                # Should be unreachable: encode_record() converts a raw record before we get
+                # here. Kept so a future path that skips it fails with an instruction rather
+                # than a type error.
+                extra = (
+                    "\n  That is a raw flight record. Encode it first:\n"
+                    f"    tools/zenohreplay {path} --frames out.jsonl"
+                )
+            raise SystemExit(
+                "{}: format is {!r}, expected {!r} — this reads what "
+                "`zenohreplay --frames` writes.{}".format(
+                    path, header.get("format"), FRAME_FORMAT, extra
+                )
+            )
+        rows = []
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            if start is not None and r["t"] < start:
+                continue
+            if end is not None and r["t"] > end:
+                break
+            if r["ch"] not in CATALOGUE:
+                raise SystemExit(
+                    "{}: unknown channel {!r} — the catalogue here and the "
+                    "one in zenohreplay have diverged".format(path, r["ch"])
+                )
+            r["raw"] = bytes.fromhex(r["hex"])
+            if len(r["raw"]) != r["len"]:
+                raise SystemExit(
+                    "%s: frame at t=%s says len %d but carries %d bytes"
+                    % (path, r["t"], r["len"], len(r["raw"]))
+                )
+            rows.append(r)
+    if not rows:
+        raise SystemExit(f"{path}: no frames in the selected window")
+    return Frames(header, rows, path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The session
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def endpoint(spec):
+    """`host`, `host:port` or a full `proto/host:port` -> a zenoh endpoint."""
+    if "/" in spec:
+        return spec
+    return "tcp/%s" % (spec if ":" in spec else "%s:%d" % (spec, ZENOH_PORT))
+
+
+def open_session(args, what, listening):
+    """Open a zenoh session exactly the way DiMOS opens one.
+
+    `ZenohSessionPool.acquire` builds a bare `zenoh.Config()` and inserts mode,
+    connect/endpoints and listen/endpoints as JSON5. Mirrored rather than
+    reimplemented so that "it works here" transfers to "it works there".
+
+    `--local` is a loopback bus on its own port rather than multicast scouting, for
+    two reasons: this project's AP filters multicast between wifi clients, which is
+    what made DiMOS stop trusting scouting in the first place; and port 7447 on a
+    developer machine is not necessarily free — on this laptop it belongs to an
+    unrelated zenoh router, and a replay that quietly joins someone else's bus is a
+    worse failure than one that does not start.
+    """
+    import zenoh
+
+    connect = [endpoint(e) for e in args.connect]
+    listen = [endpoint(e) for e in args.listen]
+    if args.local and not connect and not listen:
+        if listening:
+            listen = [LOCAL_ENDPOINT]
+        else:
+            connect = [LOCAL_ENDPOINT]
+    if not connect and not listen and not args.local:
+        connect = [endpoint(args.router)]
+
+    cfg = zenoh.Config()
+    cfg.insert_json5("mode", json.dumps(args.mode))
+    if connect:
+        cfg.insert_json5("connect/endpoints", json.dumps(connect))
+    if listen:
+        cfg.insert_json5("listen/endpoints", json.dumps(listen))
+    if args.no_scouting or args.local:
+        cfg.insert_json5("scouting/multicast/enabled", "false")
+        cfg.insert_json5("scouting/gossip/enabled", "false")
+    session = zenoh.open(cfg)
+    print(f"{what}   mode {args.mode}")
+    print("  connect      %s" % (", ".join(connect) or "— (nothing dialled)"))
+    print("  listen       %s" % (", ".join(listen) or "— (zenoh's defaults)"))
+    if args.local:
+        print("  scouting     off — a two-process loopback bus, no router, no multicast")
+    elif not connect and not listen:
+        print("               relying on multicast scouting, which this project's AP")
+        print("               is known to filter between wifi clients. Fine on one host.")
+    return session
+
+
+def qos_kwargs(qos):
+    import zenoh
+
+    if qos == NEVER_DROP:
+        return {
+            "reliability": zenoh.Reliability.RELIABLE,
+            "congestion_control": zenoh.CongestionControl.BLOCK,
+        }
+    if qos == LATEST_WINS:
+        return {
+            "reliability": zenoh.Reliability.BEST_EFFORT,
+            "congestion_control": zenoh.CongestionControl.DROP,
+        }
+    return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Publishing
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Publisher:
+    """Declared publishers for every channel a frames file actually carries."""
+
+    def __init__(self, session, prefix, channels):
+        self.prefix = prefix
+        self.pubs = {}
+        for ch in channels:
+            self.pubs[ch] = session.declare_publisher(
+                key_expr(prefix, ch), **qos_kwargs(CATALOGUE[ch][1])
+            )
+
+    def put(self, ch, data):
+        self.pubs[ch].put(data)
+
+    def undeclare(self):
+        for p in self.pubs.values():
+            try:
+                p.undeclare()
+            except Exception:
+                pass
+
+
+def describe_frames(frames, args):
+    hdr = frames.header
+    counts = frames.counts()
+    print(f"frames       {frames.path}")
+    print("  session    %s" % (hdr.get("session") or "?"))
+    started = hdr.get("started_unix_ms")
+    if started:
+        rec = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started / 1000.0))
+        age_h = (time.time() - started / 1000.0) / 3600.0
+        print(f"  recorded   {rec} ({age_h:.1f} h ago)")
+    # `origin` since the datum channel's deletion; `datum` is the old spelling, read so an
+    # already-encoded frames file still describes itself.
+    d = hdr.get("origin") or hdr.get("datum") or {}
+    if d:
+        print(
+            "  origin     {:.7f}, {:.7f}, takeoff alt {}  ({}'s 0,0,0, never published)".format(
+                d.get("lat"),
+                d.get("lon"),
+                ("{:.3f} m".format(d["alt"])) if d.get("alt") is not None else "unknown",
+                FRAME_WORLD,
+            )
+        )
+    print(
+        "  window     t=%.3f..%.3f s (%.1f s), %d frames"
+        % (frames.rows[0]["t"], frames.rows[-1]["t"], frames.span, len(frames.rows))
+    )
+    if args.speed != 1.0:
+        print(f"  speed      {args.speed:g}x — {frames.span / args.speed:.1f} s of wall clock")
+    print()
+    print("publishing on")
+    for ch in CATALOGUE:
+        n = counts.get(ch, 0)
+        if not n:
+            continue
+        qos = CATALOGUE[ch][1] or "default (reliable, drop)"
+        print("  %-52s %6d  %s" % (key_expr(args.prefix, ch), n, qos))
+    silent = [ch for ch in CATALOGUE if not counts.get(ch)]
+    if silent:
+        print("  silent in this recording: {}".format(", ".join(silent)))
+        print("  (a channel with nothing on it and a channel with no data look the same")
+        print("   from outside — that is the encoder's rule, not a fault here)")
+    print()
+
+
+class Restamper:
+    """Rewrites each message's header stamp to the wall clock it is published at.
+
+    Off by default. A replay is honest about being old: the stamps are the flight's.
+    But a consumer that discards anything older than a few seconds discards the whole
+    replay, so this exists — and it is the only thing in this tool that re-encodes,
+    which is why it verifies its own round trip before it is allowed to touch a frame.
+
+    **The stamp tracks the send, not the recording, and `--speed` is therefore in it.**
+    The naive rule — add a constant offset to every stamp — is right at 1x and wrong
+    everywhere else: at 20x it hands a subscriber stamps 20 times further apart than
+    the messages, so the stream races into the future and the staleness filter this
+    option exists to satisfy sees a stamp a minute ahead of its own clock. That was
+    not reasoned out; the spy's `stamped` column showed it as a growing negative age.
+
+    Frames from one sample keep one stamp, because they are one reading.
+    """
+
+    def __init__(self, decoders, rows):
+        self.decoders = decoders
+        self.unstamped = set()
+        bad = []
+        seen = set()
+        for r in rows:
+            if r["ch"] in seen:
+                continue
+            seen.add(r["ch"])
+            cls = decoders[CATALOGUE[r["ch"]][0]]
+            msg = cls.lcm_decode(r["raw"])
+            if msg.lcm_encode() != r["raw"]:
+                bad.append(r["ch"])
+            if not set_stamp(msg, 0.0):
+                self.unstamped.add(r["ch"])
+        if bad:
+            raise SystemExit(
+                "--restamp refused: decode->encode is not byte-identical for {}.\n"
+                "  Restamping would change more than the stamp, and a replay whose\n"
+                "  bytes differ from the aircraft's is not a replay.".format(", ".join(bad))
+            )
+
+    def begin(self, rows, speed):
+        """Anchor a pass. Returns the state `stamp_for` needs."""
+        self._speed = speed
+        self._wall0 = time.time()
+        self._unix0 = rows[0]["unix"]
+        self._cached_t = None
+        self._cached_stamp = None
+
+    def stamp_for(self, row):
+        if row["t"] == self._cached_t:
+            return self._cached_stamp
+        if self._speed > 0:
+            stamp = self._wall0 + (row["unix"] - self._unix0) / self._speed
+        else:
+            # --speed 0 has no timeline to map onto: the frames go out as fast as
+            # they can, so "now" is the only true answer.
+            stamp = time.time()
+        self._cached_t, self._cached_stamp = row["t"], stamp
+        return stamp
+
+    def apply(self, row):
+        if row["ch"] in self.unstamped:
+            return row["raw"]
+        cls = self.decoders[CATALOGUE[row["ch"]][0]]
+        msg = cls.lcm_decode(row["raw"])
+        set_stamp(msg, self.stamp_for(row))
+        return msg.lcm_encode()
+
+
+def publish(args, frames, session):
+    rows = frames.rows
+    channels = sorted({r["ch"] for r in rows})
+    pub = Publisher(session, args.prefix, channels)
+
+    restamper = None
+    if args.restamp:
+        decoders, source = load_decoders(args.dimos_lcm)
+        if decoders is None:
+            raise SystemExit(
+                "--restamp needs the LCM bindings; none found. "
+                "Point --dimos-lcm at the dimos-lcm checkout."
+            )
+        restamper = Restamper(decoders, rows)
+        print(f"restamp      on, via {source}")
+        print(f"             stamps track the send, so --speed {args.speed:g} is in them: a")
+        print("             subscriber sees stamps advancing with its own clock")
+        if restamper.unstamped:
+            print(
+                "             ({} carry no header at all and go out unchanged)".format(
+                    ", ".join(sorted(restamper.unstamped))
+                )
+            )
+        print()
+
+    sent = collections.Counter()
+    t_zero = rows[0]["t"]
+    worst_late = 0.0
+    passes = 0
+    started_wall = time.time()
+
+    try:
+        while True:
+            passes += 1
+            wall0 = time.monotonic()
+            if restamper:
+                restamper.begin(rows, args.speed)
+            next_status = wall0 + args.status_every
+            for row in rows:
+                if args.speed > 0:
+                    due = wall0 + (row["t"] - t_zero) / args.speed
+                    now = time.monotonic()
+                    if due > now:
+                        time.sleep(due - now)
+                    else:
+                        worst_late = max(worst_late, now - due)
+                data = restamper.apply(row) if restamper else row["raw"]
+                pub.put(row["ch"], data)
+                sent[row["ch"]] += 1
+                if not args.quiet and time.monotonic() >= next_status:
+                    next_status = time.monotonic() + args.status_every
+                    status_line(row["t"] - t_zero, sent, started_wall, passes, args)
+            if not args.loop:
+                break
+            if not args.quiet:
+                print("  --- pass %d complete, restarting in %.1f s ---" % (passes, args.loop_gap))
+            time.sleep(args.loop_gap)
+    except KeyboardInterrupt:
+        print()
+    finally:
+        pub.undeclare()
+
+    print()
+    print(
+        "published    %d frames over %.1f s of wall clock%s"
+        % (
+            sum(sent.values()),
+            time.time() - started_wall,
+            (", %d passes" % passes) if passes > 1 else "",
+        )
+    )
+    for ch in CATALOGUE:
+        if sent.get(ch):
+            print("  %-52s %6d" % (key_expr(args.prefix, ch), sent[ch]))
+    if worst_late > 0.05:
+        print(f"  worst lateness {worst_late:.3f} s — the timeline slipped; a slower --speed or a")
+        print("  quieter machine would hold it better")
+    else:
+        print("  timeline held to within %.0f ms" % (worst_late * 1000.0))
+    return 0
+
+
+def status_line(t, sent, started_wall, passes, args):
+    elapsed = time.time() - started_wall
+    total = sum(sent.values())
+    per = " ".join("%s %d" % (ch[:4], sent[ch]) for ch in CATALOGUE if sent.get(ch))
+    print(
+        "  t=%7.1fs  %-58s  %5d frames  %5.1f/s%s"
+        % (
+            t,
+            per,
+            total,
+            total / elapsed if elapsed else 0.0,
+            ("  pass %d" % passes) if passes > 1 else "",
+        )
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Spy — the other half of the proof
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def digest(ch, msg):
+    """One line a human can check against the flight. Never a repr().
+
+    DiMOS's own `Vector3.__str__` raises on NaN (`geometry_msgs/Vector3.py:158`,
+    `int(NaN)`), and this bridge publishes NaN deliberately wherever a quantity is
+    not reported. So printing a decoded Imu or Odometry the obvious way crashes,
+    and every field this prints is reached explicitly.
+    """
+    try:
+        if ch == "gps_location":
+            return "{}  {:.7f}, {:.7f}  alt {:.2f}  status {}".format(
+                frame_of(msg) or "?",
+                msg.latitude,
+                msg.longitude,
+                msg.altitude,
+                msg.status,
+            )
+        if ch == "odom":
+            p = msg.position
+            return f"{frame_of(msg)}->{msg.child_frame_id}  x {p[0]:.2f} y {p[1]:.2f} z {p[2]:.2f}"
+        if ch == "pose":
+            p = msg.position
+            return f"{frame_of(msg)}  x {p[0]:.2f} y {p[1]:.2f} z {p[2]:.2f}"
+        if ch == "imu":
+            q = msg.orientation
+            return f"{frame_of(msg)}  quat {q[0]:.3f} {q[1]:.3f} {q[2]:.3f} {q[3]:.3f}"
+        if ch == "battery":
+            return f"{msg.percentage * 100.0:.0f}%  {msg.voltage:.2f} V  {msg.temperature:.1f} C"
+        if ch in ("mode", "status", "health", "command_ack"):
+            return repr(msg.data)
+        if ch == "gimbal":
+            return f"pitch {msg.x:.1f}"
+    except Exception as e:
+        return f"decoded, but this tool cannot render it: {e!r}"
+    return "decoded"
+
+
+def fmt_age(seconds):
+    """How far behind wall clock a header stamp is, in a unit a human can read.
+
+    `-` means the stamp is in the future, which is a real thing to see: two machines
+    whose clocks disagree, or a --restamp against a clock that is not this one.
+    """
+    sign = "-" if seconds < 0 else ""
+    s = abs(seconds)
+    if s < 90:
+        return f"{sign}{s:.1f}s"
+    if s < 5400:
+        return f"{sign}{s / 60.0:.1f}m"
+    return f"{sign}{s / 3600.0:.1f}h"
+
+
+# `telemetry/Geo`'s constant, and `zenohreplay`'s. Duplicated on purpose: recovering the
+# origin below is a *consumer's* derivation, and a check that imports the code under test
+# proves only that the code agrees with itself.
+METRES_PER_DEG = 111194.93
+
+
+def enu_metres(from_lat, from_lon, to_lat, to_lon):
+    """ENU offset in metres as (east, north)."""
+    north = (to_lat - from_lat) * METRES_PER_DEG
+    east = (to_lon - from_lon) * METRES_PER_DEG * math.cos(math.radians(from_lat))
+    return east, north
+
+
+def xy_of(msg):
+    """A pose's local (east, north) metres, whichever binding decoded it, or None.
+
+    `dimos.msgs` flattens `position` onto the message as an indexable vector; the generated
+    `lcm_msgs` classes nest it one level for `PoseStamped` and two for `Odometry`.
+    """
+    p = getattr(msg, "position", None)
+    if p is None:
+        pose = getattr(msg, "pose", None)
+        p = getattr(pose, "position", None) if pose is not None else None
+        if p is None and pose is not None:
+            p = getattr(getattr(pose, "pose", None), "position", None)
+    if p is None:
+        return None
+    if hasattr(p, "x"):
+        return float(p.x), float(p.y)
+    return float(p[0]), float(p[1])
+
+
+def recover_origin(poses, fixes):
+    """Where `drone/world`'s 0,0,0 is, from the two channels that both describe it.
+
+    **This is the arithmetic that replaced the deleted `datum` message**, and it is a
+    subscriber's first act rather than ours: `pose` and `gps_location` are the same
+    measurement expressed two ways — GPS, and GPS minus a constant — so subtracting them
+    over any set of samples carrying both gives the constant back, from every sample rather
+    than from the one instant a message would have named.
+
+    The projection is inverted exactly: the encoder takes `cos(latitude)` at the *origin*,
+    so this recovers the latitude first and takes the cosine there. `docs/mem2-converter.md`
+    quotes a 4.4 µm residual, which is what taking the cosine at each sample's own latitude
+    costs; doing it this way the residual is floating-point noise.
+
+    Returns `((lat, lon), worst separation in metres)`, or `(None, 0.0)`.
+    """
+    recovered = []
+    for ts in sorted(set(poses) & set(fixes)):
+        east, north = poses[ts]
+        lat, lon = fixes[ts]
+        lat0 = lat - north / METRES_PER_DEG
+        c = math.cos(math.radians(lat0))
+        if c == 0.0:
+            continue
+        recovered.append((lat0, lon - east / (METRES_PER_DEG * c)))
+    if not recovered:
+        return None, 0.0
+    mean_lat = sum(a for a, _ in recovered) / len(recovered)
+    mean_lon = sum(b for _, b in recovered) / len(recovered)
+    worst = 0.0
+    for lat, lon in recovered:
+        de, dn = enu_metres(mean_lat, mean_lon, lat, lon)
+        worst = max(worst, math.hypot(de, dn))
+    return (mean_lat, mean_lon), worst
+
+
+def frame_of(msg):
+    """A decoded message's `header.frame_id`, whichever binding produced it.
+
+    `dimos.msgs` flattens the header onto the message; the generated `lcm_msgs` classes
+    keep it nested. Both are loadable here (see `load_decoders`), so both are reached.
+    """
+    if hasattr(msg, "frame_id"):
+        return msg.frame_id
+    header = getattr(msg, "header", None)
+    return getattr(header, "frame_id", None)
+
+
+def stamp_of(msg):
+    if hasattr(msg, "ts"):
+        return msg.ts
+    h = getattr(msg, "header", None)
+    s = getattr(h, "stamp", None)
+    if s is None:
+        return None
+    return s.sec + s.nsec / 1e9
+
+
+class Spy:
+    def __init__(self, decoders, echo=()):
+        self.decoders = decoders
+        self.echo = set(echo)
+        self.lock = threading.Lock()
+        self.count = collections.Counter()
+        self.bytes = collections.Counter()
+        self.failed = collections.Counter()
+        self.last = {}
+        self.last_at = {}
+        # now-minus-header-stamp. The column that makes "this is a three-hour-old
+        # recording" visible, and the only way to see that --restamp did anything.
+        self.last_skew = {}
+        self.first_at = None
+        self.started = time.time()
+        self.unknown = collections.Counter()
+        # --echo collapses consecutive identical renderings. `mode` sits on one word
+        # for a thousand messages and then changes, and the change is the whole point;
+        # a thousand identical lines hide it. `odom` never repeats, so nothing is lost.
+        self.echoed = {}
+        self.repeats = collections.Counter()
+
+    def on_sample(self, sample):
+        key = str(sample.key_expr)
+        data = sample.payload.to_bytes()
+        ch = self.channel_of(key)
+        now = time.time()
+        with self.lock:
+            if self.first_at is None:
+                self.first_at = now
+            if ch is None:
+                self.unknown[key] += 1
+                return
+            self.count[ch] += 1
+            self.bytes[ch] += len(data)
+            self.last_at[ch] = now
+        cls = self.decoders[CATALOGUE[ch][0]] if self.decoders else None
+        if cls is None:
+            return
+        try:
+            msg = cls.lcm_decode(data)
+        except Exception as e:
+            with self.lock:
+                self.failed[ch] += 1
+                self.last[ch] = f"DECODE FAILED: {e!r}"
+            return
+        line = digest(ch, msg)
+        stamp = stamp_of(msg)
+        with self.lock:
+            self.last[ch] = line
+            self.last_skew[ch] = None if stamp is None else now - stamp
+            if ch not in self.echo:
+                return
+            if self.echoed.get(ch) == line:
+                self.repeats[ch] += 1
+                return
+            repeats = self.repeats.pop(ch, 0)
+            self.echoed[ch] = line
+        if repeats:
+            print("  %-14s ... and %d more the same" % (ch, repeats))
+        print("  %-14s %s" % (ch, line))
+
+    @staticmethod
+    def channel_of(key):
+        parts = key.split("/")
+        if len(parts) < 2:
+            return None
+        ch = parts[-2]
+        return ch if ch in CATALOGUE else None
+
+    def table(self, prefix):
+        with self.lock:
+            if not self.count and not self.unknown:
+                print("  (nothing yet)")
+                return
+            now = time.time()
+            print(
+                "  %-14s %7s %9s %7s %9s  %s"
+                % ("channel", "msgs", "bytes", "age", "stamped", "last value")
+            )
+            for ch in CATALOGUE:
+                n = self.count.get(ch, 0)
+                if not n:
+                    continue
+                age = now - self.last_at[ch]
+                skew = self.last_skew.get(ch)
+                stamped = "—" if skew is None else fmt_age(skew)
+                bad = "  (%d UNDECODABLE)" % self.failed[ch] if self.failed.get(ch) else ""
+                print(
+                    "  %-14s %7d %9d %6.1fs %9s  %s%s"
+                    % (ch, n, self.bytes[ch], age, stamped, self.last.get(ch, "-"), bad)
+                )
+            for key, n in self.unknown.most_common():
+                print("  UNKNOWN KEY   %7d            %s" % (n, key))
+
+
+def spy(args, session):
+    decoders, source = load_decoders(args.dimos_lcm)
+    if decoders is None:
+        print("no LCM bindings found — this will count bytes but cannot prove them.")
+        print("  Point --dimos-lcm at the dimos-lcm checkout, or run under a")
+        print("  interpreter that has DiMOS importable.")
+    else:
+        print(f"decoding     with {source}")
+    pattern = f"{args.prefix}/**"
+    print(f"subscribed   {pattern}")
+    print()
+    s = Spy(decoders, echo=args.echo)
+    sub = session.declare_subscriber(pattern, s.on_sample)
+    deadline = time.time() + args.for_seconds if args.for_seconds else None
+    try:
+        while deadline is None or time.time() < deadline:
+            time.sleep(args.status_every)
+            print("t+%.0fs listening" % (time.time() - s.started))
+            s.table(args.prefix)
+    except KeyboardInterrupt:
+        print()
+    finally:
+        sub.undeclare()
+    print()
+    print("totals")
+    s.table(args.prefix)
+    total = sum(s.count.values())
+    if not total:
+        print()
+        print("NOTHING ARRIVED. That is a real answer, and usually one of:")
+        print("  - the publisher and this spy dialled different endpoints")
+        print("  - the router is not up (try: nc -vz {})".format(DEFAULT_ROUTER.replace(":", " ")))
+        print(f"  - --prefix differs between the two (this one: {args.prefix})")
+        return 1
+    if sum(s.failed.values()):
+        print()
+        print("SOME FRAMES DID NOT DECODE — arrival is not proof; this is the proof.")
+        return 1
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Selftest — publish, subscribe, decode, and check the values, in one process
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def selftest(args, frames):
+    import zenoh
+
+    decoders, source = load_decoders(args.dimos_lcm)
+    if decoders is None:
+        print("selftest cannot run: no LCM bindings. Arrival alone proves only the socket.")
+        return 1
+    print(f"decoding     with {source}")
+
+    port = args.selftest_port
+    sub_cfg = zenoh.Config()
+    sub_cfg.insert_json5("mode", '"peer"')
+    sub_cfg.insert_json5("listen/endpoints", json.dumps(["tcp/127.0.0.1:%d" % port]))
+    sub_cfg.insert_json5("scouting/multicast/enabled", "false")
+    sub_cfg.insert_json5("scouting/gossip/enabled", "false")
+    pub_cfg = zenoh.Config()
+    pub_cfg.insert_json5("mode", '"peer"')
+    pub_cfg.insert_json5("connect/endpoints", json.dumps(["tcp/127.0.0.1:%d" % port]))
+    pub_cfg.insert_json5("scouting/multicast/enabled", "false")
+    pub_cfg.insert_json5("scouting/gossip/enabled", "false")
+    print("transport    two peers over tcp/127.0.0.1:%d, scouting off" % port)
+
+    rows = frames.rows[: args.selftest_frames]
+    expect = collections.Counter(r["ch"] for r in rows)
+    got = []
+    done = threading.Event()
+
+    def on_sample(sample):
+        got.append((str(sample.key_expr), sample.payload.to_bytes()))
+        if len(got) >= len(rows):
+            done.set()
+
+    sub_session = zenoh.open(sub_cfg)
+    sub = sub_session.declare_subscriber(f"{args.prefix}/**", on_sample)
+    pub_session = zenoh.open(pub_cfg)
+    time.sleep(1.0)  # let the peers find each other before the first put
+    pub = Publisher(pub_session, args.prefix, sorted(expect))
+    for row in rows:
+        pub.put(row["ch"], row["raw"])
+    done.wait(timeout=15.0)
+    time.sleep(0.5)
+    pub.undeclare()
+    sub.undeclare()
+    pub_session.close()
+    sub_session.close()
+
+    failures = []
+    if len(got) != len(rows):
+        failures.append("%d frames sent, %d arrived" % (len(rows), len(got)))
+
+    by_channel = collections.Counter()
+    origin = frames.header.get("origin") or frames.header.get("datum") or {}
+    decoded = 0
+    reencoded = 0
+    stamps = []
+    poses, fixes = {}, {}
+    for key, data in got:
+        ch = Spy.channel_of(key)
+        if ch is None:
+            failures.append(f"arrived on a key with no known channel: {key}")
+            continue
+        if key != key_expr(args.prefix, ch):
+            failures.append(f"key {key} is not the catalogue's {key_expr(args.prefix, ch)}")
+        by_channel[ch] += 1
+        cls = decoders[CATALOGUE[ch][0]]
+        try:
+            msg = cls.lcm_decode(data)
+        except Exception as e:
+            failures.append(f"{ch} did not decode: {e!r}")
+            continue
+        decoded += 1
+        # A decode that drops a field re-encodes differently. Byte equality is the
+        # only cheap check that the decode was complete rather than merely plausible.
+        try:
+            if msg.lcm_encode() == data:
+                reencoded += 1
+            else:
+                failures.append(f"{ch} decoded but did not re-encode to the same bytes")
+        except Exception as e:
+            failures.append(f"{ch} would not re-encode: {e!r}")
+        st = stamp_of(msg)
+        if st is not None:
+            stamps.append(st)
+        # The frame names, off the decoded bytes. A rename that lands only in a docstring
+        # has not landed, and this is the tool that puts the old one on a live bus.
+        if ch in FRAME_EXPECTED and frame_of(msg) != FRAME_EXPECTED[ch]:
+            failures.append(
+                f"{ch} header.frame_id is {frame_of(msg)!r}, not {FRAME_EXPECTED[ch]!r}"
+            )
+        if ch == "odom":
+            if msg.child_frame_id != FRAME_BASE_LINK:
+                failures.append(
+                    f"odom child_frame_id is {msg.child_frame_id!r}, not {FRAME_BASE_LINK!r}"
+                )
+            p = msg.position
+            if not all(math.isfinite(v) for v in (p[0], p[1], p[2])):
+                failures.append(f"odom position is not finite: {tuple(p)!r}")
+            if math.hypot(p[0], p[1]) > 2000.0:
+                failures.append(
+                    f"odom is {math.hypot(p[0], p[1]):.0f} m from the origin, which is not this flight"
+                )
+        # There is no datum message to check the origin against, so check the arithmetic
+        # that replaced it: pose and gps_location are the same measurement, so subtracting
+        # them must give the header's origin back.
+        if ch == "pose":
+            xy = xy_of(msg)
+            if xy is None:
+                failures.append(
+                    f"a decoded pose has no position this tool can read ({type(msg).__name__})"
+                )
+            else:
+                poses[round(stamp_of(msg) or 0.0, 6)] = xy
+        if ch == "gps_location":
+            fixes[round(stamp_of(msg) or 0.0, 6)] = (msg.latitude, msg.longitude)
+
+    for ch, n in expect.items():
+        if by_channel.get(ch, 0) != n:
+            failures.append("%s: sent %d, received %d" % (ch, n, by_channel.get(ch, 0)))
+    if stamps and stamps != sorted(stamps):
+        failures.append("header stamps did not arrive in order")
+
+    recovered, residual = recover_origin(poses, fixes)
+    if origin and recovered:
+        de, dn = enu_metres(origin["lat"], origin["lon"], recovered[0], recovered[1])
+        if math.hypot(de, dn) > 0.01:
+            failures.append(
+                "the origin recovered by subtracting pose from gps_location is"
+                " {:.7f}, {:.7f} — {:.3f} m from the header's {:.7f}, {:.7f}".format(
+                    recovered[0], recovered[1], math.hypot(de, dn), origin["lat"], origin["lon"]
+                )
+            )
+        if residual > 0.01:
+            failures.append(
+                f"the recovered origin is not one constant: {residual:.4f} m of spread"
+                " across the paired samples"
+            )
+    elif origin and poses and fixes:
+        failures.append(
+            "no pose/gps_location pair shared a stamp, so the origin cannot be"
+            " recovered — which is the only way a consumer learns where 0,0,0 is"
+        )
+
+    print()
+    print("sent         %d frames on %d channels" % (len(rows), len(expect)))
+    print("received     %d" % len(got))
+    print("decoded      %d" % decoded)
+    print("re-encoded   %d byte-identical" % reencoded)
+    for ch in CATALOGUE:
+        if expect.get(ch):
+            print(
+                "  %-52s %5d -> %5d"
+                % (key_expr(args.prefix, ch), expect[ch], by_channel.get(ch, 0))
+            )
+    frames_checked = sum(1 for ch in FRAME_EXPECTED if expect.get(ch))
+    print(
+        "frames       %d channels checked against the tree: %s -> %s"
+        % (frames_checked, FRAME_WORLD, FRAME_BASE_LINK)
+    )
+    if recovered:
+        print(
+            "origin       %.7f, %.7f recovered from %d paired samples, spread %.1f um"
+            % (recovered[0], recovered[1], len(set(poses) & set(fixes)), residual * 1e6)
+        )
+    else:
+        print(
+            "origin       NOT RECOVERED — no window with both pose and gps_location on it,"
+            " so the check did not run"
+        )
+    print()
+    if failures:
+        print("selftest FAILED")
+        for f in failures[:30]:
+            print("  " + f)
+        if len(failures) > 30:
+            print("  ... and %d more" % (len(failures) - 30))
+        return 1
+    print("selftest ok: every frame arrived on its catalogue key, decoded with DiMOS's")
+    print("own message classes, re-encoded to the same bytes, carried the frames the")
+    print("contract names, and gave the origin back by subtraction.")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def print_keys(prefix):
+    print(f"Zenoh key expressions — docs/zenoh-topics.md, prefix {prefix}\n")
+    print("  %-52s %-24s %s" % ("key expression", "QoS", "replayable"))
+    for ch, (_typ, qos, in_frames) in CATALOGUE.items():
+        print(
+            "  %-52s %-24s %s"
+            % (
+                key_expr(prefix, ch),
+                qos or "default (reliable, drop)",
+                "yes" if in_frames else "no",
+            )
+        )
+    print()
+    print("`replayable` is whether zenohreplay encodes the channel from a")
+    print("mini4pro-flightlog-1 record. The four `no`s are limits of the derivation rather")
+    print("than of the recording: status/health/command_ack are recorded as `event` lines")
+    print("and not yet reconstructed, and the gimbal edge needs the COMMANDED angle, which")
+    print("no record carries because MsdkGimbalAim does not go through DjiCalls.")
+    print()
+    print("Frames, docs/mem2-converter.md 2 — checked off decoded bytes by --selftest:")
+    print(f"  odom, pose               header.frame_id  {FRAME_WORLD}")
+    print(f"  odom                     child_frame_id   {FRAME_BASE_LINK}")
+    print(f"  gps_location, imu, battery                {FRAME_BASE_LINK}")
+    print("  drone/camera, drone/camera_optical        the tf tree's leaves, not published")
+    print("                                            by anything here yet")
+    print()
+    print("There is no `datum` channel. A subscriber recovers where 0,0,0 is by")
+    print("subtracting pose from gps_location over samples carrying both, which is what")
+    print("--selftest does. docs/zenoh-frames-and-paths.md is the argument.")
+    print()
+    print("Two rows this table and docs/zenoh-topics.md disagree about, stated rather than")
+    print("silently reconciled: that doc retires `gimbal` in favour of a `tf` edge and adds")
+    print("`tf` and `video`. The Kotlin encoder still has `gimbal` and neither it nor")
+    print("zenohreplay produces `tf`, so this table follows the encoder. When the encoder")
+    print("moves, this moves with it.")
+    print()
+    print("QoS names are DiMOS's (protocol/pubsub/impl/zenohpubsub.py):")
+    print("  NEVER_DROP  reliable + block      LATEST_WINS  best_effort + drop")
+    print("  default     reliable + drop  (zenoh's own publisher defaults)")
+    print()
+    print("QoS is a publisher-side property; a subscriber cannot ask for it and cannot")
+    print("tell what it was. It is in the contract because the Android publisher must")
+    print("set the same values, not because anything downstream can check.")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("frames", nargs="*", help="a frames file from `zenohreplay --frames`")
+    ap.add_argument(
+        "--prefix", default=DEFAULT_PREFIX, help=f"key prefix (default {DEFAULT_PREFIX})"
+    )
+
+    g = ap.add_argument_group("where the bus is")
+    g.add_argument(
+        "--router",
+        default=DEFAULT_ROUTER,
+        help=f"router to dial, host[:port] (default {DEFAULT_ROUTER} — hyper1)",
+    )
+    g.add_argument(
+        "--connect",
+        action="append",
+        default=[],
+        help="dial this endpoint instead of the router; repeatable",
+    )
+    g.add_argument(
+        "--listen", action="append", default=[], help="also listen on this endpoint; repeatable"
+    )
+    g.add_argument(
+        "--local",
+        action="store_true",
+        help="dial nothing: a plain peer, for a laptop with nothing else running",
+    )
+    g.add_argument(
+        "--mode",
+        default="peer",
+        choices=["peer", "client", "router"],
+        help="zenoh session mode (default peer, matching DiMOS)",
+    )
+    g.add_argument(
+        "--no-scouting", action="store_true", help="disable multicast and gossip discovery"
+    )
+
+    g = ap.add_argument_group("timing")
+    g.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="timeline multiplier; 0 means as fast as possible (default 1)",
+    )
+    g.add_argument("--start", type=float, help="skip to this many seconds into the flight")
+    g.add_argument("--end", type=float, help="stop at this many seconds")
+    g.add_argument("--loop", action="store_true", help="replay for ever")
+    g.add_argument(
+        "--loop-gap", type=float, default=2.0, help="seconds of silence between passes (default 2)"
+    )
+    g.add_argument(
+        "--restamp",
+        action="store_true",
+        help="rewrite header stamps to live wall clock (re-encodes; off by default)",
+    )
+
+    g = ap.add_argument_group("modes")
+    g.add_argument("--spy", action="store_true", help="subscribe and decode instead of publishing")
+    g.add_argument(
+        "--echo",
+        action="append",
+        default=[],
+        metavar="CH",
+        help="in --spy, print every message on this channel; repeatable",
+    )
+    g.add_argument("--for-seconds", type=float, help="in --spy, stop after this long")
+    g.add_argument(
+        "--selftest", action="store_true", help="publish, subscribe and decode in one process"
+    )
+    g.add_argument(
+        "--selftest-frames",
+        type=int,
+        default=800,
+        help="how many frames the selftest sends (default 800)",
+    )
+    g.add_argument("--selftest-port", type=int, default=7887)
+    g.add_argument("--keys", action="store_true", help="print the key expressions and exit")
+
+    g = ap.add_argument_group("noise")
+    g.add_argument(
+        "--status-every", type=float, default=5.0, help="seconds between progress lines (default 5)"
+    )
+    g.add_argument("--quiet", action="store_true", help="no progress lines")
+    g.add_argument(
+        "--dimos-lcm",
+        default="~/coding/dimos-lcm",
+        help="dimos-lcm checkout, for decoding without DiMOS installed",
+    )
+    g.add_argument(
+        "--no-reexec",
+        action="store_true",
+        help="fail rather than re-exec under an interpreter that has zenoh",
+    )
+    args = ap.parse_args()
+
+    for ch in args.echo:
+        if ch not in CATALOGUE:
+            ap.error("--echo {}: not a channel. Try one of: {}".format(ch, ", ".join(CATALOGUE)))
+
+    if args.keys:
+        return print_keys(args.prefix)
+
+    ensure_zenoh(reexec=not args.no_reexec)
+
+    paths = []
+    for p in args.frames:
+        matched = sorted(glob.glob(p))
+        paths.extend(matched if matched else [p])
+
+    if args.spy:
+        if paths:
+            ap.error("--spy takes no frames file; it listens for one being published")
+        session = open_session(args, "spy session", listening=True)
+        print()
+        try:
+            return spy(args, session)
+        finally:
+            session.close()
+
+    if len(paths) != 1:
+        ap.error("give exactly one flight record or frames file, or --spy")
+    frames = read_frames(as_frames_path(paths[0]), args.start, args.end)
+
+    if args.selftest:
+        describe_frames(frames, args)
+        return selftest(args, frames)
+
+    describe_frames(frames, args)
+    session = open_session(args, "publish session", listening=False)
+    print()
+    try:
+        return publish(args, frames, session)
+    finally:
+        session.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

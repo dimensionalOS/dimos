@@ -1,6 +1,9 @@
 default_stages: [pre-commit]
 default_install_hook_types: [pre-commit, commit-msg]
-exclude: (dimos/models/.*)|(deprecated)
+# TEMPORARY (2026-08-12): the mini4pro Android/Kotlin tree was vendored in wholesale.
+# Its tools/ scripts are Python-by-shebang and are not ruff-formatted, and it carries
+# sources over the 75KB largefiles limit. Drop this exclusion once both are addressed.
+exclude: (dimos/models/.*)|(deprecated)|(dimos/robot/drone/mini4pro/.*)
 repos:
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks

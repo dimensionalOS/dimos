@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Join a detection run to the flight's own altitude, and say where detection stops working.
+
+    tools/tagrate detect-full.csv datasets/2026-07-27-apriltag-nadir-land/*.001.jsonl
+
+**Why this exists.** `TagProfileTest.detect` writes one line per decoded frame — the frame's `n`,
+its `t` on the recorder's monotonic clock, the ids found, and the longest edge in pixels. That is
+deliberately all it writes: the phone has no business deciding what counts as an altitude band,
+and the flight record already holds the altitude on the *same clock*, so the join is exact and
+belongs here rather than in a test.
+
+**The question this answers** is not "does the detector work" but "above what height must a
+tag-guided descent refuse to arm". Those are different questions, and only the second one is
+safety-relevant. A rate of 60 % is a working detector and an unflyable controller.
+
+## What the numbers are and are not
+
+`relalt` is DJI's height above the takeoff point, delta-encoded in the record (a `dji_state` line
+carries a field only when it changed), so it is carried forward here exactly as `replay/` does it.
+It is **not** height above the tag: the tag in the reference flight sits on a table, so every
+altitude in these tables is larger than the camera-to-tag range by the table's height, which
+nobody measured.
+
+The pose range is **derived, not measured**. See [focal_px].
+"""
+
+import argparse
+import bisect
+from collections import defaultdict
+import json
+import math
+import sys
+
+# The tag's black square, metres. AprilTag and OpenCV both take the outer edge of the black
+# border as the marker length, which is the convention `markerLength` means everywhere.
+TAG_M = 0.075
+
+# **Fitted from two flights, and the whole pose rests on it.**
+#
+# **This was 1280.0 until 2026-07-28 and that number was 12 % low.** It came from DJI's published
+# figures — a 24 mm format equivalent implying 1280 px, and an 82.1 deg diagonal implying 1265.6 —
+# which agreed with each other to 1.1 % and were both wrong for this stream, because the spec
+# describes the full sensor and the video is a crop of it. Two derivations agreeing is not
+# evidence when they share an assumption.
+#
+# What replaced it is a measurement: `docs/measurements/2026-07-27-tag-detection-rate.md` §3 fitted
+# the focal length against recorded altitude on two independent flights and got 1465.9 px and
+# 1448.3 px at 1920 wide, agreeing to 1.2 % — while the same fits' intercepts disagreed entirely,
+# which is what says the fit separated a camera property from a scene one.
+#
+# Every range this tool printed before that date was 12 % short. Distortion is separately measured
+# and is nil (`docs/measurements/2026-07-28-camera-intrinsics-prior.md`), but the principal point
+# is still unmeasured, so `TagSighting.Sighting.metric` stays false and ranges here stay marked.
+#
+# Kept in step with `vision/CameraCalibration.ASSUMED.fxAt1920` (formerly
+# `TagWorld.FOCAL_PX_AT_1920`) and `tools/memexport`'s FOCAL_OVER_WIDTH.
+FOCAL_PX = 1457.0
+
+
+# The flight's own apex, used to split the climb from the descent. Read from the data rather than
+# hard-coded, but a flight with two apexes would need a real segmenter and this would be wrong.
+def split_at_apex(series):
+    return max(series, key=lambda s: s[1])[0]
+
+
+def read_altitudes(path):
+    """`(t, relalt)` in time order, with the record's delta encoding undone."""
+    series, current = [], None
+    with open(path) as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a torn last line is expected; the recorder is append-only
+            if rec.get("k") != "dji_state":
+                continue
+            if "relalt" in rec:
+                current = rec["relalt"]
+            if current is not None:
+                series.append((rec["t"], current))
+    return series
+
+
+def read_detections(path):
+    """`(n, t, ids, longest_px)` from the on-phone run."""
+    out = []
+    with open(path) as f:
+        header = f.readline()
+        if not header.startswith("n,t,ids"):
+            sys.exit(f"{path}: not a detection csv")
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            if len(parts) < 4:
+                continue
+            ids = [int(x) for x in parts[2].split() if x.strip()]
+            out.append((int(parts[0]), float(parts[1]), ids, float(parts[3])))
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("csv")
+    ap.add_argument("jsonl")
+    ap.add_argument("--bin", type=float, default=0.5, help="altitude bin, metres")
+    ap.add_argument(
+        "--min-frames",
+        type=int,
+        default=20,
+        help="below this a bin reports 'insufficient data' rather than a rate",
+    )
+    ap.add_argument(
+        "--from",
+        dest="t_from",
+        type=float,
+        default=None,
+        help="ignore frames before this flight time",
+    )
+    ap.add_argument(
+        "--to", dest="t_to", type=float, default=None, help="ignore frames after this flight time"
+    )
+    args = ap.parse_args()
+
+    alts = read_altitudes(args.jsonl)
+    if not alts:
+        sys.exit("no dji_state altitude in the record")
+    ts = [t for t, _ in alts]
+    apex_t = split_at_apex(alts)
+
+    def alt_at(t):
+        i = bisect.bisect_right(ts, t) - 1
+        return alts[i][1] if i >= 0 else None
+
+    dets = read_detections(args.csv)
+    # A window, because a recording is not all measurement. This flight sat on the ground with the
+    # camera running for 22 s before takeoff; those frames are real detections of a stationary tag
+    # at zero altitude and they would swamp the lowest bin with data that answers no question
+    # about descent. Excluding them is a stated choice, not a filter applied quietly.
+    if args.t_from is not None:
+        dets = [d for d in dets if d[1] >= args.t_from]
+    if args.t_to is not None:
+        dets = [d for d in dets if d[1] <= args.t_to]
+    if not dets:
+        sys.exit("no detections file rows in the requested window")
+
+    # Every distinct id ever seen. One tag was in frame; anything else is a false positive, and a
+    # false positive on a landing controller is worse than a miss because a miss is visible.
+    id_counts = defaultdict(int)
+    for _, _, ids, _ in dets:
+        for i in ids:
+            id_counts[i] += 1
+
+    print(f"frames in detection run : {len(dets)}")
+    print(f"flight time covered     : {dets[0][1]:.2f} .. {dets[-1][1]:.2f} s")
+    print(f"apex of the flight      : t={apex_t:.2f} s, {alt_at(apex_t)} m")
+    print(f"ids ever reported       : {dict(sorted(id_counts.items()))}")
+    print()
+
+    # Separate the two ways a derived range can be wrong, because they have different causes and
+    # different fixes and they are constantly confused.
+    #
+    #   range = (relalt - board_height) / scale
+    #
+    # A least-squares fit of relalt against the derived range over every detected frame gives both
+    # at once. SLOPE is the scale error: it is 1.0 if the assumed focal length is right, and it is
+    # wrong by exactly the ratio the focal length is wrong by. INTERCEPT is the board height --
+    # the tag sits on a raised board and relalt is measured from the takeoff point, so a constant
+    # offset is expected and is NOT evidence of anything being broken.
+    #
+    # Reporting only a mean error would blend the two and could show a small number while both
+    # were large and cancelling in the middle of the range.
+    pairs = []
+    for _, t, ids, px in dets:
+        if not ids or px <= 0:
+            continue
+        a = alt_at(t)
+        if a is None:
+            continue
+        pairs.append((FOCAL_PX * TAG_M / px, a))
+    if len(pairs) >= 2:
+        n = len(pairs)
+        sx = sum(r for r, _ in pairs)
+        sy = sum(a for _, a in pairs)
+        sxx = sum(r * r for r, _ in pairs)
+        sxy = sum(r * a for r, a in pairs)
+        denom = n * sxx - sx * sx
+        if abs(denom) > 1e-12:
+            slope = (n * sxy - sx * sy) / denom
+            intercept = (sy - slope * sx) / n
+            resid = [a - (slope * r + intercept) for r, a in pairs]
+            worst = max(abs(e) for e in resid)
+            rms = math.sqrt(sum(e * e for e in resid) / n)
+            print("## POSE CROSS-CHECK  relalt = slope * derived_range + intercept")
+            print(f"  detected frames used : {n}")
+            print(f"  slope                : {slope:.4f}   (1.0 = assumed focal length is right)")
+            print(f"  intercept            : {intercept:+.3f} m   (the board height, expected > 0)")
+            print(f"  residual             : rms {rms:.3f} m, worst {worst:.3f} m")
+            print(f"  focal length implied : {FOCAL_PX * slope:.1f} px  (assumed {FOCAL_PX:.1f})")
+            print()
+
+    for phase, keep in (("CLIMB", lambda t: t <= apex_t), ("DESCENT", lambda t: t > apex_t)):
+        bins = defaultdict(lambda: {"n": 0, "hit": 0, "px": []})
+        for _, t, ids, px in dets:
+            if not keep(t):
+                continue
+            a = alt_at(t)
+            if a is None:
+                continue
+            b = math.floor(a / args.bin) * args.bin
+            slot = bins[b]
+            slot["n"] += 1
+            if ids:
+                slot["hit"] += 1
+                slot["px"].append(px)
+
+        print(f"## {phase}")
+        print(
+            f"{'alt band (m)':>14} {'frames':>7} {'detected':>9} {'rate':>7} "
+            f"{'median px':>10} {'range (m, assumed)':>20}"
+        )
+        for b in sorted(bins):
+            s = bins[b]
+            band = f"{b:.1f}-{b + args.bin:.1f}"
+            if s["n"] < args.min_frames:
+                print(
+                    f"{band:>14} {s['n']:>7} {s['hit']:>9} {'  —':>7} "
+                    f"{'—':>10} {'insufficient data':>20}"
+                )
+                continue
+            rate = s["hit"] / s["n"]
+            if s["px"]:
+                med = sorted(s["px"])[len(s["px"]) // 2]
+                rng = FOCAL_PX * TAG_M / med
+                print(
+                    f"{band:>14} {s['n']:>7} {s['hit']:>9} {rate:>6.1%} {med:>10.1f} {rng:>20.2f}"
+                )
+            else:
+                print(f"{band:>14} {s['n']:>7} {s['hit']:>9} {rate:>6.1%} {'—':>10} {'—':>20}")
+        print()
+
+
+if __name__ == "__main__":
+    main()

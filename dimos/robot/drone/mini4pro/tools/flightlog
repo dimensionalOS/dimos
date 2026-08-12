@@ -1,0 +1,2478 @@
+#!/usr/bin/env python3
+"""Read a mini4pro on-phone flight log, and diagnose why the aircraft moved wrong.
+
+Reads the `mini4pro-flightlog-1` JSONL the phone writes and answers two questions. **What
+happened** — `--summary`, the default: duration, entry counts, dropped entries *and when*, the
+mode timeline, virtual-stick engagement, events. **Why did it move the wrong way** —
+`--diagnose-axis`: a time-aligned table of commanded axis, value and control mode against the
+resulting NED velocity, attitude and altitude rate, then a conclusion in plain words naming
+which of the eight cases the evidence supports, or a statement that the data is insufficient
+and what is missing.
+
+    tools/flightlog session.001.jsonl                       # summary
+    tools/flightlog 20260801-*.jsonl                        # all parts of a session
+    tools/flightlog session.001.jsonl --diagnose-axis       # auto-pick the window
+    tools/flightlog s.jsonl --diagnose-axis --around 83.4 --window 3
+    tools/flightlog s.jsonl --diagnose-axis --from 80 --to 90
+    tools/flightlog s.jsonl --cross-check flight.tlog       # against QGC's own record
+    tools/flightlog --list-cases                            # the eight cases
+    tools/flightlog --selftest                              # planted faults, all caught
+
+Exits non-zero if a diagnosis is inconclusive (so it can gate a test session) and if any
+self-test profile is missed.
+
+Full rationale — the record's format, how to read each mode's output, and the self-test's
+seventeen planted faults: `docs/flight-recording.md`.
+"""
+
+import argparse
+import bisect
+import glob
+import itertools
+import json
+import math
+import os
+import re
+import sys
+import tempfile
+
+FORMAT = "mini4pro-flightlog-1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The eight cases. Their wording is the brief's; their `evidence` is what in the
+# log distinguishes each one, and if a case has no evidence source the log cannot
+# separate it and says so rather than guessing.
+# ─────────────────────────────────────────────────────────────────────────────
+CASES = {
+    1: (
+        "gcs-command",
+        "The GCS sent a different command than the operator believes",
+        "mav_in entries (decoded fields + raw hex), cross-checked against QGC's own .tlog",
+    ),
+    2: (
+        "mav-misread",
+        "We misread the inbound MAVLink — wrong axis, wrong frame, or wrong sign",
+        "mav_in decoded fields vs the stick_cmd.sp our controller derived from them",
+    ),
+    3: (
+        "controller-setpoint",
+        "Our guided controller computed the wrong setpoint",
+        "stick_cmd.sp vs the intent implied by the mav_in it cites in stick_cmd.src",
+    ),
+    4: (
+        "axis-mapping",
+        "We mapped the setpoint onto the wrong virtual-stick axis, or with the wrong sign",
+        "stick_cmd.sp vs stick_cmd.dji, axis by axis, under the declared mapping",
+    ),
+    5: (
+        "control-mode",
+        "The virtual-stick control mode was wrong, so a number meant something else",
+        "stick_cmd.modes, recorded on every command rather than at configuration time",
+    ),
+    6: (
+        "rc-override",
+        "The human's RC sticks were fighting us",
+        "rc_stick entries — raw [-660,660] positions of all four axes",
+    ),
+    7: (
+        "aircraft-override",
+        "The aircraft refused or overrode us — obstacle braking, geofence takeback, mode change",
+        "vs_state (engagement, authority, DJI's changeReason), the *Limit dji_fields, "
+        "the obstacle-avoidance dji_fields, and flightMode changes",
+    ),
+    8: (
+        "dji-frame",
+        "DJI's frame convention differs from what we assumed",
+        "elimination: everything above clean, yet the achieved axis is not the commanded one",
+    ),
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The mapping this tool checks against. It is an **assumption**, not a
+# measurement: DJI documents that `roll` moves the aircraft left/right and `pitch`
+# forward/backward, and that all-zero attitude means level and heading north
+# (djidoc: FlightControllerKey, IVirtualStickManager), but the sign conventions of
+# the virtual-stick axes on this airframe are unverified — see
+# docs/measurements/2026-07-25-ground-probe.md, "still unverified", items 1 and 2.
+#
+# So the tool prints the assumption alongside every diagnosis. A deviation from it
+# is reported as "case 4 (our mapping) or case 8 (DJI's convention)" and the
+# distinction is made by whether our own numbers are self-consistent.
+# ─────────────────────────────────────────────────────────────────────────────
+DECLARED_MAPPING = [
+    ("sp.ve  (east, +m/s)", "dji.roll     (+ = right)", "GROUND coordinate system"),
+    ("sp.vn  (north, +m/s)", "dji.pitch    (+ = forward)", "GROUND coordinate system"),
+    ("sp.vd  (down, +m/s)", "dji.throttle (+ = up)", "sign inverted: MAVLink down vs DJI up"),
+    (
+        "sp.yawrate (+cw deg/s)",
+        "dji.yaw      (+ = clockwise)",
+        "djidoc: IVirtualStickManager getLeftStick",
+    ),
+]
+
+# Axis of dji_* that each setpoint axis should drive, and whether the sign flips.
+AXIS_MAP = {"ve": ("roll", +1), "vn": ("pitch", +1), "vd": ("throttle", -1)}
+
+# Thresholds. Each is a judgement about what counts as "a command" or "a movement";
+# override on the command line so a marginal case can be re-read at another setting.
+DEFAULTS = {
+    "cmd_min": 0.30,  # m/s — below this a setpoint axis is not commanding anything
+    "resp_min": 0.30,  # m/s — below this the aircraft is not moving on that axis
+    "rc_min": 0.05,  # normalised — a stick this far off centre is pilot input
+    "axis_ratio": 2.0,  # one axis must exceed the others by this to be "dominant"
+    "window": 3.0,  # s — default width of --around
+    "join": 0.25,  # s — how far a joined sample may be from the command
+}
+
+PASS, FAIL, WARN, INFO = "ok", "FAIL", "warn", "info"
+
+
+# ─────────────────────────────── input ───────────────────────────────
+
+
+def _coerce(v):
+    """Non-finite floats are written as strings — see the Json object in Kotlin."""
+    if v == "NaN":
+        return float("nan")
+    if v == "Infinity":
+        return float("inf")
+    if v == "-Infinity":
+        return float("-inf")
+    return v
+
+
+def _walk(obj):
+    if isinstance(obj, dict):
+        return {k: _walk(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_walk(v) for v in obj]
+    return _coerce(obj)
+
+
+class Session:
+    """One recording session, possibly spread over several rotated parts."""
+
+    def __init__(self):
+        self.header = None
+        self.headers = []
+        self.entries = []  # every entry, ordered by t, header lines excluded
+        self.parts = []
+        self.bad_lines = 0
+
+    def of_kind(self, kind):
+        return [e for e in self.entries if e.get("k") == kind]
+
+    @property
+    def duration(self):
+        return self.entries[-1]["t"] - self.entries[0]["t"] if self.entries else 0.0
+
+    def abs_to_t(self, mono_ns):
+        """Absolute monotonic nanoseconds -> session-relative seconds."""
+        origin = self.header.get("started_mono_ns", 0)
+        return (mono_ns - origin) / 1e9
+
+
+def read_session(paths):
+    s = Session()
+    for path in paths:
+        with open(path) as f:
+            for _lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _walk(json.loads(line))
+                except json.JSONDecodeError:
+                    # A torn last line is expected: the recorder is append-only and
+                    # a power loss can cut mid-line. One bad line at the end of a
+                    # part is normal; anywhere else it is a finding.
+                    s.bad_lines += 1
+                    continue
+                if rec.get("k") == "header":
+                    s.headers.append(rec)
+                    if s.header is None:
+                        s.header = rec
+                    s.parts.append(os.path.basename(path))
+                    continue
+                s.entries.append(rec)
+    if s.header is None:
+        raise SystemExit(f"{', '.join(paths)}: no {FORMAT} header line found — not a flight log?")
+    if s.header.get("format") != FORMAT:
+        raise SystemExit(f"{s.parts[0]}: format is {s.header.get('format')!r}, expected {FORMAT!r}")
+    s.entries.sort(key=lambda e: e.get("t", 0.0))
+    return s
+
+
+def expand(patterns):
+    """Expands globs and, given one part of a session, picks up its siblings."""
+    out = []
+    for p in patterns:
+        hits = sorted(glob.glob(p)) or [p]
+        for h in hits:
+            base = os.path.basename(h)
+            if base.count(".") >= 2 and base.endswith(".jsonl"):
+                session = base.split(".")[0]
+                sibs = sorted(
+                    glob.glob(os.path.join(os.path.dirname(h) or ".", session + ".*.jsonl"))
+                )
+                out.extend(sibs or [h])
+            else:
+                out.append(h)
+    seen, uniq = set(), []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+# ─────────────────────────────── helpers ───────────────────────────────
+
+
+def nearest(entries, t, window):
+    """Nearest entry in time to t, or None if none is within `window` seconds."""
+    if not entries:
+        return None
+    ts = [e["t"] for e in entries]
+    i = bisect.bisect_left(ts, t)
+    best, bestd = None, None
+    for j in (i - 1, i, i + 1):
+        if 0 <= j < len(ts):
+            d = abs(ts[j] - t)
+            if bestd is None or d < bestd:
+                best, bestd = entries[j], d
+    return best if bestd is not None and bestd <= window else None
+
+
+def latest_before(entries, t):
+    out = None
+    for e in entries:
+        if e["t"] <= t:
+            out = e
+        else:
+            break
+    return out
+
+
+def dominant(values, floor, ratio):
+    """(name, value) of the one axis that clearly dominates, or (None, 0)."""
+    pairs = [(k, v) for k, v in values.items() if v is not None and not math.isnan(v)]
+    if not pairs:
+        return None, 0.0
+    pairs.sort(key=lambda kv: abs(kv[1]), reverse=True)
+    top = pairs[0]
+    if abs(top[1]) < floor:
+        return None, 0.0
+    rest = max((abs(v) for _, v in pairs[1:]), default=0.0)
+    if rest > 0 and abs(top[1]) < rest * ratio:
+        return None, top[1]
+    return top[0], top[1]
+
+
+def direction(axis, value):
+    """A word an operator would use, so a conclusion reads like a sentence."""
+    if axis is None:
+        return "nothing"
+    words = {
+        "vn": ("north", "south"),
+        "pitch_ax": ("forward", "backward"),
+        "ve": ("east", "west"),
+        "roll_ax": ("right", "left"),
+        "vd": ("down", "up"),
+        "throttle_ax": ("up", "down"),
+        "yawrate": ("clockwise", "anticlockwise"),
+    }
+    pos, neg = words.get(axis, (f"+{axis}", f"-{axis}"))
+    return pos if value >= 0 else neg
+
+
+def num(v, fmt="%7.2f"):
+    if v is None:
+        return "      -"
+    if isinstance(v, float) and math.isnan(v):
+        return "    NaN"
+    return fmt % v
+
+
+def get(d, *path, default=None):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return default
+        d = d[k]
+    return d if d is not None else default
+
+
+# ─────────────────────────────── summary ───────────────────────────────
+
+
+def summarise(s, out, args):
+    h = s.header
+    out.write(f"session  {h.get('session')}   parts {len(s.headers)} ({', '.join(s.parts)})\n")
+    started = h.get("started_unix_ms", 0) / 1000.0
+    out.write(
+        "started  %s UTC (unix %.3f)   duration %.1f s   entries %d\n"
+        % (_utc(started), started, s.duration, len(s.entries))
+    )
+    out.write(
+        "clock    {}, t = seconds since started_mono_ns = {}\n".format(
+            get(h, "clock", "mono", default="?"), h.get("started_mono_ns")
+        )
+    )
+    meta = h.get("meta", {})
+    app, dev = meta.get("app", {}), meta.get("device", {})
+    out.write(
+        "app      {} {}   device {} {} / Android {}\n".format(
+            app.get("package", "?"),
+            app.get("version_name", "?"),
+            dev.get("manufacturer", "?"),
+            dev.get("model", "?"),
+            dev.get("android_release", "?"),
+        )
+    )
+    rec = meta.get("recorder", {})
+    out.write(
+        "recorder state_hz={}  mirror={}@{}Hz{}\n".format(
+            rec.get("state_hz"),
+            rec.get("mirror_enabled"),
+            rec.get("mirror_hz"),
+            " (only while engaged)" if rec.get("mirror_only_when_engaged") else "",
+        )
+    )
+    if meta.get("note"):
+        out.write(f"note     {meta['note']}\n")
+
+    # ── entry counts ──
+    kinds = {}
+    for e in s.entries:
+        kinds[e.get("k", "?")] = kinds.get(e.get("k", "?"), 0) + 1
+    out.write(f"\nentries by kind (rate over {s.duration:.1f} s):\n")
+    for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
+        out.write("  %-12s %7d   %6.2f/s\n" % (k, n, n / s.duration if s.duration else 0))
+
+    # ── the honesty section ──
+    out.write("\nrecorder health:\n")
+    drops = s.of_kind("drop")
+    stats = s.of_kind("stats")
+    if not drops:
+        out.write("  no dropped entries\n")
+    else:
+        total = drops[-1].get("total", 0)
+        out.write("  %d entries LOST in %d burst(s):\n" % (total, len(drops)))
+        for d in drops:
+            a, b = s.abs_to_t(d.get("from", 0)), s.abs_to_t(d.get("to", 0))
+            out.write(
+                "    %6d entries lost between t=%.3f and t=%.3f  %s\n"
+                % (d.get("n", 0), a, b, d.get("kinds", {}))
+            )
+        out.write(
+            "  a diagnosis whose window overlaps one of those spans is reading an "
+            "incomplete record.\n"
+        )
+    if stats:
+        last = stats[-1]
+        out.write(
+            "  written %d, bytes %d, peak queue %d/%s, flushes %d, fsyncs %d, parts %d\n"
+            % (
+                last.get("written", 0),
+                last.get("bytes", 0),
+                last.get("peak_queued", 0),
+                get(h, "config", "queue_capacity", default="?"),
+                last.get("flushes", 0),
+                last.get("syncs", 0),
+                last.get("part", 1),
+            )
+        )
+    if s.bad_lines:
+        out.write(
+            "  %d unparseable line(s). One at the very end of the last part is a "
+            "power-loss truncation and expected; elsewhere it is corruption.\n" % s.bad_lines
+        )
+    stopped = [e for e in s.of_kind("event") if e.get("code") == "recorder_stop"]
+    if not stopped:
+        out.write(
+            "  NO recorder_stop entry — the app did not shut the recorder down "
+            "cleanly (crash, kill, or power loss).\n"
+        )
+
+    # ── identity as the aircraft reported it ──
+    ident = {}
+    for e in s.of_kind("dji_field"):
+        if e.get("f") in (
+            "productType",
+            "rcType",
+            "firmwareVersion",
+            "djiFlightRecordPath",
+            "djiFlyClogPath",
+        ):
+            ident[e["f"]] = e.get("v")
+    if ident:
+        out.write("\naircraft as reported:\n")
+        for k in ("productType", "rcType", "firmwareVersion"):
+            if k in ident:
+                out.write("  %-14s %s\n" % (k, ident[k]))
+        for k in ("djiFlightRecordPath", "djiFlyClogPath"):
+            if k in ident:
+                out.write("  %-14s %s\n" % (k, ident[k]))
+        if "djiFlightRecordPath" in ident:
+            out.write("  DJI's own records are the independent third source. Pull them with:\n")
+            out.write("    adb pull '{}'\n".format(ident["djiFlightRecordPath"]))
+
+    # ── timelines ──
+    _timeline(s, out, "flight mode", "flightMode")
+    _timeline(s, out, "in flight", "isFlying")
+    _timeline(s, out, "motors", "motorsOn")
+
+    _freshness(s, out)
+
+    vs = s.of_kind("vs_state")
+    if vs:
+        out.write("\nvirtual stick:\n")
+        prev = None
+        for e in vs:
+            key = (e.get("on"), e.get("adv"), e.get("auth"), e.get("reason"))
+            if key == prev:
+                continue
+            prev = key
+            reason = f"  reason={e['reason']}" if e.get("reason") else ""
+            out.write(
+                "  t={:9.3f}  on={} advanced={} authority={}{}\n".format(
+                    e["t"], e.get("on"), e.get("adv"), e.get("auth"), reason
+                )
+            )
+    else:
+        out.write(
+            "\nvirtual stick: no vs_state entries — never engaged, or the listener "
+            "did not attach (look for an sdk_error event).\n"
+        )
+
+    cmds = s.of_kind("stick_cmd")
+    if cmds:
+        out.write(
+            "stick commands: %d between t=%.3f and t=%.3f\n"
+            % (len(cmds), cmds[0]["t"], cmds[-1]["t"])
+        )
+    else:
+        out.write(
+            "stick commands: none. M3 (guided control) either did not run or is not "
+            "wired to the recorder — see docs/flight-recording.md.\n"
+        )
+
+    # ── events, and the fields that mean something went wrong ──
+    events = s.of_kind("event")
+    if events:
+        out.write("\nevents:\n")
+        for e in events:
+            sev = e.get("sev", "info")
+            mark = {"error": "!!", "warn": " !"}.get(sev, "  ")
+            out.write(
+                "  %s t=%9.3f %-22s %s\n" % (mark, e["t"], e.get("code", "?"), e.get("msg") or "")
+            )
+
+    flags = _notable_fields(s)
+    if flags:
+        out.write("\nfields worth reading (refusals, limits, obstacles):\n")
+        for e in flags:
+            out.write(
+                "  t=%9.3f %-28s %s  (was %s)\n" % (e["t"], e.get("f"), e.get("v"), e.get("prev"))
+            )
+
+
+# `dji_state.age.*` → the Signal it describes and that Signal's own limit.
+# Mirrors `Signal.staleAfterMs` in the Kotlin (telemetry/SampleAges.kt); nothing
+# links the two automatically, same as the field names themselves. A session's own
+# `signal_stale` events carry `d.limit_ms`, and those win when present.
+AGE_KEYS = [
+    ("pos", "POSITION", 1000, "lat/lon"),
+    ("relalt", "ALTITUDE", 1000, "relalt"),
+    ("att", "ATTITUDE", 2000, "roll/pitch/yaw"),
+    ("vel", "VELOCITY", 2000, "vn/ve/vd"),
+]
+
+
+def _freshness(s, out):
+    """How old the values in `dji_state` actually were when they were recorded.
+
+    This is the answer to "was that value real?". DJI updates each key on its own
+    schedule and `KeyAircraftVelocity` is change-only on this airframe — it fired
+    **once in 35 s** on the ground probe — so a flat trace may mean "not moving" or
+    "not updating", and only the age separates them.
+    """
+    states = s.of_kind("dji_state")
+    if not states:
+        return
+    # A session's own events are authoritative about the limits in force.
+    limits = {}
+    for e in s.of_kind("event"):
+        if e.get("code") in ("signal_stale", "signal_fresh"):
+            d = e.get("d") or {}
+            if d.get("sig") and d.get("limit_ms") is not None:
+                limits[d["sig"]] = d["limit_ms"]
+
+    rows = []
+    for key, sig, default_limit, reading in AGE_KEYS:
+        ages = [get(e, "age", key) for e in states]
+        ages = [a for a in ages if a is not None]
+        if not ages:
+            continue
+        limit = limits.get(sig, default_limit)
+        stale = sum(1 for a in ages if a > limit)
+        rows.append((sig, reading, len(ages), max(ages), 100.0 * stale / len(ages), limit))
+    if not rows:
+        out.write(
+            "\nsignal freshness: no `age` in dji_state — this log predates per-field "
+            "staleness, so a flat trace cannot be told from a dead feed.\n"
+        )
+        return
+
+    out.write(
+        "\nsignal freshness (age = ms since DJI last *delivered* the key, not since it changed):\n"
+    )
+    out.write("  signal            reading          samples   max age    % past limit  limit\n")
+    for sig, reading, n, worst, pct, limit in rows:
+        mark = " !" if pct > 0 else "  "
+        out.write(
+            "%s%-16s  %-15s  %7d  %7d ms  %11.1f%%  %5d ms\n"
+            % (mark, sig, reading, n, worst, pct, limit)
+        )
+    if any(r[4] > 0 for r in rows):
+        out.write(
+            "  a reading past its limit is cached, not measured — do not read a flat "
+            'trace there as "stationary".\n'
+        )
+
+
+def _utc(unix_s):
+    import datetime
+
+    if not unix_s:
+        return "?"
+    return datetime.datetime.fromtimestamp(unix_s, datetime.timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+
+def _timeline(s, out, label, field):
+    changes = [e for e in s.of_kind("dji_field") if e.get("f") == field]
+    if not changes:
+        out.write(f"\n{label}: no {field} entries\n")
+        return
+    out.write(f"\n{label} timeline:\n")
+    for i, e in enumerate(changes):
+        end = changes[i + 1]["t"] if i + 1 < len(changes) else s.entries[-1]["t"]
+        out.write("  t={:9.3f} .. {:9.3f}  {}\n".format(e["t"], end, e.get("v")))
+
+
+# Fields whose value is only interesting when it is not the boring one. These are
+# the log's answer to "did the aircraft refuse, or was something in the way".
+NOTABLE = {
+    "isNearHeightLimit": "true",
+    "isNearDistanceLimit": "true",
+    "outOfDistanceLimit": "true",
+    "isInLimitHeightArea": "true",
+    "isActivelyAvoidingObstacle": "true",
+    "isAscentLimitedByObstacle": "true",
+    "isNearObstacle": "true",
+    "oaWorkingForward": "true",
+    "oaWorkingBackward": "true",
+    "oaWorkingLeft": "true",
+    "oaWorkingRight": "true",
+    "oaWorkingUp": "true",
+    "oaWorkingDown": "true",
+    "inFailsafe": "true",
+    "notAllowMotorStart": "true",
+    "imuWarmingUp": "true",
+    "fcConnected": "false",
+}
+ALWAYS_NOTABLE = {
+    "motorStopReason",
+    "motorStartFailureError",
+    "takeoffFailureError",
+    "goHomeState",
+    "windWarning",
+}
+
+
+def _notable_fields(s, t0=None, t1=None):
+    out = []
+    for e in s.of_kind("dji_field"):
+        if t0 is not None and not (t0 <= e["t"] <= t1):
+            continue
+        f, v = e.get("f"), e.get("v")
+        if f in ALWAYS_NOTABLE and v not in (None, "NONE", "IDLE", "UNKNOWN", "NO_WARNING"):
+            out.append(e)
+        elif f in NOTABLE and v == NOTABLE[f]:
+            out.append(e)
+    return out
+
+
+# ─────────────────────────── diagnose-axis ───────────────────────────
+
+
+def pick_window(s, args, th):
+    """Chooses the window to diagnose: explicit, around a time, or auto-detected."""
+    if args.from_t is not None or args.to_t is not None:
+        t0 = args.from_t if args.from_t is not None else s.entries[0]["t"]
+        t1 = args.to_t if args.to_t is not None else s.entries[-1]["t"]
+        return t0, t1, "explicit --from/--to"
+    if args.around is not None:
+        w = args.window / 2.0
+        return args.around - w, args.around + w, f"--around {args.around:.3f} ± {w:.2f} s"
+
+    # Auto: the longest run of commands whose horizontal setpoint is non-trivial.
+    cmds = s.of_kind("stick_cmd")
+    runs, cur = [], None
+    for c in cmds:
+        sp = c.get("sp", {})
+        mag = max(abs(get(sp, "vn", default=0.0) or 0.0), abs(get(sp, "ve", default=0.0) or 0.0))
+        if mag >= th["cmd_min"]:
+            cur = cur or [c["t"], c["t"]]
+            cur[1] = c["t"]
+        elif cur:
+            runs.append(cur)
+            cur = None
+    if cur:
+        runs.append(cur)
+    if runs:
+        best = max(runs, key=lambda r: r[1] - r[0])
+        return best[0], best[1] + 0.5, "auto: longest run of a commanded horizontal setpoint"
+    if cmds:
+        return cmds[0]["t"], cmds[-1]["t"], "auto: all stick commands (none exceeded --cmd-min)"
+    return s.entries[0]["t"], s.entries[-1]["t"], "auto: whole session (no stick_cmd entries)"
+
+
+def diagnose_axis(s, out, args):
+    th = dict(DEFAULTS)
+    for k in th:
+        v = getattr(args, k.replace("-", "_"), None)
+        if v is not None:
+            th[k] = v
+
+    t0, t1, how = pick_window(s, args, th)
+    out.write("=" * 100 + "\n")
+    out.write(f"AXIS DIAGNOSIS   window t={t0:.3f} .. {t1:.3f} s ({t1 - t0:.2f} s)   [{how}]\n")
+    out.write("=" * 100 + "\n\n")
+
+    out.write(
+        "mapping assumed by this tool (an assumption, not a measurement —\n"
+        "docs/measurements/2026-07-25-ground-probe.md items 1-2 are still open):\n"
+    )
+    for a, b, note in DECLARED_MAPPING:
+        out.write("  %-24s -> %-26s  %s\n" % (a, b, note))
+    out.write("\n")
+
+    states = [e for e in s.of_kind("dji_state")]
+    cmds = [e for e in s.of_kind("stick_cmd") if t0 <= e["t"] <= t1]
+    rcs = s.of_kind("rc_stick")
+    vss = s.of_kind("vs_state")
+    mavins = [e for e in s.of_kind("mav_in") if t0 - 2.0 <= e["t"] <= t1]
+
+    # ── drops overlapping the window are stated before anything is concluded ──
+    overlapping = []
+    for d in s.of_kind("drop"):
+        a, b = s.abs_to_t(d.get("from", 0)), s.abs_to_t(d.get("to", 0))
+        if b >= t0 and a <= t1:
+            overlapping.append((a, b, d.get("n", 0), d.get("kinds", {})))
+    if overlapping:
+        out.write("!! ENTRIES WERE LOST INSIDE THIS WINDOW — the table below has holes:\n")
+        for a, b, n, kinds in overlapping:
+            out.write("     %d lost between t=%.3f and t=%.3f  %s\n" % (n, a, b, kinds))
+        out.write("\n")
+
+    # ── the table ──
+    if cmds:
+        _table(out, s, cmds, states, rcs, vss, th, args.max_rows or 30)
+    else:
+        out.write("No stick_cmd entries in this window.\n\n")
+        _table_states_only(out, states, rcs, vss, t0, t1, args.max_rows or 30)
+
+    ev = collect_evidence(s, cmds, states, rcs, vss, mavins, t0, t1, th)
+    _print_evidence(out, ev)
+    verdict, detail, cases, missing = conclude(ev, th)
+    _print_conclusion(out, verdict, detail, cases, missing, overlapping)
+    return verdict
+
+
+def _row_state(states, t, join):
+    st = nearest(states, t, join)
+    return st or {}
+
+
+def _decimate(rows, limit):
+    """At 25 Hz a four-second window is a hundred rows nobody reads. Keep the first,
+    the last, and an even spread between — and say so, so the table is never mistaken
+    for the whole record."""
+    if limit <= 0 or len(rows) <= limit:
+        return rows, 1
+    step = max(2, len(rows) // limit)
+    kept = rows[::step]
+    if rows[-1] not in kept:
+        kept.append(rows[-1])
+    return kept, step
+
+
+def _table(out, s, cmds, states, rcs, vss, th, max_rows):
+    shown, step = _decimate(cmds, max_rows)
+    if step > 1:
+        out.write(
+            "showing every %dth of %d commands (%d rows) — raise --max-rows for all\n\n"
+            % (step, len(cmds), len(shown))
+        )
+    out.write(
+        "t         | setpoint (our frame)        | handed to DJI                    "
+        "| modes            | achieved NED          | attitude          | rc sticks (norm)     | vs\n"
+    )
+    out.write(
+        "          | frame        vn    ve    vd | pitch  roll   yaw  throt  path   "
+        "| rp/yaw/vert/coord| vn    ve    vd  relalt| roll  pitch  yaw  | lh    lv    rh    rv | on/auth\n"
+    )
+    out.write("-" * 100 + "\n")
+    for c in shown:
+        t = c["t"]
+        sp, dji, md = c.get("sp", {}), c.get("dji", {}), c.get("modes", {})
+        st = _row_state(states, t, th["join"])
+        rc = nearest(rcs, t, max(th["join"], 1.1)) or {}
+        vs = latest_before(vss, t) or {}
+        relalt = st.get("relalt")
+        out.write(
+            "%9.3f | %-12s %s %s %s | %s %s %s %s  %-7s| %s/%s/%s/%s | %s %s %s %s | %s %s %s | %s %s %s %s | %s/%s\n"
+            % (
+                t,
+                (sp.get("frame") or "-")[:12],
+                num(sp.get("vn"), "%5.2f"),
+                num(sp.get("ve"), "%5.2f"),
+                num(sp.get("vd"), "%5.2f"),
+                num(dji.get("pitch"), "%6.2f"),
+                num(dji.get("roll"), "%5.2f"),
+                num(dji.get("yaw"), "%5.2f"),
+                num(dji.get("throttle"), "%5.2f"),
+                (c.get("path") or "-")[:7],
+                _abbr(md.get("rp")),
+                _abbr(md.get("yaw")),
+                _abbr(md.get("vert")),
+                _abbr(md.get("coord")),
+                num(st.get("vn"), "%5.2f"),
+                num(st.get("ve"), "%5.2f"),
+                num(st.get("vd"), "%5.2f"),
+                num(relalt, "%6.1f"),
+                num(st.get("roll"), "%5.1f"),
+                num(st.get("pitch"), "%6.1f"),
+                num(st.get("yaw"), "%6.1f"),
+                num(get(rc, "n", "lh"), "%5.2f"),
+                num(get(rc, "n", "lv"), "%5.2f"),
+                num(get(rc, "n", "rh"), "%5.2f"),
+                num(get(rc, "n", "rv"), "%5.2f"),
+                vs.get("on"),
+                (vs.get("auth") or "-")[:4],
+            )
+        )
+    out.write("\n")
+
+
+def _abbr(mode):
+    return {
+        "ANGLE": "ANG",
+        "VELOCITY": "VEL",
+        "POSITION": "POS",
+        "ANGULAR_VELOCITY": "AVL",
+        "GROUND": "GND",
+        "BODY": "BDY",
+        None: "?",
+        "UNKNOWN": "UNK",
+    }.get(mode, str(mode)[:3])
+
+
+def _table_states_only(out, states, rcs, vss, t0, t1, max_rows):
+    out.write("What the aircraft did anyway, so cases 6 and 7 can still be judged:\n")
+    out.write("t         | achieved NED          | attitude          | rc sticks (norm)     | vs\n")
+    out.write("-" * 80 + "\n")
+    shown, step = _decimate([e for e in states if t0 <= e["t"] <= t1], max_rows)
+    if step > 1:
+        out.write("(every %dth sample)\n" % step)
+    for st in shown:
+        t = st["t"]
+        rc = nearest(rcs, t, 1.1) or {}
+        vs = latest_before(vss, t) or {}
+        out.write(
+            "{:9.3f} | {} {} {} {} | {} {} {} | {} {} {} {} | {}/{}\n".format(
+                t,
+                num(st.get("vn"), "%5.2f"),
+                num(st.get("ve"), "%5.2f"),
+                num(st.get("vd"), "%5.2f"),
+                num(st.get("relalt"), "%6.1f"),
+                num(st.get("roll"), "%5.1f"),
+                num(st.get("pitch"), "%6.1f"),
+                num(st.get("yaw"), "%6.1f"),
+                num(get(rc, "n", "lh"), "%5.2f"),
+                num(get(rc, "n", "lv"), "%5.2f"),
+                num(get(rc, "n", "rh"), "%5.2f"),
+                num(get(rc, "n", "rv"), "%5.2f"),
+                vs.get("on"),
+                (vs.get("auth") or "-")[:4],
+            )
+        )
+    out.write("\n")
+
+
+def _mean(values):
+    vals = [v for v in values if v is not None and not math.isnan(v)]
+    return sum(vals) / len(vals) if vals else None
+
+
+def collect_evidence(s, cmds, states, rcs, vss, mavins, t0, t1, th):
+    """Gathers the facts. Deliberately separate from the verdict, so the printed
+    evidence stands on its own even when the conclusion is 'insufficient'."""
+    ev = {"t0": t0, "t1": t1, "n_cmds": len(cmds), "th": th}
+
+    win_states = [e for e in states if t0 <= e["t"] <= t1]
+    ev["ach"] = {
+        "vn": _mean([e.get("vn") for e in win_states]),
+        "ve": _mean([e.get("ve") for e in win_states]),
+        "vd": _mean([e.get("vd") for e in win_states]),
+    }
+    ev["n_states"] = len(win_states)
+    # How much of the "achieved velocity" in this window was a cached reading. A
+    # frozen KeyAircraftVelocity and a stationary aircraft produce identical
+    # numbers, so without this the evidence block would present a dead feed as a
+    # measured non-response.
+    vel_ages = [get(e, "age", "vel") for e in win_states]
+    vel_ages = [a for a in vel_ages if a is not None]
+    vel_limit = next(lim for k, sig, lim, _r in AGE_KEYS if k == "vel")
+    ev["ach_cached_pct"] = (
+        100.0 * sum(1 for a in vel_ages if a > vel_limit) / len(vel_ages) if vel_ages else None
+    )
+    ev["ach_max_age"] = max(vel_ages) if vel_ages else None
+    alts = [e.get("relalt") for e in win_states if e.get("relalt") is not None]
+    ev["alt_rate"] = ((alts[-1] - alts[0]) / (t1 - t0)) if len(alts) >= 2 and t1 > t0 else None
+    ev["att"] = {
+        "roll": _mean([e.get("roll") for e in win_states]),
+        "pitch": _mean([e.get("pitch") for e in win_states]),
+    }
+
+    # commanded setpoint, averaged over the window
+    if cmds:
+        ev["sp"] = {
+            "vn": _mean([get(c, "sp", "vn") for c in cmds]),
+            "ve": _mean([get(c, "sp", "ve") for c in cmds]),
+            "vd": _mean([get(c, "sp", "vd") for c in cmds]),
+            "yawrate": _mean([get(c, "sp", "yawrate") for c in cmds]),
+        }
+        ev["frames"] = sorted({get(c, "sp", "frame", default="?") for c in cmds})
+        ev["dji"] = {
+            "pitch": _mean([get(c, "dji", "pitch") for c in cmds]),
+            "roll": _mean([get(c, "dji", "roll") for c in cmds]),
+            "yaw": _mean([get(c, "dji", "yaw") for c in cmds]),
+            "throttle": _mean([get(c, "dji", "throttle") for c in cmds]),
+        }
+        ev["modes"] = sorted(
+            {
+                (
+                    get(c, "modes", "rp"),
+                    get(c, "modes", "yaw"),
+                    get(c, "modes", "vert"),
+                    get(c, "modes", "coord"),
+                    get(c, "modes", "adv"),
+                )
+                for c in cmds
+            }
+        )
+        ev["refused"] = [c for c in cmds if c.get("accepted") is False]
+        ev["src"] = [c.get("src") for c in cmds if c.get("src")]
+    else:
+        ev["sp"] = ev["dji"] = None
+        ev["modes"] = ev["frames"] = ev["refused"] = ev["src"] = []
+
+    # RC — case 6
+    win_rc = [e for e in rcs if t0 - 0.5 <= e["t"] <= t1]
+    ev["rc_max"] = {}
+    for ax in ("lh", "lv", "rh", "rv"):
+        vals = [abs(get(e, "n", ax, default=0.0) or 0.0) for e in win_rc]
+        ev["rc_max"][ax] = max(vals) if vals else None
+    ev["rc_active"] = [ax for ax, v in ev["rc_max"].items() if v is not None and v >= th["rc_min"]]
+    ev["n_rc"] = len(win_rc)
+
+    # virtual stick — case 7
+    ev["vs_at_start"] = latest_before(vss, t0) or (vss[0] if vss else None)
+    ev["vs_in_window"] = [e for e in vss if t0 <= e["t"] <= t1]
+    ev["vs_reasons"] = [e for e in vss if e.get("reason") and t0 - 2.0 <= e["t"] <= t1]
+    ev["vs_engaged"] = None
+    ev["vs_authority"] = None
+    v = ev["vs_at_start"]
+    if v:
+        ev["vs_engaged"] = v.get("on")
+        ev["vs_authority"] = v.get("auth")
+    for e in ev["vs_in_window"]:
+        if e.get("on") is False:
+            ev["vs_engaged"] = False
+        if e.get("auth") and e["auth"] != "MSDK":
+            ev["vs_authority"] = e["auth"]
+
+    # aircraft-side refusals — case 7
+    ev["notable"] = _notable_fields(s, t0 - 1.0, t1)
+    ev["mode_changes"] = [
+        e for e in s.of_kind("dji_field") if e.get("f") == "flightMode" and t0 - 1.0 <= e["t"] <= t1
+    ]
+
+    # inbound MAVLink — cases 1, 2, 3
+    ev["mav_in"] = [e for e in mavins if e.get("name") in COMMAND_MESSAGES]
+    ev["mav_in_all"] = mavins
+    ev["mav_intent"] = mav_intent(ev["mav_in"])
+    return ev
+
+
+COMMAND_MESSAGES = {
+    "SET_POSITION_TARGET_LOCAL_NED",
+    "SET_POSITION_TARGET_GLOBAL_INT",
+    "SET_ATTITUDE_TARGET",
+    "MANUAL_CONTROL",
+    "COMMAND_LONG",
+    "COMMAND_INT",
+}
+
+
+def mav_intent(entries):
+    """What the GCS asked for, in the same NED-velocity terms as a setpoint.
+
+    Only the messages whose meaning is unambiguous are interpreted. Anything else is
+    reported as 'present but not interpreted' rather than guessed at — a wrong
+    interpretation here would manufacture a case-2 finding out of nothing.
+    """
+    for e in reversed(entries):
+        f = e.get("f", {})
+        if e["name"] == "SET_POSITION_TARGET_LOCAL_NED":
+            return {
+                "msg": e["name"],
+                "t": e["t"],
+                "seq": e.get("seq"),
+                "vn": f.get("vx"),
+                "ve": f.get("vy"),
+                "vd": f.get("vz"),
+                "frame": f.get("coordinate_frame_s") or f.get("coordinate_frame"),
+                "note": "vx/vy/vz are m/s in the frame named by coordinate_frame",
+            }
+        if e["name"] == "MANUAL_CONTROL":
+            # x/y/z/r are 1000-scaled joystick axes: x = pitch (forward+),
+            # y = roll (right+), z = throttle, r = yaw.
+            #
+            # z is read on QGC's convention — the one the bridge itself interprets and
+            # refuses to deviate from (guided/StickMapping.kt): 0..1000 with 500 at the
+            # centre, above 500 = climb. Read from QGC source at da14fad28
+            # (JoystickThumbPad yAxisPositiveRangeOnly, Joystick.cc:1129-1136). The old
+            # reading here (z 0-centred, ±1000) was the MAVLink field prose, which QGC
+            # does not send; under it every hover (z=500) decoded as a half-scale climb
+            # and would have manufactured a case-2 finding out of a stationary stick.
+            return {
+                "msg": e["name"],
+                "t": e["t"],
+                "seq": e.get("seq"),
+                "vn": _scale(f.get("x")),
+                "ve": _scale(f.get("y")),
+                "vd": _neg(_z_centre(f.get("z"))),
+                "frame": "MANUAL_CONTROL 1000-scaled axes, normalised here to ±1",
+                "note": "magnitudes are normalised joystick units, not m/s — "
+                "only the axis and the sign are comparable; z read as "
+                "0..1000 with 500 centre (QGC's convention)",
+            }
+    return None
+
+
+def _scale(v):
+    return None if v is None else v / 1000.0
+
+
+def _z_centre(v):
+    """MANUAL_CONTROL z (0..1000, 500 = neutral) -> ±1 up-positive."""
+    return None if v is None else (v - 500.0) / 500.0
+
+
+def _neg(v):
+    return None if v is None else -v
+
+
+def _print_evidence(out, ev):
+    th = ev["th"]
+    out.write("EVIDENCE\n" + "-" * 100 + "\n")
+
+    if ev["sp"]:
+        sp_axis, sp_val = dominant(
+            {k: ev["sp"][k] for k in ("vn", "ve", "vd")}, th["cmd_min"], th["axis_ratio"]
+        )
+        out.write(
+            "commanded   frame={}  vn={} ve={} vd={}  -> dominant: {} ({})\n".format(
+                ",".join(ev["frames"]),
+                num(ev["sp"]["vn"], "%.2f"),
+                num(ev["sp"]["ve"], "%.2f"),
+                num(ev["sp"]["vd"], "%.2f"),
+                sp_axis or "none",
+                direction(sp_axis, sp_val),
+            )
+        )
+        d = ev["dji"]
+        dji_axis, dji_val = dominant(
+            {"roll_ax": d["roll"], "pitch_ax": d["pitch"], "throttle_ax": d["throttle"]},
+            th["cmd_min"],
+            th["axis_ratio"],
+        )
+        out.write(
+            "handed DJI  pitch={} roll={} yaw={} throttle={}  -> dominant: {} ({})\n".format(
+                num(d["pitch"], "%.2f"),
+                num(d["roll"], "%.2f"),
+                num(d["yaw"], "%.2f"),
+                num(d["throttle"], "%.2f"),
+                (dji_axis or "none").replace("_ax", ""),
+                direction(dji_axis, dji_val),
+            )
+        )
+        for m in ev["modes"]:
+            out.write(
+                "modes       rollPitch={} yaw={} vertical={} coord={} advanced={}\n".format(*m)
+            )
+        out.write(
+            "commands    %d in window, %d refused by the SDK\n" % (ev["n_cmds"], len(ev["refused"]))
+        )
+    else:
+        out.write("commanded   -- no stick_cmd entries --\n")
+
+    a = ev["ach"]
+    ach_axis, ach_val = dominant(a, th["resp_min"], th["axis_ratio"])
+    out.write(
+        "achieved    vn=%s ve=%s vd=%s  -> dominant: %s (%s)   [%d dji_state samples]\n"
+        % (
+            num(a["vn"], "%.2f"),
+            num(a["ve"], "%.2f"),
+            num(a["vd"], "%.2f"),
+            ach_axis or "none",
+            direction(ach_axis, ach_val),
+            ev["n_states"],
+        )
+    )
+    out.write(
+        "            mean attitude roll={} pitch={} deg, altitude rate {} m/s\n".format(
+            num(ev["att"]["roll"], "%.1f"),
+            num(ev["att"]["pitch"], "%.1f"),
+            num(ev["alt_rate"], "%+.2f"),
+        )
+    )
+    if ev.get("ach_cached_pct") is None:
+        out.write(
+            "            NO AGE DATA on dji_state: a flat 'achieved' cannot be told from a "
+            "dead KeyAircraftVelocity here.\n"
+        )
+    elif ev["ach_cached_pct"] > 0:
+        out.write(
+            "            CACHED: %.0f%% of those samples were past the velocity key's "
+            "freshness limit (worst %d ms).\n"
+            "            The 'achieved' row above is then a cached reading, not a measured "
+            "response — read it as unknown, not as zero.\n"
+            % (ev["ach_cached_pct"], ev["ach_max_age"])
+        )
+
+    if ev["n_rc"] == 0:
+        out.write("rc sticks   -- no rc_stick entries in window: case 6 CANNOT be ruled out --\n")
+    elif ev["rc_active"]:
+        out.write(
+            "rc sticks   MOVED: {} (peak normalised {})\n".format(
+                ", ".join(ev["rc_active"]),
+                ", ".join("{}={:.2f}".format(ax, ev["rc_max"][ax]) for ax in ev["rc_active"]),
+            )
+        )
+    else:
+        out.write(
+            "rc sticks   centred throughout (peak {}) — the pilot is exonerated\n".format(
+                ", ".join(f"{ax}={v:.2f}" for ax, v in ev["rc_max"].items() if v is not None)
+            )
+        )
+
+    if ev["vs_at_start"] is None:
+        out.write("virt stick  -- no vs_state entries: engagement and authority UNKNOWN --\n")
+    else:
+        out.write(
+            "virt stick  engaged={} authority={}{}\n".format(
+                ev["vs_engaged"],
+                ev["vs_authority"],
+                "  changes in window: "
+                + ", ".join(
+                    "t={:.3f} on={} auth={} reason={}".format(
+                        e["t"], e.get("on"), e.get("auth"), e.get("reason")
+                    )
+                    for e in ev["vs_in_window"]
+                )
+                if ev["vs_in_window"]
+                else "",
+            )
+        )
+    for e in ev["vs_reasons"]:
+        out.write(
+            "            !! DJI reported an authority change: {} at t={:.3f}\n".format(
+                e["reason"], e["t"]
+            )
+        )
+
+    if ev["notable"]:
+        out.write(
+            "aircraft    !! %d notable field(s) in or just before the window:\n"
+            % len(ev["notable"])
+        )
+        for e in ev["notable"]:
+            out.write("              t={:9.3f} {} = {}\n".format(e["t"], e.get("f"), e.get("v")))
+    else:
+        out.write("aircraft    no obstacle, geofence or refusal field set in the window\n")
+    if ev["mode_changes"]:
+        for e in ev["mode_changes"]:
+            out.write(
+                "            !! flightMode {} -> {} at t={:.3f}\n".format(
+                    e.get("prev"), e.get("v"), e["t"]
+                )
+            )
+
+    mi = ev["mav_intent"]
+    if mi:
+        out.write(
+            "gcs asked   {} seq={} at t={:.3f}: vn={} ve={} vd={} ({})\n".format(
+                mi["msg"],
+                mi["seq"],
+                mi["t"],
+                num(mi["vn"], "%.2f"),
+                num(mi["ve"], "%.2f"),
+                num(mi["vd"], "%.2f"),
+                mi["frame"],
+            )
+        )
+        out.write("            {}\n".format(mi["note"]))
+    elif ev["mav_in_all"]:
+        out.write(
+            "gcs asked   %d inbound message(s) in window, none of an interpretable "
+            "command type: %s\n"
+            % (
+                len(ev["mav_in_all"]),
+                ", ".join(sorted({e.get("name", "?") for e in ev["mav_in_all"]})),
+            )
+        )
+    else:
+        out.write("gcs asked   -- no mav_in entries: cases 1, 2 and 3 CANNOT be separated --\n")
+    out.write("\n")
+
+
+def conclude(ev, th):
+    """Returns (verdict, detail sentences, [case numbers], [missing evidence])."""
+    cases, detail, missing = [], [], []
+
+    sp = ev["sp"]
+    sp_axis, sp_val = (None, 0.0)
+    if sp:
+        sp_axis, sp_val = dominant(
+            {k: sp[k] for k in ("vn", "ve", "vd")}, th["cmd_min"], th["axis_ratio"]
+        )
+    d = ev["dji"] or {}
+    dji_axis, dji_val = (
+        dominant(
+            {
+                "roll_ax": d.get("roll"),
+                "pitch_ax": d.get("pitch"),
+                "throttle_ax": d.get("throttle"),
+            },
+            th["cmd_min"],
+            th["axis_ratio"],
+        )
+        if d
+        else (None, 0.0)
+    )
+    ach_axis, ach_val = dominant(ev["ach"], th["resp_min"], th["axis_ratio"])
+
+    # ── the sentence a human wanted in the first place ──
+    if sp_axis or ach_axis:
+        horiz = {"vn", "ve"}
+        kind = ""
+        if sp_axis in horiz and ach_axis == "vd":
+            kind = " — a vertical response to a horizontal command"
+        elif sp_axis == "vd" and ach_axis in horiz:
+            kind = " — a horizontal response to a vertical command"
+        elif sp_axis in horiz and ach_axis in horiz and sp_axis != ach_axis:
+            kind = " — the other horizontal axis"
+        elif sp_axis and ach_axis == sp_axis and sp_val * ach_val < 0:
+            kind = " — the right axis, the opposite direction"
+        detail.append(
+            "commanded {} ({} {:+.2f} m/s); observed vn={} ve={} vd={} m/s"
+            " and an altitude rate of {} m/s, i.e. the aircraft moved {}{}.".format(
+                direction(sp_axis, sp_val),
+                sp_axis or "no axis",
+                sp_val,
+                num(ev["ach"]["vn"], "%.2f"),
+                num(ev["ach"]["ve"], "%.2f"),
+                num(ev["ach"]["vd"], "%.2f"),
+                num(ev["alt_rate"], "%+.2f"),
+                direction(ach_axis, ach_val),
+                kind,
+            )
+        )
+
+    # ── what is simply not in the log ──
+    if ev["n_cmds"] == 0:
+        missing.append(
+            "stick_cmd entries — M3 (guided control) did not run, or is not "
+            "wired to Recorder.stickCmd(). Cases 2, 3, 4 and 5 are all "
+            "undiagnosable without them"
+        )
+    if ev["n_states"] == 0:
+        missing.append("dji_state entries — no achieved velocity to compare against")
+    if ev["n_rc"] == 0:
+        missing.append("rc_stick entries — case 6 cannot be excluded")
+    if ev["vs_at_start"] is None:
+        missing.append(
+            "vs_state entries — engagement and authority unknown, so case 7 cannot be excluded"
+        )
+    if not ev["mav_in_all"]:
+        missing.append("mav_in entries — cases 1, 2 and 3 cannot be separated from each other")
+
+    # ── 7: the aircraft was not ours to command ──
+    if ev["vs_engaged"] is False:
+        cases.append(7)
+        detail.append(
+            "virtual stick was NOT engaged during this window, so our stick "
+            "commands were never in force. Nothing about our axis mapping can be "
+            "concluded from what the aircraft did."
+        )
+    if ev["vs_authority"] and ev["vs_authority"] != "MSDK":
+        cases.append(7)
+        detail.append(
+            "flight-control authority was held by {}, not MSDK. Our commands were "
+            "being ignored.".format(ev["vs_authority"])
+        )
+    for e in ev["vs_reasons"]:
+        cases.append(7)
+        reason = e["reason"]
+        why = {
+            "NEAR_BOUNDARY": "the aircraft was within the geofence margin (DJI documents "
+            "~30 m from a restricted zone or distance limit), where the RC "
+            "takes control and virtual stick stops working",
+            "RC_NOT_P_MODE": "the RC flight-mode switch was not in P mode",
+            "RC_SWITCH": "the pilot moved the RC mode switch",
+            "RC_PAUSE_STOP": "the pilot pressed pause/stop on the RC",
+            "RC_ONE_KEY_GO_HOME": "the pilot pressed return-to-home",
+            "RC_LOST": "the RC link was lost",
+            "BATTERY_LOW_GO_HOME": "low battery triggered return-to-home",
+            "BATTERY_SUPER_LOW_LANDING": "critically low battery triggered a landing",
+        }.get(reason, f"DJI gave the reason as {reason}")
+        detail.append(
+            "DJI itself reported an authority change ({}) at t={:.3f}: {}.".format(
+                reason, e["t"], why
+            )
+        )
+    obstacles = [
+        e
+        for e in ev["notable"]
+        if e.get("f", "").startswith(
+            ("isActivelyAvoiding", "isAscentLimited", "oaWorking", "isNearObstacle")
+        )
+    ]
+    limits = [e for e in ev["notable"] if "Limit" in e.get("f", "")]
+    if obstacles:
+        cases.append(7)
+        detail.append(
+            "obstacle avoidance was active ({}). DJI's braking overrides virtual "
+            "stick, which is exactly the known Mini-4-Pro hazard PLAN.md flags for M3.".format(
+                ", ".join(sorted({e["f"] for e in obstacles}))
+            )
+        )
+    if limits:
+        cases.append(7)
+        detail.append(
+            "a flight limit was in play ({}), the condition under which DJI hands "
+            "control back to the RC.".format(", ".join(sorted({e["f"] for e in limits})))
+        )
+    if ev["mode_changes"]:
+        cases.append(7)
+        detail.append(
+            "the flight mode changed during the window ({}), so the aircraft was "
+            "doing something of its own.".format(
+                ", ".join("{}->{}".format(e.get("prev"), e.get("v")) for e in ev["mode_changes"])
+            )
+        )
+    if ev["refused"]:
+        cases.append(7)
+        detail.append(
+            "%d stick command(s) were refused by the SDK (see stick_cmd.err)." % len(ev["refused"])
+        )
+
+    # ── 6: the pilot ──
+    if ev["rc_active"]:
+        cases.append(6)
+        detail.append(
+            "the human's RC sticks were off centre ({}, peak {:.2f} of full "
+            "deflection). DJI mixes RC input with virtual-stick input, so part or "
+            "all of the movement may be the pilot's.".format(
+                ", ".join(ev["rc_active"]), max(ev["rc_max"][ax] for ax in ev["rc_active"])
+            )
+        )
+
+    # ── 5: the control modes ──
+    if ev["modes"] and sp:
+        for rp, _yawm, vert, _coord, adv in ev["modes"]:
+            frames = ",".join(ev["frames"])
+            if "VELOCITY" in frames and rp not in (None, "VELOCITY"):
+                cases.append(5)
+                detail.append(
+                    "the setpoint is a VELOCITY (frame {}) but rollPitchControlMode "
+                    "was {}. In ANGLE mode a roll of {} means {} degrees of bank, not "
+                    "{} m/s — the same number, a completely different command.".format(
+                        frames,
+                        rp,
+                        num(d.get("roll"), "%.2f"),
+                        num(d.get("roll"), "%.2f"),
+                        num(d.get("roll"), "%.2f"),
+                    )
+                )
+            if "VELOCITY" in frames and vert not in (None, "VELOCITY"):
+                cases.append(5)
+                detail.append(
+                    f"verticalControlMode was {vert}, so the throttle axis was an "
+                    "altitude target rather than a climb rate."
+                )
+            if adv is False:
+                cases.append(5)
+                detail.append(
+                    "advanced mode was off, so the control modes did not apply at "
+                    "all and only [-660,660] stick positions were in force."
+                )
+            if rp is None and vert is None:
+                cases.append(5)
+                detail.append(
+                    "no control modes were recorded with the command, so a "
+                    "control-mode fault cannot be distinguished from an axis fault. "
+                    "That is the one thing the schema exists to prevent — check the "
+                    "M3 wiring."
+                )
+
+    # ── 4: our own mapping ──
+    mapping_ok = None
+    if sp and d and sp_axis in AXIS_MAP:
+        want_axis, sign = AXIS_MAP[sp_axis]
+        want = sign * sp_val
+        got = d.get(want_axis)
+        others = {k: v for k, v in d.items() if k != want_axis and k != "yaw"}
+        other_axis, other_val = dominant(others, th["cmd_min"], th["axis_ratio"])
+        if got is None or abs(got) < th["cmd_min"]:
+            if other_axis:
+                cases.append(4)
+                mapping_ok = False
+                detail.append(
+                    "the setpoint commanded {} ({} {:.2f} m/s), which under our "
+                    "declared mapping belongs on dji.{} — but dji.{} was {} and the "
+                    "magnitude appeared on dji.{} ({:.2f}) instead. That is an axis "
+                    "swap in the setpoint-to-stick mapping.".format(
+                        direction(sp_axis, sp_val),
+                        sp_axis,
+                        sp_val,
+                        want_axis,
+                        want_axis,
+                        num(got, "%.2f"),
+                        other_axis,
+                        other_val,
+                    )
+                )
+            else:
+                cases.append(4)
+                mapping_ok = False
+                detail.append(
+                    "the setpoint commanded {} but no DJI axis carried it: dji.{} "
+                    "was {} and nothing else was driven either.".format(
+                        direction(sp_axis, sp_val), want_axis, num(got, "%.2f")
+                    )
+                )
+        elif got * want < 0:
+            cases.append(4)
+            mapping_ok = False
+            detail.append(
+                f"the setpoint commanded {direction(sp_axis, sp_val)} ({sp_axis} {sp_val:+.2f}) and the right axis was used "
+                f"(dji.{want_axis}) but with the opposite sign ({got:+.2f}). That is a sign "
+                "inversion, not an axis swap."
+            )
+        else:
+            mapping_ok = True
+
+    # ── 1, 2, 3: upstream of the controller ──
+    mi = ev["mav_intent"]
+    if mi and sp:
+        gcs_axis, gcs_val = dominant(
+            {k: mi.get(k) for k in ("vn", "ve", "vd")},
+            th["cmd_min"] if mi["msg"] != "MANUAL_CONTROL" else 0.05,
+            th["axis_ratio"],
+        )
+        if gcs_axis and sp_axis and gcs_axis != sp_axis:
+            cases.append(2)
+            detail.append(
+                "the GCS asked for {} ({} on {}) but our controller's setpoint was "
+                "{} ({}). The inbound message was read onto the wrong axis — or the "
+                "frame it declared was not the one we assumed.".format(
+                    direction(gcs_axis, gcs_val),
+                    mi["msg"],
+                    gcs_axis,
+                    direction(sp_axis, sp_val),
+                    sp_axis,
+                )
+            )
+        elif gcs_axis and sp_axis and gcs_axis == sp_axis and gcs_val * sp_val < 0:
+            cases.append(2)
+            detail.append(
+                f"the GCS asked for {direction(gcs_axis, gcs_val)} and our setpoint was {direction(sp_axis, sp_val)} — same axis, "
+                "inverted sign, i.e. the inbound sign convention was misread."
+            )
+        elif (
+            gcs_axis
+            and sp_axis
+            and mi["msg"] != "MANUAL_CONTROL"
+            and gcs_val != 0
+            and abs(sp_val / gcs_val - 1) > 0.5
+        ):
+            cases.append(3)
+            detail.append(
+                f"the GCS asked for {gcs_val:.2f} m/s on {gcs_axis} and our setpoint was {sp_val:.2f} m/s on "
+                "the same axis — right axis, wrong magnitude, so the controller's "
+                "arithmetic is the suspect rather than the parsing."
+            )
+
+    # ── 8: elimination ──
+    if sp and d and mapping_ok and not cases and sp_axis and ach_axis and sp_axis != ach_axis:
+        cases.append(8)
+        detail.append(
+            "everything of ours is self-consistent: the GCS's request, our "
+            "setpoint, the DJI axis we drove and the control modes all agree, the "
+            "RC was centred, and the aircraft reported no override. Yet the "
+            f"aircraft moved {direction(ach_axis, ach_val)} when we commanded {direction(sp_axis, sp_val)}. By elimination the remaining "
+            "explanation is that DJI's virtual-stick frame or sign convention is "
+            "not what our mapping assumes. That is measurable: command one axis at "
+            "a time on a tether and read dji_state back."
+        )
+
+    # ── verdict ──
+    cases = sorted(set(cases))
+    if cases:
+        return FAIL, detail, cases, missing
+    if ev["n_cmds"] == 0 or ev["n_states"] == 0:
+        return INFO, detail, cases, missing
+    if sp_axis and ach_axis and sp_axis == ach_axis and (sp_val * ach_val) > 0:
+        detail.append(
+            f"the aircraft moved {direction(ach_axis, ach_val)}, which is what was commanded. No fault is "
+            "visible in this window."
+        )
+        return PASS, detail, cases, missing
+    if not sp_axis:
+        detail.append(
+            "no single setpoint axis dominated in this window, so there is nothing "
+            "to compare a response against. Pick a window where one axis was "
+            "commanded, or lower --cmd-min."
+        )
+        return INFO, detail, cases, missing
+    if not ach_axis:
+        detail.append(
+            "a {} command was issued and correctly mapped, but the aircraft barely "
+            "moved on any axis (all below --resp-min {:.2f} m/s). Either the command "
+            "was saturated away, the aircraft was braking, or it never took effect.".format(
+                direction(sp_axis, sp_val), th["resp_min"]
+            )
+        )
+        return INFO, detail, cases, missing
+    return INFO, detail, cases, missing
+
+
+def _print_conclusion(out, verdict, detail, cases, missing, overlapping):
+    out.write("CONCLUSION\n" + "-" * 100 + "\n")
+    for line in detail:
+        out.write(_wrap("  - " + line) + "\n")
+    if not detail:
+        out.write("  Nothing conclusive.\n")
+    out.write("\n")
+    if cases:
+        out.write("  Evidence supports:\n")
+        for c in cases:
+            slug, title, _ = CASES[c]
+            out.write("    case %d  %-20s %s\n" % (c, slug, title))
+    else:
+        out.write("  No case is supported by the evidence in this window.\n")
+    if missing:
+        out.write("\n  DATA INSUFFICIENT for a complete answer. Missing:\n")
+        for m in missing:
+            out.write(_wrap("    - " + m) + "\n")
+    if overlapping:
+        out.write(
+            "\n  ...and entries were lost inside the window, so absence of evidence "
+            "here is not evidence of absence.\n"
+        )
+    out.write(f"\n  verdict: {verdict.upper()}\n")
+
+
+def _wrap(text, width=98):
+    words, lines, cur = text.split(), [], ""
+    indent = " " * (len(text) - len(text.lstrip()) + 2)
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = indent + w
+        else:
+            cur = (cur + " " + w) if cur else w
+    if cur:
+        lines.append(cur)
+    return "\n".join(lines)
+
+
+# ─────────────────────────── cross-check vs QGC tlog ───────────────────────────
+
+# ─────────────────────────────── corners ───────────────────────────────
+
+# `MissionGuidance.CORNER_ALLOWANCE_M`. The bound this report exists to check, and the
+# reason it matters: `MAX_HOME_DIST_M` subtracts it at the launch gate so that the
+# *flown* path stays inside line of sight even where the *drawn* path only just does.
+# A corner wider than this makes that subtraction a fiction.
+CORNER_ALLOWANCE_M = 6.0
+
+METRES_PER_DEG = 111320.0
+
+
+def _xy(lat, lon, lat0, lon0):
+    return (
+        (lat - lat0) * METRES_PER_DEG,
+        (lon - lon0) * METRES_PER_DEG * math.cos(math.radians(lat0)),
+    )
+
+
+def _point_to_segment(p, a, b):
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / l2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def corner_report(s, out, args):
+    """**How far the flown path left the drawn one**, and whether the allowance still holds.
+
+    The mission layer cuts corners on purpose: an intermediate waypoint is *crossed*
+    rather than stopped at, so the aircraft rounds the turn inside the drawn angle.
+    That is the design (`docs/m4-mission-execution.md` §3.1) and it is why
+    `CORNER_ALLOWANCE_M` exists — the launch gate subtracts it from the
+    distance-from-home bound so a plan cleared at the desk cannot be violated by the
+    rounding the executor chose.
+
+    The allowance was a **guess** until 2026-07-27, when the first mission ever flown
+    measured 2.71 m against it. Then the corner law changed — both terms of the speed
+    law now read the distance to the next *rest* rather than to the next waypoint, so
+    a corner is taken at up to the full envelope instead of half of it — and the
+    measurement has to be retaken. This mode is so that retaking it is one command
+    after every flight rather than an afternoon with a notebook.
+
+    Reads the plan from the `MISSION_ITEM_INT`s QGC uploaded, the flown path from our
+    own `GLOBAL_POSITION_INT`s, and the crossings from the `goto_arrived` events the
+    cursor writes. Nothing here is inferred from the setpoints: this is where the
+    aircraft **went**, not where it was told to go.
+    """
+    items = {}
+    for e in s.entries:
+        if e.get("k") == "mav_in" and e.get("name") == "MISSION_ITEM_INT":
+            f = e.get("f") or {}
+            seq = f.get("seq")
+            if seq is None or f.get("x") is None:
+                continue
+            items[seq] = (f["x"] / 1e7, f["y"] / 1e7, f.get("command"))
+
+    reached = []
+    for e in s.entries:
+        if e.get("k") == "event" and e.get("code") == "goto_arrived":
+            m = re.search(r"mission (?:item=|complete seq=)(\d+) err=([-\d.]+)", e.get("msg") or "")
+            if m:
+                reached.append((e["t"], int(m.group(1)), float(m.group(2))))
+
+    if not items or not reached:
+        out.write(
+            "corners     -- no mission in this session "
+            "(%d plan items, %d item-reached events) --\n" % (len(items), len(reached))
+        )
+        return INFO
+
+    fixes = []
+    for e in s.entries:
+        if e.get("k") == "mav_out" and e.get("name") == "GLOBAL_POSITION_INT":
+            f = e.get("f") or {}
+            if f.get("lat"):
+                fixes.append((e["t"], f["lat"] / 1e7, f["lon"] / 1e7))
+
+    # The drawn path is the *navigable* items in sequence order. A takeoff item has no
+    # lateral leg — DJI climbs where the aircraft stands — so including it would draw a
+    # line from home to the first waypoint that the aircraft was never asked to fly.
+    flown_seqs = [seq for _, seq, _ in reached]
+    drawn = [items[q] for q in sorted(items) if q in flown_seqs and items[q][2] != 22]
+    if len(drawn) < 2:
+        out.write("corners     -- fewer than two navigable waypoints were reached --\n")
+        return INFO
+
+    lat0, lon0 = drawn[0][0], drawn[0][1]
+    poly = [_xy(la, lo, lat0, lon0) for la, lo, _ in drawn]
+    segs = list(itertools.pairwise(poly))
+
+    # The window is from the first navigable crossing to the last, which excludes the
+    # climb and any goto flown afterwards — neither is part of the drawn path.
+    first_t = min(
+        t for t, seq, _ in reached if seq in [q for q in sorted(items) if items[q][2] != 22]
+    )
+    last_t = max(t for t, _, _ in reached)
+    devs = []
+    worst = (0.0, None)
+    for t, la, lo in fixes:
+        if not (first_t <= t <= last_t):
+            continue
+        p = _xy(la, lo, lat0, lon0)
+        d = min(_point_to_segment(p, a, b) for a, b in segs)
+        devs.append(d)
+        if d > worst[0]:
+            worst = (d, t)
+
+    out.write("\ncorners — how far the flown path left the drawn one\n")
+    out.write(
+        "  plan          %d items uploaded, %d navigable, %d reached\n"
+        % (len(items), len(drawn), len(reached))
+    )
+    if not devs:
+        out.write("  -- no position fixes inside the mission window --\n")
+        return INFO
+
+    devs_sorted = sorted(devs)
+    p95 = devs_sorted[min(len(devs_sorted) - 1, int(len(devs_sorted) * 0.95))]
+    out.write("  fixes         %d between t=%.1f and t=%.1f\n" % (len(devs), first_t, last_t))
+    out.write(f"  median        {devs_sorted[len(devs_sorted) // 2]:5.2f} m\n")
+    out.write(f"  p95           {p95:5.2f} m\n")
+    out.write(f"  worst         {worst[0]:5.2f} m  at t={worst[1] or 0.0:.2f}\n")
+    out.write(
+        f"  allowance     {CORNER_ALLOWANCE_M:5.2f} m  (MissionGuidance.CORNER_ALLOWANCE_M)\n"
+    )
+
+    out.write("\n  crossing errors — the distance at which each item was declared reached\n")
+    for t, seq, err in reached:
+        kind = "takeoff" if items.get(seq, (0, 0, None))[2] == 22 else "waypoint"
+        out.write("    seq %-3d %-9s %5.2f m   t=%.2f\n" % (seq, kind, err, t))
+
+    if worst[0] > CORNER_ALLOWANCE_M:
+        out.write(
+            f"\n  {FAIL} the flown path left the drawn one by {worst[0]:.2f} m, past the {CORNER_ALLOWANCE_M:.1f} m allowance.\n"
+        )
+        out.write(
+            "  The launch gate subtracts that allowance from MAX_HOME_DIST_M to keep the\n"
+            "  flown path inside line of sight, so this makes that subtraction untrue.\n"
+            "  Either raise the allowance and re-derive the home bound, or draw the corner\n"
+            "  wider with a larger acceptance radius on the item (param2, 2-10 m band).\n"
+        )
+        return FAIL
+    if worst[0] > CORNER_ALLOWANCE_M * 0.75:
+        out.write(
+            f"\n  {WARN} {worst[0]:.2f} m of {CORNER_ALLOWANCE_M:.1f} m used. Inside the bound, with less margin than is\n"
+            "  comfortable — watch it on the next flight before flying near anything.\n"
+        )
+        return WARN
+    out.write(f"\n  {PASS} {worst[0]:.2f} m of {CORNER_ALLOWANCE_M:.1f} m used.\n")
+    return PASS
+
+
+def cross_check(s, tlog_path, out):
+    """Compares our own mav_out record against QGC's independently-written .tlog.
+
+    Two independent records disagreeing is itself a finding: one of them is lying,
+    and which one matters. QGC's tlog was written by software that is not ours, from
+    bytes that actually crossed the radio, so a message present in our log and absent
+    from the tlog means it never made it out — a very different problem from a wrong
+    number.
+    """
+    try:
+        from pymavlink import mavutil
+    except ImportError:
+        out.write("cross-check needs pymavlink — run inside the nix dev shell.\n")
+        return WARN
+
+    out.write(f"\nCROSS-CHECK against {tlog_path}\n" + "-" * 100 + "\n")
+    mlog = mavutil.mavlink_connection(tlog_path)
+    tlog_counts, tlog_named, tlog_t0, tlog_t1 = {}, {}, None, None
+    while True:
+        m = mlog.recv_match(blocking=False)
+        if m is None:
+            break
+        name = m.get_type()
+        if name == "BAD_DATA":
+            continue
+        tlog_counts[name] = tlog_counts.get(name, 0) + 1
+        ts = getattr(m, "_timestamp", None)
+        if ts:
+            tlog_t0 = ts if tlog_t0 is None else min(tlog_t0, ts)
+            tlog_t1 = ts if tlog_t1 is None else max(tlog_t1, ts)
+        if name == "NAMED_VALUE_FLOAT":
+            tlog_named.setdefault(m.name.rstrip("\x00"), []).append((ts, m.value))
+        if name == "DEBUG_VECT":
+            tlog_named.setdefault(m.name.rstrip("\x00"), []).append((ts, (m.x, m.y, m.z)))
+
+    ours = {}
+    for e in s.of_kind("mav_out"):
+        ours[e.get("name")] = ours.get(e.get("name"), 0) + 1
+
+    # ── time alignment, the reason the wall-clock anchor exists ──
+    our_t0 = s.header.get("started_unix_ms", 0) / 1000.0
+    if tlog_t0:
+        out.write(
+            f"our session began at unix {our_t0:.3f}, the tlog's first frame at unix {tlog_t0:.3f} "
+            f"(offset {tlog_t0 - our_t0:+.3f} s)\n"
+        )
+        out.write(f"  tlog spans {tlog_t1 - tlog_t0:.1f} s; our log spans {s.duration:.1f} s\n")
+    else:
+        out.write("the tlog carries no timestamps — alignment is impossible.\n")
+
+    out.write("\n%-32s %10s %10s %s\n" % ("message", "ours", "tlog", "note"))
+    verdict = PASS
+    for name in sorted(set(ours) | set(tlog_counts)):
+        o, t = ours.get(name, 0), tlog_counts.get(name, 0)
+        note = ""
+        if o and not t:
+            note = "WE LOGGED IT SENT, THE GCS NEVER SAW IT"
+            verdict = FAIL
+        elif t and not o and name not in ("HEARTBEAT",):
+            note = "in the tlog but not in our mav_out — was the recorder hook missing?"
+            verdict = FAIL if verdict == PASS else verdict
+        elif o and t and (max(o, t) / max(1, min(o, t))) > 1.5:
+            note = "counts differ by more than 1.5x — loss, or a missing hook"
+            verdict = WARN if verdict == PASS else verdict
+        out.write("%-32s %10d %10d %s\n" % (name, o, t, note))
+
+    if tlog_named:
+        out.write("\nmirrored debug values present in the tlog (the free cross-check):\n")
+        for name, samples in sorted(tlog_named.items()):
+            out.write("  %-12s %5d samples\n" % (name, len(samples)))
+    else:
+        out.write(
+            "\nno NAMED_VALUE_FLOAT/DEBUG_VECT in the tlog — the GCS mirror was off, "
+            "or virtual stick never engaged (it is gated on engagement by default).\n"
+        )
+    return verdict
+
+
+# ─────────────────────────── synthetic sessions & self-test ───────────────────────────
+
+MONO0 = 5_000_000_000  # arbitrary non-zero monotonic origin, as on a real phone
+UNIX0 = 1_753_000_000_000
+
+
+def _line(t, kind, **kw):
+    rec = {"t": round(t, 6), "k": kind}
+    rec.update({k: v for k, v in kw.items() if v is not None})
+    return json.dumps(rec)
+
+
+def synth(profile, path):
+    """Writes a synthetic session containing exactly one planted fault.
+
+    The point of these is the same as `tools/fixtures/generate`'s: prove that each
+    branch of the diagnosis fires on the fault it claims to detect. They are built
+    from the same schema the Kotlin `LogEntry` writes; nothing links the two
+    automatically, so `LogEntryTest` pins the field names on that side.
+    """
+    lines = [
+        json.dumps(
+            {
+                "t": 0,
+                "k": "header",
+                "format": FORMAT,
+                "schema": 1,
+                "session": "synthetic",
+                "part": 1,
+                "started_unix_ms": UNIX0,
+                "started_mono_ns": MONO0,
+                "opened_unix_ms": UNIX0,
+                "opened_mono_ns": MONO0,
+                "clock": {
+                    "mono": "SystemClock.elapsedRealtimeNanos",
+                    "wall": "System.currentTimeMillis",
+                    "t_field": "seconds since started_mono_ns",
+                },
+                "config": {"queue_capacity": 8192, "flush_interval_ms": 500},
+                "meta": {
+                    "app": {"package": "com.dimensional.mini4pro", "version_name": "0.1"},
+                    "device": {"manufacturer": "synthetic", "model": "none"},
+                    "recorder": {"state_hz": 25.0, "mirror_enabled": True, "mirror_hz": 2.0},
+                    "note": "synthetic self-test profile: " + profile,
+                },
+            }
+        )
+    ]
+
+    p = PROFILES[profile]
+    hz, t_cmd0, t_cmd1 = 25.0, 2.0, 6.0
+
+    # slow fields, once at the start
+    for f, v in (
+        ("fcConnected", "true"),
+        ("isFlying", "true"),
+        ("motorsOn", "true"),
+        ("flightMode", "VIRTUAL_STICK"),
+        ("satelliteCount", "17"),
+        ("gpsSignalLevel", "5"),
+        ("inFailsafe", "false"),
+        ("productType", "DJI_MINI_4_PRO"),
+        ("rcType", "DJI_RC_N2"),
+        (
+            "djiFlightRecordPath",
+            "/sdcard/Android/data/com.dimensional.mini4pro/files/DJI/FlightRecord",
+        ),
+    ):
+        lines.append(_line(0.05, "dji_field", f=f, v=v))
+    for f, v in p.get("fields", []):
+        lines.append(_line(t_cmd0 + 0.1, "dji_field", f=f, v=v, prev="false"))
+
+    # virtual stick state
+    vs = p.get("vs", {"on": True, "adv": True, "auth": "MSDK"})
+    lines.append(_line(1.0, "vs_state", **{"on": vs["on"], "adv": vs["adv"], "auth": vs["auth"]}))
+    if p.get("vs_reason"):
+        lines.append(
+            _line(
+                t_cmd0 + 0.2,
+                "vs_state",
+                **{
+                    "on": vs["on"],
+                    "adv": vs["adv"],
+                    "auth": p.get("vs_reason_auth", vs["auth"]),
+                    "reason": p["vs_reason"],
+                },
+            )
+        )
+
+    # inbound MAVLink: what the GCS asked for
+    gcs = p.get("gcs")
+    if gcs is not False:
+        gcs = gcs or {"vx": 0.0, "vy": 2.0, "vz": 0.0}
+        for i in range(int((t_cmd1 - t_cmd0) * 5)):
+            lines.append(
+                _line(
+                    t_cmd0 + i / 5.0,
+                    "mav_in",
+                    name="SET_POSITION_TARGET_LOCAL_NED",
+                    id=84,
+                    sys=255,
+                    comp=190,
+                    seq=i,
+                    len=53,
+                    hex="fd" + "00" * 52,
+                    hexsrc="wire",
+                    f={
+                        "time_boot_ms": int(t_cmd0 * 1000),
+                        "coordinate_frame": 1,
+                        "coordinate_frame_s": "MAV_FRAME_LOCAL_NED",
+                        "type_mask": 3527,
+                        **gcs,
+                    },
+                )
+            )
+
+    n = int((t_cmd1 - 0.0) * hz)
+    for i in range(n):
+        t = i / hz
+        commanding = t_cmd0 <= t <= t_cmd1
+        ach = p["response"](t) if commanding else (0.0, 0.0, 0.0)
+        relalt = 30.0 + p.get("alt", lambda t: 0.0)(t)
+        # Ages, as the recorder writes them. `vel_age` lets a profile freeze the
+        # velocity feed without changing a single velocity number — which is the
+        # whole point of recording ages at all.
+        vel_age = p.get("vel_age", lambda t: 40)(t)
+        lines.append(
+            _line(
+                t,
+                "dji_state",
+                lat=37.9938612,
+                lon=23.7253298,
+                relalt=round(relalt, 3),
+                roll=p.get("roll", lambda t: 0.0)(t),
+                pitch=0.0,
+                yaw=-121.1,
+                vn=round(ach[0], 3),
+                ve=round(ach[1], 3),
+                vd=round(ach[2], 3),
+                age={"pos": 20, "relalt": 20, "att": 520, "vel": vel_age},
+            )
+        )
+        rc = p.get("rc", (0, 0, 0, 0)) if commanding else (0, 0, 0, 0)
+        lines.append(
+            _line(
+                t,
+                "rc_stick",
+                lh=rc[0],
+                lv=rc[1],
+                rh=rc[2],
+                rv=rc[3],
+                n={
+                    "lh": round(rc[0] / 660, 4),
+                    "lv": round(rc[1] / 660, 4),
+                    "rh": round(rc[2] / 660, 4),
+                    "rv": round(rc[3] / 660, 4),
+                },
+            )
+        )
+        if commanding and p.get("cmd"):
+            sp, dji, modes = p["cmd"]
+            lines.append(
+                _line(
+                    t,
+                    "stick_cmd",
+                    seq=i,
+                    src={
+                        "name": "SET_POSITION_TARGET_LOCAL_NED",
+                        "seq": i,
+                        "t": MONO0 + int(t * 1e9) - 20_000_000,
+                    },
+                    sp=dict(sp),
+                    dji=dict(dji),
+                    modes=dict(modes),
+                    path="advanced_param",
+                    accepted=p.get("accepted", True),
+                    err=p.get("err"),
+                )
+            )
+
+    for d in p.get("drops", []):
+        lines.append(
+            _line(
+                d[1],
+                "drop",
+                n=d[2],
+                **{"from": MONO0 + int(d[0] * 1e9), "to": MONO0 + int(d[1] * 1e9)},
+                total=d[2],
+                kinds={"dji_state": d[2]},
+            )
+        )
+
+    lines.append(
+        _line(
+            t_cmd1 + 0.5,
+            "stats",
+            written=len(lines),
+            dropped=0,
+            queued=0,
+            peak_queued=12,
+            bytes=sum(len(x) for x in lines),
+            flushes=14,
+            syncs=3,
+            rotations=0,
+            part=1,
+        )
+    )
+    lines.append(_line(t_cmd1 + 0.6, "event", code="recorder_stop", sev="info"))
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+VEL_MODES = {
+    "rp": "VELOCITY",
+    "yaw": "ANGULAR_VELOCITY",
+    "vert": "VELOCITY",
+    "coord": "GROUND",
+    "adv": True,
+    "code": 1100,
+}
+EAST_SP = {
+    "frame": "NED_VELOCITY",
+    "vn": 0.0,
+    "ve": 2.0,
+    "vd": 0.0,
+    "yawrate": 0.0,
+    "units": "m/s;deg",
+}
+
+PROFILES = {
+    # ── clean ──
+    "clean": {
+        "desc": "commanded east, mapped to roll, aircraft went east",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (0.02, 1.95, 0.0),
+        "roll": lambda t: 8.0,
+        "expect": [],
+        "verdict": PASS,
+    },
+    # ── case 4: the mapping ──
+    "axis-swapped": {
+        "desc": "east setpoint written to dji.pitch instead of dji.roll",
+        "cmd": (EAST_SP, {"pitch": 2.0, "roll": 0.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (1.95, 0.02, 0.0),
+        "expect": [4],
+        "verdict": FAIL,
+    },
+    "sign-inverted": {
+        "desc": "east setpoint on the right axis with the sign flipped",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": -2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (0.02, -1.95, 0.0),
+        "expect": [4],
+        "verdict": FAIL,
+    },
+    "flew-up": {
+        "desc": "THE SCENARIO: commanded right, the value landed on the throttle axis",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 0.0, "yaw": 0.0, "throttle": 2.0}, VEL_MODES),
+        "response": lambda t: (0.0, 0.03, -1.2),
+        "alt": lambda t: max(0.0, (t - 2.0)) * 1.2,
+        "expect": [4],
+        "verdict": FAIL,
+    },
+    # ── case 5: the control modes ──
+    "wrong-control-mode": {
+        "desc": "velocity setpoint sent while rollPitchControlMode was ANGLE",
+        "cmd": (
+            EAST_SP,
+            {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0},
+            dict(VEL_MODES, rp="ANGLE", code=100),
+        ),
+        "response": lambda t: (0.0, 0.15, 0.0),
+        "expect": [5],
+        "verdict": FAIL,
+    },
+    "vertical-mode-position": {
+        "desc": "verticalControlMode POSITION, so throttle was an altitude target",
+        "cmd": (
+            dict(EAST_SP, vd=-1.0),
+            {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 1.0},
+            dict(VEL_MODES, vert="POSITION", code=1110),
+        ),
+        "response": lambda t: (0.0, 1.9, 0.0),
+        "expect": [5],
+        "verdict": FAIL,
+    },
+    "modes-not-recorded": {
+        "desc": "stick_cmd with no control modes at all — the schema's own failure",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, {"adv": True}),
+        "response": lambda t: (0.0, 0.1, -1.2),
+        "expect": [5],
+        "verdict": FAIL,
+    },
+    # ── case 6: the pilot ──
+    "rc-override": {
+        "desc": "correct command, but the pilot's right stick was pushed forward",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "rc": (0, 0, 0, 420),
+        "response": lambda t: (3.1, 1.9, 0.0),
+        "expect": [6],
+        "verdict": FAIL,
+    },
+    # ── case 7: the aircraft ──
+    "geofence-takeback": {
+        "desc": "within the geofence margin: DJI handed control back to the RC",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "fields": [("isNearDistanceLimit", "true")],
+        "vs_reason": "NEAR_BOUNDARY",
+        "vs_reason_auth": "RC",
+        "response": lambda t: (0.0, 0.02, 0.0),
+        "expect": [7],
+        "verdict": FAIL,
+    },
+    "obstacle-brake": {
+        "desc": "obstacle avoidance braking swallowed the command",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "fields": [("isActivelyAvoidingObstacle", "true"), ("oaWorkingRight", "true")],
+        "response": lambda t: (0.0, 0.05, 0.0),
+        "expect": [7],
+        "verdict": FAIL,
+    },
+    "vs-not-engaged": {
+        "desc": "commands sent while virtual stick was never engaged",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "vs": {"on": False, "adv": True, "auth": "RC"},
+        "response": lambda t: (0.0, 0.0, 0.0),
+        "expect": [7],
+        "verdict": FAIL,
+    },
+    # ── case 2: the parsing ──
+    "mav-misread": {
+        "desc": "GCS asked for east, our setpoint came out north",
+        "gcs": {"vx": 0.0, "vy": 2.0, "vz": 0.0},
+        "cmd": (
+            {"frame": "NED_VELOCITY", "vn": 2.0, "ve": 0.0, "vd": 0.0, "units": "m/s;deg"},
+            {"pitch": 2.0, "roll": 0.0, "yaw": 0.0, "throttle": 0.0},
+            VEL_MODES,
+        ),
+        "response": lambda t: (1.95, 0.0, 0.0),
+        "expect": [2],
+        "verdict": FAIL,
+    },
+    # ── case 3: the controller ──
+    "setpoint-magnitude": {
+        "desc": "right axis, wrong magnitude — the controller's arithmetic",
+        "gcs": {"vx": 0.0, "vy": 2.0, "vz": 0.0},
+        "cmd": (
+            dict(EAST_SP, ve=8.0),
+            {"pitch": 0.0, "roll": 8.0, "yaw": 0.0, "throttle": 0.0},
+            VEL_MODES,
+        ),
+        "response": lambda t: (0.0, 7.8, 0.0),
+        "expect": [3],
+        "verdict": FAIL,
+    },
+    # ── case 8: DJI ──
+    "dji-frame": {
+        "desc": "everything of ours consistent, yet the aircraft went north",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (1.95, 0.02, 0.0),
+        "expect": [8],
+        "verdict": FAIL,
+    },
+    # ── the log itself is not good enough ──
+    "no-m3": {
+        "desc": "no stick_cmd entries at all — M3 not wired to the recorder",
+        "cmd": None,
+        "response": lambda t: (0.0, 0.0, -1.2),
+        "expect": [],
+        "verdict": INFO,
+        "want_missing": "stick_cmd",
+    },
+    "drops-in-window": {
+        "desc": "entries lost inside the diagnosis window",
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (0.0, 1.9, 0.0),
+        "drops": [(3.5, 3.9, 11)],
+        "expect": [],
+        "verdict": PASS,
+        "want_drop": True,
+    },
+    "frozen-velocity": {
+        "desc": "KeyAircraftVelocity stopped arriving — the 'achieved' row is cached",
+        # Everything of ours is correct and the aircraft may well be flying east.
+        # The velocity numbers read zero only because the key stopped being
+        # delivered, which on values alone is indistinguishable from an aircraft
+        # that refused to move. Only `age.vel` separates them, and the evidence
+        # block must say so rather than let a reader take the zeros as a response.
+        "cmd": (EAST_SP, {"pitch": 0.0, "roll": 2.0, "yaw": 0.0, "throttle": 0.0}, VEL_MODES),
+        "response": lambda t: (0.0, 0.0, 0.0),
+        "vel_age": lambda t: 40 if t < 2.0 else int((t - 2.0) * 1000) + 40,
+        "expect": [],
+        "verdict": WARN,
+        "want_text": "CACHED:",
+    },
+}
+
+
+def _corner_session(path, overshoot_m):
+    """A two-leg mission flown with a planted corner deviation of [overshoot_m] metres.
+
+    The legs are a right angle so the corner is unambiguous: 60 m north, then 60 m
+    east. The flown path follows them exactly except across the turn, where it bulges
+    outward — which is what cutting a corner too wide looks like from above.
+
+    **The planted number is the perpendicular distance the report should measure**, not
+    the distance the point is moved. At a right angle the outward bisector is 45° to
+    both legs, so a point pushed `k` along it is only `k·sin45 = 0.707k` from the
+    nearest segment. Planting 5 m of *push* and asserting a 5 m *reading* was the first
+    version of this test, and it failed — correctly, and for a reason worth keeping in
+    the code: a self-test whose planted value is not the quantity under test proves
+    nothing about the quantity under test.
+    """
+    lat0, lon0 = 38.0, 23.7
+    dlat = 1.0 / METRES_PER_DEG
+    dlon = 1.0 / (METRES_PER_DEG * math.cos(math.radians(lat0)))
+    wp = [(lat0, lon0), (lat0 + 60 * dlat, lon0), (lat0 + 60 * dlat, lon0 + 60 * dlon)]
+
+    lines = [
+        json.dumps(
+            {
+                "t": 0,
+                "k": "header",
+                "format": FORMAT,
+                "schema": 1,
+                "session": "synthetic-corners",
+                "part": 1,
+                "started_unix_ms": UNIX0,
+                "started_mono_ns": MONO0,
+                "opened_unix_ms": UNIX0,
+                "opened_mono_ns": MONO0,
+                "clock": {
+                    "mono": "SystemClock.elapsedRealtimeNanos",
+                    "wall": "System.currentTimeMillis",
+                    "t_field": "seconds since started_mono_ns",
+                },
+                "config": {"queue_capacity": 8192, "flush_interval_ms": 500},
+                "meta": {"note": f"synthetic corner profile, overshoot {overshoot_m:.1f} m"},
+            }
+        )
+    ]
+    for seq, (la, lo) in enumerate(wp):
+        lines.append(
+            _line(
+                1.0 + seq * 0.01,
+                "mav_in",
+                name="MISSION_ITEM_INT",
+                f={"seq": seq, "command": 16, "x": round(la * 1e7), "y": round(lo * 1e7)},
+            )
+        )
+
+    t = 10.0
+    fixes = []
+    for i in range(61):  # up the first leg
+        fixes.append((t + i * 0.2, lat0 + i * dlat, lon0))
+    # Across the corner: eight samples pushed out along the bisector by the planted amount.
+    push = overshoot_m * math.sqrt(2.0)  # so the *perpendicular* deviation is overshoot_m
+    for i in range(9):
+        k = math.sin(math.pi * i / 8.0) * push
+        fixes.append(
+            (
+                t + 12.2 + i * 0.2,
+                lat0 + (60 + k * 0.7071) * dlat,
+                lon0 + (i * 1.5 + k * 0.7071) * dlon,
+            )
+        )
+    for i in range(12, 61):  # along the second leg
+        fixes.append((t + 13.8 + i * 0.2, lat0 + 60 * dlat, lon0 + i * dlon))
+    for ft, la, lo in fixes:
+        lines.append(
+            _line(
+                ft,
+                "mav_out",
+                name="GLOBAL_POSITION_INT",
+                f={"lat": round(la * 1e7), "lon": round(lo * 1e7), "relative_alt": 20000},
+            )
+        )
+
+    lines.append(
+        _line(t + 12.0, "event", code="goto_arrived", sev="info", msg="mission item=1 err=2.90")
+    )
+    lines.append(
+        _line(
+            t + 26.0,
+            "event",
+            code="goto_arrived",
+            sev="info",
+            msg="mission complete seq=2 err=0.30",
+        )
+    )
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def corners_selftest(verbose=False):
+    """Two planted corners: one inside the allowance, one past it.
+
+    The same rule the axis diagnosis is held to — a report that has never been shown
+    to catch anything is not a report. A wide corner is the *only* thing this mode
+    exists to notice, so a synthetic one that it calls `ok` would be worse than having
+    no mode at all.
+    """
+    import io
+
+    tmp = tempfile.mkdtemp(prefix="flightlog-corners-")
+    cases = [
+        ("inside the allowance", 2.0, PASS),
+        ("past the allowance", 9.0, FAIL),
+        ("close enough to warn", 5.0, WARN),
+    ]
+    failures = 0
+    print("\ncorner report self-test — %d planted corners\n" % len(cases))
+    for name, overshoot, want in cases:
+        path = os.path.join(tmp, f"corner-{overshoot:.0f}.001.jsonl")
+        _corner_session(path, overshoot)
+        s = read_session([path])
+        buf = io.StringIO()
+        got = corner_report(s, buf, None)
+        text = buf.getvalue()
+        m = re.search(r"worst\s+([\d.]+) m", text)
+        measured = float(m.group(1)) if m else -1.0
+        # **The number, not just the verdict.** A report that says FAIL for the wrong
+        # reason is a report that will say ok for the wrong reason too.
+        close = abs(measured - overshoot) <= 0.35
+        ok = got == want and close
+        failures += 0 if ok else 1
+        print(
+            "  %-24s planted %4.1f m  measured %5.2f m  want %-4s got %-4s  %s"
+            % (name, overshoot, measured, want, got, "ok" if ok else "MISMATCH")
+        )
+        if verbose or not ok:
+            print(buf.getvalue())
+    print("\n%d/%d corner profiles behaved as planted" % (len(cases) - failures, len(cases)))
+    return failures
+
+
+def selftest(only=None, verbose=False):
+    tmp = tempfile.mkdtemp(prefix="flightlog-selftest-")
+    width = max(len(p) for p in PROFILES)
+    failures = 0
+    print("flightlog self-test — %d profiles, each with one planted fault\n" % len(PROFILES))
+    for name, p in PROFILES.items():
+        if only and only not in name:
+            continue
+        path = os.path.join(tmp, name + ".001.jsonl")
+        synth(name, path)
+        s = read_session([path])
+
+        class A:
+            pass
+
+        args = A()
+        args.from_t = 2.0
+        args.to_t = 6.0
+        args.around = None
+        args.max_rows = 6
+        for k, v in DEFAULTS.items():
+            setattr(args, k, v)
+        import io
+
+        buf = io.StringIO()
+        diagnose_axis(s, buf, args)
+        text = buf.getvalue()
+
+        want, got = set(p["expect"]), set()
+        for c in CASES:
+            if ("case %d " % c) in text.split("Evidence supports:")[-1]:
+                got.add(c)
+        ok = want.issubset(got)
+        notes = []
+        if not ok:
+            notes.append(
+                "expected case(s) {}, named {}".format(
+                    sorted(want) or "none", sorted(got) or "none"
+                )
+            )
+        if p.get("want_missing") and p["want_missing"] not in text:
+            ok = False
+            notes.append("did not report {} as missing".format(p["want_missing"]))
+        if p.get("want_drop") and "LOST INSIDE THIS WINDOW" not in text:
+            ok = False
+            notes.append("did not flag the drop inside the window")
+        if p.get("want_text") and p["want_text"] not in text:
+            ok = False
+            notes.append("did not print {!r}".format(p["want_text"]))
+        if (
+            not p["expect"]
+            and not p.get("want_missing")
+            and not p.get("want_drop")
+            and not p.get("want_text")
+            and got
+        ):
+            ok = False
+            notes.append(f"clean profile but named {sorted(got)}")
+
+        status = "ok  " if ok else "FAIL"
+        print("%s %-*s  %s" % (status, width, name, p["desc"]))
+        if notes:
+            for nline in notes:
+                print(f"     {nline}")
+        if not ok:
+            failures += 1
+        if verbose or not ok:
+            print("\n".join("     | " + ln for ln in text.splitlines()))
+            print()
+
+    print(f"\nfixtures in {tmp}")
+    if failures:
+        print("%d profile(s) NOT caught — the diagnosis has a hole." % failures)
+    else:
+        print("every planted fault was named correctly.")
+    return 1 if failures else 0
+
+
+# ─────────────────────────────── driver ───────────────────────────────
+
+
+def list_cases(out):
+    out.write("The eight things that could have happened, and what in the log separates them.\n")
+    out.write("If a log cannot distinguish these, it has failed.\n\n")
+    for n, (slug, title, evidence) in CASES.items():
+        out.write("case %d  %s\n" % (n, slug))
+        out.write(f"        {title}\n")
+        out.write(f"        distinguished by: {evidence}\n\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="the recorder that writes these files is "
+        "android/app/src/main/java/com/dimensional/mini4pro/record/",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "files", nargs="*", help="session JSONL file(s); one part pulls in its siblings"
+    )
+    ap.add_argument("--summary", action="store_true", help="session overview (the default)")
+    ap.add_argument(
+        "--diagnose-axis",
+        action="store_true",
+        help="answer 'why did it move the wrong way' for a window",
+    )
+    ap.add_argument("--from", dest="from_t", type=float, metavar="S", help="window start, seconds")
+    ap.add_argument("--to", dest="to_t", type=float, metavar="S", help="window end, seconds")
+    ap.add_argument("--around", type=float, metavar="S", help="centre the window here")
+    ap.add_argument("--window", type=float, metavar="S", help="width for --around (default 3)")
+    ap.add_argument(
+        "--cmd-min",
+        dest="cmd_min",
+        type=float,
+        metavar="MS",
+        help="m/s below which a setpoint axis is not commanding (default 0.30)",
+    )
+    ap.add_argument(
+        "--resp-min",
+        dest="resp_min",
+        type=float,
+        metavar="MS",
+        help="m/s below which the aircraft is not moving (default 0.30)",
+    )
+    ap.add_argument(
+        "--rc-min",
+        dest="rc_min",
+        type=float,
+        metavar="N",
+        help="normalised stick deflection counted as pilot input (default 0.05)",
+    )
+    ap.add_argument(
+        "--axis-ratio",
+        dest="axis_ratio",
+        type=float,
+        metavar="R",
+        help="how much one axis must exceed the others to dominate (default 2.0)",
+    )
+    ap.add_argument(
+        "--max-rows",
+        dest="max_rows",
+        type=int,
+        metavar="N",
+        default=30,
+        help="rows of the diagnosis table to print, evenly sampled (0 = all)",
+    )
+    ap.add_argument(
+        "--join",
+        type=float,
+        metavar="S",
+        help="how far a joined sample may be from a command (default 0.25)",
+    )
+    ap.add_argument(
+        "--corners",
+        action="store_true",
+        help="how far the flown path left the drawn one, against CORNER_ALLOWANCE_M",
+    )
+    ap.add_argument("--cross-check", metavar="TLOG", help="compare against a QGC .tlog")
+    ap.add_argument("--list-cases", action="store_true", help="the eight cases and their evidence")
+    ap.add_argument(
+        "--selftest", action="store_true", help="synthetic sessions with planted faults"
+    )
+    ap.add_argument("--only", metavar="SUBSTR", help="restrict --selftest to matching profiles")
+    ap.add_argument("--verbose", action="store_true", help="print full output in --selftest")
+    args = ap.parse_args()
+
+    if args.list_cases:
+        list_cases(sys.stdout)
+        return 0
+    if args.selftest:
+        rc = selftest(args.only, args.verbose)
+        return rc + corners_selftest(args.verbose)
+    if not args.files:
+        ap.error("give a session file, or --selftest / --list-cases")
+
+    s = read_session(expand(args.files))
+    rc = 0
+    if args.corners:
+        verdict = corner_report(s, sys.stdout, args)
+        rc = 1 if verdict == FAIL else 0
+    elif args.diagnose_axis:
+        verdict = diagnose_axis(s, sys.stdout, args)
+        rc = 1 if verdict in (FAIL, INFO) else 0
+    else:
+        summarise(s, sys.stdout, args)
+    if args.cross_check:
+        v = cross_check(s, args.cross_check, sys.stdout)
+        if v == FAIL:
+            rc = 1
+    return rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

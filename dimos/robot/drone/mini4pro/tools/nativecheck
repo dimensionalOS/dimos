@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Diff an APK's native libraries against the build that actually flew.
+
+    tools/nativecheck android/app/build/outputs/apk/debug/app-debug.apk
+    tools/nativecheck <apk> --update      # re-bless, after a build is proven on the aircraft
+
+**This is a diff, not a verdict.** It cannot tell you a build is safe; it tells you exactly what
+changed in the one dimension that has bitten this project — Gradle's `pickFirst` silently
+resolving `libc++_shared.so` to another vendor's copy, which on 2026-07-27 killed MSDK on the
+aircraft with `UnsatisfiedLinkError`. Sometimes a dirty run is just "yes, that is the library I
+just added"; the point is that it is deliberate rather than discovered mid-flight.
+
+Exit codes: **0** nothing moved, **1** something changed, review it, **2** a library implicated
+in that crash changed. `--update` re-blesses `tools/native-known-good.txt` and must be run
+**after** a build has flown, never before; it requires `--note` saying what proved it.
+
+Full rationale: `docs/tools/nativecheck.md`.
+"""
+
+import argparse
+import os
+import sys
+import zipfile
+
+DEFAULT_MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "native-known-good.txt")
+
+# `pickFirst` in android/app/build.gradle resolves these by merge order, which is the mechanism
+# that failed. A change here is not "a difference to review", it is the 23:25 crash until proven
+# otherwise, so it is reported separately and loudly.
+PICK_FIRST = ("libc++_shared.so",)
+
+# Stripping or replacing one of these takes registration or flight down. build.gradle carries a
+# `doNotStrip` for each, with the comment "MSDK native libs must not be stripped or registration
+# /flight fails" — this is the same list, checked at the other end of the build.
+MSDK_CRITICAL = (
+    "libconstants.so",
+    "libdjibase.so",
+    "libDJICSDKCommon.so",
+    "libdjisdk_jni.so",
+    "libDJIRegister.so",
+    "libDJIFlySafeCore-CSDK.so",
+    "libPPAL.so",
+)
+
+
+def natives(apk):
+    """`{path: (size, crc)}` for every native library in the APK."""
+    out = {}
+    with zipfile.ZipFile(apk) as z:
+        for info in z.infolist():
+            if info.filename.startswith("lib/") and info.filename.endswith(".so"):
+                out[info.filename] = (info.file_size, info.CRC)
+    return out
+
+
+def read_manifest(path):
+    entries, meta = {}, {}
+    if not os.path.exists(path):
+        return None, meta
+    with open(path) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if line.startswith("#"):
+                if ":" in line:
+                    k, _, v = line[1:].partition(":")
+                    meta[k.strip()] = v.strip()
+                continue
+            if not line.strip():
+                continue
+            crc, size, name = line.split(None, 2)
+            entries[name] = (int(size), int(crc, 16))
+    return entries, meta
+
+
+def write_manifest(path, entries, apk, note):
+    import hashlib
+
+    h = hashlib.md5()
+    with open(apk, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    with open(path, "w") as fh:
+        fh.write("# The native libraries of the APK this project treats as known-good.\n")
+        fh.write("# Regenerate ONLY after a build has been proven against the aircraft:\n")
+        fh.write("#     tools/nativecheck <apk> --update\n")
+        fh.write("# Written by tools/nativecheck. Format: <crc32> <size> <path>\n")
+        fh.write("#\n")
+        fh.write(f"# apk: {os.path.relpath(apk, os.path.dirname(os.path.abspath(path)))}\n")
+        fh.write(f"# md5: {h.hexdigest()}\n")
+        fh.write(f"# proven: {note}\n")
+        fh.write("#\n")
+        for name in sorted(entries):
+            size, crc = entries[name]
+            fh.write("%08x %12d %s\n" % (crc, size, name))
+    return h.hexdigest()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("apk")
+    ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
+    ap.add_argument(
+        "--update",
+        action="store_true",
+        help="re-bless the manifest from this APK; only after it has flown",
+    )
+    ap.add_argument(
+        "--note", default="", help="with --update: what proved this build, recorded in the manifest"
+    )
+    args = ap.parse_args()
+
+    if not os.path.exists(args.apk):
+        sys.exit(f"no such APK: {args.apk}")
+    now = natives(args.apk)
+    if not now:
+        sys.exit(f"no lib/**/*.so in {args.apk} — is this an APK?")
+
+    if args.update:
+        if not args.note:
+            sys.exit(
+                "--update needs --note saying what proved this build. A blessing nobody "
+                "can trace is worse than no manifest."
+            )
+        md5 = write_manifest(args.manifest, now, args.apk, args.note)
+        print("blessed %d native libraries from %s" % (len(now), args.apk))
+        print(f"  md5 {md5}")
+        print(f"  ->  {args.manifest}")
+        return 0
+
+    known, meta = read_manifest(args.manifest)
+    if known is None:
+        sys.exit(
+            f"no manifest at {args.manifest} — create one with --update from a build that has flown"
+        )
+
+    print(f"APK       {args.apk}")
+    print(f"against   {args.manifest}")
+    for k in ("apk", "md5", "proven"):
+        if k in meta:
+            print("  %-8s %s" % (k, meta[k]))
+    print("%d native libraries now, %d in the manifest" % (len(now), len(known)))
+
+    added = sorted(set(now) - set(known))
+    missing = sorted(set(known) - set(now))
+    changed = sorted(n for n in set(now) & set(known) if now[n] != known[n])
+
+    def base(p):
+        return p.rsplit("/", 1)[-1]
+
+    fatal = []
+    for n in changed + missing:
+        if base(n) in PICK_FIRST:
+            fatal.append(("pickFirst library resolved differently", n))
+        elif base(n) in MSDK_CRITICAL:
+            fatal.append(("MSDK library changed or gone", n))
+    for n in missing:
+        if not any(n == f[1] for f in fatal):
+            fatal.append(("library present in the known-good build and absent here", n))
+
+    if not (added or missing or changed):
+        print("\nCLEAN — every native library matches the build that flew.")
+        return 0
+
+    if changed:
+        print("\nCHANGED (%d)" % len(changed))
+        for n in changed:
+            print(
+                "  %-46s %d -> %d bytes, crc %08x -> %08x"
+                % (n, known[n][0], now[n][0], known[n][1], now[n][1])
+            )
+    if added:
+        print("\nADDED (%d) — new to this build" % len(added))
+        for n in added:
+            print("  %-46s %d bytes" % (n, now[n][0]))
+    if missing:
+        print("\nMISSING (%d) — in the known-good build, not in this one" % len(missing))
+        for n in missing:
+            print("  %-46s was %d bytes" % (n, known[n][0]))
+
+    if fatal:
+        print("\n" + "=" * 78)
+        print("STOP. This is the shape of the 2026-07-27 23:25 crash.")
+        for why, n in fatal:
+            print(f"  {why}:\n    {n}")
+        print("A different libc++_shared.so means `pickFirst` chose another vendor's copy, and")
+        print("MSDK will fail at JNIKeyValue.native_get_sync — after installing, on the aircraft.")
+        print("=" * 78)
+        return 2
+
+    print("\nDifferences, none of them in the libraries that have broken this before.")
+    print("Review the list above, then install and verify on the aircraft before --update.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

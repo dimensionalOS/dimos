@@ -1,0 +1,190 @@
+# DJI Mini 4 Pro gimbal camera, 1920x1080 video stream.
+#
+# ============================================================================
+# THIS IS A PRIOR, NOT A CALIBRATION. It will be replaced by a chessboard run.
+# ============================================================================
+#
+# No chessboard was ever shown to this camera. Every number below comes from
+# flights recorded for other purposes, and the file exists so that a consumer
+# has something defensible to load in the meantime rather than the 1000.0 px
+# placeholder that dimos/robot/drone/blueprints/basic/drone_basic.py carries
+# today — which is 31 % low and would put a tag at 3 m two metres closer than
+# it is.
+#
+# Regenerate with dimos' own tool, which writes exactly this schema:
+#     dimos cameracalibrate --distortion-model plumb_bob ...
+# Doing so will discard these comments, which is correct: they describe
+# evidence that a real calibration supersedes.
+#
+# Full derivation and error budget:
+#   mini4pro/docs/measurements/2026-07-28-camera-intrinsics-prior.md
+#   mini4pro/docs/measurements/2026-07-27-tag-detection-rate.md  (section 3)
+#
+# ---------------------------------------------------------------------------
+# fx, fy = 1457.1 px      FITTED, reproduces to 1.2 %
+# ---------------------------------------------------------------------------
+# Two independent flights fitted the focal length against recorded altitude
+# over their own AprilTag detections: 1465.9 px and 1448.3 px at 1920 wide.
+# They agree to 1.2 %, which is what a camera property should do, while the
+# same fits' intercepts (+0.328 m, -0.063 m) disagree entirely — because that
+# is the height of the board the tag stood on and the two sessions were set up
+# on different days. Slope reproducing while intercept does not is the evidence
+# the fit separated a camera error from a scene error.
+#
+# DJI's published 82.1 deg diagonal implies 1266 px instead. That figure is
+# 13.2 % low for THIS STREAM and should not be used: the implied field of view
+# here is 66.8 x 40.7 deg, 74.2 diagonal. The published number is presumably
+# the full sensor, and the video is cropped.
+#
+# fx == fy is BOUNDED, not assumed. A square tag on a plane parallel to the
+# sensor images as a square, so A*A^T for its edge vectors must be diagonal
+# with ratio (fx/fy)^2 — the tag's heading, the aircraft yaw and the height all
+# cancel. 1203 detections across both flights put fy within 0.85 % of fx.
+#
+# The anisotropy that IS present is not the pixel aspect and must not be read
+# as one: pixel aspect is diag(fx, fy), acts along the image axes, and can
+# produce no skew at all. The observed anisotropy sits 35 deg off any image
+# axis in one flight, and the two flights agree on its magnitude while
+# disagreeing 36 deg on its axis. A camera property cannot change axis between
+# two flights; a tag on a differently-sloped surface can.
+#
+# ---------------------------------------------------------------------------
+# cx, cy = image centre      ASSUMED — this is the weakest number in the file
+# ---------------------------------------------------------------------------
+# Extrapolating the tag's image track to zero scale gives the image of a tag
+# infinitely far away, which is on the optical axis by definition. Both flights
+# fit it tightly and DISAGREE BY 82 px in cx (1006 and 1088 against a centre of
+# 960), twenty times their formal standard errors.
+#
+# The disagreement is structural, not statistical. A camera pointing d away
+# from true nadir displaces the tag-at-infinity by f*tan(d), which is
+# algebraically identical to a principal-point offset of f*tan(d). In a nadir
+# descent they are the same parameter and no amount of this data separates
+# them. 46 px is 1.8 deg; 128 px is 5.0 deg. The gimbal reported exactly -90.0
+# through every frame used.
+#
+# So the centre is kept, and the honest error bar on it is tens of pixels.
+# At 3 m that is 10-26 cm of lateral error on a tag pose — larger than the
+# focal length term (3.6 cm), the aspect bound (2.6 cm) and the distortion
+# (under a millimetre) combined. If a consumer can only check one number in
+# this file against a real calibration, check this one.
+#
+# ---------------------------------------------------------------------------
+# distortion = zero, plumb_bob      MEASURED. This is the one solid result.
+# ---------------------------------------------------------------------------
+# Plumb-line calibration (mini4pro/tools/lensfit): a straight line in the world
+# projects to a straight line under a pinhole whatever its depth, so the
+# straight edges already in the scene are a free target. 66 edges across 24
+# frames of both flights, traced to subpixel off the interpolated intensity
+# gradient. Three independent reads:
+#
+#   sign test    30 of 63 edges bow outward, 48 % — a coin flip. Barrel
+#                distortion bows every line outward and would give ~100 %.
+#   LAD slope    k1 = +0.026, 95 % bootstrap CI [-0.031, +0.054]
+#   least sq.    correcting improves straightness 1.589 -> 1.577 px RMS, 0.8 %
+#
+# As the quantity k1 and k2 do not trade against each other, the radial shift
+# at the image corner is +16 px, CI [-19, +34], on a 1101 px corner radius.
+# DJI is evidently already rectifying the delivered stream.
+#
+# THE ZEROS BELOW ARE WEAKER THAN THE ZERO ABOVE, in two ways worth stating.
+#
+# First, only the radial terms were fitted. p1 and p2 were never estimated.
+# Decentering distortion also bends straight lines, so the residual straightness
+# does bound it in aggregate, but nothing here bounds it specifically.
+#
+# Second, mini4pro's own LCM camera_info publishes an EMPTY D with an empty
+# distortion_model, and deliberately not five zeros — the argument being that
+# zeros are an affirmative claim and an empty D forces a consumer to make the
+# zero assumption itself, visibly. This file cannot do that: dimos'
+# load_camera_info() indexes distortion_coefficients.data directly, and an
+# empty list would propagate into cv2.undistort as a broken model rather than
+# as an absent one. The format has to commit, so it commits to the measurement.
+#
+# ---------------------------------------------------------------------------
+# Why there is no 1280x720 variant of this file
+# ---------------------------------------------------------------------------
+# fx is carried elsewhere in this project as a fraction of width (0.7589 * W)
+# so that it follows a resolution change. That scaling is only valid if the
+# pipeline SCALES to produce another size. If it CROPS, the fraction is wrong
+# and the focal length in pixels is unchanged instead. Nobody has checked which
+# DJI does, so no second file is written. Detect at 1920x1080.
+
+image_width: 1920
+image_height: 1080
+camera_name: mini4pro_gimbal_1080p
+distortion_model: plumb_bob
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1457.1
+  - 0.0
+  - 960.0
+  - 0.0
+  - 1457.1
+  - 540.0
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 1457.1
+  - 0.0
+  - 960.0
+  - 0.0
+  - 0.0
+  - 1457.1
+  - 540.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+
+# Non-standard, ignored by CameraInfo.from_yaml and load_camera_info (both
+# index by name and skip what they do not know). Here so the qualification
+# travels with the file even when the comments above are stripped.
+provenance:
+  calibrated: false
+  intrinsics: fitted
+  focal_over_width: 0.7589
+  focal_fits_px_at_1920: [1465.9, 1448.3]
+  aspect: bounded
+  aspect_bound_pct: 0.85
+  distortion: bounded-none
+  distortion_corner_px: 16.2
+  distortion_corner_ci_px: [-19.5, 33.9]
+  principal_point: assumed-image-centre
+  principal_point_disagreement_px: [82.1, 23.0]
+  principal_point_note: >-
+    Inseparable from gimbal pointing bias in a nadir descent; the two flights
+    put the optical axis 46 and 128 px off centre and disagree with each other.
+    This is the largest error in the model.
+  sources:
+    - docs/measurements/2026-07-28-camera-intrinsics-prior.md
+    - docs/measurements/2026-07-27-tag-detection-rate.md

@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""Turn a session's video sidecar into something a person can watch, and a frame
+into something a person can look at.
+
+    tools/videoexport session.001.jsonl                  # one MP4 per contiguous run
+    tools/videoexport session.001.jsonl --at 48.62       # the frame at flight time 48.62 s
+    tools/videoexport session.001.jsonl --at 48.62 --out corner.png
+    tools/videoexport session.001.jsonl --list           # what is in the index, no writing
+
+**Why this exists.** The recorder writes an Annex-B elementary stream — `.h264` with
+no container — because that is what survives a power cut and what joins to telemetry
+on one clock. It is the right thing to *record* and the wrong thing to *watch*: it
+carries no timestamps, no frame rate and no duration, so ffplay decodes it but cannot
+seek, and VLC and mplayer will not open it at all. That is not a fault in the file;
+there is simply nothing in it to seek by.
+
+**Why not just `ffmpeg -r 34 -i in.h264 out.mp4`.** Because it would be a lie in the
+one place that matters. The frames' arrival times are in the flight log, stamped on
+the same monotonic clock as the gimbal angle and the altitude — that is the entire
+reason the sidecar is an index rather than an MP4. A constant frame rate throws that
+away, and where recording was toggled off and on it is wrong by whole seconds: the
+2026-07-27 bench session has an 8.2 s gap in the middle of it. A viewer built on that
+would put the camera somewhere the aircraft was not.
+
+So: **one file per contiguous run**, each at its own measured rate, and a printed
+mapping from flight time to file. Within a run the stream is near-constant (34.2 fps
+measured, jitter of a few ms) so a constant rate is honest at the millisecond level;
+across a gap nothing is invented at all, because there is no file spanning it.
+
+`--at` needs no container. It walks the index back to the keyframe preceding the
+requested time, feeds ffmpeg exactly those bytes, and takes the last frame — which is
+the smallest decode that can be correct, and works even when the part it lands in was
+pruned away from everything after it.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+FORMAT = "mini4pro-flightlog-1"
+
+# Frames further apart than this begin a new run. Comfortably longer than a dropped
+# frame or two at 34 fps and far shorter than any deliberate pause.
+RUN_GAP_S = 0.5
+
+
+def read_index(path):
+    """The `frame` lines, the session id, and where the sidecar parts should be."""
+    frames, session = [], None
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a torn last line is expected; the recorder is append-only
+            if rec.get("k") == "header":
+                if rec.get("format") != FORMAT:
+                    sys.exit(f"{path}: not a {FORMAT} log")
+                session = session or rec.get("session")
+            elif rec.get("k") == "frame":
+                frames.append(rec)
+    if session is None:
+        sys.exit(f"{path}: no header line — not a flight log?")
+    frames.sort(key=lambda f: f["t"])
+    return session, frames
+
+
+def part_path(directory, session, part):
+    return os.path.join(directory, "%s.v%03d.h264" % (session, part))
+
+
+def runs_of(frames):
+    """Contiguous stretches, split where the stream stopped for longer than [RUN_GAP_S]."""
+    out, current = [], []
+    for fr in frames:
+        if current and fr["t"] - current[-1]["t"] > RUN_GAP_S:
+            out.append(current)
+            current = []
+        current.append(fr)
+    if current:
+        out.append(current)
+    return out
+
+
+def bytes_for(frames, directory, session, missing):
+    """The frames' bytes, in order, read from the parts they name.
+
+    A part that is not there is **not an error**: the sidecar prunes oldest-first, so
+    an index line can outlive its bytes. Knowing a frame existed and when it arrived is
+    evidence even when the picture is gone, which is the difference between an index and
+    a container — so the gap is reported and the rest is exported.
+    """
+    blob = bytearray()
+    handles = {}
+    used = 0
+    for fr in frames:
+        p = fr["part"]
+        if p in missing:
+            continue
+        if p not in handles:
+            path = part_path(directory, session, p)
+            if not os.path.exists(path):
+                missing.add(p)
+                continue
+            handles[p] = open(path, "rb")
+        h = handles[p]
+        h.seek(fr["off"])
+        blob += h.read(fr["len"])
+        used += 1
+    for h in handles.values():
+        h.close()
+    return bytes(blob), used
+
+
+def rate_of(frames):
+    span = frames[-1]["t"] - frames[0]["t"]
+    if span <= 0 or len(frames) < 2:
+        return 30.0
+    return (len(frames) - 1) / span
+
+
+def export_runs(path, out_dir, quiet=False):
+    session, frames = read_index(path)
+    if not frames:
+        print("no `frame` entries in this session — nothing was recorded")
+        return 1
+    directory = os.path.dirname(os.path.abspath(path))
+    out_dir = out_dir or directory
+    os.makedirs(out_dir, exist_ok=True)
+
+    missing = set()
+    print("%s — %d frames indexed\n" % (session, len(frames)))
+    print("  run  flight time        dur     frames    fps   file")
+    rc = 0
+    for i, run in enumerate(runs_of(frames), 1):
+        blob, used = bytes_for(run, directory, session, missing)
+        if not blob:
+            print(
+                "  %-4d %7.2f–%-7.2f  %6s  %6d   —      (bytes pruned away)"
+                % (i, run[0]["t"], run[-1]["t"], "—", len(run))
+            )
+            rc = 1
+            continue
+        fps = rate_of(run)
+        out = os.path.join(out_dir, "%s.run%d.mp4" % (session, i))
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-fflags",
+                "+genpts",
+                "-r",
+                f"{fps:.4f}",
+                "-f",
+                "h264",
+                "-i",
+                "pipe:0",
+                "-c:v",
+                "copy",
+                "-video_track_timescale",
+                "1000",
+                out,
+            ],
+            input=blob,
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            print("  %-4d ffmpeg failed: %s" % (i, proc.stderr.decode()[:120]))
+            rc = 1
+            continue
+        print(
+            "  %-4d %7.2f–%-7.2f  %5.1fs  %6d  %5.1f   %s"
+            % (
+                i,
+                run[0]["t"],
+                run[-1]["t"],
+                run[-1]["t"] - run[0]["t"],
+                used,
+                fps,
+                os.path.basename(out),
+            )
+        )
+    if missing:
+        print(
+            "\n  parts {} are indexed but their bytes are gone (pruned). Those frames were skipped.".format(
+                ", ".join(str(p) for p in sorted(missing))
+            )
+        )
+    print("\n  To find a moment: video time = flight time − the run's start.")
+    print("  Or let this tool do it: --at <flight time>")
+    return rc
+
+
+def export_frame(path, at, out, quiet=False):
+    """One frame, decoded from the smallest correct span of bytes.
+
+    From the keyframe at or before [at] through the requested frame — a decoder needs
+    everything between the two and nothing before, so this is the least it can be given
+    and still be right.
+    """
+    session, frames = read_index(path)
+    if not frames:
+        sys.exit("no `frame` entries in this session")
+    directory = os.path.dirname(os.path.abspath(path))
+
+    target = min(range(len(frames)), key=lambda i: abs(frames[i]["t"] - at))
+    start = target
+    while start > 0 and not frames[start].get("key"):
+        start -= 1
+    if not frames[start].get("key"):
+        sys.exit(
+            f"no keyframe at or before t={at:.3f} — the run began mid-stream, which the "
+            "recorder no longer allows but older records may contain"
+        )
+
+    span = frames[start : target + 1]
+    if len({f["part"] for f in span}) > 1:
+        # Possible only in records written before rotation waited for a keyframe.
+        print("note: this span crosses a part boundary", file=sys.stderr)
+    missing = set()
+    blob, used = bytes_for(span, directory, session, missing)
+    if not blob:
+        sys.exit("the bytes for that moment have been pruned away")
+
+    out = out or os.path.join(directory, "{}.t{:.2f}.png".format(session, frames[target]["t"]))
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-vf",
+            "select=eq(n\\,%d)" % (used - 1),
+            "-frames:v",
+            "1",
+            out,
+        ],
+        input=blob,
+        capture_output=True,
+    )
+    if proc.returncode != 0 or not os.path.exists(out):
+        sys.exit(f"ffmpeg could not decode that span: {proc.stderr.decode()[:200]}")
+    fr = frames[target]
+    print(
+        "t=%.3f  frame %d  part %d  %s%s\n%s"
+        % (
+            fr["t"],
+            fr["n"],
+            fr["part"],
+            "keyframe" if fr.get("key") else "inter",
+            "" if used == 1 else "  (decoded %d frames from the preceding keyframe)" % used,
+            out,
+        )
+    )
+    return 0
+
+
+def list_index(path):
+    session, frames = read_index(path)
+    if not frames:
+        print("no `frame` entries — nothing was recorded this session")
+        return 0
+    span = frames[-1]["t"] - frames[0]["t"]
+    total = sum(f["len"] for f in frames)
+    keys = [f for f in frames if f.get("key")]
+    print(f"{session}\n")
+    print("  frames      %d over %.1fs = %.1f fps" % (len(frames), span, rate_of(frames)))
+    print(
+        f"  bytes       {total / 1e6:.1f} MB = {total / span / 1024:.0f} kB/s = {total * 8 / span / 1e6:.2f} Mbit/s"
+    )
+    print("  keyframes   %d, about %.1fs apart" % (len(keys), span / max(1, len(keys))))
+    print("  parts       {}".format(", ".join(str(p) for p in sorted({f["part"] for f in frames}))))
+    runs = runs_of(frames)
+    print(
+        "  runs        %d (split where the stream stopped for more than %.1fs)"
+        % (len(runs), RUN_GAP_S)
+    )
+    for i, r in enumerate(runs, 1):
+        print(
+            "    %-3d %7.2f–%-7.2f  %6.1fs  %5d frames"
+            % (i, r[0]["t"], r[-1]["t"], r[-1]["t"] - r[0]["t"], len(r))
+        )
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Export a session's recorded video, with the flight's own timestamps."
+    )
+    ap.add_argument("session", help="a session .jsonl (the sidecar parts sit beside it)")
+    ap.add_argument(
+        "--at", type=float, metavar="S", help="export the single frame nearest this flight time"
+    )
+    ap.add_argument("--out", metavar="PATH", help="output file (--at) or directory")
+    ap.add_argument("--list", action="store_true", help="what the index holds; writes nothing")
+    args = ap.parse_args()
+
+    if args.list:
+        return list_index(args.session)
+    if args.at is not None:
+        return export_frame(args.session, args.at, args.out)
+    return export_runs(args.session, args.out)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

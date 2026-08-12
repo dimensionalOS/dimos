@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Dump a DJI MSDK offline API doc page as readable text.
+
+The bundled reference (Mobile-SDK-Android-V5/Docs/Android_API/en) is 67 MB of
+HTML whose every page repeats a ~500-entry nav sidebar. This strips the chrome
+and prints just the article body, so the API surface is greppable offline.
+
+    tools/djidoc IVirtualStickManager
+    tools/djidoc IVirtualStickManager/VirtualStickFlightControlParam
+    tools/djidoc -l virtualstick          # list matching pages
+"""
+
+import html
+from pathlib import Path
+import re
+import sys
+
+DOCS = Path(__file__).resolve().parent.parent / "Mobile-SDK-Android-V5/Docs/Android_API/en"
+
+
+def pages():
+    return sorted(DOCS.rglob("*.html"))
+
+
+def find(query):
+    q = query.lower().replace(".html", "")
+    exact = [p for p in pages() if p.stem.lower() == q]
+    if exact:
+        return exact
+    rel = [p for p in pages() if q in str(p.relative_to(DOCS)).lower()]
+    return rel
+
+
+def text_of(path):
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    # The sidebar lives outside <div class="article">; keep only article bodies.
+    articles = re.findall(r'<div class="article".*?>(.*)', raw, flags=re.S)
+    body = articles[0] if articles else raw
+    body = re.sub(r"<(script|style|nav)\b.*?</\1>", "", body, flags=re.S)
+    body = re.sub(r"<br\s*/?>", "\n", body)
+    body = re.sub(r"</(p|div|tr|li|h[1-6]|pre)>", "\n", body)
+    body = re.sub(r"</t[dh]>", " | ", body)
+    body = re.sub(r"<[^>]+>", "", body)
+    body = html.unescape(body)
+    body = re.sub(r"[ \t]+", " ", body)
+    body = re.sub(r" *\n( *\n)+", "\n\n", body)
+    return "\n".join(line.strip() for line in body.splitlines()).strip()
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        sys.exit(__doc__)
+    if args[0] in ("-l", "--list"):
+        for p in find(args[1] if len(args) > 1 else ""):
+            print(p.relative_to(DOCS))
+        return
+    hits = find(args[0])
+    if not hits:
+        sys.exit(f"no page matching {args[0]!r} (try -l)")
+    if len(hits) > 1 and hits[0].stem.lower() != args[0].lower():
+        print(f"# {len(hits)} matches, showing {hits[0].relative_to(DOCS)}", file=sys.stderr)
+        for p in hits[1:]:
+            print(f"#   also: {p.relative_to(DOCS)}", file=sys.stderr)
+    print(text_of(hits[0]))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Publish a recorded flight onto a real Zenoh bus using the app's OWN classes.
+#
+#     tools/zenohlive/run <record.jsonl> [--endpoint tcp/10.55.1.50:7447] [--speed 10]
+#
+# See ZenohLive.java for what this proves and — more importantly — what it does not. The short
+# version: it runs the shipping `ZenohPublisher`/`ZenohKotlinSink` against the JVM build of the
+# same zenoh binding the Android AAR ships, so everything below the seam is exercised for real
+# except the one thing only an arm64 phone can settle.
+#
+# The classpath is deliberately assembled by hand rather than through Gradle. The app depends on
+# `zenoh-kotlin-android`, whose native library is an Android binary and will not load here; this
+# needs `zenoh-kotlin`, the JVM artifact, which carries a Linux `.so` as a resource. Same classes,
+# same package, different natives — so the app's compiled Kotlin runs against it unchanged, which
+# is the whole reason this harness is worth anything.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../.." && pwd)"
+classes="$repo/android/app/build/tmp/kotlin-classes/debug"
+libs="$repo/tmp/zenohlive-libs"
+out="$repo/tmp/zenohlive-classes"
+
+ZENOH_VERSION="${ZENOH_VERSION:-1.9.0}"
+CENTRAL=https://repo1.maven.org/maven2
+
+# groupPath:artifact:version — zenoh-kotlin's own runtime dependencies, from its POM.
+DEPS=(
+    "org/eclipse/zenoh:zenoh-kotlin:$ZENOH_VERSION"
+    "org/jetbrains/kotlinx:kotlinx-coroutines-core-jvm:1.7.3"
+    "org/jetbrains/kotlinx:kotlinx-serialization-core-jvm:1.6.0"
+    "org/jetbrains/kotlinx:kotlinx-serialization-json-jvm:1.6.0"
+    "org/jetbrains/kotlin:kotlin-reflect:1.9.10"
+    "commons-net:commons-net:3.9.0"
+)
+
+mkdir -p "$libs" "$out"
+for dep in "${DEPS[@]}"; do
+    group="${dep%%:*}"; rest="${dep#*:}"
+    artifact="${rest%%:*}"; version="${rest#*:}"
+    jar="$libs/$artifact-$version.jar"
+    if [ ! -s "$jar" ]; then
+        url="$CENTRAL/$group/$artifact/$version/$artifact-$version.jar"
+        echo "fetching $artifact-$version.jar" >&2
+        curl -fsSL -o "$jar" "$url"
+    fi
+done
+
+if [ "${SKIP_GRADLE:-0}" != "1" ]; then
+    (cd "$repo/android" && ./gradlew --offline -q :app:compileDebugKotlin)
+fi
+
+if [ ! -d "$classes" ]; then
+    echo "no compiled Kotlin at $classes -- run android/gradlew :app:compileDebugKotlin" >&2
+    exit 1
+fi
+
+stdlib="$(find "$HOME/.gradle/caches" -name 'kotlin-stdlib-2*.jar' 2>/dev/null | head -1)"
+if [ -z "$stdlib" ]; then
+    echo "kotlin-stdlib jar not found under ~/.gradle/caches" >&2
+    exit 1
+fi
+
+cp="$classes:$stdlib"
+for jar in "$libs"/*.jar; do cp="$cp:$jar"; done
+
+javac -nowarn -cp "$cp" -d "$out" "$here/ZenohLive.java"
+exec java -cp "$out:$cp" ZenohLive "$@"

@@ -1,0 +1,44 @@
+{
+  "comment": [
+    "QGroundControl Fly View actions for the mini4pro bridge \u2014 the bottom auxiliary lamp.",
+    "",
+    "To install: QGC -> Fly View Settings -> 'Fly View Actions File', point it at this file.",
+    "The buttons then appear behind the Fly View's additional-actions button. No QGC build,",
+    "no patch, no plugin: QGC reads this file at startup (MavlinkActionManager.cc) and sends",
+    "the command verbatim.",
+    "",
+    "mavCmd 31010 is MAV_CMD_USER_1, which MAVLink reserves for exactly this. There is no",
+    "standard command for a lamp on an airframe QGC believes is a PX4 quadcopter, and taking",
+    "a standard id would collide with whatever that id comes to mean.",
+    "",
+    "param1: 0 AUTO, 1 ON, 2 OFF, 3 BEACON. Anything else is refused by the bridge rather",
+    "than clamped, because DJI's own enum has an UNKNOWN member and a lenient mapping would",
+    "ask the aircraft for a mode nobody chose.",
+    "",
+    "BEACON is deliberately not given a button. It strobes, which alternates the camera's",
+    "exposure frame to frame and is the worst possible mode for anything looking at video.",
+    "It remains reachable by editing this file, by whoever wants it and knows why."
+  ],
+  "fileType": "MavlinkActions",
+  "version": 1,
+  "actions": [
+    {
+      "label": "Light On",
+      "description": "Force the bottom auxiliary lamp on. It lights the ground close in, for the downward vision sensors \u2014 whether it helps the camera see a tag at height is unmeasured.",
+      "mavCmd": 31010,
+      "param1": 1
+    },
+    {
+      "label": "Light Off",
+      "description": "Force the bottom auxiliary lamp off.",
+      "mavCmd": 31010,
+      "param1": 2
+    },
+    {
+      "label": "Light Auto",
+      "description": "Hand the lamp back to the aircraft, which turns it on near the ground for the landing sensors. This is the factory behaviour and the state to leave it in.",
+      "mavCmd": 31010,
+      "param1": 0
+    }
+  ]
+}

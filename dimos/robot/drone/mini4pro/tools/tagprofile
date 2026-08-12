@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Measure what decoding and detecting a recorded flight costs on the actual phone.
+#
+#   tools/tagprofile stage             # push the reference dataset to the phone (once)
+#   tools/tagprofile throughput        # fps / CPU at each working resolution
+#   tools/tagprofile frameprobe [s]    # NEEDS A POWERED AIRCRAFT: what addFrameListener costs
+#   tools/tagprofile soak [seconds]    # hold the working rate for minutes, watch the heat
+#   tools/tagprofile pull              # bring the reports back into tmp/tagprofile/
+#
+# WHY THIS EXISTS. Nothing in this project has ever decoded a video frame: the video path
+# forwards the aircraft's encoded H.264 without looking inside it, which is exactly why it is
+# cheap. Tag detection cannot do that, so before any of it is designed, the cost has to be a
+# measured number on the device that would pay it — a Xiaomi in the sun, clamped to a controller,
+# already running the abort ladder.
+#
+# WHY IT REPLAYS A RECORDING RATHER THAN USING THE CAMERA. Determinism. The same 2374 frames in
+# the same order every run means two numbers from two designs are comparable, and it means the
+# whole thing runs with no aircraft, no flying and no weather. The dataset is a real flight —
+# takeoff to 8.5 m and a landing, gimbal nadir, the 75 mm tag in frame — so the frames are the
+# aircraft's own, at the resolution and bitrate it really sends.
+#
+# THE PHONE MAY BE BUSY. Its single USB-C port belongs to the RC during any flight, and adb comes
+# the long way round through hyper1 (tools/phoneadb). This script never starts anything that
+# touches the aircraft, but a five-minute soak will heat a phone that someone is about to fly
+# with, so check what the rig is doing before running one.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+PKG=com.dimensional.mini4pro
+DATASET=${TAGPROFILE_DATASET:-datasets/2026-07-27-apriltag-nadir-land}
+REMOTE=/sdcard/Android/data/$PKG/files/tagprofile
+CLASS=com.dimensional.mini4pro.vision.TagProfileTest
+PROBE_CLASS=com.dimensional.mini4pro.vision.FrameListenerProbeTest
+RUNNER=$PKG.test/androidx.test.runner.AndroidJUnitRunner
+
+adb() { tools/phoneadb "$@"; }
+
+require_device() {
+    local n
+    n=$(adb devices | sed -n '2,$p' | grep -c "device$" || true)
+    if [ "$n" -eq 0 ]; then
+        echo "no phone attached — 'tools/phoneadb up' first" >&2
+        exit 1
+    fi
+}
+
+# Stage into the app's INTERNAL files dir, via /data/local/tmp and run-as.
+#
+# The obvious route — `adb push` straight into /sdcard/Android/data/$PKG/files — succeeds, and
+# the files are then invisible to the app: `ls` from the shell shows them, `File.listFiles` from
+# inside the app returns nothing. Measured 2026-07-27 on HyperOS/Android 16. Rather than argue
+# with the FUSE view, the dataset goes where the app has no doubt about ownership. `run-as` works
+# because the debug build is debuggable, which is also why this can never be a release-build path.
+cmd_stage() {
+    require_device
+    local index stream
+    index=$(ls "$DATASET"/*.jsonl | head -1)
+    stream=$(ls "$DATASET"/*.h264 | head -1)
+    echo "staging $(basename "$index") and $(basename "$stream") ($(du -h "$stream" | cut -f1))"
+    # The .h264 is 31 MB over an SSH tunnel to hyper1 and then wifi to the phone. It is pushed
+    # once and left there; every later run reuses it.
+    adb push "$index" /data/local/tmp/ >/dev/null
+    adb push "$stream" /data/local/tmp/ >/dev/null
+    adb shell "
+        run-as $PKG mkdir -p files/tagprofile
+        run-as $PKG cp /data/local/tmp/$(basename "$index") files/tagprofile/
+        run-as $PKG cp /data/local/tmp/$(basename "$stream") files/tagprofile/
+        run-as $PKG ls -la files/tagprofile
+    "
+}
+
+# Build and install the test APK alongside the app. Both must be the same build or the
+# instrumentation refuses to start, so they are always installed together.
+cmd_install() {
+    require_device
+    nix develop --command bash -c \
+        'cd android && ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest'
+    adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+    # The test APK is a NEW package (com.dimensional.mini4pro.test), and HyperOS refuses new
+    # packages over `adb install` with INSTALL_FAILED_USER_RESTRICTED / "Install canceled by
+    # user" — measured 2026-07-27. It only permits *updates* to packages already there, which is
+    # why the app APK goes in fine and this one does not. Pushing the file to /data/local/tmp and
+    # calling `pm install` from the shell is not a workaround for a security decision; it is the
+    # same install taking the path the restriction does not sit on, and it succeeds first try.
+    adb push android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+        /data/local/tmp/ >/dev/null
+    adb shell "pm install -r -t --user 0 /data/local/tmp/app-debug-androidTest.apk"
+    echo "installed; APK mtimes:"
+    ls -la --time-style=+%H:%M:%S android/app/build/outputs/apk/debug/app-debug.apk \
+        android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+}
+
+run_test() {
+    local method=$1; shift
+    run_class "$CLASS" "$method" "$@"
+}
+
+run_class() {
+    local cls=$1 method=$2; shift 2
+    require_device
+    # -w blocks until the run finishes and prints the result; without it the numbers arrive in
+    # logcat only, and a run that crashed looks exactly like one that passed.
+    adb shell "am instrument -w -r $* -e class $cls#$method $RUNNER"
+}
+
+cmd_throughput() { run_test throughput; }
+
+# **The one run that needs an aircraft.** Everything else in this script replays a file; this calls
+# ICameraStreamManager.addFrameListener against a live camera and measures what nothing had ever
+# measured — the delivery rate, the dispatch thread, and whether occupying that callback stalls the
+# encoded passthrough QGroundControl is fed from.
+#
+# Results and the argument: docs/measurements/2026-07-28-addframelistener-on-the-aircraft.md.
+#
+# TWO THINGS THAT COST TIME THE FIRST TIME.
+#
+#   - The camera takes tens of seconds to start delivering after the aircraft is powered on, and a
+#     run started too early measures an idle radio in its first phases. The report prints
+#     `encoded frames before the first phase`; if that is 0, throw the run away and repeat. Running
+#     it twice and using the second is the reliable habit.
+#   - The aircraft heats up sitting on the ground with no props turning. Eight phases at 12 s is
+#     about 100 s of aircraft time and that is as long as is reasonable to ask for.
+cmd_frameprobe() {
+    local seconds=${1:-12}
+    local sweep=${2:-1,2,4,8}
+    echo "this needs a powered aircraft; ~$((seconds * 8))s of it"
+    run_class "$PROBE_CLASS" frameListener \
+        -e frameprobe.seconds "$seconds" -e frameprobe.sweep "$sweep"
+}
+
+cmd_soak() {
+    local seconds=${1:-300}
+    echo "soaking for ${seconds}s — this heats the phone; do not run it on a rig about to fly"
+    run_test soak -e tagprofile.soakSeconds "$seconds"
+}
+
+# Reports live in the app's INTERNAL files dir, for the same reason the dataset does: the app
+# cannot write to its own external files dir on this device (EACCES, measured 2026-07-27). So they
+# come back out through run-as and a device-side copy, rather than a direct adb pull.
+cmd_pull() {
+    require_device
+    mkdir -p tmp/tagprofile
+    adb shell "
+        rm -rf /data/local/tmp/tagprofile-out && mkdir -p /data/local/tmp/tagprofile-out
+        for f in \$(run-as $PKG ls files/tagprofile | grep -E '\\.(txt|csv)\\\$'); do
+            run-as $PKG cat files/tagprofile/\$f > /data/local/tmp/tagprofile-out/\$f
+        done
+        ls /data/local/tmp/tagprofile-out
+    "
+    adb pull /data/local/tmp/tagprofile-out tmp/tagprofile/ >/dev/null 2>&1 || true
+    ls -la tmp/tagprofile/tagprofile-out/ 2>/dev/null || echo "no reports yet"
+}
+
+# A temperature trace taken from the shell side, in parallel with a run. The app may or may not
+# be allowed to read /sys/class/thermal — SELinux decides, and it differs by device — so this is
+# the reading that is always available, and the cross-check when both exist.
+cmd_temps() {
+    require_device
+    local seconds=${1:-60}
+    local end=$((SECONDS + seconds))
+    while [ $SECONDS -lt $end ]; do
+        adb shell "
+            printf '%s ' \$(date +%H:%M:%S)
+            for z in /sys/class/thermal/thermal_zone*; do
+                t=\$(cat \$z/type 2>/dev/null)
+                case \$t in cpu-1-0-0|gpuss-0|battery|quiet-therm|skin-therm)
+                    printf '%s=%s ' \$t \$(cat \$z/temp 2>/dev/null);;
+                esac
+            done
+            echo
+        "
+        sleep 5
+    done
+}
+
+case "${1:-}" in
+    stage)      shift; cmd_stage "$@" ;;
+    install)    shift; cmd_install "$@" ;;
+    throughput) shift; cmd_throughput "$@" ;;
+    frameprobe) shift; cmd_frameprobe "$@" ;;
+    soak)       shift; cmd_soak "$@" ;;
+    pull)       shift; cmd_pull "$@" ;;
+    temps)      shift; cmd_temps "$@" ;;
+    *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

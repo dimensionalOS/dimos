@@ -1,0 +1,659 @@
+#!/usr/bin/env python3
+"""Measure this camera's radial distortion from straight edges in the flight frames.
+
+    tools/lensfit tmp/lensfit/*.png
+    tools/lensfit --solve-centre tmp/lensfit/*.png
+
+Plumb-line calibration: a straight line in the world projects to a straight line in the image
+whatever its depth, so every straight edge already in the scene is a free target and any bow is
+the lens. It measures **distortion alone** — straightness is invariant to scale — so it cannot
+launder the fitted focal length into looking better than it is.
+
+- **`f` is an input, not an output.** `--focal` exists only because OpenCV's coefficients are
+  defined on normalized coordinates.
+- **`--solve-centre` is a diagnostic, not a result.** The centre trades against decentering
+  distortion and is poorly conditioned from a handful of lines.
+- **Two traps.** Genuinely curved objects (catenaries, sagging mesh) read as a bowed straight
+  line; `--trim` drops the worst lines and the per-line table shows the bow before and after.
+  And the stream is stabilised, so a frame grabbed during fast motion carries a shear that is
+  not the lens — prefer near-stationary frames and read the between-frame spread as the error
+  bar.
+
+Full rationale: `docs/tools/camera-intrinsics.md`. The findings:
+`docs/measurements/2026-07-28-camera-intrinsics-prior.md` §1.
+"""
+
+import argparse
+import glob
+import math
+import sys
+
+import cv2
+import numpy as np
+
+# Fitted, not calibrated: two flights against recorded altitude, agreeing to 1.2 %.
+# See docs/measurements/2026-07-27-tag-detection-rate.md and tools/memexport.
+FOCAL_OVER_WIDTH = 0.7589
+
+
+def detect_lines(gray, min_len, canny_lo, canny_hi):
+    """Long straight-ish edge chains, as (theta, rho) hypotheses in pixel space.
+
+    HoughLinesP finds *segments*; a bowed edge breaks into several nearly-collinear ones, so
+    the segments are merged by angle and offset before anything is fitted. The merge tolerance
+    is deliberately loose in rho (12 px) because the bow we are hunting is exactly what pushes
+    a segment's offset around.
+    """
+    edges = cv2.Canny(gray, canny_lo, canny_hi, apertureSize=3, L2gradient=True)
+    segs = cv2.HoughLinesP(
+        edges, 1, np.pi / 720, threshold=80, minLineLength=min_len, maxLineGap=12
+    )
+    if segs is None:
+        return edges, []
+    segs = segs.reshape(-1, 4).astype(float)
+
+    hyps = []
+    for x1, y1, x2, y2 in segs:
+        theta = math.atan2(y2 - y1, x2 - x1) % math.pi
+        n = np.array([-math.sin(theta), math.cos(theta)])
+        rho = float(n @ np.array([x1, y1]))
+        length = math.hypot(x2 - x1, y2 - y1)
+        for h in hyps:
+            dt = abs(theta - h["theta"])
+            dt = min(dt, math.pi - dt)
+            if dt < math.radians(2.0) and abs(rho - h["rho"]) < 12.0:
+                h["w"] += length
+                h["theta"] += (theta - h["theta"]) * length / h["w"]
+                h["rho"] += (rho - h["rho"]) * length / h["w"]
+                h["segs"].append((x1, y1, x2, y2))
+                break
+        else:
+            hyps.append({"theta": theta, "rho": rho, "w": length, "segs": [(x1, y1, x2, y2)]})
+    hyps.sort(key=lambda h: -h["w"])
+    return edges, hyps
+
+
+def trace(gray, edges, hyp, band, min_span, min_pts, min_grad, ambig):
+    """Subpixel edge points along one hypothesis, or None if it is not a usable line.
+
+    **The first version of this used the centroid of the Canny support and it was not good
+    enough**: it left a 1.37 px straightness floor on lines that a perfect lens would render
+    straight to a fraction of a pixel, and at that noise level the distortion fit had nothing
+    to bite on. Canny thresholds a gradient; where the peak actually sits between two pixels is
+    thrown away, and on a weathered-wood or rough-concrete edge the surviving pixels wander.
+
+    So the Canny map is used only to *find* the line, and the position comes from the greyscale:
+    for each column (or row) the intensity is sampled along the perpendicular at 1/4-pixel steps
+    by bilinear interpolation, differentiated, and the extremum located by a parabola through the
+    three samples around it. That is the standard construction and it is good to roughly a tenth
+    of a pixel on a clean step.
+
+    Two rejections keep bad edges out rather than letting them into the fit as noise:
+
+    - `min_grad` — the profile must actually contain an edge, not a soft shading gradient.
+    - `ambig` — the second-strongest extremum, at least 3 px away, must be well below the
+      strongest. This is what throws out the mesh, the railings and the string lights, where
+      several parallel edges live inside one search band and the tracer would otherwise hop
+      between them and manufacture a bow out of nothing.
+
+    Two passes: the first around the straight hypothesis, the second around a quadratic through
+    the first, so a genuinely bowed edge is not clipped by its own straight-line band.
+    """
+    h, w = gray.shape
+    theta, rho = hyp["theta"], hyp["rho"]
+    horizontal = abs(math.sin(theta)) < 0.7071  # runs more along x than y
+
+    span = [
+        (min(s[0], s[2]), max(s[0], s[2]), min(s[1], s[3]), max(s[1], s[3])) for s in hyp["segs"]
+    ]
+    u0 = min(s[0] for s in span) if horizontal else min(s[2] for s in span)
+    u1 = max(s[1] for s in span) if horizontal else max(s[3] for s in span)
+    if u1 - u0 < min_span:
+        return None
+
+    if horizontal:
+
+        def model0(u):
+            return (rho + math.sin(theta) * u) / math.cos(theta)
+    else:
+
+        def model0(u):
+            return (math.cos(theta) * u - rho) / math.sin(theta)
+
+    model = np.vectorize(model0)
+
+    step = 0.25
+    us_all = np.arange(int(u0), int(u1) + 1, dtype=np.float64)
+
+    pts = None
+    for width in (band, max(2.5, band / 3.0)):
+        offs = np.arange(-width, width + step / 2, step)
+        centres = model(us_all)
+        # profile[i, j] = intensity at (u_i, centre_i + off_j), bilinear
+        vv = centres[:, None] + offs[None, :]
+        uu = np.repeat(us_all[:, None], offs.size, axis=1)
+        if horizontal:
+            mx, my = uu, vv
+        else:
+            mx, my = vv, uu
+        ok = (mx >= 1) & (mx <= w - 2) & (my >= 1) & (my <= h - 2)
+        prof = cv2.remap(
+            gray,
+            mx.astype(np.float32),
+            my.astype(np.float32),
+            cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        prof = np.where(ok, prof, np.nan)
+
+        g = (prof[:, 2:] - prof[:, :-2]) / (2 * step)  # d(intensity)/d(offset)
+        mag = np.abs(g)
+        with np.errstate(invalid="ignore"):
+            good = np.isfinite(mag).all(axis=1)
+        idx = np.full(len(us_all), -1)
+        if good.any():
+            idx[good] = np.argmax(mag[good], axis=1)
+
+        us, vs = [], []
+        for i in range(len(us_all)):
+            j = idx[i]
+            if j <= 0 or j >= mag.shape[1] - 1:
+                continue
+            peak = mag[i, j]
+            if peak < min_grad:
+                continue
+            far = np.abs(np.arange(mag.shape[1]) - j) * step >= 3.0
+            if far.any() and mag[i][far].max() > ambig * peak:
+                continue
+            a, b, c = mag[i, j - 1], mag[i, j], mag[i, j + 1]
+            den = a - 2 * b + c
+            sub = 0.0 if den == 0 else 0.5 * (a - c) / den
+            if abs(sub) > 1.0:
+                continue
+            us.append(us_all[i])
+            vs.append(centres[i] + offs[j + 1] + sub * step)
+
+        if len(us) < min_pts:
+            return None
+        us_a, vs_a = np.array(us), np.array(vs)
+        for _ in range(3):  # robust: drop 3-sigma outliers off a quadratic, refit
+            c = np.polyfit(us_a, vs_a, 2)
+            r = vs_a - np.polyval(c, us_a)
+            s = max(0.15, 1.4826 * np.median(np.abs(r - np.median(r))))
+            keep = np.abs(r) <= 3.0 * s
+            if keep.all() or keep.sum() < min_pts:
+                break
+            us_a, vs_a = us_a[keep], vs_a[keep]
+        if len(us_a) < min_pts or us_a.max() - us_a.min() < min_span:
+            return None
+        c = np.polyfit(us_a, vs_a, 2)
+
+        def model(u, c=c):
+            return np.polyval(c, u)
+
+        pts = np.stack([us_a, vs_a] if horizontal else [vs_a, us_a], axis=1)
+
+    return pts
+
+
+def corner_shift(k1, k2, f, corner):
+    """Radial displacement the fitted model implies at the image corner, in px.
+
+    **Report this, not k1.** `k1` and `k2` are strongly anti-correlated over the radii a real
+    scene covers — the pooled fit below lands on k1=+0.043 with k2=-0.057, and the two very
+    nearly cancel. Quoting `k1` alone makes a fit that predicts a 6 px shift look like a fit
+    that predicts thirty. The corner shift is the quantity that survives the correlation and it
+    is also the one a landing controller cares about, being the worst case over the frame.
+    """
+    rc = corner / f
+    return (k1 * rc**3 + k2 * rc**5) * f
+
+
+def straight_residual(pts):
+    """RMS and peak perpendicular deviation from the best-fit straight line, in px."""
+    c = pts - pts.mean(axis=0)
+    _, _, vt = np.linalg.svd(c, full_matrices=False)
+    n = vt[1]
+    d = c @ n
+    return float(np.sqrt((d**2).mean())), float(np.abs(d).max())
+
+
+def undistort(pts, k1, k2, cx, cy, f):
+    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], float)
+    D = np.array([k1, k2, 0.0, 0.0, 0.0], float)
+    out = cv2.undistortPoints(pts.reshape(-1, 1, 2).astype(np.float64), K, D, P=K)
+    return out.reshape(-1, 2)
+
+
+def sagitta(pts, cx, cy):
+    """Signed midpoint deviation of a traced line from its own chord, in px.
+
+    Positive means the line bows *away* from the image centre, which is the sign barrel
+    distortion produces. That sign is the whole point of this function.
+    """
+    c = pts - pts.mean(axis=0)
+    _, _, vt = np.linalg.svd(c, full_matrices=False)
+    along, normal = vt[0], vt[1]
+    u, v = c @ along, c @ normal
+    order = np.argsort(u)
+    u, v = u[order], v[order]
+    # Chord through the two ends; the sagitta is the largest departure from it.
+    t = (u - u[0]) / (u[-1] - u[0])
+    chord = v[0] + t * (v[-1] - v[0])
+    dev = v - chord
+    s = dev[np.argmax(np.abs(dev))]
+    mid = pts.mean(axis=0) - np.array([cx, cy])
+    outward = 1.0 if (normal @ mid) > 0 else -1.0
+    return float(s * outward), float(u[-1] - u[0])
+
+
+def distort(pts, k1, k2, cx, cy, f):
+    x = (pts[:, 0] - cx) / f
+    y = (pts[:, 1] - cy) / f
+    r2 = x * x + y * y
+    g = 1.0 + k1 * r2 + k2 * r2 * r2
+    return np.stack([x * g * f + cx, y * g * f + cy], axis=1)
+
+
+def straighten(pts):
+    """The traced points projected onto their own best-fit straight line."""
+    m = pts.mean(axis=0)
+    c = pts - m
+    _, _, vt = np.linalg.svd(c, full_matrices=False)
+    along = vt[0]
+    return m + np.outer(c @ along, along)
+
+
+def sensitivity(pts, cx, cy, f, probe=0.01):
+    """Sagitta this line would show per unit k1, in px. The regressor for the robust fit.
+
+    Computed numerically rather than in closed form: take the line's own points made exactly
+    straight, distort them by a small probe k1, and measure what came out. Small probe because
+    the model is only linear in k1 near zero and a unit k1 at r=0.8 is nowhere near that.
+    """
+    s, _ = sagitta(distort(straighten(pts), probe, 0.0, cx, cy, f), cx, cy)
+    return s / probe
+
+
+def weighted_median(v, w):
+    o = np.argsort(v)
+    v, w = v[o], w[o]
+    c = np.cumsum(w)
+    return float(v[np.searchsorted(c, c[-1] / 2.0)])
+
+
+def lad_slope(x, y, boot=2000, seed=20260728):
+    """Least-absolute-deviations slope through the origin, with a bootstrap interval.
+
+    The slope minimising sum|y_i - m*x_i| is the **weighted median of the ratios y_i/x_i with
+    weights |x_i|**, which is the closed form used here. Two properties earn it the headline:
+
+    - It is robust the way a plain median is — contamination has to be the majority before it
+      moves, and on a terrace full of catenaries and sagging mesh that matters more than
+      efficiency.
+    - It weights each line by how much that line can actually say about `k1`. An unweighted
+      median over ratios does not, and a line whose midpoint sits near the image centre has a
+      sensitivity near zero and a ratio near infinite variance. Letting such a line vote as
+      loudly as one at the corner is what left the first version of this estimator with an
+      interval three times wider than the data supports.
+
+    The interval is a percentile bootstrap rather than an analytic MAD expression, because the
+    ratios are heavy-tailed by construction and a normal-theory standard error on them is a
+    fiction. `seed` is fixed so the reported interval is reproducible.
+    """
+    m = weighted_median(y / x, np.abs(x))
+    rng = np.random.default_rng(seed)
+    n = len(x)
+    draws = np.empty(boot)
+    for b in range(boot):
+        i = rng.integers(0, n, n)
+        draws[b] = weighted_median(y[i] / x[i], np.abs(x[i]))
+    lo, hi = np.percentile(draws, [2.5, 97.5])
+    return m, float(lo), float(hi)
+
+
+def cost(params, lines, cx0, cy0, f, solve_centre):
+    if solve_centre:
+        k1, k2, cx, cy = params
+    else:
+        k1, k2 = params
+        cx, cy = cx0, cy0
+    total, n = 0.0, 0
+    for pts in lines:
+        rms, _ = straight_residual(undistort(pts, k1, k2, cx, cy, f))
+        total += (rms**2) * len(pts)
+        n += len(pts)
+    return math.sqrt(total / n)
+
+
+def nelder_mead(fn, x0, step, iters=600, tol=1e-12):
+    """Plain Nelder-Mead. scipy is not in this project's shell and two to four parameters
+    do not justify adding it."""
+    n = len(x0)
+    simplex = [np.array(x0, float)]
+    for i in range(n):
+        p = np.array(x0, float)
+        p[i] += step[i]
+        simplex.append(p)
+    vals = [fn(p) for p in simplex]
+    for _ in range(iters):
+        idx = np.argsort(vals)
+        simplex = [simplex[i] for i in idx]
+        vals = [vals[i] for i in idx]
+        if abs(vals[-1] - vals[0]) < tol:
+            break
+        centroid = np.mean(simplex[:-1], axis=0)
+        xr = centroid + (centroid - simplex[-1])
+        fr = fn(xr)
+        if fr < vals[0]:
+            xe = centroid + 2.0 * (centroid - simplex[-1])
+            fe = fn(xe)
+            simplex[-1], vals[-1] = (xe, fe) if fe < fr else (xr, fr)
+        elif fr < vals[-2]:
+            simplex[-1], vals[-1] = xr, fr
+        else:
+            xc = centroid + 0.5 * (simplex[-1] - centroid)
+            fc = fn(xc)
+            if fc < vals[-1]:
+                simplex[-1], vals[-1] = xc, fc
+            else:
+                for i in range(1, n + 1):
+                    simplex[i] = simplex[0] + 0.5 * (simplex[i] - simplex[0])
+                    vals[i] = fn(simplex[i])
+    i = int(np.argmin(vals))
+    return simplex[i], vals[i]
+
+
+def self_test(f=1457.1, W=1920, H=1080):
+    """Recover known k1 values from synthetic lines. Run this before believing a null result.
+
+    **A broken estimator reports no distortion.** So does a lens with no distortion, and the two
+    are indistinguishable from the output alone — which is the exact shape of failure this
+    project keeps meeting: a plausible artifact instead of an error. The only defence is to feed
+    the estimator an answer it must get right.
+
+    Lines are laid down straight in the *undistorted* image and then distorted by a known k1, in
+    that order, because that is the direction physics runs: the world is straight and the lens
+    bends it. Estimating on lines built the other way round would confirm the inverse of the
+    model and quietly pass.
+    """
+    cx, cy = W / 2.0, H / 2.0
+    corner = math.hypot(cx, cy)
+    rng = np.random.default_rng(7)
+    ok = True
+    print("self-test: recovering known k1 from synthetic lines (f=%.1f, %dx%d)" % (f, W, H))
+    print("  %9s %9s %9s %11s %11s" % ("true k1", "est k1", "err", "true corner", "est corner"))
+    for truth in (0.0, 0.02, 0.05, -0.05, 0.10, -0.10):
+        lines = []
+        for _ in range(40):
+            # A random chord of the frame, sampled densely, straight by construction.
+            a = rng.uniform(0, math.pi)
+            d = rng.uniform(-0.45, 0.45) * corner
+            n = np.array([-math.sin(a), math.cos(a)])
+            along = np.array([math.cos(a), math.sin(a)])
+            t = np.linspace(-1, 1, 400) * rng.uniform(250, 800)
+            pts = np.array([cx, cy]) + n * d + np.outer(t, along)
+            inside = (pts[:, 0] > 2) & (pts[:, 0] < W - 3) & (pts[:, 1] > 2) & (pts[:, 1] < H - 3)
+            pts = pts[inside]
+            if len(pts) < 120:
+                continue
+            lines.append(distort(pts, truth, 0.0, cx, cy, f))
+        sens = np.array([sensitivity(p, cx, cy, f) for p in lines])
+        sags = np.array([sagitta(p, cx, cy)[0] for p in lines])
+        use = np.abs(sens) > 2.0
+        est, _, _ = lad_slope(sens[use], sags[use], boot=200)
+        good = abs(est - truth) <= 0.1 * max(0.02, abs(truth))
+        ok &= good
+        print(
+            "  {:+9.5f} {:+9.5f} {:+9.5f} {:+11.2f} {:+11.2f}  {}".format(
+                truth,
+                est,
+                est - truth,
+                corner_shift(truth, 0.0, f, corner),
+                corner_shift(est, 0.0, f, corner),
+                "ok" if good else "FAIL",
+            )
+        )
+    print("self-test: %s" % ("PASS" if ok else "FAIL"))
+    return 0 if ok else 1
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
+    ap.add_argument("images", nargs="+")
+    ap.add_argument(
+        "--self-test", action="store_true", help="recover known k1 from synthetic lines and exit"
+    )
+    ap.add_argument(
+        "--focal",
+        type=float,
+        default=None,
+        help=f"focal length in px; default {FOCAL_OVER_WIDTH:g} * image width",
+    )
+    ap.add_argument("--min-len", type=int, default=260, help="Hough minLineLength, px")
+    ap.add_argument(
+        "--min-span", type=int, default=420, help="reject a line spanning less than this, px"
+    )
+    ap.add_argument("--band", type=float, default=9.0, help="perpendicular search half-width, px")
+    ap.add_argument(
+        "--min-grad",
+        type=float,
+        default=6.0,
+        help="reject a profile whose peak |d(intensity)/d(offset)| is below this",
+    )
+    ap.add_argument(
+        "--ambig",
+        type=float,
+        default=0.55,
+        help="reject a profile with a rival peak above this fraction of the best",
+    )
+    ap.add_argument("--max-lines", type=int, default=14, help="lines kept per frame")
+    ap.add_argument(
+        "--trim",
+        type=int,
+        default=2,
+        help="drop this many worst-residual lines and refit (catenary defence)",
+    )
+    ap.add_argument(
+        "--solve-centre",
+        action="store_true",
+        help="also fit cx, cy (poorly conditioned; read the docstring)",
+    )
+    ap.add_argument(
+        "--per-frame",
+        action="store_true",
+        help="also fit each frame alone, to expose EIS frame-to-frame spread",
+    )
+    args = ap.parse_args()
+
+    paths = []
+    for p in args.images:
+        paths.extend(sorted(glob.glob(p)) if any(c in p for c in "*?[") else [p])
+    if not paths:
+        sys.exit("no images")
+
+    frames = []
+    W = H = None
+    for path in paths:
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            print(f"  skip (unreadable): {path}")
+            continue
+        h, w = img.shape
+        if W is None:
+            W, H = w, h
+        elif (w, h) != (W, H):
+            sys.exit("mixed resolutions: %dx%d after %dx%d" % (w, h, W, H))
+        edges, hyps = detect_lines(img, args.min_len, 60, 180)
+        # Smoothed once here, not inside trace(): the profile derivative is differentiating
+        # 8-bit data and JPEG-grade ringing off an H.264 decode will otherwise put the parabola
+        # vertex on a compression artefact. sigma 1.0 costs well under the 0.1 px the subpixel
+        # fit is worth, and the smoothing is symmetric so it does not bias the edge position.
+        smooth = cv2.GaussianBlur(img, (0, 0), 1.0).astype(np.float32)
+        lines = []
+        for hyp in hyps:
+            if len(lines) >= args.max_lines:
+                break
+            pts = trace(
+                smooth,
+                edges,
+                hyp,
+                args.band,
+                args.min_span,
+                min_pts=args.min_span // 2,
+                min_grad=args.min_grad,
+                ambig=args.ambig,
+            )
+            if pts is not None:
+                lines.append(pts)
+        frames.append((path, lines))
+        print("  %-58s %2d lines" % (path.split("/")[-1], len(lines)))
+
+    f = args.focal if args.focal else FOCAL_OVER_WIDTH * W
+    cx0, cy0 = W / 2.0, H / 2.0
+    allpts = [p for _, ls in frames for p in ls]
+    if len(allpts) < 4:
+        sys.exit("only %d usable lines; need at least 4" % len(allpts))
+
+    def radius(pts):
+        c = pts.mean(axis=0)
+        return math.hypot(c[0] - cx0, c[1] - cy0)
+
+    corner = math.hypot(cx0, cy0)
+    print(
+        "\n%d frames, %dx%d, f = %.1f px, image corner r = %.0f px" % (len(frames), W, H, f, corner)
+    )
+    rs = sorted(radius(p) / corner for p in allpts)
+    print(
+        "%d lines, midpoint radius %.2f..%.2f of corner (median %.2f)"
+        % (len(allpts), rs[0], rs[-1], rs[len(rs) // 2])
+    )
+
+    def report(tag, lines):
+        base = cost((0.0, 0.0), lines, cx0, cy0, f, False)
+        if args.solve_centre:
+            x, v = nelder_mead(
+                lambda p: cost(p, lines, cx0, cy0, f, True),
+                [0.0, 0.0, cx0, cy0],
+                [0.02, 0.02, 8.0, 8.0],
+            )
+            k1, k2, cx, cy = x
+        else:
+            x, v = nelder_mead(
+                lambda p: cost(p, lines, cx0, cy0, f, False), [0.0, 0.0], [0.02, 0.02]
+            )
+            k1, k2 = x
+            cx, cy = cx0, cy0
+        print("\n%s  (%d lines)" % (tag, len(lines)))
+        print(f"  straightness RMS, no correction : {base:6.3f} px")
+        print(f"  straightness RMS, fitted        : {v:6.3f} px")
+        print(f"  k1 = {k1:+.5f}   k2 = {k2:+.5f}")
+        if args.solve_centre:
+            print(f"  cx = {cx:8.2f} ({cx - cx0:+.2f})   cy = {cy:8.2f} ({cy - cy0:+.2f})")
+        # Reported at the image corner because that is where a radial model is largest and
+        # where a landing controller is least likely to be looking — a corner figure that is
+        # small is the statement that the assumption costs nothing anywhere.
+        dr = corner_shift(k1, k2, f, corner)
+        print(
+            f"  implied radial shift at the image corner: {dr:+.2f} px ({100.0 * dr / corner:.2f} %)"
+        )
+        return (k1, k2, cx, cy), v, base
+
+    # ── the headline estimator ───────────────────────────────────────────────
+    #
+    # Least squares over every traced line was the first thing tried here and it is the wrong
+    # tool: the scene contains objects that are genuinely curved — a catenary of string lights,
+    # sagging wire mesh, a warped board — and least squares has no defence against them. The
+    # tell was a 10 px bow on a line whose midpoint sat at r=0.10, where a lens can produce
+    # essentially nothing. So the pooled fit below is kept only as a cross-check, and the
+    # number to read is this one.
+    #
+    # Barrel distortion bows every line the same way: outward, away from the image centre.
+    # Scene curvature has no opinion about where the image centre is, so its sign is a coin
+    # flip. A median over signed, sensitivity-normalised bows therefore converges on the lens
+    # and ignores the terrace, and it does not need the contamination identified or removed.
+    sens = np.array([sensitivity(p, cx0, cy0, f) for p in allpts])
+    sags = np.array([sagitta(p, cx0, cy0)[0] for p in allpts])
+    usable = np.abs(sens) > 2.0  # a line through the centre carries no information about k1
+    print(
+        "\nROBUST (median of signed bow / sensitivity)  %d of %d lines with |sens| > 2 px"
+        % (usable.sum(), len(allpts))
+    )
+    if usable.sum() >= 5:
+        k1_r, k1_lo, k1_hi = lad_slope(sens[usable], sags[usable])
+        pos = int((sags[usable] > 0).sum())
+        n = int(usable.sum())
+        print(
+            f"  sensitivity |s| per unit k1: median {np.median(np.abs(sens[usable])):.0f} px, max {np.abs(sens[usable]).max():.0f} px"
+        )
+        print(
+            f"  k1 = {k1_r:+.5f}   95 % CI [{k1_lo:+.5f}, {k1_hi:+.5f}]   (k2 = 0 by construction)"
+        )
+        print(
+            f"  radial shift at the image corner: {corner_shift(k1_r, 0.0, f, corner):+.2f} px, CI [{corner_shift(k1_lo, 0.0, f, corner):+.2f}, {corner_shift(k1_hi, 0.0, f, corner):+.2f}] = [{100 * corner_shift(k1_lo, 0.0, f, corner) / corner:.2f}, {100 * corner_shift(k1_hi, 0.0, f, corner) / corner:.2f}] %"
+        )
+        # The sign test needs no model at all: under "no distortion" the bow of each line is as
+        # likely outward as inward, so this is a coin flip, and a run of heads is the evidence.
+        print(
+            "  sign test: %d of %d lines bow outward (%.0f %%); a lens with no distortion"
+            % (pos, n, 100.0 * pos / n)
+        )
+        print(
+            "             gives 50 %%, and the 2-sigma band on %d flips is %.0f..%.0f %%"
+            % (n, 50 - 100 * 1.0 / math.sqrt(n), 50 + 100 * 1.0 / math.sqrt(n))
+        )
+    else:
+        print("  too few off-centre lines to estimate")
+
+    (k1, k2, cx, cy), v, base = report("POOLED (least squares — cross-check only)", allpts)
+
+    print("\n  per-line peak bow, px          before   after")
+    scored = []
+    for pts in allpts:
+        _, pk0 = straight_residual(pts)
+        _, pk1 = straight_residual(undistort(pts, k1, k2, cx, cy, f))
+        scored.append((pk1, pk0, pts))
+    for pk1_, pk0_, pts in sorted(scored, key=lambda s: -s[0]):
+        c = pts.mean(axis=0)
+        print(
+            "    r=%.2f  n=%4d  (%6.0f,%6.0f)   %6.2f  %6.2f"
+            % (radius(pts) / corner, len(pts), c[0], c[1], pk0_, pk1_)
+        )
+
+    if args.trim and len(allpts) - args.trim >= 4:
+        kept = [s[2] for s in sorted(scored, key=lambda s: s[0])[: -args.trim]]
+        report("TRIMMED (worst %d dropped)" % args.trim, kept)
+
+    if args.per_frame:
+        print("\n  per-frame fit — the spread of the CORNER SHIFT column is the honest error")
+        print("  bar, with EIS and scene in it. Frames are independent samples of one lens.")
+        print("    %-30s %9s %9s %11s %7s" % ("frame", "k1", "k2", "corner px", "rms"))
+        shifts = []
+        for path, lines in frames:
+            name = path.split("/")[-1]
+            if len(lines) < 4:
+                print("    %-30s  %d lines, skipped" % (name, len(lines)))
+                continue
+            x, v_ = nelder_mead(
+                lambda p: cost(p, lines, cx0, cy0, f, False), [0.0, 0.0], [0.02, 0.02]
+            )
+            dr = corner_shift(x[0], x[1], f, corner)
+            shifts.append(dr)
+            print(
+                "    %-30s %+9.5f %+9.5f %+11.2f %7.3f  (%d lines)"
+                % (name, x[0], x[1], dr, v_, len(lines))
+            )
+        if len(shifts) >= 2:
+            a = np.array(shifts)
+            print(
+                "    %-30s mean %+.2f px, sd %.2f px, range %+.2f..%+.2f"
+                % ("", a.mean(), a.std(ddof=1), a.min(), a.max())
+            )
+
+
+if __name__ == "__main__":
+    main()

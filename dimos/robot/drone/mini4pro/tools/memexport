@@ -1,0 +1,4258 @@
+#!/usr/bin/env python3
+"""Convert a mini4pro flight record into a DiMOS **mem2** store, offline.
+
+    tools/memexport datasets/2026-07-27-apriltag-nadir-25hz/20260727-192417.001.jsonl
+    tools/memexport session.001.jsonl --out tmp/flight.db
+    tools/memexport session.001.jsonl --keyframes-only     # 0.5% of frames, 5% of bytes
+    tools/memexport --spy tmp/flight.db                    # what a consumer will see
+    tools/memexport --selftest                             # planted data, planted faults
+
+Streams: pose, odom, gps_location, imu, battery, mode, tf, color_image, camera_info,
+detections, tag_fix, setpoint, wind, status, health, command_ack, provenance — each created
+even when empty, so "none occurred" and "this converter cannot produce them" stay
+distinguishable.
+
+- **One recording, one flight, one store.** Local coordinates are metres from *this* flight's
+  takeoff point, so a store holding two would silently place one somewhere it never was. Refused.
+- **The video is copied, never decoded.** `--keyframes-only` is therefore the only decimation on
+  offer; any other rate would store frames that decode to garbage.
+- **`camera_info` is a fitted focal length, not a calibration**, and says so in its own tags.
+- **Four cross-checks run on every conversion and abort it on mismatch**: the Kotlin encoder byte
+  for byte, a round trip out of SQLite, the origin by subtraction, video conformance.
+  `--no-crosscheck` skips them, loudly.
+- Re-execs into DiMOS's venv, the only interpreter with `dimos.memory2` and the LCM bindings.
+
+Full rationale, and the specification this implements: `docs/mem2-converter.md`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import glob
+import hashlib
+import importlib.machinery
+import importlib.util
+import itertools
+import json
+import math
+import os
+import struct
+import subprocess
+import sys
+import time
+
+CONVERTER = "memexport-1"
+RECORD_FORMAT = "mini4pro-flightlog-1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interpreter. `dimos.memory2` and the generated LCM bindings live in DiMOS's
+# venv and nowhere else on this machine.
+# ─────────────────────────────────────────────────────────────────────────────
+
+CANDIDATE_PYTHONS = [
+    os.environ.get("MEMEXPORT_PYTHON"),
+    os.path.expanduser("~/coding/dimos/.venv/bin/python"),
+]
+
+
+def ensure_dimos(reexec=True):
+    """Import DiMOS, re-execing under an interpreter that has it if this one does not.
+
+    Noisy rather than clever: it prints which interpreter it moved to, because "the tool
+    silently ran as something else" is its own class of bug.
+    """
+    try:
+        import dimos.memory2.store.sqlite  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    if reexec:
+        for cand in CANDIDATE_PYTHONS:
+            if not cand or not os.path.exists(cand):
+                continue
+            if os.path.realpath(cand) == os.path.realpath(sys.executable):
+                continue
+            if os.system(f"{cand} -c 'import dimos.memory2' 2>/dev/null") == 0:
+                sys.stderr.write(f"memexport: no dimos here; re-exec under {cand}\n")
+                os.execv(cand, [cand, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.stderr.write(
+        "memexport: dimos.memory2 is not importable.\n"
+        "  It lives in DiMOS's venv:\n"
+        "    ~/coding/dimos/.venv/bin/python tools/memexport ...\n"
+        "  or point MEMEXPORT_PYTHON at an interpreter that has it.\n"
+    )
+    sys.exit(2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The frame tree. `OdomDatum`'s constants, spelled once here so a rename in
+# either place shows up as a cross-check failure rather than as silence.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FRAME_WORLD = "drone/world"
+FRAME_BASE_LINK = "drone/base_link"
+FRAME_CAMERA = "drone/camera"
+FRAME_CAMERA_OPTICAL = "drone/camera_optical"
+
+# `drone/base_link` -> `drone/camera`, measured with a ruler 2026-07-27: the camera sits
+# 8 cm forward of the body centre. The vertical component has never been measured and is
+# published as zero; on a nadir camera that offset lies *along* the viewing axis, where it
+# biases range directly. The provenance observation says so, so a store states its own
+# assumptions rather than relying on this comment being read.
+CAMERA_OFFSET_M = (0.08, 0.0, 0.0)
+CAMERA_OFFSET_UNMEASURED = "vertical component of base_link->camera never measured, published as 0"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The gates. `telemetry/Signal` and `zenoh/Gate`, mirrored from their rules.
+#
+# A limit exists only where the delivery cadence was measured continuous. For the
+# event-driven keys a long silence means "nothing changed", so a limit would
+# manufacture a warning out of normal operation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+STALE_AFTER_MS = {"POSITION": 1000, "ALTITUDE": 1000, "ATTITUDE": 2000, "VELOCITY": 2000}
+AGE_MEMBER = {"POSITION": "pos", "ALTITUDE": "relalt", "ATTITUDE": "att", "VELOCITY": "vel"}
+
+# One entry per AircraftState field a record carries. Mirrors `replay/FlightReplay.FIELD_MAP`.
+FIELD_MAP = {
+    "fcConnected": ("fcConnected", "bool"),
+    "takeoffAltitudeAmsl": ("takeoffAltitudeAmsl", "float"),
+    "satelliteCount": ("satelliteCount", "int"),
+    "gpsSignalLevel": ("gpsSignalLevel", "int"),
+    "homeLatitude": ("homeLatitude", "float"),
+    "homeLongitude": ("homeLongitude", "float"),
+    "isHomeLocationSet": ("homeLocationSet", "bool"),
+    "isFlying": ("isFlying", "bool"),
+    "motorsOn": ("motorsOn", "bool"),
+    "flightMode": ("flightMode", "str"),
+    "notAllowMotorStart": ("notAllowMotorStart", "bool"),
+    "imuWarmingUp": ("imuWarmingUp", "bool"),
+    "inFailsafe": ("inFailsafe", "bool"),
+    "batteryPercent": ("batteryPercent", "int"),
+    "voltageMv": ("voltageMv", "int"),
+    "currentMa": ("currentMa", "int"),
+    "cellCount": ("cellCount", "int"),
+    "cellVoltagesMv": ("cellVoltagesMv", "intlist"),
+    "batteryTempC": ("batteryTempC", "float"),
+}
+
+# telemetry/Geo. The cos(latitude) factor on east is a 21% error at 38N if dropped, and
+# dropping it is one of this project's two recurring landmines. `--selftest` plants it.
+METRES_PER_DEG = 111194.93
+
+MIN_SATS_FOR_FIX = 6
+
+TELEMETRY_STREAMS = ["pose", "odom", "gps_location", "imu", "battery", "mode"]
+# `detections` is not a TELEMETRY_STREAM — `ZenohReplay` cannot produce it (a sighting is
+# not an AircraftState; ReplayCoverage.TAG_SIGHTINGS) — but it IS byte-checked against the
+# shipping encoder: `tools/kotlinframes` rebuilds each Sighting from the record's own `tag`
+# lines and runs `ZenohEmission.detection` over them, so the comparison covers it too.
+# `tag_fix` and `setpoint` join `detections` on the same argument: `ZenohReplay` cannot
+# produce them (a sighting's fix and a stick command are not AircraftStates), but
+# `tools/kotlinframes` rebuilds each from the record's own `tag`/`stick_cmd` lines and runs
+# `ZenohEmission.tagFix`/`ZenohEmission.setpoint` over them, so the byte comparison covers
+# all three against the shipping encoder. `wind` (2026-07-30) is the same shape again —
+# a key delivery is not an AircraftState, deliberately (resampling a change-driven key is
+# the failure the channel's contract forbids) — rebuilt from `dji_field` windSpeedDmS lines
+# through `ZenohEmission.wind`.
+KOTLIN_CHECKED_STREAMS = [*TELEMETRY_STREAMS, "detections", "tag_fix", "setpoint", "wind"]
+# How many differing messages the Kotlin cross-check prints as examples. Only the printing
+# is capped: the comparison itself always runs to the end of every stream, because the
+# number that matters ("how many, and in which streams") is unknowable if it stops early.
+KOTLIN_PROBLEM_EXAMPLES = 5
+
+# One yaw rate on which `deg / 180.0 * PI` and `Math.toRadians(deg)` are different doubles,
+# and the byte pattern the JVM's answer has — the selftest's plant for the landing16 defect.
+#
+# −84.54 deg/s is `stick_cmd` seq 122 of `datasets/landing16/20260730-161329.001.jsonl`,
+# t=64.035565. `-Math.toRadians(-84.54)` on jdk17.0.20 is 3ff79ba74d9e3f86;
+# `-(-84.54 / 180.0 * math.pi)` in CPython 3.11 is 3ff79ba74d9e3f85. The golden is the JVM
+# side because the JVM is the live wire: `ZenohTelemetryEncoder.setpointOrNull` is what the
+# aircraft actually published, and any re-derivation has to arrive at those bytes.
+SETPOINT_YAWRATE_ULP_DEG = -84.54
+SETPOINT_YAWRATE_ULP_JVM_HEX = "3ff79ba74d9e3f86"
+
+# `warnings` (2026-07-30) replaced `health`: the live bus stopped having a device-health
+# channel and gained one for EVERY DJI warning, fed by a single owner (`warn/WarningBus`).
+# The record half changed with it -- `dji_warn` lines, `dji_health` up to landing17 -- and
+# both kinds are read here, because a converter that stopped parsing the old one would
+# silently lose every session written before the rename.
+#
+# It is deliberately NOT in KOTLIN_CHECKED_STREAMS, and the reason is worth stating rather
+# than leaving as an omission. The byte-checked streams are rebuilt by `tools/kotlinframes`
+# from record lines through the shipping encoder; for `warnings` the *payload* would
+# reproduce exactly -- a `dji_warn` line carries the whole decided event, severity, sentence
+# and all -- but the **header** would not: the live publisher's `seq` counts messages offered
+# in that session and its stamp is `System.currentTimeMillis()` at the offer, neither of
+# which the record preserves. Comparing payload-without-header is the open half of the
+# cross-check; until it exists this stream is reproduced faithfully and accounted for, and
+# says so, rather than claiming a byte pin it does not have.
+ALL_STREAMS = [
+    *TELEMETRY_STREAMS,
+    "tf",
+    "color_image",
+    "camera_info",
+    "detections",
+    "tag_fix",
+    "setpoint",
+    "wind",
+    "status",
+    "warnings",
+    "command_ack",
+    "provenance",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The camera, as far as anything has actually measured it.
+#
+# Two independent flights fitted `relalt = slope x range + intercept` over their own
+# detections and implied these focal lengths at 1920 wide. They agree to 1.2 %, which is
+# what a camera property should do, while the fits' intercepts (+0.328 m, -0.063 m)
+# disagree entirely — because that is the height of the board the tag stood on, and the two
+# sessions were set up on different days. Slope reproducing while intercept does not is the
+# evidence the fit separated a camera error from a scene error rather than trading them off.
+#
+# `docs/measurements/2026-07-27-tag-detection-rate.md` §3, corrected into
+# `docs/apriltag-landing-recording.md` §6.2 by commit d590504.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FOCAL_SOURCE = "docs/measurements/2026-07-27-tag-detection-rate.md"
+FOCAL_FITS_PX_AT_1920 = (1465.9, 1448.3)  # 25 Hz nadir descent; 5 Hz nadir landing
+FOCAL_FIT_WIDTH = 1920.0
+
+# f / W, so the intrinsics follow a resolution change instead of being pinned to one.
+FOCAL_OVER_WIDTH = (sum(FOCAL_FITS_PX_AT_1920) / len(FOCAL_FITS_PX_AT_1920)) / FOCAL_FIT_WIDTH
+
+# What DJI's published 82.1 deg diagonal implies, kept only so the self-test can show the
+# two are far apart. It is 13.2 % low and is the number a consumer with no `camera_info`
+# would reach for.
+FOCAL_OVER_WIDTH_FROM_SPEC = 0.659
+
+# The contract's rule for a slowly-varying stream (`docs/zenoh-topics.md`: `mode` is "on
+# change, >=1 Hz", the fixed TF edge "at least 1 Hz"). A subscriber joins whenever it likes.
+CAMERA_INFO_PERIOD_S = 1.0
+
+# Distortion is still published as an empty D, and after 2026-07-28 that is a different
+# statement than it was. It used to mean "nobody looked". It now means "looked, found nothing,
+# and will not write five zeros for a tangential term that was never measured".
+#
+# `tools/lensfit` traced 66 straight edges across 24 frames of both flights and found no
+# radial distortion: 30 of 63 lines bow outward, which is a coin flip, and correcting improves
+# straightness by 0.8 % on a 1.6 px floor. The bound is on the radial shift at the image
+# corner, that being the combination `k1` and `k2` do not trade against each other.
+#
+# So a consumer assuming zero distortion is now doing something supported rather than
+# something desperate — and the empty model is what tells it to make that assumption itself,
+# visibly, instead of reading it off a field that looks calibrated.
+DISTORTION_SOURCE = "docs/measurements/2026-07-28-camera-intrinsics-prior.md"
+DISTORTION_CORNER_SHIFT_PX = 16.2  # point estimate
+DISTORTION_CORNER_SHIFT_CI_PX = (-19.5, 33.9)  # 95 %, bootstrap
+
+# `fx == fy`, same day, same tool. A square tag on a plane parallel to the sensor images as a
+# square, so `A A^T` for its edge vectors must be diagonal with ratio (fx/fy)^2 — the tag's
+# heading, the yaw and the height all cancel.
+#
+# The trap is that the observed anisotropy is NOT the pixel aspect. Pixel aspect is
+# diag(fx, fy): it acts along the image axes and can produce no skew at all. The 25 Hz flight's
+# anisotropy sits 35 degrees off any image axis, and the two flights agree on its magnitude
+# (1.0079, 1.0085) while disagreeing 36 degrees on its axis — which a camera property cannot
+# do and a tag on a differently-sloped surface can. So this is the bound on what could still be
+# hiding under a scene tilt, not a measurement of a difference.
+ASPECT_BOUND_PCT = 0.85
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The pose-solve gates, mirroring `vision/TagPose` exactly — the same deliberate
+# duplication as MIN_SATS_FOR_FIX, named on both sides. A solved orientation reaches a
+# message ONLY past both gates; failing either degrades the message to the pre-solve
+# contract (NaN orientation, refused bbox, plain id), never to a partial claim. The
+# thresholds are measured, docs/measurements/2026-07-28-pose-solve-stability.md, and the
+# selftest holds this converter's copy to the Kotlin encoder's byte for byte through the
+# solved fixture and the planted gate faults.
+# ─────────────────────────────────────────────────────────────────────────────
+
+MIN_SOLVE_PIXELS = 60.0  # vision/TagPose.MIN_SOLVE_PIXELS
+MAX_AMBIGUITY_RATIO = 0.5  # vision/TagPose.MAX_AMBIGUITY_RATIO
+
+
+def trusted_solve(px, solve):
+    """`vision/TagPose.trusted`, mirrored: the solve dict when believable, else None.
+
+    `solve` is `{qx,qy,qz,qw,tx,ty,tz,e1,e2,tag_m}` floats or None. `e2` may be +inf —
+    no second PnP minimum, the UNAMBIGUOUS case (ratio 0), not a missing value.
+    """
+    if solve is None:
+        return None
+    finite = [solve[k] for k in ("qx", "qy", "qz", "qw", "tx", "ty", "tz")]
+    if not all(math.isfinite(v) for v in finite):
+        return None
+    if not math.isfinite(solve["e1"]) or solve["e1"] < 0.0:
+        return None
+    if math.isnan(solve["e2"]):
+        return None
+    if not math.isfinite(solve["tag_m"]) or solve["tag_m"] <= 0.0:
+        return None
+    if solve["tz"] <= 0.0:
+        return None
+    if not math.isfinite(px) or px < MIN_SOLVE_PIXELS:
+        return None
+    e1, e2 = solve["e1"], solve["e2"]
+    if e2 == float("inf"):
+        ratio = 0.0
+    elif e2 <= 0.0:
+        ratio = 1.0
+    else:
+        ratio = e1 / e2
+    if ratio > MAX_AMBIGUITY_RATIO:
+        return None
+    return solve
+
+
+def _yaml_block(path, key):
+    """The float list under `key:`/`data:` in a ROS CameraInfo YAML, or None.
+
+    A block scanner, not a YAML parser: it wants one flat `- <float>` sequence under one named
+    mapping and gives up on anything else. That is all the schema this is checking against
+    contains, and PyYAML is not in this project's shell — adding a dependency so that a
+    self-test can read nine numbers would be the wrong trade.
+    """
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    out, inside, seen_data = [], False, False
+    for line in lines:
+        stripped = line.strip()
+        if not inside:
+            if stripped == key + ":":
+                inside = True
+            continue
+        if stripped == "data:":
+            seen_data = True
+            continue
+        if stripped.startswith("- ") and seen_data:
+            try:
+                out.append(float(stripped[2:]))
+            except ValueError:
+                return None
+            continue
+        if stripped.startswith("#") or not stripped:
+            continue
+        if seen_data:
+            break  # first non-item line after the sequence ends it
+        if ":" in stripped and not stripped.startswith("-"):
+            continue  # rows:/cols: before data:
+        break
+    return out if out else None
+
+
+CAMERA_INFO_CAVEAT = (
+    "camera_info carries a FITTED focal length (%.1f px at %d wide, f = %.4f * W), not a "
+    "calibration: two flights, one tag, no chessboard, no distortion term, against an "
+    "altitude quantised to 0.1 m. Distortion is BOUNDED, not calibrated: no radial "
+    "distortion is detectable, radial shift at the image corner %+.1f px, 95%% CI "
+    "[%+.1f, %+.1f] px on a 1101 px corner radius, so D stays empty with an empty "
+    "distortion_model rather than becoming five zeros — the tangential terms were never "
+    "measured. fx == fy is BOUNDED: a square tag imaged near-nadir over two flights puts fy "
+    "within %.2f %% of fx. Principal point is assumed to be the image centre and is the one "
+    "intrinsic still UNMEASURED: the same two flights put the optical axis 46 and 128 px off "
+    "centre and disagree with each other, because a gimbal pointing bias is algebraically "
+    "identical to a principal-point offset in a nadir descent and this geometry cannot "
+    "separate them. That is the largest error in this camera model. Sources: %s, %s"
+    % (
+        FOCAL_OVER_WIDTH * FOCAL_FIT_WIDTH,
+        int(FOCAL_FIT_WIDTH),
+        FOCAL_OVER_WIDTH,
+        DISTORTION_CORNER_SHIFT_PX,
+        DISTORTION_CORNER_SHIFT_CI_PX[0],
+        DISTORTION_CORNER_SHIFT_CI_PX[1],
+        ASPECT_BOUND_PCT,
+        FOCAL_SOURCE,
+        DISTORTION_SOURCE,
+    )
+)
+
+# `record/Json` writes non-finite floats as these three quoted strings, because bare NaN is
+# not JSON and a log we cannot `jq` is a log we will not read.
+NONFINITE = {"NaN": float("nan"), "Infinity": float("inf"), "-Infinity": float("-inf")}
+
+NAN = float("nan")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reading the record
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def num(v):
+    """A recorded value as a float, coercing the three quoted non-finites."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return NONFINITE.get(v)
+
+
+def finite(v):
+    return v is not None and math.isfinite(v)
+
+
+def read_records(paths):
+    """Every line of every path, in file order. Returns (header, entries, bad_lines).
+
+    File order is queue order, not quite time order — 78 of 21 061 lines were measured out
+    of order on the reference mission, by at most 4.5 ms, because entries are built on the
+    producing thread and rendered on the writer thread. Nothing is re-sorted here: the
+    causal derivation runs in the order the publisher would have seen, and only the
+    per-stream insertion sorts (§5.4).
+    """
+    header, entries, bad = None, [], 0
+    for path in paths:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except ValueError:
+                    bad += 1  # a torn last line is expected; the recorder is append-only
+                    continue
+                if o.get("k") == "header":
+                    if header is None:
+                        header = o
+                else:
+                    entries.append(o)
+    return header, entries, bad
+
+
+def parse_value(raw, kind):
+    """Invert the `toString()` / `Json.num` the recorder rendered a slow value with.
+
+    A value that will not parse becomes None rather than a default: "we cannot read this"
+    and "it was 0" are the two things this codebase refuses to confuse.
+    """
+    if raw is None:
+        return None
+    if kind == "bool":
+        return {"true": True, "false": False}.get(raw)
+    if kind == "str":
+        return raw
+    if kind == "intlist":
+        if raw == "":
+            return []
+        try:
+            return [int(p.strip()) for p in raw.split(",")]
+        except ValueError:
+            return None
+    try:
+        f = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return round(f) if kind == "int" else f
+
+
+def unix_seconds(started_unix_ms, t):
+    """The record's monotonic `t` as a wall-clock instant, millisecond-quantised.
+
+    `floor(x + 0.5)`, which is Java's `Math.round` — Python's `round()` is banker's
+    rounding and disagrees on an exact half, which a 25 Hz record hits often. The
+    quantisation is deliberate and not a shortcut: the live publisher will stamp with
+    `System.currentTimeMillis()`, so **the store must be no more precise than the wire**.
+    """
+    if started_unix_ms is None:
+        return None
+    return math.floor(started_unix_ms + t * 1000.0 + 0.5) / 1000.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Geometry. Small and hand-written on purpose: every one of these is something
+# `--selftest` plants a fault in, and a library call cannot be planted in.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def coordinate_or_none(lat, lon):
+    """A coordinate this bridge is willing to repeat, or None.
+
+    The range check is the load-bearing one: DJI's no-home filler is 4.583662361046586E7 in
+    *both* fields, which is not a latitude at all. The equality check catches a future
+    filler that lands inside the bounds, and the exactly-0/0 pair with it.
+    """
+    if lat is None or lon is None:
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return None
+    if lat == lon:
+        return None
+    return lat, lon
+
+
+def enu_metres(from_lat, from_lon, to_lat, to_lon):
+    """ENU offset in metres as (east, north). The `cos(latitude)` is the landmine."""
+    north = (to_lat - from_lat) * METRES_PER_DEG
+    d_lon = to_lon - from_lon
+    if d_lon > 180.0:
+        d_lon -= 360.0
+    if d_lon < -180.0:
+        d_lon += 360.0
+    east = d_lon * METRES_PER_DEG * math.cos(math.radians(from_lat))
+    return east, north
+
+
+def enu_quaternion(roll_deg, pitch_deg, yaw_deg):
+    """DJI's FRD/NED attitude as the ENU/FLU rotation ROS wants, `(x, y, z, w)`.
+
+    roll stays; pitch negates (Y flips from right to left); yaw becomes `90 - yaw`
+    (clockwise-from-north to counterclockwise-from-east). Used for the airframe *and* for
+    the gimbal, because DJI reports both in the same convention and the gimbal's is
+    earth-referenced.
+    """
+    hr = math.radians(roll_deg) / 2.0
+    hp = math.radians(-pitch_deg) / 2.0
+    hy = math.radians(90.0 - yaw_deg) / 2.0
+    cr, sr = math.cos(hr), math.sin(hr)
+    cp, sp = math.cos(hp), math.sin(hp)
+    cy, sy = math.cos(hy), math.sin(hy)
+    return (
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    )
+
+
+def q_mul(a, b):
+    """Hamilton product, `(x, y, z, w)` in and out. `a ⊗ b` = rotate by b then by a."""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    )
+
+
+def q_conj(q):
+    """The inverse of a unit quaternion."""
+    return (-q[0], -q[1], -q[2], q[3])
+
+
+def q_rotate(q, v):
+    """Rotate a 3-vector by a unit quaternion."""
+    x, y, z, w = q
+    vx, vy, vz = v
+    # t = 2 * (q_vec x v); v' = v + w*t + q_vec x t
+    tx = 2.0 * (y * vz - z * vy)
+    ty = 2.0 * (z * vx - x * vz)
+    tz = 2.0 * (x * vy - y * vx)
+    return (
+        vx + w * tx + (y * tz - z * ty),
+        vy + w * ty + (z * tx - x * tz),
+        vz + w * tz + (x * ty - y * tx),
+    )
+
+
+def q_from_matrix(m):
+    """A rotation matrix (row-major 3x3) as `(x, y, z, w)`. Only used for the fixed edge."""
+    tr = m[0][0] + m[1][1] + m[2][2]
+    if tr > 0:
+        s = math.sqrt(tr + 1.0) * 2.0
+        w = 0.25 * s
+        x = (m[2][1] - m[1][2]) / s
+        y = (m[0][2] - m[2][0]) / s
+        z = (m[1][0] - m[0][1]) / s
+    elif m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        s = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0
+        w = (m[2][1] - m[1][2]) / s
+        x = 0.25 * s
+        y = (m[0][1] + m[1][0]) / s
+        z = (m[0][2] + m[2][0]) / s
+    elif m[1][1] > m[2][2]:
+        s = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0
+        w = (m[0][2] - m[2][0]) / s
+        x = (m[0][1] + m[1][0]) / s
+        y = 0.25 * s
+        z = (m[1][2] + m[2][1]) / s
+    else:
+        s = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0
+        w = (m[1][0] - m[0][1]) / s
+        x = (m[0][2] + m[2][0]) / s
+        y = (m[1][2] + m[2][1]) / s
+        z = 0.25 * s
+    return (x, y, z, w)
+
+
+def optical_rotation():
+    """`drone/camera` → `drone/camera_optical`: exact, free, and needing no measurement.
+
+    The columns are the optical axes written in camera coordinates: optical +x is "right in
+    the image", which is the camera frame's −y (it is y-left); optical +y is down, which is
+    −z; optical +z is into the image, which is +x forward. That is Foxglove's own definition
+    of `CompressedVideo.frame_id`, so setting the video's `frame_id` to this leaf makes the
+    video's frame right **by construction** rather than by our assertion.
+    """
+    m = [
+        [0.0, 0.0, 1.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+    ]
+    return q_from_matrix(m)
+
+
+OPTICAL_Q = optical_rotation()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The causal derivation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Sample:
+    """One `dji_state` line, with everything true of the aircraft at that instant."""
+
+    __slots__ = ("fold", "gimbal", "gimbal_t", "state", "t", "unix")
+
+    def __init__(self, t, unix, state, fold, gimbal, gimbal_t):
+        self.t = t
+        self.unix = unix
+        self.state = state
+        self.fold = fold
+        self.gimbal = gimbal  # the last reported gimbal line at or before `t`, or None
+        self.gimbal_t = gimbal_t
+
+    # ── the four gated inputs ──────────────────────────────────────────────
+
+    def age_ms(self, signal):
+        return (self.state.get("age") or {}).get(AGE_MEMBER[signal])
+
+    def fresh(self, signal):
+        a = self.age_ms(signal)
+        return a is not None and a <= STALE_AFTER_MS[signal]
+
+    @property
+    def link_alive(self):
+        """`fcConnected` — about the *link*, not about any datum on it.
+
+        This is the whole of the dense-stream gate. Quiet-because-unchanged and
+        quiet-because-dead look identical to any per-key freshness test, because every data
+        key falls silent together; only a signal about the link can separate them.
+        """
+        return self.fold.get("fcConnected") is True
+
+    def allows(self, signal, held):
+        return self.link_alive if held else self.fresh(signal)
+
+    def coordinate(self):
+        return coordinate_or_none(num(self.state.get("lat")), num(self.state.get("lon")))
+
+    def relalt(self):
+        v = num(self.state.get("relalt"))
+        return v if finite(v) else None
+
+    def rpy(self):
+        r = num(self.state.get("roll"))
+        p = num(self.state.get("pitch"))
+        y = num(self.state.get("yaw"))
+        return (r, p, y) if all(finite(v) for v in (r, p, y)) else None
+
+    def ned_velocity(self):
+        vn = num(self.state.get("vn"))
+        ve = num(self.state.get("ve"))
+        vd = num(self.state.get("vd"))
+        return (vn, ve, vd) if all(finite(v) for v in (vn, ve, vd)) else None
+
+    # ── the derived quantities ─────────────────────────────────────────────
+
+    def local_position(self, origin, held):
+        """ENU metres from the takeoff origin, or None. Mirrors `localPositionOrNull`."""
+        if origin is None:
+            return None
+        here = self.coordinate()
+        if here is None:
+            return None
+        if not self.allows("POSITION", held):
+            return None
+        up = self.relalt()
+        if up is None:
+            return None
+        if not self.allows("ALTITUDE", held):
+            return None
+        east, north = enu_metres(origin[0], origin[1], here[0], here[1])
+        return (east, north, up)
+
+    def orientation(self, held):
+        rpy = self.rpy()
+        if rpy is None or not self.allows("ATTITUDE", held):
+            return None
+        return enu_quaternion(*rpy)
+
+    def velocity_enu(self):
+        """**An aged velocity is not a measured zero.** Fresh or nothing, always."""
+        v = self.ned_velocity()
+        if v is None or not self.fresh("VELOCITY"):
+            return None
+        vn, ve, vd = v
+        return (ve, vn, -vd)  # ENU x=east=NED y, y=north=NED x, z=up=−down
+
+    def nav_sat_status(self):
+        """DJI's signal level and satellite count → `NavSatStatus.status`, a *signed* int8.
+
+        A level of 2 is a marginal 2D solution — enough for a position, not enough to assert
+        one — and reports no fix here rather than being rounded up, on the same thresholds
+        `TelemetryEncoder.fixType` uses, so the two wires never disagree about whether this
+        aircraft has a fix.
+        """
+        level = self.fold.get("gpsSignalLevel")
+        sats = self.fold.get("satelliteCount")
+        fixed = level is not None and level >= 3 and (sats is None or sats >= MIN_SATS_FOR_FIX)
+        return 0 if fixed else -1
+
+
+def build_samples(header, entries):
+    """Fold the slow fields and the gimbal forward, and pair them with each `dji_state`.
+
+    Fields stamped at or before a sample were already true *in* it: `StateDelta` derives
+    them from the state it was handed and writes them after the sample line at the same `t`.
+    Folding in file order alone would put every slow value one sample late.
+
+    Nothing here reads a later entry, which is the whole of §3.3.
+    """
+    started = (header or {}).get("started_unix_ms")
+    fold = {}
+    gimbal, gimbal_t = None, None
+    samples = []
+    pending = []  # entries at this `t` not yet folded, kept so `<=` means what it says
+    states = [e for e in entries if e.get("k") == "dji_state"]
+    slow = [e for e in entries if e.get("k") in ("dji_field", "gimbal")]
+    i = 0
+    for s in states:
+        while i < len(slow) and slow[i]["t"] <= s["t"]:
+            e = slow[i]
+            if e["k"] == "dji_field":
+                binding = FIELD_MAP.get(e.get("f"))
+                if binding is not None:
+                    attr, kind = binding
+                    fold[attr] = parse_value(e.get("v"), kind)
+            else:
+                gimbal, gimbal_t = e, e["t"]
+            i += 1
+        samples.append(
+            Sample(s["t"], unix_seconds(started, s["t"]), s, dict(fold), gimbal, gimbal_t)
+        )
+    del pending
+    return samples
+
+
+def takeoff_origin(samples):
+    """The local frame's origin: the first fix taken while DJI said the motors were on.
+
+    Read off the record rather than assumed, and **fresh**, not held: a datum recorded from
+    a cached fix anchors the whole flight's local frame to wherever the aircraft was the
+    last time the GPS spoke, and every local coordinate afterwards inherits that error with
+    no way to see it. Falls back to the first usable fix so a ground session still has a
+    frame. Returns `(lat, lon, takeoff_altitude_or_None, t)`.
+
+    The origin is **a constant of the flight, not a reading**: captured once, held until the
+    aircraft lands, never re-read and never expired. Applying a staleness limit to a
+    constant is a category error, and one this project has actually made.
+    """
+    for require_motors in (True, False):
+        for s in samples:
+            if require_motors and s.fold.get("motorsOn") is not True:
+                continue
+            c = s.coordinate()
+            if c is None or not s.fresh("POSITION"):
+                continue
+            return (c[0], c[1], s.fold.get("takeoffAltitudeAmsl"), s.t)
+    return None
+
+
+class Derived:
+    """One sample's worth of publishing decisions — what went out and what did not."""
+
+    __slots__ = ("channels", "orientation", "position", "reasons", "sample")
+
+    def __init__(self, sample):
+        self.sample = sample
+        self.channels = {}  # channel -> the values a message needs
+        self.reasons = {}  # channel -> why not, when absent
+        self.position = None
+        self.orientation = None
+
+
+def derive(samples, origin):
+    """Run the publishing rules over the samples, causally and in order.
+
+    Every decision here is one a live publisher could take with no knowledge of the future.
+    """
+    out = []
+    for s in samples:
+        d = Derived(s)
+
+        held_pos = s.local_position(origin, held=True)
+        held_ori = s.orientation(held=True)
+        d.position, d.orientation = held_pos, held_ori
+
+        # pose — dense. Position, altitude and attitude held under the liveness gate,
+        # because this is the channel a landing relies on and a 22 s hole in it is what
+        # gating on data freshness actually produced.
+        if held_pos is not None and held_ori is not None:
+            d.channels["pose"] = (held_pos, held_ori)
+        else:
+            d.reasons["pose"] = _why(s, origin, held=True)
+
+        # odom — sparse, and that is the honest answer. Every input fresh, velocity
+        # included. No holding, no covariance inflation, no pretending.
+        fresh_pos = s.local_position(origin, held=False)
+        fresh_ori = s.orientation(held=False)
+        vel = s.velocity_enu()
+        if fresh_pos is not None and fresh_ori is not None and vel is not None:
+            d.channels["odom"] = (fresh_pos, fresh_ori, vel)
+        else:
+            r = _why(s, origin, held=False)
+            d.reasons["odom"] = (
+                r
+                if r != "PUBLISHED"
+                else ("VELOCITY_MISSING" if s.ned_velocity() is None else "VELOCITY_STALE")
+            )
+
+        # gps_location — the same position under a different projection, so the same gate.
+        # There is no defensible reason for the two to disagree about publishability.
+        here = s.coordinate()
+        up = s.relalt()
+        if here is not None and up is not None and s.link_alive:
+            d.channels["gps_location"] = (here[0], here[1], up, s.nav_sat_status())
+        else:
+            d.reasons["gps_location"] = _why_position(s, held=True)
+
+        if held_ori is not None:
+            d.channels["imu"] = held_ori
+        else:
+            d.reasons["imu"] = _why_attitude(s, held=True)
+
+        pct = s.fold.get("batteryPercent")
+        if isinstance(pct, int) and 0 <= pct <= 100:
+            d.channels["battery"] = pct
+        else:
+            d.reasons["battery"] = "BATTERY_MISSING"
+
+        mode = s.fold.get("flightMode")
+        if mode and mode.strip():
+            d.channels["mode"] = mode
+        else:
+            d.reasons["mode"] = "MODE_MISSING"
+
+        out.append(d)
+    return out
+
+
+def _why_position(s, held):
+    if s.coordinate() is None:
+        return "POSITION_INVALID"
+    if not s.allows("POSITION", held):
+        return "LINK_DOWN" if held else "POSITION_STALE"
+    if s.relalt() is None:
+        return "ALTITUDE_MISSING"
+    if not s.allows("ALTITUDE", held):
+        return "LINK_DOWN" if held else "ALTITUDE_STALE"
+    return "PUBLISHED"
+
+
+def _why_attitude(s, held):
+    if s.rpy() is None:
+        return "ATTITUDE_MISSING"
+    if not s.allows("ATTITUDE", held):
+        return "LINK_DOWN" if held else "ATTITUDE_STALE"
+    return "PUBLISHED"
+
+
+def _why(s, origin, held):
+    if origin is None:
+        return "NO_ORIGIN"
+    r = _why_position(s, held)
+    return r if r != "PUBLISHED" else _why_attitude(s, held)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The frame tree
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def camera_edge(sample, world_from_base, source):
+    """`drone/base_link` → `drone/camera` — a **joint** rotation, not DJI's number.
+
+    Returns `(quaternion, tags)` or None. `source` is the earth-referenced camera attitude
+    in DJI's own convention as `(roll, pitch, yaw)` degrees, from whichever of the commanded
+    or the reported angle is available.
+
+    The airframe's attitude is composed away because DJI's gimbal report is
+    earth-referenced: commanded to −90° the camera points at the ground regardless of how
+    the aircraft is leaning, so the angle is measured from the horizon rather than from the
+    airframe, and an edge between two body frames is not that.
+
+    Note the consequence, which must not be conflated with the airframe property that
+    the gimbal has no usable roll axis: **the joint roll here is approximately minus the
+    aircraft's roll**, because that is exactly what the stabiliser is doing. Zero in the
+    report, non-zero in the edge.
+    """
+    if world_from_base is None or source is None:
+        return None
+    world_from_camera = enu_quaternion(*source)
+    q = q_mul(q_conj(world_from_base), world_from_camera)
+    return q
+
+
+def gimbal_source(sample, commanded):
+    """The earth-referenced camera attitude to build the edge from, and where it came from.
+
+    Returns `((roll, pitch, yaw), tags)` or `(None, tags)`. The commanded angle is preferred
+    per §2.2 and is exact and always fresh; the reported one is change-driven and goes
+    silent exactly when the camera is held still, which is what a nadir descent consists of.
+    So when the reported angle is used its **age travels with it**, in the tags, where a
+    consumer can see that a held reading is behind the edge.
+    """
+    if commanded:
+        pitch, _at = commanded
+        return (0.0, pitch, sample.state_yaw()), {"gimbal_src": "commanded"}
+    g = sample.gimbal
+    if g is None:
+        return None, {"gimbal_src": "none"}
+    pitch = num(g.get("p"))
+    roll = num(g.get("r"))
+    yaw = num(g.get("y"))
+    if not finite(pitch) or not finite(yaw):
+        return None, {"gimbal_src": "none"}
+    tags = {"gimbal_src": "reported"}
+    if g.get("age") is not None:
+        # The reading's own delivery age at the moment it was written, plus however long we
+        # have been holding it since. Both halves matter and neither is guessable from the
+        # other.
+        tags["gimbal_age_ms"] = int(g["age"]) + round((sample.t - sample.gimbal_t) * 1000)
+    return (roll if finite(roll) else 0.0, pitch, yaw), tags
+
+
+def _state_yaw(self):
+    rpy = self.rpy()
+    return rpy[2] if rpy else 0.0
+
+
+Sample.state_yaw = _state_yaw
+
+
+def build_tf(derived, commanded_by_t, gimbal_mode):
+    """One `TFMessage` per state tick, carrying every edge valid at that instant.
+
+    One message rather than three because the three are a snapshot of one tree at one
+    timestamp, and a consumer that has to re-join them across messages is doing a merge that
+    can be stale in one edge and fresh in another.
+
+    The fixed `camera` → `camera_optical` edge is in every message. It could in principle be
+    latched and published once, but "once" has no meaning on a bus a subscriber can join at
+    any moment; at ~100 bytes it is not worth optimising, and republishing means a late
+    joiner can resolve the whole chain within one tick.
+    """
+    rows = []
+    counts = collections.Counter()
+    for d in derived:
+        s = d.sample
+        edges = []
+        if d.position is not None and d.orientation is not None:
+            edges.append((FRAME_WORLD, FRAME_BASE_LINK, d.position, d.orientation))
+            counts["world->base_link"] += 1
+        tags = {}
+        if gimbal_mode != "none":
+            src, gtags = gimbal_source(s, commanded_by_t.get(s.t))
+            tags.update(gtags)
+            q = camera_edge(s, d.orientation, src)
+            if q is not None:
+                edges.append((FRAME_BASE_LINK, FRAME_CAMERA, CAMERA_OFFSET_M, q))
+                counts["base_link->camera"] += 1
+        edges.append((FRAME_CAMERA, FRAME_CAMERA_OPTICAL, (0.0, 0.0, 0.0), OPTICAL_Q))
+        counts["camera->camera_optical"] += 1
+        rows.append((s.unix, edges, tags, d.position))
+    return rows, counts
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Video. The sidecar stays the authority; this reads its bytes and checks them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_videoexport():
+    """`tools/videoexport`'s index reader, imported rather than reimplemented.
+
+    The two must agree about what a frame's bytes are, and the cheapest way to guarantee
+    that is for there to be one implementation.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videoexport")
+    loader = importlib.machinery.SourceFileLoader("videoexport", path)
+    spec = importlib.util.spec_from_loader("videoexport", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def nal_units(data):
+    """Annex-B NAL payloads in `data`, as `(nal_type, payload_offset)` pairs."""
+    out = []
+    n = len(data)
+    i = 0
+    while i + 3 < n:
+        if data[i] == 0 and data[i + 1] == 0:
+            if data[i + 2] == 1:
+                start = i + 3
+            elif data[i + 2] == 0 and i + 3 < n and data[i + 3] == 1:
+                start = i + 4
+            else:
+                i += 1
+                continue
+            if start < n:
+                out.append((data[start] & 0x1F, start))
+            i = start + 1
+            continue
+        i += 1
+    return out
+
+
+def _rbsp(data, offset, limit=24):
+    """The next few bytes of RBSP after `offset`, with emulation-prevention bytes removed."""
+    out = bytearray()
+    zeros = 0
+    i = offset
+    while i < len(data) and len(out) < limit:
+        b = data[i]
+        if zeros >= 2 and b == 0x03:
+            zeros = 0
+            i += 1
+            continue
+        out.append(b)
+        zeros = zeros + 1 if b == 0 else 0
+        i += 1
+    return bytes(out)
+
+
+class _Bits:
+    def __init__(self, data):
+        self.d, self.p = data, 0
+
+    def bit(self):
+        byte = self.d[self.p >> 3]
+        b = (byte >> (7 - (self.p & 7))) & 1
+        self.p += 1
+        return b
+
+    def ue(self):
+        """Exp-Golomb unsigned. Raises IndexError when the buffer runs out, which the
+        caller treats as "cannot tell", not as "fine"."""
+        n = 0
+        while self.bit() == 0:
+            n += 1
+            if n > 31:
+                raise ValueError("exp-golomb ran away")
+        v = 1
+        for _ in range(n):
+            v = (v << 1) | self.bit()
+        return v - 1
+
+
+SLICE_TYPE_NAMES = {
+    0: "P",
+    1: "B",
+    2: "I",
+    3: "SP",
+    4: "SI",
+    5: "P",
+    6: "B",
+    7: "I",
+    8: "SP",
+    9: "SI",
+}
+
+
+def slice_type_of(data, offset):
+    """The slice type letter of a coded slice NAL, or None when it cannot be read.
+
+    `slice_header` begins `first_mb_in_slice ue(v)` then `slice_type ue(v)`. Two exp-Golomb
+    reads, and the only reason to do them at all: **Foxglove's `CompressedVideo` does not
+    support B-frames**, because they need lookahead. Zero were measured on this firmware,
+    which is exactly why the check has to be shown to fire on a planted one rather than
+    assumed to work.
+    """
+    try:
+        bits = _Bits(_rbsp(data, offset + 1))
+        bits.ue()
+        return SLICE_TYPE_NAMES.get(bits.ue())
+    except (IndexError, ValueError):
+        return None
+
+
+class VideoFault(Exception):
+    """A frame the schema does not permit. Aborts the conversion, never a warning."""
+
+
+def check_frame(fr, blob):
+    """Everything that must be true of one access unit before a row is written.
+
+    Refusals, not warnings: a consumer decoding our stream incorrectly is worse than a
+    conversion that failed, and a store is a thing people trust afterwards.
+    """
+    nals = nal_units(blob)
+    if not nals:
+        raise VideoFault("frame {}: no NAL start code — not an Annex-B access unit".format(fr["n"]))
+    types = [t for t, _ in nals]
+    if fr.get("key"):
+        if 7 not in types:
+            raise VideoFault(
+                "frame {} is a keyframe with no SPS (NAL 7); saw {}. Every keyframe message "
+                "must carry its own SPS or a subscriber joining there cannot decode.".format(
+                    fr["n"], types
+                )
+            )
+    for t, off in nals:
+        if t in (1, 5):
+            st = slice_type_of(blob, off)
+            if st == "B":
+                raise VideoFault(
+                    "frame {} contains a B slice. foxglove_msgs.CompressedVideo does not "
+                    "support B-frames — they need lookahead. This firmware emitted none when "
+                    "the contract was measured; if it now does, the video path needs a "
+                    "decision rather than a conversion.".format(fr["n"])
+                )
+            if st is None:
+                raise VideoFault("frame %s: could not read a slice type from NAL %d" % (fr["n"], t))
+    return types
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Message construction — DiMOS's own types, so the bytes are what DiMOS receives
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Messages:
+    """Builds the DiMOS message objects. Imported lazily so `--help` works anywhere."""
+
+    def __init__(self):
+        # Raw generated bindings, like BatteryState: DiMOS has no wrapper for
+        # `diagnostic_msgs` (checked 2026-07-30), and the encoding is the binding's either
+        # way -- the wrapper only changes what a *decode* hands a consumer.
+        from dimos_lcm.diagnostic_msgs import DiagnosticArray, DiagnosticStatus, KeyValue
+        from dimos_lcm.geometry_msgs import (
+            Point as LcmPoint,
+            Pose as LcmPose,
+            PoseWithCovariance as LcmPoseWithCovariance,
+            Quaternion as LcmQuaternion,
+            Vector3 as LcmVector3,
+        )
+        from dimos_lcm.sensor_msgs.BatteryState import BatteryState
+        from dimos_lcm.std_msgs import Header as LcmHeader, Time as LcmTime
+        from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+
+        from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
+        from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Transform import Transform
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+        from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos.msgs.nav_msgs.Odometry import Odometry
+        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+        from dimos.msgs.sensor_msgs.Imu import Imu
+
+        # Lives on dimos's ivan/feat/go2-gps (commit 0e5abf607), not yet on main. A vendored
+        # copy stood in here until 2026-07-30 and is gone on purpose: mem2 records the payload
+        # type as `__module__.__qualname__` and re-imports that string on open, so a store
+        # written from a local copy either names a module no consumer can import, or — if the
+        # name is faked to the canonical one — hides any drift between the two classes behind
+        # bytes nothing at read time can check. A dimos checkout without this class should stop
+        # the conversion here, loudly, rather than produce a store that lies about its type.
+        from dimos.msgs.sensor_msgs.NavSatFix import NavSatFix
+        from dimos.msgs.std_msgs.Float32 import Float32
+        from dimos.msgs.std_msgs.String import String
+        from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+        # The two message types are DiMOS's own wrappers (Ivan, 2026-07-28): they subclass
+        # the generated bindings so the *encoding* is bit-for-bit the same — the fixture
+        # plant in the selftest proves it — but a store typed with the wrapper *decodes*
+        # into objects carrying `ts`, `frame_id`, `msg_name` and the rerun path, which is
+        # what a DiMOS consumer reads. The inner plumbing types stay raw generated
+        # bindings, built attribute-style exactly as `tools/lcmfixtures/generate.py`
+        # builds the fixtures.
+        from dimos.msgs.vision_msgs.Detection3D import Detection3D
+        from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+
+        self.PoseStamped, self.Pose = PoseStamped, Pose
+        self.PoseWithCovariance = PoseWithCovariance
+        self.Quaternion, self.Vector3 = Quaternion, Vector3
+        self.Transform, self.TFMessage = Transform, TFMessage
+        self.Twist, self.TwistWithCovariance = Twist, TwistWithCovariance
+        self.TwistStamped = TwistStamped
+        self.Odometry, self.Imu, self.NavSatFix = Odometry, Imu, NavSatFix
+        self.CameraInfo = CameraInfo
+        self.String, self.CompressedVideo = String, CompressedVideo
+        self.Float32 = Float32
+        self.BatteryState = BatteryState
+        self.DiagnosticArray, self.DiagnosticStatus = DiagnosticArray, DiagnosticStatus
+        self.KeyValue = KeyValue
+        self.LcmHeader, self.LcmTime = LcmHeader, LcmTime
+        self.Detection3D, self.Detection3DArray = Detection3D, Detection3DArray
+        self.ObjectHypothesisWithPose = ObjectHypothesisWithPose
+        self.ObjectHypothesis, self.BoundingBox3D = ObjectHypothesis, BoundingBox3D
+        self.LcmPose, self.LcmPoseWithCovariance = LcmPose, LcmPoseWithCovariance
+        self.LcmPoint, self.LcmQuaternion = LcmPoint, LcmQuaternion
+        self.LcmVector3 = LcmVector3
+
+    def types(self):
+        return {
+            "pose": self.PoseStamped,
+            "odom": self.Odometry,
+            "gps_location": self.NavSatFix,
+            "imu": self.Imu,
+            "battery": self.BatteryState,
+            "mode": self.String,
+            "tf": self.TFMessage,
+            "color_image": self.CompressedVideo,
+            "camera_info": self.CameraInfo,
+            "detections": self.Detection3DArray,
+            "tag_fix": self.Detection3DArray,
+            "setpoint": self.TwistStamped,
+            "wind": self.Float32,
+            "status": self.String,
+            "warnings": self.DiagnosticArray,
+            "command_ack": self.String,
+            "provenance": self.String,
+        }
+
+    def pose(self, ts, position, orientation):
+        return self.PoseStamped(
+            ts=ts,
+            frame_id=FRAME_WORLD,
+            position=self.Vector3(*position),
+            orientation=self.Quaternion(*orientation),
+        )
+
+    def odom(self, ts, position, orientation, velocity):
+        pose = self.Pose(
+            position=self.Vector3(*position), orientation=self.Quaternion(*orientation)
+        )
+        # `twist.angular` is NaN on every axis: this airframe reports no angular rate at
+        # all, and 0 would read as a confidently motionless aircraft.
+        twist = self.Twist(self.Vector3(*velocity), self.Vector3(NAN, NAN, NAN))
+        return self.Odometry(
+            ts=ts,
+            frame_id=FRAME_WORLD,
+            child_frame_id=FRAME_BASE_LINK,
+            pose=self.PoseWithCovariance(pose, [0.0] * 36),
+            twist=self.TwistWithCovariance(twist, [0.0] * 36),
+        )
+
+    def gps(self, ts, lat, lon, alt, status):
+        # `altitude` is metres above THIS flight's takeoff point, not the WGS-84 ellipsoid
+        # height ROS asks for. The barometric alternative moved 41.5 m between sessions.
+        return self.NavSatFix(
+            latitude=lat,
+            longitude=lon,
+            altitude=alt,
+            status=status,
+            service=1,
+            frame_id=FRAME_BASE_LINK,
+            ts=ts,
+        )
+
+    def imu(self, ts, orientation):
+        unreported = [-1.0] + [0.0] * 8  # ROS's own "this quantity is not reported"
+        return self.Imu(
+            orientation=self.Quaternion(*orientation),
+            orientation_covariance=[0.0] * 9,
+            angular_velocity=self.Vector3(NAN, NAN, NAN),
+            angular_velocity_covariance=list(unreported),
+            linear_acceleration=self.Vector3(NAN, NAN, NAN),
+            linear_acceleration_covariance=list(unreported),
+            frame_id=FRAME_BASE_LINK,
+            ts=ts,
+        )
+
+    def battery(self, ts, fold):
+        b = self.BatteryState()
+        # A **fresh** header, not the one `BatteryState()` came with. The generated
+        # bindings hold their nested messages as class-level defaults, so every instance
+        # shares one `header` object and mutating it in place would give all 1422 battery
+        # messages the last one's timestamp — while the store's own `ts` column stayed
+        # right, so nothing about the store would look wrong. Found by the byte comparison
+        # against the Kotlin encoder, and by nothing else; `check_roundtrip` re-encodes the
+        # same object and would have agreed with itself. This is why the cross-check exists.
+        b.header = self.LcmHeader(seq=0, stamp=self.lcm_stamp(ts), frame_id=FRAME_BASE_LINK)
+        mv = fold.get("voltageMv")
+        b.voltage = NAN if mv is None else mv / 1000.0
+        t = fold.get("batteryTempC")
+        b.temperature = NAN if t is None else t
+        ma = fold.get("currentMa")
+        # Negative while discharging in both conventions — no inversion, unlike MAVLink's cA.
+        b.current = NAN if ma is None else ma / 1000.0
+        b.charge = b.capacity = b.design_capacity = NAN
+        b.percentage = fold["batteryPercent"] / 100.0  # ROS's 0..1 fraction, not 0..100
+        b.power_supply_status = 0 if ma is None else (2 if ma < 0 else (1 if ma > 0 else 3))
+        b.power_supply_health = 0
+        b.power_supply_technology = 3  # LIPO
+        b.present = True
+        cells = fold.get("cellVoltagesMv") or []
+        # Never averaged: a spread between cells is a flight-safety signal and averaging
+        # erases it.
+        b.cell_voltage = [c / 1000.0 for c in cells]
+        b.cell_voltage_length = len(cells)
+        # DJI reports one pack temperature, not per-cell; an empty list is the honest length.
+        b.cell_temperature = []
+        b.cell_temperature_length = 0
+        b.location = ""
+        b.serial_number = ""
+        return b
+
+    def mode(self, name):
+        return self.String(name)
+
+    def tf(self, ts, edges):
+        transforms = []
+        for parent, child, translation, rotation in edges:
+            transforms.append(
+                self.Transform(
+                    translation=self.Vector3(*translation),
+                    rotation=self.Quaternion(*rotation),
+                    frame_id=parent,
+                    child_frame_id=child,
+                    ts=ts,
+                )
+            )
+        return self.TFMessage(*transforms)
+
+    def camera_info(self, ts, width, height):
+        """`sensor_msgs.CameraInfo` in the **optical** frame, with no distortion claim.
+
+        `frame_id` is `drone/camera_optical` and not `drone/camera`: the projection this
+        matrix describes is expressed in the optical convention — z forward along the
+        optical axis, x right, y down — which is the leaf `CompressedVideo` already stamps
+        itself with. Naming the parent body frame here would look fine right up until
+        someone composed a transform with it.
+
+        `R` is the identity because a monocular unrectified camera's rectification *is* the
+        identity — that is exact, not an assumption — and `P` is `K` with a zero fourth
+        column for the same reason. `D` is empty and `distortion_model` is empty: see
+        `docs/mem2-converter.md` §0.2 for why that, and not five zeros, and not NaN.
+        """
+        f = FOCAL_OVER_WIDTH * width
+        cx, cy = width / 2.0, height / 2.0
+        return self.CameraInfo(
+            width=int(width),
+            height=int(height),
+            distortion_model="",
+            D=[],
+            K=[f, 0.0, cx, 0.0, f, cy, 0.0, 0.0, 1.0],
+            R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            P=[f, 0.0, cx, 0.0, 0.0, f, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+            frame_id=FRAME_CAMERA_OPTICAL,
+            ts=ts,
+        )
+
+    def video(self, ts, data):
+        return self.CompressedVideo(data=data, format="h264", frame_id=FRAME_CAMERA_OPTICAL, ts=ts)
+
+    def lcm_stamp(self, ts):
+        """A float unix ts as an `LcmTime`, truncating like the Kotlin side truncates.
+
+        Shared by `battery` and `detections`. Battery's messages go through the byte
+        comparison against the Kotlin encoder on every conversion, which is what pins
+        this truncation; detections cannot (no replay reader), so they inherit the
+        pinning by sharing the code.
+        """
+        return self.LcmTime(sec=int(ts), nsec=int((ts - int(ts)) * 1e9))
+
+    def detection_element(self, stamp, seq, tag_id, margin, x, y, z, metric, solve=None):
+        """`vision_msgs.Detection3D`, field for field what the live encoder builds.
+
+        **The element, not the message** — `detection` wraps this in the
+        `vision_msgs.Detection3DArray` the channel carries. The split mirrors the Kotlin,
+        where `detectionOrNull` builds this and `detectionsOrNull` wraps it, and both
+        fixtures are planted in the selftest so neither half can drift alone.
+
+        Mirrors `zenoh/ZenohTelemetryEncoder.detectionOrNull` — the shipping Kotlin — and
+        the selftest holds the two together by re-building the encoder's own test fixtures
+        (`vision_msgs_Detection3D.bin` and `_solved.bin`) byte for byte from this method.
+        The choices are the encoder's, stated there in full: `score` is the decision margin
+        (NOT hamming, whose sense is inverted), the covariance is ROS's all-zero "unknown",
+        and `id` carries the `metric=false` qualification because it is the only string on
+        the schema that can. The booleans print Kotlin-style lowercase — `str(False)` would
+        silently fork the contract.
+
+        `solve` is a TRUSTED solve (`trusted_solve` already applied by the caller — the
+        gate lives with the gates, not in a message builder) or None. None is the pre-solve
+        message exactly: NaN orientation, bbox refused entire, plain id. A trusted solve
+        fills the orientation, puts the solved pose at the bbox centre with the tag's flat
+        square `(tag_m, tag_m, 0)` as its size — the zero z-extent is a measurement of a
+        printed marker, not a refused zero — and appends `;pose=solved` to the id.
+        **`x, y, z` are untouched either way**: the published position stays the
+        apparent-size ray so history stays comparable, and the solve's own translation is
+        visible only in the box.
+        """
+        hyp = self.ObjectHypothesis()
+        hyp.class_id = "tag36h11:%d" % tag_id
+        hyp.score = margin
+        hp = self.ObjectHypothesisWithPose()
+        hp.hypothesis = hyp
+        pose = self.LcmPose()
+        pose.position = self.LcmPoint()
+        pose.position.x, pose.position.y, pose.position.z = x, y, z
+        q = self.LcmQuaternion()
+        if solve is None:
+            q.x = q.y = q.z = q.w = NAN
+        else:
+            q.x, q.y, q.z, q.w = solve["qx"], solve["qy"], solve["qz"], solve["qw"]
+        pose.orientation = q
+        pc = self.LcmPoseWithCovariance()
+        pc.pose = pose
+        pc.covariance = [0.0] * 36
+        hp.pose = pc
+        box = self.BoundingBox3D()
+        centre = self.LcmPose()
+        centre.position = self.LcmPoint()
+        bq = self.LcmQuaternion()
+        box.size = self.LcmVector3()
+        if solve is None:
+            centre.position.x = centre.position.y = centre.position.z = NAN
+            bq.x = bq.y = bq.z = bq.w = NAN
+            box.size.x = box.size.y = box.size.z = NAN
+        else:
+            centre.position.x = solve["tx"]
+            centre.position.y = solve["ty"]
+            centre.position.z = solve["tz"]
+            bq.x, bq.y, bq.z, bq.w = solve["qx"], solve["qy"], solve["qz"], solve["qw"]
+            box.size.x = box.size.y = solve["tag_m"]
+            box.size.z = 0.0
+        centre.orientation = bq
+        box.center = centre
+        det = self.Detection3D()
+        det.header = self.LcmHeader(seq=seq, stamp=stamp, frame_id=FRAME_CAMERA_OPTICAL)
+        det.results = [hp]
+        det.results_length = 1
+        det.bbox = box
+        # **Bare, and that is Ivan's decision** (2026-07-29: "we shouldn't add all this
+        # stuff into the label"). The solved/unsolved fact travels structurally — NaN
+        # orientation and box exactly when the gates fail — and the metric/range caveat
+        # lives in the contract row; per-message belief provenance is `tag_fix`'s.
+        det.id = "tag36h11:%d" % tag_id
+        return det
+
+    def detection(self, stamp, seq, tag_id, margin, x, y, z, metric, solve=None):
+        """`vision_msgs.Detection3DArray` — **what the channel carries**, one frame's worth.
+
+        The type changed from a bare `Detection3D` on 2026-07-28 (Ivan): ROS's own
+        convention for a detection topic, and the type DiMOS consumes natively, which is
+        what makes `dimos/msgs/vision_msgs/Detection3DArray.py` and its rerun path work
+        without a shim here.
+
+        **The array holds one element, and that is a fact about the recogniser rather than
+        about this contract.** `vision/TagRecogniser.publish` reduces each frame to
+        `found.largest` — size being the only ranking available without a pose — before
+        anything downstream, this converter included, ever sees a sighting. A `tag` line is
+        therefore already one tag, so a row here is one element; nothing about the schema
+        or the encoder promises that, and both sides carry two- and zero-element fixtures
+        so the codecs do not rest on it.
+
+        The array's header **restates the element's** — same seq, same stamp, same frame.
+        With one element there is one arrival time and one frame, and a second stamp taken
+        from a clock here would be the conversion's time rather than the flight's.
+        """
+        det = self.detection_element(stamp, seq, tag_id, margin, x, y, z, metric, solve)
+        arr = self.Detection3DArray()
+        arr.header = det.header
+        arr.detections = [det]
+        arr.detections_length = 1
+        return arr
+
+    def tag_fix(
+        self, stamp, seq, tag_id, margin, north, east, fix_metric, range_src, pitch_reported
+    ):
+        """`vision_msgs.Detection3DArray` in `drone/world` — the `tag_fix` channel.
+
+        Mirrors `zenoh/ZenohTelemetryEncoder.tagFixOrNull`, the shipping Kotlin, and is
+        pinned to it byte for byte by the kotlinframes cross-check. **The record's own
+        `n`/`e` values, never a re-derivation**: the channel exists because a consumer
+        composing camera-frame detections against tf edges of a different instant makes
+        the tag ride the camera and drag into the floor (Ivan, 2026-07-29, watching mem2
+        replays), and `TagWorld.fix` already composed each sighting with the pose at the
+        sighting's own instant. Re-deriving here would plant that artifact at the source.
+
+        ENU off the line's NED names: x = east, y = north. `z` is 0.0 — the tag is
+        ASSUMED on the datum plane (it might be standing on a box; the 25 Hz flight's was,
+        +0.33 m, measured by accident) and every id carries `z=datum_plane` so the zero
+        cannot be read as a survey. Orientation and bbox are NaN entire: no world-frame
+        tag orientation has ever been derived — the solved one is optical-frame and lives
+        on `detections`. `margin` arrives at the line's own 1 dp; the live encoder
+        quantises to the same digit, which is what byte-identity means here.
+        """
+        hyp = self.ObjectHypothesis()
+        hyp.class_id = "tag36h11:%d" % tag_id
+        hyp.score = margin
+        hp = self.ObjectHypothesisWithPose()
+        hp.hypothesis = hyp
+        pose = self.LcmPose()
+        pose.position = self.LcmPoint()
+        pose.position.x, pose.position.y, pose.position.z = east, north, 0.0
+        q = self.LcmQuaternion()
+        q.x = q.y = q.z = q.w = NAN
+        pose.orientation = q
+        pc = self.LcmPoseWithCovariance()
+        pc.pose = pose
+        pc.covariance = [0.0] * 36
+        hp.pose = pc
+        box = self.BoundingBox3D()
+        centre = self.LcmPose()
+        centre.position = self.LcmPoint()
+        centre.position.x = centre.position.y = centre.position.z = NAN
+        bq = self.LcmQuaternion()
+        bq.x = bq.y = bq.z = bq.w = NAN
+        centre.orientation = bq
+        box.center = centre
+        box.size = self.LcmVector3()
+        box.size.x = box.size.y = box.size.z = NAN
+        det = self.Detection3D()
+        det.header = self.LcmHeader(seq=seq, stamp=stamp, frame_id=FRAME_WORLD)
+        det.results = [hp]
+        det.results_length = 1
+        det.bbox = box
+        # The provenance — ZenohTelemetryEncoder.tagFixId, token for token, and MINIMAL
+        # per Ivan's bare-label rule: only what varies per message and has no typed
+        # vehicle. The rung falls back to "solve" when fix_metric vouches for it on a line
+        # that predates range_src, and is OMITTED on an old bearing line: absent means
+        # unrecorded, never a guess. bearing=assumed and z=datum_plane are channel-level
+        # constants and live in the contract row, not on every message.
+        rung = range_src or ("solve" if fix_metric else None)
+        det.id = "tag36h11:%d%s%s" % (
+            tag_id,
+            (f";range={rung}") if rung else "",
+            ";pitch=reported" if pitch_reported else "",
+        )
+        arr = self.Detection3DArray()
+        arr.header = det.header
+        arr.detections = [det]
+        arr.detections_length = 1
+        return arr
+
+    def setpoint(self, ts, vn, ve, vd, yawrate_dps):
+        """`geometry_msgs.TwistStamped` in `drone/world` — the `setpoint` channel.
+
+        Mirrors `zenoh/ZenohTelemetryEncoder.setpointOrNull`, the shipping Kotlin, and is
+        pinned to it byte for byte by the kotlinframes cross-check. The inputs are the
+        `stick_cmd` line's own `sp` values, already at the record's precision — the
+        Kotlin side quantises to the same digits before encoding, which is the rule that
+        makes the live wire and this store byte-identical.
+
+        Two conversions, both the encoder's and spelled identically:
+        linear = NED (vn, ve, vd) as ENU (ve, vn, −vd); angular.z = −radians(yawrate) —
+        NED clockwise-positive deg/s as ENU counterclockwise-positive rad/s.
+
+        ## The degree→radian expression is measured, not assumed (landing16, 2026-07-30)
+
+        This line used to read `-(yawrate_dps / 180.0 * math.pi)`, on the stated grounds
+        that `Math.toRadians` is "deg / 180.0 * PI in that order". **It is not, and has not
+        been since JDK 9**: `java.lang.Math.toRadians` is a single multiply by the constant
+        `DEGREES_TO_RADIANS = 0.017453292519943295`, and the two expressions are not the
+        same double. A JVM probe on jdk17.0.20 over this flight's own yaw rates:
+
+            deg        Math.toRadians       deg/180*PI           deg*DEGREES_TO_RADIANS
+            −84.54     bff79ba74d9e3f86     bff79ba74d9e3f85     bff79ba74d9e3f86
+            −83.94     bff770c2a418ac72     bff770c2a418ac72     bff770c2a418ac72
+            −78.25     bff5d9fd5c77023b     bff5d9fd5c77023b     bff5d9fd5c77023b
+              90.0     3ff921fb54442d18     3ff921fb54442d18     3ff921fb54442d18
+
+        so the divide-first form is off by one ULP on *some* inputs and right on most —
+        which is exactly how it survived: landing13 flew TAG_DESCENT, which commands
+        `yawrate: 0`, and −0.0 is −0.0 either way, so 29481/29493 passed while carrying a
+        wrong expression. landing16/landing17 flew missions with real yaw rates, and with
+        the old expression 246 of landing16's 1513 setpoints and 361 of landing17's 2613
+        differed at byte 83 of 84 — the low byte of `twist.angular.z`, and nothing else, in
+        any stream, on either flight.
+
+        `math.radians` is CPython's `x * (pi/180)` with the same constant
+        (`math.pi / 180.0 == 0.017453292519943295`, checked bit for bit), so it is the
+        expression that mirrors the JVM — the same call §4's quaternion path already uses
+        for `Math.toRadians` there. It is spelled as the call, not as an inlined constant,
+        so there is one owner of "what the JVM's toRadians is" on this side.
+
+        angular.x/y are NaN: the advanced virtual-stick surface commands no roll or pitch
+        rate, ever, and zero would claim a command that does not exist.
+        """
+        return self.TwistStamped(
+            ts=ts,
+            frame_id=FRAME_WORLD,
+            linear=[ve, vn, -vd],
+            angular=[NAN, NAN, -math.radians(yawrate_dps)],
+        )
+
+    def wind(self, dms):
+        """`std_msgs.Float32` — the `wind` channel: DJI's own wind estimate, m/s.
+
+        Mirrors `zenoh/ZenohTelemetryEncoder.windOrNull`, the shipping Kotlin, and is
+        pinned to it byte for byte by the kotlinframes cross-check. The input is the
+        record's own dm/s **integer** — DJI's quantisation, not ours — and the one
+        conversion is `dms / 10.0` in double, narrowed once to float32 by the binding's
+        `>f` pack: the identical IEEE round-to-nearest that Kotlin's
+        `(dmS / 10.0).toFloat()` performs, which is what lets a byte comparison hold
+        across the two languages without a tolerance.
+        """
+        return self.Float32(dms / 10.0)
+
+    # DJI's level word -> `diagnostic_msgs.DiagnosticStatus`'s four-value ladder. The single
+    # owner of this mapping is `warn/WarnLevel.diagnosticLevel`; this dict mirrors it, and the
+    # `dji_warn` line carries the level word it was decided from, so the two cannot silently
+    # diverge without a record to prove it. UNKNOWN is STALE: ROS's own "no usable reading",
+    # which is what DJI failing to map its own code is.
+    DIAGNOSTIC_LEVELS = {
+        "NORMAL": 0,
+        "NOTICE": 0,
+        "CAUTION": 1,
+        "WARNING": 2,
+        "SERIOUS_WARNING": 2,
+        "UNKNOWN": 3,
+    }
+
+    def warning(self, e, ts, seq):
+        """`diagnostic_msgs.DiagnosticArray` -- the `warnings` channel: one DJI warning change.
+
+        Mirrors `zenoh/ZenohTelemetryEncoder.warning`, the shipping Kotlin, field for field
+        and in its order, from one `dji_warn` record line. **Nothing is decided here**: the
+        level, the sentence and the severity were decided once by `warn/WarningMonitor` and
+        written to the record by the same owner that fed the live bus, so this copies rather
+        than re-maps. A second severity table in a converter is exactly how a replayed flight
+        comes to disagree with the flight it replays.
+
+        The `dji_health` lines written before 2026-07-30 carry no `src`, `state` or `meas`.
+        The source falls back to `health`, which is what all of them were; the missing
+        key-values are simply **absent**, never zero-filled -- an old record measured no wind
+        speed and saying so is a fact, while writing one would not be.
+        """
+        source = e.get("src") or "health"
+        code = e.get("code") or ""
+        change = e.get("chg") or ""
+        level = e.get("lvl") or ""
+        values = []
+        for key, value in (
+            ("source", source),
+            ("state", e.get("state") or level),
+            ("level", level),
+            ("change", change),
+        ):
+            kv = self.KeyValue()
+            kv.key, kv.value = key, value
+            values.append(kv)
+        for key, value in (("previous", e.get("prev")), ("measurement", e.get("meas"))):
+            if not value:
+                continue
+            kv = self.KeyValue()
+            kv.key, kv.value = key, value
+            values.append(kv)
+        kv = self.KeyValue()
+        kv.key, kv.value = "forwarded", "true" if e.get("fwd") else "false"
+        values.append(kv)
+
+        comp, sensor = e.get("comp"), e.get("sensor")
+        hardware_id = (
+            ""
+            if comp is None and sensor is None
+            else "{}/{}".format("" if comp is None else comp, "" if sensor is None else sensor)
+        )
+
+        s = self.DiagnosticStatus()
+        # A clear is OK whatever level it cleared from -- the retraction of a fault must not
+        # read to a subscriber as a fault. The same rule the wire's INFO follows.
+        s.level = 0 if change == "cleared" else self.DIAGNOSTIC_LEVELS.get(level, 3)
+        s.name = f"{source}/{code}"
+        s.message = e.get("msg") or ""
+        s.hardware_id = hardware_id
+        s.values = values
+        s.values_length = len(values)
+
+        a = self.DiagnosticArray()
+        # A fresh header, for `battery`'s measured reason: the generated bindings hold nested
+        # messages as class-level defaults, so mutating one in place would give every message
+        # the last one's stamp.
+        a.header = self.LcmHeader(seq=seq, stamp=self.lcm_stamp(ts), frame_id=FRAME_BASE_LINK)
+        a.status = [s]
+        a.status_length = 1
+        return a
+
+    def text(self, s):
+        return self.String(s)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Writing
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def nearest_pose(pose_rows, ts, tolerance):
+    """The pose observation nearest `ts` within `tolerance`, or None.
+
+    A tolerance rather than an interpolation: at this flight's measured p90 speed 0.25 s is
+    0.65 m, which is inside what the mission legs actually arrived to, and it still refuses
+    to fabricate a position if a future flight loses the link mid-air.
+    """
+    import bisect
+
+    if not pose_rows:
+        return None
+    i = bisect.bisect_left(pose_rows, (ts,))
+    best = None
+    for j in (i - 1, i):
+        if 0 <= j < len(pose_rows):
+            dt = abs(pose_rows[j][0] - ts)
+            if dt <= tolerance and (best is None or dt < best[0]):
+                best = (dt, pose_rows[j])
+    return None if best is None else best[1]
+
+
+class Conversion:
+    """Everything one record becomes, and the numbers to report about it."""
+
+    def __init__(self):
+        self.rows = collections.defaultdict(list)  # stream -> [(ts, payload, pose, tags)]
+        self.reasons = collections.defaultdict(collections.Counter)
+        self.notes = []
+        self.tf_edges = collections.Counter()
+        self.video_types = collections.Counter()
+        # The `warnings` header's own counter, mirroring the live publisher's `warningsSeen`:
+        # one per message offered, so a subscriber (or a reader of the store) can see a gap.
+        self.warnings_seq = 0
+        self.resolution_changes = []
+
+
+def convert(paths, args):
+    """The whole derivation, in memory. Writing is a separate step so a fault aborts first."""
+    header, entries, bad = read_records(paths)
+    if header is None:
+        sys.exit("no header line in %s — not a flight record?" % (paths[0] if paths else "?"))
+    if header.get("format") != RECORD_FORMAT:
+        sys.exit(
+            "{}: format is {!r}, not {!r}".format(paths[0], header.get("format"), RECORD_FORMAT)
+        )
+
+    samples = build_samples(header, entries)
+    if not samples:
+        sys.exit(
+            "no dji_state entries — nothing to convert. A session recorded before MSDK "
+            "registration has no DJI half at all; check for an sdk_attached event."
+        )
+
+    origin = takeoff_origin(samples)
+    derived = derive(samples, origin)
+    msgs = Messages()
+    c = Conversion()
+    c.header, c.samples, c.origin, c.bad_lines = header, samples, origin, bad
+
+    started = header.get("started_unix_ms")
+
+    # ── telemetry ──────────────────────────────────────────────────────────
+    for d in derived:
+        s = d.sample
+        ts = s.unix
+        ages = s.state.get("age") or {}
+        # The four delivery ages travel with every held pose. Under the liveness gate they
+        # matter *more* than before, not less: a held pose is exactly as good as the age of
+        # the reading behind it, and the age is the only thing that says which.
+        pose_tags = {f"age_{k}_ms": int(v) for k, v in ages.items() if v is not None}
+        for ch, value in d.channels.items():
+            if ch == "pose":
+                position, orientation = value
+                c.rows["pose"].append(
+                    (
+                        ts,
+                        msgs.pose(ts, position, orientation),
+                        tuple(position) + tuple(orientation),
+                        dict(pose_tags),
+                    )
+                )
+            elif ch == "odom":
+                position, orientation, velocity = value
+                c.rows["odom"].append(
+                    (
+                        ts,
+                        msgs.odom(ts, position, orientation, velocity),
+                        tuple(position) + tuple(orientation),
+                        {},
+                    )
+                )
+            elif ch == "gps_location":
+                lat, lon, alt, status = value
+                c.rows["gps_location"].append(
+                    (ts, msgs.gps(ts, lat, lon, alt, status), d.position, {"fix": status})
+                )
+            elif ch == "imu":
+                c.rows["imu"].append((ts, msgs.imu(ts, value), d.position, {}))
+            elif ch == "battery":
+                c.rows["battery"].append(
+                    (ts, msgs.battery(ts, s.fold), d.position, {"percent": value})
+                )
+            elif ch == "mode":
+                c.rows["mode"].append((ts, msgs.mode(value), d.position, {"mode": value}))
+        for ch, reason in d.reasons.items():
+            c.reasons[ch][reason] += 1
+
+    # ── tf ─────────────────────────────────────────────────────────────────
+    commanded = commanded_gimbal(entries)
+    tf_rows, c.tf_edges = build_tf(derived, commanded, args.gimbal)
+    for ts, edges, tags, position in tf_rows:
+        tags = dict(tags)
+        tags["edges"] = len(edges)
+        c.rows["tf"].append((ts, msgs.tf(ts, edges), position, tags))
+    c.commanded_gimbal_count = len(commanded)
+
+    # ── the narrative streams ──────────────────────────────────────────────
+    pose_index = sorted((ts, pose) for ts, _, pose, _ in c.rows["pose"])
+
+    # ── camera_info ────────────────────────────────────────────────────────
+    ci_rows, c.resolution_changes, mimes = camera_info_rows(entries, started)
+    # `CompressedVideo.format` is written as "h264" and the conformance checks read H.264
+    # NAL types. A record that says otherwise is not a record this tool understands, and
+    # storing its bytes under an h264 label would be a consumer's problem rather than ours.
+    unexpected = [m for m in mimes if m.upper().replace(".", "") not in ("H264", "VIDEOAVC")]
+    if unexpected and not args.no_video:
+        raise VideoFault(
+            f"the sidecar declares mime {unexpected}, not H264. Every byte-level check here reads "
+            "H.264 NAL types and the store would label the frames 'h264'."
+        )
+    for ts, (w, h) in ci_rows:
+        pose = nearest_pose(pose_index, ts, args.pose_tolerance)
+        c.rows["camera_info"].append(
+            (
+                ts,
+                msgs.camera_info(ts, w, h),
+                pose[1] if pose else None,
+                {
+                    "width": w,
+                    "height": h,
+                    "fx": round(FOCAL_OVER_WIDTH * w, 3),
+                    # The qualification travels with every observation, because K[0] is non-zero
+                    # and ROS's own "uncalibrated" flag is therefore not available to say it.
+                    "intrinsics": "fitted",
+                    "calibrated": False,
+                    # "bounded", not "unmeasured": nothing was found, and the size of the nothing is
+                    # carried alongside so a consumer can decide whether zero is good enough for it.
+                    "distortion": "bounded-none",
+                    "distortion_corner_px": DISTORTION_CORNER_SHIFT_PX,
+                    "distortion_corner_ci_px": list(DISTORTION_CORNER_SHIFT_CI_PX),
+                    "source": FOCAL_SOURCE,
+                    "distortion_source": DISTORTION_SOURCE,
+                },
+            )
+        )
+    det_seq = 0
+    fix_seq = 0
+    for e in entries:
+        k = e.get("k")
+        ts = unix_seconds(started, e["t"])
+        pose = nearest_pose(pose_index, ts, args.pose_tolerance)
+        pose = pose[1] if pose else None
+        if k == "tag":
+            det, why = detection_row(msgs, e, ts, det_seq + 1)
+            if det is None:
+                c.reasons["detections"][why] += 1
+            else:
+                det_seq += 1
+                c.reasons["detections"]["published"] += 1
+                c.rows["detections"].append(
+                    (
+                        ts,
+                        det,
+                        pose,
+                        {
+                            "tag_id": e.get("id"),
+                            "px": e.get("px"),
+                            "hamming": e.get("ham"),
+                            "margin": e.get("margin"),
+                            "metric": bool(e.get("metric")),
+                            "latched": bool(e.get("latched")),
+                            # Whether the pose gates passed — mirrors the `;pose=solved` id marker,
+                            # queryable without string-parsing the message.
+                            "pose_solved": trusted_solve(
+                                float(e.get("px") or float("nan")), solve_of(e)
+                            )
+                            is not None,
+                        },
+                    )
+                )
+            # The same line's world-frame half, onto `tag_fix`. The gate is
+            # `ZenohEmission.tagFixReason`'s: a fix (`n`/`e`) is present and finite, or the
+            # record itself had no place to offer and the sighting travels on `detections`
+            # alone. The numbers on the wire are the line's own — never re-derived here.
+            n, ee = num(e.get("n")), num(e.get("e"))
+            if n is None or ee is None or not (math.isfinite(n) and math.isfinite(ee)):
+                c.reasons["tag_fix"]["fix_unavailable"] += 1
+            else:
+                fix_seq += 1
+                c.reasons["tag_fix"]["published"] += 1
+                c.rows["tag_fix"].append(
+                    (
+                        ts,
+                        msgs.tag_fix(
+                            msgs.lcm_stamp(ts),
+                            fix_seq,
+                            e.get("id"),
+                            float(e.get("margin") or 0.0),
+                            n,
+                            ee,
+                            bool(e.get("fix_metric")),
+                            e.get("range_src"),
+                            bool(e.get("pitch_reported")),
+                        ),
+                        pose,
+                        {
+                            "tag_id": e.get("id"),
+                            # The numbers the id's tokens qualify, queryable without decoding:
+                            # the aircraft's baro height at the fix and the solved range when the
+                            # fix is metric — landing07-B measured the two disagreeing by ~1.2 m,
+                            # which is why both travel.
+                            "from_h": e.get("from_h"),
+                            "range_m": e.get("range_m"),
+                            "fix_metric": bool(e.get("fix_metric")),
+                            "range_src": e.get("range_src"),
+                            "bearing_assumed": bool(e.get("bearing_assumed")),
+                            "pitch_reported": bool(e.get("pitch_reported")),
+                            "latched": bool(e.get("latched")),
+                        },
+                    )
+                )
+        elif k == "stick_cmd":
+            # The commanded velocity, onto `setpoint`. Gates mirror
+            # `ZenohEmission.setpointReason`, in its order: a shadow line (`accepted`
+            # absent — never handed to the SDK) is NOT_SENT and stays off the bus however
+            # well-formed it is; then the frame, then completeness. Zeros publish — a zero
+            # setpoint is a command, and absence on this stream must mean no command flowed.
+            sp = e.get("sp") or {}
+            accepted = e.get("accepted")
+            vn, ve_, vd = num(sp.get("vn")), num(sp.get("ve")), num(sp.get("vd"))
+            yr = num(sp.get("yawrate"))
+            if accepted is None:
+                c.reasons["setpoint"]["not_sent"] += 1
+            elif not sp or sp.get("frame") is None:
+                c.reasons["setpoint"]["setpoint_incomplete"] += 1
+            elif sp.get("frame") != "NED_VELOCITY":
+                c.reasons["setpoint"]["setpoint_frame_unsupported"] += 1
+            elif any(v is None or not math.isfinite(v) for v in (vn, ve_, vd, yr)):
+                c.reasons["setpoint"]["setpoint_incomplete"] += 1
+            else:
+                c.reasons["setpoint"]["published"] += 1
+                c.rows["setpoint"].append(
+                    (
+                        ts,
+                        msgs.setpoint(ts, vn, ve_, vd, yr),
+                        pose,
+                        {
+                            "src": (e.get("src") or {}).get("name"),
+                            "accepted": bool(accepted),
+                            "seq": e.get("seq"),
+                        },
+                    )
+                )
+        elif k == "dji_field" and e.get("f") == "windSpeedDmS":
+            # DJI's own wind estimate, onto `wind` — one message per record line, and the
+            # line exists only when the value changed (KeyWindSpeed is change-driven; the
+            # recorder's on-change dedup already ran when the line was written). So this
+            # stream is on-delivery by construction: never resampled, never held, and its
+            # silence means UNCHANGED, not stale. The gate mirrors `ZenohEmission.windReason`:
+            # a value, or nothing — a value-less line is DJI *withdrawing* the reading
+            # (landing14's last wind line), and writing 0.0 for it would fabricate a calm.
+            try:
+                dms = int(e.get("v"))
+            except (TypeError, ValueError):
+                dms = None
+            if dms is None:
+                c.reasons["wind"]["wind_missing"] += 1
+            else:
+                c.reasons["wind"]["published"] += 1
+                # The tag keeps the record's own integer beside the converted float, so the
+                # dm/s provenance stays queryable without decoding the payload.
+                c.rows["wind"].append((ts, msgs.wind(dms), pose, {"dms": dms}))
+        elif k == "event":
+            text = "{}: {}".format(e.get("code"), e.get("msg") or "")
+            c.rows["status"].append(
+                (
+                    ts,
+                    msgs.text(text.strip().rstrip(":")),
+                    pose,
+                    {"code": e.get("code"), "sev": e.get("sev") or "info"},
+                )
+            )
+        elif k in ("dji_warn", "dji_health"):
+            # Every DJI warning, from every source, onto `warnings` -- one message per
+            # *change*, exactly as the live bus publishes it, because the line itself is
+            # written on change only (`warn/WarningMonitor` owns that diff and the record is
+            # downstream of it). Nothing is re-decided here; see `Msgs.warning`.
+            c.warnings_seq += 1
+            c.reasons["warnings"]["published"] += 1
+            c.rows["warnings"].append(
+                (
+                    ts,
+                    msgs.warning(e, ts, c.warnings_seq),
+                    pose,
+                    {
+                        "src": e.get("src") or "health",
+                        "code": e.get("code"),
+                        "sev": e.get("sev") or "warn",
+                        "fwd": bool(e.get("fwd")),
+                    },
+                )
+            )
+        elif k == "dji_call" and e.get("phase") != "ask":
+            # DJI's verdict, and `none` — no callback ever arrived — is a verdict too, and
+            # the measured behaviour of this airframe rather than a defensive possibility.
+            text = "{} {}{}".format(
+                e.get("op"),
+                e.get("phase"),
+                (" " + e["err"]) if e.get("err") else "",
+            )
+            c.rows["command_ack"].append(
+                (
+                    ts,
+                    msgs.text(text),
+                    pose,
+                    {
+                        "op": e.get("op"),
+                        "phase": e.get("phase"),
+                        "seq": e.get("seq"),
+                        "ms": e.get("ms"),
+                    },
+                )
+            )
+
+    # ── video ──────────────────────────────────────────────────────────────
+    c.video_missing = set()
+    if not args.no_video:
+        convert_video(paths[0], c, msgs, args, pose_index)
+
+    return c, msgs
+
+
+def solve_of(e):
+    """The raw pose solve off one `tag` line, or None on a line that predates it.
+
+    All-or-nothing on `qx..tz, e1, tag_m` — `TagTap` writes them as a group, so a partial
+    group is a truncated line, and reading half of one would manufacture a partial solve
+    the gates exist to refuse. `e2` is coerced through `float()` because the format writes
+    a non-finite as the STRING "Infinity" (no second PnP minimum — the unambiguous case,
+    59 % of measured solves) and `json.loads` hands it back as a string.
+    """
+    keys = ("qx", "qy", "qz", "qw", "tx", "ty", "tz", "e1", "tag_m")
+    if any(e.get(k) is None for k in keys):
+        return None
+    solve = {k: float(e[k]) for k in keys}
+    e2 = e.get("e2")
+    solve["e2"] = float("nan") if e2 is None else float(e2)
+    return solve
+
+
+def detection_row(msgs, e, ts, seq):
+    """The publishing gate for one `tag` line: `(message, None)` or `(None, why)`.
+
+    The gates mirror `ZenohTelemetryEncoder.detectionOrNull`, in its order. The one that
+    fires in practice is the range: `z` **is** the range along the optical axis, and 0.0 is
+    the value the detector substitutes when the tag's apparent size implied none — a
+    sighting with no range is withheld, never published at the camera's own origin. `seq`
+    counts published messages from 1, exactly as the live channel's counter does; a
+    withheld sighting consumes no seq on either side.
+
+    The pose solve rides the same rule the encoder applies: `trusted_solve` (pixel size and
+    ambiguity, the measured gates) decides whether the orientation and the box are real,
+    and a line without the fields — every record before 2026-07-28 — produces the legacy
+    message, byte for byte. That absence-is-legacy path IS the backward-compat contract.
+    """
+    if e.get("w", 0) <= 0 or e.get("h", 0) <= 0:
+        return None, "no_geometry"
+    x, y, z = e.get("x"), e.get("y"), e.get("z")
+    if x is None or y is None or not (math.isfinite(x) and math.isfinite(y)):
+        return None, "no_geometry"
+    if z is None or not math.isfinite(z) or z <= 0.0:
+        return None, "range_unknown"
+    solve = trusted_solve(float(e.get("px") or float("nan")), solve_of(e))
+    return msgs.detection(
+        msgs.lcm_stamp(ts), seq, e["id"], e["margin"], x, y, z, bool(e.get("metric")), solve
+    ), None
+
+
+def camera_info_rows(entries, started):
+    """When a `camera_info` is due, and at what resolution. `(rows, changes, mimes)`.
+
+    Driven by the `frame` lines' own `w`/`h`, never by an assumption. **The record states
+    them only on change, plus once at the start** — `LogEntry.Frame` is explicit that a
+    resolution change *"invalidates the camera intrinsics every downstream pose solution
+    rests on, so it has to be a discrete timestamped line rather than something a reader
+    infers by diffing two frames it happened to look at."* Measured on the reference
+    recording: 1 of 2104 `frame` lines carries `w`/`h`.
+
+    So the resolution is **held forward**, like every other change-driven value in this
+    file, and a frame line that states a *different* one emits immediately and is reported
+    as a change rather than averaged into one matrix. Until a resolution has been stated
+    once there is nothing to hold and nothing is published — absence, not a guess.
+
+    Between changes the rule is `docs/zenoh-topics.md`'s for a slowly-varying stream: on
+    change, ≥1 Hz. Deliberately not "once at the start" — a store is compared against a live
+    publisher, and on a bus "once" is invisible to everyone who joined afterwards. No frames
+    means no rows, including across a gap where the operator had video switched off: with no
+    image there is nothing for a camera matrix to describe.
+    """
+    frames = sorted((e for e in entries if e.get("k") == "frame"), key=lambda e: e["t"])
+    rows, changes, mimes = [], [], collections.Counter()
+    held, last_t = None, None
+    for fr in frames:
+        if fr.get("mime"):
+            mimes[fr["mime"]] += 1
+        w, h = fr.get("w"), fr.get("h")
+        stated = (int(w), int(h)) if w and h else None
+        if stated is not None and stated != held:
+            if held is not None:
+                changes.append((fr["t"], held, stated))
+            held = stated
+            due = True
+        elif held is None:
+            continue
+        else:
+            due = last_t is None or (fr["t"] - last_t) >= CAMERA_INFO_PERIOD_S
+        if due:
+            rows.append((unix_seconds(started, fr["t"]), held))
+            last_t = fr["t"]
+    return rows, changes, mimes
+
+
+def commanded_gimbal(entries):
+    """Commanded gimbal pitch by `t`, from `dji_call` asks — normally empty, see the header.
+
+    `DjiOp.GIMBAL_ROTATE` exists and nothing taps it, so this returns `{}` for every record
+    written to date. Implemented anyway because the contract specifies it and because the
+    day the tap lands, the converter should already prefer it.
+    """
+    out = {}
+    for e in entries:
+        if e.get("k") != "dji_call" or e.get("phase") != "ask":
+            continue
+        if e.get("op") != "gimbal_rotate":
+            continue
+        args = e.get("args") or {}
+        pitch = num(args.get("pitch"))
+        if finite(pitch):
+            out[e["t"]] = (pitch, e["t"])
+    return out
+
+
+def convert_video(record_path, c, msgs, args, pose_index):
+    """The sidecar's own bytes, unmodified, one `CompressedVideo` per access unit."""
+    ve = load_videoexport()
+    session, frames = ve.read_index(record_path)
+    if not frames:
+        c.notes.append("no `frame` entries — video was never recorded this session")
+        return
+    directory = os.path.dirname(os.path.abspath(record_path))
+    started = c.header.get("started_unix_ms")
+
+    if args.keyframes_only:
+        # The only lossless decimation an inter-frame codec has: each keyframe is a
+        # self-contained (SPS, PPS, IDR) needing nothing before it. Any other rate is a
+        # re-encode wearing a filter's clothes, and this tool refuses to offer one.
+        frames = [f for f in frames if f.get("key")]
+
+    handles, sizes = {}, {}
+    try:
+        for fr in frames:
+            part = fr["part"]
+            if part not in handles:
+                path = ve.part_path(directory, session, part)
+                if not os.path.exists(path):
+                    # Not an error: the sidecar prunes oldest-first, so an index line can
+                    # outlive its bytes. Knowing a frame existed is evidence even when the
+                    # picture is gone.
+                    handles[part] = None
+                    c.video_missing.add(part)
+                else:
+                    handles[part] = open(path, "rb")
+                    sizes[part] = os.path.getsize(path)
+            fh = handles[part]
+            if fh is None:
+                continue
+            if fr["off"] < 0 or fr["off"] + fr["len"] > sizes[part]:
+                raise VideoFault(
+                    "frame %s claims bytes [%d, %d) of part %d, which is %d bytes long. A "
+                    "part-2 offset applied to part 1 looks exactly like this."
+                    % (fr["n"], fr["off"], fr["off"] + fr["len"], part, sizes[part])
+                )
+            fh.seek(fr["off"])
+            blob = fh.read(fr["len"])
+            if len(blob) != fr["len"]:
+                raise VideoFault("frame %s: short read from part %d" % (fr["n"], part))
+            types = check_frame(fr, blob)
+            c.video_types[tuple(types)] += 1
+            ts = unix_seconds(started, fr["t"])
+            pose = nearest_pose(pose_index, ts, args.pose_tolerance)
+            tags = {
+                "n": fr["n"],
+                "part": part,
+                "off": fr["off"],
+                "len": fr["len"],
+                "key": bool(fr.get("key")),
+            }
+            if fr.get("pts") is not None:
+                # DJI's own `presentationTimeMs`, verbatim, on whatever clock it turns out
+                # to be. Carried, never stamped with.
+                tags["pts"] = fr["pts"]
+            c.rows["color_image"].append(
+                (ts, msgs.video(ts, blob), pose[1] if pose else None, tags)
+            )
+    finally:
+        for fh in handles.values():
+            if fh is not None:
+                fh.close()
+
+
+def provenance(c, paths, args):
+    """One observation stating what this store is, what it came from, and what it assumes.
+
+    A store that states its own assumptions does not depend on `docs/mem2-converter.md`
+    being read by whoever opens it in a year.
+    """
+    sources = []
+    for p in paths:
+        sources.append(
+            {"file": os.path.basename(p), "sha256": sha256_of(p), "bytes": os.path.getsize(p)}
+        )
+    directory = os.path.dirname(os.path.abspath(paths[0]))
+    session = (c.header or {}).get("session")
+    for part in (
+        sorted({t["part"] for _, _, _, t in c.rows["color_image"]}) if c.rows["color_image"] else []
+    ):
+        sc = os.path.join(directory, "%s.v%03d.h264" % (session, part))
+        if os.path.exists(sc):
+            sources.append(
+                {
+                    "file": os.path.basename(sc),
+                    "sha256": sha256_of(sc),
+                    "bytes": os.path.getsize(sc),
+                }
+            )
+
+    stats = [e for e in c.entries if e.get("k") == "stats"]
+    drops = [e for e in c.entries if e.get("k") == "drop"]
+    dropped = sum(int(s.get("dropped") or 0) for s in stats)
+    complete = not drops and dropped == 0 and c.bad_lines == 0
+
+    caveats = [
+        "drone/world is GPS-anchored horizontally and barometric vertically: x and y are "
+        "bounded and non-accumulating, z drifts (measured -2.3 m in 12 min, stationary).",
+        "Nothing is smoothed. There is no VIO, no wheel odometry and no state estimator "
+        "anywhere in this system, so a GPS jump appears undamped in local position.",
+        "Altitude is height above THIS flight's takeoff point everywhere, including inside "
+        "gps_location where ROS asks for a WGS-84 ellipsoid height.",
+        "base_link->camera translation is (0.08, 0, 0) m, measured with a ruler. "
+        + CAMERA_OFFSET_UNMEASURED
+        + ", and base_link's origin is taken to be the body "
+        "centre without that having been established.",
+        "One flight per store. Local coordinates are metres from this flight's takeoff "
+        "point and mean nothing against another flight's origin.",
+        CAMERA_INFO_CAVEAT,
+        "Timestamps are millisecond-quantised because the live publisher's wall clock is; "
+        "absolute accuracy is System.currentTimeMillis() on a phone and is not checked.",
+        "tag_fix positions are anchored to DJI's home point, re-recorded at every takeoff "
+        "at the wandering GPS reading, while drone/world's datum is latched once per "
+        "session — measured 0.41-1.37 m apart across landing10's five takeoffs. The offset "
+        "is NOT corrected; it is the same GPS-anchoring error drone/world already carries.",
+        "tag_fix z is 0: the tag is ASSUMED on the datum plane (it may be standing on "
+        "something; nothing measured it) — every message's id says z=datum_plane.",
+        "setpoint is the commanded velocity actually sent (zeros included, shadow-mode "
+        "would-be commands excluded); absence means no command flowed, not silence.",
+        "wind is DJI's own estimate, quantised at source to dm/s and converted once to m/s; "
+        "one observation per change-driven key delivery. Silence means the value was "
+        "UNCHANGED, never that the reading is stale — do not freshness-gate this stream.",
+        "warnings carries every DJI warning change (device health, wind, and every later "
+        "source) exactly as the operator's ground station got it — the level, the sentence "
+        "and the severity are the flight's own decisions, copied rather than re-derived. "
+        "One message per change, never per sample; a warning still standing at the end of "
+        "the session has no closing message, because none was said.",
+    ]
+    if c.gimbal_note:
+        caveats.append(c.gimbal_note)
+
+    body = {
+        "converter": CONVERTER,
+        "record_format": RECORD_FORMAT,
+        "sources": sources,
+        "header": c.header,
+        "counts": {k: len(v) for k, v in sorted(c.rows.items())},
+        "withheld": {k: dict(v) for k, v in sorted(c.reasons.items())},
+        "tf_edges": dict(c.tf_edges),
+        "camera_info": {
+            "focal_over_width": FOCAL_OVER_WIDTH,
+            "fits_px_at_%d" % int(FOCAL_FIT_WIDTH): list(FOCAL_FITS_PX_AT_1920),
+            "source": FOCAL_SOURCE,
+            "calibrated": False,
+            "distortion_model": "",
+            "resolution_changes": [
+                {"t": t, "from": list(a), "to": list(b)} for t, a, b in c.resolution_changes
+            ],
+        },
+        "origin": None
+        if c.origin is None
+        else {
+            "lat": c.origin[0],
+            "lon": c.origin[1],
+            "takeoff_altitude_m": c.origin[2],
+            "t": c.origin[3],
+        },
+        "recording_complete": complete,
+        "bad_lines": c.bad_lines,
+        "dropped_entries": dropped,
+        "drop_entries": drops,
+        "pruned_video_parts": sorted(c.video_missing),
+        "options": {
+            "keyframes_only": bool(args.keyframes_only),
+            "video": not args.no_video,
+            "gimbal": args.gimbal,
+            "pose_tolerance_s": args.pose_tolerance,
+        },
+        "caveats": caveats,
+        "converted_unix": time.time(),
+    }
+    return json.dumps(body, sort_keys=True, default=str)
+
+
+def write_store(path, c, msgs, args):
+    """Create every stream, sort each one, and insert. Sorting is not lookahead — §5.4."""
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    if os.path.exists(path):
+        if not args.force:
+            sys.exit(f"{path} already exists. One flight per store; pass --force to replace it.")
+        os.remove(path)
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(path + suffix):
+                os.remove(path + suffix)
+
+    store = SqliteStore(path=path)
+    types = msgs.types()
+    streams = {}
+    # Every stream is created even when empty, so "nothing happened" and "this converter
+    # cannot express it" are different things in the store rather than only in the docs.
+    for name in ALL_STREAMS:
+        streams[name] = store.stream(name, types[name])
+
+    written = {}
+    for name in ALL_STREAMS:
+        rows = c.rows.get(name, [])
+        # `Stream.align`'s two-pointer merge assumes ascending ts and `Replay.observable`
+        # inserts a spurious loop gap when it sees ts < prev, so a stream goes in sorted
+        # even though the record's own order is queue order.
+        rows = sorted(rows, key=lambda r: r[0])
+        st = streams[name]
+        for ts, payload, pose, tags in rows:
+            st.append(payload, ts=ts, pose=pose, tags=tags)
+        written[name] = len(rows)
+    return store, streams, written
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def payload_stamp(name, obj):
+    """The instant the *payload itself* claims, or None for a type that carries none.
+
+    Read out of the decoded message rather than off the row, because the whole point is to
+    catch the two disagreeing. `std_msgs.String` has no header at all, which is why `status`
+    and friends are not in this check and their `ts` rests on the row alone.
+    """
+    if name == "tf":
+        return obj.transforms[0].ts if obj.transforms else None
+    if name == "battery":
+        return obj.header.stamp.sec + obj.header.stamp.nsec / 1e9
+    return getattr(obj, "ts", None)
+
+
+def check_roundtrip(streams, c):
+    """Read every observation back, re-encode, and compare with what went in.
+
+    Video is compared against the *sidecar's* bytes rather than against a re-derivation,
+    which is stronger and is the advantage of not decoding.
+    """
+    problems = []
+    compared = 0
+    for name in ALL_STREAMS:
+        expect = sorted(c.rows.get(name, []), key=lambda r: r[0])
+        if not expect:
+            continue
+        got = sorted(streams[name].to_list(), key=lambda o: o.ts)
+        if len(got) != len(expect):
+            problems.append("%s: %d rows back, %d written" % (name, len(got), len(expect)))
+            continue
+        for (ts, payload, _, tags), obs in zip(expect, got, strict=False):
+            compared += 1
+            if obs.ts != ts:
+                problems.append(f"{name} at {ts:.6f}: ts came back {obs.ts:.6f}")
+                break
+            want = payload.lcm_encode()
+            back = obs.data.lcm_encode()
+            if back != want:
+                problems.append(
+                    "%s at %.6f: %d bytes in, %d out, first differing byte %s"
+                    % (name, ts, len(want), len(back), first_diff(want, back, ("in", "out")))
+                )
+                break
+            # The store's `ts` and the payload's own stamp must be the same instant, to the
+            # millisecond the format quantises to. They come from different places and a
+            # shared mutable default in a generated binding is enough to separate them.
+            stamp = payload_stamp(name, obs.data)
+            if stamp is not None and abs(stamp - ts) > 5e-7:
+                problems.append(f"{name} at {ts:.6f}: the payload's own stamp says {stamp:.6f}")
+                break
+            if name == "color_image":
+                if bytes(obs.data.data) != bytes(payload.data):
+                    problems.append(f"{name} at {ts:.6f}: payload bytes differ")
+                    break
+                for key in ("n", "part", "off", "len", "key"):
+                    if obs.tags.get(key) != tags.get(key):
+                        problems.append(
+                            f"{name} at {ts:.6f}: tag {key} came back {obs.tags.get(key)!r}, wrote {tags.get(key)!r}"
+                        )
+                        break
+    return compared, problems
+
+
+def check_video_against_sidecar(streams, record_path):
+    """Every stored frame's bytes must equal the `len` bytes at `off` in part `part`.
+
+    The store holds the sidecar's own bytes, so this is exact and has no tolerance in it.
+    """
+    ve = load_videoexport()
+    session, _ = ve.read_index(record_path)
+    directory = os.path.dirname(os.path.abspath(record_path))
+    handles = {}
+    problems, compared = [], 0
+    try:
+        for obs in streams["color_image"].to_list():
+            part = obs.tags["part"]
+            if part not in handles:
+                p = ve.part_path(directory, session, part)
+                handles[part] = open(p, "rb") if os.path.exists(p) else None
+            fh = handles[part]
+            if fh is None:
+                continue
+            fh.seek(obs.tags["off"])
+            want = fh.read(obs.tags["len"])
+            compared += 1
+            if bytes(obs.data.data) != want:
+                problems.append("frame {} does not match the sidecar".format(obs.tags["n"]))
+                if len(problems) > 5:
+                    break
+    finally:
+        for fh in handles.values():
+            if fh is not None:
+                fh.close()
+    return compared, problems
+
+
+def check_tf(store, c, probes=25):
+    """`StreamTF.from_store` must resolve `drone/world` → `drone/camera_optical`.
+
+    Not our own reader: `dimos.memory2.tf.StreamTF` is the thing a consumer will actually
+    use, and `dimos/protocol/tf/test_tf.py` already asserts that a live buffer, a
+    `MemoryStore` stream and a `SqliteStore` stream answer identically — so a store this
+    resolves through is one a DiMOS consumer resolves through.
+
+    Probed at instants spread across the flight rather than at one, because the fixed
+    `camera` → `camera_optical` edge published once and then never again would still answer
+    at t=0 and nowhere else. A subscriber joins whenever it likes.
+    """
+    try:
+        from dimos.memory2.tf import StreamTF
+    except ImportError as e:
+        return 0, [], f"dimos.memory2.tf is not importable: {e}"
+    tf = StreamTF.from_store(store, stream="tf")
+    if tf is None:
+        return 0, ["no tf stream in the store"], None
+    rows = sorted(
+        (ts, {(t.frame_id, t.child_frame_id) for t in payload.transforms})
+        for ts, payload, _, _ in c.rows["tf"]
+    )
+    if not rows:
+        return 0, [], "the tf stream is empty"
+    problems = []
+
+    # The fixed edge, republished. It could in principle be latched and sent once, and
+    # "once" has no meaning on a bus a subscriber joins whenever it likes — so require it
+    # in **every one-second window**, which is the property a late joiner depends on.
+    fixed = [ts for ts, edges in rows if (FRAME_CAMERA, FRAME_CAMERA_OPTICAL) in edges]
+    for a, b in itertools.pairwise(fixed):
+        if b - a > 1.0:
+            problems.append(
+                f"the fixed camera->camera_optical edge is absent for {b - a:.1f} s "
+                f"after {a:.3f}; a subscriber joining there stays blind"
+            )
+            break
+
+    # The chain, probed only where the tree actually has all its edges. Where `pose` is
+    # withheld there is no `world->base_link` to chain through and the absence is the
+    # information, not a fault — so requiring a resolution there would be requiring the
+    # converter to invent one.
+    whole = [
+        ts
+        for ts, edges in rows
+        if {
+            (FRAME_WORLD, FRAME_BASE_LINK),
+            (FRAME_BASE_LINK, FRAME_CAMERA),
+            (FRAME_CAMERA, FRAME_CAMERA_OPTICAL),
+        }
+        <= edges
+    ]
+    if not whole:
+        return (
+            0,
+            problems,
+            (
+                "no sample published all three edges, so the chain is not "
+                "resolvable anywhere in this record"
+            ),
+        )
+    ok = 0
+    step = max(1, len(whole) // probes)
+    for ts in whole[::step]:
+        if tf.get(FRAME_WORLD, FRAME_CAMERA_OPTICAL, ts, 0.5) is None:
+            problems.append(
+                f"world->camera_optical does not resolve at {ts:.3f}, where all "
+                "three edges were published"
+            )
+            if len(problems) > 4:
+                break
+        else:
+            ok += 1
+    return ok, problems, None
+
+
+def check_origin_by_subtraction(c):
+    """`gps_location` minus `pose` must be one constant — the deleted `datum` channel's job.
+
+    A swapped X/Y breaks this by metres; a dropped `cos(latitude)` by 21% of the easting at
+    this site; a second flight in the store by a median 2.5 m; a mid-flight re-capture of
+    the origin by a visible step. All four are invisible to any byte comparison, which is
+    why this check is worth the arithmetic.
+    """
+    poses = {ts: p for ts, _, p, _ in c.rows["pose"]}
+    residuals = []
+    recovered = []
+    for ts, payload, _, _ in c.rows["gps_location"]:
+        p = poses.get(ts)
+        if p is None:
+            continue
+        # Undo the projection: the origin implied by this sample alone.
+        east, north = p[0], p[1]
+        lat = payload.latitude - north / METRES_PER_DEG
+        lon = payload.longitude - east / (METRES_PER_DEG * math.cos(math.radians(lat)))
+        recovered.append((lat, lon))
+        if c.origin is not None:
+            de, dn = enu_metres(c.origin[0], c.origin[1], lat, lon)
+            residuals.append(math.hypot(de, dn))
+    if not recovered:
+        return None, 0.0, 0, 0.0
+    mean_lat = sum(a for a, _ in recovered) / len(recovered)
+    mean_lon = sum(b for _, b in recovered) / len(recovered)
+    spread = 0.0
+    for lat, lon in recovered:
+        de, dn = enu_metres(mean_lat, mean_lon, lat, lon)
+        spread = max(spread, math.hypot(de, dn))
+    return (mean_lat, mean_lon), max(residuals or [0.0]), len(recovered), spread
+
+
+def first_diff(a, b, labels=("ours", "theirs")):
+    """Where two encodings first disagree, said so a reader can find the *field*.
+
+    A bare offset is not enough to act on. "bytes differ at 83" cost a day of diagnosis
+    on landing16 (2026-07-30) because nothing in the line said 83 was the last byte of an
+    84-byte message — i.e. the low byte of the final double, i.e. a one-ULP disagreement
+    in `twist.angular.z` and not a structural divergence. So the offset travels with the
+    length and with both bytes: `83/84 ours 0x85 theirs 0x86` reads as "the last byte of
+    the last field, off by one", which is the whole diagnosis.
+    """
+    for i in range(min(len(a), len(b))):
+        if a[i] != b[i]:
+            return "%d/%d %s 0x%02x %s 0x%02x" % (i, len(a), labels[0], a[i], labels[1], b[i])
+    return "length only (%s %d, %s %d)" % (labels[0], len(a), labels[1], len(b))
+
+
+def _quaternions(obj):
+    """Every `geometry_msgs.Quaternion` reachable from a message, in a deterministic order.
+
+    Walks attributes by sorted name so that walking two decodings of the same type visits
+    their quaternions in the same order — which is what lets [_agrees_to_quat_ulp] pair
+    them up positionally. dimos messages keep some fields as properties over internal
+    storage rather than in `__dict__` (`PoseStamped.orientation` is one), so this walks
+    `dir()` and not `vars()`.
+    """
+    out = []
+
+    def walk(o):
+        if isinstance(o, (list, tuple)):
+            for v in o:
+                walk(v)
+            return
+        if type(o).__name__ == "Quaternion":
+            out.append(o)
+            return
+        # Only message objects are entered. Anything else — numpy arrays with their
+        # self-referential `.T`, floats, strings — is a leaf, or the walk never ends.
+        if not type(o).__module__.startswith("dimos."):
+            return
+        for a in sorted(dir(o)):
+            if a.startswith("_"):
+                continue
+            try:
+                v = getattr(o, a)
+            except Exception:
+                continue
+            if not callable(v):
+                walk(v)
+
+    walk(obj)
+    return out
+
+
+# A few ULP at unit scale, and the scale is the point. The error in a quaternion component
+# is inherited from sin/cos values of magnitude ~1 and from the cancellation in
+# `sr*cp*cy - cr*sp*sy`, so it is an *absolute* error of a few 2^-53 — measured on the
+# yaw-over-tag flight: 1.1e-16 on a component of 0.68 (1 ULP of itself) and 4.3e-19 on a
+# component of 0.0017 (2 ULP of itself). A per-result-ULP tolerance would have to grow
+# without bound as a component crosses zero, which is why this is not one.
+QUAT_COMPONENT_TOL = 4 * 2.0**-53
+
+
+def _agrees_to_quat_ulp(payload, theirs_bytes):
+    """True iff the encodings differ only inside quaternion components, within [QUAT_COMPONENT_TOL].
+
+    The verdict is delivered by the encoder itself rather than by field-walking arithmetic:
+    every tolerated component is copied from our message onto theirs, theirs is re-encoded,
+    and the bytes must then be identical. So a difference anywhere *else* — another field, a
+    length, a stamp — still fails exactly as before, because nothing outside a quaternion is
+    ever touched. `struct.pack` equality is the float comparison so that NaN payloads (which
+    this project uses deliberately) compare by bit pattern rather than by IEEE `==`.
+    """
+    # Both sides through a decode, so they have the same shape. A constructed message and a
+    # decoded one expose different derived properties (a decoded position grows a
+    # `.quaternion` of its own), and the walker must see the same quaternions in the same
+    # order on both sides. A derived quaternion cannot smuggle tolerance in: correcting it
+    # mutates a throwaway object, and the verdict below re-encodes the message's real fields.
+    theirs = type(payload).lcm_decode(theirs_bytes)
+    ours = type(payload).lcm_decode(payload.lcm_encode())
+    ours_q, theirs_q = _quaternions(ours), _quaternions(theirs)
+    if len(ours_q) != len(theirs_q):
+        return False
+    for m, t in zip(ours_q, theirs_q, strict=False):
+        for a in ("x", "y", "z", "w"):
+            mv, tv = getattr(m, a), getattr(t, a)
+            if struct.pack(">d", mv) == struct.pack(">d", tv):
+                continue
+            if math.isfinite(mv) and math.isfinite(tv) and abs(mv - tv) <= QUAT_COMPONENT_TOL:
+                setattr(t, a, mv)
+            else:
+                return False
+    return theirs.lcm_encode() == payload.lcm_encode()
+
+
+def check_against_kotlin(paths, c, repo, quiet=False):
+    """Every message the shipping Kotlin encoder would have published must be ours, exactly —
+    except that a quaternion component may disagree in its last bit.
+
+    This is the check the whole contract turns on. `tools/kotlinframes/run` executes
+    `ZenohReplay` and `ZenohTelemetryEncoder` bytecode — not a description of them, not a
+    second Python copy of their rules — over the same record, and prints the frames it would
+    have sent. Anything on both sides must be byte-identical.
+
+    **The one tolerance, and why it is exactly this narrow.** JVM `Math.sin`/`cos` and
+    glibc's disagree in the last bit for some inputs — both are within their documented
+    0.5–1 ULP bounds and neither is wrong — so the two implementations of `enuQuaternion`
+    cannot be byte-equal on every attitude even though the code is line-for-line the same.
+    Found 2026-07-28 on the yaw-over-tag flight: 4 of 15,108 messages differed, every
+    difference inside a quaternion component, and a JVM probe running the shipping
+    `enuQuaternion` on the failing attitude reproduced the Kotlin bytes exactly while CPython
+    from the same inputs reproduced ours. The same morning's other flight passed 14,655/14,655
+    because DJI quantises attitude to 0.1° and none of its values hit a divergent input —
+    which is why this check could pass for a day while carrying an unachievable requirement.
+    The tolerance is [QUAT_COMPONENT_TOL] absolute, quaternion components only — see the
+    constant for why absolute-at-unit-scale is the metric and per-result ULPs are not.
+    Anything outside a quaternion still has to be byte-exact.
+
+    Returns `(compared, ulp_ok, differed, problems, note, per_stream)`; `per_stream` maps each
+    checked stream to `(byte_identical, compared)` so the report can account stream by stream —
+    the `detections`/`tag_fix`/`setpoint`/`wind` streams must be *visibly* in the comparison, not
+    merely inside an aggregate that would look the same without them. `ulp_ok` counts messages
+    that needed the tolerance, because "equal" and "equal to tolerance" must never print the
+    same. A missing toolchain is a `note`, not a pass: "the check did not run" and "the check
+    passed" must never print the same either.
+
+    ## Why `differed` is counted separately, and why the whole comparison always runs
+
+    Until 2026-07-30 this returned only `problems` (a list of human-readable complaints) and
+    stopped as soon as it had nine of them, and the report printed `len(problems)` where the
+    sentence said "byte-identical". A single-field, single-stream, one-ULP divergence on
+    landing16 therefore printed as **"FAILED — 9 of 33491 messages byte-identical"**, which
+    reads as "everything is broken" and is not what was measured: the truth was 246 of 35038
+    (all of them `setpoint`, 1267 of that stream's 1513 still identical, every other stream
+    perfect), and even the 33491 was wrong — it was only the messages reached before the
+    early return. Both halves were bugs of the same kind: a count that means one thing
+    printed as if it meant another, and an early return that made the real count unknowable
+    and left `per_stream` truncated — the streams after the failing one never got an entry,
+    and the failing stream's entry was never written at all, so the one line that could have
+    named `setpoint` was also the one line that was missing.
+
+    So: the loop never returns early, `differed` is the real number of compared messages that
+    are not byte-identical and not inside the tolerance, `problems` keeps at most
+    [KOTLIN_PROBLEM_EXAMPLES] *examples* plus every structural complaint, and `per_stream`
+    subtracts the differing messages as well as the tolerated ones — an accounting that
+    claimed a failing stream was fully identical would be the same class of lie.
+    """
+    runner = os.path.join(repo, "tools", "kotlinframes", "run")
+    if not os.path.exists(runner):
+        return 0, 0, 0, [], "tools/kotlinframes/run is missing", {}
+    out = os.path.join(repo, "tmp", "memexport-kotlin-frames.jsonl")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    proc = subprocess.run([runner, out, *list(paths)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return (
+            0,
+            0,
+            0,
+            [],
+            "kotlinframes failed: {}".format((proc.stderr.strip().splitlines() or [""])[-1]),
+            {},
+        )
+
+    theirs = collections.defaultdict(dict)
+    with open(out) as fh:
+        next(fh)
+        for line in fh:
+            f = json.loads(line)
+            theirs[f["ch"]][round(f["unix"], 6)] = f["hex"]
+
+    problems, compared, ulp_ok, differed = [], 0, 0, 0
+    examples = 0
+    per_stream = {}
+    for name in KOTLIN_CHECKED_STREAMS:
+        mine = {round(ts, 6): payload for ts, payload, _, _ in c.rows.get(name, [])}
+        theirs_ch = theirs.get(name, {})
+        if len(mine) != len(theirs_ch):
+            problems.append(
+                "%s: %d messages here, %d from the Kotlin encoder"
+                % (name, len(mine), len(theirs_ch))
+            )
+        only_mine = sorted(set(mine) - set(theirs_ch))[:3]
+        only_theirs = sorted(set(theirs_ch) - set(mine))[:3]
+        if only_mine:
+            problems.append(f"{name}: published at {only_mine} and the Kotlin encoder did not")
+        if only_theirs:
+            problems.append(f"{name}: the Kotlin encoder published at {only_theirs} and we did not")
+        s_compared = s_ulp = s_bad = 0
+        for ts in sorted(set(mine) & set(theirs_ch)):
+            compared += 1
+            s_compared += 1
+            mine_hex = mine[ts].lcm_encode().hex()
+            if mine_hex == theirs_ch[ts]:
+                continue
+            # A mismatch so deep the other side's bytes do not even decode as this type
+            # (a drifted fingerprint is the known way) is a byte difference, not a crash:
+            # the report below must say WHERE, not die inside the tolerance probe.
+            try:
+                tolerated = _agrees_to_quat_ulp(mine[ts], bytes.fromhex(theirs_ch[ts]))
+            except Exception:
+                tolerated = False
+            if tolerated:
+                ulp_ok += 1
+                s_ulp += 1
+                continue
+            differed += 1
+            s_bad += 1
+            if examples < KOTLIN_PROBLEM_EXAMPLES:
+                examples += 1
+                problems.append(
+                    f"{name} at {ts:.3f}: bytes differ at {first_diff(bytes.fromhex(mine_hex), bytes.fromhex(theirs_ch[ts]))}"
+                )
+        per_stream[name] = (s_compared - s_ulp - s_bad, s_compared)
+    return compared, ulp_ok, differed, problems, None, per_stream
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reporting
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def report(c, written, path, elapsed):
+    print()
+    print(f"streams      {os.path.abspath(path)}")
+    print("  %-14s %8s  %-11s %s" % ("stream", "rows", "span (s)", "notes"))
+    total = 0
+    for name in ALL_STREAMS:
+        rows = sorted(c.rows.get(name, []), key=lambda r: r[0])
+        n = written.get(name, 0)
+        total += n
+        span = "—" if len(rows) < 2 else "%.1f" % (rows[-1][0] - rows[0][0])
+        why = ", ".join(
+            "%s %d" % (k.lower(), v)
+            for k, v in c.reasons.get(name, collections.Counter()).most_common(3)
+        )
+        if not rows:
+            why = why or "nothing in the record produces this"
+        print("  %-14s %8d  %-11s %s" % (name, n, span, why))
+    size = os.path.getsize(path) / 1e6 if os.path.exists(path) else 0.0
+    print("  %-14s %8d" % ("total", total))
+    print()
+    print(f"db           {size:.1f} MB, written in {elapsed:.1f} s")
+    if c.origin:
+        print(
+            "origin       {:.7f}, {:.7f} at t={:.3f} — takeoff altitude {}".format(
+                c.origin[0],
+                c.origin[1],
+                c.origin[3],
+                "unknown" if c.origin[2] is None else f"{c.origin[2]:.3f} m (pressure, not AMSL)",
+            )
+        )
+    else:
+        print(
+            "origin       NONE — no fix good enough to anchor a local frame; every local "
+            "channel is withheld"
+        )
+    if c.tf_edges:
+        print(
+            "tf edges     {}".format(
+                ", ".join("%s %d" % (k, v) for k, v in sorted(c.tf_edges.items()))
+            )
+        )
+    if c.video_types:
+        print(
+            "video NALs   {}".format(
+                ", ".join(
+                    "%s x%d" % ("+".join(str(t) for t in k), v)
+                    for k, v in c.video_types.most_common()
+                )
+            )
+        )
+    if c.rows.get("camera_info"):
+        seen = sorted({(t["width"], t["height"]) for _, _, _, t in c.rows["camera_info"]})
+        print(
+            "camera_info  {}, f = {:.4f} * W (fitted, NOT calibrated) — {}".format(
+                ", ".join("%dx%d" % r for r in seen), FOCAL_OVER_WIDTH, FOCAL_SOURCE
+            )
+        )
+        print("             distortion unmeasured: D is empty, distortion_model is empty")
+        for t, a, b in c.resolution_changes:
+            print(
+                "             RESOLUTION CHANGED at t=%.3f: %dx%d -> %dx%d. The intrinsics "
+                "before and after are different cameras." % ((t, *a, *b))
+            )
+    for note in c.notes:
+        print(f"note         {note}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --spy: the same table, from the store's own side
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def spy(path):
+    """What a DiMOS consumer sees. §7.3: this table must match the publisher's."""
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    if not os.path.exists(path):
+        sys.exit(f"no such store: {path}")
+    store = SqliteStore(path=path, must_exist=True)
+    names = store.list_streams()
+    print(f"{os.path.abspath(path)}\n")
+    print("  %-14s %8s  %-17s %-17s %s" % ("stream", "rows", "first", "last", "sha256 of payloads"))
+    for name in names:
+        try:
+            st = store.stream(name)
+        except Exception as e:
+            print("  %-14s  cannot open: %s" % (name, e))
+            continue
+        rows = sorted(st.to_list(), key=lambda o: o.ts)
+        h = hashlib.sha256()
+        for o in rows:
+            try:
+                h.update(o.data.lcm_encode())
+            except Exception:
+                h.update(repr(o.data).encode())
+        first = f"{rows[0].ts:.3f}" if rows else "—"
+        last = f"{rows[-1].ts:.3f}" if rows else "—"
+        print("  %-14s %8d  %-17s %-17s %s" % (name, len(rows), first, last, h.hexdigest()[:16]))
+    prov = [o for o in store.stream("provenance").to_list()] if "provenance" in names else []
+    if prov:
+        body = json.loads(prov[0].data.data)
+        print("\n  converter    {}".format(body.get("converter")))
+        print("  session      {}".format((body.get("header") or {}).get("session")))
+        print("  complete     {}".format(body.get("recording_complete")))
+        for cav in body.get("caveats", []):
+            print(f"  caveat       {cav}")
+    store.stop()
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --selftest: planted data, and planted faults
+#
+# The discipline this project holds itself to: *a check that has never been shown
+# to catch a planted fault is not known to work*. Every assertion below either
+# names a metre, a millisecond or an axis, or shows a refusal firing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+PLANT_LAT = 60.0  # far from the equator on purpose: cos(60) = 0.5 exactly, so a
+PLANT_LON = 20.0  # dropped cos(latitude) doubles the easting rather than nudging it
+PLANT_START_MS = 1785000000123
+
+
+def _plant_record(tmpdir, samples, gimbal=None, frames=None, session="20260101-000000", extra=None):
+    """Write a synthetic `mini4pro-flightlog-1` record with exactly the values we planted."""
+    path = os.path.join(tmpdir, f"{session}.001.jsonl")
+    with open(path, "w") as f:
+        f.write(
+            json.dumps(
+                {
+                    "t": 0.0,
+                    "k": "header",
+                    "format": RECORD_FORMAT,
+                    "schema": 1,
+                    "session": session,
+                    "part": 1,
+                    "started_unix_ms": PLANT_START_MS,
+                    "started_mono_ns": 1,
+                    "meta": {"recorder": {"state_hz": 5}},
+                }
+            )
+            + "\n"
+        )
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "fcConnected", "v": "true"}) + "\n")
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "motorsOn", "v": "true"}) + "\n")
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "flightMode", "v": "GPS_ATTI"}) + "\n")
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "batteryPercent", "v": "62"}) + "\n")
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "gpsSignalLevel", "v": "5"}) + "\n")
+        f.write(json.dumps({"t": 0.0, "k": "dji_field", "f": "satelliteCount", "v": "14"}) + "\n")
+        for g in gimbal or []:
+            f.write(json.dumps(dict(g, k="gimbal")) + "\n")
+        for s in samples:
+            f.write(json.dumps(dict(s, k="dji_state")) + "\n")
+        for fr in frames or []:
+            f.write(json.dumps(dict(fr, k="frame")) + "\n")
+        for e in extra or []:
+            f.write(json.dumps(e) + "\n")
+    return path
+
+
+def _sample(
+    t, dlat=0.0, dlon=0.0, alt=0.0, roll=0.0, pitch=0.0, yaw=0.0, vn=0.0, ve=0.0, vd=0.0, ages=None
+):
+    return {
+        "t": t,
+        "lat": PLANT_LAT + dlat,
+        "lon": PLANT_LON + dlon,
+        "relalt": alt,
+        "roll": roll,
+        "pitch": pitch,
+        "yaw": yaw,
+        "vn": vn,
+        "ve": ve,
+        "vd": vd,
+        "age": ages if ages is not None else {"pos": 10, "relalt": 10, "att": 10, "vel": 10},
+    }
+
+
+class _Args:
+    keyframes_only = False
+    no_video = False
+    gimbal = "auto"
+    pose_tolerance = 0.25
+    force = True
+
+
+def selftest(repo):
+    """Planted data, planted faults — and the mutations that were measured against it.
+
+    The house mutation protocol applies to this file too: a property this selftest claims to
+    hold is only held if breaking it goes red. One mutation at a time, whole selftest per
+    mutant, counts MEASURED (2026-07-30, `tools/memexport --selftest`, plus the flight-record
+    cross-check where the mutation is about the cross-check itself).
+
+    | # | mutation applied to `tools/memexport`                                       | RED |
+    |---|-----------------------------------------------------------------------------|-----|
+    | 1 | `setpoint`: `-math.radians(q)` → `-(q / 180.0 * math.pi)` — the defect itself | 1 |
+    | 2 | `setpoint`: `-math.radians(q)` → `math.radians(q)` — drop the negation        | 2 |
+    | 3 | `first_diff`: drop the length and the two bytes, return `str(i)` as before    | 0 |
+    | 4 | cross-check: `per_stream[name] = (s_compared - s_ulp, s_compared)` — stop subtracting the differing messages | 0 |
+
+    Mutation 1 is also the one measured against real flight records, which is where it was
+    found: with it applied, `landing16/20260730-161329.001.jsonl` reports **246 of 35038**
+    messages differing and `landing17/20260730-172355.001.jsonl` **361 of 47915**, every one
+    of them a `setpoint` and every one of them at byte 83 of 84. Without it, both are clean.
+
+    **Survivors 3 and 4 are real and are recorded, not hidden.** Both are properties of how
+    the checker *reports*, and this selftest exercises the converter, never the report — it
+    never constructs a failing comparison, so nothing here can observe how a failure prints.
+    They are held today only by the flight records: mutations 1+4 applied together make
+    landing16 print `per stream: … setpoint 1513/1513` on a run whose own aggregate line says
+    246 messages differ (measured 2026-07-30) — the same self-contradiction, in the same
+    report, that `9 of 33491` was. Closing them properly means a planted mismatching frame
+    file driven through `check_against_kotlin`, which needs the runner stubbed out and is a
+    bigger change than this fix; until then the KDoc on each states what it must print and
+    why, and mutation 1 is what guards the bytes.
+    """
+    import tempfile
+
+    failures = []
+
+    def check(name, ok, detail=""):
+        if ok:
+            print(f"  ok    {name}")
+        else:
+            print(f"  FAIL  {name}   {detail}")
+            failures.append(name)
+
+    print("selftest — planted data, one case per axis\n")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # ── 1. one metre per axis, planted and read back ────────────────────
+        #
+        # A degree of latitude is METRES_PER_DEG metres of north; a degree of longitude at
+        # 60N is half that of east. Separate cases per axis because a swapped X/Y and a
+        # dropped cos(latitude) both produce entirely plausible-looking output, and a
+        # single diagonal case would let one hide the other.
+        north_deg = 25.0 / METRES_PER_DEG  # 25 m north
+        east_deg = 40.0 / (METRES_PER_DEG * math.cos(math.radians(PLANT_LAT)))  # 40 m east
+        samples = [
+            _sample(0.0),  # the origin itself
+            _sample(0.2, dlat=north_deg),  # +25 m north only
+            _sample(0.4, dlon=east_deg),  # +40 m east only
+            _sample(0.6, alt=12.5),  # +12.5 m up only
+        ]
+        path = _plant_record(tmp, samples)
+        header, entries, _ = read_records([path])
+        s = build_samples(header, entries)
+        origin = takeoff_origin(s)
+        d = derive(s, origin)
+
+        got = [x.position for x in d]
+        check("origin sample is (0, 0, 0)", all(abs(v) < 1e-9 for v in got[0]), str(got[0]))
+        check(
+            "+25 m north lands on ENU y, not x",
+            abs(got[1][1] - 25.0) < 1e-6 and abs(got[1][0]) < 1e-9,
+            f"east={got[1][0]:.6f} north={got[1][1]:.6f}",
+        )
+        check(
+            "+40 m east lands on ENU x, not y",
+            abs(got[2][0] - 40.0) < 1e-6 and abs(got[2][1]) < 1e-9,
+            f"east={got[2][0]:.6f} north={got[2][1]:.6f}",
+        )
+        check("+12.5 m up lands on ENU z, positive", abs(got[3][2] - 12.5) < 1e-9, str(got[3]))
+
+        # The cos(latitude) itself, stated as the number it is: at 60N one degree of
+        # longitude is exactly half a degree of latitude in metres. Dropping the factor
+        # doubles the easting, which is 21% at this project's own site and 100% here.
+        e_raw, _ = enu_metres(PLANT_LAT, PLANT_LON, PLANT_LAT, PLANT_LON + 1.0)
+        check(
+            "cos(latitude) is applied to easting",
+            abs(e_raw - METRES_PER_DEG * 0.5) < 1e-6,
+            f"1 deg lon at 60N = {e_raw:.3f} m, expected {METRES_PER_DEG * 0.5:.3f}",
+        )
+
+        # ── 2. the millisecond ──────────────────────────────────────────────
+        #
+        # `t = 0.2` on a record started at ...123 ms is ...323 ms and nothing else. The
+        # store's ts, the LCM header's stamp and this arithmetic must be the same number.
+        msgs = Messages()
+        ts = s[1].unix
+        check(
+            "t=0.200 stamps at started_unix_ms + 200 ms exactly",
+            ts == (PLANT_START_MS + 200) / 1000.0,
+            f"{ts!r}",
+        )
+        pose_msg = msgs.pose(ts, got[1], enu_quaternion(0, 0, 0))
+        back = msgs.PoseStamped.lcm_decode(pose_msg.lcm_encode())
+        check(
+            "the payload's own header stamp equals the store ts",
+            abs(back.ts - ts) < 5e-7,
+            f"{back.ts!r} vs {ts!r}",
+        )
+        check(
+            "round-tripped position is the planted metre",
+            abs(back.position.y - 25.0) < 1e-6,
+            str(back.position),
+        )
+
+        # Rounding: Java's Math.round, not Python's banker's rounding. An exact half must
+        # go up, and `round()` would send 0.5 to 0.
+        check(
+            "an exact half millisecond rounds up, not to even",
+            unix_seconds(0, 0.0005) == 0.001 and unix_seconds(0, 0.0015) == 0.002,
+            f"{unix_seconds(0, 0.0005)!r} {unix_seconds(0, 0.0015)!r}",
+        )
+
+        # ── 3. the frame tree, at a tilted airframe ─────────────────────────
+        #
+        # This is the subtlest thing in the contract: the gimbal report is
+        # earth-referenced, so the edge must compose the airframe's attitude away. Plant a
+        # 30-degree roll and a 20-degree pitch under a nadir gimbal and require the camera
+        # to still point at the ground. Writing the reported angle straight into the edge
+        # fails this by 30 degrees.
+        tilt = _sample(0.0, roll=30.0, pitch=20.0, yaw=137.0)
+        tpath = _plant_record(
+            tmp,
+            [tilt],
+            gimbal=[{"t": 0.0, "p": -90.0, "r": 0.0, "y": 137.0, "age": 5000}],
+            session="20260101-000001",
+        )
+        th, te, _ = read_records([tpath])
+        ts_ = build_samples(th, te)
+        td = derive(ts_, takeoff_origin(ts_))[0]
+        src, gtags = gimbal_source(ts_[0], {})
+        q_edge = camera_edge(ts_[0], td.orientation, src)
+        # Compose the edge back out and look at where the camera's +x (its view axis at
+        # pitch 0, forward) ends up in the world.
+        world_from_camera = q_mul(td.orientation, q_edge)
+        view = q_rotate(world_from_camera, (1.0, 0.0, 0.0))
+        check(
+            "a nadir gimbal points down in world despite 30 deg of roll",
+            abs(view[0]) < 1e-9 and abs(view[1]) < 1e-9 and abs(view[2] + 1.0) < 1e-9,
+            "camera +x in world = ({:.6f}, {:.6f}, {:.6f})".format(*view),
+        )
+        # ... and the planted fault: the reported angle straight into the edge.
+        naive = enu_quaternion(0.0, -90.0, 137.0)
+        naive_view = q_rotate(q_mul(td.orientation, naive), (1.0, 0.0, 0.0))
+        off_deg = math.degrees(math.acos(max(-1.0, min(1.0, -naive_view[2]))))
+        check(
+            "planted fault: the uncomposed edge misses the ground by tens of degrees",
+            off_deg > 20.0,
+            f"off by {off_deg:.1f} deg",
+        )
+        check(
+            "the reported gimbal's age travels with the edge",
+            gtags.get("gimbal_age_ms") == 5000 and gtags.get("gimbal_src") == "reported",
+            str(gtags),
+        )
+
+        # The optical edge, which is exact and free: +z of camera_optical must be the
+        # camera's forward axis, +y its down.
+        ox = q_rotate(OPTICAL_Q, (0.0, 0.0, 1.0))
+        oy = q_rotate(OPTICAL_Q, (0.0, 1.0, 0.0))
+        check("camera_optical +z is the camera's forward axis", abs(ox[0] - 1.0) < 1e-9, str(ox))
+        check("camera_optical +y is the camera's down axis", abs(oy[2] + 1.0) < 1e-9, str(oy))
+
+        # ── 4. the causal rule ──────────────────────────────────────────────
+        #
+        # Fault 5 of the contract, and the one a converter can commit and a live publisher
+        # cannot: filling a gap from both sides. A sample before the first position must
+        # produce no pose at all — not an interpolation, and not a zero.
+        blind = [
+            {
+                "t": 0.0,
+                "lat": None,
+                "lon": None,
+                "relalt": 0.0,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0,
+                "vn": 0.0,
+                "ve": 0.0,
+                "vd": 0.0,
+                "age": {"pos": 10, "relalt": 10, "att": 10, "vel": 10},
+            },
+            _sample(0.2, dlat=north_deg),
+        ]
+        bpath = _plant_record(tmp, blind, session="20260101-000002")
+        bh, be, _ = read_records([bpath])
+        bs = build_samples(bh, be)
+        bd = derive(bs, takeoff_origin(bs))
+        check(
+            "no pose before the first position — the gap is not filled from the right",
+            "pose" not in bd[0].channels and "pose" in bd[1].channels,
+            str(bd[0].reasons),
+        )
+
+        # And fault 4: `odom` may never publish from a held velocity. A stale VELOCITY must
+        # withhold odom while pose sails on.
+        stale_vel = [_sample(0.0, ages={"pos": 10, "relalt": 10, "att": 10, "vel": 9000})]
+        vpath = _plant_record(tmp, stale_vel, session="20260101-000003")
+        vh, ve_, _ = read_records([vpath])
+        vs = build_samples(vh, ve_)
+        vd = derive(vs, takeoff_origin(vs))[0]
+        check(
+            "planted fault: a 9 s old velocity withholds odom and not pose",
+            "odom" not in vd.channels and "pose" in vd.channels,
+            str(vd.reasons),
+        )
+
+        # ... and the liveness gate is about the link, not about the data. With
+        # fcConnected false every dense stream stops, even though every reading is fresh.
+        dead = os.path.join(tmp, "dead.001.jsonl")
+        with open(vpath) as fh, open(dead, "w") as out:
+            for line in fh:
+                out.write(
+                    line.replace(
+                        '"f": "fcConnected", "v": "true"', '"f": "fcConnected", "v": "false"'
+                    )
+                )
+        dh, de, _ = read_records([dead])
+        ds = build_samples(dh, de)
+        dd = derive(ds, takeoff_origin(ds))[0]
+        check(
+            "planted fault: a dead link stops pose even with fresh readings",
+            "pose" not in dd.channels and dd.reasons["pose"] == "LINK_DOWN",
+            str(dd.reasons),
+        )
+
+        # ── 5. video, and the two refusals ──────────────────────────────────
+        sps = bytes([0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1E, 0xFF])
+        pps = bytes([0, 0, 0, 1, 0x68, 0xCE, 0x38, 0x80])
+        # slice_header: first_mb_in_slice=0 (bit '1'), slice_type=7 (I) -> ue(7)='0001000'
+        idr = bytes([0, 0, 0, 1, 0x65]) + bytes([0b10001000, 0x80, 0x00])
+        # slice_type=0 (P) -> ue(0)='1'
+        inter = bytes([0, 0, 0, 1, 0x41]) + bytes([0b11000000, 0x80, 0x00])
+        # slice_type=1 (B) -> ue(1)='010'
+        bframe = bytes([0, 0, 0, 1, 0x41]) + bytes([0b10100000, 0x80, 0x00])
+        keyblob = sps + pps + idr
+
+        check(
+            "a well-formed keyframe passes the conformance check",
+            check_frame({"n": 1, "key": True}, keyblob) == [7, 8, 5],
+        )
+        check(
+            "an inter frame is a single slice NAL",
+            check_frame({"n": 2, "key": False}, inter) == [1],
+        )
+        check(
+            "planted fault: a B slice is refused",
+            _raises(VideoFault, check_frame, {"n": 3, "key": False}, bframe),
+        )
+        check(
+            "planted fault: a keyframe stripped of its SPS is refused",
+            _raises(VideoFault, check_frame, {"n": 4, "key": True}, pps + idr),
+        )
+
+        # The whole video path, end to end, against a planted sidecar.
+        vsession = "20260101-000004"
+        blob = keyblob + inter
+        with open(os.path.join(tmp, f"{vsession}.v001.h264"), "wb") as fh:
+            fh.write(blob)
+        vframes = [
+            {
+                "t": 0.10,
+                "n": 1,
+                "part": 1,
+                "off": 0,
+                "len": len(keyblob),
+                "key": True,
+                "pts": 111,
+                "w": 1920,
+                "h": 1080,
+                "mime": "H264",
+            },
+            {
+                "t": 0.14,
+                "n": 2,
+                "part": 1,
+                "off": len(keyblob),
+                "len": len(inter),
+                "key": False,
+                "pts": 151,
+                "w": 1920,
+                "h": 1080,
+                "mime": "H264",
+            },
+        ]
+        vpath2 = _plant_record(
+            tmp,
+            samples,
+            frames=vframes,
+            session=vsession,
+            gimbal=[{"t": 0.0, "p": -90.0, "r": 0.0, "y": 0.0, "age": 10}],
+        )
+        args = _Args()
+        c, msgs2 = convert([vpath2], args)
+        check(
+            "the sidecar's bytes arrive verbatim, keyframe first",
+            len(c.rows["color_image"]) == 2
+            and bytes(c.rows["color_image"][0][1].data) == keyblob
+            and bytes(c.rows["color_image"][1][1].data) == inter,
+            "%d frames" % len(c.rows["color_image"]),
+        )
+        check(
+            "a video frame is stamped from the record's clock, not from `pts`",
+            c.rows["color_image"][0][0] == (PLANT_START_MS + 100) / 1000.0,
+            "{!r}".format(c.rows["color_image"][0][0]),
+        )
+        check(
+            "`pts` is carried in tags and never stamped with",
+            c.rows["color_image"][0][3]["pts"] == 111,
+        )
+        check(
+            "the video's frame_id is the optical leaf the schema defines for itself",
+            c.rows["color_image"][0][1].frame_id == FRAME_CAMERA_OPTICAL,
+        )
+
+        # ── 5b. camera_info ─────────────────────────────────────────────────
+        ci = c.rows["camera_info"]
+        check(
+            "camera_info is emitted, in the OPTICAL frame and not the camera frame",
+            len(ci) == 1 and ci[0][1].frame_id == FRAME_CAMERA_OPTICAL,
+            "%d rows, frame_id %r" % (len(ci), ci[0][1].frame_id if ci else None),
+        )
+        info = ci[0][1]
+        check(
+            "width and height come from the record's own frame lines",
+            info.width == 1920 and info.height == 1080,
+            "%dx%d" % (info.width, info.height),
+        )
+        K = list(info.K)
+        check(
+            "K is [fx 0 cx; 0 fy cy; 0 0 1] with the principal point at the centre",
+            abs(K[1]) < 1e-12
+            and abs(K[3]) < 1e-12
+            and K[2] == 960.0
+            and K[5] == 540.0
+            and K[8] == 1.0
+            and abs(K[0] - K[4]) < 1e-12,
+            str(K),
+        )
+        # The measured focal length, and not the spec figure a consumer would otherwise
+        # invent. 13.2 % apart, which at a true 3 m is the difference between 3.0 and 2.6.
+        check(
+            "fx is the fitted focal length, ~1457 px at 1920",
+            abs(K[0] - 1457.1) < 0.5,
+            f"{K[0]:.2f} px",
+        )
+        spec = FOCAL_OVER_WIDTH_FROM_SPEC * 1920
+        check(
+            "planted fault: the published-spec focal length is 13% away and would be caught",
+            abs(K[0] - spec) / K[0] > 0.10,
+            f"{K[0]:.2f} vs spec {spec:.2f}",
+        )
+        check(
+            "distortion is bounded but not calibrated: D is empty, no model is claimed",
+            list(info.D) == [] and info.distortion_model == "",
+            f"D={list(info.D)!r} model={info.distortion_model!r}",
+        )
+        check(
+            "planted fault: five zeros with plumb_bob would be a claim, and is not what we write",
+            not (len(list(info.D)) == 5 and info.distortion_model == "plumb_bob"),
+        )
+        # ── the same camera, described in two files ──────────────────────────
+        #
+        # `calib/mini4pro_gimbal_1080.yaml` carries these numbers again, in ROS's CameraInfo
+        # schema, for consumers that load a file instead of subscribing. Two places holding
+        # one measurement is how measurements drift: tomorrow's chessboard will rewrite the
+        # YAML through dimos' own writer, and nothing would otherwise notice that this module
+        # still hands out the fitted focal length.
+        #
+        # Parsed by hand rather than with PyYAML, which is not in this project's shell. The
+        # schema is fixed and flat, so a block scanner is enough and is cheaper than a
+        # dependency that exists only for a self-test.
+        yaml_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "calib", "mini4pro_gimbal_1080.yaml"
+        )
+        yk = _yaml_block(yaml_path, "camera_matrix")
+        yd = _yaml_block(yaml_path, "distortion_coefficients")
+        check(
+            "calib/mini4pro_gimbal_1080.yaml exists and states a camera matrix",
+            yk is not None and len(yk) == 9,
+            f"{yk!r}",
+        )
+        if yk and len(yk) == 9:
+            check(
+                "the YAML's fx, fy agree with the focal length published here",
+                abs(yk[0] - K[0]) < 0.05 and abs(yk[4] - K[0]) < 0.05,
+                f"yaml fx={yk[0]:.2f} fy={yk[4]:.2f} vs {K[0]:.2f}",
+            )
+            check(
+                "the YAML's principal point agrees with the one published here",
+                yk[2] == K[2] and yk[5] == K[5],
+                f"yaml ({yk[2]:.1f}, {yk[5]:.1f}) vs ({K[2]:.1f}, {K[5]:.1f})",
+            )
+            check(
+                "planted fault: a YAML drifting by 1 % on fx would be caught",
+                abs(yk[0] * 1.01 - K[0]) >= 0.05,
+            )
+        # The YAML commits to five zeros where the wire leaves D empty, because dimos'
+        # load_camera_info indexes distortion_coefficients.data directly and an empty list
+        # would reach cv2.undistort as a broken model rather than an absent one. Different
+        # answers, one measurement — so assert the difference is the intended one and not a
+        # third opinion about the lens.
+        check(
+            "the YAML commits to zero distortion where the wire declines to, and only that",
+            yd == [0.0] * 5,
+            f"{yd!r}",
+        )
+
+        check(
+            "R is the identity — exact for an unrectified monocular camera, not an assumption",
+            list(info.R) == [1, 0, 0, 0, 1, 0, 0, 0, 1],
+            str(list(info.R)),
+        )
+        check(
+            "P is K with a zero fourth column",
+            list(info.P) == [K[0], 0, K[2], 0, 0, K[4], K[5], 0, 0, 0, 1, 0],
+            str(list(info.P)),
+        )
+        check(
+            "every camera_info says calibrated: false, because K[0] is not zero to say it",
+            all(
+                t.get("calibrated") is False and t.get("intrinsics") == "fitted"
+                for _, _, _, t in ci
+            ),
+            str(ci[0][3]),
+        )
+
+        # The record states w/h **only on change plus once at the start** — 1 of 2104 lines
+        # on the reference recording — so the resolution is held forward and republished at
+        # >=1 Hz. Nothing before the first statement, because absence is not a guess.
+        held_frames = (
+            [{"t": 0.00, "n": 1, "part": 1, "off": 0, "len": 4}]  # silent
+            + [{"t": 0.10, "n": 2, "part": 1, "off": 0, "len": 4, "w": 1920, "h": 1080}]
+            + [
+                {"t": 0.10 + 0.04 * i, "n": 3 + i, "part": 1, "off": 0, "len": 4}
+                for i in range(1, 80)
+            ]  # 3.2 s
+        )
+        hrows, hchanges, _m = camera_info_rows(
+            [dict(f, k="frame") for f in held_frames], PLANT_START_MS
+        )
+        check(
+            "nothing is published before a resolution has ever been stated",
+            hrows and hrows[0][0] == (PLANT_START_MS + 100) / 1000.0,
+            str(hrows[:1]),
+        )
+        gaps = [b[0] - a[0] for a, b in itertools.pairwise(hrows)]
+        check(
+            "a held resolution is republished at >=1 Hz, once every second and not oftener",
+            len(hrows) == 4 and all(0.99 <= g <= 1.05 for g in gaps) and not hchanges,
+            "%d rows, gaps %s" % (len(hrows), [f"{g:.2f}" for g in gaps]),
+        )
+        check(
+            "every republished row carries the held resolution, not a re-guess",
+            {r[1] for r in hrows} == {(1920, 1080)},
+            str({r[1] for r in hrows}),
+        )
+
+        # A resolution change is a different camera, and must appear at the instant it
+        # happens rather than be averaged into one matrix.
+        changed_frames = [
+            dict(vframes[0], t=0.10, w=1920, h=1080),
+            dict(vframes[1], t=0.14, w=1280, h=720),
+        ]
+        cpath = _plant_record(
+            tmp,
+            samples,
+            frames=changed_frames,
+            session=vsession + "r",
+            gimbal=[{"t": 0.0, "p": -90.0, "r": 0.0, "y": 0.0, "age": 10}],
+        )
+        os.link(
+            os.path.join(tmp, f"{vsession}.v001.h264"),
+            os.path.join(tmp, f"{vsession}r.v001.h264"),
+        )
+        cc, _ = convert([cpath], _Args())
+        widths = [t["width"] for _, _, _, t in cc.rows["camera_info"]]
+        check(
+            "a mid-record resolution change emits its own camera_info at that instant",
+            widths == [1920, 1280]
+            and len(cc.resolution_changes) == 1
+            and abs(cc.rows["camera_info"][1][0] - (PLANT_START_MS + 140) / 1000.0) < 1e-9,
+            f"widths={widths} changes={cc.resolution_changes}",
+        )
+        check(
+            "the focal length follows the width rather than being pinned to 1920",
+            abs(cc.rows["camera_info"][1][1].K[0] - FOCAL_OVER_WIDTH * 1280) < 1e-9,
+            "{:.2f}".format(cc.rows["camera_info"][1][1].K[0]),
+        )
+
+        # planted fault: an offset past the end of the part.
+        bad_frames = [dict(vframes[0], off=len(blob) - 4)]
+        bpath2 = _plant_record(tmp, samples, frames=bad_frames, session=vsession + "x")
+        # point it at the same sidecar name so the bytes exist but are the wrong length
+        os.link(
+            os.path.join(tmp, f"{vsession}.v001.h264"),
+            os.path.join(tmp, f"{vsession}x.v001.h264"),
+        )
+        check(
+            "planted fault: a frame whose bytes run past the end of its part is refused",
+            _raises(VideoFault, convert, [bpath2], _Args()),
+        )
+
+        # ── 6. the whole thing, into a store, and back out ──────────────────
+        store_path = os.path.join(tmp, "selftest.db")
+        c, msgs3 = convert([vpath2], _Args())
+        c.entries = read_records([vpath2])[1]
+        c.gimbal_note = None
+        c.rows["provenance"].append(
+            (c.rows["pose"][0][0], msgs3.text(provenance(c, [vpath2], _Args())), None, {})
+        )
+        store, streams, written = write_store(store_path, c, msgs3, _Args())
+        compared, problems = check_roundtrip(streams, c)
+        check(
+            "every observation re-encodes to the bytes that went in (%d compared)" % compared,
+            not problems,
+            "; ".join(problems[:3]),
+        )
+        vcompared, vproblems = check_video_against_sidecar(streams, vpath2)
+        check(
+            "every stored frame equals the sidecar's bytes (%d compared)" % vcompared,
+            not vproblems,
+            "; ".join(vproblems[:3]),
+        )
+        rec, resid, n, spread = check_origin_by_subtraction(c)
+        check(
+            "the origin recovered by subtracting gps_location from pose is one constant",
+            n > 0 and spread < 1e-3,
+            "n=%d spread=%.6f m" % (n, spread),
+        )
+        tfok, tfproblems, tfnote = check_tf(store, c)
+        check(
+            "DiMOS's own StreamTF resolves world->camera_optical out of this store",
+            tfnote is None and tfok > 0 and not tfproblems,
+            tfnote or "; ".join(tfproblems[:2]),
+        )
+        # ... and the same check with the camera edge withheld must *not* resolve, or it
+        # was never testing the chain at all.
+        gone = _Args()
+        gone.gimbal = "none"
+        cg, _ = convert([vpath2], gone)
+        check(
+            "planted fault: with no camera edge the chain does not resolve",
+            not cg.tf_edges.get("base_link->camera"),
+            str(dict(cg.tf_edges)),
+        )
+        check(
+            "every stream exists in the store, including the empty ones",
+            set(ALL_STREAMS) <= set(store.list_streams()),
+            str(sorted(set(ALL_STREAMS) - set(store.list_streams()))),
+        )
+
+        # planted fault 1: swap X and Y in the pose column and watch the subtraction break.
+        swapped = Conversion()
+        swapped.origin = c.origin
+        swapped.rows["gps_location"] = c.rows["gps_location"]
+        swapped.rows["pose"] = [
+            (ts, p, (pose[1], pose[0], *tuple(pose[2:])), t) for ts, p, pose, t in c.rows["pose"]
+        ]
+        _, _, sn, sspread = check_origin_by_subtraction(swapped)
+        check(
+            "planted fault: swapped X/Y breaks the origin subtraction by metres",
+            sn > 0 and sspread > 1.0,
+            "spread=%.3f m over %d samples" % (sspread, sn),
+        )
+
+        # ── the quaternion tolerance, shown to be exactly as narrow as stated ──
+        #
+        # Five plants: the tolerance admits a few-ULP-at-unit-scale disagreement inside a
+        # quaternion, and ONLY that — beyond the tolerance fails, a bit-level disagreement
+        # outside a quaternion fails even when it is far smaller than the tolerance, and a
+        # NaN never matches a number. Each fault must fire or the tolerance is wider than
+        # its docstring. The tolerated values are the measured JVM-vs-glibc pair from the
+        # yaw-over-tag flight, not synthetic ones.
+        from dimos.msgs.geometry_msgs.Point import Point as _Pt
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as _PS
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion as _Q
+
+        ref = _PS(ts=1.0, frame_id="drone/world")
+        ref.position = _Pt(1.25, -2.5, 3.75)
+        ref.orientation = _Q(
+            0.004391716062693248, -0.0016725289399545016, -0.6775161975411673, 0.7354928399014689
+        )
+
+        def _variant(**kw):
+            v = _PS.lcm_decode(ref.lcm_encode())
+            for k, val in kw.items():
+                obj, attr = (v.orientation, k[1:]) if k.startswith("q") else (v.position, k[1:])
+                setattr(obj, attr, val)
+            return v.lcm_encode()
+
+        check(
+            "the measured JVM z (1 ULP of 0.68) is tolerated",
+            _agrees_to_quat_ulp(ref, _variant(qz=-0.6775161975411674)),
+        )
+        check(
+            "the measured JVM y (2 ULP of 0.0017, 4.3e-19 absolute) is tolerated",
+            _agrees_to_quat_ulp(ref, _variant(qy=-0.001672528939954502)),
+        )
+        check(
+            "planted fault: a quaternion component off by 1e-15 fails",
+            not _agrees_to_quat_ulp(ref, _variant(qz=ref.orientation.z + 1e-15)),
+        )
+        check(
+            "planted fault: 1 ULP on a position component fails",
+            not _agrees_to_quat_ulp(ref, _variant(px=math.nextafter(ref.position.x, math.inf))),
+        )
+        check(
+            "planted fault: NaN against a number in a quaternion fails",
+            not _agrees_to_quat_ulp(ref, _variant(qw=math.nan)),
+        )
+
+        # ── the detections stream, held to the Kotlin encoder by its own fixtures ──
+        #
+        # The Kotlin cross-check cannot cover `detections` from a replay (no reader), so
+        # this is the plant that stands in for it: rebuild the fixtures the Kotlin
+        # encoder's LcmFixtureTest asserts byte-for-byte, from this converter's own
+        # builders, with the fixtures' planted values. Passing means converter == fixture
+        # == Kotlin encoder == DiMOS lcm_encode, the full square. The gates get their own
+        # plants because the fixtures only exercise the publishing path.
+        #
+        # **Both halves are planted**, the wire message and the element inside it. The
+        # array is what the channel carries and is what a subscriber decodes; the element
+        # is where every field decision lives, and a wrapper that quietly rebuilt its
+        # contents would still match an array fixture built the same wrong way. Two
+        # fixtures, one built from `detection` and one from `detection_element`, is what
+        # makes that impossible.
+        fixture_dir = os.path.join(repo, "android", "app", "src", "test", "resources", "lcm")
+        planted = dict(tag_id=7, margin=41.75, x=-0.375, y=0.8125, z=3.5, metric=False)
+        stamp = msgs.LcmTime(sec=1753622400, nsec=987654321)
+        det = msgs.detection(stamp, 4242, **planted)
+        element = msgs.detection_element(stamp, 4242, **planted)
+        for name, msg in (
+            ("vision_msgs_Detection3DArray", det),
+            ("vision_msgs_Detection3D", element),
+        ):
+            with open(os.path.join(fixture_dir, name + ".bin"), "rb") as fh:
+                check(
+                    f"{name} encodes byte-identically to the Kotlin encoder's fixture",
+                    msg.lcm_encode() == fh.read(),
+                )
+        check(
+            "the array's header is the element's, restated not invented",
+            det.detections_length == 1
+            and det.header.seq == element.header.seq
+            and det.header.stamp.sec == element.header.stamp.sec
+            and det.header.stamp.nsec == element.header.stamp.nsec
+            and det.header.frame_id == element.header.frame_id,
+        )
+        tag_line = {
+            "id": 7,
+            "margin": 41.75,
+            "w": 1920,
+            "h": 1080,
+            "x": -0.375,
+            "y": 0.8125,
+            "z": 3.5,
+            "metric": False,
+        }
+        ok_det, ok_why = detection_row(msgs, dict(tag_line), 100.0, 1)
+        check("a sighting with a range publishes", ok_det is not None, str(ok_why))
+        for fault, patch in (
+            ("z=0 (range unknown) is withheld", {"z": 0.0}),
+            ("NaN x is withheld", {"x": float("nan")}),
+            ("no frame geometry is withheld", {"w": 0}),
+        ):
+            bad_det, why = detection_row(msgs, {**tag_line, **patch}, 100.0, 1)
+            check("planted fault: " + fault, bad_det is None, str(why))
+
+        # ── the pose solve, held to the Kotlin encoder the same way ──
+        #
+        # The solved fixture rebuilt from this converter's own builders (converter ==
+        # fixture == Kotlin encoder == DiMOS lcm_encode, the same square as above), then
+        # the gates planted one fault at a time: each must degrade the message to the
+        # LEGACY bytes — not withhold it, not partially solve it. The legacy-equality
+        # plants are the backward-compat contract in executable form: a record from before
+        # the fields produces the same bytes it produced before they existed.
+        solved_planted = dict(
+            qx=0.20056212,
+            qy=-0.09442657,
+            qz=0.47555491,
+            qw=0.85078055,
+            tx=0.0625,
+            ty=-0.03125,
+            tz=3.46875,
+            e1=1.5e-7,
+            e2=6.5e-7,
+            tag_m=0.075,
+        )
+        solved_det = msgs.detection_element(
+            msgs.LcmTime(sec=1753622400, nsec=987654321),
+            9,
+            7,
+            41.75,
+            -0.375,
+            0.8125,
+            3.5,
+            False,
+            dict(solved_planted),
+        )
+        with open(os.path.join(fixture_dir, "vision_msgs_Detection3D_solved.bin"), "rb") as fh:
+            check(
+                "the SOLVED element encodes byte-identically to the Kotlin fixture",
+                solved_det.lcm_encode() == fh.read(),
+            )
+        solved_arr = msgs.detection(
+            msgs.LcmTime(sec=1753622400, nsec=987654321),
+            9,
+            7,
+            41.75,
+            -0.375,
+            0.8125,
+            3.5,
+            False,
+            dict(solved_planted),
+        )
+        with open(os.path.join(fixture_dir, "vision_msgs_Detection3DArray_solved.bin"), "rb") as fh:
+            check(
+                "the SOLVED array encodes byte-identically to the Kotlin fixture",
+                solved_arr.lcm_encode() == fh.read(),
+            )
+        # The id is bare on both (Ivan 2026-07-29), so the NaN convention is now the ONLY
+        # carrier of the solved fact — load-bearing, and pinned as such: a solved message
+        # has a real box and orientation, an unsolved one is NaN there, and their ids are
+        # identical.
+        unsolved_det = msgs.detection_element(
+            msgs.LcmTime(sec=1, nsec=0), 1, 7, 41.75, -0.375, 0.8125, 3.5, False, None
+        )
+        check(
+            "the id is the bare label on solved and unsolved alike",
+            solved_det.id == "tag36h11:7" and unsolved_det.id == "tag36h11:7",
+            f"{solved_det.id!r} {unsolved_det.id!r}",
+        )
+        check(
+            "the solved fact travels structurally: NaN box unsolved, real box solved",
+            math.isnan(unsolved_det.bbox.size.x)
+            and math.isnan(unsolved_det.results[0].pose.pose.orientation.w)
+            and solved_det.bbox.size.x == 0.075
+            and not math.isnan(solved_det.results[0].pose.pose.orientation.w),
+        )
+
+        solved_line = {**tag_line, "px": 80.0, **solved_planted}
+        legacy_bytes = detection_row(msgs, dict(tag_line, px=80.0), 100.0, 1)[0].lcm_encode()
+        good = detection_row(msgs, dict(solved_line), 100.0, 1)[0]
+        check(
+            "a whole solve above both gates publishes a solved message",
+            good.detections[0].bbox.size.z == 0.0 and good.detections[0].bbox.size.x == 0.075,
+        )
+        check(
+            "the solve does not move the published position",
+            good.detections[0].results[0].pose.pose.position.x == -0.375
+            and good.detections[0].results[0].pose.pose.position.z == 3.5,
+        )
+        for fault, patch in (
+            ("below the pixel gate (14 px at the 8 m arming altitude)", {"px": 14.0}),
+            ("just under the pixel gate", {"px": 59.9}),
+            ("ambiguous (e1/e2 = 0.94, the measured outlier median)", {"e1": 9.4e-7, "e2": 1.0e-6}),
+            ("partial solve (NaN qw)", {"qw": float("nan")}),
+            ("partial solve (missing tz)", {"tz": None}),
+            ("tag behind the camera", {"tz": -3.0}),
+            ("no tag size", {"tag_m": 0.0}),
+        ):
+            got = detection_row(msgs, {**solved_line, **patch}, 100.0, 1)[0]
+            check(
+                "planted gate fault degrades to the LEGACY bytes: " + fault,
+                got is not None and got.lcm_encode() == legacy_bytes,
+            )
+        check(
+            "a record from before the fields produces the legacy bytes unchanged",
+            detection_row(msgs, dict(tag_line, px=80.0), 100.0, 1)[0].lcm_encode() == legacy_bytes,
+        )
+        inf_line = {**solved_line, "e2": "Infinity"}  # as json.loads hands back the format
+        got_inf = detection_row(msgs, inf_line, 100.0, 1)[0]
+        check(
+            'e2="Infinity" (no second minimum) is unambiguous and publishes solved',
+            not math.isnan(got_inf.detections[0].bbox.size.x),
+        )
+
+        # ── the setpoint stream: one case per axis, the two signs, and the two gates ──
+        #
+        # Planted one axis at a time for section 1's reason: a swapped X/Y and a flipped
+        # sign both produce plausible-looking output, and a diagonal case lets one hide
+        # the other. The values are already at the record's precision, as real lines are.
+        def sp(t, **kw):
+            return {
+                "t": t,
+                "k": "stick_cmd",
+                "seq": int(t * 10),
+                "sp": {
+                    "frame": kw.pop("frame", "NED_VELOCITY"),
+                    "vn": kw.pop("vn", 0),
+                    "ve": kw.pop("ve", 0),
+                    "vd": kw.pop("vd", 0),
+                    "yawrate": kw.pop("yawrate", 0),
+                    "units": "m/s;deg",
+                },
+                "path": "advanced_param",
+                **kw,
+            }
+
+        sp_lines = [
+            sp(0.1, vn=1.5, accepted=True),  # north only
+            sp(0.2, ve=2.25, accepted=True),  # east only
+            sp(0.3, vd=1.5, accepted=True),  # down only
+            sp(0.4, yawrate=90, accepted=True),  # yaw rate only
+            sp(0.5, accepted=True),  # all zeros — a command
+            sp(0.6, vn=1.0),  # shadow: accepted absent
+            sp(0.7, vn=1.0, frame="BODY_VELOCITY", accepted=True),  # unconvertible frame
+            sp(0.8, vn=0.5, accepted=False),  # refused send WAS a send
+            # landing16's own yaw rate, planted because 90 deg/s cannot see this bug:
+            # 90/180 is an exact halving so `deg/180*PI` and `deg*(PI/180)` agree, and every
+            # flown record before landing16 commanded yawrate 0. −84.54 is one of the inputs
+            # where the two expressions differ in the last bit. See SETPOINT_YAWRATE_ULP.
+            sp(0.9, yawrate=SETPOINT_YAWRATE_ULP_DEG, accepted=True),
+        ]
+        # ... and the tag stream's world half beside it, on the same planted record. The
+        # fix values are deliberately unrelated to anything derivable from the camera-frame
+        # x/y/z on the same line — the artifact plant: a converter that re-derived the fix
+        # consumer-style could not reproduce them.
+        tag = {
+            "id": 7,
+            "margin": 41.8,
+            "w": 1920,
+            "h": 1080,
+            "cx": 900.0,
+            "cy": 500.0,
+            "px": 80.0,
+            "ham": 0,
+            "x": -0.375,
+            "y": 0.8125,
+            "z": 3.5,
+            "metric": False,
+        }
+        tag_lines = [
+            dict(tag, t=0.15, n=12.345, e=-4.567, from_h=7.5, bearing_assumed=True),
+            dict(
+                tag,
+                t=0.25,
+                n=1.0,
+                e=2.0,
+                from_h=1.2,
+                fix_metric=True,
+                range_m=1.9,
+                range_src="solve",
+                bearing_assumed=True,
+                pitch_reported=True,
+            ),
+            dict(tag, t=0.35),  # no fix at all
+            {
+                **{k: v for k, v in tag.items()},
+                "t": 0.45,
+                "n": 3.0,
+                "e": 4.0,
+                "from_h": 2.0,
+                "range_src": "size",
+                "bearing_assumed": True,
+            },
+        ]
+        # ... and the wind stream on the same planted record: landing14's own ramp endpoints
+        # (22 and 91 dm/s), a zero (a calm day IS a measurement), and a value-less line (DJI
+        # withdrawing the reading — landing14's last wind line). Values as the record writes
+        # them: JSON strings of DJI's integers.
+        wind_lines = [
+            {"t": 0.12, "k": "dji_field", "f": "windSpeedDmS", "v": "0"},
+            {"t": 0.22, "k": "dji_field", "f": "windSpeedDmS", "v": "22", "prev": "0"},
+            {"t": 0.32, "k": "dji_field", "f": "windSpeedDmS", "v": "91", "prev": "22"},
+            {"t": 0.42, "k": "dji_field", "f": "windSpeedDmS", "prev": "91"},
+        ]
+        spath = _plant_record(
+            tmp,
+            [_sample(0.0)],
+            session="20260101-000009",
+            extra=sp_lines + [dict(e, k="tag") for e in tag_lines] + wind_lines,
+        )
+        sc, smsgs = convert([spath], _Args())
+        rows = sorted(sc.rows["setpoint"], key=lambda r: r[0])
+        check(
+            "six real sends publish; shadow and BODY frame are refused by name",
+            len(rows) == 7
+            and sc.reasons["setpoint"]["not_sent"] == 1
+            and sc.reasons["setpoint"]["setpoint_frame_unsupported"] == 1,
+            str(dict(sc.reasons["setpoint"])),
+        )
+        tw = [r[1] for r in rows]
+        check(
+            "+1.5 m/s north lands on ENU linear.y, alone",
+            tw[0].linear.y == 1.5 and tw[0].linear.x == 0.0 and tw[0].linear.z == 0.0,
+            str(tw[0].linear),
+        )
+        check(
+            "+2.25 m/s east lands on ENU linear.x, alone",
+            tw[1].linear.x == 2.25 and tw[1].linear.y == 0.0,
+            str(tw[1].linear),
+        )
+        check(
+            "+1.5 m/s DOWN lands on ENU linear.z as -1.5 — the sign that ends in the ground",
+            tw[2].linear.z == -1.5,
+            str(tw[2].linear),
+        )
+        check(
+            "+90 deg/s clockwise yaw is ENU angular.z = -pi/2 rad/s, exactly",
+            tw[3].angular.z == -(90.0 / 180.0 * math.pi),
+            repr(tw[3].angular.z),
+        )
+        # ── the degree→radian expression, pinned to the JVM and not to itself ──
+        #
+        # The +90 check above is the shape that let the real bug through for two flights:
+        # it re-derives the expectation with the SAME Python expression the converter uses,
+        # so any expression at all satisfies it, and it picks the one value where the two
+        # candidate expressions agree anyway. This pin is the opposite on both counts — the
+        # expected bytes come from a JVM running the shipping `-Math.toRadians(qr)`, and the
+        # planted rate is one the two expressions disagree on. The last assertion is the
+        # important one: it proves the plant is still discriminating, so this test cannot
+        # quietly stop testing if someone edits the constant.
+        z_bytes = struct.pack(">d", tw[6].angular.z).hex()
+        check(
+            "-84.54 deg/s yaw encodes as the JVM's -Math.toRadians, bit for bit",
+            z_bytes == SETPOINT_YAWRATE_ULP_JVM_HEX,
+            z_bytes,
+        )
+        check(
+            "the retired `deg/180*PI` spelling really does differ here (the plant bites)",
+            struct.pack(">d", -(SETPOINT_YAWRATE_ULP_DEG / 180.0 * math.pi)).hex()
+            != SETPOINT_YAWRATE_ULP_JVM_HEX,
+        )
+        check(
+            "a zero setpoint is a command and publishes",
+            tw[4].linear.x == 0.0 and tw[4].linear.y == 0.0 and tw[4].linear.z == 0.0,
+        )
+        check(
+            "angular.x/y are NaN — no roll/pitch rate is ever commanded",
+            math.isnan(tw[0].angular.x) and math.isnan(tw[0].angular.y),
+        )
+        check(
+            "a refused send was still a send and publishes",
+            any(t["accepted"] is False for _, _, _, t in rows),
+        )
+        check(
+            "the frame is drone/world and the stamp is the record's own millisecond",
+            tw[0].frame_id == FRAME_WORLD and rows[0][0] == (PLANT_START_MS + 100) / 1000.0,
+            f"{tw[0].frame_id} {rows[0][0]!r}",
+        )
+        # ── the wind stream: the conversion, the zero, and the withdrawn reading ──
+        wrows = sorted(sc.rows["wind"], key=lambda r: r[0])
+        check(
+            "three wind deliveries publish; the value-less line is wind_missing, not 0.0",
+            len(wrows) == 3 and sc.reasons["wind"]["wind_missing"] == 1,
+            str(dict(sc.reasons["wind"])),
+        )
+        # Byte pins against DiMOS's own generated encoder output — the same golden hexes
+        # ZenohWindTest pins on the Kotlin side, so the two mirrors are held to one wire.
+        # 91 dm/s -> 9.1 m/s: the landing14 value this stream exists for; a broken /10
+        # (0x42b60000 = 91.0f) and a double-width encode both fail here.
+        check(
+            "0 dm/s is a calm day and encodes as 0.0f (12 bytes)",
+            wrows[0][1].lcm_encode().hex() == "0adc26b8f0546dd300000000",
+            wrows[0][1].lcm_encode().hex(),
+        )
+        check(
+            "22 dm/s -> 2.2 m/s, byte-identical to the generated encoder",
+            wrows[1][1].lcm_encode().hex() == "0adc26b8f0546dd3400ccccd",
+            wrows[1][1].lcm_encode().hex(),
+        )
+        check(
+            "91 dm/s -> 9.1 m/s — landing14's number, never 91.0 or 0.91",
+            wrows[2][1].lcm_encode().hex() == "0adc26b8f0546dd34111999a",
+            wrows[2][1].lcm_encode().hex(),
+        )
+        check(
+            "the wind stamp is the record's own millisecond and the dm/s rides the tags",
+            wrows[1][0] == (PLANT_START_MS + 220) / 1000.0 and wrows[1][3]["dms"] == 22,
+            f"{wrows[1][0]!r} {wrows[1][3]!r}",
+        )
+        fixrows = sorted(sc.rows["tag_fix"], key=lambda r: r[0])
+        check(
+            "three fixes publish, the fixless sighting is fix_unavailable",
+            len(fixrows) == 3 and sc.reasons["tag_fix"]["fix_unavailable"] == 1,
+            str(dict(sc.reasons["tag_fix"])),
+        )
+        f0 = fixrows[0][1].detections[0]
+        check(
+            "the fix is the record's OWN n/e — east on x, north on y, never re-derived",
+            f0.results[0].pose.pose.position.x == -4.567
+            and f0.results[0].pose.pose.position.y == 12.345,
+            str((f0.results[0].pose.pose.position.x, f0.results[0].pose.pose.position.y)),
+        )
+        check(
+            "z is the datum-plane assumption (0.0), not the baro height on the line",
+            f0.results[0].pose.pose.position.z == 0.0 and f0.header.frame_id == FRAME_WORLD,
+        )
+        check(
+            "a legacy bearing fix's id is the bare label — absent rung means unrecorded",
+            f0.id == "tag36h11:7",
+            f0.id,
+        )
+        f1 = fixrows[1][1].detections[0]
+        check(
+            "metric-fix provenance carries the rung and the pitch belief, minimally",
+            f1.id == "tag36h11:7;range=solve;pitch=reported",
+            f1.id,
+        )
+        f2 = fixrows[2][1].detections[0]
+        check(
+            "a size-scaled bearing fix carries range=size", f2.id == "tag36h11:7;range=size", f2.id
+        )
+        check(
+            "the world fix's orientation and box are refused entire (NaN)",
+            math.isnan(f0.results[0].pose.pose.orientation.w) and math.isnan(f0.bbox.size.x),
+        )
+        check(
+            "from_h and range_m ride the row tags, queryable without decoding",
+            fixrows[1][3]["from_h"] == 1.2 and fixrows[1][3]["range_m"] == 1.9,
+            str(fixrows[1][3]),
+        )
+
+        # planted fault 15: two flights in one store show as two origins.
+        far = Conversion()
+        far.origin = c.origin
+        far.rows["gps_location"] = c.rows["gps_location"] + [
+            (ts + 1000, p, pose, t) for ts, p, pose, t in c.rows["gps_location"]
+        ]
+        shifted = []
+        for ts, p, pose, t in c.rows["pose"]:
+            shifted.append((ts + 1000, p, (pose[0] + 6.0, pose[1], pose[2], *tuple(pose[3:])), t))
+        far.rows["pose"] = c.rows["pose"] + shifted
+        _, _, fn, fspread = check_origin_by_subtraction(far)
+        check(
+            "planted fault: a second flight's origin shows as a second origin",
+            fspread > 1.0,
+            "spread=%.3f m over %d samples" % (fspread, fn),
+        )
+
+        store.stop()
+
+    print()
+    if failures:
+        print("selftest FAILED: %d of the planted checks did not hold" % len(failures))
+        for f in failures:
+            print("  " + f)
+        return 1
+    print("selftest ok — every check above was shown to hold, and every planted fault to fire")
+    return 0
+
+
+def _raises(exc, fn, *a, **kw):
+    try:
+        fn(*a, **kw)
+    except exc:
+        return True
+    except SystemExit:
+        return False
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def main():
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(here)
+
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("paths", nargs="*", help="flight record .jsonl files or globs")
+    ap.add_argument("--out", metavar="FILE", help="the store to write (default: beside the record)")
+    ap.add_argument("--force", action="store_true", help="replace an existing store")
+    ap.add_argument(
+        "--keyframes-only",
+        action="store_true",
+        help="the only lossless decimation: 0.5%% of the frames, 5%% of the bytes",
+    )
+    ap.add_argument("--no-video", action="store_true", help="telemetry and tf only")
+    ap.add_argument(
+        "--gimbal",
+        choices=("auto", "none"),
+        default="auto",
+        help="'none' omits the base_link->camera edge entirely",
+    )
+    ap.add_argument(
+        "--pose-tolerance",
+        type=float,
+        default=0.25,
+        metavar="S",
+        help="how near a pose must be to be attached to a frame (default 0.25 s)",
+    )
+    ap.add_argument(
+        "--no-crosscheck",
+        action="store_true",
+        help="skip the checks. Says so loudly, because it is the point of the tool",
+    )
+    ap.add_argument("--spy", metavar="STORE", help="print what a consumer sees; writes nothing")
+    ap.add_argument("--selftest", action="store_true", help="planted data and planted faults")
+    args = ap.parse_args()
+
+    if args.selftest:
+        ensure_dimos()
+        return selftest(repo)
+    if args.spy:
+        ensure_dimos()
+        return spy(args.spy)
+    if not args.paths:
+        ap.print_help()
+        return 2
+    ensure_dimos()
+
+    paths = []
+    for p in args.paths:
+        matched = sorted(glob.glob(p))
+        paths.extend(matched if matched else [p])
+    for p in paths:
+        if not os.path.exists(p):
+            sys.exit(f"no such record: {p}")
+
+    out = args.out or os.path.join(
+        repo, "tmp", os.path.basename(paths[0]).split(".")[0] + ".mem2.db"
+    )
+
+    started = time.time()
+    try:
+        c, msgs = convert(paths, args)
+    except VideoFault as e:
+        sys.stderr.write(f"memexport: refusing to write this store.\n  {e}\n")
+        return 1
+
+    c.entries = read_records(paths)[1]
+    c.gimbal_note = None
+    if (
+        args.gimbal != "none"
+        and not c.commanded_gimbal_count
+        and c.tf_edges.get("base_link->camera")
+    ):
+        c.gimbal_note = (
+            "base_link->camera was built from the REPORTED gimbal angle, held, because no "
+            "dji_call carried a commanded one (DjiOp.GIMBAL_ROTATE is never tapped). Each tf "
+            "observation carries the reading's age in gimbal_age_ms."
+        )
+        print(f"note         {c.gimbal_note}")
+
+    c.rows["provenance"].append(
+        (
+            (c.rows["pose"] or c.rows["mode"] or [(0.0,)])[0][0],
+            msgs.text(provenance(c, paths, args)),
+            None,
+            {},
+        )
+    )
+
+    store, streams, written = write_store(out, c, msgs, args)
+    elapsed = time.time() - started
+    report(c, written, out, elapsed)
+
+    rc = 0
+    if args.no_crosscheck:
+        print(
+            "\nchecks       SKIPPED by --no-crosscheck. This store has not been checked "
+            "against anything."
+        )
+    else:
+        print()
+        compared, problems = check_roundtrip(streams, c)
+        _say("round trip", compared, problems, "observations re-encoded to the bytes written")
+        rc |= bool(problems)
+
+        if c.rows["color_image"]:
+            vc, vp = check_video_against_sidecar(streams, paths[0])
+            _say("video bytes", vc, vp, "frames equal the sidecar at their own {part,off,len}")
+            rc |= bool(vp)
+
+        kc, kulp, kdiff, kp, note, kper = check_against_kotlin(paths, c, repo)
+        if note:
+            print(f"  kotlin       NOT RUN: {note}")
+            print(
+                "               The cross-check against the shipping encoder is the one that "
+                "keeps three implementations honest. Not running it is not passing it."
+            )
+        elif kp:
+            # The failing line says how many DIFFER, never how many complaints were printed.
+            # Printing `len(problems)` where the sentence said "byte-identical" is what made
+            # a 1512-message one-byte divergence read as "9 of 33491" (landing16, 2026-07-30).
+            print(
+                "  kotlin       FAILED — %d of %d messages differ from ZenohTelemetryEncoder"
+                % (kdiff, kc)
+            )
+            for p in kp[: KOTLIN_PROBLEM_EXAMPLES + 3]:
+                print(f"               {p}")
+            rc |= 1
+        elif kulp:
+            # Never folded into the identical count: "equal" and "equal to tolerance"
+            # must not print the same. See check_against_kotlin for what earns this line.
+            print(
+                "  kotlin       %d of %d messages byte-identical to ZenohTelemetryEncoder"
+                % (kc - kulp, kc)
+            )
+            print(
+                "               the other %d agree to a few ULP at unit scale on "
+                "quaternion components (JVM vs glibc sin/cos)" % kulp
+            )
+        else:
+            print(
+                "  kotlin       %d of %d messages byte-identical to ZenohTelemetryEncoder"
+                % (kc, kc)
+            )
+        if kper:
+            # Stream by stream, ALWAYS — pass or fail. On a pass it makes a stream's
+            # membership in the comparison visible (an aggregate that would read the same
+            # with a stream silently absent is not an accounting of that stream); on a
+            # failure it is the line that names WHICH stream broke, which is exactly what
+            # the aggregate cannot say and what a diagnosis has to start from.
+            print(
+                "               per stream: "
+                + ", ".join("%s %d/%d" % (n, ok, tot) for n, (ok, tot) in kper.items())
+            )
+
+        tc, tp, tnote = check_tf(store, c)
+        if tnote:
+            print(f"  tf           NOT RUN: {tnote}")
+        else:
+            _say("tf", tc, tp, "instants across the flight resolve world->camera_optical")
+            rc |= bool(tp)
+
+        rec, resid, n, spread = check_origin_by_subtraction(c)
+        if n:
+            print(
+                "  origin       %d paired samples recover %.7f, %.7f — spread %.1f um, "
+                "residual against the recorded origin %.1f um"
+                % (n, rec[0], rec[1], spread * 1e6, resid * 1e6)
+            )
+            if spread > 0.01:
+                print(
+                    "               SPREAD OVER 1 cm. The origin is not single-valued: either "
+                    "the projection is wrong or this store holds more than one flight."
+                )
+                rc |= 1
+        else:
+            print("  origin       no sample carries both a pose and a fix — nothing to subtract")
+
+    store.stop()
+    return rc
+
+
+def _say(name, compared, problems, what):
+    """One check's verdict.
+
+    `what` is phrased as the success predicate ("observations re-encoded to the bytes
+    written"), so the failing line has to be built the other way round: "of N ..., M did
+    not". The old failing line was `"%d of %d %s" % (len(problems), compared, what)`, which
+    put the *complaint count* where the reader reads the *success count* — "9 of 33491
+    messages byte-identical" for a run in which 33482 were byte-identical and nine
+    complaints had been printed (landing16, 2026-07-30). A number that means the opposite of
+    what its sentence says is worse than no number.
+    """
+    if problems:
+        print("  %-12s FAILED — of %d %s, %d did not" % (name, compared, what, len(problems)))
+        for p in problems[:5]:
+            print(f"               {p}")
+    else:
+        print("  %-12s %d of %d %s" % (name, compared, compared, what))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

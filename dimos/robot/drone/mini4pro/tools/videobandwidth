@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""What the Zenoh video channel would actually cost, computed off a real flight's frame index.
+
+No estimate anywhere: every number below comes from the `frame` lines of a recorded session, which
+are one per access unit and carry the exact byte length the sidecar wrote. The LCM envelope is
+computed from the same arithmetic `CompressedVideoCodec.encodedSize` uses, so the wire figure is
+the wire figure and not the payload figure with a guess added to it.
+
+    tools/videobandwidth datasets/2026-07-27-apriltag-nadir-25hz/20260727-192417.001.jsonl
+"""
+
+from __future__ import annotations
+
+import itertools
+import json
+import statistics
+import sys
+
+FRAME_ID = "drone/camera_optical"
+FORMAT = "h264"
+
+# 8 fingerprint + 4 data_length + 8 builtin_interfaces.Time
+# + (4 + len + 1) frame_id + (4 + len + 1) format. The payload is added per frame.
+ENVELOPE = 8 + 4 + 8 + (4 + len(FRAME_ID) + 1) + (4 + len(FORMAT) + 1)
+
+
+# `tf`, measured off the encoder: three TransformStamped, each a Header (4 + 8 + string) plus a
+# child_frame_id string plus a Transform (7 doubles). Computed here rather than assumed.
+def lcm_string(s: str) -> int:
+    return 4 + len(s.encode()) + 1
+
+
+def transform_stamped_bytes(parent: str, child: str) -> int:
+    header = 4 + 8 + lcm_string(parent)  # seq, std_msgs.Time, frame_id
+    return header + lcm_string(child) + 7 * 8  # Vector3 + Quaternion
+
+
+TF_BYTES = (
+    8
+    + 4
+    + sum(
+        transform_stamped_bytes(p, c)
+        for p, c in [
+            ("drone/world", "drone/base_link"),
+            ("drone/base_link", "drone/camera"),
+            ("drone/camera", "drone/camera_optical"),
+        ]
+    )
+)
+
+# `camera_info`: fingerprint + D_length + header + height + width + distortion_model
+# + 0 doubles of D + (9 + 9 + 12) doubles + binning_x + binning_y + RegionOfInterest.
+CAMERA_INFO_BYTES = (
+    8 + 4 + (4 + 8 + lcm_string(FRAME_ID)) + 4 + 4 + lcm_string("") + 30 * 8 + 4 + 4 + (4 * 4 + 1)
+)
+
+
+def main() -> int:
+    path = sys.argv[1]
+    frames = []
+    first_t = last_t = None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a torn last line is expected; the recorder is append-only
+            if e.get("k") != "frame":
+                continue
+            frames.append((e["t"], e["len"], bool(e.get("key"))))
+    if not frames:
+        print("no frame lines")
+        return 1
+    frames.sort()
+    first_t, last_t = frames[0][0], frames[-1][0]
+    span = last_t - first_t
+    lengths = [n for _, n, _ in frames]
+    keys = [(t, n) for t, n, k in frames if k]
+
+    payload = sum(lengths)
+    wire = payload + ENVELOPE * len(frames)
+    key_payload = sum(n for _, n in keys)
+    key_wire = key_payload + ENVELOPE * len(keys)
+
+    gaps = [b - a for (a, _), (b, _) in itertools.pairwise(keys)]
+
+    print(f"record          {path}")
+    print(f"frames          {len(frames)} over {span:.1f} s  ({len(frames) / span:.1f} fps)")
+    print(
+        f"access unit     mean {statistics.mean(lengths) / 1000:.1f} kB, "
+        f"median {statistics.median(lengths) / 1000:.1f} kB, "
+        f"max {max(lengths) / 1000:.1f} kB, min {min(lengths)} B"
+    )
+    print()
+    print(
+        f"H.264 payload   {payload / 1e6:.1f} MB   {payload / span / 1e3:.0f} kB/s   "
+        f"{payload * 8 / span / 1e6:.2f} Mbit/s"
+    )
+    print(
+        f"LCM envelope    {ENVELOPE} B/frame  ->  {ENVELOPE * len(frames) / 1e3:.0f} kB total "
+        f"({100 * ENVELOPE * len(frames) / payload:.2f} % over payload)"
+    )
+    print(
+        f"on the wire     {wire / 1e6:.1f} MB   {wire / span / 1e3:.0f} kB/s   "
+        f"{wire * 8 / span / 1e6:.2f} Mbit/s"
+    )
+    print()
+    print(f"keyframes       {len(keys)} over {span:.1f} s")
+    if gaps:
+        print(
+            f"keyframe gap    mean {statistics.mean(gaps):.2f} s, "
+            f"median {statistics.median(gaps):.2f} s, max {max(gaps):.2f} s"
+        )
+    print(
+        f"keyframes only  {key_wire / 1e6:.2f} MB   {key_wire / span / 1e3:.1f} kB/s   "
+        f"{key_wire * 8 / span / 1e6:.3f} Mbit/s   "
+        f"({100 * key_wire / wire:.1f} % of the full rate, "
+        f"{100 * len(keys) / len(frames):.1f} % of the frames)"
+    )
+    print()
+    print(f"tf              {TF_BYTES} B/message x 5 Hz = {TF_BYTES * 5 * 8 / 1e3:.1f} kbit/s")
+    print(
+        f"camera_info     {CAMERA_INFO_BYTES} B/message x 1 Hz = "
+        f"{CAMERA_INFO_BYTES * 8 / 1e3:.2f} kbit/s"
+    )
+    telemetry = (TF_BYTES * 5 + CAMERA_INFO_BYTES) * 8 / 1e3
+    print(
+        f"the two together {telemetry:.1f} kbit/s, which is "
+        f"{100 * telemetry * 1e3 / (wire * 8 / span):.3f} % of the video"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

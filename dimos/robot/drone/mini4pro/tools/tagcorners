@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Detect the AprilTag in every frame of a recording and write its corners.
+
+    tools/tagcorners datasets/2026-07-27-apriltag-nadir-25hz/*.run2.mp4 tmp/corners-25hz.csv
+
+Feeds `tools/tagoptics`. `vision/TagDetection.Found` keeps only the ids and the longest edge,
+which is a dead end for anything geometric, so this writes the corner positions instead. It
+runs on the laptop against recorded video and is not a second implementation of the detector
+that ships — it exists to measure the *camera*.
+
+**Feed it the `.h264`, not the `.mp4`.** The MP4s silently lose frames (1747 by the record,
+1720 decoded) while the elementary stream decodes to exactly the record's `frame` count, so
+only there is the decode index the record's `n` and the join to telemetry exact. `--strict`
+(the default) refuses a container whose frame count does not match a `--record` JSONL.
+
+Output, one row per detected tag: `n,t,id,cx,cy,x0,y0,x1,y1,x2,y2,x3,y3,edge_px`. Corner
+refinement is `CORNER_REFINE_APRILTAG`; everything downstream assumes subpixel corners.
+
+Full rationale: `docs/tools/camera-intrinsics.md`.
+"""
+
+import argparse
+import json
+import sys
+
+import cv2
+import numpy as np
+
+
+def record_frames(path):
+    """How many `frame` lines the flight record holds, and their timestamps by `n`."""
+    ts = {}
+    with open(path) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("k") == "frame":
+                ts[o["n"]] = o["t"]
+    return ts
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("video")
+    ap.add_argument("out")
+    ap.add_argument("--family", default="DICT_APRILTAG_36h11")
+    ap.add_argument(
+        "--id", type=int, default=None, help="keep only this id; default keeps every detection"
+    )
+    ap.add_argument(
+        "--record",
+        default=None,
+        help="the session JSONL; stamps rows with the record's own t and checks "
+        "the frame count matches",
+    )
+    ap.add_argument(
+        "--no-strict",
+        action="store_true",
+        help="proceed even if the decoded frame count disagrees with --record",
+    )
+    args = ap.parse_args()
+
+    rec = record_frames(args.record) if args.record else None
+
+    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, args.family))
+    params = cv2.aruco.DetectorParameters()
+    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_APRILTAG
+    detector = cv2.aruco.ArucoDetector(dictionary, params)
+
+    cap = cv2.VideoCapture(args.video)
+    if not cap.isOpened():
+        sys.exit(f"cannot open {args.video}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+
+    n = found = 0
+    with open(args.out, "w") as fh:
+        fh.write("n,t,id,cx,cy,x0,y0,x1,y1,x2,y2,x3,y3,edge_px\n")
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            n += 1  # 1-based: the record's own numbering for an elementary stream
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            corners, ids, _ = detector.detectMarkers(gray)
+            t = rec.get(n) if rec else ((n - 1) / fps if fps else 0.0)
+            if t is None:
+                t = (n - 1) / fps if fps else 0.0
+            if ids is not None:
+                for c, i in zip(corners, ids.flatten(), strict=False):
+                    if args.id is not None and int(i) != args.id:
+                        continue
+                    p = c.reshape(4, 2).astype(float)
+                    e = max(float(np.linalg.norm(p[k] - p[(k + 1) % 4])) for k in range(4))
+                    m = p.mean(axis=0)
+                    fh.write(
+                        "%d,%.4f,%d,%.3f,%.3f,%s,%.3f\n"
+                        % (n, t, int(i), m[0], m[1], ",".join(f"{v:.3f}" for v in p.flatten()), e)
+                    )
+                    found += 1
+            if n % 500 == 0:
+                print("  %d frames, %d detections" % (n, found), file=sys.stderr)
+    cap.release()
+    print("%d frames at %.2f fps, %d detections -> %s" % (n, fps, found, args.out))
+    if rec is not None:
+        if n != len(rec):
+            msg = (
+                "frame-count mismatch: decoded %d, record has %d. The container is dropping "
+                "frames and every row's join to telemetry is wrong by a drifting offset."
+                % (n, len(rec))
+            )
+            if args.no_strict:
+                print("WARNING: " + msg, file=sys.stderr)
+            else:
+                sys.exit("ERROR: " + msg + "\nFeed the .h264 sidecar, or pass --no-strict.")
+        else:
+            print(
+                "frame count matches the record exactly (%d); the join to telemetry is "
+                "by frame number, not by time" % n
+            )
+
+
+if __name__ == "__main__":
+    main()

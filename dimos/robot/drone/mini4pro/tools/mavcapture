@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+"""Record a MAVLink UDP conversation to a replayable JSONL file — and replay it.
+
+mavcapture deliberately **decodes nothing**. It logs raw datagrams and imports no MAVLink
+library, so a decode bug can never corrupt the record, and the same file can afterwards be
+checked by an independent implementation (`tools/mavverify`, which uses pymavlink).
+
+    # listen only -- sit where QGC would sit, forward nothing on
+    tools/mavcapture --seconds 30 --out tools/fixtures/run.jsonl
+
+    # man in the middle -- capture both directions while QGC is running. Only one process can
+    # hold 14550, so mavcapture takes it and QGC is moved to 14551 (start mavcapture first).
+    tools/mavcapture --port 14550 --forward 127.0.0.1:14551
+
+    # from a read-only tcpdump tap at the relay -- the only placement that works while
+    # somebody is flying, because it takes no port and touches neither QGC nor the relay
+    tools/mavcapture --from-pcap tmp/tap.pcap --out tmp/tap.jsonl
+
+    # replay at the recorded pacing, e.g. to drive QGC with no aircraft
+    tools/mavcapture --replay run.jsonl --to 127.0.0.1:14550 --speed 4 --direction up
+
+Output is `mavcapture-1`: one JSON header line, then one line per datagram with `t`, `dir`
+(`up` = vehicle→GCS, `down` = GCS→vehicle) and the payload as lowercase `hex`.
+
+Full rationale — the three placements, the pcap duplicate-leg trap, the file format field by
+field, and why QGC's inbound traffic is worth proxying for: `docs/verification.md`.
+"""
+
+import argparse
+import collections
+import json
+import select
+import socket
+import struct
+import sys
+import time
+
+FORMAT = "mavcapture-1"
+
+# pcap global-header magics: (endianness, timestamps are nanoseconds?)
+PCAP_MAGICS = {
+    0xA1B2C3D4: ("<", False),
+    0xA1B23C4D: ("<", True),
+    0xD4C3B2A1: (">", False),
+    0x4D3CB2A1: (">", True),
+}
+# link types we can strip a header off. Ethernet is what a wired tap gives you;
+# LINUX_SLL is what `tcpdump -i any` gives you; RAW is IP with no link layer.
+LINKTYPE_ETHERNET, LINKTYPE_RAW, LINKTYPE_LINUX_SLL = 1, 101, 113
+
+
+def addr_str(a):
+    return f"{a[0]}:{a[1]}"
+
+
+def record(args, out):
+    up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    up.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        up.bind((args.bind, args.port))
+    except OSError as e:
+        sys.stderr.write(
+            f"cannot bind {args.bind}:{args.port} — {e}\n"
+            "QGroundControl holds 14550 exclusively; check `ss -lunp | grep 14550` "
+            "and use --port 14551 --forward 127.0.0.1:14550 instead.\n"
+        )
+        return 2
+
+    fwd = None
+    target = None
+    if args.forward:
+        host, _, port = args.forward.rpartition(":")
+        target = (host, int(port))
+        fwd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    header = {
+        "format": FORMAT,
+        "encoding": "hex",
+        "started_unix": round(time.time(), 6),
+        "bind": f"{args.bind}:{args.port}",
+        "forward": args.forward,
+        "note": args.note,
+        "argv": sys.argv[1:],
+    }
+    out.write(json.dumps(header) + "\n")
+
+    socks = [up] + ([fwd] if fwd else [])
+    started = time.monotonic()
+    vehicle = None  # last address seen on the vehicle side, for reply routing
+    counts = {"up": 0, "down": 0}
+    nbytes = {"up": 0, "down": 0}
+
+    if not args.quiet:
+        where = f"udp://{args.bind}:{args.port}"
+        how = f" ⇄ forwarding to {args.forward}" if fwd else " (listen only)"
+        span = f"{args.seconds:g}s" if args.seconds else "until Ctrl-C"
+        sys.stderr.write(f"capturing {where}{how} for {span}\n")
+
+    try:
+        while not args.seconds or time.monotonic() - started < args.seconds:
+            ready, _, _ = select.select(socks, [], [], 0.5)
+            now = time.monotonic() - started
+            for s in ready:
+                data, src = s.recvfrom(65535)
+                if s is up:
+                    direction, vehicle = "up", src
+                    dst = args.forward or f"{args.bind}:{args.port}"
+                    if fwd:
+                        fwd.sendto(data, target)
+                else:
+                    direction = "down"
+                    dst = addr_str(vehicle) if vehicle else None
+                    if vehicle:
+                        up.sendto(data, vehicle)
+                out.write(
+                    json.dumps(
+                        {
+                            "t": round(now, 6),
+                            "dir": direction,
+                            "src": addr_str(src),
+                            "dst": dst,
+                            "len": len(data),
+                            "hex": data.hex(),
+                        }
+                    )
+                    + "\n"
+                )
+                counts[direction] += 1
+                nbytes[direction] += len(data)
+    except KeyboardInterrupt:
+        pass
+
+    elapsed = time.monotonic() - started
+    if not args.quiet:
+        sys.stderr.write(
+            f"\n{elapsed:.1f}s: up {counts['up']} datagrams / {nbytes['up']} B, "
+            f"down {counts['down']} / {nbytes['down']} B\n"
+        )
+        if not counts["up"]:
+            sys.stderr.write(
+                "nothing from the vehicle side — check the app's target IP and port, "
+                "that the phone and this host are on the same /24, and that the app "
+                "was started BEFORE this capture.\n"
+            )
+        if fwd and not counts["down"]:
+            sys.stderr.write(
+                "nothing from the GCS side — is QGroundControl actually running on "
+                f"{args.forward}? Its inbound commands are the point of --forward.\n"
+            )
+    return 0 if counts["up"] or counts["down"] else 1
+
+
+def replay(args):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    host, _, port = args.to.rpartition(":")
+    target = (host, int(port))
+    sent = 0
+    started = time.monotonic()
+    with open(args.replay) as f:
+        head = json.loads(f.readline())
+        if head.get("format") != FORMAT:
+            sys.stderr.write(f"{args.replay}: not a {FORMAT} capture\n")
+            return 2
+        for line in f:
+            rec = json.loads(line)
+            if args.direction != "both" and rec["dir"] != args.direction:
+                continue
+            if args.speed > 0:
+                due = started + rec["t"] / args.speed
+                delay = due - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+            sock.sendto(bytes.fromhex(rec["hex"]), target)
+            sent += 1
+    if not args.quiet:
+        sys.stderr.write(
+            f"replayed {sent} datagrams to {args.to} in {time.monotonic() - started:.1f}s\n"
+        )
+    return 0 if sent else 1
+
+
+def pcap_packets(path):
+    """Yield (unix_t, linktype, frame, was_snaplen_truncated) from a classic pcap."""
+    with open(path, "rb") as f:
+        gh = f.read(24)
+        if len(gh) < 24:
+            raise SystemExit(f"{path}: too short to be a pcap")
+        (magic,) = struct.unpack("<I", gh[:4])
+        if magic == 0x0A0D0D0A:
+            raise SystemExit(
+                f"{path}: this is pcapng, not classic pcap. Convert it with "
+                "`editcap -F pcap in.pcapng out.pcap`, or capture without -w's "
+                "default ng format."
+            )
+        if magic not in PCAP_MAGICS:
+            raise SystemExit(f"{path}: not a pcap (magic {magic:#x})")
+        endian, nanos = PCAP_MAGICS[magic]
+        (linktype,) = struct.unpack(endian + "I", gh[20:24])
+        if linktype not in (LINKTYPE_ETHERNET, LINKTYPE_RAW, LINKTYPE_LINUX_SLL):
+            raise SystemExit(
+                f"{path}: link type {linktype} is not one we can strip "
+                f"(want {LINKTYPE_ETHERNET} Ethernet, {LINKTYPE_LINUX_SLL} "
+                f"LINUX_SLL or {LINKTYPE_RAW} RAW)"
+            )
+        while True:
+            ph = f.read(16)
+            if len(ph) < 16:
+                return
+            ts_s, ts_frac, caplen, origlen = struct.unpack(endian + "IIII", ph)
+            data = f.read(caplen)
+            if len(data) < caplen:
+                return  # capture cut off mid-packet
+            yield (ts_s + ts_frac / (1e9 if nanos else 1e6), linktype, data, caplen < origlen)
+
+
+def udp_of(linktype, data):
+    """Strip link layer + IPv4 + UDP. Returns (src, sport, dst, dport, payload)."""
+    if linktype == LINKTYPE_ETHERNET:
+        if len(data) < 14:
+            return None
+        ethertype, off = struct.unpack("!H", data[12:14])[0], 14
+        if ethertype == 0x8100:  # 802.1Q VLAN tag
+            if len(data) < 18:
+                return None
+            ethertype, off = struct.unpack("!H", data[16:18])[0], 18
+        if ethertype != 0x0800:  # not IPv4
+            return None
+    elif linktype == LINKTYPE_LINUX_SLL:
+        if len(data) < 16 or struct.unpack("!H", data[14:16])[0] != 0x0800:
+            return None
+        off = 16
+    else:  # LINKTYPE_RAW
+        off = 0
+
+    ip = data[off:]
+    if len(ip) < 20 or (ip[0] >> 4) != 4:
+        return None
+    if ip[9] != 17:  # not UDP
+        return None
+    if struct.unpack("!H", ip[6:8])[0] & 0x1FFF:  # a non-first fragment
+        return None
+    ihl = (ip[0] & 0xF) * 4
+    src = ".".join(str(b) for b in ip[12:16])
+    dst = ".".join(str(b) for b in ip[16:20])
+    u = ip[ihl:]
+    if len(u) < 8:
+        return None
+    sport, dport, ulen = struct.unpack("!HHH", u[:6])
+    return src, sport, dst, dport, (u[8:ulen] if 8 <= ulen <= len(u) else u[8:])
+
+
+def classify(flows, port, relay=None, vehicle=None):
+    """Decide which host is the relay and which is the vehicle, from the flow table.
+
+    flows: {(src, sport, dst, dport): count}. Returns (relay, vehicle, why).
+
+    The relay duplicates every datagram, so it appears in *both* legs of both
+    directions — i.e. in every packet — while the phone and the GCS each appear in
+    only their own. That is the signature we key on, and it needs a third host to
+    exist at all: a direct phone->GCS capture has no relay and needs no dedup.
+    """
+    why = []
+    hosts = {h for (s, _sp, d, _dp) in flows for h in (s, d)}
+    if relay is None and len(hosts) > 2:
+        total = sum(flows.values())
+        seen = collections.Counter()
+        for (s, _sp, d, _dp), n in flows.items():
+            for h in {s, d}:
+                seen[h] += n
+        everywhere = [h for h in hosts if seen[h] == total]
+        if len(everywhere) == 1:
+            relay = everywhere[0]
+            why.append(f"relay {relay} (the only host present in all {total} packets)")
+    elif relay:
+        why.append(f"relay {relay} (given)")
+    if relay is None:
+        why.append("no relay detected — keeping every packet, nothing to de-duplicate")
+
+    if vehicle:
+        why.append(f"vehicle {vehicle} (given)")
+        return relay, vehicle, why
+
+    # Of the hosts talking *to* the relay (or to anyone, if there is none), the
+    # vehicle is the one that does not send *from* the MAVLink port: our app binds
+    # an ephemeral source port, a GCS sits on 14550.
+    senders = collections.Counter()
+    from_port = collections.defaultdict(set)
+    for (s, sp, d, _dp), n in flows.items():
+        if relay and s == relay:
+            continue
+        senders[s] += n
+        from_port[s].add(sp)
+    candidates = [h for h in senders if port not in from_port[h]]
+    if len(candidates) == 1:
+        vehicle = candidates[0]
+        why.append(f"vehicle {vehicle} (only sender not using :{port} as its source port)")
+    elif senders:
+        vehicle = senders.most_common(1)[0][0]
+        why.append(f"vehicle {vehicle} (ambiguous — busiest sender; pass --vehicle to override)")
+    return relay, vehicle, why
+
+
+def from_pcap(args, out):
+    flows = collections.Counter()
+    packets, truncated = [], 0
+    for t, linktype, data, cut in pcap_packets(args.from_pcap):
+        p = udp_of(linktype, data)
+        if not p:
+            continue
+        src, sport, dst, dport, payload = p
+        if args.port not in (sport, dport):
+            continue
+        truncated += cut
+        flows[(src, sport, dst, dport)] += 1
+        packets.append((t, src, sport, dst, dport, payload))
+
+    if not packets:
+        sys.stderr.write(f"{args.from_pcap}: no UDP packets on port {args.port}\n")
+        return 1
+
+    relay, vehicle, why = classify(flows, args.port, args.relay, args.vehicle)
+    kept = collections.Counter()
+    rows, t0 = [], None
+    for t, src, sport, dst, dport, payload in packets:
+        if relay and src == relay:
+            continue  # the relay's forwarded copy of a frame we already have
+        if relay and dst != relay:
+            continue  # traffic that never reached the relay
+        direction = "up" if src == vehicle else "down"
+        if t0 is None:
+            t0 = t
+        kept[direction] += 1
+        rows.append(
+            {
+                "t": round(t - t0, 6),
+                "dir": direction,
+                "src": f"{src}:{sport}",
+                "dst": f"{dst}:{dport}",
+                "len": len(payload),
+                "hex": payload.hex(),
+            }
+        )
+
+    out.write(
+        json.dumps(
+            {
+                "format": FORMAT,
+                "encoding": "hex",
+                "started_unix": t0,
+                "bind": f"{relay}:{args.port}" if relay else None,
+                "note": args.note,
+                "source": f"pcap {args.from_pcap}, reframed by tools/mavcapture --from-pcap; "
+                + "; ".join(why),
+                "argv": sys.argv[1:],
+            }
+        )
+        + "\n"
+    )
+    for r in rows:
+        out.write(json.dumps(r) + "\n")
+
+    if not args.quiet:
+        sys.stderr.write(f"flows seen on port {args.port}:\n")
+        for (s, sp, d, dp), n in flows.most_common():
+            if relay and s == relay:
+                mark = "  (forwarded copy — dropped)"
+            elif relay and d != relay:
+                mark = "  (not addressed to the relay — dropped)"
+            else:
+                mark = f"  -> {'up' if s == vehicle else 'down'}"
+            sys.stderr.write(f"  {n:6d}  {s}:{sp} -> {d}:{dp}{mark}\n")
+        for line in why:
+            sys.stderr.write(f"{line}\n")
+        sys.stderr.write(f"{len(rows)} datagrams written (up {kept['up']}, down {kept['down']})\n")
+        if truncated:
+            sys.stderr.write(
+                f"WARNING: {truncated} packets were snaplen-truncated — "
+                "capture with -s 0 or every frame is a decode error\n"
+            )
+        if not kept["up"]:
+            sys.stderr.write(
+                "nothing on the vehicle leg — check --vehicle against the flow table above\n"
+            )
+    return 0 if rows else 1
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="mavverify reads these captures: tools/mavverify capture.jsonl",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--port",
+        type=int,
+        default=14550,
+        help="local UDP port to bind (default 14550; use another when QGC holds it)",
+    )
+    ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument(
+        "--forward",
+        metavar="HOST:PORT",
+        help="man-in-the-middle: forward vehicle traffic here and relay replies back, "
+        "capturing both directions (e.g. 127.0.0.1:14550 for a local QGC)",
+    )
+    ap.add_argument(
+        "--out",
+        metavar="FILE",
+        help="capture file (default capture-<timestamp>.jsonl; - for stdout)",
+    )
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=0.0,
+        help="stop after N seconds (default: run until Ctrl-C)",
+    )
+    ap.add_argument("--note", help="free-text note stored in the header, e.g. 'M1 ground test'")
+    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--replay", metavar="FILE", help="replay a capture instead of recording")
+    ap.add_argument("--to", metavar="HOST:PORT", help="replay destination")
+    ap.add_argument(
+        "--direction",
+        choices=("up", "down", "both"),
+        default="up",
+        help="which recorded direction to replay (default up = vehicle telemetry)",
+    )
+    ap.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="replay speed multiplier; 0 = as fast as possible (default 1)",
+    )
+    ap.add_argument(
+        "--from-pcap",
+        metavar="FILE",
+        dest="from_pcap",
+        help="reframe a tcpdump pcap into a capture instead of recording — the "
+        "non-disruptive way to verify while an operator is using QGC",
+    )
+    ap.add_argument(
+        "--relay",
+        metavar="IP",
+        help="the relay host whose forwarded duplicates should be dropped "
+        "(default: detected from the flow table)",
+    )
+    ap.add_argument(
+        "--vehicle",
+        metavar="IP",
+        help="the phone's address, i.e. which leg is 'up' (default: detected)",
+    )
+    args = ap.parse_args()
+
+    if args.replay:
+        if not args.to:
+            ap.error("--replay needs --to HOST:PORT")
+        return replay(args)
+
+    if args.from_pcap:
+        path = args.out or (args.from_pcap.rsplit(".", 1)[0] + ".jsonl")
+        if path == "-":
+            return from_pcap(args, sys.stdout)
+        with open(path, "w") as out:
+            if not args.quiet:
+                sys.stderr.write(f"writing {path}\n")
+            return from_pcap(args, out)
+
+    path = args.out or time.strftime("capture-%Y%m%d-%H%M%S.jsonl")
+    if path == "-":
+        return record(args, sys.stdout)
+    with open(path, "w", buffering=1) as out:  # line-buffered: Ctrl-C loses nothing
+        if not args.quiet:
+            sys.stderr.write(f"writing {path}\n")
+        return record(args, out)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Byte-for-byte parity between the live Kotlin publisher and `tools/memexport`, on `tf`,
+`camera_info` and `video`.
+
+    tools/zenohparity/check              # the table
+    tools/zenohparity/check --verbose    # every case, with the first differing byte
+
+`docs/mem2-converter.md` is a contract with three implementations, and the rule that keeps them
+honest is that each is written from the specification and then checked against the others frame by
+frame. `tools/kotlinframes` does that for the six telemetry channels by running both over a real
+flight record. **It cannot do it for these three**, and the reason is structural rather than
+temporary: a `ReplaySample` is a fold of `dji_state` lines, so it carries no gimbal angle and no
+video geometry — which are exactly the two inputs `tf` and `camera_info` need
+(`replay/ReplayCoverage.TF_TREE`, `.CAMERA_GEOMETRY`), and the video bytes live in the `.h264`
+sidecar that `replay/` is never handed.
+
+So the cross-check is on **planted inputs** instead, and that is weaker in one specific way and no
+other: it does not prove the two agree about a real flight's *inputs*, only about the derivation
+applied to them. Both sides are pure functions of the numbers below — no clocks, no files, no
+state — so agreeing on every case is agreeing on the derivation, which is the part that can be
+wrong. What the record-driven check adds and this does not is coverage of the gating, and that is
+already `tools/kotlinframes`' job for the channels it can reach.
+
+**Neither side is the other's source.** The Kotlin was written to `docs/mem2-converter.md` §2 and
+§0.2; `tools/memexport` was written to the same sections weeks earlier and by a different hand.
+Two implementations agreeing is the evidence.
+
+Where it runs: DiMOS's venv, `~/coding/dimos/.venv/bin/python`, the only interpreter with
+`dimos.msgs` — the same re-exec `tools/memexport` and `tools/zenohpublish` already perform.
+"""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+
+CANDIDATE_PYTHONS = [
+    os.environ.get("ZENOHPARITY_PYTHON"),
+    os.path.expanduser("~/coding/dimos/.venv/bin/python"),
+]
+
+
+def ensure_dimos():
+    """Import `dimos.msgs`, re-execing under an interpreter that has it if this one does not."""
+    try:
+        import dimos.msgs  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    for cand in CANDIDATE_PYTHONS:
+        if not cand or not os.path.exists(cand):
+            continue
+        if os.path.realpath(cand) == os.path.realpath(sys.executable):
+            continue
+        sys.stderr.write(f"zenohparity: re-exec under {cand}\n")
+        os.execv(cand, [cand, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.exit(
+        "no interpreter with `dimos.msgs`.\n"
+        "  Try: ~/coding/dimos/.venv/bin/python tools/zenohparity/check\n"
+        "  or point ZENOHPARITY_PYTHON at one."
+    )
+
+
+def load_memexport():
+    """`tools/memexport` as a module, so its own functions produce the reference bytes.
+
+    Imported rather than reimplemented, for `tools/memexport`'s own reason for importing
+    `videoexport`: the two must agree about what a message *is*, and the cheapest way to guarantee
+    that is for there to be one implementation of it.
+    """
+    path = os.path.join(REPO, "tools", "memexport")
+    loader = importlib.machinery.SourceFileLoader("memexport", path)
+    spec = importlib.util.spec_from_loader("memexport", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+# The same planted numbers `ZenohParity.java` uses. Written out on both sides rather than shared
+# through a file, deliberately: a fixture carrying its own inputs would let one typo satisfy both
+# encoders, which is the one thing a cross-check cannot afford.
+LAT = 37.9938243
+LON = 23.7252903
+UNIX_MS = 1785169465521
+
+ATTITUDES = [
+    (0.0, 0.0, 0.0),
+    (30.0, 20.0, 118.0),  # `memexport`'s own planted case
+    (-31.7, 27.3, 250.0),  # the flight's measured worst roll
+    (5.5, -3.25, 359.5),  # a heading past 180, so the 90-minus-yaw term cannot hide
+]
+GIMBAL_PITCHES = [-90.0, -45.0]
+RESOLUTIONS = [(1920, 1080), (960, 540), (1280, 720), (3840, 2160)]
+
+
+def build_reference(mx):
+    """Every planted case, as `tools/memexport` would write it. `{case: hex}`."""
+    msgs = mx.Messages()
+    ts = round(UNIX_MS / 1000.0, 3)
+    out = {}
+
+    lat = LAT + 40.0 / mx.METRES_PER_DEG
+    lon = LON + 30.0 / (mx.METRES_PER_DEG * math.cos(math.radians(LAT)))
+    east, north = mx.enu_metres(LAT, LON, lat, lon)
+    position = (east, north, 12.0)
+
+    for roll, pitch, yaw in ATTITUDES:
+        world_from_base = mx.enu_quaternion(roll, pitch, yaw)
+        for gimbal_pitch in GIMBAL_PITCHES:
+            # `memexport.camera_edge` takes a Sample it never reads, so None is honest here.
+            q = mx.camera_edge(None, world_from_base, (0.0, gimbal_pitch, yaw))
+            edges = [
+                (mx.FRAME_WORLD, mx.FRAME_BASE_LINK, position, world_from_base),
+                (mx.FRAME_BASE_LINK, mx.FRAME_CAMERA, mx.CAMERA_OFFSET_M, q),
+                (mx.FRAME_CAMERA, mx.FRAME_CAMERA_OPTICAL, (0.0, 0.0, 0.0), mx.OPTICAL_Q),
+            ]
+            name = f"tf/roll{roll:.3f}_pitch{pitch:.3f}_yaw{yaw:.3f}_gimbal{gimbal_pitch:.3f}"
+            out[name] = msgs.tf(ts, edges).lcm_encode().hex()
+        edges = [
+            (mx.FRAME_WORLD, mx.FRAME_BASE_LINK, position, world_from_base),
+            (mx.FRAME_CAMERA, mx.FRAME_CAMERA_OPTICAL, (0.0, 0.0, 0.0), mx.OPTICAL_Q),
+        ]
+        name = f"tf/roll{roll:.3f}_pitch{pitch:.3f}_yaw{yaw:.3f}_nogimbal"
+        out[name] = msgs.tf(ts, edges).lcm_encode().hex()
+
+    for w, h in RESOLUTIONS:
+        out["camera_info/%dx%d" % (w, h)] = msgs.camera_info(ts, w, h).lcm_encode().hex()
+
+    short_unit = bytes([0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x1F, 0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00])
+    long_unit = bytearray(17000)
+    long_unit[: len(short_unit)] = short_unit
+    for i in range(len(short_unit), len(long_unit)):
+        long_unit[i] = i % 251
+    out["video/short"] = msgs.video(ts, short_unit).lcm_encode().hex()
+    out["video/17k"] = msgs.video(ts, bytes(long_unit)).lcm_encode().hex()
+    return out
+
+
+def kotlin_cases():
+    """`tools/zenohparity/run`'s output, as `{case: (kind, hex)}`."""
+    proc = subprocess.run(
+        [os.path.join(HERE, "run")],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+    )
+    if proc.returncode != 0:
+        sys.exit("tools/zenohparity/run failed:\n" + proc.stderr[-2000:])
+    out = {}
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        out[row["case"]] = (row["kind"], row["hex"])
+    return out
+
+
+def first_difference(a: str, b: str) -> str:
+    if len(a) != len(b):
+        return "length %d vs %d" % (len(a) // 2, len(b) // 2)
+    for i in range(0, len(a), 2):
+        if a[i : i + 2] != b[i : i + 2]:
+            return "byte %d: %s vs %s" % (i // 2, a[i : i + 2], b[i : i + 2])
+    return "identical"
+
+
+def main() -> int:
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    ensure_dimos()
+    mx = load_memexport()
+    reference = build_reference(mx)
+    kotlin = kotlin_cases()
+
+    by_kind = {}
+    problems = []
+    for case, (kind, hex_kotlin) in sorted(kotlin.items()):
+        hit, total = by_kind.setdefault(kind, [0, 0])
+        total += 1
+        want = reference.get(case)
+        if want is None:
+            problems.append(f"{case}: no memexport reference")
+        elif want == hex_kotlin:
+            hit += 1
+            if verbose:
+                print("  ok    %-52s %d bytes" % (case, len(hex_kotlin) // 2))
+        else:
+            problems.append(f"{case}: {first_difference(want, hex_kotlin)}")
+            if verbose:
+                print("  DIFF  %-52s %s" % (case, first_difference(want, hex_kotlin)))
+        by_kind[kind] = [hit, total]
+
+    missing = set(reference) - set(kotlin)
+    for case in sorted(missing):
+        problems.append(f"{case}: the Kotlin harness produced no such case")
+
+    print()
+    for kind in ("tf", "camera_info", "video"):
+        hit, total = by_kind.get(kind, [0, 0])
+        print("  %-12s %d of %d byte-identical to tools/memexport" % (kind, hit, total))
+    if problems:
+        print()
+        for p in problems:
+            print("  FAIL  " + p)
+        return 1
+    print("\n  the live publisher and the store write the same bytes.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

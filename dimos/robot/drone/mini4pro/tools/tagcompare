@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Compare two detection runs frame by frame, and refuse to compare ones that saw different pixels.
+
+    tools/tagcompare aruco.csv apriltag.csv
+
+**Why this exists.** A detection rate is not self-validating. On 2026-07-27 a run of this same
+harness read a tiled MediaCodec buffer as if it were linear, produced a plausible-looking rate, and
+the rate was a measurement of nothing (fixed in 351cf55). Two *detectors* compared across two runs
+inherit that risk twice over — a difference in rate could be the detectors, or it could be that one
+run decoded a different image.
+
+So `TagProfileTest.detect` writes a fifth column, `luma_sum`: the sum of every luminance byte the
+detector was handed. This checks that column first and **stops** if it disagrees on any frame the
+two runs share. Everything after that point is a comparison of detectors.
+
+Output is per-frame agreement, not just two totals: two detectors that each find the tag in 90 % of
+frames are a very different proposition depending on whether it is the same 90 %.
+"""
+
+import sys
+
+
+def read(path):
+    rows = {}
+    with open(path) as f:
+        header = f.readline().rstrip("\n").split(",")
+        if header[:4] != ["n", "t", "ids", "longest_px"]:
+            sys.exit(f"{path}: not a detection csv (header {header})")
+        has_sum = len(header) > 4 and header[4] == "luma_sum"
+        for line in f:
+            p = line.rstrip("\n").split(",")
+            if len(p) < 4:
+                continue
+            n = int(p[0])
+            rows[n] = {
+                "t": float(p[1]),
+                "ids": [int(x) for x in p[2].split() if x.strip()],
+                "px": float(p[3]),
+                "sum": int(p[4]) if has_sum and len(p) > 4 else None,
+            }
+    return rows
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    a_path, b_path = sys.argv[1], sys.argv[2]
+    a, b = read(a_path), read(b_path)
+
+    shared = sorted(set(a) & set(b))
+    print(f"A {a_path}: {len(a)} frames")
+    print(f"B {b_path}: {len(b)} frames")
+    print(f"shared frames        : {len(shared)}")
+    if not shared:
+        sys.exit("no frames in common — different windows, nothing to compare")
+
+    # The gate. Not a warning: a mismatch means the two runs were fed different images and every
+    # number below it would be a comparison of decode paths wearing a detector's name.
+    checked = [n for n in shared if a[n]["sum"] is not None and b[n]["sum"] is not None]
+    bad = [n for n in checked if a[n]["sum"] != b[n]["sum"]]
+    if not checked:
+        print("luma_sum             : ABSENT in one or both runs — identity NOT verified")
+    elif bad:
+        print(f"luma_sum             : MISMATCH on {len(bad)} of {len(checked)} frames")
+        for n in bad[:5]:
+            print(f"    n={n}  A={a[n]['sum']}  B={b[n]['sum']}")
+        sys.exit("input pixels differ — the comparison is void")
+    else:
+        print(f"luma_sum             : identical on all {len(checked)} shared frames")
+    print()
+
+    a_hit = sum(1 for n in shared if a[n]["ids"])
+    b_hit = sum(1 for n in shared if b[n]["ids"])
+    both = sum(1 for n in shared if a[n]["ids"] and b[n]["ids"])
+    only_a = sum(1 for n in shared if a[n]["ids"] and not b[n]["ids"])
+    only_b = sum(1 for n in shared if b[n]["ids"] and not a[n]["ids"])
+    neither = len(shared) - both - only_a - only_b
+
+    print(f"A detected           : {a_hit} / {len(shared)}  ({a_hit / len(shared):.1%})")
+    print(f"B detected           : {b_hit} / {len(shared)}  ({b_hit / len(shared):.1%})")
+    print(f"  both               : {both}")
+    print(f"  A only             : {only_a}")
+    print(f"  B only             : {only_b}")
+    print(f"  neither            : {neither}")
+    print()
+
+    ids_a = sorted({i for n in shared for i in a[n]["ids"]})
+    ids_b = sorted({i for n in shared for i in b[n]["ids"]})
+    print(f"ids ever reported A  : {ids_a}")
+    print(f"ids ever reported B  : {ids_b}")
+
+    # Corner geometry, on the frames where both agree there is a tag. A systematic difference in
+    # measured tag size would propagate straight into any derived range, so it is worth a number
+    # even though neither detector's corners are ground truth.
+    pairs = [
+        (a[n]["px"], b[n]["px"])
+        for n in shared
+        if a[n]["ids"] and b[n]["ids"] and a[n]["px"] > 0 and b[n]["px"] > 0
+    ]
+    if pairs:
+        ratios = sorted(y / x for x, y in pairs)
+        med = ratios[len(ratios) // 2]
+        print()
+        print(
+            f"longest-edge B/A     : median {med:.4f} over {len(pairs)} co-detected frames "
+            f"(min {ratios[0]:.3f}, max {ratios[-1]:.3f})"
+        )
+
+
+if __name__ == "__main__":
+    main()

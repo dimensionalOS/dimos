@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Where "straight down" lands in the image, from a yaw-in-place over a tag.
+
+    tools/nadirpoint datasets/2026-07-28-yaw-over-tag/20260728-095851.001.jsonl --from 70 --to 105
+
+With the gimbal at nadir, yawing the aircraft sweeps a ground tag around a circle in the image,
+and the centre of that circle is the pixel a point directly beneath the aircraft appears at.
+That is the pixel a tag-landing controller should servo to; servoing to the image centre instead
+leaves a standing lateral bias of `height * offset / f`.
+
+**It is not the principal point.** A gimbal sitting `delta` off true nadir puts the circle centre
+at `principal_point + f*tan(delta)`; the two are summed and this experiment cannot separate them.
+Do not paste the result into a camera matrix.
+
+Reads the on-board detector's `cx, cy` out of the flight record — no video needed. To fly it:
+hover over the tag, gimbal nadir, yaw slowly through one or more full turns at constant height,
+deliberately off-centre (a tag directly beneath the aircraft traces a useless point).
+
+Full rationale and the measured result: `docs/measurements/2026-07-28-nadir-image-point.md`.
+"""
+
+import argparse
+import json
+import math
+import sys
+
+import numpy as np
+
+
+def load(path, t0, t1):
+    rows, cur = [], {}
+    with open(path) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("k") == "dji_state":
+                for f in ("yaw", "relalt", "lat", "lon"):
+                    if f in o:
+                        cur[f] = o[f]
+            elif o.get("k") == "tag" and "yaw" in cur and t0 <= o["t"] <= t1:
+                rows.append(
+                    (
+                        o["t"],
+                        cur["yaw"],
+                        cur.get("relalt"),
+                        o["cx"],
+                        o["cy"],
+                        o.get("px"),
+                        cur.get("lat"),
+                        cur.get("lon"),
+                    )
+                )
+    return rows
+
+
+def fit(psi, u, v):
+    """p = c + P cos(psi) + Q sin(psi). Linear in c, P, Q once the height is constant."""
+    X = np.stack([np.ones_like(psi), np.cos(psi), np.sin(psi)], axis=1)
+    bu, *_ = np.linalg.lstsq(X, u, rcond=None)
+    bv, *_ = np.linalg.lstsq(X, v, rcond=None)
+    ru = float(np.sqrt(((u - X @ bu) ** 2).mean()))
+    rv = float(np.sqrt(((v - X @ bv) ** 2).mean()))
+    return (bu[0], bv[0], math.hypot(bu[1], bv[1]), math.hypot(bu[2], bv[2]), ru, rv)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("record")
+    ap.add_argument("--from", dest="t0", type=float, required=True)
+    ap.add_argument("--to", dest="t1", type=float, required=True)
+    ap.add_argument("--width", type=int, default=1920)
+    ap.add_argument("--height", type=int, default=1080)
+    ap.add_argument("--focal", type=float, default=1457.1)
+    args = ap.parse_args()
+
+    rows = load(args.record, args.t0, args.t1)
+    if len(rows) < 60:
+        sys.exit("only %d sightings in %.1f..%.1f s" % (len(rows), args.t0, args.t1))
+    psi = np.radians(np.array([r[1] for r in rows]))
+    H = np.array([r[2] for r in rows], dtype=float)
+    u = np.array([r[3] for r in rows])
+    v = np.array([r[4] for r in rows])
+    cx0, cy0 = args.width / 2.0, args.height / 2.0
+
+    un = np.unwrap(psi)
+    turns = float(np.abs(np.diff(un)).sum() / (2 * math.pi))
+    print("%d sightings, %.1f..%.1f s, %.2f full turns" % (len(rows), args.t0, args.t1, turns))
+    print(f"height {np.nanmin(H):.2f}..{np.nanmax(H):.2f} m (sd {np.nanstd(H):.3f})")
+    if np.nanstd(H) > 0.15:
+        print("  WARNING: the height is not constant over this window. The radius is f*offset/H,")
+        print("  so a changing height makes a spiral rather than a circle and the fit is wrong.")
+
+    cx, cy, Pn, Qn, ru, rv = fit(psi, u, v)
+    print(
+        f"\npooled          cx = {cx:.2f}  cy = {cy:.2f}   radius {Pn:.1f}/{Qn:.1f} px   residual {ru:.1f}/{rv:.1f} px"
+    )
+
+    start = un.min()
+    cs = []
+    print("\nper turn — the spread of these is the error bar, not the fit's own interval")
+    print("  turn      n        cx        cy    |P|    |Q|   res")
+    for k in range(math.floor(turns) + 1):
+        sel = (un >= start + k * 2 * math.pi) & (un < start + (k + 1) * 2 * math.pi)
+        if sel.sum() < 40:
+            continue
+        a, b, p_, q_, r1, r2 = fit(psi[sel], u[sel], v[sel])
+        cs.append((a, b, p_))
+        print(
+            "    %d %7d %9.1f %9.1f %6.1f %6.1f  %5.1f"
+            % (k + 1, sel.sum(), a, b, p_, q_, max(r1, r2))
+        )
+    if len(cs) < 2:
+        print("\nonly one full turn — no independent error bar available")
+        return
+    cs = np.array(cs)
+    mx, my = cs[:, 0].mean(), cs[:, 1].mean()
+    sx, sy = cs[:, 0].std(ddof=1), cs[:, 1].std(ddof=1)
+    print(f"\nNADIR IMAGE POINT   cx = {mx:.1f} +/- {sx:.1f}    cy = {my:.1f} +/- {sy:.1f}")
+    print(
+        f"  offset from the image centre: {mx - cx0:+.1f}, {my - cy0:+.1f} px  ({math.degrees(math.atan(math.hypot(mx - cx0, my - cy0) / args.focal)):.2f} deg off the optical axis)"
+    )
+
+    # Drift changes the radius and leaves the centre alone. Saying so is worth more than
+    # asserting the fit is good, because it is a property the reader can check in the table.
+    if len(cs) >= 2:
+        rad = cs[:, 2]
+        print(
+            f"  radius moved {100 * (rad.max() - rad.min()) / rad.mean():.0f}% across turns while the centre moved {max(np.ptp(cs[:, 0]), np.ptp(cs[:, 1])):.1f} px — drift changes"
+        )
+        print("  the radius, not the centre, which is why this is believable")
+
+    off = math.hypot(mx - cx0, my - cy0)
+    print("\n  cost of servoing a landing to the image centre instead:")
+    for h in (1.0, 3.0, 8.0):
+        print(f"    {h:.0f} m -> {100 * h * off / args.focal:.1f} cm of standing lateral bias")
+    print("\n  NOT the principal point: this is principal + f*tan(gimbal nadir error), and only")
+    print("  a chessboard separates the two. Do not paste it into camera_matrix.")
+
+
+if __name__ == "__main__":
+    main()

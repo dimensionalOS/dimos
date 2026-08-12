@@ -1,0 +1,6 @@
+// Versions pinned to match the official MSDK v5.18 sample
+// (Mobile-SDK-Android-V5/SampleCode-V5/android-sdk-v5-as).
+plugins {
+    id 'com.android.application' version '8.7.0' apply false
+    id 'org.jetbrains.kotlin.android' version '2.1.0' apply false
+}

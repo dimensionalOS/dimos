@@ -1,0 +1,807 @@
+#!/usr/bin/env python3
+"""Generate synthetic mavcapture-1 fixtures — clean, and with planted faults.
+
+This exists to answer one question about `tools/mavverify`: does it actually
+catch anything? A validator that has never been shown a bug it was pointed at is
+not known to work. Every profile below is a stream built from the real values in
+docs/measurements/2026-07-25-ground-probe.md, with exactly one thing broken in a
+way we plausibly could break it, plus the list of check ids that MUST fail.
+
+    tools/fixtures/generate --selftest      # generate every fault, assert mavverify catches it
+    tools/fixtures/generate                 # write the two clean fixtures into tools/fixtures/
+    tools/fixtures/generate --all --out /tmp/fx     # write every profile
+    tools/fixtures/generate --list
+
+Only the clean fixtures are committed; fault streams are regenerated on demand,
+because they are cheaper to derive than to store.
+
+The generator encodes with pymavlink, i.e. with the *same* library mavverify
+decodes with, so it cannot prove our Kotlin encoder correct — that is the app's
+job, on real hardware. What it proves is that each check fires on the fault it
+claims to detect, which is the part that would otherwise be assumed.
+"""
+
+import argparse
+import json
+import math
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+from pymavlink.dialects.v20 import ardupilotmega as mav2
+
+HERE = Path(__file__).resolve().parent
+MAVVERIFY = HERE.parent / "mavverify"
+
+# ── measured ground truth (docs/measurements/2026-07-25-ground-probe.md) ──
+LAT, LON = 37.9938612, 23.7253298
+HOME_LAT, HOME_LON = 37.9938872, 23.7253295
+TAKEOFF_AMSL = 103.1696  # KeyTakeoffLocationAltitude
+YAW_DEG = -121.1  # KeyCompassHeading, signed [-180,180]
+SATS = 17  # 14..19 observed
+CELLS_MV = [4186, 4183]  # KeyCellVoltages, 2S
+PACK_MV = 8371  # KeyVoltage (whole pack)
+CURRENT_MA = -905  # KeyCurrent, negative while discharging
+BATT_PCT = 98
+BATT_TEMP_C = 37.5
+
+SENSORS = (
+    mav2.MAV_SYS_STATUS_SENSOR_3D_GYRO
+    | mav2.MAV_SYS_STATUS_SENSOR_3D_ACCEL
+    | mav2.MAV_SYS_STATUS_SENSOR_3D_MAG
+    | mav2.MAV_SYS_STATUS_SENSOR_GPS
+    | mav2.MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE
+    | mav2.MAV_SYS_STATUS_SENSOR_BATTERY
+)  # deliberately NOT MOTOR_OUTPUTS
+
+SCHEDULE = {  # Hz — Bridge.tick()'s divisors, i.e. mavverify's EXPECTED_RATES
+    "HEARTBEAT": 1.0,
+    "SYS_STATUS": 2.5,
+    "GLOBAL_POSITION_INT": 5.0,
+    "GPS_RAW_INT": 5.0,
+    "ATTITUDE": 5.0,
+    "VFR_HUD": 5.0,
+    "BATTERY_STATUS": 1.0,
+    # An event message, not a scheduled one — it has no entry in EXPECTED_RATES.
+    # Emitted here at a slow trickle only so the stream contains one.
+    "HOME_POSITION": 0.2,
+}
+
+
+def state_at(t, flight):
+    """Physical state at time t. Ground = exactly what the probe measured."""
+    if flight:
+        rel = 3.0 * t  # climbing at 3 m/s
+        vz_cms, vx_cms, vy_cms = -300, 500, 0
+    else:
+        rel = 0.0
+        vz_cms = vx_cms = vy_cms = 0
+    amsl = TAKEOFF_AMSL + rel
+    return {
+        "t": t,
+        "flight": flight,
+        "rel_m": rel,
+        "amsl_m": amsl,
+        "alt_mm": round(amsl * 1000),
+        "rel_mm": round(rel * 1000),
+        "vx": vx_cms,
+        "vy": vy_cms,
+        "vz": vz_cms,
+        "yaw_deg": YAW_DEG,
+        "hdg_cdeg": round(YAW_DEG % 360 * 100),
+        "gs_ms": math.hypot(vx_cms, vy_cms) / 100.0,
+        "climb_ms": -vz_cms / 100.0,
+    }
+
+
+def fields(name, st):
+    """The message the app *should* send for this state, in MAVLink units."""
+    tb = int(st["t"] * 1000) + 1
+    if name == "HEARTBEAT":
+        base = mav2.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+        if st["flight"]:
+            base |= mav2.MAV_MODE_FLAG_SAFETY_ARMED
+        # PX4 identity (docs/decisions/2026-07-25-autopilot-identity.md), and with
+        # it a PX4 custom_mode: main 3 / sub 0 = POSCTL, what Px4Mode maps GPS_ATTI
+        # to and what the real aircraft was seen sending.
+        return dict(
+            type=mav2.MAV_TYPE_QUADROTOR,
+            autopilot=mav2.MAV_AUTOPILOT_PX4,
+            base_mode=base,
+            custom_mode=3 << 16,
+            system_status=mav2.MAV_STATE_ACTIVE if st["flight"] else mav2.MAV_STATE_STANDBY,
+        )
+    if name == "SYS_STATUS":
+        return dict(
+            onboard_control_sensors_present=SENSORS,
+            onboard_control_sensors_enabled=SENSORS,
+            onboard_control_sensors_health=SENSORS,
+            load=0,
+            voltage_battery=PACK_MV,
+            current_battery=round(-CURRENT_MA / 10),
+            battery_remaining=BATT_PCT,
+            drop_rate_comm=0,
+            errors_comm=0,
+            errors_count1=0,
+            errors_count2=0,
+            errors_count3=0,
+            errors_count4=0,
+        )
+    if name == "GLOBAL_POSITION_INT":
+        return dict(
+            time_boot_ms=tb,
+            lat=round(LAT * 1e7),
+            lon=round(LON * 1e7),
+            alt=st["alt_mm"],
+            relative_alt=st["rel_mm"],
+            vx=st["vx"],
+            vy=st["vy"],
+            vz=st["vz"],
+            hdg=st["hdg_cdeg"],
+        )
+    if name == "GPS_RAW_INT":
+        return dict(
+            time_usec=tb * 1000,
+            fix_type=3,
+            lat=round(LAT * 1e7),
+            lon=round(LON * 1e7),
+            alt=st["alt_mm"],
+            eph=100,
+            epv=150,
+            vel=round(st["gs_ms"] * 100),
+            cog=st["hdg_cdeg"],
+            satellites_visible=SATS,
+        )
+    if name == "ATTITUDE":
+        return dict(
+            time_boot_ms=tb,
+            roll=0.0,
+            pitch=0.0,
+            yaw=math.radians(YAW_DEG),
+            rollspeed=0.0,
+            pitchspeed=0.0,
+            yawspeed=0.0,
+        )
+    if name == "VFR_HUD":
+        return dict(
+            airspeed=st["gs_ms"],
+            groundspeed=st["gs_ms"],
+            heading=round(st["hdg_cdeg"] / 100) % 360,
+            throttle=40 if st["flight"] else 0,
+            alt=st["alt_mm"] / 1000.0,
+            climb=st["climb_ms"],
+        )
+    if name == "BATTERY_STATUS":
+        return dict(
+            id=0,
+            battery_function=mav2.MAV_BATTERY_FUNCTION_ALL,
+            type=mav2.MAV_BATTERY_TYPE_LIPO,
+            temperature=round(BATT_TEMP_C * 100),
+            voltages=CELLS_MV + [65535] * (10 - len(CELLS_MV)),
+            current_battery=round(-CURRENT_MA / 10),
+            current_consumed=-1,
+            energy_consumed=-1,
+            battery_remaining=BATT_PCT,
+        )
+    if name == "HOME_POSITION":
+        return dict(
+            latitude=round(HOME_LAT * 1e7),
+            longitude=round(HOME_LON * 1e7),
+            altitude=round(TAKEOFF_AMSL * 1000),
+            x=0.0,
+            y=0.0,
+            z=0.0,
+            q=[1.0, 0.0, 0.0, 0.0],
+            approach_x=0.0,
+            approach_y=0.0,
+            approach_z=0.0,
+        )
+    raise KeyError(name)
+
+
+# ── planted faults ───────────────────────────────────────────────────────────
+# mutate(name, f, ctx, i, st) edits the field dict in place, may set ctx flags
+# ("v1", "corrupt", "truncate", "coalesce", "seq_bump", "sysid"), or return
+# False to drop the frame entirely.
+
+
+def _zero_latlon(name, f, ctx, i, st):
+    if "lat" in f:
+        f["lat"] = f["lon"] = 0
+
+
+def _latlon_degrees(name, f, ctx, i, st):
+    if "lat" in f:
+        f["lat"], f["lon"] = int(LAT), int(LON)
+
+
+def _latlon_swapped(name, f, ctx, i, st):
+    if "lat" in f:
+        f["lat"], f["lon"] = f["lon"], f["lat"]
+
+
+def _alt_mm_in_vfr(name, f, ctx, i, st):
+    if name == "VFR_HUD":
+        f["alt"] = float(st["alt_mm"])
+
+
+def _hdg_degrees(name, f, ctx, i, st):
+    if name == "GLOBAL_POSITION_INT":
+        f["hdg"] = round(st["hdg_cdeg"] / 100)
+
+
+def _hdg_signed(name, f, ctx, i, st):
+    if name == "GLOBAL_POSITION_INT":
+        f["hdg"] = round(YAW_DEG * 100) & 0xFFFF  # int16 -12110 cast to uint16
+
+
+def _amsl_relative(name, f, ctx, i, st):
+    if name == "GLOBAL_POSITION_INT":
+        f["alt"] = st["rel_mm"]
+    if name == "VFR_HUD":
+        f["alt"] = st["rel_m"]
+    if name == "GPS_RAW_INT":
+        f["alt"] = st["rel_mm"]
+
+
+def _cell_zero_sentinel(name, f, ctx, i, st):
+    if name == "BATTERY_STATUS":
+        f["voltages"] = CELLS_MV + [0] * 8
+
+
+def _current_sign(name, f, ctx, i, st):
+    if "current_battery" in f:
+        f["current_battery"] = round(CURRENT_MA / 10)
+
+
+def _current_milliamps(name, f, ctx, i, st):
+    if "current_battery" in f:
+        f["current_battery"] = -CURRENT_MA  # mA sent as if it were cA
+
+
+def _climb_sign(name, f, ctx, i, st):
+    if name == "VFR_HUD":
+        f["climb"] = st["vz"] / 100.0
+
+
+def _groundspeed_cms(name, f, ctx, i, st):
+    if name == "VFR_HUD":
+        f["groundspeed"] = st["gs_ms"] * 100.0
+
+
+def _attitude_degrees(name, f, ctx, i, st):
+    if name == "ATTITUDE":
+        f["yaw"] = YAW_DEG
+        f["roll"], f["pitch"] = -1.0, 0.0  # KeyAircraftAttitude, degrees
+
+
+def _fix_3d_few_sats(name, f, ctx, i, st):
+    if name == "GPS_RAW_INT":
+        f["satellites_visible"] = 2
+
+
+def _no_fix_zeros(name, f, ctx, i, st):
+    """Not a fault — DJI withdrawing the fix, exactly as it did on 2026-07-26.
+
+    Half way through, GPSSignalLevel collapses: GPS_RAW_INT goes to NO_FIX with
+    lat/lon 0/0 while still seeing every satellite, and GLOBAL_POSITION_INT is
+    suppressed rather than sent as 0/0. Both are decisions the encoder documents
+    (TelemetryEncoder.kt:614-619), so this stream must pass.
+    """
+    if st["t"] < 4.0:
+        return
+    if name == "GLOBAL_POSITION_INT":
+        return False
+    if name == "GPS_RAW_INT":
+        f["fix_type"] = 1
+        f["lat"] = f["lon"] = 0
+
+
+def _time_frozen(name, f, ctx, i, st):
+    if "time_boot_ms" in f:
+        f["time_boot_ms"] = 1
+
+
+def _motor_outputs_bit(name, f, ctx, i, st):
+    if name == "SYS_STATUS":
+        f["onboard_control_sensors_present"] |= mav2.MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS
+        f["onboard_control_sensors_enabled"] |= mav2.MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS
+
+
+def _wrong_autopilot(name, f, ctx, i, st):
+    if name == "HEARTBEAT":
+        f["autopilot"] = mav2.MAV_AUTOPILOT_GENERIC
+
+
+def _pack_from_one_cell(name, f, ctx, i, st):
+    if name == "SYS_STATUS":
+        f["voltage_battery"] = CELLS_MV[0]
+
+
+def _missing_position(name, f, ctx, i, st):
+    if name == "GLOBAL_POSITION_INT":
+        return False
+
+
+def _heartbeat_slow(name, f, ctx, i, st):
+    if name == "HEARTBEAT" and st["t"] % 5.0 > 0.001:
+        return False
+
+
+def _crc_corrupt(name, f, ctx, i, st):
+    if i % 20 == 7:
+        ctx["corrupt"] = True
+
+
+def _seq_gap(name, f, ctx, i, st):
+    if i % 40 == 11:
+        ctx["seq_bump"] = 3
+
+
+def _mavlink1(name, f, ctx, i, st):
+    ctx["v1"] = True
+
+
+def _sysid_two(name, f, ctx, i, st):
+    if i % 7 == 0:
+        ctx["sysid"] = 2
+
+
+def _truncated(name, f, ctx, i, st):
+    if i % 30 == 5:
+        ctx["truncate"] = 4
+
+
+def _coalesced(name, f, ctx, i, st):
+    ctx["coalesce"] = True
+
+
+# profile -> (description, flight?, gcs traffic?, mutate, expect FAIL, expect WARN, extra argv)
+PROFILES = {
+    "nominal": (
+        "clean ground stream, every value from the ground probe, plus a "
+        "short burst of QGC->vehicle traffic",
+        False,
+        True,
+        None,
+        [],
+        [],
+        [],
+    ),
+    "nominal-truth": (
+        "the clean ground stream checked against the measured position",
+        False,
+        True,
+        None,
+        [],
+        [],
+        ["--expect-site", "ground-probe"],
+    ),
+    "nominal-flight": (
+        "clean synthetic flight: 3 m/s climb, 5 m/s ground track — the "
+        "motion the sign-convention checks need",
+        True,
+        False,
+        None,
+        [],
+        [],
+        [],
+    ),
+    "zero-latlon": (
+        "position unknown encoded as 0/0 — in GLOBAL_POSITION_INT, which has no "
+        "fix_type to excuse it, and in GPS_RAW_INT beside a claimed 3D fix",
+        False,
+        False,
+        _zero_latlon,
+        ["pos.nonzero", "gps.zero_only_no_fix"],
+        [],
+        [],
+    ),
+    # Expects nothing at all — not even a warning. Suppressing GLOBAL_POSITION_INT
+    # without a fix is designed behaviour, so flagging it is the false positive this
+    # profile exists to forbid. (An earlier version wanted rate.gap to WARN here,
+    # which contradicted its own docstring; it also cannot fire, because rate.gap
+    # measures gaps *between consecutive samples* and a series that simply ends has
+    # none. That trailing-stop blind spot is real and noted in docs/verification.md
+    # — it is not fixed here, because a check that fired on it would fire on every
+    # legitimate suppression, which is precisely this profile.)
+    "no-fix-zeros": (
+        "DJI withdraws the fix mid-stream: GPS_RAW_INT 0/0 behind NO_FIX and "
+        "GLOBAL_POSITION_INT suppressed — documented behaviour, must not be "
+        "flagged",
+        False,
+        False,
+        _no_fix_zeros,
+        [],
+        [],
+        [],
+    ),
+    "latlon-degrees": (
+        "degrees written into a degE7 field (x1e7 forgotten)",
+        False,
+        False,
+        _latlon_degrees,
+        ["pos.dege7"],
+        [],
+        [],
+    ),
+    "latlon-swapped": (
+        "lat and lon transposed — wire-legal, plausible, and wrong; only ground truth can see it",
+        False,
+        False,
+        _latlon_swapped,
+        ["truth.position"],
+        [],
+        ["--expect-site", "ground-probe"],
+    ),
+    "alt-mm-in-vfr": (
+        "VFR_HUD.alt left in millimetres (1000x)",
+        False,
+        False,
+        _alt_mm_in_vfr,
+        ["xscale.alt"],
+        [],
+        [],
+    ),
+    "hdg-degrees": (
+        "hdg written in degrees instead of centidegrees (100x)",
+        False,
+        False,
+        _hdg_degrees,
+        ["xscale.hdg", "att.yaw_vs_hdg"],
+        [],
+        [],
+    ),
+    "hdg-signed": (
+        "DJI's signed [-180,180] compass heading cast straight to uint16 cdeg",
+        False,
+        False,
+        _hdg_signed,
+        ["pos.hdg_range", "xscale.hdg", "att.yaw_vs_hdg"],
+        [],
+        [],
+    ),
+    "amsl-relative": (
+        "takeoff-relative altitude sent as AMSL — self-consistent across "
+        "messages, so only the plausibility layer sees it",
+        False,
+        False,
+        _amsl_relative,
+        ["pos.amsl_not_zero", "pos.amsl_vs_relative"],
+        [],
+        [],
+    ),
+    "cell-zero-sentinel": (
+        "unused voltages[] slots left at 0 instead of 65535",
+        False,
+        False,
+        _cell_zero_sentinel,
+        ["bat.cell_sentinel", "bat.cell_count"],
+        [],
+        [],
+    ),
+    "current-sign": (
+        "DJI's discharge-negative current passed through unflipped",
+        False,
+        False,
+        _current_sign,
+        ["bat.current_sign"],
+        [],
+        [],
+    ),
+    "current-milliamps": (
+        "milliamps sent as centiamps (RosettaDrone's mistake)",
+        False,
+        False,
+        _current_milliamps,
+        ["bat.current_idle"],
+        [],
+        [],
+    ),
+    "climb-sign": (
+        "climb rate not negated from vz (NED down vs up)",
+        True,
+        False,
+        _climb_sign,
+        ["xscale.climb"],
+        [],
+        [],
+    ),
+    "groundspeed-cms": (
+        "groundspeed left in cm/s",
+        True,
+        False,
+        _groundspeed_cms,
+        ["xscale.groundspeed"],
+        [],
+        [],
+    ),
+    "attitude-degrees": (
+        "ATTITUDE sent in degrees instead of radians",
+        False,
+        False,
+        _attitude_degrees,
+        ["att.radians", "att.yaw_vs_hdg"],
+        [],
+        [],
+    ),
+    "fix-3d-few-sats": (
+        "a 3D fix claimed on 2 satellites. The old profile here was the "
+        "converse — no fix with 17 satellites — which the real aircraft does "
+        "legitimately (px4-reverify), so it is no longer a fault",
+        False,
+        False,
+        _fix_3d_few_sats,
+        ["gps.fix_vs_sats"],
+        [],
+        [],
+    ),
+    "time-frozen": (
+        "time_boot_ms frozen",
+        False,
+        False,
+        _time_frozen,
+        ["pos.time_boot_ms"],
+        [],
+        [],
+    ),
+    "motor-outputs-bit": (
+        "SYS_STATUS advertises MOTOR_OUTPUTS, which hijacks QGC's arm detection on APM firmware",
+        False,
+        False,
+        _motor_outputs_bit,
+        ["sys.motor_outputs_bit"],
+        [],
+        [],
+    ),
+    "wrong-autopilot": (
+        "heartbeat claims MAV_AUTOPILOT_GENERIC, which leaves QGC with no "
+        "command buttons and no flight-mode dropdown at all",
+        False,
+        False,
+        _wrong_autopilot,
+        ["hb.autopilot"],
+        [],
+        [],
+    ),
+    "pack-from-one-cell": (
+        "pack voltage taken from a single cell",
+        False,
+        False,
+        _pack_from_one_cell,
+        ["xscale.battery_v"],
+        [],
+        [],
+    ),
+    "missing-position": (
+        "GLOBAL_POSITION_INT emitter never scheduled",
+        False,
+        False,
+        _missing_position,
+        ["rate.present"],
+        [],
+        [],
+    ),
+    "heartbeat-slow": (
+        "heartbeat at 0.2 Hz instead of 1 Hz",
+        False,
+        False,
+        _heartbeat_slow,
+        ["rate.hz"],
+        [],
+        [],
+    ),
+    "crc-corrupt": (
+        "one byte flipped in every 20th frame",
+        False,
+        False,
+        _crc_corrupt,
+        ["wire.bad_data"],
+        [],
+        [],
+    ),
+    "seq-gap": ("sequence counter jumps", False, False, _seq_gap, ["wire.seq"], [], []),
+    "mavlink1": ("MAVLink 1 framing", False, False, _mavlink1, ["wire.version"], [], []),
+    "sysid-two": ("two source sysids on one link", False, False, _sysid_two, ["wire.ids"], [], []),
+    "truncated": (
+        "datagrams cut short mid-frame",
+        False,
+        False,
+        _truncated,
+        ["wire.parse"],
+        [],
+        [],
+    ),
+    "coalesced": (
+        "two frames per datagram, which our UDP adapter must never do",
+        False,
+        False,
+        _coalesced,
+        [],
+        ["wire.one_frame_per_datagram"],
+        [],
+    ),
+}
+
+
+def gcs_frames(t0):
+    """A short burst of QGC->vehicle traffic: the M2/M4 regression corpus, in miniature."""
+    mav = mav2.MAVLink(None, srcSystem=255, srcComponent=190)
+    out = []
+    msgs = [
+        mav.heartbeat_encode(
+            mav2.MAV_TYPE_GCS, mav2.MAV_AUTOPILOT_INVALID, 0, 0, mav2.MAV_STATE_ACTIVE
+        ),
+        mav.param_request_list_encode(1, 1),
+        mav.mission_request_list_encode(1, 1, 0),
+        mav.command_long_encode(1, 1, mav2.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, 0, 10.0),
+        mav.command_long_encode(1, 1, mav2.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0),
+    ]
+    for k, m in enumerate(msgs):
+        mav.seq = k
+        out.append((t0 + 0.1 * k, "down", m.pack(mav)))
+    return out
+
+
+def build(profile, seconds):
+    desc, flight, gcs, mutate, _f, _w, _a = PROFILES[profile]
+    events = []
+    for name, hz in SCHEDULE.items():
+        k = 0
+        while k / hz < seconds:
+            events.append((round(k / hz, 6), name))
+            k += 1
+    events.sort(key=lambda e: (e[0], e[1]))
+
+    mav = mav2.MAVLink(None, srcSystem=1, srcComponent=1)
+    seq = 0
+    frames = []
+    pending = None
+    for i, (t, name) in enumerate(events):
+        st = state_at(t, flight)
+        f = fields(name, st)
+        ctx = {}
+        if mutate is not None and mutate(name, f, ctx, i, st) is False:
+            continue
+        mav.srcSystem = ctx.get("sysid", 1)
+        mav.seq = seq % 256
+        seq += 1 + ctx.get("seq_bump", 0)
+        msg = getattr(mav, name.lower() + "_encode")(**f)
+        b = bytearray(msg.pack(mav, force_mavlink1=ctx.get("v1", False)))
+        if ctx.get("corrupt"):
+            b[-1] ^= 0xFF
+        if ctx.get("truncate"):
+            b = b[: -ctx["truncate"]]
+        if ctx.get("coalesce"):
+            if pending is None:
+                pending = bytes(b)
+                continue
+            b, pending = bytearray(pending + bytes(b)), None
+        frames.append((t, "up", bytes(b)))
+    if pending:
+        frames.append((events[-1][0], "up", pending))
+    if gcs:
+        frames.extend(gcs_frames(1.0))
+    frames.sort(key=lambda r: r[0])
+    return desc, frames
+
+
+def write(profile, seconds, path):
+    desc, frames = build(profile, seconds)
+    with open(path, "w") as out:
+        out.write(
+            json.dumps(
+                {
+                    "format": "mavcapture-1",
+                    "encoding": "hex",
+                    "started_unix": 0,
+                    "bind": "0.0.0.0:14550",
+                    "forward": None,
+                    "note": f"SYNTHETIC fixture, profile {profile!r}: {desc}. "
+                    f"Generated by tools/fixtures/generate — not a real aircraft capture.",
+                    "argv": [profile],
+                }
+            )
+            + "\n"
+        )
+        for t, direction, b in frames:
+            src = "10.55.1.15:38214" if direction == "up" else "10.55.1.12:14550"
+            out.write(
+                json.dumps(
+                    {
+                        "t": round(t, 6),
+                        "dir": direction,
+                        "src": src,
+                        "dst": "10.55.1.12:14550" if direction == "up" else "10.55.1.15:38214",
+                        "len": len(b),
+                        "hex": b.hex(),
+                    }
+                )
+                + "\n"
+            )
+    return len(frames)
+
+
+def selftest(seconds, only=None):
+    tmp = Path(tempfile.mkdtemp(prefix="mavverify-selftest-"))
+    width = max(len(p) for p in PROFILES)
+    bad = 0
+    print(f"{'profile':<{width}}  {'verdict':<7}  result")
+    for profile, (_desc, _fl, _g, _m, exp_fail, exp_warn, extra) in PROFILES.items():
+        if only and profile not in only:
+            continue
+        path = tmp / f"{profile}.jsonl"
+        write(profile, seconds, path)
+        cmd = [sys.executable, str(MAVVERIFY), str(path), "--json", *extra]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            report = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            print(f"{profile:<{width}}  ERROR    mavverify did not produce JSON:\n{r.stderr}")
+            bad += 1
+            continue
+        got = {(f["check"], f["severity"]) for f in report["findings"]}
+        verdict = report["verdict"]
+        want_verdict = "FAIL" if exp_fail else "PASS"
+        problems = []
+        if verdict != want_verdict:
+            problems.append(f"verdict {verdict}, wanted {want_verdict}")
+        for cid in exp_fail:
+            if (cid, "FAIL") not in got:
+                sev = next((s for c, s in got if c == cid), "absent")
+                problems.append(f"{cid} was {sev}, wanted FAIL")
+        for cid in exp_warn:
+            if (cid, "WARN") not in got:
+                sev = next((s for c, s in got if c == cid), "absent")
+                problems.append(f"{cid} was {sev}, wanted WARN")
+        if r.returncode != (1 if want_verdict == "FAIL" else 0):
+            problems.append(f"exit code {r.returncode}")
+        if problems:
+            bad += 1
+            print(f"{profile:<{width}}  {verdict:<7}  MISMATCH: {'; '.join(problems)}")
+        else:
+            caught = ", ".join(exp_fail + [w + "(warn)" for w in exp_warn]) or "nothing to catch"
+            print(f"{profile:<{width}}  {verdict:<7}  ok — caught {caught}")
+    print(f"\nfixtures in {tmp}")
+    print("SELFTEST: " + (f"{bad} profile(s) wrong" if bad else "all profiles behaved as declared"))
+    return 1 if bad else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--out", default=str(HERE), help="output directory (default tools/fixtures)")
+    ap.add_argument("--seconds", type=float, default=8.0, help="stream duration (default 8)")
+    ap.add_argument(
+        "--all", action="store_true", help="write every profile, not just the clean ones"
+    )
+    ap.add_argument("--only", action="append", default=[], metavar="PROFILE")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument(
+        "--selftest",
+        action="store_true",
+        help="generate every profile and assert mavverify's verdict on each",
+    )
+    args = ap.parse_args()
+
+    if args.list:
+        for p, (desc, _fl, _g, _m, ef, ew, _a) in PROFILES.items():
+            marks = ", ".join(ef + [w + " (warn)" for w in ew]) or "must pass clean"
+            print(f"{p:<20} {desc}\n{'':<20} expects: {marks}")
+        return 0
+    if args.selftest:
+        return selftest(args.seconds, set(args.only) or None)
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    names = args.only or (list(PROFILES) if args.all else ["nominal", "nominal-flight"])
+    for p in names:
+        n = write(p, args.seconds, out / f"{p}.jsonl")
+        print(f"{out / f'{p}.jsonl'}: {n} frames")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      zenoh-kotlin-android declares minSdkVersion 30 and this app declares 24, which the
+      manifest merger refuses outright. Overridden rather than bumped, deliberately:
+
+        * The floor exists for the Zenoh JNI library alone. `libzenoh_jni.so` is built by
+          NDK r26 against API 30 (`file` reports "for Android 30"), so `System.loadLibrary`
+          is what would fail on an older phone — nothing else in the app would.
+        * Zenoh is optional and off by default. Raising the whole app's floor from Android 7
+          to Android 11 for a transport nobody has switched on would be paying for it with
+          the aircraft-facing half, which has worked on API 24 since M0.
+        * The refusal is made honest in code rather than left to a linker error:
+          `zenoh/ZenohKotlinSink` checks `Build.VERSION.SDK_INT` before it touches the
+          library and reports "no publishing" with the reason, exactly as it does for a
+          router it cannot reach.
+
+      The device this project flies on is API 36. If the floor should genuinely move to 30,
+      that is a decision about the whole app and belongs in `gradle.properties`.
+    -->
+    <uses-sdk tools:overrideLibrary="io.zenoh" />
+
+    <!-- SDK registration is an online activation, so the network is mandatory. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- MAVLink is served over the local network to the GCS. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- The bridge holds a WifiLock and a partial WakeLock while the link is up, so
+         the radio and CPU stay available with the screen off — the normal state of a
+         phone strapped to a controller. CHANGE_WIFI_STATE is what
+         WIFI_MODE_FULL_HIGH_PERF requires. Read the KDoc on LinkLocks before relying
+         on these: the packet loss they were originally added to fix turned out to
+         have a different cause, and their benefit is unverified. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The bridge runs as a foreground service so Android's app freezer cannot
+         suspend it while DJI Fly is in front or the screen is off. Measured cost of
+         not doing this: 322 heartbeats emitted where 1036 were due, including one
+         601-second silence, all inside a live process. See BridgeService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+      The aircraft is reached only through the RC-N2: its top USB-C port to the
+      phone, as a USB accessory. There is no WiFi path on the Mini 4 Pro.
+    -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.usb.accessory"
+        android:required="true" />
+
+    <application
+        android:name=".Mini4ProApp"
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Mini4Pro">
+
+        <meta-data
+            android:name="com.dji.sdk.API_KEY"
+            android:value="${API_KEY}" />
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Launched when the RC is plugged in, so the app comes up on cable attach.
+          @xml/accessory_filter is provided by the MSDK aar.
+        -->
+        <activity
+            android:name=".UsbAttachActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
+        </activity>
+
+        <!--
+          The link itself. connectedDevice rather than dataSync: we bridge an
+          aircraft attached through the RC, and dataSync carries tighter runtime
+          limits on recent Android than a whole flight can live with.
+        -->
+        <service
+            android:name=".BridgeService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+    </application>
+</manifest>

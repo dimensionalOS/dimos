@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Measure UDP loss in both directions between this laptop and the phone.
+
+Neither QGroundControl nor the DJI aircraft is involved, so what this measures is
+the network path and nothing else. Run it, point the app at this port, and it:
+
+  * counts every datagram the phone sends us            -> phone -> laptop
+  * sends one MAVLink HEARTBEAT per second back at it   -> laptop -> phone
+    (a real one, captured off the wire from QGC, so the app's parser accepts it
+    and the flight recorder logs each arrival as `mav_in`)
+
+The phone's own recorder holds the other half of the answer: compare the
+heartbeats we sent here against the `mav_in` HEARTBEAT count in its flight log.
+"""
+
+import socket
+import sys
+import time
+
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 14551
+SECONDS = int(sys.argv[2]) if len(sys.argv) > 2 else 60
+
+# A genuine QGC heartbeat, lifted from tmp/session-logs/20260725-212951.001.jsonl.
+# Crafting one by hand risks measuring our own bad checksum instead of the link.
+HEARTBEAT = bytes.fromhex("fe098dffbe00000000000608c004037efe")
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("0.0.0.0", PORT))
+sock.settimeout(0.2)
+
+print(f"listening on :{PORT} for {SECONDS}s", flush=True)
+
+peer = None
+rx = 0
+tx = 0
+start = time.monotonic()
+next_tx = start
+buckets = {}  # second -> datagrams received, so loss shows as gaps not an average
+
+while time.monotonic() - start < SECONDS:
+    now = time.monotonic()
+    if peer and now >= next_tx:
+        try:
+            sock.sendto(HEARTBEAT, peer)
+            tx += 1
+        except OSError as e:
+            print(f"send failed: {e}", flush=True)
+        next_tx += 1.0
+    try:
+        _, addr = sock.recvfrom(4096)
+    except TimeoutError:
+        continue
+    if peer is None:
+        peer = addr
+        print(f"phone is {addr[0]}:{addr[1]} — sending heartbeats back", flush=True)
+        next_tx = time.monotonic()
+    rx += 1
+    buckets[int(now - start)] = buckets.get(int(now - start), 0) + 1
+
+elapsed = time.monotonic() - start
+silent = [s for s in range(int(elapsed)) if buckets.get(s, 0) == 0]
+print()
+print(f"phone -> laptop : {rx} datagrams in {elapsed:.0f}s ({rx / elapsed:.1f}/s)")
+print(f"  seconds with nothing at all: {len(silent)} of {int(elapsed)}")
+if silent:
+    runs, run = [], [silent[0]]
+    for s in silent[1:]:
+        if s == run[-1] + 1:
+            run.append(s)
+        else:
+            runs.append(run)
+            run = [s]
+    runs.append(run)
+    worst = max(runs, key=len)
+    print(f"  longest silence: {len(worst)}s (t={worst[0]}..{worst[-1]})")
+print(f"laptop -> phone : {tx} heartbeats sent — compare with the recorder's mav_in count")

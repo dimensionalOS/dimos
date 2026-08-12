@@ -1,0 +1,1662 @@
+#!/usr/bin/env python3
+"""Measure how far DJI's altitude datum wanders, across and within flight sessions.
+
+`AircraftState.takeoffAltitudeAmsl` is the number any absolute height we could publish would rest
+on. `docs/measurements/2026-07-26-amsl-datum.md` argued from ~18 hand-picked readings that it is
+pressure altitude referenced to 1013.25 hPa, not AMSL. This re-asks the same question
+mechanically, over every session on disk.
+
+    tools/altitudewander tmp/phone-logs/*.jsonl            # per-session table (default)
+    tools/altitudewander tmp/phone-logs/*.jsonl --between  # spread across sessions, by site
+    tools/altitudewander tmp/phone-logs/*.jsonl --drift    # within-session drift, m/min
+    tools/altitudewander tmp/phone-logs/*.jsonl --truth 89.5   # against a ground-truth elevation
+    tools/altitudewander tmp/phone-logs/*.jsonl --repeat   # same-site pairs, by gap in time
+    tools/altitudewander tmp/phone-logs/*.jsonl --pressure # against independent surface pressure
+    tools/altitudewander tmp/phone-logs/*.jsonl --correlate    # against sats / level / hour
+    tools/altitudewander --selftest                        # planted numbers, all recovered
+
+Five filters run before any statistic, because each has already produced a wrong finding here:
+truncated logs are classified and excluded from `--drift`; simulated intervals are cut out with a
+settling allowance; a session is represented by its **last settled on-ground reading**, not its
+median, because the datum is filtered; renamed copies of one recording are deduplicated by
+`started_unix_ms`; and a group below `--min-samples` is reported as such rather than given a
+statistic. `--include-cut` / `--include-sim` disable the first two.
+
+Exits non-zero if any self-test assertion fails.
+
+Full rationale: `docs/tools/altitudewander.md`. The finding:
+`docs/measurements/2026-07-27-altitude-datum-wander.md`.
+"""
+
+import argparse
+from collections import defaultdict
+import itertools
+import json
+import math
+import os
+import statistics
+import sys
+import tempfile
+
+# Same-site radius. `docs/mem2-converter.md` measures session origins on this patch of ground
+# separating by a median of 2.5 m, p90 8.7 m, max 13.4 m -- so anything inside a few tens of
+# metres is the same launch point, and the threshold is loose on purpose: mis-splitting one site
+# into two would manufacture agreement, which is the error that matters here.
+SITE_RADIUS_M = 40.0
+
+# Below this the aircraft is treated as on the ground for "stationary" windows.
+GROUND_RELALT_M = 1.0
+
+# Simulator phases in which `takeoffAltitudeAmsl` is pinned rather than measured.
+SIM_ON = ("ACTIVE", "STARTING", "STOPPING")
+
+# How long the datum takes to relax back to the barometer after the simulator is switched off.
+# Measured, not assumed: `sim-session` t=329.8 relaxes 111.13 -> 74.40 in 13 s, and
+# `20260727-160758` t=0 relaxes 101.64 -> 83.14 and is within 0.3 m of its asymptote by t=33.
+# 60 s is that with room to spare. A window shorter than this simply yields no samples.
+SIM_SETTLE_S = 60.0
+
+EARTH_R = 6371000.0
+
+
+def metres_between(a, b):
+    """Great-circle distance, metres, on a sphere. Good to ~0.2 % at these scales."""
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * EARTH_R * math.asin(min(1.0, math.sqrt(h)))
+
+
+# ── reading ───────────────────────────────────────────────────────────────────
+
+
+class Session:
+    """One recording session: its datum series, its origin, and how much to trust it."""
+
+    def __init__(self, sid):
+        self.sid = sid
+        self.parts = []
+        self.started_unix_ms = None
+        self.datum = []  # (t_s, value_m) from dji_field takeoffAltitudeAmsl
+        self.relalt = []  # (t_s, value_m) from dji_state
+        self.fixes = []  # (t_s, lat, lon)
+        self.sats = []  # (t_s, count)
+        self.levels = []  # (t_s, level)
+        self.sim_events = []  # (t_s, phase) parsed from sim_phase messages
+        self.fc = []  # (t_s, connected) from dji_field fcConnected
+        self.closed = False  # ends in recorder_stop
+        self.has_stats = False
+        self.last_t = 0.0
+        self.dropped = 0
+
+    # --- classification -------------------------------------------------------
+
+    @property
+    def whole(self):
+        """A session is whole only if it closed itself. See the module docstring."""
+        return self.closed and self.has_stats
+
+    @property
+    def sim_from(self):
+        """First moment the simulator was ACTIVE, or None."""
+        for t, ph in self.sim_events:
+            if ph == "ACTIVE":
+                return t
+        return None
+
+    @property
+    def simulated(self):
+        return self.sim_from is not None
+
+    def real_intervals(self, settle=None):
+        """The [start, end) windows in which the aircraft's own barometer was being reported.
+
+        A session in which the simulator never ran is real throughout. Otherwise the phase
+        timeline is walked. Two things make a window untrustworthy and both are handled here:
+
+        * **The simulator is on.** `ACTIVE`, `STARTING` and `STOPPING` all mean the datum is
+          pinned at ~100 m. `UNKNOWN` means the recorder does not know, which is not the same as
+          off, so it closes a window too.
+        * **The simulator has just been turned off.** Measured (`sim-session`, t = 329.8):
+          the datum does not step back, it *relaxes* — 111.13, 104.86, 99.44, 94.86, 90.95 … 74.40
+          over 13 s. `20260727-160758` shows the same relaxation taking 33 s to settle within
+          0.3 m. So a window that opens after an observed simulator run starts `settle` seconds
+          late. A window opened by the first `→ OFF` of a session that has not yet run the
+          simulator carries no such pin and is not delayed.
+
+        The head of a session that opened with the simulator already running is never counted at
+        all: its datum is the previous run's 100 m still relaxing.
+        """
+        settle = SIM_SETTLE_S if settle is None else settle
+        if not any(ph in SIM_ON for _, ph in self.sim_events):
+            return [(0.0, float("inf"))]
+        out = []
+        open_at = None
+        seen_on = False  # has the simulator been observed running yet in this session?
+        for t, ph in self.sim_events:
+            if ph == "OFF":
+                if open_at is None:
+                    open_at = t + (settle if seen_on else 0.0)
+            elif ph in SIM_ON:
+                if open_at is not None:
+                    out.append((open_at, t))
+                    open_at = None
+                seen_on = True
+            else:  # UNKNOWN, or anything this parser has not seen before
+                if open_at is not None:
+                    out.append((open_at, t))
+                    open_at = None
+        if open_at is not None:
+            out.append((open_at, float("inf")))
+        return [(a, b) for a, b in out if b > a]
+
+    def in_real_window(self, t):
+        return any(a <= t < b for a, b in self.real_intervals())
+
+    def real_datum(self, honour_sim=True):
+        if not honour_sim:
+            return list(self.datum)
+        return [(t, v) for (t, v) in self.datum if self.in_real_window(t)]
+
+    def settled_datum(self):
+        """The best single estimate of this session's datum: its last settled on-ground reading.
+
+        `KeyTakeoffLocationAltitude` is not a raw barometer read-out. After any disturbance —
+        the app attaching, the simulator stopping — it relaxes toward the barometric value with
+        a time constant of a few seconds. Measured on `20260726-180444`, with no simulator
+        involved: 79.479, 79.065, 78.713, 78.411, 78.150, 77.742, 77.450, 77.166, 76.891 over
+        17 s, an unmistakable first-order settle and not weather. A *median* over such a session
+        is dragged up by the transient; the last reading is past it. So `--between` reports this
+        by default and prints first / median / n beside it so the transient stays visible.
+        """
+        pts = self.ground_datum_window()
+        if not pts:
+            pts = self.used_datum()
+        return pts[-1][1] if pts else None
+
+    @property
+    def start_wall(self):
+        return self.started_unix_ms
+
+    def wall_of(self, t):
+        if self.started_unix_ms is None:
+            return None
+        return self.started_unix_ms / 1000.0 + t
+
+    # --- derived --------------------------------------------------------------
+
+    def origin(self):
+        """Median fix while on the ground, or median of all fixes if it never sat still.
+
+        Median rather than first: the first fix of a session is the least settled one, and a
+        median over the ground segment is what `docs/mem2-converter.md` compares sites with.
+        """
+        ground = self._ground_fixes()
+        use = ground if len(ground) >= 3 else [(t, la, lo) for (t, la, lo) in self.fixes]
+        if not use:
+            return None
+        return (statistics.median(p[1] for p in use), statistics.median(p[2] for p in use))
+
+    def _ground_fixes(self):
+        if not self.relalt:
+            return list(self.fixes)
+        out = []
+        for t, la, lo in self.fixes:
+            if abs(self._relalt_at(t)) <= GROUND_RELALT_M:
+                out.append((t, la, lo))
+        return out
+
+    def _relalt_at(self, t):
+        best, bt = 0.0, None
+        for rt, v in self.relalt:
+            if rt > t:
+                break
+            best, bt = v, rt
+        return best if bt is not None else 0.0
+
+    # `honour_sim` is set once by the caller; the accessors below then report the real
+    # (simulator-off) samples only. Kept as state rather than a parameter so that no analysis
+    # mode can forget to pass it and silently average a simulated 100 m into a barometer.
+    honour_sim = True
+
+    def used_datum(self):
+        return self.real_datum(self.honour_sim)
+
+    def datum_first(self):
+        d = self.used_datum()
+        return d[0][1] if d else None
+
+    def datum_last(self):
+        d = self.used_datum()
+        return d[-1][1] if d else None
+
+    def datum_median(self):
+        d = self.used_datum()
+        return statistics.median(v for _, v in d) if d else None
+
+    def datum_span(self):
+        d = self.used_datum()
+        if not d:
+            return None
+        vs = [v for _, v in d]
+        return max(vs) - min(vs)
+
+    def ground_datum_window(self):
+        """The datum samples taken while the aircraft was on the ground and not simulated.
+
+        This is the drift measurement's raw material: `KeyTakeoffLocationAltitude` latches at
+        takeoff (measured, `2026-07-26-amsl-datum.md`), so any sample after the aircraft leaves
+        the ground is a frozen copy and would flatten the drift toward zero.
+        """
+        cut = self.first_airborne_t()
+        best = []
+        for lo, hi in self.connected_intervals():
+            out = []
+            for t, v in self.used_datum():
+                if not (lo <= t < hi):
+                    continue
+                if cut is not None and t >= cut:
+                    break
+                if abs(self._relalt_at(t)) > GROUND_RELALT_M:
+                    continue
+                out.append((t, v))
+            # "Longest" by elapsed time, not by sample count: the datum is change-driven, so a
+            # noisy minute logs more samples than a steady hour.
+            if out and (not best or out[-1][0] - out[0][0] > best[-1][0] - best[0][0]):
+                best = out
+        return best
+
+    def connected_intervals(self):
+        """The [start, end) windows in which the flight controller was actually attached.
+
+        Without this, a session that sat with the aircraft off for most of an hour reads as an
+        hour of rock-steady datum. Measured: `retest` reports `fcConnected false` from t = 88.6
+        to t = 3223.0 -- 52 of its 54 minutes -- while the naive window called the whole span one
+        stationary observation. A disconnected aircraft is not a stable barometer; it is no
+        barometer.
+        """
+        if not self.fc:
+            return [(0.0, float("inf"))]
+        out = []
+        open_at = None
+        for t, up in self.fc:
+            if up and open_at is None:
+                open_at = t
+            elif not up and open_at is not None:
+                out.append((open_at, t))
+                open_at = None
+        if open_at is not None:
+            out.append((open_at, float("inf")))
+        return out
+
+    def first_airborne_t(self):
+        """When the aircraft first left the ground, or None if it never did.
+
+        The drift window has to *end* here, not merely skip airborne samples. Because the datum
+        latches at takeoff and stops updating, a window running from the first pre-flight reading
+        to a post-landing one looks on-ground at both ends while containing an entire flight in
+        between -- and every rate computed across it is divided by the wrong elapsed time.
+        """
+        for t, v in self.relalt:
+            if abs(v) > GROUND_RELALT_M:
+                return t
+        return None
+
+    def sats_median(self):
+        return statistics.median(v for _, v in self.sats) if self.sats else None
+
+    def level_median(self):
+        return statistics.median(v for _, v in self.levels) if self.levels else None
+
+
+def read_sessions(paths):
+    """Read every file into a Session keyed by session id, merging multi-part recordings."""
+    sessions = {}
+    for p in sorted(paths):
+        base = os.path.basename(p)
+        sid = base.split(".")[0]
+        s = sessions.setdefault(sid, Session(sid))
+        s.parts.append(base)
+        part_closed = False
+        part_stats = False
+        with open(p, errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue  # a torn last line is exactly what truncation leaves
+                k = o.get("k")
+                t = o.get("t")
+                if isinstance(t, (int, float)):
+                    s.last_t = max(s.last_t, t)
+                if k == "header":
+                    if s.started_unix_ms is None or o.get("part") == 1:
+                        s.started_unix_ms = o.get("started_unix_ms")
+                    part_closed = False
+                    part_stats = False
+                elif k == "dji_field":
+                    f, n = o.get("f"), o.get("n")
+                    # fcConnected is a boolean field: it carries `v`, never the numeric `n`,
+                    # so it has to be read before the numeric guard below.
+                    if f == "fcConnected":
+                        v = o.get("v")
+                        if v in ("true", "false"):
+                            s.fc.append((t, v == "true"))
+                        continue
+                    if n is None:
+                        continue
+                    if f == "takeoffAltitudeAmsl":
+                        s.datum.append((t, float(n)))
+                    elif f == "satelliteCount":
+                        s.sats.append((t, float(n)))
+                    elif f == "gpsSignalLevel":
+                        s.levels.append((t, float(n)))
+                elif k == "dji_state":
+                    la, lo = o.get("lat"), o.get("lon")
+                    if isinstance(la, (int, float)) and isinstance(lo, (int, float)):
+                        s.fixes.append((t, float(la), float(lo)))
+                    ra = o.get("relalt")
+                    if isinstance(ra, (int, float)):
+                        s.relalt.append((t, float(ra)))
+                elif k == "event":
+                    code, msg = o.get("code"), o.get("msg") or ""
+                    if code == "sim_phase":
+                        # Messages are "simulator phase A → B (…)"; anything else (a START
+                        # request, an ACCEPTED notice) carries no phase and is ignored.
+                        if "phase" in msg and "→" in msg:
+                            after = msg.split("→", 1)[1].strip().split()[0].strip("().,")
+                            s.sim_events.append((t, after))
+                    elif code == "recorder_stop":
+                        part_closed = True
+                elif k == "stats":
+                    part_stats = True
+                    s.dropped = max(s.dropped, o.get("dropped") or 0)
+        # A multi-part session is whole iff its *last* part closed itself.
+        s.closed = part_closed
+        s.has_stats = part_stats
+    for s in sessions.values():
+        s.datum.sort()
+        s.relalt.sort()
+        s.fixes.sort()
+        s.sats.sort()
+        s.levels.sort()
+        s.sim_events.sort()
+        s.fc.sort()
+    return [sessions[k] for k in sorted(sessions)]
+
+
+def dedupe(sessions):
+    """One Session per recording. Returns (kept, [(dropped, kept_it_duplicated)]).
+
+    Several files on disk are renamed copies -- often truncated prefixes -- of a recording that
+    also exists under its own session id. `started_unix_ms` identifies the recording; the copy
+    with the most datum samples wins, and ties go to the one that closed itself.
+    """
+    by_start = defaultdict(list)
+    loners = []
+    for s in sessions:
+        if s.started_unix_ms is None:
+            loners.append(s)
+        else:
+            by_start[s.started_unix_ms].append(s)
+    kept, dropped = list(loners), []
+    for _, group in sorted(by_start.items()):
+        group.sort(key=lambda x: (len(x.datum), x.whole, x.last_t), reverse=True)
+        kept.append(group[0])
+        for other in group[1:]:
+            dropped.append((other, group[0]))
+    kept.sort(key=lambda s: (s.wall_of(0) or 0, s.sid))
+    return kept, dropped
+
+
+def group_by_site(sessions, radius=SITE_RADIUS_M):
+    """Single-link clustering of session origins. Returns [(centre, [sessions])]."""
+    placed = []
+    for s in sessions:
+        o = s.origin()
+        if o is None:
+            continue
+        for g in placed:
+            if metres_between(o, g["centre"]) <= radius:
+                g["members"].append((s, o))
+                lats = [p[1][0] for p in g["members"]]
+                lons = [p[1][1] for p in g["members"]]
+                g["centre"] = (statistics.median(lats), statistics.median(lons))
+                break
+        else:
+            placed.append({"centre": o, "members": [(s, o)]})
+    placed.sort(key=lambda g: -len(g["members"]))
+    return placed
+
+
+# ── filtering ─────────────────────────────────────────────────────────────────
+
+
+def usable(sessions, include_sim, include_cut, need_datum=True, need_whole=True):
+    """Apply the exclusions the module docstring promises, and say what was dropped.
+
+    `need_whole` is False for the between-session comparison: what that measures is where the
+    datum *started*, and a file cut short still carries its own opening readings honestly. It is
+    True for drift, where a missing tail shortens the very window being measured.
+    """
+    out, dropped = [], []
+    for s in sessions:
+        if need_datum and not s.datum:
+            dropped.append((s, "no takeoffAltitudeAmsl reading at all"))
+        elif need_datum and not s.used_datum():
+            dropped.append((s, "every reading was simulated or post-simulator-carryover"))
+        elif need_whole and not s.whole and not include_cut:
+            dropped.append((s, "open-or-cut (no closing recorder_stop + stats)"))
+        else:
+            out.append(s)
+    return out, dropped
+
+
+def num(v, dp=2):
+    """Format a number that may be absent. A '-' is a fact; a crash is not."""
+    return "-" if v is None else f"{v:.{dp}f}"
+
+
+def fmt_wall(unix_s):
+    if unix_s is None:
+        return "?"
+    import datetime
+
+    return datetime.datetime.fromtimestamp(unix_s).strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ── independent weather, for the one hypothesis that can be tested offline ─────
+#
+# Hourly surface pressure at the launch site from open-meteo's forecast API (ECMWF-backed),
+# inlined so this check re-runs without the network -- the same discipline as
+# `tmp/amsl-pressure-audit.py`. **No DJI data enters this table.** The model's grid elevation
+# for the point is PRESSURE_GRID_ELEV_M; the residual reported by `--pressure` is therefore
+# "how far above the model's ground the aircraft's pressure altitude puts it", and it is a
+# constant if and only if DJI is reporting ICAO-standard pressure altitude.
+PRESSURE_GRID_ELEV_M = 77.0
+PRESSURE_HOURLY = [
+    ("2026-07-25T00:00", 998.0),
+    ("2026-07-25T01:00", 998.0),
+    ("2026-07-25T02:00", 998.1),
+    ("2026-07-25T03:00", 997.5),
+    ("2026-07-25T04:00", 997.7),
+    ("2026-07-25T05:00", 997.7),
+    ("2026-07-25T06:00", 998.3),
+    ("2026-07-25T07:00", 999.0),
+    ("2026-07-25T08:00", 999.9),
+    ("2026-07-25T09:00", 1000.2),
+    ("2026-07-25T10:00", 1000.6),
+    ("2026-07-25T11:00", 1001.0),
+    ("2026-07-25T12:00", 1001.4),
+    ("2026-07-25T13:00", 1001.9),
+    ("2026-07-25T14:00", 1002.1),
+    ("2026-07-25T15:00", 1002.0),
+    ("2026-07-25T16:00", 1002.0),
+    ("2026-07-25T17:00", 1002.2),
+    ("2026-07-25T18:00", 1002.8),
+    ("2026-07-25T19:00", 1002.9),
+    ("2026-07-25T20:00", 1003.3),
+    ("2026-07-25T21:00", 1003.6),
+    ("2026-07-25T22:00", 1004.2),
+    ("2026-07-25T23:00", 1004.4),
+    ("2026-07-26T00:00", 1004.9),
+    ("2026-07-26T01:00", 1005.3),
+    ("2026-07-26T02:00", 1005.5),
+    ("2026-07-26T03:00", 1005.4),
+    ("2026-07-26T04:00", 1005.6),
+    ("2026-07-26T05:00", 1005.4),
+    ("2026-07-26T06:00", 1006.2),
+    ("2026-07-26T07:00", 1006.2),
+    ("2026-07-26T08:00", 1006.9),
+    ("2026-07-26T09:00", 1007.0),
+    ("2026-07-26T10:00", 1007.1),
+    ("2026-07-26T11:00", 1007.1),
+    ("2026-07-26T12:00", 1006.9),
+    ("2026-07-26T13:00", 1007.1),
+    ("2026-07-26T14:00", 1006.9),
+    ("2026-07-26T15:00", 1007.0),
+    ("2026-07-26T16:00", 1006.2),
+    ("2026-07-26T17:00", 1006.0),
+    ("2026-07-26T18:00", 1005.8),
+    ("2026-07-26T19:00", 1005.8),
+    ("2026-07-26T20:00", 1006.2),
+    ("2026-07-26T21:00", 1006.4),
+    ("2026-07-26T22:00", 1006.8),
+    ("2026-07-26T23:00", 1006.7),
+    ("2026-07-27T00:00", 1006.9),
+    ("2026-07-27T01:00", 1006.8),
+    ("2026-07-27T02:00", 1006.4),
+    ("2026-07-27T03:00", 1006.2),
+    ("2026-07-27T04:00", 1006.0),
+    ("2026-07-27T05:00", 1005.6),
+    ("2026-07-27T06:00", 1005.6),
+    ("2026-07-27T07:00", 1005.8),
+    ("2026-07-27T08:00", 1006.1),
+    ("2026-07-27T09:00", 1006.1),
+    ("2026-07-27T10:00", 1006.2),
+    ("2026-07-27T11:00", 1006.1),
+    ("2026-07-27T12:00", 1006.2),
+    ("2026-07-27T13:00", 1006.1),
+    ("2026-07-27T14:00", 1006.1),
+    ("2026-07-27T15:00", 1005.2),
+    ("2026-07-27T16:00", 1004.7),
+    ("2026-07-27T17:00", 1004.3),
+    ("2026-07-27T18:00", 1004.3),
+    ("2026-07-27T19:00", 1004.0),
+    ("2026-07-27T20:00", 1004.3),
+    ("2026-07-27T21:00", 1004.6),
+    ("2026-07-27T22:00", 1005.0),
+    ("2026-07-27T23:00", 1005.1),
+]
+# Provenance of the two lines above, kept next to the numbers:
+# open-meteo forecast API, latitude=37.99386 longitude=23.72533, model grid elevation 77.0 m
+# fetched 2026-07-27; hourly surface_pressure (hPa), local time Europe/Athens
+
+
+def isa_pressure_altitude(p_hpa):
+    """ICAO-standard pressure altitude, metres, for a station pressure in hPa.
+
+    h = (T0/L) * (1 - (p/p0)^(R*L/g)) with the ISA constants T0 = 288.15 K, L = 0.0065 K/m,
+    R = 287.053 J/(kg K), g = 9.80665 m/s^2 -- i.e. the altitude at which the standard
+    atmosphere has this pressure, referenced to 1013.25 hPa. Checked in --selftest against the
+    published standard-atmosphere levels.
+    """
+    return 44330.77 * (1.0 - (p_hpa / 1013.25) ** 0.190263)
+
+
+def pressure_at(unix_s):
+    """Linear interpolation of the hourly series at a local wall-clock instant."""
+    import datetime
+
+    dt = datetime.datetime.fromtimestamp(unix_s)
+    key = dt.strftime("%Y-%m-%dT%H:00")
+    idx = {t: i for i, (t, _) in enumerate(PRESSURE_HOURLY)}
+    i = idx.get(key)
+    if i is None:
+        return None
+    p0 = PRESSURE_HOURLY[i][1]
+    if i + 1 >= len(PRESSURE_HOURLY):
+        return p0
+    p1 = PRESSURE_HOURLY[i + 1][1]
+    frac = (dt.minute * 60 + dt.second) / 3600.0
+    return p0 + (p1 - p0) * frac
+
+
+def mode_pressure(sessions, args):
+    """Test the one hypothesis the recorded data plus free weather data can settle.
+
+    If `takeoffAltitudeAmsl` is ICAO pressure altitude rather than an elevation, then
+    DJI_reading - PA(ISA at the site) is the aircraft's height above the model's ground, and is
+    therefore *constant* while the raw reading swings by tens of metres. If it is an elevation,
+    the residual is what swings. This is the same argument as
+    `docs/measurements/2026-07-26-amsl-datum.md`, run over every session rather than 18 rows.
+    """
+    use, _ = usable(sessions, args.include_sim, args.include_cut, need_whole=False)
+    hdr = (
+        f"{'session':<22} {'start (local)':<20} {'DJI (m)':>8} {'p_sfc':>8} "
+        f"{'PA(ISA)':>8} {'residual':>9}"
+    )
+    print(hdr)
+    print("-" * len(hdr))
+    raws, res = [], []
+    for s in sorted(use, key=lambda x: x.wall_of(0) or 0):
+        v = s.settled_datum()
+        w = s.wall_of(0)
+        if v is None or w is None:
+            continue
+        pr = pressure_at(w)
+        if pr is None:
+            print(f"{s.sid:<22} {fmt_wall(w):<20} {v:>8.2f}   no pressure row for this hour")
+            continue
+        pa = isa_pressure_altitude(pr)
+        raws.append(v)
+        res.append(v - pa)
+        print(f"{s.sid:<22} {fmt_wall(w):<20} {v:>8.2f} {pr:>8.2f} {pa:>8.2f} {v - pa:>+9.2f}")
+    if len(res) < 3:
+        print("\ntoo few sessions to compare")
+        return 1
+    print(
+        f"\nDJI raw:   {min(raws):.2f} .. {max(raws):.2f}  = {max(raws) - min(raws):.2f} m "
+        f"of spread, sd {statistics.stdev(raws):.2f} m"
+    )
+    print(
+        f"residual:  {min(res):+.2f} .. {max(res):+.2f}  = {max(res) - min(res):.2f} m "
+        f"of spread, sd {statistics.stdev(res):.2f} m, mean {statistics.mean(res):+.2f} m"
+    )
+    var_removed = 1.0 - (statistics.variance(res) / statistics.variance(raws))
+    print(
+        f"\nsubtracting the independently-measured pressure altitude removes "
+        f"{100 * var_removed:.1f} % of the variance."
+    )
+    print(
+        f"implied site elevation: {PRESSURE_GRID_ELEV_M:.0f} m grid + "
+        f"{statistics.mean(res):.2f} m mean residual = "
+        f"{PRESSURE_GRID_ELEV_M + statistics.mean(res):.1f} m "
+        f"(sd {statistics.stdev(res):.2f} m)"
+    )
+    print(
+        "\nThe hourly series is a model reanalysis on a coarse grid, not a barometer at the "
+        "site.\nIt can carry an argument about tens of metres; it cannot settle one about "
+        "one metre."
+    )
+    return 0
+
+
+# ── modes ─────────────────────────────────────────────────────────────────────
+
+
+def mode_sessions(sessions, args):
+    print(f"{len(sessions)} session(s)\n")
+    hdr = (
+        f"{'session':<20} {'start (local)':<20} {'dur':>7} {'whole':<6} {'sim':<4} "
+        f"{'n':>4} {'first':>8} {'last':>8} {'span':>6} {'sats':>5} {'lvl':>4}"
+    )
+    print(hdr)
+    print("-" * len(hdr))
+    for s in sessions:
+        span = s.datum_span()
+        print(
+            f"{s.sid:<20} {fmt_wall(s.wall_of(0)):<20} {s.last_t:>7.0f} "
+            f"{('yes' if s.whole else 'CUT'):<6} {('SIM' if s.simulated else '-'):<4} "
+            f"{len(s.used_datum()):>4} "
+            f"{num(s.datum_first()):>8} "
+            f"{num(s.datum_last()):>8} "
+            f"{num(span):>6} "
+            f"{num(s.sats_median(), 0):>5} "
+            f"{num(s.level_median(), 0):>4}"
+        )
+    print(
+        "\n'CUT' means the file does not end in recorder_stop + stats: it is either a "
+        "session that\nwas still open when it was copied, or one whose process died. "
+        "Either way its tail is\nmissing and nothing may be concluded from its last minutes."
+        "\n'SIM' means the simulator ran at some point; n / first / last / span count only "
+        "the\nsimulator-off samples, so a SIM row's numbers are still real barometer readings."
+    )
+
+
+def mode_between(sessions, args):
+    use, dropped = usable(sessions, args.include_sim, args.include_cut, need_whole=False)
+    print(f"{len(use)} session(s) used, {len(dropped)} excluded")
+    for s, why in dropped:
+        print(f"  excluded {s.sid:<20} {why}")
+    print()
+    groups = group_by_site(use, args.radius)
+    if not groups:
+        print("no session carried both a fix and a datum reading")
+        return 1
+    for i, g in enumerate(groups, 1):
+        mem = g["members"]
+        c = g["centre"]
+        print(
+            f"── site {i}: {c[0]:.7f}, {c[1]:.7f} — {len(mem)} session(s), "
+            f"radius <= {args.radius:.0f} m"
+        )
+        spread = max(metres_between(o, c) for _, o in mem) if len(mem) > 1 else 0.0
+        print(f"   origins scatter {spread:.1f} m from the site centre")
+        pick = {
+            "settled": lambda x: x.settled_datum(),
+            "median": lambda x: x.datum_median(),
+            "first": lambda x: x.datum_first(),
+        }[args.stat]
+        rows = sorted(((pick(s), s) for s, o in mem), key=lambda r: r[0])
+        print(
+            f"   {'session':<20} {'start (local)':<20} {args.stat:>8} {'first':>8} "
+            f"{'median':>8} {'min':>8} {'max':>8} {'n':>4} {'sim':>4} {'whole':>6}"
+        )
+        for v, s in rows:
+            vs = [d for _, d in s.used_datum()]
+            print(
+                f"   {s.sid:<20} {fmt_wall(s.wall_of(0)):<20} "
+                f"{v:>8.2f} {s.datum_first():>8.2f} {s.datum_median():>8.2f} "
+                f"{min(vs):>8.2f} {max(vs):>8.2f} {len(vs):>4} "
+                f"{('SIM' if s.simulated else '-'):>4} "
+                f"{('yes' if s.whole else 'CUT'):>6}"
+            )
+        vals = [v for v, _ in rows]
+        if len(vals) < args.min_samples:
+            print(f"   fewer than {args.min_samples} sessions — no spread reported\n")
+            continue
+        lo_v, lo_s = rows[0]
+        hi_v, hi_s = rows[-1]
+        print(
+            f"\n   spread of the session {args.stat} values: min {min(vals):.2f}  "
+            f"median {statistics.median(vals):.2f}  max {max(vals):.2f}  "
+            f"range {max(vals) - min(vals):.2f} m"
+        )
+        if len(vals) > 1:
+            print(f"   sd {statistics.stdev(vals):.2f} m")
+        print(f"   worst pair: {hi_v - lo_v:.2f} m apart")
+        print(f"     high  {hi_s.sid}  {fmt_wall(hi_s.wall_of(0))}  {hi_v:.2f} m")
+        print(f"     low   {lo_s.sid}  {fmt_wall(lo_s.wall_of(0))}  {lo_v:.2f} m")
+        print()
+    return 0
+
+
+def drift_of(s, min_seconds):
+    """Least-squares slope of the ground-segment datum, m/min, plus the raw endpoints."""
+    pts = s.ground_datum_window()
+    if len(pts) < 3:
+        return None
+    t0, t1 = pts[0][0], pts[-1][0]
+    if t1 - t0 < min_seconds:
+        return None
+    n = len(pts)
+    mt = sum(p[0] for p in pts) / n
+    mv = sum(p[1] for p in pts) / n
+    num = sum((p[0] - mt) * (p[1] - mv) for p in pts)
+    den = sum((p[0] - mt) ** 2 for p in pts)
+    if den == 0:
+        return None
+    slope_per_s = num / den
+    vs = [p[1] for p in pts]
+    return {
+        "n": n,
+        "t0": t0,
+        "t1": t1,
+        "minutes": (t1 - t0) / 60.0,
+        "slope_m_per_min": slope_per_s * 60.0,
+        "endpoint_delta": pts[-1][1] - pts[0][1],
+        "peak_to_peak": max(vs) - min(vs),
+        "first": pts[0][1],
+        "last": pts[-1][1],
+    }
+
+
+def relalt_ground_drift(s, t0, t1):
+    """What `relativeAltitude` -- the number we actually publish -- did over the same window.
+
+    The comparison matters: the datum's wander is only interesting if the channel it would be
+    added to is steadier than it. `relalt` is dense (the state stream, ~5 Hz) rather than
+    change-driven, so this is a real sample count, not a change count.
+    """
+    pts = [(t, v) for (t, v) in s.relalt if t0 <= t <= t1]
+    if len(pts) < 10:
+        return None
+    vs = [v for _, v in pts]
+    n = len(pts)
+    mt = sum(p[0] for p in pts) / n
+    mv = sum(vs) / n
+    den = sum((p[0] - mt) ** 2 for p in pts)
+    slope = (sum((p[0] - mt) * (p[1] - mv) for p in pts) / den) if den else 0.0
+    return {
+        "n": n,
+        "peak_to_peak": max(vs) - min(vs),
+        "slope_m_per_min": slope * 60.0,
+        "endpoint_delta": vs[-1] - vs[0],
+    }
+
+
+def mode_drift(sessions, args):
+    use, dropped = usable(sessions, args.include_sim, args.include_cut)
+    print(f"{len(use)} session(s) used, {len(dropped)} excluded")
+    for s, why in dropped:
+        print(f"  excluded {s.sid:<20} {why}")
+    print()
+    hdr = (
+        f"{'session':<20} {'start (local)':<20} {'ground min':>11} {'n':>4} "
+        f"{'first':>8} {'last':>8} {'delta':>7} {'p-p':>6} {'m/min':>7} | "
+        f"{'relalt n':>8} {'p-p':>6} {'m/min':>7}"
+    )
+    print(hdr)
+    print("-" * len(hdr))
+    rows = []
+    for s in sorted(use, key=lambda x: x.wall_of(0) or 0):
+        d = drift_of(s, args.min_ground)
+        if d is None:
+            continue
+        rows.append((s, d))
+        r = relalt_ground_drift(s, d["t0"], d["t1"])
+        rtxt = (
+            f"{r['n']:>8} {r['peak_to_peak']:>6.2f} {r['slope_m_per_min']:>+7.3f}"
+            if r
+            else f"{'-':>8} {'-':>6} {'-':>7}"
+        )
+        print(
+            f"{s.sid:<20} {fmt_wall(s.wall_of(0)):<20} {d['minutes']:>11.1f} {d['n']:>4} "
+            f"{d['first']:>8.2f} {d['last']:>8.2f} {d['endpoint_delta']:>+7.2f} "
+            f"{d['peak_to_peak']:>6.2f} {d['slope_m_per_min']:>+7.3f} | {rtxt}"
+        )
+    if not rows:
+        print(f"(no session had >= {args.min_ground:.0f} s of on-ground datum samples)")
+        return 1
+    slopes = [d["slope_m_per_min"] for _, d in rows]
+    pps = [d["peak_to_peak"] for _, d in rows]
+    print(
+        f"\ndrift rate, m/min:  min {min(slopes):+.3f}  median {statistics.median(slopes):+.3f}  "
+        f"max {max(slopes):+.3f}"
+    )
+    print(
+        f"|drift rate|:       median {statistics.median([abs(x) for x in slopes]):.3f}  "
+        f"max {max(abs(x) for x in slopes):.3f}"
+    )
+    print(
+        f"peak-to-peak, m:    min {min(pps):.2f}  median {statistics.median(pps):.2f}  "
+        f"max {max(pps):.2f}"
+    )
+    rel = [relalt_ground_drift(s, d["t0"], d["t1"]) for s, d in rows]
+    rel = [r for r in rel if r]
+    if rel:
+        rp = [r["peak_to_peak"] for r in rel]
+        rs = [abs(r["slope_m_per_min"]) for r in rel]
+        print("relativeAltitude over the same windows, on the ground:")
+        print(
+            f"  peak-to-peak, m:  min {min(rp):.2f}  median {statistics.median(rp):.2f}  "
+            f"max {max(rp):.2f}"
+        )
+        print(f"  |drift|, m/min:   median {statistics.median(rs):.3f}  max {max(rs):.3f}")
+    longest = max(rows, key=lambda r: r[1]["minutes"])
+    print(
+        f"\nlongest stationary window: {longest[0].sid}  {longest[1]['minutes']:.1f} min, "
+        f"{longest[1]['endpoint_delta']:+.2f} m end to end "
+        f"({longest[1]['slope_m_per_min']:+.3f} m/min)"
+    )
+    return 0
+
+
+def mode_truth(sessions, args):
+    use, dropped = usable(sessions, args.include_sim, args.include_cut, need_whole=False)
+    print(f"ground truth used: {args.truth:.2f} m (source: {args.truth_source})")
+    print(f"{len(use)} session(s) used, {len(dropped)} excluded\n")
+    hdr = f"{'session':<20} {'start (local)':<20} {'median':>8} {'error':>8} {'sats':>5} {'lvl':>4}"
+    print(hdr)
+    print("-" * len(hdr))
+    errs = []
+    for s in sorted(use, key=lambda x: x.wall_of(0) or 0):
+        v = s.settled_datum()
+        if v is None:
+            continue
+        e = v - args.truth
+        errs.append(e)
+        print(
+            f"{s.sid:<20} {fmt_wall(s.wall_of(0)):<20} {v:>8.2f} {e:>+8.2f} "
+            f"{num(s.sats_median(), 0):>5} "
+            f"{num(s.level_median(), 0):>4}"
+        )
+    if not errs:
+        print("(nothing to compare)")
+        return 1
+    print(
+        f"\nerror vs truth, m:  min {min(errs):+.2f}  median {statistics.median(errs):+.2f}  "
+        f"max {max(errs):+.2f}  range {max(errs) - min(errs):.2f}"
+    )
+    if len(errs) > 1:
+        print(
+            f"                    mean {statistics.mean(errs):+.2f}  "
+            f"sd {statistics.stdev(errs):.2f}"
+        )
+    print(
+        "\nA *fixed* bias is correctable: subtract the mean and quote the sd. A bias whose sd "
+        "is\nlarge compared to the height a vehicle flies at is not correctable and must not be "
+        "published\nas an absolute height."
+    )
+    return 0
+
+
+def mode_repeat(sessions, args):
+    """How far apart two sessions' datums are, as a function of the gap between them.
+
+    This is the measurement that separates "the datum jumps at random between power cycles"
+    from "the datum tracks something that changes over hours". If consecutive sessions minutes
+    apart agree to a fraction of a metre while sessions hours apart differ by tens, then the
+    quantity is not jumping — it is following a slow external variable, and every power cycle in
+    between is innocent.
+    """
+    use, _ = usable(sessions, args.include_sim, args.include_cut, need_whole=False)
+    pts = []
+    for g in group_by_site(use, args.radius):
+        mem = sorted(
+            ((s.wall_of(0), s) for s, _ in g["members"] if s.wall_of(0)), key=lambda r: r[0]
+        )
+        for (t1, s1), (t2, s2) in itertools.pairwise(mem):
+            v1, v2 = s1.settled_datum(), s2.settled_datum()
+            if v1 is None or v2 is None:
+                continue
+            pts.append(((t2 - t1) / 60.0, abs(v2 - v1), s1, s2))
+    if not pts:
+        print("no two sessions at the same site to compare")
+        return 1
+    pts.sort()
+    print(f"{len(pts)} consecutive same-site pair(s), ordered by the gap between them\n")
+    hdr = f"{'gap (min)':>10} {'|delta| (m)':>12} {'m/h':>8}  earlier -> later"
+    print(hdr)
+    print("-" * (len(hdr) + 30))
+    for gap, d, s1, s2 in pts:
+        rate = d / (gap / 60.0) if gap > 0 else float("nan")
+        print(f"{gap:>10.1f} {d:>12.2f} {rate:>8.2f}  {s1.sid} -> {s2.sid}")
+    for lo, hi, label in [
+        (0, 5, "under 5 min"),
+        (5, 60, "5 min to 1 h"),
+        (60, 6 * 60, "1 h to 6 h"),
+        (6 * 60, 1e9, "over 6 h"),
+    ]:
+        band = [d for gap, d, _, _ in pts if lo <= gap < hi]
+        if band:
+            print(
+                f"\n{label:<14} n={len(band):<3} |delta| min {min(band):.2f}  "
+                f"median {statistics.median(band):.2f}  max {max(band):.2f}"
+            )
+        else:
+            print(f"\n{label:<14} no pairs")
+    return 0
+
+
+def pearson(xs, ys):
+    n = len(xs)
+    if n < 3:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=False))
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if dx == 0 or dy == 0:
+        return None
+    return num / (dx * dy)
+
+
+def mode_correlate(sessions, args):
+    use, _ = usable(sessions, args.include_sim, args.include_cut, need_whole=False)
+    rows = []
+    for s in use:
+        v = s.settled_datum()
+        if v is None or s.wall_of(0) is None:
+            continue
+        import datetime
+
+        dt = datetime.datetime.fromtimestamp(s.wall_of(0))
+        rows.append(
+            {
+                "sid": s.sid,
+                "datum": v,
+                "sats": s.sats_median(),
+                "level": s.level_median(),
+                "hour": dt.hour + dt.minute / 60.0,
+                "epoch_h": s.wall_of(0) / 3600.0,
+                "length_s": s.last_t,
+            }
+        )
+    if len(rows) < 3:
+        print(f"{len(rows)} usable session(s) — too few to correlate anything")
+        return 1
+    print(f"{len(rows)} session(s)\n")
+    print(f"{'against':<24} {'n':>4} {'pearson r':>10}")
+    print("-" * 40)
+    for name, key in [
+        ("satelliteCount (median)", "sats"),
+        ("gpsSignalLevel (median)", "level"),
+        ("hour of day", "hour"),
+        ("absolute time", "epoch_h"),
+        ("session length (s)", "length_s"),
+    ]:
+        pairs = [(r[key], r["datum"]) for r in rows if r.get(key) is not None]
+        r = pearson([p[0] for p in pairs], [p[1] for p in pairs])
+        print(f"{name:<24} {len(pairs):>4} {(f'{r:+.3f}' if r is not None else 'n/a'):>10}")
+    print(
+        "\nWeather is the obvious confound and is not recorded by this bridge. A correlation "
+        "with\n'absolute time' is therefore ambiguous between a clock-like sensor drift and the "
+        "pressure\nchanging over the same hours; this tool cannot separate them and does not "
+        "try."
+    )
+    return 0
+
+
+# ── self-test ─────────────────────────────────────────────────────────────────
+
+
+def _write_synth(
+    path,
+    sid,
+    started_unix_ms,
+    datum_points,
+    lat,
+    lon,
+    close=True,
+    sim_at=None,
+    sats=14,
+    level=5,
+    relalt_points=None,
+    observe_off=True,
+    sim_off_at=None,
+    disconnects=None,
+):
+    """Write a minimal but format-faithful `mini4pro-flightlog-1` file.
+
+    `sim_at` starts the simulator; `observe_off` decides whether the recorder saw the phase as
+    OFF first (the difference between a trustworthy pre-simulator segment and a session that
+    opened mid-simulation). `sim_off_at` stops it again.
+    """
+    with open(path, "w") as fh:
+
+        def emit(o):
+            fh.write(json.dumps(o) + "\n")
+
+        emit(
+            {
+                "t": 0.0,
+                "k": "header",
+                "format": "mini4pro-flightlog-1",
+                "schema": 1,
+                "session": sid,
+                "part": 1,
+                "started_unix_ms": started_unix_ms,
+            }
+        )
+        emit({"t": 0.001, "k": "event", "code": "recorder_start", "sev": "info"})
+        emit({"t": 0.002, "k": "dji_field", "f": "satelliteCount", "v": str(sats), "n": sats})
+        emit({"t": 0.003, "k": "dji_field", "f": "gpsSignalLevel", "v": str(level), "n": level})
+        emit({"t": 0.0, "k": "dji_field", "f": "fcConnected", "v": "true"})
+        for dt, up in disconnects or []:
+            emit({"t": dt, "k": "dji_field", "f": "fcConnected", "v": "true" if up else "false"})
+        if sim_at is not None:
+            if observe_off:
+                emit(
+                    {
+                        "t": 0.004,
+                        "k": "event",
+                        "code": "sim_phase",
+                        "sev": "warn",
+                        "msg": "simulator phase UNKNOWN → OFF (DJI reports started=false)",
+                    }
+                )
+            emit(
+                {
+                    "t": sim_at,
+                    "k": "event",
+                    "code": "sim_phase",
+                    "sev": "warn",
+                    "msg": "simulator START requested at 1.0,2.0 sats=14 — DJI has not confirmed",
+                }
+            )
+            emit(
+                {
+                    "t": sim_at,
+                    "k": "event",
+                    "code": "sim_phase",
+                    "sev": "warn",
+                    "msg": "simulator phase STARTING → ACTIVE (DJI reports started=true)",
+                }
+            )
+        if sim_off_at is not None:
+            emit(
+                {
+                    "t": sim_off_at,
+                    "k": "event",
+                    "code": "sim_phase",
+                    "sev": "warn",
+                    "msg": "simulator phase ACTIVE → OFF (DJI reports started=false)",
+                }
+            )
+        rel = relalt_points or []
+        merged = [("d", t, v) for t, v in datum_points] + [("r", t, v) for t, v in rel]
+        merged.sort(key=lambda x: x[1])
+        last_t = 0.0
+        for kind, t, v in merged:
+            last_t = t
+            if kind == "d":
+                emit({"t": t, "k": "dji_field", "f": "takeoffAltitudeAmsl", "v": str(v), "n": v})
+            else:
+                emit({"t": t, "k": "dji_state", "lat": lat, "lon": lon, "relalt": v})
+        # A fix stream so origin() has something to take a median of.
+        for _i in range(6):
+            last_t += 0.5
+            emit({"t": last_t, "k": "dji_state", "lat": lat, "lon": lon, "relalt": 0.0})
+        if close:
+            emit({"t": last_t + 0.01, "k": "event", "code": "recorder_stop", "sev": "info"})
+            emit({"t": last_t + 0.02, "k": "stats", "written": 1, "dropped": 0, "part": 1})
+
+
+def selftest(verbose=False):
+    """Plant known numbers, assert this tool recovers them. Returns the failure count."""
+    failures = []
+
+    def check(name, ok, detail=""):
+        if ok:
+            if verbose:
+                print(f"  PASS {name} {detail}")
+        else:
+            failures.append(f"{name}: {detail}")
+            print(f"  FAIL {name} {detail}")
+
+    tmp = tempfile.mkdtemp(prefix="altwander-")
+    BASE = 1785000000000  # arbitrary epoch ms
+    SITE_A = (37.99386, 23.72533)
+    SITE_B = (37.99386 + 0.01, 23.72533)  # ~1.1 km away — must not merge
+
+    # 1. A clean session with a planted linear drift of exactly +0.5 m/min over 10 min.
+    pts = [(i * 30.0, 100.0 + 0.25 * i) for i in range(21)]  # 30 s steps, 0.25 m each
+    _write_synth(
+        f"{tmp}/20260101-000000.001.jsonl",
+        "20260101-000000",
+        BASE,
+        pts,
+        *SITE_A,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 2. Same site, datum 40 m lower — the planted between-session spread.
+    pts2 = [(i * 30.0, 60.0) for i in range(21)]
+    _write_synth(
+        f"{tmp}/20260101-010000.001.jsonl",
+        "20260101-010000",
+        BASE + 3600_000,
+        pts2,
+        *SITE_A,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 3. Same site again, mid value, to give the group a median.
+    pts3 = [(i * 30.0, 80.0) for i in range(21)]
+    _write_synth(
+        f"{tmp}/20260101-020000.001.jsonl",
+        "20260101-020000",
+        BASE + 7200_000,
+        pts3,
+        *SITE_A,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 4. A different site 1.1 km away — must land in its own group.
+    _write_synth(
+        f"{tmp}/20260101-030000.001.jsonl",
+        "20260101-030000",
+        BASE + 10800_000,
+        [(0.0, 500.0), (30.0, 500.0), (60.0, 500.0)],
+        *SITE_B,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 5. A truncated session — no recorder_stop.
+    _write_synth(
+        f"{tmp}/20260101-040000.001.jsonl",
+        "20260101-040000",
+        BASE + 14400_000,
+        [(0.0, 999.0), (30.0, 999.0), (60.0, 999.0)],
+        *SITE_A,
+        close=False,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 6. A simulated session with an observed OFF at t=0.004 and ACTIVE at t=5: the three
+    #    readings inside that window are real barometer, the two after it are the simulator.
+    _write_synth(
+        f"{tmp}/20260101-050000.001.jsonl",
+        "20260101-050000",
+        BASE + 18000_000,
+        [(1.0, 777.0), (2.0, 777.0), (3.0, 777.0), (30.0, 100.0), (60.0, 100.0)],
+        *SITE_A,
+        sim_at=5.0,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 7. Airborne after t=60: the datum latches, so drift must ignore the frozen tail.
+    air = [(i * 30.0, 200.0 + 0.25 * i) for i in range(3)] + [
+        (90.0 + i * 30.0, 200.5) for i in range(10)
+    ]
+    rel = [(0.0, 0.0), (75.0, 30.0)]
+    _write_synth(
+        f"{tmp}/20260101-060000.001.jsonl",
+        "20260101-060000",
+        BASE + 21600_000,
+        air,
+        *SITE_A,
+        relalt_points=rel,
+    )
+
+    # 8. A session that ran the simulator between t=100 and t=200. Its real barometer readings
+    #    are the 60 m ones outside that window; the 100 m ones inside it are the simulator.
+    mixed = (
+        [(t, 60.0) for t in (0.0, 30.0, 60.0, 90.0)]
+        + [(t, 100.0) for t in (110.0, 140.0, 170.0)]
+        + [(t, 61.0) for t in (210.0, 240.0)]
+    )
+    _write_synth(
+        f"{tmp}/20260101-070000.001.jsonl",
+        "20260101-070000",
+        BASE + 25200_000,
+        mixed,
+        *SITE_A,
+        sim_at=100.0,
+        sim_off_at=200.0,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 9. A session that opened with the simulator already running -- no observed OFF. Its head
+    #    is the previous run's pinned 100 m decaying back and must be discarded entirely.
+    carry = [(0.0, 101.6), (30.0, 99.5), (60.0, 97.5)]
+    _write_synth(
+        f"{tmp}/20260101-080000.001.jsonl",
+        "20260101-080000",
+        BASE + 28800_000,
+        carry,
+        *SITE_A,
+        sim_at=70.0,
+        observe_off=False,
+        relalt_points=[(0.0, 0.0)],
+    )
+    # 10. A renamed copy of session 3 -- same started_unix_ms, fewer samples. Must be merged.
+    _write_synth(
+        f"{tmp}/renamed-copy.jsonl",
+        "renamed-copy",
+        BASE + 7200_000,
+        [(0.0, 80.0)],
+        *SITE_A,
+        relalt_points=[(0.0, 0.0)],
+    )
+
+    # 11. A session that sat "still" for 20 min but had the aircraft detached for 18 of them.
+    #     Only the connected head may be measured, and it is 2 min long, not 20.
+    det = [
+        (0.0, 50.0),
+        (30.0, 50.5),
+        (60.0, 51.0),
+        (90.0, 51.5),
+        (120.0, 52.0),
+        (1140.0, 52.5),
+        (1170.0, 53.0),
+    ]
+    _write_synth(
+        f"{tmp}/20260101-090000.001.jsonl",
+        "20260101-090000",
+        BASE + 32400_000,
+        det,
+        *SITE_A,
+        relalt_points=[(0.0, 0.0)],
+        disconnects=[(125.0, False), (1130.0, True)],
+    )
+
+    files = [os.path.join(tmp, f) for f in sorted(os.listdir(tmp))]
+    ss = read_sessions(files)
+    by = {s.sid: s for s in ss}
+    Session.honour_sim = True
+
+    check("reads every session", len(ss) == 11, f"got {len(ss)}")
+
+    # Connection gating.
+    det_s = by["20260101-090000"]
+    dw = det_s.ground_datum_window()
+    check(
+        "the drift window stops at a flight-controller disconnect",
+        [round(t, 1) for t, _ in dw] == [0.0, 30.0, 60.0, 90.0, 120.0],
+        f"got {dw}",
+    )
+    dd = drift_of(det_s, 60)
+    check(
+        "a 20 min session with an 18 min disconnect measures 2 min, not 20",
+        dd is not None and abs(dd["minutes"] - 2.0) < 1e-6,
+        f"got {dd and dd['minutes']:.3f} min",
+    )
+    check(
+        "connected_intervals splits on the disconnect",
+        det_s.connected_intervals() == [(0.0, 125.0), (1130.0, float("inf"))],
+        f"got {det_s.connected_intervals()}",
+    )
+
+    # Simulator windowing.
+    mix = by["20260101-070000"]
+    used = [v for _, v in mix.used_datum()]
+    # Three, not six. The t=0.0 sample precedes the OFF observation at t=0.004, and a reading
+    # taken before the recorder has seen any phase at all is not *known* to be simulator-off.
+    # The t=210 and t=240 samples fall inside the 60 s settle after the simulator stopped at
+    # t=200, where the datum is still relaxing off the pinned 100 m. Both exclusions are the
+    # conservative direction.
+    check(
+        "uses only the samples known to be simulator-off and settled",
+        used == [60.0, 60.0, 60.0],
+        f"got {used}",
+    )
+    check(
+        "the post-simulator settle window is honoured",
+        mix.real_intervals()[1][0] == 260.0,
+        f"got {mix.real_intervals()}",
+    )
+    check(
+        "a shorter settle lets the post-simulator samples back in",
+        [v for t, v in mix.datum if any(a <= t < b for a, b in mix.real_intervals(settle=5.0))]
+        == [60.0, 60.0, 60.0, 61.0, 61.0],
+        "",
+    )
+    check(
+        "no settle is charged to a session that has not yet run the simulator",
+        by["20260101-050000"].real_intervals()[0][0] == 0.004,
+        f"got {by['20260101-050000'].real_intervals()}",
+    )
+    check("simulator-off samples exclude the pinned 100 m", 100.0 not in used, f"got {used}")
+    cy = by["20260101-080000"]
+    check(
+        "discards the head of a session that opened mid-simulation",
+        cy.used_datum() == [],
+        f"got {cy.used_datum()}",
+    )
+    check("that session is still flagged sim", cy.simulated is True, "")
+    check(
+        "pre-simulator segment of an observed-OFF session is kept",
+        [v for _, v in by["20260101-050000"].used_datum()] == [777.0, 777.0, 777.0],
+        f"got {by['20260101-050000'].used_datum()}",
+    )
+
+    # The settled statistic: last on-ground reading, past the transient.
+    check(
+        "settled_datum is the last on-ground reading",
+        by["20260101-070000"].settled_datum() == 60.0,
+        f"got {by['20260101-070000'].settled_datum()}",
+    )
+    check(
+        "settled_datum differs from the median when there is a transient",
+        abs(by["20260101-000000"].settled_datum() - 105.0) < 1e-9
+        and abs(by["20260101-000000"].datum_median() - 102.5) < 1e-9,
+        f"settled {by['20260101-000000'].settled_datum()}, "
+        f"median {by['20260101-000000'].datum_median()}",
+    )
+    check(
+        "settled_datum ignores the latched airborne tail",
+        abs(by["20260101-060000"].settled_datum() - 200.5) < 1e-9,
+        f"got {by['20260101-060000'].settled_datum()}",
+    )
+
+    # Dedupe.
+    kept, dups = dedupe(ss)
+    check(
+        "merges a renamed copy away",
+        len(kept) == 10 and len(dups) == 1,
+        f"kept {len(kept)}, dropped {len(dups)}",
+    )
+    if dups:
+        check(
+            "keeps the richer copy of a duplicated recording",
+            dups[0][0].sid == "renamed-copy" and dups[0][1].sid == "20260101-020000",
+            f"dropped {dups[0][0].sid} in favour of {dups[0][1].sid}",
+        )
+    check("truncated session flagged CUT", by["20260101-040000"].whole is False, "")
+    check("clean session flagged whole", by["20260101-000000"].whole is True, "")
+    check("simulated session flagged sim", by["20260101-050000"].simulated is True, "")
+    check("non-simulated session not flagged sim", by["20260101-000000"].simulated is False, "")
+
+    # Drift: planted +0.5 m/min exactly.
+    d = drift_of(by["20260101-000000"], 60)
+    check(
+        "recovers planted drift rate",
+        d is not None and abs(d["slope_m_per_min"] - 0.5) < 1e-6,
+        f"got {d and d['slope_m_per_min']:.4f} m/min, expected +0.5",
+    )
+    check(
+        "recovers planted end-to-end delta",
+        d is not None and abs(d["endpoint_delta"] - 5.0) < 1e-6,
+        f"got {d and d['endpoint_delta']:.4f} m, expected 5.0",
+    )
+    check(
+        "recovers planted window length",
+        d is not None and abs(d["minutes"] - 10.0) < 1e-6,
+        f"got {d and d['minutes']:.4f} min, expected 10.0",
+    )
+
+    # The latched tail must not be counted as ground.
+    d7 = drift_of(by["20260101-060000"], 30)
+    check(
+        "excludes airborne (latched) datum samples",
+        d7 is not None and d7["n"] == 3,
+        f"got n={d7 and d7['n']}, expected 3 on-ground samples",
+    )
+    check(
+        "the drift window ends at first takeoff, not at the last on-ground sample",
+        by["20260101-060000"].first_airborne_t() == 75.0,
+        f"got {by['20260101-060000'].first_airborne_t()}",
+    )
+    check(
+        "airborne session's drift is the ground segment's",
+        d7 is not None and abs(d7["slope_m_per_min"] - 0.5) < 1e-6,
+        f"got {d7 and d7['slope_m_per_min']:.4f}, expected +0.5",
+    )
+
+    # Grouping. Sessions 1,2,3,7 sit at site A and closed themselves; 4 is 1.1 km away.
+    clean = [s for s in kept if s.whole and not s.simulated]
+    groups = group_by_site(clean)
+    check("splits two sites 1.1 km apart", len(groups) == 2, f"got {len(groups)}")
+    big = groups[0]
+    check(
+        "same-site group holds every session at that site",
+        len(big["members"]) == 5,
+        f"got {len(big['members'])}, expected 5 (sessions 1,2,3,7,11 at site A)",
+    )
+    check(
+        "the far site is its own group of one",
+        len(groups[1]["members"]) == 1,
+        f"got {len(groups[1]['members'])}",
+    )
+
+    # Exclusions.
+    use, dropped = usable(kept, include_sim=False, include_cut=False)
+    ids = {s.sid for s in use}
+    check("keeps a sim session that has a real pre-simulator segment", "20260101-050000" in ids, "")
+    check(
+        "excludes a session whose every reading was simulated or carryover",
+        "20260101-080000" not in ids,
+        "",
+    )
+    check("excludes truncated by default (drift-style gate)", "20260101-040000" not in ids, "")
+    check("keeps clean sessions", "20260101-000000" in ids, "")
+    use_b, _ = usable(kept, include_sim=False, include_cut=False, need_whole=False)
+    check(
+        "--between's gate keeps the truncated session's opening readings",
+        "20260101-040000" in {s.sid for s in use_b},
+        "",
+    )
+
+    # Spread across the planted site-A group. Session 1 drifts 100.00 -> 105.00 in 21 even
+    # steps, so its *median* is 102.50, not 100 -- the flat sessions are 60 and 80. The
+    # planted range of the medians is therefore 42.50 m exactly. Asserting 40 here would be
+    # asserting that the tool reports first values where it says it reports medians.
+    site_a = [
+        s
+        for s, _ in big["members"]
+        if s.sid in {"20260101-000000", "20260101-010000", "20260101-020000"}
+    ]
+    meds = sorted(s.datum_median() for s in site_a)
+    check(
+        "recovers planted between-session range",
+        abs((meds[-1] - meds[0]) - 42.5) < 1e-6,
+        f"got {meds[-1] - meds[0]:.4f} m, expected 42.5",
+    )
+    check(
+        "session medians are medians, not first values",
+        abs(meds[-1] - 102.5) < 1e-6,
+        f"got {meds[-1]:.4f}, expected 102.5",
+    )
+
+    # Consecutive-pair maths, against a hand-checkable case: sessions 1,2,3 at site A are one
+    # hour apart with settled values 105.0, 60.0, 80.0, so the pairs are (60 min, 45.0) and
+    # (60 min, 20.0).
+    class _A:
+        pass
+
+    a = _A()
+    a.include_sim, a.include_cut, a.radius = False, True, SITE_RADIUS_M
+    prs = []
+    for g in group_by_site(
+        [by[x] for x in ("20260101-000000", "20260101-010000", "20260101-020000")]
+    ):
+        mem = sorted(((x.wall_of(0), x) for x, _ in g["members"]), key=lambda r: r[0])
+        for (t1, s1), (t2, s2) in itertools.pairwise(mem):
+            prs.append(((t2 - t1) / 60.0, abs(s2.settled_datum() - s1.settled_datum())))
+    check(
+        "consecutive-pair gaps and deltas are right",
+        [(round(g), round(d, 6)) for g, d in prs] == [(60, 45.0), (60, 20.0)],
+        f"got {prs}",
+    )
+
+    # The barometric formula, against the published ICAO standard-atmosphere levels. These are
+    # textbook numbers, not numbers this project produced.
+    for p_hpa, want, tol in [
+        (1013.25, 0.0, 0.01),
+        (1000.0, 110.9, 0.2),
+        (900.0, 988.0, 1.0),
+        (700.0, 3012.0, 3.0),
+        (500.0, 5574.0, 3.0),
+    ]:
+        got = isa_pressure_altitude(p_hpa)
+        check(
+            f"ISA pressure altitude at {p_hpa:.2f} hPa",
+            abs(got - want) < tol,
+            f"got {got:.1f} m, standard atmosphere says {want:.1f} m",
+        )
+    check(
+        "pressure_at interpolates within the hour",
+        PRESSURE_HOURLY
+        and pressure_at(
+            __import__("datetime")
+            .datetime.strptime(PRESSURE_HOURLY[0][0], "%Y-%m-%dT%H:%M")
+            .timestamp()
+        )
+        == PRESSURE_HOURLY[0][1],
+        "",
+    )
+
+    # Distance maths.
+    check(
+        "metres_between is right to 1 %",
+        abs(metres_between(SITE_A, SITE_B) - 1112.0) < 12.0,
+        f"got {metres_between(SITE_A, SITE_B):.1f} m for 0.01 deg of latitude",
+    )
+    check("metres_between is zero for a point on itself", metres_between(SITE_A, SITE_A) < 1e-9, "")
+
+    # Correlation maths, against a hand-checkable case.
+    check(
+        "pearson recovers +1 on a straight line",
+        abs(pearson([1, 2, 3, 4], [2, 4, 6, 8]) - 1.0) < 1e-9,
+        "",
+    )
+    check(
+        "pearson recovers -1 on a falling line",
+        abs(pearson([1, 2, 3, 4], [8, 6, 4, 2]) + 1.0) < 1e-9,
+        "",
+    )
+    check("pearson returns None on a constant", pearson([1, 2, 3, 4], [5, 5, 5, 5]) is None, "")
+
+    for f in files:
+        os.unlink(f)
+    os.rmdir(tmp)
+
+    print()
+    if failures:
+        print(f"{len(failures)} self-test failure(s):")
+        for f in failures:
+            print(f"  - {f}")
+    else:
+        print("self-test: all planted numbers recovered")
+    return len(failures)
+
+
+# ── cli ───────────────────────────────────────────────────────────────────────
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("files", nargs="*", help="session JSONL file(s)")
+    ap.add_argument("--sessions", action="store_true", help="per-session table (the default)")
+    ap.add_argument(
+        "--between",
+        action="store_true",
+        help="spread of the datum across sessions, grouped by launch site",
+    )
+    ap.add_argument(
+        "--drift",
+        action="store_true",
+        help="within-session drift while the aircraft sat on the ground",
+    )
+    ap.add_argument(
+        "--truth",
+        type=float,
+        metavar="M",
+        help="compare every session's datum against this true elevation, metres",
+    )
+    ap.add_argument(
+        "--truth-source",
+        default="unstated",
+        help="where --truth came from; printed with the result",
+    )
+    ap.add_argument(
+        "--pressure",
+        action="store_true",
+        help="datum against independently-measured surface pressure",
+    )
+    ap.add_argument(
+        "--repeat",
+        action="store_true",
+        help="how far consecutive same-site sessions' datums are apart, by gap",
+    )
+    ap.add_argument(
+        "--correlate",
+        action="store_true",
+        help="datum against satellites, signal level, hour, length",
+    )
+    ap.add_argument(
+        "--radius",
+        type=float,
+        default=SITE_RADIUS_M,
+        help=f"same-site radius, metres (default {SITE_RADIUS_M:.0f})",
+    )
+    ap.add_argument(
+        "--min-ground",
+        type=float,
+        default=120.0,
+        help="shortest on-ground window --drift will report, seconds (default 120)",
+    )
+    ap.add_argument(
+        "--stat",
+        choices=("settled", "median", "first"),
+        default="settled",
+        help="which single number represents a session's datum (default settled: "
+        "its last on-ground reading, past the post-disturbance transient)",
+    )
+    ap.add_argument(
+        "--min-samples",
+        type=int,
+        default=2,
+        help="sessions a site needs before a spread is reported (default 2)",
+    )
+    ap.add_argument("--include-sim", action="store_true", help="do not exclude simulated sessions")
+    ap.add_argument(
+        "--include-cut",
+        action="store_true",
+        help="do not exclude sessions with no closing recorder_stop",
+    )
+    ap.add_argument("--selftest", action="store_true", help="planted numbers, all recovered")
+    ap.add_argument(
+        "--quiet",
+        action="store_true",
+        help="do not list the renamed duplicates that were merged away",
+    )
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
+
+    if args.selftest:
+        return 1 if selftest(args.verbose) else 0
+    if not args.files:
+        ap.error("no files given (or pass --selftest)")
+
+    sessions = read_sessions(args.files)
+    Session.honour_sim = not args.include_sim
+    sessions, dups = dedupe(sessions)
+    if dups and not args.quiet:
+        print(f"{len(dups)} file(s) are renamed copies of another session and were merged away:")
+        for d, keeper in dups:
+            print(
+                f"  {d.sid:<24} == {keeper.sid}   "
+                f"({len(d.datum)} vs {len(keeper.datum)} datum samples)"
+            )
+        print()
+    if args.between:
+        return mode_between(sessions, args)
+    if args.drift:
+        return mode_drift(sessions, args)
+    if args.truth is not None:
+        return mode_truth(sessions, args)
+    if args.pressure:
+        return mode_pressure(sessions, args)
+    if args.repeat:
+        return mode_repeat(sessions, args)
+    if args.correlate:
+        return mode_correlate(sessions, args)
+    mode_sessions(sessions, args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
