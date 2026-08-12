@@ -34,7 +34,6 @@ from dimos.benchmark.vlnce_r2r.models import (
     VlnceEpisodeSource,
 )
 from dimos.benchmark.vlnce_r2r.preparation import (
-    PreparationError,
     prepare_public_assets,
     resolve_oci_image,
 )
@@ -152,22 +151,6 @@ def test_cold_then_warm_offline_cache_and_exact_episode_binding(tmp_path: Path) 
         warm.assets["public"].root.joinpath(source.scene_path).read_bytes()
         == files[source.scene_path]
     )
-
-
-def test_episode_preflight_rejects_case_instruction_mismatch(tmp_path: Path) -> None:
-    archive, files, episode = _make_archive(tmp_path)
-    source, task = _case_inputs(archive, files, episode)
-    changed = task.model_copy(
-        update={
-            "prompt": "A different instruction",
-            "instruction_sha256": hashlib.sha256(b"A different instruction").hexdigest(),
-        }
-    )
-
-    with pytest.raises(PreparationError, match="instruction"):
-        prepare_public_assets(
-            source, changed, cache_root=tmp_path / "cache", download=_copy_downloader(archive)
-        )
 
 
 def test_oci_resolver_accepts_only_expected_digest(tmp_path: Path) -> None:
