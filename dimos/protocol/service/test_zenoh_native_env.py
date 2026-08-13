@@ -42,11 +42,11 @@ def test_native_env_mirrors_the_whole_config():
     }
 
 
-def test_endpoints_join_with_commas():
+def test_endpoints_join_with_commas(zenoh_defaults):
     config = ZenohConfig(connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"])
     assert native_env(config)["DIMOS_ZENOH_CONNECT"] == "tcp/192.0.2.10:7447,tcp/192.0.2.11:7447"
 
 
-def test_interface_is_passed_resolved():
+def test_interface_is_passed_resolved(zenoh_defaults):
     assert native_env(ZenohConfig(scouting=True))["DIMOS_ZENOH_INTERFACE"] == ALL_INTERFACES
     assert native_env(ZenohConfig(scouting_interface="wlan0"))["DIMOS_ZENOH_INTERFACE"] == "wlan0"
