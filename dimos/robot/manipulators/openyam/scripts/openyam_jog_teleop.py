@@ -155,7 +155,10 @@ def main() -> int:
                 gripper_target = max(-3.0, min(3.0, gripper_target))
                 g_actual = adapter.read_gripper_position()
                 if g_actual is not None:
-                    gripper_target = max(g_actual - 0.3, min(g_actual + 0.3, gripper_target))
+                    # Tight leash: 0.1 rad x kp=20 caps endstop torque near
+                    # 2 Nm. A 0.3 rad leash let sustained current trip the
+                    # DM4310's over-current protection (blinking red LED).
+                    gripper_target = max(g_actual - 0.1, min(g_actual + 0.1, gripper_target))
 
             if not adapter.write_joint_positions(q_target):
                 print("write failed — aborting")
