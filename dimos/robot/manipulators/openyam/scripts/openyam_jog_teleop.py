@@ -84,8 +84,10 @@ def main() -> int:
     selected = 5  # joint 6, the wrist — safest default
     running = True
     exit_code = 0
+    tick = 0
     try:
         while running:
+            tick += 1
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -130,6 +132,13 @@ def main() -> int:
                 print(f"tracking error {worst:.3f} rad — aborting")
                 exit_code = 2
                 break
+
+            # HUD at 10 Hz only: per-tick font rendering holds the GIL long
+            # enough to starve the USB reader thread, and the dongle's FIFO
+            # overflows (observed as stale motor state mid-session).
+            if tick % 10 != 0:
+                clock.tick(RATE_HZ)
+                continue
 
             screen.fill((18, 18, 24))
             header = f"joint {selected + 1} selected   UP/DOWN jog   [/] gripper   ESC quit"
