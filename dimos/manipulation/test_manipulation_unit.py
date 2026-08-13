@@ -62,6 +62,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 
 
 def _control_coordinator(
@@ -72,6 +73,7 @@ def _control_coordinator(
     coordinator = MagicMock(spec=ControlCoordinator)
     coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 

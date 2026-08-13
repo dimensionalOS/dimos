@@ -44,6 +44,7 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryCancellationStatus,
@@ -91,7 +92,7 @@ def trajectory_task():
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         priority=10,
     )
-    return JointTrajectoryTask(name="test_traj", config=config)
+    return JointTrajectoryTask(name=JOINT_TRAJECTORY_TASK_NAME, config=config)
 
 
 @pytest.fixture
@@ -430,38 +431,31 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_rejects_second_trajectory_task(self, make_coordinator):
+    def test_requires_canonical_trajectory_task_name(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            "first",
+        task = JointTrajectoryTask(
+            "other_name",
             JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
         )
-        second = JointTrajectoryTask(
-            "second",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
-        )
 
-        assert coordinator.add_task(first, task_type="trajectory")
-        with pytest.raises(ValueError, match="exactly one JointTrajectoryTask"):
-            coordinator.add_task(second, task_type="trajectory")
-
-        assert coordinator.list_tasks() == ["first"]
+        with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
+            coordinator.add_task(task, task_type="trajectory")
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
         first = JointTrajectoryTask(
-            "first",
+            JOINT_TRAJECTORY_TASK_NAME,
             JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
         )
         second = JointTrajectoryTask(
-            "second",
+            JOINT_TRAJECTORY_TASK_NAME,
             JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
         )
         coordinator.add_task(first, task_type="trajectory")
 
-        assert coordinator.remove_task("first")
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         assert coordinator.add_task(second, task_type="trajectory")
-        assert coordinator.list_tasks() == ["second"]
+        assert coordinator.list_tasks() == [JOINT_TRAJECTORY_TASK_NAME]
 
     def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
         coordinator = make_coordinator()
@@ -509,7 +503,7 @@ class TestJointTrajectoryTask:
             )
 
     def test_initial_state(self, trajectory_task):
-        assert trajectory_task.name == "test_traj"
+        assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.IDLE
 
@@ -528,23 +522,21 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
-    def test_status_is_published_while_executing_and_terminal_once(
+    def test_status_snapshot_is_non_destructive(
         self, trajectory_task, simple_trajectory
     ):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
 
-        active = trajectory_task.take_status(10.25)
-        assert active is not None
+        active = trajectory_task.get_status(10.25)
         assert active.state is TrajectoryState.EXECUTING
         assert active.progress == pytest.approx(0.25)
 
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
-        terminal = trajectory_task.take_status(11.5)
-        assert terminal is not None
+        terminal = trajectory_task.get_status(11.5)
         assert terminal.state is TrajectoryState.COMPLETED
         assert terminal.progress == pytest.approx(1.0)
-        assert trajectory_task.take_status(11.6) is None
+        assert trajectory_task.get_status(11.6).state is TrajectoryState.COMPLETED
 
     def test_execute_partial_subset_and_claims_full_configuration(self, trajectory_task):
         trajectory = JointTrajectory(
@@ -1003,8 +995,8 @@ class TestIntegration:
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
-        traj_task = JointTrajectoryTask(name="traj_arm", config=config)
-        tasks = {"traj_arm": traj_task}
+        traj_task = JointTrajectoryTask(name=JOINT_TRAJECTORY_TASK_NAME, config=config)
+        tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 

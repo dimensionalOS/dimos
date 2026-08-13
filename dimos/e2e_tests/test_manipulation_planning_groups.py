@@ -37,7 +37,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanningGroupInfo,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 
 pytestmark = [pytest.mark.self_hosted_large]
 
@@ -159,7 +159,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         left_id = left.id
 
         tasks = coordinator_client.list_tasks()
-        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
+        assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, (left_id,))
 
@@ -190,7 +190,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         left_id, right_id = (group.id for group in groups)
 
         tasks = coordinator_client.list_tasks()
-        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
+        assert tasks == [JOINT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, (left_id, right_id))
 

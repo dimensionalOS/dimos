@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.piper.config import (
@@ -45,7 +46,7 @@ coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual, _piper_dual],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name=JOINT_TRAJECTORY_TASK_NAME,
             type="trajectory",
             joint_names=[*_xarm6_dual.joints, *_piper_dual.joints],
             priority=10,

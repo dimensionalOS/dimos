@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -32,7 +33,7 @@ coordinator_mock = ControlCoordinator.blueprint(
     hardware=[_mock_hw],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name=JOINT_TRAJECTORY_TASK_NAME,
             type="trajectory",
             joint_names=_mock_hw.joints,
             priority=10,
@@ -65,7 +66,7 @@ coordinator_dual_mock = _DualMockCoordinator.blueprint(
     hardware=[_mock_left, _mock_right],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name=JOINT_TRAJECTORY_TASK_NAME,
             type="trajectory",
             joint_names=[*_mock_left.joints, *_mock_right.joints],
             priority=10,

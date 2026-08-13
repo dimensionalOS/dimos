@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Protocol
+from typing import Protocol
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
@@ -27,14 +27,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.spec.utils import Spec
-
-MAX_AGENT_REPR_LENGTH = 500
-
-
-def _bounded_repr(text: str) -> str:
-    if len(text) <= MAX_AGENT_REPR_LENGTH:
-        return text
-    return f"{text[: MAX_AGENT_REPR_LENGTH - 3]}..."
 
 
 class OperationStatus(Enum):
@@ -92,7 +84,7 @@ class PlanningGroupInfo:
     has_gripper: bool
 
     def __repr__(self) -> str:
-        return _bounded_repr(
+        return (
             f"PlanningGroupInfo({self.id!r}, joints={self.joint_names!r}, "
             f"base={self.base_frame!r}, tip={self.tip_frame!r}, "
             f"gripper={self.has_gripper})"
@@ -109,7 +101,7 @@ class PlanningGroupState:
     joint_presets: Mapping[str, JointState] = field(default_factory=dict)
 
     def __repr__(self) -> str:
-        return _bounded_repr(
+        return (
             f"PlanningGroupState(joints={self.joints!r}, "
             f"end_effector_pose={self.end_effector_pose!r}, "
             f"gripper_position={self.gripper_position!r}, "
@@ -119,7 +111,7 @@ class PlanningGroupState:
 
 @dataclass(frozen=True, repr=False)
 class ManipulationSnapshot:
-    """One bounded snapshot of every public manipulation group."""
+    """One snapshot of every public manipulation group."""
 
     timestamp: float
     operation_status: OperationStatus
@@ -129,7 +121,7 @@ class ManipulationSnapshot:
     groups: Mapping[PlanningGroupID, PlanningGroupState]
 
     def __repr__(self) -> str:
-        return _bounded_repr(
+        return (
             f"ManipulationSnapshot(timestamp={self.timestamp!r}, "
             f"operation_status={self.operation_status.name}, error={self.error!r}, "
             f"has_pending_plan={self.has_pending_plan}, "
@@ -151,11 +143,12 @@ class PlanResult:
 
     def __repr__(self) -> str:
         if self.plan is None:
-            return _bounded_repr(f"PlanResult({self.status.name}, message={self.message!r})")
-        return _bounded_repr(
+            return f"PlanResult({self.status.name}, message={self.message!r})"
+        return (
             f"PlanResult({self.status.name}, groups={self.plan.group_ids!r}, "
             f"waypoints={len(self.plan.path)}, duration={self.plan.trajectory.duration:.3g}s, "
-            f"planning_time={self.plan.planning_time:.3g}s, message={self.message!r})"
+            f"path_length={self.plan.path_length:.3g}, planning_time={self.plan.planning_time:.3g}s, "
+            f"iterations={self.plan.iterations}, message={self.message!r})"
         )
 
 
@@ -176,7 +169,7 @@ class ExecutionResult:
         }
 
     def __repr__(self) -> str:
-        return _bounded_repr(
+        return (
             f"ExecutionResult({self.status.name}, message={self.message!r}, "
             f"coordinator_result={self.coordinator_result!r}, "
             f"trajectory_status={self.trajectory_status!r})"
@@ -195,7 +188,7 @@ class CommandResult:
         return self.status is CommandStatus.SUCCEEDED
 
     def __repr__(self) -> str:
-        return _bounded_repr(f"CommandResult({self.status.name}, message={self.message!r})")
+        return f"CommandResult({self.status.name}, message={self.message!r})"
 
 
 @dataclass(frozen=True, repr=False)
@@ -212,45 +205,10 @@ class MoveResult:
         return self.plan.succeeded and self.execution is not None and self.execution.succeeded
 
     def __repr__(self) -> str:
-        execution = self.execution.status.name if self.execution is not None else None
-        return _bounded_repr(
-            f"MoveResult(plan={self.plan.status.name}, execution={execution}, "
+        return (
+            f"MoveResult(plan={self.plan!r}, execution={self.execution!r}, "
             f"delta={self.delta!r}, collision_check={self.check_collision})"
         )
-
-
-def assert_agent_readable_result_type(result_type: type[Any]) -> None:
-    """Reject a public result type without an intentional representation."""
-
-    if result_type.__repr__ is object.__repr__:
-        raise TypeError(f"{result_type.__name__} must define __repr__")
-    dataclass_params = getattr(result_type, "__dataclass_params__", None)
-    if dataclass_params is not None and dataclass_params.repr:
-        raise TypeError(f"{result_type.__name__} must not use the generated dataclass repr")
-
-
-def assert_agent_readable_result(result: Any) -> None:
-    """Reject public results whose REPL representation is missing or unbounded."""
-
-    result_type = type(result)
-    assert_agent_readable_result_type(result_type)
-    text = repr(result)
-    if len(text) > MAX_AGENT_REPR_LENGTH:
-        raise ValueError(f"{result_type.__name__} repr exceeds {MAX_AGENT_REPR_LENGTH} characters")
-
-
-AGENT_READABLE_TYPES = (
-    PlanningGroupInfo,
-    PlanningGroupState,
-    ManipulationSnapshot,
-    PlanResult,
-    ExecutionResult,
-    CommandResult,
-    MoveResult,
-)
-
-for _result_type in AGENT_READABLE_TYPES:
-    assert_agent_readable_result_type(_result_type)
 
 
 class ManipulationSpec(Spec, Protocol):

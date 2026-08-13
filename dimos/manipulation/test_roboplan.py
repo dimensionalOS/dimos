@@ -2129,7 +2129,8 @@ def test_cartesian_can_skip_collision_postvalidation(
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         {"arm/manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
-        RoboPlanCartesianPathConfig(check_collision=False),
+        RoboPlanCartesianPathConfig(),
+        check_collision=False,
     )
 
     assert result.status == PlanningStatus.SUCCESS

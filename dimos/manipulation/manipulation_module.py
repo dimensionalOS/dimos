@@ -21,19 +21,17 @@ from enum import Enum
 import math
 import threading
 import time
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic import Field
 
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryCancellationStatus
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import (
-    ExecutionOutcome,
     ExecutionTarget,
     PlanExecutionManager,
 )
@@ -111,7 +109,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -185,7 +182,6 @@ class ManipulationModule(Module):
 
     # Input: Joint state from coordinator (for world sync)
     coordinator_joint_state: In[JointState]
-    trajectory_status: In[TrajectoryStatus]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -213,11 +209,6 @@ class ManipulationModule(Module):
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
-        self._execution_condition = threading.Condition()
-        self._execution_status = ExecutionStatus.IDLE
-        self._latest_execution_result: ExecutionResult | None = None
-        self._execution_started_at = 0.0
-        self._execution_active = False
 
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
@@ -241,10 +232,6 @@ class ManipulationModule(Module):
         if self.coordinator_joint_state is not None:
             self.coordinator_joint_state.subscribe(self._on_joint_state)
             logger.info("Subscribed to coordinator_joint_state port")
-        if getattr(self.trajectory_status, "_transport", None) is not None:
-            self.trajectory_status.subscribe(self._on_trajectory_status)
-            logger.info("Subscribed to trajectory_status port")
-
         logger.info("ManipulationModule started")
 
     def _initialize_planning(self) -> None:
@@ -461,14 +448,12 @@ class ManipulationModule(Module):
             operation_status = OperationStatus[self._state.name]
             error = self._error_message or None
             has_pending_plan = self._last_plan is not None
-        with self._execution_condition:
-            execution_status = self._execution_status
         return ManipulationSnapshot(
             timestamp=time.time(),
             operation_status=operation_status,
             error=error,
             has_pending_plan=has_pending_plan,
-            execution_status=execution_status,
+            execution_status=self._execution_manager.status,
             groups=groups,
         )
 
@@ -485,45 +470,17 @@ class ManipulationModule(Module):
         """Cancel planning or the active trajectory."""
         with self._lock:
             is_planning = self._state == ManipulationState.PLANNING
-            is_fault = self._state == ManipulationState.FAULT
             if is_planning:
                 self._planning_epoch += 1
             plan = self._last_plan
             self._last_plan = None
-        with self._execution_condition:
-            is_uncertain_fault = is_fault and self._execution_status is ExecutionStatus.UNCERTAIN
 
-        cancellation = self._execution_manager.cancel()
+        result = self._execution_manager.cancel()
         if plan is not None:
             self._dismiss_preview(plan.group_ids)
-        if not cancellation.safe:
-            result = ExecutionResult(
-                ExecutionStatus.UNCERTAIN,
-                cancellation.message or "Coordinator cancellation outcome is uncertain",
-            )
-        elif cancellation.status is TrajectoryCancellationStatus.CANCELLED:
-            result = self.wait_for_execution(timeout=min(1.0, self.config.execution_timeout))
-            if result.status is ExecutionStatus.TIMED_OUT:
-                result = ExecutionResult(
-                    ExecutionStatus.UNCERTAIN,
-                    "Coordinator cancelled the trajectory but no JTT terminal status arrived",
-                )
-        elif is_planning:
+        if is_planning and result.status is ExecutionStatus.NO_EXECUTION:
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
-        else:
-            result = ExecutionResult(ExecutionStatus.NO_EXECUTION, cancellation.message)
-        with self._lock:
-            if result.status is ExecutionStatus.UNCERTAIN:
-                self._state = ManipulationState.FAULT
-                self._error_message = result.message
-            elif is_planning or is_uncertain_fault:
-                self._state = ManipulationState.IDLE
-                self._error_message = ""
-        if is_uncertain_fault and result.status is not ExecutionStatus.UNCERTAIN:
-            with self._execution_condition:
-                self._execution_status = ExecutionStatus.IDLE
-                self._latest_execution_result = None
-                self._execution_active = False
+        self._apply_execution_result(result)
         return result
 
     def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
@@ -929,7 +886,10 @@ class ManipulationModule(Module):
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_joint_targets(
+            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets),
+            speed_scale=speed_scale,
+        )
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -945,7 +905,10 @@ class ManipulationModule(Module):
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_pose_targets(
+            cast("Mapping[PlanningGroupID | PlanningGroup, Pose]", targets),
+            speed_scale=speed_scale,
+        )
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -1043,9 +1006,18 @@ class ManipulationModule(Module):
         targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
         config: CartesianPathConfig,
         auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        check_collision: bool = True,
     ) -> bool:
         """Plan TCP motion through absolute or relative Cartesian waypoints."""
-        return self.generate_cartesian_plan(targets, config, auxiliary_groups) is not None
+        return (
+            self.generate_cartesian_plan(
+                targets,
+                config,
+                auxiliary_groups,
+                check_collision=check_collision,
+            )
+            is not None
+        )
 
     def generate_cartesian_plan(
         self,
@@ -1053,6 +1025,7 @@ class ManipulationModule(Module):
         config: CartesianPathConfig,
         auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
         speed_scale: float | None = None,
+        check_collision: bool = True,
     ) -> GeneratedPlan | None:
         """Generate and store a timed Cartesian plan through PlannerSpec."""
         if self._world_monitor is None or self._planner is None:
@@ -1089,6 +1062,7 @@ class ManipulationModule(Module):
             targets=normalized_targets,
             config=scaled_config,
             auxiliary_groups=auxiliary_ids,
+            check_collision=check_collision,
         )
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
@@ -1125,7 +1099,7 @@ class ManipulationModule(Module):
             plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
             return MoveResult(plan_result, None, delta, check_collision)
         resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
-        config = RoboPlanCartesianPathConfig(check_collision=check_collision)
+        config = RoboPlanCartesianPathConfig()
         relative = Transform(
             translation=Vector3(*delta),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -1134,6 +1108,7 @@ class ManipulationModule(Module):
             {group.id: (relative,)},
             config,
             speed_scale=resolved_speed,
+            check_collision=check_collision,
         )
         if plan is None:
             plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
@@ -1489,42 +1464,8 @@ class ManipulationModule(Module):
         self._execution_manager = PlanExecutionManager(
             targets=targets,
             coordinator=self._control_coordinator,
+            default_timeout=self.config.execution_timeout,
         )
-
-    def _on_trajectory_status(self, status: TrajectoryStatus) -> None:
-        """Cache authoritative JTT execution state and wake blocking RPCs."""
-
-        with self._execution_condition:
-            if status.timestamp < self._execution_started_at:
-                return
-            mapped = {
-                TrajectoryState.IDLE: ExecutionStatus.IDLE,
-                TrajectoryState.EXECUTING: ExecutionStatus.EXECUTING,
-                TrajectoryState.COMPLETED: ExecutionStatus.COMPLETED,
-                TrajectoryState.ABORTED: ExecutionStatus.ABORTED,
-                TrajectoryState.FAULT: ExecutionStatus.FAULT,
-            }[status.state]
-            self._execution_status = mapped
-            if mapped in {
-                ExecutionStatus.COMPLETED,
-                ExecutionStatus.ABORTED,
-                ExecutionStatus.FAULT,
-            }:
-                self._execution_active = False
-                message = status.error
-                self._latest_execution_result = ExecutionResult(
-                    mapped,
-                    message,
-                    trajectory_status=status,
-                )
-                with self._lock:
-                    self._state = {
-                        ExecutionStatus.COMPLETED: ManipulationState.COMPLETED,
-                        ExecutionStatus.ABORTED: ManipulationState.IDLE,
-                        ExecutionStatus.FAULT: ManipulationState.FAULT,
-                    }[mapped]
-                    self._error_message = message
-            self._execution_condition.notify_all()
 
     @rpc
     def execute(self, blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
@@ -1536,89 +1477,43 @@ class ManipulationModule(Module):
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
             self._state = ManipulationState.EXECUTING
-        with self._execution_condition:
-            if self._execution_active:
-                return ExecutionResult(
-                    ExecutionStatus.REJECTED,
-                    "Another trajectory is active",
-                )
-            self._execution_started_at = time.time()
-            self._execution_status = ExecutionStatus.IDLE
-            self._latest_execution_result = None
         try:
-            result = self._execution_manager.execute(target_plan)
+            result = self._execution_manager.execute(
+                target_plan,
+                blocking=blocking,
+                timeout=timeout,
+            )
         except Exception as exc:
             logger.exception("Failed to dispatch generated plan")
-            dispatch_result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
-        else:
-            match result.outcome:
-                case ExecutionOutcome.ACCEPTED:
-                    dispatch_result = ExecutionResult(
-                        ExecutionStatus.ACCEPTED,
-                        result.message,
-                        coordinator_result=result.coordinator_result,
-                    )
-                case ExecutionOutcome.REJECTED:
-                    dispatch_result = ExecutionResult(
-                        ExecutionStatus.REJECTED,
-                        result.message,
-                        coordinator_result=result.coordinator_result,
-                    )
-                case ExecutionOutcome.UNCERTAIN:
-                    dispatch_result = ExecutionResult(
-                        ExecutionStatus.UNCERTAIN,
-                        result.message,
-                        coordinator_result=result.coordinator_result,
-                    )
-        with self._execution_condition:
-            if self._execution_status not in {
-                ExecutionStatus.COMPLETED,
-                ExecutionStatus.ABORTED,
-                ExecutionStatus.FAULT,
-            }:
-                self._execution_status = dispatch_result.status
-                self._latest_execution_result = dispatch_result
-                self._execution_active = dispatch_result.status is ExecutionStatus.ACCEPTED
-            self._execution_condition.notify_all()
-        if dispatch_result.status is not ExecutionStatus.ACCEPTED:
-            with self._lock:
-                self._state = (
-                    ManipulationState.FAULT
-                    if dispatch_result.status is ExecutionStatus.UNCERTAIN
-                    else ManipulationState.IDLE
-                )
-                self._error_message = dispatch_result.message
-            return dispatch_result
-        if not blocking:
-            return dispatch_result
-        return self.wait_for_execution(timeout)
+            result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+        self._apply_execution_result(result)
+        return result
 
     @rpc
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult:
         """Wait for the active trajectory or return its cached terminal result."""
+        result = self._execution_manager.wait(timeout)
+        self._apply_execution_result(result)
+        return result
 
-        wait_timeout = self.config.execution_timeout if timeout is None else timeout
-        if not math.isfinite(wait_timeout) or wait_timeout < 0.0:
-            return ExecutionResult(ExecutionStatus.REJECTED, "timeout must be finite and >= 0")
-        deadline = time.monotonic() + wait_timeout
-        terminal = {
-            ExecutionStatus.COMPLETED,
-            ExecutionStatus.ABORTED,
-            ExecutionStatus.FAULT,
-        }
-        with self._execution_condition:
-            if self._latest_execution_result is None and not self._execution_active:
-                return ExecutionResult(ExecutionStatus.NO_EXECUTION, "No execution exists")
-            while self._execution_status not in terminal:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    return ExecutionResult(
-                        ExecutionStatus.TIMED_OUT,
-                        f"Execution did not finish within {wait_timeout:g}s",
-                    )
-                self._execution_condition.wait(remaining)
-            assert self._latest_execution_result is not None
-            return self._latest_execution_result
+    def _apply_execution_result(self, result: ExecutionResult) -> None:
+        """Mirror execution ownership into the broader manipulation snapshot."""
+        with self._lock:
+            if result.status in {ExecutionStatus.ACCEPTED, ExecutionStatus.EXECUTING}:
+                self._state = ManipulationState.EXECUTING
+                self._error_message = ""
+            elif result.status is ExecutionStatus.COMPLETED:
+                self._state = ManipulationState.COMPLETED
+                self._error_message = ""
+            elif result.status in {
+                ExecutionStatus.UNCERTAIN,
+                ExecutionStatus.FAULT,
+            }:
+                self._state = ManipulationState.FAULT
+                self._error_message = result.message
+            elif result.status is not ExecutionStatus.TIMED_OUT:
+                self._state = ManipulationState.IDLE
+                self._error_message = result.message
 
     def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
         """Private in-process bridge for the visualization operator."""
@@ -1779,6 +1674,7 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return CommandResult(CommandStatus.FAILED, "Planning is not initialized")
         groups = self._world_monitor.planning_groups.list()
+        candidates: tuple[PlanningGroup, ...]
         if planning_group is not None:
             try:
                 candidates = (self._world_monitor.planning_groups.get(planning_group),)
@@ -1846,7 +1742,7 @@ class ManipulationModule(Module):
         execution_manager = getattr(self, "_execution_manager", None)
         if execution_manager is not None:
             cancellation = execution_manager.cancel()
-            if not cancellation.safe:
+            if cancellation.status is ExecutionStatus.UNCERTAIN:
                 logger.error(
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,

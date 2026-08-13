@@ -17,7 +17,12 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSnapshot,
+    OperationStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -118,8 +123,15 @@ class FakeModule:
         self.topology_calls = 0
         self.telemetry_calls = 0
 
-    def get_state(self) -> SimpleNamespace:
-        return SimpleNamespace(operation_status=SimpleNamespace(name=self.state))
+    def get_state(self) -> ManipulationSnapshot:
+        return ManipulationSnapshot(
+            timestamp=0.0,
+            operation_status=OperationStatus[self.state],
+            error=self.error or None,
+            has_pending_plan=self.has_plan,
+            execution_status=ExecutionStatus.IDLE,
+            groups={},
+        )
 
     def get_error(self) -> str:
         return self.error
@@ -188,6 +200,7 @@ class FakeModule:
         config: RoboPlanCartesianPathConfig,
         auxiliary_groups: tuple[PlanningGroupID, ...] = (),
         speed_scale: float | None = None,
+        check_collision: bool = True,
     ) -> GeneratedPlan | None:
         self.cartesian_targets.append((targets, config, auxiliary_groups))
         return self.plan if self.plan_success else None

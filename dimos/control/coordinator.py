@@ -49,6 +49,7 @@ from dimos.control.hardware_interface import (
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -70,7 +71,6 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -148,7 +148,7 @@ class ControlCoordinator(Module):
         ...     ],
         ...     tasks=[
         ...         TaskConfig(
-        ...             name="traj_arm",
+        ...             name="joint_trajectory",
         ...             type="trajectory",
         ...             joint_names=make_joints("arm", 7),
         ...             priority=10,
@@ -161,7 +161,6 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
-    trajectory_status: Out[TrajectoryStatus]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -509,6 +508,11 @@ class ControlCoordinator(Module):
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                if task.name != JOINT_TRAJECTORY_TASK_NAME:
+                    raise ValueError(
+                        "JointTrajectoryTask must be named "
+                        f"{JOINT_TRAJECTORY_TASK_NAME!r}, got {task.name!r}"
+                    )
                 self._trajectory_task = task
             if task_type is not None:
                 try:
@@ -972,7 +976,6 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_robot_callback=publish_robot_cb,
-            publish_trajectory_status_callback=self.trajectory_status.publish,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )

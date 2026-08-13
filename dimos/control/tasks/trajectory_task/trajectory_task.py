@@ -45,6 +45,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
+
 
 class TrajectoryExecutionStatus(Enum):
     """Semantic outcome of a trajectory execution request."""
@@ -175,7 +177,6 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
-        self._terminal_status_pending = False
 
         logger.info(f"JointTrajectoryTask {name} initialized for joints: {config.joint_names}")
 
@@ -216,7 +217,6 @@ class JointTrajectoryTask(BaseControlTask):
         # Check completion - clamp to final position to ensure we reach goal
         if t_elapsed >= self._trajectory.duration:
             self._state = TrajectoryState.COMPLETED
-            self._terminal_status_pending = True
             logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
             # Return final position to hold at goal
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
@@ -248,7 +248,6 @@ class JointTrajectoryTask(BaseControlTask):
         # Abort if any of our joints were preempted
         if joints & self._joint_names:
             self._state = TrajectoryState.ABORTED
-            self._terminal_status_pending = True
             self._clear_active_trajectory()
 
     def _clear_active_trajectory(self) -> None:
@@ -365,7 +364,6 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory = trajectory
         self._last_duration = trajectory.duration
         self._last_elapsed = 0.0
-        self._terminal_status_pending = False
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
@@ -384,7 +382,6 @@ class JointTrajectoryTask(BaseControlTask):
         if self._state != TrajectoryState.EXECUTING:
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         self._state = TrajectoryState.ABORTED
-        self._terminal_status_pending = True
         self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} cancelled")
         return TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
@@ -399,7 +396,6 @@ class JointTrajectoryTask(BaseControlTask):
             logger.warning(f"Cannot reset {self._name} while executing")
             return False
         self._state = TrajectoryState.IDLE
-        self._terminal_status_pending = False
         self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} reset to IDLE")
         return True
@@ -422,8 +418,8 @@ class JointTrajectoryTask(BaseControlTask):
         t_elapsed = t_now - self._start_time
         return min(1.0, t_elapsed / self._trajectory.duration)
 
-    def take_status(self, t_now: float) -> TrajectoryStatus | None:
-        """Return per-tick executing status or one pending terminal transition."""
+    def get_status(self, t_now: float) -> TrajectoryStatus:
+        """Return a non-destructive snapshot of the current execution state."""
 
         if self._state == TrajectoryState.EXECUTING:
             progress = self.get_progress(t_now)
@@ -434,9 +430,6 @@ class JointTrajectoryTask(BaseControlTask):
                 time_elapsed=elapsed,
                 time_remaining=max(0.0, self._last_duration - elapsed),
             )
-        if not self._terminal_status_pending:
-            return None
-        self._terminal_status_pending = False
         completed = self._state == TrajectoryState.COMPLETED
         return TrajectoryStatus(
             state=self._state,

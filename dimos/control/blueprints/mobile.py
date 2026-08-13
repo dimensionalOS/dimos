@@ -33,6 +33,7 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
@@ -199,7 +200,7 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     hardware=[_mock_arm_hw, _mock_twist_base()],
     tasks=[
         TaskConfig(
-            name="traj_arm",
+            name=JOINT_TRAJECTORY_TASK_NAME,
             type="trajectory",
             joint_names=_mock_arm_hw.joints,
             priority=10,

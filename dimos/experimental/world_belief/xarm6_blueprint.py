@@ -30,7 +30,6 @@ from dimos.experimental.world_belief.worldbelief_recorder import (
 )
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -130,7 +129,6 @@ xarm6_worldbelief = autoconnect(
         dino_model_name="facebook/dinov2-base",
         clip_model_name="openai/clip-vit-base-patch32",
     ),
-    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     coordinator(
         hardware=[_hw],

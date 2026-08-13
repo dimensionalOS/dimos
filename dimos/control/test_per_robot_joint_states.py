@@ -169,10 +169,7 @@ class TestFlagOff:
         coordinator.start()
 
         assert sorted(coordinator.list_hardware()) == ["left_arm", "right_arm"]
-        assert sorted(coordinator.outputs) == [
-            "coordinator_joint_state",
-            "trajectory_status",
-        ]
+        assert sorted(coordinator.outputs) == ["coordinator_joint_state"]
 
 
 class TestPerRobotPublishing:

@@ -14,9 +14,7 @@
 
 """Tests for the single-owner manipulation execution lifecycle."""
 
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import threading
 from unittest.mock import MagicMock
 
 from dimos.control.coordinator import ControlCoordinator
@@ -87,6 +85,7 @@ def _coordinator(
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
 
@@ -128,18 +127,12 @@ def test_blocking_execute_waits_for_terminal_jtt_status(module_factory) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
-    dispatched = threading.Event()
-    coordinator.execute_trajectory.side_effect = lambda _trajectory: (
-        dispatched.set() or TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
-    )
+    coordinator.task_invoke.side_effect = [
+        TrajectoryStatus(state=TrajectoryState.EXECUTING, progress=0.5),
+        TrajectoryStatus(state=TrajectoryState.COMPLETED, progress=1.0),
+    ]
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(module.execute, True, 1.0)
-        assert dispatched.wait(timeout=1.0)
-        module._on_trajectory_status(
-            TrajectoryStatus(state=TrajectoryState.COMPLETED, progress=1.0)
-        )
-        result = future.result(timeout=1.0)
+    result = module.execute(blocking=True, timeout=1.0)
 
     assert result.status is ExecutionStatus.COMPLETED
     assert result.trajectory_status is not None
@@ -148,6 +141,7 @@ def test_blocking_execute_waits_for_terminal_jtt_status(module_factory) -> None:
 
 def test_execution_timeout_does_not_cancel_motion(module_factory) -> None:
     coordinator = _coordinator()
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
     module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
@@ -155,7 +149,7 @@ def test_execution_timeout_does_not_cancel_motion(module_factory) -> None:
 
     assert result.status is ExecutionStatus.TIMED_OUT
     coordinator.cancel_trajectory.assert_not_called()
-    assert module._execution_active is True
+    assert module._execution_manager.status is ExecutionStatus.EXECUTING
 
 
 def test_wait_preserves_aborted_jtt_terminal_state(module_factory) -> None:
@@ -163,7 +157,9 @@ def test_wait_preserves_aborted_jtt_terminal_state(module_factory) -> None:
     module._last_plan = _plan()
     module.execute(blocking=False)
 
-    module._on_trajectory_status(TrajectoryStatus(state=TrajectoryState.ABORTED))
+    module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+        state=TrajectoryState.ABORTED
+    )
     result = module.wait_for_execution(timeout=0.0)
 
     assert result.status is ExecutionStatus.ABORTED
@@ -173,6 +169,7 @@ def test_wait_preserves_aborted_jtt_terminal_state(module_factory) -> None:
 def test_uncertain_dispatch_faults_and_consumes_plan(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
@@ -196,7 +193,7 @@ def test_safe_cancel_clears_uncertain_dispatch_fault(module_factory) -> None:
 
     assert result.status is ExecutionStatus.NO_EXECUTION
     assert snapshot.operation_status.name == "IDLE"
-    assert snapshot.execution_status is ExecutionStatus.IDLE
+    assert snapshot.execution_status is ExecutionStatus.NO_EXECUTION
     assert snapshot.error is None
 
 
