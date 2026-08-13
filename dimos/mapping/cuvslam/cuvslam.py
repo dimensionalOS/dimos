@@ -111,6 +111,13 @@ def driver_cuda_major() -> int:
 
 
 def sdk_variant() -> str:
+    """Pick the dim-slam flake attr for this host.
+
+    Python picks instead of the flake's default package because nix evaluation is
+    hermetic: it can branch on arch/OS only, and cannot see the installed driver
+    (cuda12 vs cuda13 on x86) or /proc/device-tree (orin vs thor, both
+    aarch64-linux). Those need this host-side probe.
+    """
     if sys.platform == "darwin":
         return "metal"
     if platform.machine() == "aarch64":
