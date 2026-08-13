@@ -29,8 +29,10 @@
 #include "sensor_msgs/Imu.hpp"
 #include "tf2_msgs/TFMessage.hpp"
 #include "utils/depth_reproject.hpp"
+#include <Eigen/Geometry>
+
+#include "dimos/native/tf.hpp"
 #include "utils/msg_convert.hpp"
-#include "utils/transform.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -39,7 +41,8 @@ using dimos::native::Output;
 namespace logging = dimos::native::log;
 using namespace depth_reproject;
 using namespace msg_convert;
-using namespace transform_math;
+using dimos::native::StaticTfTree;
+using Transform = Eigen::Isometry3d;
 
 namespace {
 
@@ -56,7 +59,7 @@ std::string join(const std::vector<std::string>& parts) {
 
 struct RigCamera {
     std::string frame;
-    Transform rig_from_camera;
+    Transform rig_from_camera = Transform::Identity();
     sensor_msgs::CameraInfo info;
     sensor_msgs::Image image;
     bool have_image{false};
@@ -119,13 +122,6 @@ struct CuvslamConfig {
     double imu_frequency;
     /// rgbd only: raw depth units per metre. 1000 for sixteen-bit millimetres.
     double depth_units_per_meter;
-
-    void validate() const {
-        if (camera_mode != "stereo" && camera_mode != "mono" && camera_mode != "rgbd") {
-            throw std::runtime_error("camera_mode must be stereo, mono or rgbd, got '" +
-                                     camera_mode + "'");
-        }
-    }
 };
 
 class CuvslamOdometry : public Module {
@@ -196,44 +192,10 @@ private:
                 stamped.header.frame_id == cfg_.odom_frame) {
                 continue;
             }
-            tf_edges_[stamped.child_frame_id] = {stamped.header.frame_id,
-                                                 to_transform(stamped.transform)};
+            tf_tree_.set(stamped.header.frame_id, stamped.child_frame_id,
+                         to_isometry(stamped.transform));
         }
         resolve_rig();
-    }
-
-    /// parent_frame -> child_frame through their nearest common ancestor. Not
-    /// time-aware; the mount tree is rigid.
-    std::optional<Transform> tf_lookup(const std::string& parent_frame,
-                                       const std::string& child_frame) const {
-        std::unordered_map<std::string, Transform> from_child{{child_frame, Transform{}}};
-        std::string frame = child_frame;
-        Transform ancestor_from_child;
-        for (std::size_t step = 0; step < MAX_TF_DEPTH; ++step) {
-            auto edge = tf_edges_.find(frame);
-            if (edge == tf_edges_.end()) {
-                break;
-            }
-            ancestor_from_child = compose(edge->second.second, ancestor_from_child);
-            frame = edge->second.first;
-            from_child[frame] = ancestor_from_child;
-        }
-
-        frame = parent_frame;
-        Transform ancestor_from_parent;
-        for (std::size_t step = 0; step <= MAX_TF_DEPTH; ++step) {
-            auto shared = from_child.find(frame);
-            if (shared != from_child.end()) {
-                return compose(invert(ancestor_from_parent), shared->second);
-            }
-            auto edge = tf_edges_.find(frame);
-            if (edge == tf_edges_.end()) {
-                return std::nullopt;  // the two are not connected
-            }
-            ancestor_from_parent = compose(edge->second.second, ancestor_from_parent);
-            frame = edge->second.first;
-        }
-        return std::nullopt;
     }
 
     /// The frame cuVSLAM's rig is expressed in, which need not be the published frame.
@@ -270,7 +232,7 @@ private:
 
         std::vector<RigCamera> cameras;
         for (const std::string& frame : frames) {
-            const std::optional<Transform> rig_from_camera = tf_lookup(rig_frame(), frame);
+            const std::optional<Transform> rig_from_camera = tf_tree_.lookup(rig_frame(), frame);
             const auto info = camera_info_.find(frame);
             if (!rig_from_camera || info == camera_info_.end()) {
                 return;
@@ -280,8 +242,9 @@ private:
         // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
         // partner sits at +x (optical convention, x to the right).
         if (discovered && cameras.size() == 2 &&
-            compose(invert(cameras[0].rig_from_camera), cameras[1].rig_from_camera)
-                    .translation[0] < 0.0) {
+            (cameras[0].rig_from_camera.inverse() * cameras[1].rig_from_camera)
+                    .translation()
+                    .x() < 0.0) {
             std::swap(cameras[0], cameras[1]);
         }
         cameras_ = std::move(cameras);
@@ -380,7 +343,7 @@ private:
             return nullptr;
         }
         if (!camera_from_depth_) {
-            camera_from_depth_ = tf_lookup(camera.frame, depth_.header.frame_id);
+            camera_from_depth_ = tf_tree_.lookup(camera.frame, depth_.header.frame_id);
             if (!camera_from_depth_) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: tf does not connect the depth frame to the camera",
@@ -416,7 +379,7 @@ private:
         if (tracker_) {
             return;
         }
-        const std::optional<Transform> base_from_rig = tf_lookup(cfg_.base_frame, rig_frame());
+        const std::optional<Transform> base_from_rig = tf_tree_.lookup(cfg_.base_frame, rig_frame());
         if (!base_from_rig) {
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam: tf does not place the rig frame against base_frame",
@@ -425,7 +388,7 @@ private:
             return;
         }
         base_from_rig_ = *base_from_rig;
-        rig_from_base_ = invert(*base_from_rig);
+        rig_from_base_ = base_from_rig->inverse();
         cuvslam::Rig rig;
         for (const RigCamera& rig_camera : cameras_) {
             const sensor_msgs::CameraInfo& info = rig_camera.info;
@@ -439,7 +402,7 @@ private:
         }
         if (cfg_.enable_imu) {
             const std::optional<Transform> rig_from_imu =
-                imu_frame_.empty() ? std::nullopt : tf_lookup(rig_frame(), imu_frame_);
+                imu_frame_.empty() ? std::nullopt : tf_tree_.lookup(rig_frame(), imu_frame_);
             if (!rig_from_imu) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: enable_imu is on but tf does not place the IMU",
@@ -603,8 +566,8 @@ private:
         }
         // cuVSLAM tracks rig_frame(); the contract is base_frame starting at identity. Both
         // collapse to the raw pose when the two frames are the same.
-        const Transform raw_pose = compose(
-            base_from_rig_, compose(to_transform(est.world_from_rig->pose), rig_from_base_));
+        const Transform raw_pose =
+            base_from_rig_ * to_isometry(est.world_from_rig->pose) * rig_from_base_;
         covariance_ = est.world_from_rig->covariance_xyz_rpy;
         const double translation_std = std::sqrt(static_cast<double>(
             std::max({covariance_[0], covariance_[7], covariance_[14]})));
@@ -629,9 +592,12 @@ private:
             previous_raw_.has_value()) {
             // Track() rejects non-increasing stamps, so dt is strictly positive here.
             const double dt = static_cast<double>(est.timestamp_ns - previous_raw_ns_) / 1.0e9;
-            const double linear_speed = translation_between(*previous_raw_, raw_pose) / dt;
+            const double linear_speed =
+                (raw_pose.translation() - previous_raw_->translation()).norm() / dt;
             const double angular_speed =
-                angle_between(previous_raw_->rotation, raw_pose.rotation) / dt;
+                Eigen::Quaterniond(previous_raw_->linear())
+                    .angularDistance(Eigen::Quaterniond(raw_pose.linear())) /
+                dt;
             if ((cfg_.speed_gate_max_linear > 0.0 &&
                  linear_speed > cfg_.speed_gate_max_linear) ||
                 (cfg_.speed_gate_max_angular > 0.0 &&
@@ -652,10 +618,10 @@ private:
             // Implausible frame (blank wall, repeated texture, teleport): drop its motion
             // and keep rebasing onto the held pose, so recovery continues from here with
             // only the delta measured after tracking became sane again.
-            rebase_ = compose(world_from_rig_, invert(raw_pose));
+            rebase_ = world_from_rig_ * raw_pose.inverse();
             frame_gated_ = true;
         } else {
-            world_from_rig_ = compose(rebase_, raw_pose);
+            world_from_rig_ = rebase_ * raw_pose;
             frame_gated_ = false;
         }
         was_tracking_ = true;
@@ -678,18 +644,18 @@ private:
         }
         // Slam tracks the same rig, so its pose needs the same move onto base_frame as the
         // odometry one before it can be compared with world_from_rig_ or published.
-        const Transform slam_pose = compose(to_transform(slam_->GetPose()), rig_from_base_);
+        const Transform slam_pose = to_isometry(slam_->GetPose()) * rig_from_base_;
         // The gate's decision carries over: an unconstrained frame poisons the slam pose
         // through the same estimate, so the loop-closed stream holds and rebases with the
         // VO stream. A real loop-closure snap has ordinary covariance and passes through.
         if (frame_gated_) {
-            corrected_rebase_ = compose(map_from_base_, invert(slam_pose));
+            corrected_rebase_ = map_from_base_ * slam_pose.inverse();
         } else {
-            map_from_base_ = compose(corrected_rebase_, slam_pose);
+            map_from_base_ = corrected_rebase_ * slam_pose;
         }
         const Transform& map_from_base = map_from_base_;
 
-        const Transform map_from_odom_raw = compose(map_from_base, invert(world_from_rig_));
+        const Transform map_from_odom_raw = map_from_base * world_from_rig_.inverse();
 
         nav_msgs::Odometry corrected{};
         fill_pose(corrected, map_from_base, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
@@ -717,13 +683,14 @@ private:
         msg.header.stamp = to_stamp(timestamp_ns);
         msg.header.frame_id = frame;
         msg.child_frame_id = child;
-        msg.pose.pose.position.x = pose.translation[0];
-        msg.pose.pose.position.y = pose.translation[1];
-        msg.pose.pose.position.z = pose.translation[2];
-        msg.pose.pose.orientation.x = pose.rotation[0];
-        msg.pose.pose.orientation.y = pose.rotation[1];
-        msg.pose.pose.orientation.z = pose.rotation[2];
-        msg.pose.pose.orientation.w = pose.rotation[3];
+        const Eigen::Quaterniond rotation(pose.linear());
+        msg.pose.pose.position.x = pose.translation().x();
+        msg.pose.pose.position.y = pose.translation().y();
+        msg.pose.pose.position.z = pose.translation().z();
+        msg.pose.pose.orientation.x = rotation.x();
+        msg.pose.pose.orientation.y = rotation.y();
+        msg.pose.pose.orientation.z = rotation.z();
+        msg.pose.pose.orientation.w = rotation.w();
     }
 
     void publish_tf(const Transform& pose, std::int64_t timestamp_ns, const std::string& frame,
@@ -732,13 +699,14 @@ private:
         stamped.header.stamp = to_stamp(timestamp_ns);
         stamped.header.frame_id = frame;
         stamped.child_frame_id = child;
-        stamped.transform.translation.x = pose.translation[0];
-        stamped.transform.translation.y = pose.translation[1];
-        stamped.transform.translation.z = pose.translation[2];
-        stamped.transform.rotation.x = pose.rotation[0];
-        stamped.transform.rotation.y = pose.rotation[1];
-        stamped.transform.rotation.z = pose.rotation[2];
-        stamped.transform.rotation.w = pose.rotation[3];
+        const Eigen::Quaterniond rotation(pose.linear());
+        stamped.transform.translation.x = pose.translation().x();
+        stamped.transform.translation.y = pose.translation().y();
+        stamped.transform.translation.z = pose.translation().z();
+        stamped.transform.rotation.x = rotation.x();
+        stamped.transform.rotation.y = rotation.y();
+        stamped.transform.rotation.z = rotation.z();
+        stamped.transform.rotation.w = rotation.w();
 
         tf2_msgs::TFMessage message{};
         message.transforms = {stamped};
@@ -758,7 +726,7 @@ private:
         publish_tf(world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
         // With Slam running, map->odom is its correction; only one publisher per edge.
         if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
-            publish_tf(Transform{}, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
+            publish_tf(Transform::Identity(), timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
         }
     }
 
@@ -784,15 +752,14 @@ private:
     std::string imu_frame_;
 
     /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
-    static constexpr std::size_t MAX_TF_DEPTH = 32;
-    std::unordered_map<std::string, std::pair<std::string, Transform>> tf_edges_;
+    StaticTfTree tf_tree_;
 
     /// covariance gate
     cuvslam::PoseCovariance covariance_{};
-    Transform rebase_;  ///< identity until the gate first fires
+    Transform rebase_ = Transform::Identity();  ///< identity until the gate first fires
     bool frame_gated_{false};
-    Transform corrected_rebase_;
-    Transform map_from_base_;  ///< last published loop-closed pose
+    Transform corrected_rebase_ = Transform::Identity();
+    Transform map_from_base_ = Transform::Identity();  ///< last published loop-closed pose
     std::uint64_t covariance_gated_{0};
     std::optional<Transform> previous_raw_;  ///< raw pose of the last tracked frame
     std::int64_t previous_raw_ns_{0};
@@ -809,9 +776,9 @@ private:
 
     // tracking state
     std::optional<cuvslam::Odometry> tracker_;
-    Transform world_from_rig_;  ///< last published pose, on base_frame
-    Transform base_from_rig_;   ///< fixed; identity when rig_frame is base_frame
-    Transform rig_from_base_;
+    Transform world_from_rig_ = Transform::Identity();  ///< last published pose, on base_frame
+    Transform base_from_rig_ = Transform::Identity();  ///< fixed; identity when rig_frame is base_frame
+    Transform rig_from_base_ = Transform::Identity();
     bool was_tracking_{false};
     std::uint64_t segment_id_{0};
     std::uint64_t frames_{0};

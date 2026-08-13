@@ -1,8 +1,8 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Boilerplate converters between dimos-lcm messages, cuVSLAM SDK types and the
-// module's Transform: stamps, poses, distortion models.
+// Boilerplate converters between dimos-lcm messages, cuVSLAM SDK types and
+// Eigen: stamps, poses, distortion models.
 
 #pragma once
 
@@ -10,12 +10,13 @@
 #include <cstdint>
 #include <vector>
 
+#include <Eigen/Geometry>
+
 #include "cuvslam/cuvslam2.h"
 #include "geometry_msgs/Transform.hpp"
 #include "sensor_msgs/CameraInfo.hpp"
 #include "std_msgs/Header.hpp"
 #include "std_msgs/Time.hpp"
-#include "transform.hpp"
 
 namespace msg_convert {
 
@@ -33,26 +34,35 @@ inline std_msgs::Time to_stamp(std::int64_t timestamp_ns) {
     return stamp;
 }
 
-inline transform_math::Transform to_transform(const cuvslam::Pose& pose) {
-    return transform_math::Transform{
-        {pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]},
-        {pose.translation[0], pose.translation[1], pose.translation[2]}};
+inline Eigen::Isometry3d to_isometry(const cuvslam::Pose& pose) {
+    Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+    // cuvslam::Pose rotation is xyzw; Eigen's quaternion constructor takes w first.
+    iso.linear() = Eigen::Quaterniond(pose.rotation[3], pose.rotation[0], pose.rotation[1],
+                                      pose.rotation[2])
+                       .toRotationMatrix();
+    iso.translation() =
+        Eigen::Vector3d(pose.translation[0], pose.translation[1], pose.translation[2]);
+    return iso;
 }
 
-inline transform_math::Transform to_transform(const geometry_msgs::Transform& message) {
-    return transform_math::Transform{
-        {message.rotation.x, message.rotation.y, message.rotation.z, message.rotation.w},
-        {message.translation.x, message.translation.y, message.translation.z}};
+inline Eigen::Isometry3d to_isometry(const geometry_msgs::Transform& message) {
+    Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+    iso.linear() = Eigen::Quaterniond(message.rotation.w, message.rotation.x,
+                                      message.rotation.y, message.rotation.z)
+                       .toRotationMatrix();
+    iso.translation() = Eigen::Vector3d(message.translation.x, message.translation.y,
+                                        message.translation.z);
+    return iso;
 }
 
-inline cuvslam::Pose to_pose(const transform_math::Transform& transform) {
+inline cuvslam::Pose to_pose(const Eigen::Isometry3d& iso) {
+    const Eigen::Quaterniond rotation(iso.linear());
+    const Eigen::Vector3d& translation = iso.translation();
     cuvslam::Pose pose{};
-    pose.rotation = {
-        static_cast<float>(transform.rotation[0]), static_cast<float>(transform.rotation[1]),
-        static_cast<float>(transform.rotation[2]), static_cast<float>(transform.rotation[3])};
-    pose.translation = {static_cast<float>(transform.translation[0]),
-                        static_cast<float>(transform.translation[1]),
-                        static_cast<float>(transform.translation[2])};
+    pose.rotation = {static_cast<float>(rotation.x()), static_cast<float>(rotation.y()),
+                     static_cast<float>(rotation.z()), static_cast<float>(rotation.w())};
+    pose.translation = {static_cast<float>(translation.x()), static_cast<float>(translation.y()),
+                        static_cast<float>(translation.z())};
     return pose;
 }
 

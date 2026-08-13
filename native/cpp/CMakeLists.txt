@@ -28,6 +28,20 @@ if(NOT nlohmann_json_FOUND)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
+# tf.hpp exposes Eigen types in its interface. Header-only, like the SDK itself.
+find_package(Eigen3 3.4 QUIET)
+if(NOT Eigen3_FOUND)
+  FetchContent_Declare(eigen
+    URL https://gitlab.com/libeigen/eigen/-/archive/3.4.1/eigen-3.4.1.tar.gz
+    URL_HASH SHA256=b93c667d1b69265cdb4d9f30ec21f8facbbe8b307cf34c0b9942834c6d4fdbe2
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  set(EIGEN_BUILD_DOC OFF)
+  set(EIGEN_BUILD_TESTING OFF)
+  set(EIGEN_BUILD_PKGCONFIG OFF)
+  FetchContent_MakeAvailable(eigen)
+endif()
+
 # module.hpp runs the dispatch loop and publish workers on std::thread.
 find_package(Threads REQUIRED)
 
@@ -40,6 +54,7 @@ target_compile_features(dimos_native INTERFACE cxx_std_20)
 target_link_libraries(dimos_native INTERFACE
   pfr
   nlohmann_json::nlohmann_json
+  Eigen3::Eigen
   Threads::Threads
 )
 

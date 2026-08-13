@@ -128,7 +128,7 @@
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ]
             ++ pkgs.lib.optionals isDarwin [ pkgs.makeWrapper ]
             ++ pkgs.lib.optionals (!isDarwin) [ pkgs.autoPatchelfHook ];
-          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json sdkPackage ]
+          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json pkgs.eigen sdkPackage ]
             ++ cudaLibs sdk;
 
           cmakeFlags = [
