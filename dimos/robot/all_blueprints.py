@@ -166,7 +166,10 @@ all_blueprints = {
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
+    "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
+    "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
+    "arm-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmTwistCoordinator",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "basic-path-follower": "dimos.navigation.basic_path_follower.module.BasicPathFollower",
@@ -193,6 +196,7 @@ all_modules = {
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
+    "eval-module": "dimos.evals.module.EvalModule",
     "far-planner": "dimos.navigation.cmu_nav.modules.far_planner.far_planner.FarPlanner",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",
     "fast-lio2-recorder": "dimos.hardware.sensors.lidar.fastlio2.recorder.FastLio2Recorder",
