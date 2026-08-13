@@ -50,6 +50,9 @@ if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.memory2.stream import Stream
+    from dimos.models.embedding.siglip import SigLIPModel
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
     from dimos.protocol.tf.tf import TFLookup
 
@@ -225,17 +228,24 @@ def _lift(
     return valid
 
 
-def _embed_index(
+def embed_index(
     store: Any,
-    tf: TFLookup,
+    siglip: SigLIPModel,
     t0: float,
     t1: float,
-    siglip: Any,
-    optical_frame: str,
-    world_frame: str,
-    tf_tolerance: float,
+    *,
+    optical_frame: str = OPTICAL_FRAME,
+    world_frame: str = WORLD_FRAME,
+    tf_tolerance: float = TF_TOLERANCE,
 ) -> Stream[Any, Any]:
-    """SigLIP-embedded, world-posed frame index at EMBED_HZ over the window."""
+    """SigLIP-embedded, world-posed frame index at EMBED_HZ over the window.
+
+    Built once per window and handed to every ``localize`` call on it: the
+    embed forwards are what a second query would otherwise repeat.
+    """
+    tf = StreamTF.from_store(store)
+    if tf is None:
+        raise ValueError("recording has no tf stream")
     posed = (
         store.streams.color_image.after(t0)
         .before(t1)
@@ -249,6 +259,7 @@ def _embed_index(
         .filter(lambda obs: obs.pose is not None)
     )
     embedded: Stream[Any, Any] = posed.transform(EmbedImages(siglip)).materialize()
+    logger.info(f"index: {embedded.count()} frames embedded over {t1 - t0:.1f}s")
     return embedded
 
 
@@ -256,8 +267,6 @@ def _retrieve(
     index: Stream[Any, Any],
     tf: TFLookup,
     query_embedding: Any,
-    t0: float,
-    t1: float,
     optical_frame: str,
     world_frame: str,
     tf_tolerance: float,
@@ -276,6 +285,7 @@ def _retrieve(
     if not ranked:
         return []
 
+    t0, t1 = index.get_time_range()
     bands = max(1, min(TIME_BANDS, int((t1 - t0) / 20)))
     per_band = max(1, TOP_FRAMES // bands)
     span = (t1 - t0) / bands
@@ -302,8 +312,10 @@ def localize(
     store: Any,
     query: str,
     *,
-    after: float | None = None,
-    before: float | None = None,
+    index: Stream[Any, Any],
+    siglip: SigLIPModel,
+    owl: Owlv2Detector,
+    segmenter: EdgeTAMImageSegmenter,
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
     cloud_mode: str = "latest_visible",
@@ -319,26 +331,22 @@ def localize(
     no valid depth and ``require_pose`` holds. An ambiguity between
     coexisting candidates is returned with ``ambiguity_margin`` below
     ``refusal_margin`` - a flagged hit, never a silent guess.
+
+    The index and the three models belong to the caller: nothing here is
+    loaded or stopped, so one process can call this repeatedly on warm
+    weights, and every query on one window reuses the same embeddings. The
+    window is the index's - build it with :func:`embed_index`.
     """
     policy = policy or LocalizePolicy()
     tf = StreamTF.from_store(store)
     if tf is None:
         raise ValueError("recording has no tf stream")
     camera_info = store.streams.camera_info.first().data
-    lo, hi = store.streams.color_image.get_time_range()
-    t0 = after if after is not None else lo
-    t1 = before if before is not None else hi
-    logger.info(f"localize '{query}': window {t0 - lo:.1f}s..{t1 - lo:.1f}s")
 
-    # Pass 1 - SigLIP resident: embed the window, rank frames by the query.
-    from dimos.models.embedding.siglip import SigLIPModel
-
-    siglip = SigLIPModel()
-    index = _embed_index(store, tf, t0, t1, siglip, optical_frame, world_frame, tf_tolerance)
+    # Pass 1 - SigLIP: rank the indexed frames by the query.
     query_embedding = siglip.embed_text(query)
-    frames = _retrieve(index, tf, query_embedding, t0, t1, optical_frame, world_frame, tf_tolerance)
-    siglip.stop()
-    logger.info(f"retrieval: {len(frames)} candidate frames of {index.count()} embedded")
+    frames = _retrieve(index, tf, query_embedding, optical_frame, world_frame, tf_tolerance)
+    logger.info(f"localize '{query}': {len(frames)} candidate frames of {index.count()} embedded")
     if not frames:
         return None
 
@@ -348,12 +356,7 @@ def localize(
         store, tf, camera_info, frames, optical_frame, world_frame, tf_tolerance
     )
 
-    # Pass 2 - OWLv2 + EdgeTAM resident: detect, segment, lift, verify.
-    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-
-    owl = Owlv2Detector()
-    segmenter = EdgeTAMImageSegmenter()
+    # Pass 2 - OWLv2 + EdgeTAM: detect, segment, lift, verify.
     cache = _DetectionCache(owl, segmenter, query, policy.candidate_floor)
 
     clusters: list[_Cluster] = []
@@ -453,9 +456,6 @@ def localize(
             f"score={c.max_score:.2f} views={c.n_views} obs={len(c.observations)}" for c in clusters
         )
     )
-
-    owl.stop()
-    del segmenter
 
     if not verified:
         if ungrounded_best is not None and ungrounded_best[0] >= policy.accept_score:

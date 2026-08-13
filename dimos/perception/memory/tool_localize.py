@@ -12,38 +12,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Query memory for an object, localize it in 3D via depth, render in rerun.
+"""Query memory for objects, localize them in 3D via depth, render in rerun.
 
-Run: uv run python -m dimos.perception.memory.tool_localize [query] [out.rrd]
+Run: uv run python -m dimos.perception.memory.tool_localize [query ...] [out.rrd]
          [--from <s>] [--duration <s>]
 
-Exit code 0 with a printed position on a verified hit; exit code 1 with
-"no verified detection of ..." when the honest answer is that the object is
-not there. An ambiguous hit (identical twins in view) is printed with its
+Queries share one model load and one .rrd. Exit code 0 with a printed
+position per verified hit; exit code 1 when no query is verified, with
+"no verified detection of ..." per miss - the honest answer that the object
+is not there. An ambiguous hit (identical twins in view) is printed with its
 ambiguity margin flagged.
 """
 
 import argparse
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, cast
 
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.tf import StreamTF
 from dimos.memory2.transform import throttle
 from dimos.perception.memory import gates
-from dimos.perception.memory.localize import LocalizeTrace, localize
+from dimos.perception.memory.localize import LocalizeTrace, embed_index, localize
 from dimos.utils.data import get_data
 
 REFUSAL_MARGIN = 0.15
 
 
-def render(out: str, store: Any, trace: LocalizeTrace, t0: float, t1: float) -> None:
+def render(
+    out: str, store: Any, traces: list[tuple[str, LocalizeTrace]], t0: float, t1: float
+) -> None:
     """Write the .rrd - rerun stays an inline import.
 
     Entity contract (the acceptance color cheat sheet): ``map`` backdrop,
-    ``detections/matched/*`` green, ``detections/verified/*`` red,
-    ``detections/answer`` always blue.
+    then one subtree per query - ``detections/<query>/matched/*`` green,
+    ``detections/<query>/verified/*`` red, ``detections/<query>/answer``
+    always blue.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -51,7 +55,7 @@ def render(out: str, store: Any, trace: LocalizeTrace, t0: float, t1: float) -> 
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
 
-    tf = StreamTF.from_store(store)
+    tf = cast("StreamTF", StreamTF.from_store(store))
     camera_info = store.streams.camera_info.first().data
 
     rerun_init("memory-localize")
@@ -72,10 +76,10 @@ def render(out: str, store: Any, trace: LocalizeTrace, t0: float, t1: float) -> 
     def at(ts: float) -> None:
         rr.set_time("ts", timestamp=ts)
 
-    # scene backdrop from the answer frame's depth (or the first detection)
-    backdrop_ts = trace.backdrop_ts
-    if backdrop_ts is None and trace.matched:
-        backdrop_ts = trace.matched[0][0]
+    # scene backdrop from an answer frame's depth (or the first detection)
+    backdrop_ts = next((t.backdrop_ts for _, t in traces if t.backdrop_ts is not None), None)
+    if backdrop_ts is None:
+        backdrop_ts = next((t.matched[0][0] for _, t in traces if t.matched), None)
     if backdrop_ts is not None:
         try:
             color = store.streams.color_image.at(backdrop_ts, 0.1).first().data
@@ -107,41 +111,47 @@ def render(out: str, store: Any, trace: LocalizeTrace, t0: float, t1: float) -> 
         rr.log("camera/image", obs.data.to_rerun())
         rr.log("camera", pose.to_rerun())
 
-    # marked frames: into the live feed, plus a frozen frustum at the capture pose
-    for i, obs in enumerate(trace.detection_frames):
-        pose = gates.camera_pose(tf, obs.ts)
-        if pose is None:
-            continue
-        at(obs.ts)
-        annotated = obs.data.annotated_image()
-        rr.log("camera/image", annotated.to_rerun())
-        frame = f"detections/frames/{i}"
-        rr.log(frame, pose.to_rerun())
-        rr.log(frame, camera_info.to_rerun())
-        rr.log(f"{frame}/image", annotated.to_rerun())
+    for query, trace in traces:
+        root = f"detections/{query.replace(' ', '_')}"
 
-    # 3d detections: green = matched candidates, red = cross-view re-detections
-    for tag, entries, rgb in [("matched", trace.matched, GREEN), ("verified", trace.verified, RED)]:
-        for i, (ts, det) in enumerate(entries):
-            at(ts)
+        # marked frames: into the live feed, plus a frozen frustum at the capture pose
+        for i, obs in enumerate(trace.detection_frames):
+            pose = gates.camera_pose(tf, obs.ts)
+            if pose is None:
+                continue
+            at(obs.ts)
+            annotated = obs.data.annotated_image()
+            rr.log("camera/image", annotated.to_rerun())
+            frame = f"{root}/frames/{i}"
+            rr.log(frame, pose.to_rerun())
+            rr.log(frame, camera_info.to_rerun())
+            rr.log(f"{frame}/image", annotated.to_rerun())
+
+        # 3d detections: green = matched candidates, red = cross-view re-detections
+        for tag, entries, rgb in [
+            ("matched", trace.matched, GREEN),
+            ("verified", trace.verified, RED),
+        ]:
+            for i, (ts, det) in enumerate(entries):
+                at(ts)
+                rr.log(
+                    f"{root}/{tag}/{i}_{det.name.replace(' ', '_')}",
+                    det.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=rgb),
+                )
+
+        # the answer: always blue, whatever the query
+        if trace.answer is not None:
+            at(trace.answer.ts)
             rr.log(
-                f"detections/{tag}/{i}_{det.name.replace(' ', '_')}",
-                det.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=rgb),
+                f"{root}/answer",
+                trace.answer.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=BLUE),
             )
-
-    # the answer: always blue, whatever the query
-    if trace.answer is not None:
-        at(trace.answer.ts)
-        rr.log(
-            "detections/answer",
-            trace.answer.pointcloud.to_rerun(voxel_size=POINT_SIZE, colors=BLUE),
-        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("query", nargs="?", default="plant")
-    parser.add_argument("out", nargs="?", default="localize.rrd")
+    parser.add_argument("queries", nargs="+", help="one or more object queries")
+    parser.add_argument("out", help="rerun recording to write")
     parser.add_argument("--dataset", type=Path, help="memory2 recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
@@ -161,44 +171,67 @@ def main() -> int:
     store = SqliteStore(path=dataset)
     lo, hi = store.streams.color_image.get_time_range()
     after = lo + args.start
-    before = lo + args.start + args.duration if args.duration is not None else None
+    before = lo + args.start + args.duration if args.duration is not None else hi
 
-    trace = LocalizeTrace()
-    hit = localize(
-        store,
-        args.query,
-        after=after,
-        before=before,
-        require_pose=not args.allow_no_pose,
-        trace=trace,
-    )
+    from dimos.models.embedding.siglip import SigLIPModel
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
-    if hit is None:
-        print(f"no verified detection of {args.query!r}")
+    siglip = SigLIPModel()
+    owl = Owlv2Detector()
+    segmenter = EdgeTAMImageSegmenter()
+    index = embed_index(store, siglip, after, before)
+
+    traces: list[tuple[str, LocalizeTrace]] = []
+    hits = 0
+    for query in args.queries:
+        trace = LocalizeTrace()
+        hit = localize(
+            store,
+            query,
+            index=index,
+            siglip=siglip,
+            owl=owl,
+            segmenter=segmenter,
+            require_pose=not args.allow_no_pose,
+            trace=trace,
+        )
+
+        if hit is None:
+            print(f"no verified detection of {query!r}")
+            continue
+        hits += 1
+        traces.append((query, trace))
+
+        offset = hit.pose_timestamp - lo
+        if hit.position_world_xyz is None:
+            print(
+                f"hit {query!r} without pose: reason={hit.reason} "
+                f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
+            )
+            continue
+
+        x, y, z = hit.position_world_xyz
+        cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
+        print(
+            f"hit {query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
+            f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
+            f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
+        )
+        if hit.ambiguity_margin < REFUSAL_MARGIN:
+            print(
+                f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
+                f"{REFUSAL_MARGIN:.2f} - multiple coexisting matches, this pick is flagged"
+            )
+
+    siglip.stop()
+    owl.stop()
+    del segmenter
+
+    if not hits:
         return 1
 
-    offset = hit.pose_timestamp - lo
-    if hit.position_world_xyz is None:
-        print(
-            f"hit {args.query!r} without pose: reason={hit.reason} "
-            f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
-        )
-        return 0
-
-    x, y, z = hit.position_world_xyz
-    cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
-    print(
-        f"hit {args.query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
-        f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
-        f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
-    )
-    if hit.ambiguity_margin < REFUSAL_MARGIN:
-        print(
-            f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
-            f"{REFUSAL_MARGIN:.2f} - multiple coexisting matches, this pick is flagged"
-        )
-
-    render(args.out, store, trace, after, before if before is not None else hi)
+    render(args.out, store, traces, after, before)
     print(f"saved {args.out}")
     return 0
 
