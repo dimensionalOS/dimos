@@ -134,7 +134,7 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
         status=PlanningStatus.SUCCESS, path=path
     )
 
-    assert module._plan_selected_path(("left/group", "right/group"), path[0], path[-1], 1)
+    assert module._plan_selected_path(("left/group", "right/group"), path[0], path[-1], 1, 1.0)
     assert RecordingGenerator.calls == [[[0.0, 0.0, 0.0], [0.2, 0.1, 0.3]]]
     assert RecordingGenerator.limits == ([1.0, 1.0, 3.0], [2.0, 2.0, 4.0])
     assert module._last_plan is not None
@@ -194,7 +194,7 @@ def test_zero_generation_after_caching_for_status_and_completion(monkeypatch, mo
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.SUCCESS, path=path
     )
-    assert module._plan_selected_path(("left/group",), path[0], path[-1], 1)
+    assert module._plan_selected_path(("left/group",), path[0], path[-1], 1, 1.0)
     RecordingGenerator.calls = []
 
     module.wait_for_execution(timeout=0.0)

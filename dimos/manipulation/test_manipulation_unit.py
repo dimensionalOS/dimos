@@ -342,24 +342,18 @@ class TestStateMachine:
         assert module._state == ManipulationState.IDLE
         assert module._error_message == "Test error"
 
-    def test_begin_planning_state_checks(self, robot_config, module_factory):
-        """_begin_planning only allowed from IDLE or COMPLETED."""
+    def test_group_planning_resolves_speed_per_request(self, module_factory):
         module = module_factory()
         module._world_monitor = MagicMock()
-        module._robots = {"test_arm": ("robot_id", robot_config)}
 
-        # From IDLE - OK
-        module._state = ManipulationState.IDLE
-        assert module._begin_planning() == ("test_arm", "robot_id")
+        assert module._begin_group_planning(0.2) == (1, 0.2)
         assert module._state == ManipulationState.PLANNING
 
-        # From COMPLETED - OK
         module._state = ManipulationState.COMPLETED
-        assert module._begin_planning() == ("test_arm", "robot_id")
+        assert module._begin_group_planning() == (2, module.config.default_speed_scale)
 
-        # From EXECUTING - Fail
         module._state = ManipulationState.EXECUTING
-        assert module._begin_planning() is None
+        assert module._begin_group_planning() is None
 
 
 class TestRobotSelection:

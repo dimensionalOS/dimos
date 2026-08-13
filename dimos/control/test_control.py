@@ -32,7 +32,7 @@ from dimos.control.components import (
     make_joints,
     make_twist_base_joints,
 )
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig, joint_trajectory_task
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import (
     BaseControlTask,
@@ -92,7 +92,7 @@ def trajectory_task():
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         priority=10,
     )
-    return JointTrajectoryTask(name=JOINT_TRAJECTORY_TASK_NAME, config=config)
+    return JointTrajectoryTask(config=config)
 
 
 @pytest.fixture
@@ -421,26 +421,34 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_requires_canonical_trajectory_task_name(self, make_coordinator):
+    def test_trajectory_config_requires_canonical_name(self, make_coordinator):
         coordinator = make_coordinator()
-        task = JointTrajectoryTask(
-            "other_name",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
+        config = TaskConfig(
+            name="other_name",
+            type="trajectory",
+            joint_names=["arm/joint1"],
         )
 
         with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
-            coordinator.add_task(task, task_type="trajectory")
+            coordinator._create_task_from_config(config)
+
+    def test_joint_trajectory_task_factory(self):
+        config = joint_trajectory_task(
+            ("arm/joint1", "arm/joint2"),
+            priority=7,
+            start_position_tolerance=0.02,
+        )
+
+        assert config.name == JOINT_TRAJECTORY_TASK_NAME
+        assert config.type == "trajectory"
+        assert config.joint_names == ["arm/joint1", "arm/joint2"]
+        assert config.priority == 7
+        assert config.params == {"start_position_tolerance": 0.02}
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            JOINT_TRAJECTORY_TASK_NAME,
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
-        )
-        second = JointTrajectoryTask(
-            JOINT_TRAJECTORY_TASK_NAME,
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
-        )
+        first = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
+        second = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint2"]))
         coordinator.add_task(first, task_type="trajectory")
 
         assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
@@ -983,7 +991,7 @@ class TestIntegration:
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
-        traj_task = JointTrajectoryTask(name=JOINT_TRAJECTORY_TASK_NAME, config=config)
+        traj_task = JointTrajectoryTask(config=config)
         tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}

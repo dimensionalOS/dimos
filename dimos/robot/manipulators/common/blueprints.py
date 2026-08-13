@@ -20,8 +20,7 @@ from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.control.coordinator import ControlCoordinator, TaskConfig, joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -65,14 +64,10 @@ def trajectory_task(
     start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     hardware_components = (hardware, *additional_hardware)
-    return TaskConfig(
-        name=JOINT_TRAJECTORY_TASK_NAME,
-        type="trajectory",
-        joint_names=[
-            joint_name for component in hardware_components for joint_name in component.joints
-        ],
+    return joint_trajectory_task(
+        [joint_name for component in hardware_components for joint_name in component.joints],
         priority=priority,
-        params={"start_position_tolerance": start_position_tolerance},
+        start_position_tolerance=start_position_tolerance,
     )
 
 

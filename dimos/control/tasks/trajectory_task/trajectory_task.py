@@ -148,7 +148,6 @@ class JointTrajectoryTask(BaseControlTask):
 
     Example:
         >>> task = JointTrajectoryTask(
-        ...     name="traj_left",
         ...     config=JointTrajectoryTaskConfig(
         ...         joint_names=["left/joint1", "left/joint2"],
         ...         priority=10,
@@ -158,14 +157,13 @@ class JointTrajectoryTask(BaseControlTask):
         >>> task.execute(my_trajectory, current_positions)
     """
 
-    def __init__(self, name: str, config: JointTrajectoryTaskConfig) -> None:
+    def __init__(self, config: JointTrajectoryTaskConfig) -> None:
         """Initialize trajectory task.
 
         Args:
-            name: Unique task name
             config: Task configuration
         """
-        self._name = name
+        self._name = JOINT_TRAJECTORY_TASK_NAME
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
@@ -178,7 +176,9 @@ class JointTrajectoryTask(BaseControlTask):
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
 
-        logger.info(f"JointTrajectoryTask {name} initialized for joints: {config.joint_names}")
+        logger.info(
+            f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
+        )
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -450,9 +450,12 @@ class JointTrajectoryTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+    if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
+        raise ValueError(
+            f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
+        )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
-        cfg.name,
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,

@@ -428,7 +428,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, joint_trajectory_task
 
 
 # YourArm (6-DOF) — real hardware
@@ -447,12 +447,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_arm",                          # Task name (used by ManipulationModule RPC)
-            type="trajectory",                        # Trajectory execution task
-            joint_names=[f"arm_joint{i+1}" for i in range(6)],
-            priority=10,                              # Higher priority wins arbitration
-        ),
+        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
     ],
 )
 

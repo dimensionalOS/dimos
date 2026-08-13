@@ -23,6 +23,7 @@ from pytest_mock import MockerFixture
 
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
+    CommandResult,
     ExecutionResult,
     ExecutionStatus,
     ManipulationSpec,
@@ -148,6 +149,54 @@ def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
 
     assert result.plan.status is PlanStatus.AMBIGUOUS_GROUP
     assert result.execution is None
+
+
+def test_explicit_group_must_support_requested_capability(module_factory) -> None:
+    module = module_factory()
+    robot = _robot().model_copy(
+        update={
+            "planning_groups": [
+                PlanningGroupDefinition(
+                    name="tool",
+                    joint_names=("j0",),
+                    base_link="base",
+                )
+            ]
+        }
+    )
+    module._robots = {"arm": ("arm_id", robot)}
+    module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([robot])
+
+    pose_result = module._resolve_pose_group("arm/tool")
+    gripper_result = module._resolve_gripper_group("arm/tool")
+
+    assert isinstance(pose_result, CommandResult)
+    assert pose_result.message == "Planning group 'arm/tool' is not pose-capable"
+    assert isinstance(gripper_result, CommandResult)
+    assert gripper_result.message == "Planning group 'arm/tool' is not gripper-capable"
+
+
+def test_omitted_group_selects_unique_capable_group(module_factory) -> None:
+    module = module_factory()
+    plain = _robot()
+    gripper = _robot().model_copy(
+        update={
+            "name": "gripper_arm",
+            "gripper_hardware_id": "gripper",
+        }
+    )
+    module._robots = {
+        "arm": ("arm_id", plain),
+        "gripper_arm": ("gripper_arm_id", gripper),
+    }
+    module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry([plain, gripper])
+
+    result = module._resolve_gripper_group(None)
+
+    assert not isinstance(result, CommandResult)
+    assert result.id == "gripper_arm/tool"
 
 
 @pytest.fixture

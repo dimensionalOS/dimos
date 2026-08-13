@@ -25,6 +25,7 @@ Features:
 - Aggregated preemption notifications
 """
 
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 import inspect
@@ -94,6 +95,21 @@ class TaskConfig:
     stream_bind: dict[str, str] = field(default_factory=dict)
 
 
+def joint_trajectory_task(
+    joint_names: Sequence[str],
+    priority: int = 10,
+    start_position_tolerance: float = 0.05,
+) -> TaskConfig:
+    """Build the coordinator's single canonical joint-trajectory task."""
+    return TaskConfig(
+        name=JOINT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(joint_names),
+        priority=priority,
+        params={"start_position_tolerance": start_position_tolerance},
+    )
+
+
 class ControlCoordinatorConfig(ModuleConfig):
     """Configuration for the ControlCoordinator."""
 
@@ -131,7 +147,7 @@ class ControlCoordinator(Module):
     Example:
         >>> from dimos.control.components import HardwareComponent, HardwareType
         >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator, TaskConfig
+        >>> from dimos.control.coordinator import ControlCoordinator, joint_trajectory_task
         >>>
         >>> coordinator = ControlCoordinator.blueprint(
         ...     tick_rate=100.0,
@@ -145,12 +161,7 @@ class ControlCoordinator(Module):
         ...         ),
         ...     ],
         ...     tasks=[
-        ...         TaskConfig(
-        ...             name="joint_trajectory",
-        ...             type="trajectory",
-        ...             joint_names=make_joints("arm", 7),
-        ...             priority=10,
-        ...         ),
+        ...         joint_trajectory_task(make_joints("arm", 7)),
         ...     ],
         ... )
     """
@@ -496,11 +507,6 @@ class ControlCoordinator(Module):
             if isinstance(task, JointTrajectoryTask):
                 if self._trajectory_task is not None:
                     raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
-                if task.name != JOINT_TRAJECTORY_TASK_NAME:
-                    raise ValueError(
-                        "JointTrajectoryTask must be named "
-                        f"{JOINT_TRAJECTORY_TASK_NAME!r}, got {task.name!r}"
-                    )
                 self._trajectory_task = task
             if task_type is not None:
                 try:

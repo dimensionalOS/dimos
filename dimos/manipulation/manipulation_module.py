@@ -192,7 +192,6 @@ class ManipulationModule(Module):
         self._lock = threading.Lock()
         self._error_message = ""
         self._planning_epoch = 0
-        self._planning_speed_scale = self.config.default_speed_scale
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -522,32 +521,7 @@ class ManipulationModule(Module):
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
 
-    def _begin_planning(
-        self, robot_name: RobotName | None = None
-    ) -> tuple[RobotName, WorldRobotID] | None:
-        """Check state and begin planning. Returns (robot_name, robot_id) or None.
-
-        Args:
-            robot_name: Robot to plan for (required if multiple robots configured)
-        """
-        if self._world_monitor is None:
-            self._record_error("Planning not initialized")
-            return None
-        if (robot := self._get_robot(robot_name)) is None:
-            self._record_error("Robot not found or robot_name is required")
-            return None
-        with self._lock:
-            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                self._record_error(f"Cannot plan while state is {self._state.name}")
-                return None
-            self._planning_epoch += 1
-            self._last_plan = None
-            self._planning_speed_scale = self.config.default_speed_scale
-            self._error_message = ""
-            self._state = ManipulationState.PLANNING
-        return robot[0], robot[1]
-
-    def _begin_group_planning(self, speed_scale: float | None = None) -> int | None:
+    def _begin_group_planning(self, speed_scale: float | None = None) -> tuple[int, float] | None:
         """Check state and begin planning for explicit planning-group APIs."""
         if self._world_monitor is None:
             logger.error("Planning not initialized")
@@ -562,10 +536,9 @@ class ManipulationModule(Module):
                 return None
             self._planning_epoch += 1
             self._last_plan = None
-            self._planning_speed_scale = float(resolved_speed)
             self._error_message = ""
             self._state = ManipulationState.PLANNING
-            return self._planning_epoch
+            return self._planning_epoch, float(resolved_speed)
 
     def _require_unique_pose_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID:
         """Return the unique pose-targetable group or raise if it is ambiguous."""
@@ -600,6 +573,7 @@ class ManipulationModule(Module):
         group_ids: tuple[PlanningGroupID, ...],
         result: PlanningResult,
         planning_epoch: int,
+        speed_scale: float,
     ) -> GeneratedPlan | None:
         """Validate, materialize, and atomically store a successful planning result."""
         try:
@@ -610,7 +584,7 @@ class ManipulationModule(Module):
                 world=self._world_monitor.world,
                 selection=selection,
                 result=result,
-                speed_scale=self._planning_speed_scale,
+                speed_scale=speed_scale,
             )
         except Exception as exc:
             self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
@@ -630,6 +604,7 @@ class ManipulationModule(Module):
         start: JointState,
         goal: JointState,
         planning_epoch: int,
+        speed_scale: float,
     ) -> GeneratedPlan | None:
         """Plan over explicit planning groups and store the resulting plan."""
         assert self._world_monitor and self._planner
@@ -648,7 +623,7 @@ class ManipulationModule(Module):
             return None
 
         logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
-        return self._store_generated_plan(group_ids, result, planning_epoch)
+        return self._store_generated_plan(group_ids, result, planning_epoch, speed_scale)
 
     def _record_error(self, message: str) -> bool:
         """Record an error without changing the manipulation state."""
@@ -934,9 +909,10 @@ class ManipulationModule(Module):
         group_ids = tuple(
             dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)
         )
-        planning_epoch = self._begin_group_planning(speed_scale)
-        if planning_epoch is None:
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
             return None
+        planning_epoch, resolved_speed_scale = planning
 
         resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
         if resolved is None:
@@ -958,7 +934,9 @@ class ManipulationModule(Module):
             goal_positions.extend(target_global.position)
 
         goal = JointState(name=goal_names, position=goal_positions)
-        return self._plan_selected_path(group_ids, start, goal, planning_epoch)
+        return self._plan_selected_path(
+            group_ids, start, goal, planning_epoch, resolved_speed_scale
+        )
 
     def generate_plan_to_pose_targets(
         self,
@@ -982,9 +960,10 @@ class ManipulationModule(Module):
         }
         auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
         group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
-        planning_epoch = self._begin_group_planning(speed_scale)
-        if planning_epoch is None:
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
             return None
+        planning_epoch, resolved_speed_scale = planning
         resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
         if resolved is None:
             return None
@@ -999,7 +978,9 @@ class ManipulationModule(Module):
             self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
             return None
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_selected_path(group_ids, start, ik.joint_state, planning_epoch)
+        return self._plan_selected_path(
+            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+        )
 
     def plan_cartesian_targets(
         self,
@@ -1041,18 +1022,18 @@ class ManipulationModule(Module):
             return None
         auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
         group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
-        planning_epoch = self._begin_group_planning(speed_scale)
-        if planning_epoch is None:
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
             return None
+        planning_epoch, resolved_speed_scale = planning
         resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
         if resolved is None:
             return None
         selection, start = resolved
-        speed_scale = self._planning_speed_scale
         scaled_config = config.model_copy(
             update={
-                "velocity_scale": config.velocity_scale * speed_scale,
-                "acceleration_scale": config.acceleration_scale * speed_scale,
+                "velocity_scale": config.velocity_scale * resolved_speed_scale,
+                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
             }
         )
         result = self._planner.plan_cartesian_path(
@@ -1070,7 +1051,7 @@ class ManipulationModule(Module):
                 planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
             )
             return None
-        return self._store_generated_plan(group_ids, result, planning_epoch)
+        return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
 
     @rpc
     def move_linear(
@@ -1094,7 +1075,7 @@ class ManipulationModule(Module):
         if delta == (0.0, 0.0, 0.0):
             plan_result = PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
             return MoveResult(plan_result, None, delta, check_collision)
-        group = self._resolve_capable_group(planning_group, require_pose=True)
+        group = self._resolve_pose_group(planning_group)
         if isinstance(group, CommandResult):
             plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
             return MoveResult(plan_result, None, delta, check_collision)
@@ -1653,7 +1634,7 @@ class ManipulationModule(Module):
 
         if not math.isfinite(position):
             return CommandResult(CommandStatus.REJECTED, "position must be finite")
-        group = self._resolve_capable_group(planning_group, require_gripper=True)
+        group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
         config = self._group_robot_config(group)
@@ -1664,43 +1645,51 @@ class ManipulationModule(Module):
             return CommandResult(CommandStatus.SUCCEEDED, f"Gripper set to {position:.3f}m")
         return CommandResult(CommandStatus.FAILED, "Failed to set gripper position")
 
-    def _resolve_capable_group(
+    def _resolve_pose_group(
         self,
         planning_group: PlanningGroupID | None,
-        *,
-        require_pose: bool = False,
-        require_gripper: bool = False,
+    ) -> PlanningGroup | CommandResult:
+        return self._resolve_group_with_capability(planning_group, "pose")
+
+    def _resolve_gripper_group(
+        self,
+        planning_group: PlanningGroupID | None,
+    ) -> PlanningGroup | CommandResult:
+        return self._resolve_group_with_capability(planning_group, "gripper")
+
+    def _resolve_group_with_capability(
+        self,
+        planning_group: PlanningGroupID | None,
+        capability: Literal["pose", "gripper"],
     ) -> PlanningGroup | CommandResult:
         if self._world_monitor is None:
             return CommandResult(CommandStatus.FAILED, "Planning is not initialized")
         groups = self._world_monitor.planning_groups.list()
-        candidates: tuple[PlanningGroup, ...]
+
+        def is_capable(group: PlanningGroup) -> bool:
+            if capability == "pose":
+                return group.has_pose_target
+            return self._group_robot_config(group).gripper_hardware_id is not None
+
         if planning_group is not None:
             try:
-                candidates = (self._world_monitor.planning_groups.get(planning_group),)
+                group = self._world_monitor.planning_groups.get(planning_group)
             except KeyError:
                 return CommandResult(CommandStatus.REJECTED, f"Unknown group: {planning_group}")
-        else:
-            candidates = tuple(
-                group
-                for group in groups
-                if (not require_pose or group.has_pose_target)
-                and (
-                    not require_gripper
-                    or self._group_robot_config(group).gripper_hardware_id is not None
-                )
-            )
-            if len(candidates) != 1:
+            if not is_capable(group):
                 return CommandResult(
                     CommandStatus.REJECTED,
-                    f"Expected one compatible planning group, found {len(candidates)}",
+                    f"Planning group '{group.id}' is not {capability}-capable",
                 )
-        group = candidates[0]
-        if require_pose and not group.has_pose_target:
-            return CommandResult(CommandStatus.REJECTED, f"Group '{group.id}' has no tip frame")
-        if require_gripper and self._group_robot_config(group).gripper_hardware_id is None:
-            return CommandResult(CommandStatus.REJECTED, f"Group '{group.id}' has no gripper")
-        return group
+            return group
+
+        candidates = tuple(group for group in groups if is_capable(group))
+        if len(candidates) != 1:
+            return CommandResult(
+                CommandStatus.REJECTED,
+                f"Expected one {capability}-capable planning group, found {len(candidates)}",
+            )
+        return candidates[0]
 
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
