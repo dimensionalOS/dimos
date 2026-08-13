@@ -87,6 +87,59 @@ robot-region TF is unavailable. It MUST NOT publish a partially filtered cloud.
 - WHEN the self-filter handles the cloud
 - THEN no filtered cloud is published for that input
 
+### Requirement: Resolve transforms near sensor capture time
+Sensor images, point clouds, and camera transforms MUST preserve the sensor Capture Time. Dynamic robot transforms MUST be published from the complete measured joint state using that state's timestamp at a minimum source rate of 50 Hz. The pose source MUST sample TF at 50 Hz while retaining each selected transform's source timestamp, and mapping MUST match that pose to the cloud with a maximum timestamp error of 20 ms. Self-exclusion MUST query TF at the cloud timestamp with the same 20 ms bound and MAY wait up to 50 ms for transport delivery. The system MUST use TF's nearest-sample behavior without interpolation and MUST drop an observation whose required dynamic transform is outside that bound.
+
+#### Scenario: Publication delay does not move a cloud
+- GIVEN a camera frame is captured at `t` and published later
+- WHEN its image, cloud, and camera TF are emitted
+- THEN each message retains timestamp `t`
+- AND mapping resolves the camera pose near `t`, not near publication time
+
+#### Scenario: Stale dynamic TF drops the observation
+- GIVEN a cloud has Capture Time `t`
+- AND a required dynamic TF sample differs from `t` by more than 20 ms
+- WHEN the 50 ms delivery wait expires without a closer sample
+- THEN the observation is dropped without changing the voxel map
+
+### Requirement: Store static TF edges as timeless
+Static TF edges MUST be published and stored separately from dynamic transform history. A static edge SHALL be valid at every query time and MUST NOT participate in dynamic time-tolerance checks. The system MUST NOT periodically restamp and republish fixed geometry.
+
+#### Scenario: A mixed static and dynamic chain resolves at capture time
+- GIVEN `world -> link7` is dynamic and `link7 -> camera` is static
+- AND the dynamic sample is within 20 ms of a cloud's Capture Time
+- WHEN `world -> camera` is queried at that time
+- THEN the static edge is composed without an age failure
+- AND only the dynamic edge is subject to the 20 ms tolerance
+
+### Requirement: Exclude complete robot-model geometry
+The self-filter MUST derive Robot Self Geometry from the robot's URDF/Xacro collision shapes, including base, articulated links, gripper, and modeled sensor mounts. Primitive shapes MUST use analytic padded checks; mesh shapes MUST use a padded broad phase followed by distance-to-surface checks. A uniform 10 mm Self-Exclusion Padding MUST apply. Any missing required model geometry or capture-time transform MUST invalidate the entire observation.
+
+#### Scenario: Robot base returns are excluded without erasing nearby obstacles
+- GIVEN the wrist camera observes points on the robot base and on an environment object outside the 10 mm padded base surface
+- WHEN the complete robot model is evaluated at the cloud Capture Time
+- THEN base points are removed
+- AND the nearby environment points are retained
+
+### Requirement: Atomically clear robot volumes during map integration
+For each valid observation, the self-filter MUST produce unique integer voxel keys at mapper resolution covering the previous and current padded Robot Self Geometry volumes in the Planning World Frame. `RayTracingVoxelMap` MUST join the filtered cloud, capture-time camera pose, and clear mask by timestamp; it MUST clear the declared keys before integrating the cloud as one ordered update. An incomplete tuple MUST expire without mutating the map.
+
+#### Scenario: A prior robot voxel is removed when the robot moves
+- GIVEN a voxel under the robot's previous padded volume is occupied
+- AND a valid later observation contains matching cloud, pose, and clear mask
+- WHEN the mapper applies the update
+- THEN the previous and current robot-volume keys are cleared
+- AND the current environmental cloud is integrated afterward
+
+### Requirement: Reject planning with stale collision perception
+Planning MUST require a valid Planning Collision Snapshot whose Capture Time is no more than 1 second old at planning start. A stale snapshot MUST remain registered but MUST prevent a new plan until a fresh valid snapshot is staged.
+
+#### Scenario: Stale collision perception blocks a new plan
+- GIVEN the last valid snapshot is older than 1 second
+- WHEN collision-aware planning starts
+- THEN planning is rejected with a stale-perception error
+- AND the previously registered collision geometry is not cleared
+
 ### Requirement: Stage the latest snapshot and commit at plan start
 The system SHALL use latest-wins staging: each accepted snapshot replaces any previously staged snapshot that has not yet been committed. The currently staged snapshot MUST be committed when planning starts, using the obstacle lifecycle, before collision-aware planning proceeds. The system MUST NOT reject a staged or committed snapshot based on age or freshness.
 

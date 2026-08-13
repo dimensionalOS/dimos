@@ -78,6 +78,13 @@ impl VoxelMap {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
 
+    /// Remove robot-body voxels before integrating the matching sensor capture.
+    pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) {
+        for key in keys {
+            self.voxels.remove(&key);
+        }
+    }
+
     /// Add a return to its voxel's accumulated moments.
     fn accumulate(&mut self, point: (f32, f32, f32), voxel_size: f32) {
         let key = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
@@ -1419,5 +1426,17 @@ mod tests {
             !gated.contains(&isolated),
             "isolated voxel must be gated out"
         );
+    }
+
+    #[test]
+    fn robot_clear_mask_removes_only_named_voxels() {
+        let mut map = VoxelMap::default();
+        map.set((1, 2, 3), 2);
+        map.set((4, 5, 6), 2);
+
+        map.clear_voxels([(1, 2, 3)]);
+
+        assert_eq!(map.health((1, 2, 3)), None);
+        assert_eq!(map.health((4, 5, 6)), Some(2));
     }
 }

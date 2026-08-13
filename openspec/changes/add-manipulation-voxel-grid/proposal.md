@@ -10,7 +10,10 @@ This change connects complete planning collision snapshots to the unified obstac
 - Stage the latest snapshot and commit it at planning time through stable-ID obstacle add/update/remove operations.
 - Register octree collision geometry in RoboPlan and raise an explicit unsupported-operation error on planning backends without octree support.
 - Project backend-accepted obstacles in Viser through PR #3108's add-or-replace/remove/clear lifecycle.
-- Add reusable point-cloud self-filtering and TF pose-source modules needed by the xArm simulation flow.
+- Resolve camera pose from correctly stamped TF near each cloud's capture time, with a strict 20 ms dynamic-transform tolerance and 50 ms delivery wait.
+- Add timeless static TF edges and publish the complete robot kinematic TF tree from measured joint-state updates at at least 50 Hz.
+- Derive whole-robot self-exclusion from padded URDF/Xacro collision shapes and atomically clear previous/current robot volumes while integrating each cloud.
+- Reject new plans when the latest valid collision snapshot is older than 1 second.
 - Add an xArm MuJoCo/Viser example that maps wrist-camera depth data into manipulation collision geometry.
 - Add focused unit, integration, blueprint, and user-documentation coverage.
 
@@ -19,7 +22,7 @@ This change connects complete planning collision snapshots to the unified obstac
 - Modules/streams: manipulation planning, world monitoring, obstacle models, RoboPlan world adaptation, Viser visualization, point-cloud self-filtering, TF pose sourcing, and voxel-map streams.
 - Blueprints/CLI: a runnable xArm simulation blueprint discoverable through `dimos list` and `dimos run`; no CLI syntax changes.
 - Skills/MCP: none.
-- Hardware/simulation/replay: simulation example only; no direct hardware behavior or replay contract changes.
+- Hardware/simulation/replay: the xArm example remains simulation-only, while TF timestamp/static-edge semantics and robot-model self-exclusion are reusable by hardware blueprints.
 - Docs/generated registries: xArm voxel-planning usage documentation and regenerated built-in blueprint registry.
 
 ## Capabilities

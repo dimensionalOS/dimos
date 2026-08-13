@@ -39,7 +39,6 @@ xarm_perception = autoconnect(
                 name="arm",
                 add_gripper=True,
                 pitch=math.radians(45),
-                tf_extra_links=["link7"],
             )
         ],
         planning_timeout=10.0,

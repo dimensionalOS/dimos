@@ -19,14 +19,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Any, Literal, TypeAlias, cast
+import xml.etree.ElementTree as ET
 
 from pydantic import Field
 
 from dimos.agents.skill_result import SkillResult
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -178,6 +179,7 @@ class ManipulationModuleConfig(ModuleConfig):
     execution_timeout: float = Field(default=60.0, gt=0.0)
     planning_voxel_resolution: float = Field(default=0.05, gt=0.0)
     planning_world_frame: str = "world"
+    planning_collision_max_age_s: float | None = None
 
 
 class ManipulationModule(Module):
@@ -205,6 +207,7 @@ class ManipulationModule(Module):
         self._planning_collision_snapshot = PlanningCollisionSnapshot(
             resolution=float(getattr(self.config, "planning_voxel_resolution", 0.05)),
             planning_frame=str(getattr(self.config, "planning_world_frame", "world")),
+            max_age_s=getattr(self.config, "planning_collision_max_age_s", None),
         )
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
@@ -223,9 +226,7 @@ class ManipulationModule(Module):
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
 
-        # TF publishing thread
-        self._tf_stop_event = threading.Event()
-        self._tf_thread: threading.Thread | None = None
+        self._robot_tf_edges: dict[RobotName, list[tuple[str, str]]] = {}
 
         logger.info("ManipulationModule initialized")
 
@@ -252,7 +253,7 @@ class ManipulationModule(Module):
         """Stage the latest complete planning collision snapshot."""
         try:
             if not hasattr(self, "_planning_collision_snapshot"):
-                self._planning_collision_snapshot = PlanningCollisionSnapshot()
+                self._planning_collision_snapshot = self._new_planning_collision_snapshot()
             self._planning_collision_snapshot.stage(cloud)
         except ValueError as exc:
             logger.warning("Rejected planning collision snapshot: %s", exc)
@@ -260,21 +261,31 @@ class ManipulationModule(Module):
     def _synchronize_planning_collision_snapshot(self) -> None:
         """Commit staged collision input before collision-aware planning work."""
         if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         if self._world_monitor is not None:
             self._planning_collision_snapshot.synchronize(self._world_monitor)
 
     def committed_planning_collision_snapshot(self) -> PointCloud2 | None:
         """Return the completely committed planning collision snapshot."""
         if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         return self._planning_collision_snapshot.committed()
 
     def latest_planning_collision_snapshot(self) -> PointCloud2 | None:
         """Return the latest validated snapshot for prompt visualization."""
         if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = PlanningCollisionSnapshot()
+            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         return self._planning_collision_snapshot.staged()
+
+    def _new_planning_collision_snapshot(self) -> PlanningCollisionSnapshot:
+        resolution = getattr(self.config, "planning_voxel_resolution", 0.05)
+        planning_frame = getattr(self.config, "planning_world_frame", "world")
+        max_age_s = getattr(self.config, "planning_collision_max_age_s", None)
+        return PlanningCollisionSnapshot(
+            resolution=float(resolution) if isinstance(resolution, (int, float)) else 0.05,
+            planning_frame=planning_frame if isinstance(planning_frame, str) else "world",
+            max_age_s=float(max_age_s) if isinstance(max_age_s, (int, float)) else None,
+        )
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -304,10 +315,13 @@ class ManipulationModule(Module):
             world_monitor=self._world_monitor,
             manipulation_module=self,
         )
+        if not hasattr(self, "_robot_tf_edges"):
+            self._robot_tf_edges = {}
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
             self._robots[robot_config.name] = (robot_id, robot_config)
+            self._robot_tf_edges[robot_config.name] = self._load_robot_tf_edges(robot_config)
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
@@ -337,14 +351,7 @@ class ManipulationModule(Module):
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
-        # Start TF publishing thread if any robot has tf_extra_links
-        if any(c.tf_extra_links for _, c in self._robots.values()):
-            self._tf_stop_event.clear()
-            self._tf_thread = threading.Thread(
-                target=self._tf_publish_loop, name="ManipTFThread", daemon=True
-            )
-            self._tf_thread.start()
-            logger.info("TF publishing thread started")
+        logger.info("Robot TF is published from timestamped joint-state updates")
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -407,6 +414,8 @@ class ManipulationModule(Module):
                     else []
                 )
                 sub_msg = JointState(
+                    ts=msg.ts,
+                    frame_id=msg.frame_id,
                     name=list(coord_names),
                     position=sub_positions,
                     velocity=sub_velocities,
@@ -414,6 +423,7 @@ class ManipulationModule(Module):
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
+                self._publish_robot_tf(robot_name, robot_id, config, msg.ts)
 
                 # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
@@ -429,38 +439,65 @@ class ManipulationModule(Module):
 
             logger.error(traceback.format_exc())
 
-    def _tf_publish_loop(self) -> None:
-        """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs.Transform import Transform
+    @staticmethod
+    def _load_robot_tf_edges(config: RobotModelConfig) -> list[tuple[str, str]]:
+        """Read the model's parent-child link tree from its resolved URDF."""
+        from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 
-        period = 0.1  # 10Hz
-        while not self._tf_stop_event.is_set():
-            try:
-                if self._world_monitor is None:
-                    break
-                transforms: list[Transform] = []
-                for robot_id, config in self._robots.values():
-                    # Publish world → EE
-                    ee_pose = self._world_monitor.get_ee_pose(robot_id)
-                    if ee_pose is not None:
-                        ee_tf = Transform.from_pose(config.end_effector_link, ee_pose)
-                        ee_tf.frame_id = "world"
-                        transforms.append(ee_tf)
+        if not config.model_path.exists():
+            logger.warning("Robot TF tree unavailable: model does not exist: %s", config.model_path)
+            return []
+        urdf = Path(
+            prepare_urdf_for_drake(
+                config.model_path,
+                package_paths=config.package_paths,
+                xacro_args=config.xacro_args,
+            )
+        )
+        root = ET.parse(urdf).getroot()
+        edges: list[tuple[str, str]] = []
+        for joint in root.findall("joint"):
+            parent = joint.find("parent")
+            child = joint.find("child")
+            if parent is None or child is None or parent.attrib["link"] == "world":
+                continue
+            edges.append((parent.attrib["link"], child.attrib["link"]))
+        return edges
 
-                    # Publish world → each extra link
-                    for link_name in config.tf_extra_links:
-                        link_pose = self._world_monitor.get_link_pose(robot_id, link_name)
-                        if link_pose is not None:
-                            link_tf = Transform.from_pose(link_name, link_pose)
-                            link_tf.frame_id = "world"
-                            transforms.append(link_tf)
+    def _publish_robot_tf(
+        self,
+        robot_name: RobotName,
+        robot_id: WorldRobotID,
+        config: RobotModelConfig,
+        timestamp: float,
+    ) -> None:
+        """Publish the complete model TF tree from one measured joint state."""
+        if self._world_monitor is None:
+            return
+        edges = getattr(self, "_robot_tf_edges", {}).get(robot_name)
+        if edges is None:
+            return
+        links = {config.base_link, *(link for edge in edges for link in edge)}
+        world_transforms: dict[str, Transform] = {}
+        for link in links:
+            pose = self._world_monitor.get_link_pose(robot_id, link)
+            if pose is None:
+                logger.warning("Skipping robot TF sample: pose unavailable for %s", link)
+                return
+            transform = Transform.from_pose(link, pose)
+            transform.frame_id = self.config.planning_world_frame
+            transform.child_frame_id = link
+            transform.ts = timestamp
+            world_transforms[link] = transform
 
-                if transforms:
-                    self.tf.publish(TFMessage(*transforms))
-            except Exception as e:
-                logger.debug(f"TF publish error: {e}")
-
-            self._tf_stop_event.wait(period)
+        transforms = [world_transforms[config.base_link]]
+        for parent, child in edges:
+            relative = world_transforms[parent].inverse() + world_transforms[child]
+            relative.frame_id = parent
+            relative.child_frame_id = child
+            relative.ts = timestamp
+            transforms.append(relative)
+        self.tf.publish(TFMessage(*transforms))
 
     @rpc
     def get_state(self) -> ManipulationSnapshot:
@@ -1808,13 +1845,6 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
-
-        # Stop TF thread
-        if self._tf_thread is not None:
-            self._tf_stop_event.set()
-            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            self._tf_thread = None
-
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
             self._world_monitor.stop_all_monitors()

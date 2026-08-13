@@ -168,6 +168,52 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
+def test_render_capture_timestamp_is_preserved_for_images_and_tf() -> None:
+    capture_timestamp = 123.456
+    frame = CameraFrame(
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.float32),
+        cam_pos=np.zeros(3),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=capture_timestamp,
+        base_pos=np.zeros(3),
+        base_mat=np.eye(3),
+    )
+    module = MujocoSimModule(enable_color=True, enable_depth=True)
+
+    class _OneFrameEngine:
+        connected = True
+        reads = 0
+
+        def read_camera(self, camera_name: str) -> CameraFrame | None:
+            assert camera_name == module.config.camera_name
+            self.reads += 1
+            if self.reads == 1:
+                return frame
+            module._stop_event.set()
+            return None
+
+        def disconnect(self) -> None:
+            pass
+
+    try:
+        module._engine = _OneFrameEngine()  # type: ignore[assignment]
+        module.color_image = MagicMock()
+        module.depth_image = MagicMock()
+        module._publish_tf = MagicMock()  # type: ignore[method-assign]
+
+        module._publish_loop()
+
+        color = module.color_image.publish.call_args.args[0]
+        depth = module.depth_image.publish.call_args.args[0]
+        assert color.ts == capture_timestamp
+        assert depth.ts == capture_timestamp
+        module._publish_tf.assert_called_once_with(capture_timestamp, frame)
+    finally:
+        module.stop()
+
+
 def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
     engine = _FakeRespawnEngine()
     hooks = _FakeSimHooks()

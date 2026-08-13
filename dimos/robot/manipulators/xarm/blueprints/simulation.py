@@ -21,7 +21,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter, SelfFilterRegion
+from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.protocol.tf.tf_pose_source import TfPoseSource
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -35,16 +35,6 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
 XARM_VOXEL_PLANNING_RESOLUTION = 0.05
-
-_XARM_SELF_FILTER_REGIONS = [
-    SelfFilterRegion(
-        shape="box",
-        frame_id="link7",
-        size=(0.22, 0.22, 0.30),
-        center=(0.0, 0.0, 0.02),
-    ),
-    SelfFilterRegion(shape="sphere", frame_id="link_tcp", radius=0.16),
-]
 
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
@@ -69,6 +59,7 @@ xarm_voxel_planning_viser_demo = (
             planning_timeout=10.0,
             planning_world_frame="world",
             planning_voxel_resolution=XARM_VOXEL_PLANNING_RESOLUTION,
+            planning_collision_max_age_s=1.0,
             visualization={"backend": "viser"},
             world_backend="roboplan",
             planner_name="roboplan",
@@ -85,19 +76,22 @@ xarm_voxel_planning_viser_demo = (
             camera_info_fps=5.0,
         ),
         PointCloudSelfFilter.blueprint(
-            regions=_XARM_SELF_FILTER_REGIONS,
-            tf_tolerance_s=0.25,
-            drop_cloud_on_missing_tf=True,
+            robot_model=make_xarm7_sim_robot_config(),
+            padding_m=0.01,
+            voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
+            planning_frame="world",
+            tf_tolerance_s=0.02,
+            tf_forward_tolerance_s=0.05,
         ),
         TfPoseSource.blueprint(
             target_frame="world",
             source_frame="wrist_camera_color_optical_frame",
-            tf_tolerance_s=0.25,
-            publish_rate_hz=10.0,
+            tf_tolerance_s=0.02,
+            publish_rate_hz=50.0,
         ),
         RayTracingVoxelMap.blueprint(
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
-            pose_match_tolerance_s=0.1,
+            pose_match_tolerance_s=0.02,
         ),
         coordinator(
             hardware=[_xarm7_sim_hw],

@@ -35,6 +35,7 @@ def test_demo_composes_simulation_voxel_planning_modules() -> None:
     assert manip_kwargs["visualization"] == {"backend": "viser"}
     assert manip_kwargs["planning_world_frame"] == "world"
     assert manip_kwargs["planning_voxel_resolution"] == 0.05
+    assert manip_kwargs["planning_collision_max_age_s"] == 1.0
     assert "PickAndPlaceModule" not in {module.__name__ for module in modules}
 
 
@@ -52,19 +53,22 @@ def test_demo_wires_camera_filter_voxel_map_and_snapshot() -> None:
     assert {stream.name for stream in _atom(RayTracingVoxelMap).streams} >= {
         "lidar",
         "odometry",
+        "robot_clear_mask",
         "global_map",
     }
 
     filter_kwargs = _atom(PointCloudSelfFilter).kwargs
-    assert {region.frame_id for region in filter_kwargs["regions"]} == {"link7", "link_tcp"}
-    assert filter_kwargs["drop_cloud_on_missing_tf"] is True
+    assert filter_kwargs["robot_model"].base_link == "link_base"
+    assert filter_kwargs["padding_m"] == 0.01
+    assert filter_kwargs["tf_tolerance_s"] == 0.02
+    assert filter_kwargs["tf_forward_tolerance_s"] == 0.05
     assert xarm_voxel_planning_viser_demo.remapping_map == {
         (RayTracingVoxelMap.name, "lidar"): "filtered_pointcloud",
         (ManipulationModule.name, "planning_voxel_map"): "global_map",
     }
 
     assert _atom(RayTracingVoxelMap).kwargs["voxel_size"] == 0.05
-    assert _atom(RayTracingVoxelMap).kwargs["pose_match_tolerance_s"] == 0.1
+    assert _atom(RayTracingVoxelMap).kwargs["pose_match_tolerance_s"] == 0.02
     assert XARM_VOXEL_PLANNING_RESOLUTION == 0.05
     assert hasattr(ManipulationModule, "committed_planning_collision_snapshot")
 
@@ -74,6 +78,8 @@ def test_demo_is_simulation_only_and_pose_feeds_voxel_odometry() -> None:
     pose_kwargs = _atom(TfPoseSource).kwargs
     assert pose_kwargs["target_frame"] == "world"
     assert pose_kwargs["source_frame"] == "wrist_camera_color_optical_frame"
+    assert pose_kwargs["tf_tolerance_s"] == 0.02
+    assert pose_kwargs["publish_rate_hz"] == 50.0
 
     pose_out = next(stream for stream in _atom(TfPoseSource).streams if stream.name == "odometry")
     voxel_in = next(

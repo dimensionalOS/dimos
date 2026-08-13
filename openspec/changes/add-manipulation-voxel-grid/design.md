@@ -32,8 +32,8 @@ are removed before the snapshot reaches manipulation.
 
 ### Non-Goals
 
-- No freshness policy for committed snapshots beyond the mapper's bounded
-  cloud/pose synchronization contract.
+- No probabilistic occupancy or soft-collision planner objective; uncertain
+  occupancy policy is deferred to a separate change.
 - No collision-point cap; every occupied voxel is registered for collision.
 - No changes to trajectory generation, reservation, or execution.
 - No new CLI syntax, skill, MCP contract, or persistent/semantic map model.
@@ -51,10 +51,10 @@ existing obstacle interface.
 
 The concrete simulation path is:
 
-`MujocoSimModule.pointcloud: Out[PointCloud2]` → point-cloud self-filter →
+`MujocoSimModule.pointcloud: Out[PointCloud2]` → model-driven point-cloud self-filter →
 `RayTracingVoxelMap.global_map: Out[PointCloud2]` →
-`ManipulationModule.planning_voxel_map: In[PointCloud2]`.  A TF pose source
-supplies the wrist-camera pose needed by the mapping path.  `MujocoSimModule`
+`ManipulationModule.planning_voxel_map: In[PointCloud2]`. A TF pose source
+triggered by each cloud supplies the capture-time wrist-camera pose needed by the mapping path. `MujocoSimModule`
 also supplies simulated robot state to the existing coordinator path;
 `coordinator_joint_state: In[JointState]` remains the robot-state input.
 
@@ -154,6 +154,30 @@ mutation. An empty accepted snapshot is meaningful and removes that obstacle.
    existing planning and coordinator execution paths unchanged.  Snapshot
    synchronization changes collision inputs only.
 
+9. **Capture-time TF.** Sensor Capture Time is authoritative. MuJoCo preserves
+   one `CameraFrame.timestamp` across images, cloud, and camera TF. Dynamic TF
+   is published from complete measured joint states at at least 50 Hz and is
+   sampled by the existing pose source at 50 Hz without changing the selected
+   transform timestamp. Mapping applies a 20 ms cloud/pose match bound, while
+   self-exclusion queries by cloud timestamp with the same bound and a 50 ms
+   delivery wait; no interpolation is added. Static edges are timeless and
+   published once.
+
+10. **Robot-model self-exclusion.** URDF/Xacro collision shapes are
+    authoritative. Analytic primitives and mesh surface-distance queries use
+    one 10 mm padding. Missing geometry or any required capture-time link TF
+    drops the whole observation.
+
+11. **Atomic self-volume clearing.** The self-filter emits unique integer
+    mapper voxel keys covering previous and current padded robot volumes. The
+    native mapper joins cloud, pose, and clear mask by Capture Time, clears
+    those keys, then ray-traces the cloud as one update. Incomplete updates do
+    not mutate the map.
+
+12. **Freshness guard.** A plan starts only with a valid collision snapshot no
+    older than 1 second by Capture Time. Stale geometry remains registered and
+    a later valid snapshot restores planning.
+
 ## Safety / Simulation / Replay
 
 The source contract makes frame correctness and robot self-filtering explicit:
@@ -162,7 +186,7 @@ input has already had robot-body occupancy removed. Stable-ID replacement
 validates before construction and publishes only a complete replacement scene.
 Construction or insertion failure leaves the previous scene active.
 
-The xArm planning self-filter is all-or-nothing for required robot-region TFs:
+The xArm planning self-filter is all-or-nothing for complete Robot Self Geometry TFs:
 if any required transform is unavailable, it drops the whole cloud rather than
 publishing a partially filtered snapshot. This generic synchronization
 correction is required for deterministic demo input; worker-lifecycle failures
@@ -193,9 +217,9 @@ directly relative to `world`; mapping no longer waits for a separately derived
 The xArm MuJoCo example is the primary end-to-end validation path.  It uses
 the simulated `MujocoSimModule.pointcloud` and existing xArm coordinator,
 planning, and visualization modules; it does not introduce hardware behavior.
-Replay behavior and CLI syntax remain unchanged.  In replay or simulation,
-an empty accepted cloud clears obstacles, while absence of a new cloud does
-not trigger a timeout or automatic clear.
+Replay behavior and CLI syntax remain unchanged. An empty accepted cloud
+clears obstacles, while absence of a fresh valid cloud blocks new planning
+after the 1 second safety horizon without clearing registered geometry.
 
 ## Risks / Trade-offs
 
@@ -233,7 +257,6 @@ the built-in blueprint registry after the blueprint wiring is complete with:
 
 ## Open Questions
 
-- What later freshness policy, if any, should gate planning on snapshot age?
 - Should a future backend advertise octree support through a capability on
   `WorldSpec`, rather than rejecting unsupported geometry during validation?
 - What default Viser render cap is appropriate for typical xArm scenes?

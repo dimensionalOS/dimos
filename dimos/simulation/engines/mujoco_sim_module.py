@@ -876,6 +876,7 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
+            publish_started = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -891,7 +892,10 @@ class MujocoSimModule(
                 self._stop_event.wait(timeout=interval * 0.5)
                 continue
             last_timestamp = frame.timestamp
-            ts = time.time()
+            # The render pose and pixels are one capture. Preserve that timestamp
+            # through every derived message so TF lookup cannot pair the cloud
+            # with a later robot pose merely because publication was delayed.
+            ts = frame.timestamp
 
             if self.config.enable_color:
                 color_img = Image(
@@ -921,7 +925,7 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.time() - ts
+            elapsed = time.monotonic() - publish_started
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)

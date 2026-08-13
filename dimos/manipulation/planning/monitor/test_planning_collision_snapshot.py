@@ -5,6 +5,7 @@
 
 """Focused tests for the planning collision snapshot lifecycle."""
 
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -150,3 +151,21 @@ def test_falsey_obstacle_id_is_a_failed_registration() -> None:
         snapshot.synchronize(monitor)
 
     assert snapshot.committed() is None
+
+
+def test_freshness_guard_rejects_missing_snapshot() -> None:
+    snapshot = PlanningCollisionSnapshot(max_age_s=1.0)
+
+    with pytest.raises(RuntimeError, match="No valid planning collision snapshot"):
+        snapshot.synchronize(MagicMock())
+
+
+def test_freshness_guard_rejects_stale_capture_without_removing_active_geometry() -> None:
+    snapshot = PlanningCollisionSnapshot(max_age_s=1.0)
+    monitor = MagicMock()
+    snapshot.stage(_cloud([[1.0, 0.0, 0.0]], timestamp=time.time() - 2.0))
+
+    with pytest.raises(RuntimeError, match="snapshot is stale"):
+        snapshot.synchronize(monitor)
+
+    monitor.remove_obstacle.assert_not_called()

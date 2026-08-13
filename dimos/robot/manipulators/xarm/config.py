@@ -70,7 +70,6 @@ def make_xarm7_sim_robot_config() -> RobotModelConfig:
     return make_xarm7_model_config(
         name="arm",
         add_gripper=True,
-        tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
     )
@@ -228,7 +227,6 @@ def make_xarm_model_config(
     z_offset: float = 0.0,
     pitch: float = 0.0,
     joint_prefix: str | None = None,
-    tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
 ) -> RobotModelConfig:
@@ -267,7 +265,6 @@ def make_xarm_model_config(
             joint_prefix=joint_prefix,
         ),
         gripper_hardware_id=name if add_gripper else None,
-        tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * dof,
         pre_grasp_offset=pre_grasp_offset,
     )

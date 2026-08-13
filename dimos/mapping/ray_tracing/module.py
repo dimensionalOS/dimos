@@ -69,6 +69,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
 
     lidar: In[PointCloud2]
     odometry: In[Odometry]
+    robot_clear_mask: In[PointCloud2]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

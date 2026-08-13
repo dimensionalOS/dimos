@@ -106,3 +106,14 @@
 - [x] 14.1 Use the prompt blue staged snapshot as the single visualization for the reserved planning-collision obstacle.
 - [x] 14.2 Suppress only its duplicate accepted OCTREE projection while preserving backend registration and ordinary accepted obstacle rendering.
 - [x] 14.3 Add focused lifecycle coverage and update the visualization contract documentation.
+
+## 15. Capture-time TF and whole-robot self-exclusion correction
+
+- [x] 15.1 Preserve MuJoCo capture timestamps across images, point clouds, and camera TF; retain the existing pose-source path at 50 Hz and enforce a 20 ms cloud/pose match bound.
+- [x] 15.2 Implement timeless static TF storage/publication and remove periodic restamping of static transforms.
+- [x] 15.3 Publish the complete parent-child robot TF tree from measured joint-state updates at a minimum 50 Hz source rate and remove the periodic `tf_extra_links` publisher.
+- [x] 15.4 Replace hand-authored xArm self-filter regions with URDF/Xacro collision-shape filtering using a uniform 10 mm padding and all-or-nothing transform/model validation.
+- [x] 15.5 Generate previous/current Robot Self Geometry integer voxel clear masks and atomically join mask, cloud, and capture-time pose in `RayTracingVoxelMap` before clear-then-integrate updates.
+- [x] 15.6 Reject new planning when the newest valid Planning Collision Snapshot Capture Time is older than 1 second, without clearing the last registered geometry.
+- [x] 15.7 Add focused TF, self-filter, mapper synchronization/clearing, freshness, and blueprint regressions; update usage documentation.
+- [x] 15.8 Run focused Python and Rust tests, scoped type/lint/format checks, OpenSpec validation, generated-registry verification, and `git diff --check`.

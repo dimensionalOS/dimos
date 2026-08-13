@@ -48,6 +48,8 @@ class TFLookup(Protocol):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
 
 
@@ -94,6 +96,7 @@ class TBuffer(InMemoryStore[Transform]):
 class MultiTBuffer:
     def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
+        self.static_transforms: dict[tuple[str, str], Transform] = {}
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
 
@@ -109,10 +112,17 @@ class MultiTBuffer:
     def receive_tfmessage(self, msg: TFMessage) -> None:
         self.receive_transform(*msg.transforms)
 
+    def receive_static_transform(self, *args: Transform) -> None:
+        """Store transforms whose validity is independent of message time."""
+        with self._cv:
+            for transform in args:
+                self.static_transforms[(transform.frame_id, transform.child_frame_id)] = transform
+            self._cv.notify_all()
+
     def get_frames(self) -> set[str]:
         frames = set()
         with self._cv:
-            for parent, child in self.buffers:
+            for parent, child in self.buffers.keys() | self.static_transforms.keys():
                 frames.add(parent)
                 frames.add(child)
         return frames
@@ -121,7 +131,7 @@ class MultiTBuffer:
         """Get all frames connected to the given frame (both as parent and child)."""
         connections = set()
         with self._cv:
-            for parent, child in self.buffers:
+            for parent, child in self.buffers.keys() | self.static_transforms.keys():
                 if parent == frame_id:
                     connections.add(child)
                 if child == frame_id:
@@ -147,6 +157,13 @@ class MultiTBuffer:
         tolerance = time_tolerance if time_tolerance is not None else self.buffer_size
 
         with self._cv:
+            static = self.static_transforms.get((parent_frame, child_frame))
+            if static is not None:
+                return static
+            reverse_static = self.static_transforms.get((child_frame, parent_frame))
+            if reverse_static is not None:
+                return reverse_static.inverse()
+
             # Check forward direction
             key = (parent_frame, child_frame)
             if key in self.buffers:
@@ -289,7 +306,7 @@ class MultiTBuffer:
             return f"{frame_from} -> {frame_to}"
 
         with self._cv:
-            keys = list(self.buffers.keys())
+            keys = list(self.buffers.keys() | self.static_transforms.keys())
         graph_str = "\n".join(map(connection_str, keys))
 
         try:

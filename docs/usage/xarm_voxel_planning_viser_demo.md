@@ -45,7 +45,7 @@ The simulated wrist camera produces a point cloud in the planning pipeline:
 
 ```text
 MujocoSimModule.pointcloud
-  -> point-cloud self-filter
+  -> URDF collision-geometry self-filter + robot clear mask
   -> RayTracingVoxelMap.global_map
   -> ManipulationModule.planning_voxel_map
 ```
@@ -62,8 +62,9 @@ MuJoCo publishes the wrist camera's optical-frame transform directly in
 module first deriving and publishing a `world -> link7` transform.
 
 The snapshot input is latest-wins: incoming snapshots replace the staged
-snapshot, with no freshness timeout or automatic clear when no new snapshot
-arrives. Viser refreshes this staged view independently of collision-world
+snapshot. New planning is rejected when the latest valid snapshot is older
+than one second by sensor capture time; the last accepted collision geometry
+stays registered until fresh data arrives. Viser refreshes this staged view independently of collision-world
 registration, caps it at 20,000 displayed points, and throttles replacement to
 twice per second to keep the UI responsive. At the beginning of a planning
 operation, the latest staged snapshot is synchronized through the existing
@@ -101,8 +102,12 @@ Visualization failures are logged synchronization faults and do not redefine
 backend mutation success. Pose updates are backend-first and are visualized
 only after the backend truthfully reports that collision state was updated.
 Backends that cannot truthfully update pose report the operation as unsupported.
-A frame mismatch is rejected without changing staged or accepted state. Absence
-of a new snapshot does not trigger a freshness policy or automatic clear.
+A frame mismatch is rejected without changing staged or accepted state.
+
+The mapper joins each filtered cloud, its `world <- camera` pose, and its robot
+clear mask by capture timestamp before changing occupancy. The mask covers both
+the robot's previous and current padded volumes, which removes robot voxels left
+behind during motion. Incomplete triples are dropped without mutating the map.
 
 ## RoboPlan and rendering limits
 

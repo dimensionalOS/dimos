@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 
@@ -21,13 +22,21 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 class PlanningCollisionSnapshot:
     """Keep the latest planning cloud and commit it through a WorldMonitor."""
 
-    def __init__(self, resolution: float = 0.05, planning_frame: str = "world") -> None:
+    def __init__(
+        self,
+        resolution: float = 0.05,
+        planning_frame: str = "world",
+        max_age_s: float | None = None,
+    ) -> None:
         if resolution <= 0:
             raise ValueError("Planning collision snapshot resolution must be positive")
         if not planning_frame:
             raise ValueError("Planning collision snapshot planning_frame must not be empty")
+        if max_age_s is not None and max_age_s <= 0:
+            raise ValueError("Planning collision snapshot max_age_s must be positive")
         self.resolution = resolution
         self.planning_frame = planning_frame
+        self.max_age_s = max_age_s
         self._lock = threading.RLock()
         self._staged: PointCloud2 | None = None
         self._committed: PointCloud2 | None = None
@@ -65,6 +74,14 @@ class PlanningCollisionSnapshot:
     def synchronize(self, world_monitor: WorldMonitor) -> PointCloud2 | None:
         """Commit the latest staged cloud through stable-ID add/update/remove methods."""
         with self._lock:
+            if self.max_age_s is not None:
+                if self._staged is None:
+                    raise RuntimeError("No valid planning collision snapshot is available")
+                age = time.time() - self._staged.ts
+                if age > self.max_age_s:
+                    raise RuntimeError(
+                        f"Planning collision snapshot is stale ({age:.3f}s > {self.max_age_s:.3f}s)"
+                    )
             if self._staged is None or self._staged_generation == self._committed_generation:
                 return self.committed()
 

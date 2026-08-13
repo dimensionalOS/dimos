@@ -1,94 +1,117 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
 
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
-    SelfFilterRegion,
 )
 from dimos.protocol.tf.tf import MultiTBuffer
 
 
-def _cloud(
-    points: list[tuple[float, float, float]], intensities: list[float] | None = None
-) -> PointCloud2:
-    return PointCloud2.from_numpy(
-        np.asarray(points, dtype=np.float32),
-        frame_id="cloud",
-        timestamp=12.5,
-        intensities=None if intensities is None else np.asarray(intensities, dtype=np.float32),
+def _write_box_robot(path: Path) -> None:
+    path.write_text(
+        """<?xml version="1.0"?>
+<robot name="box_robot">
+  <link name="base">
+    <collision><geometry><box size="1 1 1"/></geometry></collision>
+  </link>
+</robot>
+"""
     )
 
 
-def _filter(regions: list[SelfFilterRegion], drop_missing: bool = False) -> PointCloudSelfFilter:
+def _filter(tmp_path: Path) -> PointCloudSelfFilter:
+    urdf = tmp_path / "robot.urdf"
+    _write_box_robot(urdf)
     module = object.__new__(PointCloudSelfFilter)
     state = cast("dict[str, Any]", module.__dict__)
     state["config"] = PointCloudSelfFilterConfig(
-        regions=regions, drop_cloud_on_missing_tf=drop_missing, tf_tolerance_s=100.0
+        robot_model=RobotModelConfig(
+            name="robot",
+            model_path=urdf,
+            joint_names=[],
+            base_link="base",
+        ),
+        padding_m=0.01,
+        voxel_size=0.05,
+        tf_tolerance_s=0.001,
+        tf_forward_tolerance_s=0.0,
     )
     state["_tf"] = MultiTBuffer()
+    state["_collision_geometry"] = module._load_collision_geometry()
+    state["_previous_clear_keys"] = set()
     return module
 
 
-def test_self_filter_removes_robot_points_and_preserves_metadata() -> None:
-    module = _filter([SelfFilterRegion(shape="sphere", frame_id="tool", radius=1.0)])
-    cast("MultiTBuffer", module.__dict__["_tf"]).receive_transform(
+def _cloud(points: list[tuple[float, float, float]], timestamp: float = 12.5) -> PointCloud2:
+    return PointCloud2.from_numpy(
+        np.asarray(points, dtype=np.float32).reshape((-1, 3)),
+        frame_id="camera",
+        timestamp=timestamp,
+        intensities=np.arange(1, len(points) + 1, dtype=np.float32),
+    )
+
+
+def _publish_link_pose(module: PointCloudSelfFilter, timestamp: float, x: float = 0.0) -> None:
+    tf = cast("MultiTBuffer", module.__dict__["_tf"])
+    tf.receive_transform(
         Transform(
-            translation=Vector3(1.0, 0.0, 0.0), frame_id="cloud", child_frame_id="tool", ts=12.5
-        )
-    )
-    cloud = _cloud([(1.0, 0.0, 0.0), (1.9, 0.0, 0.0), (3.0, 0.0, 0.0)], [1.0, 2.0, 3.0])
-
-    filtered = module.filter_cloud(cloud)
-
-    assert filtered is not None
-    np.testing.assert_allclose(filtered.points_f32(), [[3.0, 0.0, 0.0]])
-    intensities = filtered.intensities_f32()
-    assert intensities is not None
-    np.testing.assert_allclose(intensities, [3.0])
-    assert filtered.frame_id == "cloud"
-    assert filtered.ts == 12.5
-
-
-def test_self_filter_handles_empty_and_non_robot_clouds() -> None:
-    module = _filter([SelfFilterRegion(shape="box", frame_id="tool", size=(2.0, 2.0, 2.0))])
-    module.__dict__["_tf"].receive_transform(
-        Transform(frame_id="cloud", child_frame_id="tool", ts=12.5)
-    )
-    empty = module.filter_cloud(_cloud([]))
-    outside = module.filter_cloud(_cloud([(3.0, 0.0, 0.0)]))
-
-    assert empty is not None and len(empty) == 0
-    assert outside is not None and len(outside) == 1
-
-
-def test_missing_tf_is_deterministic() -> None:
-    region = SelfFilterRegion(shape="sphere", frame_id="missing", radius=1.0)
-    assert len(_filter([region]).filter_cloud(_cloud([(0.0, 0.0, 0.0)]))) == 1  # type: ignore[arg-type]
-    assert _filter([region], drop_missing=True).filter_cloud(_cloud([(0.0, 0.0, 0.0)])) is None
-
-
-def test_partial_required_tf_drops_whole_cloud() -> None:
-    module = _filter(
-        [
-            SelfFilterRegion(shape="sphere", frame_id="present", radius=1.0),
-            SelfFilterRegion(shape="sphere", frame_id="missing", radius=1.0),
-        ],
-        drop_missing=True,
-    )
-    cast("MultiTBuffer", module.__dict__["_tf"]).receive_transform(
-        Transform(frame_id="cloud", child_frame_id="present", ts=12.5)
+            translation=Vector3(x, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="base",
+            ts=timestamp,
+        ),
+        Transform(frame_id="world", child_frame_id="camera", ts=timestamp),
     )
 
-    assert module.filter_cloud(_cloud([(0.0, 0.0, 0.0)])) is None
+
+def test_model_filter_removes_robot_surface_and_preserves_external_point(tmp_path: Path) -> None:
+    module = _filter(tmp_path)
+    _publish_link_pose(module, 12.5)
+
+    result = module.filter_cloud(_cloud([(0.5, 0.0, 0.0), (0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]))
+
+    assert result is not None
+    filtered, clear_mask = result
+    np.testing.assert_allclose(filtered.points_f32(), [[2.0, 0.0, 0.0]])
+    np.testing.assert_allclose(filtered.intensities_f32(), [3.0])
+    assert clear_mask.frame_id == "world"
+    assert clear_mask.ts == 12.5
+    keys = clear_mask.points_f32()
+    assert len(keys) > 0
+    np.testing.assert_array_equal(keys, np.floor(keys))
 
 
-def test_self_filter_stream_types_are_voxel_map_compatible() -> None:
+def test_clear_mask_contains_previous_and_current_robot_volumes(tmp_path: Path) -> None:
+    module = _filter(tmp_path)
+    _publish_link_pose(module, 12.5, x=0.0)
+    first = module.filter_cloud(_cloud([], 12.5))
+    assert first is not None
+    first_keys = {tuple(key) for key in first[1].points_f32()}
+
+    _publish_link_pose(module, 13.0, x=1.0)
+    second = module.filter_cloud(_cloud([], 13.0))
+    assert second is not None
+    second_keys = {tuple(key) for key in second[1].points_f32()}
+
+    assert first_keys < second_keys
+    assert any(key[0] >= 10 for key in second_keys)
+
+
+def test_missing_required_link_tf_drops_whole_capture(tmp_path: Path) -> None:
+    module = _filter(tmp_path)
+    assert module.filter_cloud(_cloud([(2.0, 0.0, 0.0)])) is None
+
+
+def test_self_filter_stream_types_include_atomic_clear_mask() -> None:
     assert PointCloudSelfFilter.__annotations__["pointcloud"]
     assert PointCloudSelfFilter.__annotations__["filtered_pointcloud"]
+    assert PointCloudSelfFilter.__annotations__["robot_clear_mask"]
