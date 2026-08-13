@@ -72,6 +72,7 @@ class GsTeeCameraConfig(ModuleConfig):
 
 class GsTeeCamera(Module):
     """Own one live source pipeline and publish its raw and encoded tee branches."""
+
     config: GsTeeCameraConfig
     dedicated_worker: ClassVar[bool] = True
 
