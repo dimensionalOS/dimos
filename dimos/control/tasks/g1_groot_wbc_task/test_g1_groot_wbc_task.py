@@ -192,6 +192,39 @@ def test_on_twist_command_sets_velocity_command(task: G1GrootWBCTask) -> None:
     assert task._last_cmd_time == 100.0
 
 
+def test_yield_when_idle_only_outputs_for_fresh_nonzero_command(
+    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
+) -> None:
+    task = G1GrootWBCTask(
+        name="teleop_groot_wbc",
+        config=G1GrootWBCTaskConfig(
+            balance_onnx="/fake/balance.onnx",
+            walk_onnx="/fake/walk.onnx",
+            joint_names=joints_29[:15],
+            all_joint_names=joints_29,
+            priority=60,
+            decimation=1,
+            auto_arm=True,
+            default_ramp_seconds=0.0,
+            yield_when_idle=True,
+        ),
+        adapter=stub_adapter,
+    )
+    try:
+        task.start()
+
+        assert task.compute(_state_at(100.0, joints_29)) is None
+
+        task.set_velocity_command(0.2, 0.0, 0.0, t_now=100.0)
+        assert task.compute(_state_at(100.1, joints_29)) is not None
+
+        task.set_velocity_command(0.0, 0.0, 0.0, t_now=100.2)
+        assert task.compute(_state_at(100.2, joints_29)) is None
+        assert patched_ort == ["walk"]
+    finally:
+        task.stop()
+
+
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:
     cmd = np.array([1.0, 0.5, 0.25], dtype=np.float32)
     gyro = np.array([0.1, 0.2, 0.3], dtype=np.float32)

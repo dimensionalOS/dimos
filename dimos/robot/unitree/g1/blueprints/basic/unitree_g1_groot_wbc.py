@@ -62,7 +62,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
@@ -138,6 +138,7 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 class _G1GrootCoordinator(ControlCoordinator):
     g1_joints: Out[JointState]
+    tele_cmd_vel: In[Twist]
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
@@ -503,8 +504,14 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
-    """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
+def g1_groot_task_config(
+    *,
+    name: str = "groot_wbc",
+    priority: int = 50,
+    stream_bind: dict[str, str] | None = None,
+    yield_when_idle: bool = False,
+) -> TaskConfig:
+    """Build one coordinator-owned GR00T locomotion task."""
     groot_params: dict[str, Any] = {
         "model_path": _GROOT_MODEL_DIR,
         "hardware_id": "g1",
@@ -512,7 +519,21 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
         "auto_dry_run": _auto_dry_run,
         "default_ramp_seconds": _default_ramp_seconds,
         "decimation": _decimation,
+        "yield_when_idle": yield_when_idle,
     }
+    return TaskConfig(
+        name=name,
+        type="g1_groot_wbc",
+        joint_names=g1_legs_waist,
+        priority=priority,
+        auto_start=True,
+        params=groot_params,
+        stream_bind=dict(stream_bind or {}),
+    )
+
+
+def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
+    """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
     return _G1GrootCoordinator.blueprint(
         instance_name="ControlCoordinator",
         publish_robot_joint_states=True,
@@ -543,14 +564,7 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
             ),
         ],
         tasks=[
-            TaskConfig(
-                name="groot_wbc",
-                type="g1_groot_wbc",
-                joint_names=g1_legs_waist,
-                priority=50,
-                auto_start=True,
-                params=groot_params,
-            ),
+            g1_groot_task_config(),
             *([_arm_holder] if _arm_holder is not None else []),
             *extra_tasks,
         ],

@@ -247,6 +247,7 @@ class G1GrootWBCTaskConfig:
     cmd_norm_threshold: float = 0.05
     height_cmd: float = 0.74
     timeout: float = 1.0
+    yield_when_idle: bool = False
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
@@ -416,6 +417,28 @@ class G1GrootWBCTask(BaseControlTask):
 
         current_15 = self._cached_q_15.copy()
 
+        # A secondary command source (for example teleop) can share the
+        # locomotion joints with a lower-priority GR00T task.  It must emit no
+        # joint output while idle so coordinator arbitration can fall through
+        # to that lower-priority task instead of continuously winning with the
+        # balance policy.
+        with self._cmd_lock:
+            last_cmd_time = self._last_cmd_time
+            command_age = state.t_now - last_cmd_time if last_cmd_time > 0.0 else None
+            command_is_stale = (
+                command_age is not None
+                and self._config.timeout > 0.0
+                and command_age > self._config.timeout
+            )
+            cmd = np.zeros(3, dtype=np.float32) if command_is_stale else self._cmd.copy()
+
+        if self._config.yield_when_idle and (
+            last_cmd_time <= 0.0
+            or command_is_stale
+            or float(np.linalg.norm(cmd)) <= self._config.cmd_norm_threshold
+        ):
+            return None
+
         # arm() was called - snapshot the ramp start and enter arming /
         # armed state (ramp=0 arms immediately).
         if self._arm_pending:
@@ -508,17 +531,6 @@ class G1GrootWBCTask(BaseControlTask):
             imu = self._adapter.read_imu()
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(imu.quaternion)
-
-        # Velocity command (with timeout -> zero).
-        with self._cmd_lock:
-            if (
-                self._config.timeout > 0.0
-                and self._last_cmd_time > 0.0
-                and (state.t_now - self._last_cmd_time) > self._config.timeout
-            ):
-                cmd = np.zeros(3, dtype=np.float32)
-            else:
-                cmd = self._cmd.copy()
 
         obs = self._build_obs(cmd=cmd, gyro=gyro, gravity=gravity, q=q_29, dq=dq_29)
 
@@ -794,6 +806,7 @@ class G1GrootWBCTaskParams(BaseConfig):
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
     decimation: int | None = None
+    yield_when_idle: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
@@ -822,6 +835,7 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
+        yield_when_idle=params.yield_when_idle,
     )
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation

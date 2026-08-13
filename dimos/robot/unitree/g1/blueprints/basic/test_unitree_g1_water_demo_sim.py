@@ -90,9 +90,21 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
     assert _stream("wateringtaskmodule", "base_pose") == "odom"
 
 
-def test_task_is_the_only_base_command_source_connected_to_the_coordinator() -> None:
+def test_watering_and_teleop_are_separate_coordinator_arbitration_tasks() -> None:
     assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
     assert _stream("ControlCoordinator", "twist_command") == "cmd_vel"
+    assert _stream("ControlCoordinator", "tele_cmd_vel") == "tele_cmd_vel"
+
+    coordinator = _atom("ControlCoordinator")
+    tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
+    watering = tasks["groot_wbc"]
+    teleop = tasks["teleop_groot_wbc"]
+
+    assert watering.priority == 50
+    assert watering.stream_bind == {}
+    assert teleop.priority == 60
+    assert teleop.stream_bind == {"twist_command": "tele_cmd_vel"}
+    assert teleop.params["yield_when_idle"] is True
 
     twist_transports = [
         transport

@@ -53,6 +53,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _n_workers,
     _viewer,
     g1_groot_coordinator,
+    g1_groot_task_config,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     _ARM_TRAJECTORY_TASK,
@@ -74,6 +75,13 @@ _demo_remappings = [
     (WateringTaskModule, "base_pose", "odom"),
 ]
 
+_TELEOP_GROOT_TASK = g1_groot_task_config(
+    name="teleop_groot_wbc",
+    priority=60,
+    stream_bind={"twist_command": "tele_cmd_vel"},
+    yield_when_idle=True,
+)
+
 _watering_backend = MujocoSimModule.blueprint(
     address=_MJCF_PATH,
     extra_mjcf=_SCENE_PROPS,
@@ -90,7 +98,7 @@ _watering_backend = MujocoSimModule.blueprint(
 unitree_g1_water_demo_sim = (
     autoconnect(
         _watering_backend,
-        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
+        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK, _TELEOP_GROOT_TASK)),
         SimBodyPose.blueprint(body_name="plant_pot_1"),
         PoseTargetObservationModule.blueprint(
             object_id="plant_pot_1",
