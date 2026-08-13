@@ -35,6 +35,7 @@ dimos-lcm = false
 lcm-dimos-fork = false
 pyrealsense2-extended = false
 md-babel-py = false
+edgetam-dimos = false
 roboplan = false
 
 [manifest]
@@ -2102,7 +2103,7 @@ requires-dist = [
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "eclipse-zenoh", specifier = ">=1.9.0,<2.0" },
-    { name = "edgetam-dimos", marker = "extra == 'misc'" },
+    { name = "edgetam-dimos", marker = "extra == 'misc'", specifier = ">=1.0.1" },
     { name = "einops", marker = "extra == 'perception'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.6" },
     { name = "faster-whisper", marker = "extra == 'agents'", specifier = ">=1.0.0" },
@@ -2590,7 +2591,7 @@ wheels = [
 
 [[package]]
 name = "edgetam-dimos"
-version = "1.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hydra-core" },
@@ -2602,7 +2603,10 @@ dependencies = [
     { name = "torchvision" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/ea/bec55e18e19b6e43ed5f18bfcb699933ab82744fa8a52209ac6e94a6d6d8/edgetam_dimos-1.0.tar.gz", hash = "sha256:4fea5fd5a5aa17f9145dc4f35abc41de9426acaa0d59cae9b467cf26e657d4a7", size = 74935, upload-time = "2026-01-19T22:53:39.159Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/3f/6517d2cf72c5fde86254599b249986437148372b4610374b3df34d393ecc/edgetam_dimos-1.0.1.tar.gz", hash = "sha256:f194fe8a7ac2295703d2e603f381d3527f05a9cc2bdad42eba64bfe7c3eafbf5", size = 85046, upload-time = "2026-08-13T06:56:50.332Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/06/2cb164df1afd4ea2cab1c6f16a857974cb64420fd06e8d624d5cc71455fd/edgetam_dimos-1.0.1-py3-none-any.whl", hash = "sha256:cddc8aef9c6842205f2092d50f8b1cefcc87ad82a2b17d74edb1add57d5f5030", size = 112560, upload-time = "2026-08-13T06:56:48.865Z" },
+]
 
 [[package]]
 name = "eigenpy"

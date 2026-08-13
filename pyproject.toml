@@ -186,7 +186,7 @@ misc = [
 
     # Perception Dependencies
     "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos",
+    "edgetam-dimos>=1.0.1",
 
     # embedding models
     "open_clip_torch==3.2.0",
@@ -497,7 +497,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, edgetam-dimos = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
