@@ -46,13 +46,15 @@ def test_env_var_sets_mode(monkeypatch):
 
 
 def test_unknown_mode_rejected():
-    with pytest.raises(ValueError, match="'peer', 'client' or 'router'"):
+    with pytest.raises(ValueError, match="'peer' or 'client'"):
         ZenohConfig(mode="mesh")
 
 
-def test_router_is_a_valid_mode(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_mode", "router")
-    assert ZenohConfig().mode == "router"
+def test_router_mode_rejected():
+    """Routers are external zenohd processes. A second router-mode session on a
+    host would fail binding zenoh's fixed router listen port."""
+    with pytest.raises(ValueError, match="'peer' or 'client'"):
+        ZenohConfig(mode="router")
 
 
 def test_mode_separates_pooled_sessions(clean_config):
