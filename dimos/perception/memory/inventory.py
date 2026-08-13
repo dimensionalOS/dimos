@@ -74,6 +74,11 @@ NAME_ATTACH_IOU = 0.45
 SUPPRESS_SCORE = 0.25
 SUPPRESS_OVERLAP = 0.35
 UNGROUNDED_TRACK_IOU = 0.40
+# The majority of a candidate's points must lie within the error envelope of
+# the track's accumulated support. Partial and newly revealed views of one
+# object satisfy this; a different object placed at a vacated rest position
+# does not, which is what AABB overlap cannot express at tabletop scale.
+SUPPORT_EXPLAINED = 0.5
 
 # Groups of surface strings for one thing, canonical label first. Only groups
 # compete, so near-synonyms reinforce instead of splitting a box's score. A
@@ -120,10 +125,13 @@ class _Track:
     members: list[SupportObservation] = field(default_factory=list)
     frame_ts: set[float] = field(default_factory=set)
     labels: dict[str, float] = field(default_factory=dict)
+    support_pts: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
 
     def add(self, obs: SupportObservation, frame_key: float) -> None:
         self.members.append(obs)
         self.frame_ts.add(frame_key)
+        points = np.asarray(obs.cloud.pointcloud.points)
+        self.support_pts = np.vstack([self.support_pts, points[:: max(1, len(points) // 400)]])
 
     @property
     def centroid(self) -> np.ndarray:
@@ -335,6 +343,16 @@ def _cloud_gap(a: SupportObservation, b: SupportObservation) -> float:
     return float(distances.min())
 
 
+def _support_explained(points: np.ndarray, support: np.ndarray, pad: float) -> float:
+    """Fraction of ``points`` lying within ``pad`` of the accumulated support."""
+    from scipy.spatial import cKDTree
+
+    sample = points[:: max(1, len(points) // 800)]
+    tree = cKDTree(support[:: max(1, len(support) // 4000)])
+    distances, _ = tree.query(sample, k=1)
+    return float((distances <= pad).mean())
+
+
 def _absorb_into(target: SupportObservation, obs: SupportObservation) -> None:
     target.aabb_min = np.minimum(target.aabb_min, obs.aabb_min)
     target.aabb_max = np.maximum(target.aabb_max, obs.aabb_max)
@@ -383,8 +401,9 @@ def _associate(
     Per frame, observations assign one-to-one to existing tracks - the
     same-frame constraint is structural, no score overrides it. A pair is
     forbidden outright (infinite cost) when the supports are farther apart
-    than the search radius, their envelopes do not overlap enough, or their
-    sizes are incompatible beyond measurement error.
+    than the search radius, their envelopes do not overlap enough, their
+    sizes are incompatible beyond measurement error, or the observation is
+    not majority-explained by the track's accumulated support.
     """
     from scipy.optimize import linear_sum_assignment
 
@@ -402,6 +421,7 @@ def _associate(
 
         cost = np.full((len(observations), len(tracks)), forbidden)
         for i, obs in enumerate(observations):
+            obs_points = np.asarray(obs.cloud.pointcloud.points)
             for j, track in enumerate(tracks):
                 distance = float(np.linalg.norm(obs.centroid - track.centroid))
                 if distance > policy.search_radius_m:
@@ -414,6 +434,9 @@ def _associate(
                     obs.aabb_min, obs.aabb_max, t_lo, t_hi, pad=policy.envelope_pad_m
                 )
                 if overlap < policy.overlap_accept:
+                    continue
+                explained = _support_explained(obs_points, track.support_pts, policy.envelope_pad_m)
+                if explained < SUPPORT_EXPLAINED:
                     continue
                 cost[i, j] = 1.0 - overlap
 
@@ -463,9 +486,10 @@ def _merge_tracks(tracks: list[_Track], policy: InventoryPolicy) -> list[_Track]
     """Collapse fragmented tracks of one support.
 
     Tracks merge when they never share a frame (the same-frame veto at
-    instance level) and their supports overlap within the envelope - or when
-    they do share frames but were demonstrably pieces of one body in every
-    one of them. Runs to a fixed point.
+    instance level), their supports overlap within the envelope and either
+    accumulated support majority-explains the other - or when they do share
+    frames but were demonstrably pieces of one body in every one of them.
+    Runs to a fixed point.
     """
     changed = True
     while changed:
@@ -483,6 +507,12 @@ def _merge_tracks(tracks: list[_Track], policy: InventoryPolicy) -> list[_Track]
                     b_lo, b_hi = b.aabb
                     overlap = aabb_overlap(a_lo, a_hi, b_lo, b_hi, pad=policy.envelope_pad_m)
                     if overlap < policy.overlap_accept:
+                        continue
+                    explained = max(
+                        _support_explained(a.support_pts, b.support_pts, policy.envelope_pad_m),
+                        _support_explained(b.support_pts, a.support_pts, policy.envelope_pad_m),
+                    )
+                    if explained < SUPPORT_EXPLAINED:
                         continue
                 for obs in b.members:
                     a.add(obs, obs.ts)

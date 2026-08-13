@@ -14,7 +14,7 @@
 
 """Enumerate deduplicated object instances in a recording window.
 
-Run: uv run python -m dimos.perception.memory.tool_inventory
+Run: uv run python -m dimos.perception.memory.tool_inventory [out.rrd]
          [--from <s>] [--duration <s>] [--labels <group> ...] [--no-vocabulary]
          [--include-ungrounded] [--log-progress]
 
@@ -42,14 +42,24 @@ timestamp come from each instance's latest member observation. An object
 moved between rest positions inside the window registers once per rest
 position - linking rest positions of one object across time is
 re-identification, which this tool does not do.
+
+The .rrd holds the same instances the stdout lines report, no second
+perception pass: the member clouds on the timeline, one labeled box per
+instance in 3D, and each member's pixel box on the camera view at the
+keyframe it came from.
 """
 
 import argparse
 from pathlib import Path
 import sys
+from typing import Any, cast
 
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.tf import StreamTF
+from dimos.memory2.transform import throttle
+from dimos.perception.memory import gates
 from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
+from dimos.perception.memory.types import Instance, SupportObservation
 from dimos.utils.data import get_data
 
 
@@ -68,10 +78,134 @@ def labels_to_vocabulary(tokens: list[str]) -> NamingVocabulary:
     return tuple(groups)
 
 
+def instance_label(instance: Instance) -> str:
+    """``obj-NN name score`` - the score only when that name won the instance."""
+    if instance.labels and instance.labels[0][0] == instance.primary_label:
+        return f"{instance.instance_id} {instance.primary_label} {instance.labels[0][1]:.2f}"
+    return f"{instance.instance_id} {instance.primary_label}"
+
+
+def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float) -> None:
+    """Write the .rrd - rerun stays an inline import.
+
+    Entity contract: ``map`` backdrop, ``camera/image`` the live feed carrying
+    the per-keyframe pixel boxes, ``instances/<id>_<name>`` the member clouds
+    with a static labeled box. One color per instance across both views.
+    """
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    from dimos.memory2.vis.color import Color
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.visualization.rerun.init import rerun_init
+
+    tf = StreamTF.from_store(store)
+    assert tf is not None
+    camera_info = store.streams.camera_info.first().data
+
+    rerun_init("memory-inventory")
+    rr.save(out)
+    rr.send_blueprint(
+        rrb.Blueprint(
+            rrb.Horizontal(
+                rrb.Spatial3DView(origin="/", name="Scene"),
+                rrb.Spatial2DView(origin="camera", name="Live"),
+                column_shares=[2, 1],
+            )
+        )
+    )
+
+    POINT_SIZE = 0.005
+
+    def at(ts: float) -> None:
+        rr.set_time("ts", timestamp=ts)
+
+    grounded = [instance for instance in instances if instance.support is not None]
+    colors = [
+        list(Color.from_cmap("turbo", i / max(len(grounded) - 1, 1)).rgb_u8())
+        for i in range(len(grounded))
+    ]
+    labels = [instance_label(instance) for instance in grounded]
+    paths = [
+        f"instances/{instance.instance_id}_{cast('str', instance.primary_label).replace(' ', '_')}"
+        for instance in grounded
+    ]
+
+    frames: dict[float, list[tuple[int, SupportObservation]]] = {}
+    for i, instance in enumerate(grounded):
+        for member in instance.members:
+            frames.setdefault(member.ts, []).append((i, member))
+
+    # scene backdrop from the last keyframe that carried an instance
+    backdrop_ts = max(frames, default=None)
+    if backdrop_ts is not None:
+        color = store.streams.color_image.at(backdrop_ts, 0.1).first().data
+        depth = gates.depth_at(store, backdrop_ts)
+        transform = tf.get(gates.OPTICAL_FRAME, gates.WORLD_FRAME, backdrop_ts, gates.TF_TOLERANCE)
+        assert depth is not None and transform is not None
+        backdrop = PointCloud2.from_rgbd(color, depth, camera_info, depth_scale=0.001).transform(
+            -transform
+        )
+        rr.log("map", backdrop.voxel_downsample(0.01).to_rerun(voxel_size=POINT_SIZE), static=True)
+
+    # live camera feed + frustum; the empty box clears the overlay off non-keyframes
+    rr.log("camera", camera_info.to_rerun(), static=True)
+    feed_throttle = 0.1 if (t1 - t0) <= 160 else 0.4
+    feed = store.streams.color_image.after(t0).before(t1).transform(throttle(feed_throttle))
+    for obs in feed:
+        pose = gates.camera_pose(tf, obs.ts)
+        if pose is None:
+            continue
+        at(obs.ts)
+        rr.log("camera/image", obs.data.to_rerun())
+        rr.log("camera", pose.to_rerun())
+        rr.log("camera/image/instances", rr.Boxes2D(array=[], array_format=rr.Box2DFormat.XYXY))
+
+    # keyframes, logged after the feed so their boxes win the shared timestamps
+    for ts, entries in sorted(frames.items()):
+        at(ts)
+        keyframe_pose = gates.camera_pose(tf, ts)
+        assert keyframe_pose is not None
+        rr.log("camera/image", store.streams.color_image.at(ts, 0.05).first().data.to_rerun())
+        rr.log("camera", keyframe_pose.to_rerun())
+        rr.log(
+            "camera/image/instances",
+            rr.Boxes2D(
+                array=[
+                    cast("tuple[float, float, float, float]", member.bbox) for _, member in entries
+                ],
+                array_format=rr.Box2DFormat.XYXY,
+                labels=[labels[i] for i, _ in entries],
+                colors=[colors[i] for i, _ in entries],
+            ),
+        )
+        for i, member in entries:
+            rr.log(paths[i], member.cloud.to_rerun(voxel_size=POINT_SIZE, colors=colors[i]))
+
+    # the reported instance: one labeled box, static so it holds over the whole timeline
+    for i, instance in enumerate(grounded):
+        support = instance.support
+        assert support is not None
+        cx, cy, cz = support.center_xyz
+        ex, ey, ez = support.extent_xyz_m
+        rr.log(
+            f"{paths[i]}/box",
+            rr.Boxes3D(
+                centers=[(cx, cy, cz)],
+                half_sizes=[(ex / 2, ey / 2, ez / 2)],
+                colors=[colors[i]],
+                labels=[labels[i]],
+                fill_mode=rr.components.FillMode.MajorWireframe,
+            ),
+            static=True,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("out", nargs="?", default="inventory.rrd")
     parser.add_argument("--dataset", type=Path, help="memory2 recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
@@ -110,7 +244,7 @@ def main() -> int:
         "xarm6_worldbelief_20260729_203624_161992.db"
     )
     store = SqliteStore(path=dataset)
-    lo, _ = store.streams.color_image.get_time_range()
+    lo, hi = store.streams.color_image.get_time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else None
 
@@ -152,6 +286,9 @@ def main() -> int:
             f"xyz={xyz}  ts_offset={instance.latest_seen_ts - lo:.1f}  "
             f"members={len(instance.members)}{geometry}"
         )
+
+    render(args.out, store, instances, after, before if before is not None else hi)
+    print(f"saved {args.out}")
     return 0
 
 
