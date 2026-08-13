@@ -56,6 +56,10 @@ class VoxelRayMapper:
         """
         ...
 
+    def phase_times(self) -> list[tuple[str, float]]:
+        """Cumulative wall seconds per add_frame phase, in execution order."""
+        ...
+
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
         ...

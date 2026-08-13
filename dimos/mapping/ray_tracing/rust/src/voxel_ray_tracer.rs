@@ -822,6 +822,18 @@ fn live_voxels(points: &[(f32, f32, f32)], voxel_size: f32) -> AHashSet<VoxelKey
     out
 }
 
+/// Cumulative wall time (s) of `update_map`'s internal phases, for benchmarks.
+#[derive(Default, Clone, Copy)]
+pub struct UpdatePhases {
+    pub filter: f64,
+    pub raycast: f64,
+    pub hits: f64,
+    pub accumulate: f64,
+    pub misses: f64,
+    pub normals: f64,
+    pub fine_live: f64,
+}
+
 /// One frame's hit sets from `update_map`.
 #[derive(Default)]
 pub struct FrameHits {
@@ -838,6 +850,17 @@ pub fn update_map(
     points: &[(f32, f32, f32)],
     cfg: &Config,
 ) -> FrameHits {
+    update_map_timed(map, origin, points, cfg, &mut UpdatePhases::default())
+}
+
+/// `update_map` with per-phase wall time accumulated into `phases`.
+pub fn update_map_timed(
+    map: &mut VoxelMap,
+    origin: (f32, f32, f32),
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+    phases: &mut UpdatePhases,
+) -> FrameHits {
     let inv = 1.0_f32 / cfg.voxel_size;
     let max_range_sq = if cfg.max_range > 0.0 {
         cfg.max_range * cfg.max_range
@@ -845,6 +868,7 @@ pub fn update_map(
         f32::INFINITY
     };
 
+    let t = std::time::Instant::now();
     // Drop invalid returns and out-of-range points before they enter the map.
     let mut filtered: Vec<(f32, f32, f32)> = Vec::with_capacity(points.len());
     filtered.extend(points.iter().copied().filter(|&(x, y, z)| {
@@ -860,10 +884,12 @@ pub fn update_map(
     let points = &filtered[..];
 
     let hits = live_voxels(points, cfg.voxel_size);
+    phases.filter += t.elapsed().as_secs_f64();
 
     let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
     let step = cfg.ray_subsample as usize;
     let voxels = &map.voxels;
+    let t = std::time::Instant::now();
     let misses: AHashSet<VoxelKey> = points
         .par_iter()
         .enumerate()
@@ -893,11 +919,15 @@ pub fn update_map(
             a.extend(b);
             a
         });
+    phases.raycast += t.elapsed().as_secs_f64();
 
+    let t = std::time::Instant::now();
     for &v in &hits {
         map.record_hit(v, cfg.min_health, cfg.max_health);
     }
+    phases.hits += t.elapsed().as_secs_f64();
 
+    let t = std::time::Instant::now();
     let fine = cfg.fine_layer().map(|(d, size)| (d as i32, size));
     for &p in points {
         map.accumulate(p, cfg.voxel_size);
@@ -905,21 +935,30 @@ pub fn update_map(
             map.observe_fine(p, divisor, cfg.voxel_size);
         }
     }
+    phases.accumulate += t.elapsed().as_secs_f64();
 
+    let t = std::time::Instant::now();
     let mut removed: Vec<VoxelKey> = Vec::new();
     for &v in misses.difference(&hits) {
         if map.record_miss(v, cfg.min_health) {
             removed.push(v);
         }
     }
+    phases.misses += t.elapsed().as_secs_f64();
 
+    let t = std::time::Instant::now();
     refresh_voxels(map, &hits, &removed, cfg.voxel_size);
+    phases.normals += t.elapsed().as_secs_f64();
+
+    let t = std::time::Instant::now();
+    let fine_live = fine.map_or_else(AHashSet::new, |(_, fine_size)| {
+        live_voxels(points, fine_size)
+    });
+    phases.fine_live += t.elapsed().as_secs_f64();
 
     FrameHits {
         coarse: hits,
-        fine: fine.map_or_else(AHashSet::new, |(_, fine_size)| {
-            live_voxels(points, fine_size)
-        }),
+        fine: fine_live,
     }
 }
 

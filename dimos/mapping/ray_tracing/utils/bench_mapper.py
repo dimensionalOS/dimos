@@ -162,6 +162,14 @@ def main(
         f"RAYON_NUM_THREADS={os.environ.get('RAYON_NUM_THREADS', 'unset')}"
     )
     _report("add_frame", add_t, 1)
+    add_total = float(np.sum(add_t))
+    phases = mapper.phase_times()
+    other = max(add_total - sum(secs for _, secs in phases), 0.0)
+    for name, secs in [*phases, ("other", other)]:
+        print(
+            f"  {name:10s} {1e3 * secs / count:6.2f} ms/frame"
+            f"  {100 * secs / max(add_total, 1e-9):3.0f}%"
+        )
     _report("local emit", local_t, emit_every or 1)
     _report("fine emit", fine_t, fine_emit_every or 1)
     _report("global emit", global_t, global_emit_every or 1)

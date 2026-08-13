@@ -162,6 +162,15 @@ impl VoxelRayMapper {
         self.mapper.take_local_bounds()
     }
 
+    /// Cumulative wall seconds per add_frame phase, in execution order.
+    fn phase_times(&self) -> Vec<(String, f64)> {
+        self.mapper
+            .phase_times()
+            .into_iter()
+            .map(|(name, secs)| (name.to_string(), secs))
+            .collect()
+    }
+
     fn global_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let mapper = &self.mapper;
         let points = py.allow_threads(|| mapper.global_points());

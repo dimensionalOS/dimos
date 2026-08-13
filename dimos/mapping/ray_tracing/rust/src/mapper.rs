@@ -15,8 +15,8 @@
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, emit_points_fine, update_map, Config, FrameHits, LocalBounds,
-    VoxelMap,
+    batch_local_bounds, emit_points, emit_points_fine, update_map_timed, Config, FrameHits,
+    LocalBounds, UpdatePhases, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -39,6 +39,8 @@ pub struct Mapper {
     batch_origins: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    register_s: f64,
+    phases: UpdatePhases,
 }
 
 impl Mapper {
@@ -53,6 +55,8 @@ impl Mapper {
             batch_origins: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
+            register_s: 0.0,
+            phases: UpdatePhases::default(),
         }
     }
 
@@ -67,6 +71,7 @@ impl Mapper {
     /// Register a sensor-frame cloud into the world by `pose`, fold it into the
     /// map, and return the registered points.
     pub fn add_frame(&mut self, sensor_points: &[Point], pose: Pose) -> Vec<Point> {
+        let t = std::time::Instant::now();
         let (px, py, pz) = pose.position;
         let (qx, qy, qz, qw) = pose.orientation;
         let translation = Vector3::new(px, py, pz);
@@ -79,8 +84,15 @@ impl Mapper {
                 (p.x, p.y, p.z)
             })
             .collect();
+        self.register_s += t.elapsed().as_secs_f64();
 
-        self.live = update_map(&mut self.map, pose.position, &points, &self.config);
+        self.live = update_map_timed(
+            &mut self.map,
+            pose.position,
+            &points,
+            &self.config,
+            &mut self.phases,
+        );
 
         // The batch only feeds the local region bounds, so skip it when both
         // local maps are disabled.
@@ -164,6 +176,21 @@ impl Mapper {
         ))
     }
 
+    /// Cumulative wall time (s) per add_frame phase, in execution order.
+    pub fn phase_times(&self) -> Vec<(&'static str, f64)> {
+        let p = &self.phases;
+        vec![
+            ("register", self.register_s),
+            ("filter", p.filter),
+            ("raycast", p.raycast),
+            ("hits", p.hits),
+            ("accumulate", p.accumulate),
+            ("misses", p.misses),
+            ("normals", p.normals),
+            ("fine_live", p.fine_live),
+        ]
+    }
+
     /// Reset to an empty map, keeping the config.
     pub fn clear(&mut self) {
         self.map.clear();
@@ -171,6 +198,8 @@ impl Mapper {
         self.batch_points.clear();
         self.batch_origins.clear();
         self.frame_count = 0;
+        self.register_s = 0.0;
+        self.phases = UpdatePhases::default();
     }
 }
 
