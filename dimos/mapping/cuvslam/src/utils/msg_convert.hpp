@@ -17,6 +17,7 @@
 #include "sensor_msgs/CameraInfo.hpp"
 #include "std_msgs/Header.hpp"
 #include "std_msgs/Time.hpp"
+#include "tf.hpp"
 
 namespace msg_convert {
 
@@ -53,6 +54,23 @@ inline Eigen::Isometry3d to_isometry(const geometry_msgs::Transform& message) {
     iso.translation() = Eigen::Vector3d(message.translation.x, message.translation.y,
                                         message.translation.z);
     return iso;
+}
+
+inline Eigen::Isometry3d to_isometry(const tf_client::Rigid& rigid) {
+    Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+    iso.linear() = Eigen::Quaterniond(rigid.rotation[3], rigid.rotation[0], rigid.rotation[1],
+                                      rigid.rotation[2])
+                       .toRotationMatrix();
+    iso.translation() = Eigen::Vector3d(rigid.translation[0], rigid.translation[1],
+                                        rigid.translation[2]);
+    return iso;
+}
+
+inline tf_client::Rigid to_rigid(const Eigen::Isometry3d& iso) {
+    const Eigen::Quaterniond rotation(iso.linear());
+    return tf_client::Rigid{
+        {rotation.x(), rotation.y(), rotation.z(), rotation.w()},
+        {iso.translation().x(), iso.translation().y(), iso.translation().z()}};
 }
 
 inline cuvslam::Pose to_pose(const Eigen::Isometry3d& iso) {
