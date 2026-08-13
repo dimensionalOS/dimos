@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runs headless and defaults to replay/sim so no robot is required.
-"""
+"""Runs headless and defaults to replay/sim so no robot is required."""
 
 from __future__ import annotations
 
@@ -45,8 +44,7 @@ _SIMULATORS = ("mujoco", "dimsim")
 
 
 def _config_overrides(run_mode: str, simulator: str) -> dict[str, object]:
-    """Build the global_config overrides for a run mode.
-    """
+    """Build the global_config overrides for a run mode."""
     if run_mode == "replay":
         return {"replay": True}
     if run_mode == "simulation":
@@ -63,8 +61,7 @@ def run_eval(
     warmup: float = 3.0,
     interval: float = 1.0,
 ) -> EvalResult:
-    """Evaluate ``blueprint`` on the current machine and return an EvalResult.
-    """
+    """Evaluate ``blueprint`` on the current machine and return an EvalResult."""
     if interval <= 0:
         raise ValueError(f"interval must be > 0, got {interval}")
     if run_mode not in _RUN_MODES:
@@ -88,13 +85,13 @@ def run_eval(
     gpu = GpuSampler(interval=interval)
     resource_logger = InMemoryResourceLogger()
     monitor: StatsMonitor | None = None
-    coordinator: "ModuleCoordinator | None" = None
+    coordinator: ModuleCoordinator | None = None
 
     try:
         bp = get_by_name(blueprint)
         build_start = time.monotonic()
         from dimos.core.coordination.module_coordinator import ModuleCoordinator
-        
+
         # Instantiate explicitly instead of using .build().
         # This guarantees we hold a reference to 'coordinator' so the finally
         # block can call .stop() and kill workers even if load_blueprint fails
@@ -102,7 +99,7 @@ def run_eval(
         coordinator = ModuleCoordinator()
         coordinator.start()
         coordinator.load_blueprint(bp)
-        
+
         result.startup_seconds = time.monotonic() - build_start
 
         worker_source = cast("WorkerManagerPython", coordinator._managers["python"])

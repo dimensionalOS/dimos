@@ -15,8 +15,10 @@
 """Data model, JSON serialization, and terminal rendering for eval results."""
 
 from __future__ import annotations
+
 from dataclasses import asdict, dataclass, field
 import json
+
 from dimos.eval.hardware import HardwareProfile
 from dimos.utils.human import human_bytes
 
@@ -70,7 +72,7 @@ class EvalResult:
 
     blueprint: str
     run_mode: str  # "replay" | "simulation" | "real"
-    status: str    # "ok" | "failed"
+    status: str  # "ok" | "failed"
     timestamp: str
     hardware: HardwareProfile
     startup_seconds: float = 0.0
