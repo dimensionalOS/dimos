@@ -19,7 +19,7 @@ import json
 import numpy as np
 
 from dimos.models.qwen.bbox import BBox
-from dimos.models.vl.qwen import QwenVlModel
+from dimos.models.vl.qwen import DEFAULT_QWEN_VL_MODEL, QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -27,7 +27,7 @@ def query_single_frame(
     image: np.ndarray,
     query: str = "Return the center coordinates of the fridge handle as a tuple (x,y)",
     api_key: str | None = None,
-    model_name: str = "qwen2.5-vl-72b-instruct",
+    model_name: str = DEFAULT_QWEN_VL_MODEL,
 ) -> str:
     """Process a single numpy image array with Qwen model.
 
@@ -35,7 +35,7 @@ def query_single_frame(
         image: A numpy array image to process, shape (H, W, 3)
         query: The query to ask about the image
         api_key: Alibaba API key. If None, falls back to the ALIBABA_API_KEY env var
-        model_name: The Qwen model to use. Defaults to qwen2.5-vl-72b-instruct
+        model_name: The Qwen model to use. Defaults to DEFAULT_QWEN_VL_MODEL
 
     Returns:
         str: The model's response
