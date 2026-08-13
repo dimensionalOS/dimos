@@ -163,6 +163,9 @@ pub struct Planner {
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
+    // Last goal and whether a full plan reached it, so replan outcomes log
+    // on transitions instead of every cycle.
+    last_result: Option<((f32, f32, f32), bool)>,
 }
 
 impl Planner {
@@ -480,19 +483,24 @@ impl Planner {
     ) -> Vec<(f32, f32, f32)> {
         if !self.graph.nodes.is_empty() {
             if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
+                if self.last_result != Some((goal, true)) {
+                    tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
+                }
+                self.last_result = Some((goal, true));
                 self.last_path = Some((goal, cells));
                 return waypoints;
             }
         }
+        if self.last_result != Some((goal, false)) {
+            tracing::warn!(
+                ?goal,
+                "no full path to goal, following any cached path while safe"
+            );
+        }
+        self.last_result = Some((goal, false));
         match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
-                let safe = planner::truncate_to_safe(&self.graph, cells, start, config);
-                tracing::warn!(
-                    ?goal,
-                    safe_waypoints = safe.len(),
-                    "no full path to goal, validating and following the cached path only while safe"
-                );
-                safe
+                planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
         }

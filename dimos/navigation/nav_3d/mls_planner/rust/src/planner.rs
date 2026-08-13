@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
-use crate::dijkstra::walk_preds;
+use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
@@ -115,7 +114,7 @@ pub fn plan(
     let start_candidates =
         snap_candidates(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m);
     if start_candidates.is_empty() {
-        tracing::warn!(
+        tracing::debug!(
             ?start_pose,
             "plan failed: start does not snap to any surface cell"
         );
@@ -124,16 +123,21 @@ pub fn plan(
     let Some(goal_coord) =
         snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
     else {
-        tracing::warn!(
+        tracing::debug!(
             ?goal_pose,
             "plan failed: goal does not snap to any surface cell"
         );
         return None;
     };
     let Some(goal_cell) = plg.cells.id(goal_coord) else {
-        tracing::warn!(?goal_coord, "plan failed: goal cell is not in the graph");
+        tracing::debug!(?goal_coord, "plan failed: goal cell is not in the graph");
         return None;
     };
+    let start_cells: Vec<CellId> = start_candidates
+        .iter()
+        .take(MAX_SNAP_ATTEMPTS)
+        .filter_map(|&candidate| plg.cells.id(candidate))
+        .collect();
 
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
 
@@ -145,7 +149,7 @@ pub fn plan(
         .expect("walk_preds returns at least the start cell");
     if !node_cells.contains(&goal_node) {
         let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
-            tracing::warn!(
+            tracing::debug!(
                 ?goal_coord,
                 "plan failed: goal's connected component has no graph node"
             );
@@ -159,28 +163,34 @@ pub fn plan(
     let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node);
 
     let radius = (config.node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
-    let mut entry: Option<(Vec<CellId>, Vec<NodeId>)> = None;
-    for &candidate in start_candidates.iter().take(MAX_SNAP_ATTEMPTS) {
-        let Some(start_cell) = plg.cells.id(candidate) else {
-            continue;
-        };
-        entry = select_entry(
+    // Nearest candidate first so the lead-in anchors at the robot's own cell.
+    // The rest are only a fallback when it cannot connect.
+    let (near, rest) = start_cells.split_at(start_cells.len().min(1));
+    let entry = select_entry(
+        plg,
+        near,
+        goal_cell,
+        goal_node,
+        &cost_to_go,
+        &pred_to_goal,
+        &node_cells,
+        radius,
+    )
+    .or_else(|| {
+        select_entry(
             plg,
-            start_cell,
+            rest,
             goal_cell,
             goal_node,
             &cost_to_go,
             &pred_to_goal,
             &node_cells,
             radius,
-        );
-        if entry.is_some() {
-            break;
-        }
-    }
+        )
+    });
     let Some((lead_in, node_seq)) = entry else {
-        tracing::warn!(
-            candidates = start_candidates.len().min(MAX_SNAP_ATTEMPTS),
+        tracing::debug!(
+            candidates = start_cells.len(),
             reachable_nodes = cost_to_go.len(),
             total_nodes = plg.nodes.len(),
             "plan failed: start and goal lie on separate connected surface components",
@@ -428,7 +438,7 @@ fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn select_entry(
     plg: &PlannerGraph,
-    start_cell: CellId,
+    start_cells: &[CellId],
     goal_cell: CellId,
     goal_node: NodeId,
     cost_to_go: &AHashMap<NodeId, f32>,
@@ -436,7 +446,7 @@ fn select_entry(
     node_cells: &AHashSet<NodeId>,
     radius_m: f32,
 ) -> Option<(Vec<CellId>, Vec<NodeId>)> {
-    let (connect_dist, connect_pred) = robot_search(&plg.cells, start_cell, radius_m);
+    let (connect_dist, connect_pred) = robot_search(&plg.cells, start_cells, radius_m);
 
     if connect_dist.contains_key(&goal_cell) {
         let mut lead = walk_local_preds(&connect_pred, goal_cell);
@@ -473,33 +483,40 @@ fn select_entry(
         return Some((lead, follow_preds(entry_node, goal_node, pred_to_goal)?));
     }
 
-    let start_segment = walk_preds(&plg.cell_state, start_cell);
-    let region_node = *start_segment.last()?;
-    if !node_cells.contains(&region_node)
-        || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
-    {
-        return None;
+    for &start_cell in start_cells {
+        let start_segment = walk_preds(&plg.cell_state, start_cell);
+        let region_node = *start_segment
+            .last()
+            .expect("walk_preds returns at least the start cell");
+        if !node_cells.contains(&region_node)
+            || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
+        {
+            continue;
+        }
+        let Some(node_seq) = follow_preds(region_node, goal_node, pred_to_goal) else {
+            continue;
+        };
+        return Some((start_segment, node_seq));
     }
-    Some((
-        start_segment,
-        follow_preds(region_node, goal_node, pred_to_goal)?,
-    ))
+    None
 }
 
 /// Bounded Dijkstra from the robot cell. Cost is wall-penalized for steering,
 /// but the radius bounds metric distance, not penalized cost.
 fn robot_search(
     cells: &SurfaceCells,
-    source: CellId,
+    sources: &[CellId],
     radius_m: f32,
 ) -> (AHashMap<CellId, f32>, AHashMap<CellId, CellId>) {
     let mut dist: AHashMap<CellId, f32> = AHashMap::new();
     let mut geo: AHashMap<CellId, f32> = AHashMap::new();
     let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
-    dist.insert(source, 0.0);
-    geo.insert(source, 0.0);
-    heap.push(Scored(0.0, source));
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
+    for &source in sources {
+        dist.insert(source, 0.0);
+        geo.insert(source, 0.0);
+        heap.push(Scored(0.0, source));
+    }
 
     while let Some(Scored(d, u)) = heap.pop() {
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
@@ -583,7 +600,7 @@ fn node_dijkstra(
     let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
     let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
     dist.insert(source, 0.0);
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     heap.push(Scored(0.0, source));
 
     while let Some(Scored(d, u)) = heap.pop() {
@@ -833,25 +850,6 @@ fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx>
         }
     }
     None
-}
-
-struct Scored(f32, NodeId);
-
-impl PartialEq for Scored {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
-    }
-}
-impl Eq for Scored {}
-impl PartialOrd for Scored {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Scored {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
-    }
 }
 
 #[cfg(test)]
@@ -1190,8 +1188,17 @@ mod tests {
         let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
         let (ctg, pred) = node_dijkstra(&plg, goal_node);
 
-        let (lead, node_seq) =
-            select_entry(&plg, start, goal, goal_node, &ctg, &pred, &node_cells, 3.0).unwrap();
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[start],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            3.0,
+        )
+        .unwrap();
 
         assert!(
             node_seq.is_empty(),
