@@ -106,8 +106,6 @@ class Graph:
     modules: tuple[str, ...]
     connections: tuple[Connection, ...]
     warnings: tuple[str, ...]
-    # (module id, declared port) -> effective name
-    remaps: Mapping[tuple[str, str], str]
 
     def topics(self) -> dict[str, dict[str, str]]:
         """Baked wiring: `{module: {port: topic}}`."""
@@ -224,7 +222,6 @@ def build_graph(
         modules=tuple(m.id for m in modules),
         connections=tuple(connections),
         warnings=tuple(warnings),
-        remaps=remaps,
     )
 
 

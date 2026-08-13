@@ -30,6 +30,7 @@ from typing import Any
 import tomllib
 
 from dimos.cli.bake.errors import BakeError
+from dimos.constants import DIMOS_PROJECT_ROOT
 
 # Directories that never hold a source manifest, and that are expensive to walk.
 _PRUNE = {
@@ -48,7 +49,7 @@ _SEARCH_ROOTS = ("dimos", "native")
 
 def repo_root() -> Path:
     """The checkout root, i.e. the directory holding the `dimos` package."""
-    return Path(__file__).resolve().parents[3]
+    return DIMOS_PROJECT_ROOT
 
 
 @dataclass(frozen=True)

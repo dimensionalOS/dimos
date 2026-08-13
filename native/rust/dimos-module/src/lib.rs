@@ -33,7 +33,7 @@ pub use module::{
     Output,
 };
 pub use tf::{Lookup, Tf, Transform};
-pub use transport::{DynTransport, SharedTransport, Transport};
+pub use transport::{SharedTransport, Transport};
 pub use zenoh::ZenohTransport;
 
 pub use nalgebra;
