@@ -20,10 +20,11 @@ how to override them; run the probe script before first enable.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 import time
 from typing import Any
+
+import numpy as np
 
 from dimos.hardware.manipulators.openyam.driver import (
     CANABLE_PRODUCT_ID,
@@ -44,6 +45,7 @@ from dimos.hardware.manipulators.spec import (
     JointLimits,
     ManipulatorInfo,
 )
+from dimos.utils.data import LfsPath
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,11 +69,15 @@ _DEFAULT_KD = [1.2, 1.2, 1.2, 0.8, 0.8, 0.8]
 _GRIPPER_KP = 20.0
 _GRIPPER_KD = 0.5
 
-# Placeholder joint limits until Anvil publishes the OpenYAM URDF (their
-# description repo is currently empty). ±π keeps commands out of hard stops
-# on YAM-class geometry; override via adapter kwargs once calibrated.
-_DEFAULT_POS_LOWER = [-math.pi] * 6
-_DEFAULT_POS_UPPER = [math.pi] * 6
+# Joint limits from yam_description/urdf/yam_gripper_gravity.urdf (the same
+# model the canonical Linux adapter validates against). Joints 2 and 3 are
+# asymmetric — zero at one hard stop.
+_DEFAULT_POS_LOWER = [-3.92699, 0.0, 0.0, -1.65806, -1.5708, -2.35619]
+_DEFAULT_POS_UPPER = [1.5708, 3.66519, 4.01426, 1.65806, 1.5708, 1.8326]
+_DEFAULT_VEL_MAX = [3.0, 10.0, 3.0, 10.0, 3.0, 10.0]
+
+# Pinocchio gravity model (mass data from the canonical PR's URDF; lazy LFS)
+_GRAVITY_URDF = LfsPath("yam_description/urdf/yam_gripper_gravity.urdf")
 
 _STATE_MAX_AGE_S = 0.1
 
@@ -102,6 +108,7 @@ class OpenYamAdapter:
         position_lower: list[float] | None = None,
         position_upper: list[float] | None = None,
         auto_set_mit_mode: bool = False,
+        gravity_comp: bool = True,
         usb_vendor_id: int = CANABLE_VENDOR_ID,
         usb_product_id: int = CANABLE_PRODUCT_ID,
         **_: Any,
@@ -135,6 +142,10 @@ class OpenYamAdapter:
         self._pos_lower = list(position_lower) if position_lower else list(_DEFAULT_POS_LOWER)
         self._pos_upper = list(position_upper) if position_upper else list(_DEFAULT_POS_UPPER)
         self._auto_set_mit_mode = auto_set_mit_mode
+        self._gravity_comp = gravity_comp
+        # Pinocchio model, loaded lazily in connect()
+        self._pin_model: Any = None
+        self._pin_data: Any = None
 
         types = [MotorType(t) for t in arm_motor_types] if arm_motor_types is not None else None
         self._motors = make_yam_motors(
@@ -208,6 +219,20 @@ class OpenYamAdapter:
                 self._bus = None
                 return False
 
+        if self._gravity_comp:
+            try:
+                import pinocchio
+
+                self._pin_model = pinocchio.buildModelFromUrdf(str(_GRAVITY_URDF))
+                self._pin_data = self._pin_model.createData()
+                if self._pin_model.nq != self._dof:
+                    raise ValueError(f"gravity model nq={self._pin_model.nq} != dof={self._dof}")
+                logger.info(f"OpenYAM gravity compensation enabled (nq={self._pin_model.nq})")
+            except Exception as e:
+                logger.warning(f"gravity comp disabled — {e}")
+                self._pin_model = None
+                self._pin_data = None
+
         return True
 
     def disconnect(self) -> None:
@@ -250,7 +275,7 @@ class OpenYamAdapter:
         return JointLimits(
             position_lower=list(self._pos_lower),
             position_upper=list(self._pos_upper),
-            velocity_max=[m.limits[1] for m in self._motors],
+            velocity_max=list(_DEFAULT_VEL_MAX),
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -322,6 +347,23 @@ class OpenYamAdapter:
 
     # ------------------------------------------------------------------ write
 
+    def _gravity_torques(self) -> list[float]:
+        # Pinocchio G(q) at the measured pose, clamped to motor torque
+        # limits. Zeros when the model is unavailable or state is stale —
+        # PD-only control still works, just with steady-state sag.
+        if self._pin_model is None or self._pin_data is None:
+            return [0.0] * self._dof
+        import pinocchio
+
+        try:
+            q = np.array(self.read_joint_positions(), dtype=np.float64)
+        except RuntimeError:
+            return [0.0] * self._dof
+        tau_g = pinocchio.computeGeneralizedGravity(self._pin_model, self._pin_data, q)
+        return [
+            float(np.clip(tau_g[i], -m.limits[2], m.limits[2])) for i, m in enumerate(self._motors)
+        ]
+
     def write_joint_positions(
         self,
         positions: list[float],
@@ -332,8 +374,11 @@ class OpenYamAdapter:
         if len(positions) != self._dof:
             return False
         velocity = max(0.0, min(1.0, velocity))
-        for motor, q, kp, kd in zip(self._motors, positions, self._kp, self._kd, strict=False):
-            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp * velocity, kd, 0.0))
+        tau_ff = self._gravity_torques()
+        for motor, q, kp, kd, tau in zip(
+            self._motors, positions, self._kp, self._kd, tau_ff, strict=False
+        ):
+            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp * velocity, kd, tau))
         self._last_cmd_q = list(positions)
         return True
 
@@ -350,10 +395,11 @@ class OpenYamAdapter:
             except RuntimeError:
                 return False
         anchor = self._last_cmd_q
-        for motor, q_anchor, dq, kd in zip(
-            self._motors, anchor, velocities, self._kd, strict=False
+        tau_ff = self._gravity_torques()
+        for motor, q_anchor, dq, kd, tau in zip(
+            self._motors, anchor, velocities, self._kd, tau_ff, strict=False
         ):
-            self._bus.send_mit_one(motor.send_id, (q_anchor, dq, 0.0, kd, 0.0))
+            self._bus.send_mit_one(motor.send_id, (q_anchor, dq, 0.0, kd, tau))
         return True
 
     def write_stop(self) -> bool:
@@ -364,8 +410,11 @@ class OpenYamAdapter:
             q_now = self.read_joint_positions()
         except RuntimeError:
             return False
-        for motor, q, kp, kd in zip(self._motors, q_now, self._kp, self._kd, strict=False):
-            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp, kd, 0.0))
+        tau_ff = self._gravity_torques()
+        for motor, q, kp, kd, tau in zip(
+            self._motors, q_now, self._kp, self._kd, tau_ff, strict=False
+        ):
+            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp, kd, tau))
         self._last_cmd_q = q_now
         return True
 
