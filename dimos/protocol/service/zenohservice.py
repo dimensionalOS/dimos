@@ -127,7 +127,6 @@ def endpoint_addresses(endpoint: str) -> set[str]:
 
 
 class ZenohConfig(BaseConfig):
-    # client hands all routing to an external zenohd router. peer meshes directly.
     mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
@@ -145,7 +144,6 @@ class ZenohConfig(BaseConfig):
 
     @property
     def multicast_interface(self) -> str:
-        """Interface multicast scouting binds to."""
         return self.scouting_interface or (ALL_INTERFACES if self.scouting else LOOPBACK_INTERFACE)
 
     @property
@@ -190,10 +188,8 @@ class ZenohSessionPool:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
                     zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
-                # Multicast stays on loopback by default so sibling worker
-                # processes still discover each other. Multicast and gossip are
-                # knobs so a router deployment can stop its clients meshing
-                # around the router.
+                # Loopback multicast by default keeps sibling worker processes
+                # discovering each other.
                 zconfig.insert_json5("scouting/multicast/enabled", json.dumps(config.multicast))
                 zconfig.insert_json5(
                     "scouting/multicast/interface", json.dumps(config.multicast_interface)

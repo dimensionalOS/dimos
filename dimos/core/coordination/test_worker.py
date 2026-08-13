@@ -48,9 +48,7 @@ class SimpleModule(Module):
 
     @rpc
     def read_global_robot_ip(self) -> str | None:
-        from dimos.core.global_config import global_config as worker_config
-
-        return worker_config.robot_ip
+        return global_config.robot_ip
 
 
 class AnotherModule(Module):

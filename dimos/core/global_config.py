@@ -68,7 +68,7 @@ class GlobalConfig(BaseSettings):
     # Interface multicast scouting binds to, e.g. wlan0.
     # Empty derives it from zenoh_scouting.
     zenoh_interface: str = ""
-    # Whether multicast scouting runs at all.
+    # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
     zenoh_multicast: bool = True
     # Whether peers propagate the peers they already know over established links.
     # None follows zenoh_scouting, preserving its isolation contract above.

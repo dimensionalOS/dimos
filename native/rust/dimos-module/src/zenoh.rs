@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use crate::transport::{Dispatch, Transport};
 
 /// Env vars the python launcher sets to mirror its own session config
-/// (`native_env` in zenohservice.py). Python owns every value. A var it
+/// (native_env in zenohservice.py). Python owns every value. A var it
 /// left unset keeps zenoh's own default, and an invalid value is an error.
 const ENV_CONNECT: &str = "DIMOS_ZENOH_CONNECT";
 const ENV_LISTEN: &str = "DIMOS_ZENOH_LISTEN";
