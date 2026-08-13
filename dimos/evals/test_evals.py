@@ -332,3 +332,48 @@ def test_instruct_delivers_over_real_transport() -> None:
     finally:
         unsubscribe()
         listener.stop()
+
+
+def test_interactive_env_torn_down_per_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each interactive case gets its own sim process, stopped even on failure —
+    the leak Paul flagged on PR #3411 (only the last _proc was ever stopped)."""
+    from dataclasses import dataclass
+
+    import dimos.e2e_tests.dimos_cli_call as cli_call_mod
+    from dimos.evals.runner import EvalRunner
+    from dimos.evals.types import EvalRig
+
+    launched: list[Any] = []
+
+    class FakeProc:
+        def __init__(self) -> None:
+            self.simulator = ""
+            self.global_args: list[str] = []
+            self.demo_args: list[str] = []
+            self.stopped = False
+            launched.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    monkeypatch.setattr(cli_call_mod, "DimosCliCall", FakeProc)
+    monkeypatch.setattr(EvalRunner, "_wait_mcp", lambda self, timeout: True)
+
+    @dataclass(frozen=True, kw_only=True)
+    class BoomCase(InteractiveEval):
+        def evaluate(self, rig: EvalRig) -> Any:
+            rig.setup_env(self)
+            raise RuntimeError("boom")
+
+    runner = EvalRunner()
+    case = BoomCase(id="boom", inputs="x", score=lambda s: 1.0)
+    for _ in range(2):
+        result = runner._guarded(case)
+        assert "boom" in (result.error or "")
+
+    assert len(launched) == 2, "each case must launch its own env"
+    assert all(p.stopped for p in launched), "every launched env must be stopped"
+    assert runner._proc is None

@@ -39,6 +39,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
 
+    from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory2.store.base import Store
     from dimos.memory2.stream import Stream
@@ -101,6 +102,7 @@ class EvalRunner(Configurable, CompositeResource):
         CompositeResource.__init__(self)
         self._model: BaseChatModel | None = None
         self._proc: DimosCliCall | None = None
+        self._sim: DimSimClient | None = None
         self._run_dir: Path | None = None
 
     # -- run lifecycle -----------------------------------------------------------
@@ -156,6 +158,8 @@ class EvalRunner(Configurable, CompositeResource):
             )
         except Exception as e:
             return EvalResult(case_id=case.id, error=repr(e), duration_s=time.monotonic() - t0)
+        finally:
+            self.teardown_env()
 
     @property
     def run_dir(self) -> Path:
@@ -175,9 +179,7 @@ class EvalRunner(Configurable, CompositeResource):
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     def stop(self) -> None:
-        if self._proc is not None:
-            self._proc.stop()
-            self._proc = None
+        self.teardown_env()
         super().stop()
 
     # -- EvalRig: shared ------------------------------------------------------------
@@ -329,7 +331,17 @@ class EvalRunner(Configurable, CompositeResource):
 
             sim = DimSimClient()
             sim.start()
+            self._sim = sim
             case.setup(sim)
+
+    def teardown_env(self) -> None:
+        """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
+        if self._sim is not None:
+            self._sim.stop()
+            self._sim = None
+        if self._proc is not None:
+            self._proc.stop()
+            self._proc = None
 
     def check_env(self, case: InteractiveEval) -> None:
         if self.config.attach or not case.simulator:
