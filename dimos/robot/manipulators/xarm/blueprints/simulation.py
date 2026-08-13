@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,

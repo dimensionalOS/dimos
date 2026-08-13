@@ -52,6 +52,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -331,6 +332,7 @@ class MujocoSimModule(
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -958,24 +960,26 @@ class MujocoSimModule(
             optical_transform = inv_base_transform @ optical_transform
 
         self.tf.publish(
-            _transform_from_matrix(
-                optical_transform,
-                frame_id=parent_frame,
-                child_frame_id=self._color_optical_frame,
-                ts=ts,
-            ),
-            _transform_from_matrix(
-                optical_transform,
-                frame_id=parent_frame,
-                child_frame_id=self._depth_optical_frame,
-                ts=ts,
-            ),
-            _transform_from_matrix(
-                camera_transform,
-                frame_id=parent_frame,
-                child_frame_id=self._camera_link,
-                ts=ts,
-            ),
+            TFMessage(
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._color_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._depth_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    camera_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._camera_link,
+                    ts=ts,
+                ),
+            )
         )
 
     def _generate_pointcloud(self) -> None:

@@ -56,7 +56,9 @@ from dimos.spec import perception
 class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
+    build_command: str | None = "nix build -L .#mid360_native"
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))
     lidar_ip: str = Field(
         default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", "192.168.1.155")

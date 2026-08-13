@@ -56,15 +56,12 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 XARM_MODEL_PATH = LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": LfsPath("xarm_description")}
-XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
-XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM_GRIPPER_PARAMS = {
     "gripper_joint": make_gripper_joints("arm")[0],
     "gripper_open_pos": 0.85,
     "gripper_closed_pos": 0.0,
-    "max_joint_delta_deg": 50.0,
 }
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
@@ -231,7 +228,6 @@ def make_xarm_model_config(
     z_offset: float = 0.0,
     pitch: float = 0.0,
     joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
     tf_extra_links: list[str] | None = None,
     home_joints: list[float] | None = None,
     pre_grasp_offset: float = 0.10,
@@ -270,7 +266,6 @@ def make_xarm_model_config(
             dof,
             joint_prefix=joint_prefix,
         ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name if add_gripper else None,
         tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * dof,

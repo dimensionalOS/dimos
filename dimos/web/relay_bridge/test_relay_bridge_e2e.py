@@ -92,7 +92,10 @@ class _Publisher:
 
 
 def _start_bridge() -> tuple[RelayBridgeModule, pLCMTransport, pLCMTransport]:
-    module = RelayBridgeModule(local_port=0, open_browser=False, robot_id=ROBOT_ID)
+    # cockpit_build=False: tests must never trigger the npm-downloading build.
+    module = RelayBridgeModule(
+        local_port=0, open_browser=False, cockpit_build=False, robot_id=ROBOT_ID
+    )
     odom_tr = pLCMTransport("/rb_e2e/odom")
     image_tr = pLCMTransport("/rb_e2e/color_image")
     odom_tr.start()

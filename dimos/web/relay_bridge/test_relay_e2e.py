@@ -30,9 +30,12 @@ import pytest
 
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, wait_subs
 from dimos.web.relay_bridge.protocol import (
+    ChannelSpec,
     DataFrame,
     FrameHeader,
+    Hello,
     RobotInfo,
+    RobotManifest,
     Unsub,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
@@ -113,6 +116,32 @@ async def test_robot_hello_without_identity_is_rejected(relay: RelayReadyInfo) -
     async with await RelayClient.connect(relay.wt_url, "robot") as robot:
         with pytest.raises(Exception, match="missing_robot_id"):
             await robot.hello()
+
+
+async def test_previous_protocol_version_is_rejected(relay: RelayReadyInfo) -> None:
+    # A v1 (T2-era) bridge would misread the v2 persistent reliable stream as
+    # a single frame; the relay must fail its handshake loudly. Hello rides
+    # lossy datagrams, so resend until the error lands.
+    async with await RelayClient.connect(relay.wt_url, "robot") as old:
+        deadline = time.monotonic() + 5.0
+        while old._session.relay_error is None and time.monotonic() < deadline:
+            old.send_control(Hello(v=1, role="robot", robot=ROBOT))
+            await asyncio.sleep(0.05)
+        error = old._session.relay_error
+        assert error is not None and error.code == "version_mismatch"
+
+
+async def test_invalid_manifest_hello_is_rejected(relay: RelayReadyInfo) -> None:
+    duplicated = RobotManifest(
+        channels=[
+            ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.0),
+            ChannelSpec(ch="odom", encoding="jpeg.v1", delivery="latest", maxHz=15.0),
+        ]
+    )
+    async with await RelayClient.connect(relay.wt_url, "robot") as robot:
+        with pytest.raises(RelayRejectedError) as exc_info:
+            await robot.hello(robot=ROBOT, manifest=duplicated)
+        assert exc_info.value.code == "invalid_manifest"
 
 
 async def test_reliable_channel_is_complete_and_intact(
