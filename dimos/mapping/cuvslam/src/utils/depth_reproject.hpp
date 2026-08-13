@@ -12,7 +12,7 @@
 
 #include "sensor_msgs/CameraInfo.hpp"
 #include "sensor_msgs/Image.hpp"
-#include "transform.hpp"
+#include <Eigen/Geometry>
 
 namespace depth_reproject {
 
@@ -23,9 +23,8 @@ namespace depth_reproject {
 inline void reproject_depth(const sensor_msgs::Image& depth,
                             const sensor_msgs::CameraInfo& depth_info,
                             const sensor_msgs::CameraInfo& camera_info,
-                            const transform_math::Transform& camera_from_depth,
+                            const Eigen::Isometry3d& camera_from_depth,
                             double units_per_meter, sensor_msgs::Image& out) {
-    using transform_math::quat_rotate;
 
     out.header = depth.header;
     out.header.frame_id = camera_info.header.frame_id;
@@ -37,11 +36,12 @@ inline void reproject_depth(const sensor_msgs::Image& depth,
     out.data.assign(static_cast<std::size_t>(out.step) * out.height, 0);
     out.data_length = static_cast<std::int32_t>(out.data.size());
 
-    // The rotation as columns, so each point costs multiplies rather than quaternion algebra.
-    const std::array<double, 3> col_x = quat_rotate(camera_from_depth.rotation, {1.0, 0.0, 0.0});
-    const std::array<double, 3> col_y = quat_rotate(camera_from_depth.rotation, {0.0, 1.0, 0.0});
-    const std::array<double, 3> col_z = quat_rotate(camera_from_depth.rotation, {0.0, 0.0, 1.0});
-    const std::array<double, 3>& origin = camera_from_depth.translation;
+    // The rotation as columns, so each point costs multiplies rather than a full transform.
+    const Eigen::Matrix3d rotation = camera_from_depth.linear();
+    const Eigen::Vector3d col_x = rotation.col(0);
+    const Eigen::Vector3d col_y = rotation.col(1);
+    const Eigen::Vector3d col_z = rotation.col(2);
+    const Eigen::Vector3d origin = camera_from_depth.translation();
     const double fx_d = depth_info.K[0], fy_d = depth_info.K[4];
     const double cx_d = depth_info.K[2], cy_d = depth_info.K[5];
     const double fx_c = camera_info.K[0], fy_c = camera_info.K[4];
