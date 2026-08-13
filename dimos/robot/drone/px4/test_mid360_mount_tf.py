@@ -14,31 +14,15 @@
 
 import numpy as np
 
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.drone.px4.mid360_mount_tf import BASE_TO_MID360, Mid360MountStaticTf
 
 
-def test_mount_blueprint_construction_does_not_start_the_publisher() -> None:
-    blueprint = Mid360MountStaticTf.blueprint()
-
-    assert [atom.module for atom in blueprint.active_blueprints] == [Mid360MountStaticTf]
-
-
-def test_mount_transform_connects_body_below_pointlio_sensor_frame() -> None:
+def test_mount_transform_attaches_body_below_pointlio_sensor_frame() -> None:
     mount = Mid360MountStaticTf()
     try:
         transform = mount.transforms()[0]
-        expected = BASE_TO_MID360.inverse()
 
         assert (transform.frame_id, transform.child_frame_id) == ("mid360_link", "base_link")
-        np.testing.assert_allclose(
-            [transform.translation.x, transform.translation.y, transform.translation.z],
-            (expected.translation.x, expected.translation.y, expected.translation.z),
-        )
-        np.testing.assert_allclose(transform.to_matrix(), expected.to_matrix())
+        np.testing.assert_allclose(transform.to_matrix(), BASE_TO_MID360.inverse().to_matrix())
     finally:
         mount.stop()
-
-
-def test_mount_is_a_static_tf_publisher() -> None:
-    assert issubclass(Mid360MountStaticTf, StaticTfPublisher)

@@ -14,9 +14,9 @@
 
 """Static MID360-to-body mount transform for the MAVSDK drone.
 
-Point-LIO already publishes the dynamic ``odom -> mid360_link`` edge. This
-module attaches ``base_link`` below that sensor pose using the inverse of
-:data:`BASE_TO_MID360`, avoiding a second parent for ``mid360_link``.
+Point-LIO publishes the dynamic ``odom -> mid360_link`` edge. This module
+attaches ``base_link`` below that sensor pose using the inverse of
+:data:`BASE_TO_MID360`.
 
 Published frame relationship::
 
@@ -32,7 +32,7 @@ import numpy as np
 from typing_extensions import override
 
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 
 BASE_TO_MID360: Final[Transform] = Transform.from_matrix(
     np.array(
@@ -48,38 +48,10 @@ BASE_TO_MID360: Final[Transform] = Transform.from_matrix(
 )
 
 
-class Mid360MountConfig(StaticTfPublisherConfig):
-    """Settings for the ``mid360_link -> base_link`` static TF broadcast.
-
-    Inherits all fields from :class:`StaticTfPublisherConfig` (publish rate,
-    frame expiry, etc.). No additional fields are needed because the actual
-    transform values are supplied by :data:`BASE_TO_MID360`.
-    """
-
-
 class Mid360MountStaticTf(StaticTfPublisher):
-    """Publish the calibrated ``mid360_link -> base_link`` static transform.
-
-    The inverse mount transform is derived from :data:`BASE_TO_MID360`, the
-    same calibration used to convert Point-LIO sensor odometry to body pose.
-
-    Why a static TF?
-
-    * The mount geometry is fixed per vehicle; it never changes at runtime.
-    * Point-LIO owns the dynamic ``odom -> mid360_link`` edge.
-    * This static edge completes ``odom -> mid360_link -> base_link`` without
-      assigning two parents to ``mid360_link``.
-    """
+    """Publish the calibrated ``mid360_link -> base_link`` static transform."""
 
     @override
     def transforms(self) -> list[Transform]:
-        """Build a single static TF entry from the calibrated mount values.
-
-        Publishes the inverse calibration with ``mid360_link`` as parent of
-        ``base_link``.
-
-        The parent class (:class:`StaticTfPublisher`) calls this once and
-        publishes the result. Subclasses override this to supply the
-        frame definitions.
-        """
+        """Return the inverse mount with ``mid360_link`` as parent."""
         return [BASE_TO_MID360.inverse()]

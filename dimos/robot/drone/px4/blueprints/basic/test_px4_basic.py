@@ -13,72 +13,81 @@
 # limitations under the License.
 
 from collections import Counter
-from typing import Any, TypeGuard
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.coordination.blueprints import TransportSpec
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.web_human_input import WebInput
 from dimos.core.module import ModuleBase
-from dimos.core.stream import Transport
-from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.drone.px4 import camera
-from dimos.robot.drone.px4.blueprints.basic.px4_basic import px4_basic
+from dimos.robot.drone.px4.blueprints.agentic.px4_agentic import px4_agentic
+from dimos.robot.drone.px4.blueprints.basic.px4_basic import (
+    gazebo_rerun_config,
+    px4_basic,
+    px4_gazebo_harmonic,
+    rerun_config,
+)
 from dimos.robot.drone.px4.flight_control import FlightController
-from dimos.robot.drone.px4.gstreamer.gstreamer_tee_camera import Px4GstTeeCamera
-from dimos.robot.drone.px4.mid360_mount_tf import Mid360MountStaticTf
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+from dimos.robot.drone.px4.gstreamer_tee_camera import GsTeeCamera, GstInputFormat
 
 
-def test_px4_basic_contains_all_required_modules() -> None:
-    module_counts: Counter[type[ModuleBase]] = Counter(
-        atom.module for atom in px4_basic.active_blueprints
-    )
-
-    assert module_counts[PointLio] == 1
-    assert module_counts[Mid360MountStaticTf] == 1
-    assert module_counts[FlightController] == 1
-    assert module_counts[Px4GstTeeCamera] == 1
-    assert module_counts[RayTracingVoxelMap] == 1
-    assert module_counts[RerunBridgeModule] == 1
-    camera_atom = next(
-        atom for atom in px4_basic.active_blueprints if atom.module is Px4GstTeeCamera
-    )
-    assert "h264_sink" not in camera_atom.kwargs
+def _module_counts(blueprint) -> Counter[type[ModuleBase]]:
+    return Counter(atom.module for atom in blueprint.active_blueprints)
 
 
-def test_px4_basic_suppresses_bridged_raw_color_image_in_h264_mode() -> None:
-    bridge_atom = next(
-        atom for atom in px4_basic.active_blueprints if atom.module is RerunBridgeModule
-    )
+def test_px4_basic_contains_hardware_stack() -> None:
+    counts = _module_counts(px4_basic)
 
-    assert bridge_atom.kwargs["blueprint"] is camera.px4_camera_layout
-    overrides = bridge_atom.kwargs["visual_override"]
-    assert overrides["world/region_bounds"] is None
+    assert counts[PointLio] == 1
+    assert counts[FlightController] == 1
+    assert counts[GsTeeCamera] == 1
+
+
+def test_px4_basic_rerun_config_visualizes_maps_and_drone_body() -> None:
+    overrides = rerun_config["visual_override"]
+
     assert overrides["world/color_image"] is None
-    assert callable(overrides["world/camera_info"])
     assert callable(overrides["world/video_h264"])
+    assert overrides["world/region_bounds"] is None
+    assert rerun_config["max_hz"] == {
+        "world/global_map": 0,
+        "world/local_map": 0,
+        "world/lidar": 5.0,
+    }
+    assert callable(rerun_config["static"]["world/drone/body"])
 
 
-def test_px4_basic_pins_raw_pshm_and_typed_h264_lcm_transports() -> None:
-    raw_transport = px4_basic.transport_map[("color_image", Image)]
-    h264_transport = px4_basic.transport_map[("video_h264", CompressedVideo)]
+def test_px4_gazebo_uses_sitl_mavlink_and_rtp_h264() -> None:
+    controller = next(
+        atom for atom in px4_gazebo_harmonic.active_blueprints if atom.module is FlightController
+    )
+    camera_module = next(
+        atom for atom in px4_gazebo_harmonic.active_blueprints if atom.module is GsTeeCamera
+    )
 
-    assert _is_transport_spec(raw_transport)
-    assert _is_transport_spec(h264_transport)
-    assert raw_transport.cls is pSHMTransport
-    assert raw_transport.args == ("/color_image",)
-    assert raw_transport.kwargs == {"default_capacity": DEFAULT_CAPACITY_COLOR_IMAGE}
-    assert h264_transport.cls is LCMTransport
-    assert h264_transport.args == ("/video_h264", CompressedVideo)
-
-
-def test_px4_basic_routes_rerun_teleop_to_flight_control() -> None:
-    assert px4_basic.remapping_map[(RerunWebSocketServer.name, "tele_cmd_vel")] == "cmd_vel"
+    assert controller.kwargs["connection_url"] == "udpin://0.0.0.0:14540"
+    assert camera_module.kwargs["input_format"] is GstInputFormat.H264
+    assert "udpsrc port=5600" in camera_module.kwargs["input_pipeline"]
 
 
-def _is_transport_spec(value: TransportSpec | Transport[Any]) -> TypeGuard[TransportSpec]:
-    return isinstance(value, TransportSpec)
+def test_px4_gazebo_rerun_config_is_video_only() -> None:
+    assert gazebo_rerun_config["blueprint"].__name__ == "_gazebo_rerun_layout"
+    assert gazebo_rerun_config["visual_override"]["world/color_image"] is None
+    assert callable(gazebo_rerun_config["visual_override"]["world/video_h264"])
+    assert "max_hz" not in gazebo_rerun_config
+    assert "static" not in gazebo_rerun_config
+
+
+def test_px4_basic_uses_sensor_frame_for_pointlio_odometry() -> None:
+    pointlio = next(atom for atom in px4_basic.active_blueprints if atom.module is PointLio)
+
+    assert pointlio.kwargs["sensor_frame_id"] == "mid360_link"
+
+
+def test_px4_agentic_adds_mcp_modules_to_hardware_stack() -> None:
+    counts = _module_counts(px4_agentic)
+
+    assert counts[PointLio] == 1
+    assert counts[FlightController] == 1
+    assert counts[McpServer] == 1
+    assert counts[McpClient] == 1
+    assert counts[WebInput] == 1

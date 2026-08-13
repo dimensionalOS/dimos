@@ -1,6 +1,6 @@
 # DimOS Drone Module
 
-DJI drone integration via RosettaDrone MAVLink bridge, with visual servoing, autonomous tracking, and LLM agent control. For the PX4 MAVSDK stack, see [`px4/README.md`](px4/README.md).
+DJI drone integration via RosettaDrone MAVLink bridge, with visual servoing, autonomous tracking, and LLM agent control. For the PX4 MAVSDK stack, see [`px4/README.md`](../px4/README.md).
 
 ## Quick Start
 

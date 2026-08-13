@@ -13,78 +13,74 @@
 # limitations under the License.
 
 """Direct MAVSDK gRPC flight control and external-vision forwarding."""
-# noqa: SIZE_OK - Flight control and vision are intentionally one hardware boundary.
 
-import asyncio  # noqa: ANYIO_OK - Module lifecycle exposes a native asyncio loop.
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-import json
 from logging import Logger
 import math
 from typing import Final, TypeAlias
 
+from mavsdk import System  # type: ignore[import-untyped]
+from mavsdk.action import ActionError  # type: ignore[import-untyped]
+from mavsdk.mocap import (  # type: ignore[import-untyped]
+    AngleBody,
+    Covariance,
+    MocapError,
+    PositionBody,
+    VisionPositionEstimate,
+)
+from mavsdk.offboard import (  # type: ignore[import-untyped]
+    OffboardError,
+    PositionNedYaw,
+    VelocityBodyYawspeed,
+)
 import numpy as np
+from numpy.typing import NDArray
+from typing_extensions import override
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.robot.drone.px4.config import MavsdkConfig
-from dimos.robot.drone.px4.errors import MavsdkConnectionTimeoutError
-from dimos.robot.drone.px4.frames import flu_to_frd_body_velocity
-from dimos.robot.drone.px4.mavsdk_runtime import (
-    LazyMavsdkRuntime,
-    MavsdkOdometryValues,
-    MavsdkRuntime,
-    MavsdkSystem,
-)
 from dimos.robot.drone.px4.mid360_mount_tf import BASE_TO_MID360
 from dimos.utils.logging_config import setup_logger
 
 logger: Logger = setup_logger()
 
-_VisionVector: TypeAlias = tuple[float, float, float]
 _VisionQuaternion: TypeAlias = tuple[float, float, float, float]
 _VisionCovariance: TypeAlias = tuple[float, ...]
-_FLU_TO_FRD: Final[np.ndarray] = np.diag((1.0, -1.0, -1.0))
+_FLU_TO_FRD: Final[NDArray[np.float64]] = np.diag((1.0, -1.0, -1.0))
 _UNKNOWN_COVARIANCE: Final[_VisionCovariance] = (float("nan"),)
 
 
+class FlightControllerConfig(ModuleConfig):
+    connection_url: str = "serial:///dev/ttyTHS3:921600"
+    connection_timeout_s: float = 10.0
+
+
 @dataclass(frozen=True, slots=True)
-class _InvalidExternalVisionSampleError(Exception):
-    detail: str
+class MavsdkConnectionTimeoutError(TimeoutError):
+    connection_url: str
+    timeout_s: float
 
+    @override
     def __str__(self) -> str:
-        return self.detail
+        return f"MAVSDK did not connect to {self.connection_url} within {self.timeout_s:g} seconds"
 
 
-class _MavsdkLoopUnavailableError(RuntimeError):
-    pass
+class _InvalidExternalVisionSampleError(Exception):
+    """Raised when a Point-LIO sample cannot be forwarded safely."""
 
 
 def _require_finite(values: Sequence[float], detail: str) -> None:
     if not all(math.isfinite(value) for value in values):
         raise _InvalidExternalVisionSampleError(detail)
-
-
-def _vector_tuple(vector: Vector3) -> _VisionVector:
-    return (vector.x, vector.y, vector.z)
-
-
-def _flu_to_frd_vector(vector: _VisionVector) -> _VisionVector:
-    _require_finite(vector, "position must be finite")
-    return (vector[0], -vector[1], -vector[2])
-
-
-def _flu_to_frd_hamilton_quaternion(quaternion: _VisionQuaternion) -> _VisionQuaternion:
-    _require_finite(quaternion, "orientation quaternion must be finite")
-    return (quaternion[0], quaternion[1], -quaternion[2], -quaternion[3])
 
 
 def _quaternion_from_hamilton(quaternion: _VisionQuaternion) -> Quaternion:
@@ -107,26 +103,9 @@ def _validated_quaternion(quaternion: Quaternion) -> Quaternion:
     return _quaternion_from_hamilton((values[3], values[0], values[1], values[2])).normalize()
 
 
-def _mounted_frd_hamilton(odom_to_base: Transform) -> _VisionQuaternion:
-    rotation = odom_to_base.rotation
-    return _flu_to_frd_hamilton_quaternion((rotation.w, rotation.x, rotation.y, rotation.z))
-
-
-def _transform_sensor_twist_to_base_frd(
-    linear_sensor: _VisionVector, angular_sensor: _VisionVector
-) -> tuple[_VisionVector, _VisionVector]:
-    _require_finite((*linear_sensor, *angular_sensor), "twist must be finite")
-    angular_base = BASE_TO_MID360.rotation.rotate_vector(Vector3(angular_sensor))
-    rotated_linear = BASE_TO_MID360.rotation.rotate_vector(Vector3(linear_sensor))
-    lever_velocity = angular_base.cross(BASE_TO_MID360.translation)
-    linear_base = rotated_linear - lever_velocity
-    return _flu_to_frd_vector(_vector_tuple(linear_base)), _flu_to_frd_vector(
-        _vector_tuple(angular_base)
-    )
-
-
 def _transform_pose_covariance_to_frd(
-    covariance: Sequence[float] | np.ndarray, odom_mid360_quaternion: _VisionQuaternion
+    covariance: Sequence[float] | NDArray[np.float64],
+    odom_mid360_quaternion: _VisionQuaternion,
 ) -> _VisionCovariance:
     if len(covariance) != 36 or not all(math.isfinite(value) for value in covariance):
         return _UNKNOWN_COVARIANCE
@@ -148,54 +127,47 @@ def _transform_pose_covariance_to_frd(
     return tuple(float(transformed[row, column]) for row in range(6) for column in range(row, 6))
 
 
-def _seconds_to_microseconds(timestamp_s: float) -> int:
-    if not math.isfinite(timestamp_s) or timestamp_s <= 0.0:
-        raise _InvalidExternalVisionSampleError("timestamp must be finite and positive")
-    return round(timestamp_s * 1_000_000.0)
-
-
-def _build_mavsdk_odometry_values(message: Odometry) -> MavsdkOdometryValues:
+def _build_vision_position_estimate(message: Odometry) -> VisionPositionEstimate:
     if message.frame_id != "odom" or message.child_frame_id != "mid360_link":
         raise _InvalidExternalVisionSampleError("PointLIO odometry must be odom -> mid360_link")
+    if not math.isfinite(message.ts) or message.ts <= 0.0:
+        raise _InvalidExternalVisionSampleError("timestamp must be finite and positive")
     odom_to_mid360 = Transform.from_pose("mid360_link", message.to_pose_stamped())
     odom_to_mid360.rotation = _validated_quaternion(message.orientation)
     odom_to_base = odom_to_mid360 + BASE_TO_MID360.inverse()
-    linear_frd, angular_frd = _transform_sensor_twist_to_base_frd(
-        _vector_tuple(message.linear_velocity), _vector_tuple(message.angular_velocity)
-    )
     quaternion = message.orientation
-    return MavsdkOdometryValues(
-        time_usec=_seconds_to_microseconds(message.ts),
-        position_body=_flu_to_frd_vector(_vector_tuple(odom_to_base.translation)),
-        quaternion=_mounted_frd_hamilton(odom_to_base),
-        speed_body=linear_frd,
-        angular_velocity_body=angular_frd,
-        pose_covariance=_transform_pose_covariance_to_frd(
-            message.pose.covariance.tolist(),
-            (quaternion.w, quaternion.x, quaternion.y, quaternion.z),
+    rotation = odom_to_base.rotation
+    frd_orientation = _quaternion_from_hamilton((rotation.w, rotation.x, -rotation.y, -rotation.z))
+    euler = frd_orientation.to_euler()
+    position = odom_to_base.translation
+    _require_finite((position.x, position.y, position.z), "position must be finite")
+    return VisionPositionEstimate(
+        time_usec=round(message.ts * 1_000_000.0),
+        position_body=PositionBody(position.x, -position.y, -position.z),
+        angle_body=AngleBody(euler.roll, euler.pitch, euler.yaw),
+        pose_covariance=Covariance(
+            list(
+                _transform_pose_covariance_to_frd(
+                    message.pose.covariance.tolist(),
+                    (quaternion.w, quaternion.x, quaternion.y, quaternion.z),
+                )
+            )
         ),
-        velocity_covariance=_UNKNOWN_COVARIANCE,
+        reset_counter=0,
     )
 
 
 class FlightController(Module):
     """Expose MAVSDK gRPC flight skills, velocity control, and vision pose."""
 
+    config: FlightControllerConfig
     cmd_vel: In[Twist]
     odometry: In[Odometry]
 
     # RPC handlers are registered before start(); callers must not invoke skills until startup completes.
-    def __init__(
-        self,
-        *,
-        g: GlobalConfig = global_config,
-        mavsdk_config: MavsdkConfig | None = None,
-        mavsdk_runtime: MavsdkRuntime | None = None,
-    ) -> None:
-        super().__init__(g=g)
-        self._mavsdk_config: MavsdkConfig = mavsdk_config or MavsdkConfig()
-        self._mavsdk_runtime: MavsdkRuntime = mavsdk_runtime or LazyMavsdkRuntime()
-        self._system: MavsdkSystem
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._system: System
         self._connected: bool = False
         self._armed: bool | None = None
         self._in_air: bool | None = None
@@ -205,28 +177,34 @@ class FlightController(Module):
         self._yaw_deg: float | None = None
         self._telemetry_tasks: list[asyncio.Task[None]] = []
 
-    def _set_offboard_active(self, active: bool) -> None:
-        self._offboard_active = active
+    def _auto_bind_handlers(self) -> None:
+        """Bind only inputs connected by the selected PX4 blueprint."""
+        for stream, handler in (
+            (self.cmd_vel, self.handle_cmd_vel),
+            (self.odometry, self.handle_odometry),
+        ):
+            if getattr(stream, "_transport", None) is not None:
+                self.process_observable(stream.pure_observable(), handler)
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def arm(self) -> str:
         """Arm the vehicle motors."""
         try:
             await self._system.action.arm()
-        except self._mavsdk_runtime.action_error as error:
+        except ActionError as error:
             return f"arm failed: {error}"
         return "arm command sent"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def disarm(self) -> str:
         """Disarm the vehicle motors when the autopilot permits it."""
         try:
             await self._system.action.disarm()
-        except self._mavsdk_runtime.action_error as error:
+        except ActionError as error:
             return f"disarm failed: {error}"
         return "disarm command sent"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def takeoff(self, altitude: float = 3.0) -> str:
         """Set a positive takeoff altitude and command takeoff.
 
@@ -238,20 +216,29 @@ class FlightController(Module):
         try:
             await self._system.action.set_takeoff_altitude(altitude)
             await self._system.action.takeoff()
-        except self._mavsdk_runtime.action_error as error:
+        except ActionError as error:
             return f"takeoff failed: {error}"
         return f"takeoff command sent for {altitude} m"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def land(self) -> str:
         """Command the vehicle to land at its current position."""
         try:
             await self._system.action.land()
-        except (self._mavsdk_runtime.action_error, self._mavsdk_runtime.offboard_error) as error:
+        except ActionError as error:
             return f"land failed: {error}"
         return "land command sent"
 
-    @skill
+    async def _set_body_velocity(
+        self, forward: float, left: float, up: float, yaw_rate: float
+    ) -> None:
+        if not all(math.isfinite(value) for value in (forward, left, up, yaw_rate)):
+            raise ValueError("frame conversion inputs must be finite")
+        await self._system.offboard.set_velocity_body(
+            VelocityBodyYawspeed(forward, -left, -up, -math.degrees(yaw_rate))
+        )
+
+    @skill(uses=[CAP_MOVEMENT])
     async def move(
         self, forward: float = 0.0, left: float = 0.0, up: float = 0.0, yaw_rate: float = 0.0
     ) -> str:
@@ -264,18 +251,12 @@ class FlightController(Module):
             yaw_rate: Counter-clockwise yaw rate in radians per second.
         """
         try:
-            velocity = flu_to_frd_body_velocity(forward, left, up, yaw_rate)
-        except ValueError as error:
-            return f"move failed: {error}"
-        try:
-            await self._system.offboard.set_velocity_body(
-                self._mavsdk_runtime.velocity_body_yawspeed(*velocity)
-            )
-        except self._mavsdk_runtime.offboard_error as error:
+            await self._set_body_velocity(forward, left, up, yaw_rate)
+        except (ValueError, OffboardError) as error:
             return f"move failed: {error}"
         return "move command sent"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def goto(self, north: float, east: float, down: float, yaw: float = 0.0) -> str:
         """Set a local-NED position and yaw target.
 
@@ -289,52 +270,43 @@ class FlightController(Module):
         if not all(math.isfinite(value) for value in values):
             return "goto failed: position and yaw must be finite"
         try:
-            await self._system.offboard.set_position_ned(
-                self._mavsdk_runtime.position_ned_yaw(*values)
-            )
-        except self._mavsdk_runtime.offboard_error as error:
+            await self._system.offboard.set_position_ned(PositionNedYaw(*values))
+        except OffboardError as error:
             return f"goto failed: {error}"
         return "goto command sent"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def enter_offboard(self) -> str:
         """Enter Offboard mode with a zero body-velocity setpoint."""
         try:
-            await self._system.offboard.set_velocity_body(
-                self._mavsdk_runtime.velocity_body_yawspeed(0.0, 0.0, 0.0, 0.0)
-            )
+            await self._system.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
             await self._system.offboard.start()
-        except self._mavsdk_runtime.offboard_error as error:
+        except OffboardError as error:
             return f"enter offboard failed: {error}"
-        self._set_offboard_active(True)
+        self._offboard_active = True
         return "offboard mode entered"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def exit_offboard(self) -> str:
         """Exit Offboard mode."""
         try:
             await self._system.offboard.stop()
-        except self._mavsdk_runtime.offboard_error as error:
+        except OffboardError as error:
             return f"exit offboard failed: {error}"
-        self._set_offboard_active(False)
+        self._offboard_active = False
         return "offboard mode exited"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def hold(self) -> str:
-        """Hold the latest local-NED position and yaw target."""
-        position = self._position_ned
-        yaw = self._yaw_deg
-        if position is None or yaw is None:
-            return "hold failed: local NED position and yaw are unavailable"
+        """Exit Offboard control and command the PX4 Hold flight mode."""
         try:
-            await self._system.offboard.set_position_ned(
-                self._mavsdk_runtime.position_ned_yaw(*position, yaw)
-            )
-        except self._mavsdk_runtime.offboard_error as error:
+            await self._system.action.hold()
+        except ActionError as error:
             return f"hold failed: {error}"
-        return "hold command sent"
+        self._offboard_active = False
+        return "hold mode entered"
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     async def hover(self) -> str:
         """Hold the latest local-NED position and yaw target."""
         position = self._position_ned
@@ -342,10 +314,8 @@ class FlightController(Module):
         if position is None or yaw is None:
             return "hover failed: local NED position and yaw are unavailable"
         try:
-            await self._system.offboard.set_position_ned(
-                self._mavsdk_runtime.position_ned_yaw(*position, yaw)
-            )
-        except self._mavsdk_runtime.offboard_error as error:
+            await self._system.offboard.set_position_ned(PositionNedYaw(*position, yaw))
+        except OffboardError as error:
             return f"hover failed: {error}"
         return "hover command sent"
 
@@ -354,7 +324,7 @@ class FlightController(Module):
         """Connect MAVSDK and start telemetry before accepting stream input."""
         loop = self._loop
         if loop is None or not loop.is_running():
-            raise _MavsdkLoopUnavailableError
+            raise RuntimeError("FlightController event loop is not running")
         started = False
         try:
             asyncio.run_coroutine_threadsafe(self._start_mavsdk(), loop).result()
@@ -375,17 +345,17 @@ class FlightController(Module):
             super().stop()
 
     async def _start_mavsdk(self) -> None:
-        system = self._mavsdk_runtime.create_system()
-        await system.connect(system_address=self._mavsdk_config.connection_url)
+        system = System()
+        await system.connect(system_address=self.config.connection_url)
         try:
             await asyncio.wait_for(
                 self._wait_until_connected(system),
-                timeout=self._mavsdk_config.connection_timeout_s,
+                timeout=self.config.connection_timeout_s,
             )
         except TimeoutError as error:
             raise MavsdkConnectionTimeoutError(
-                connection_url=self._mavsdk_config.connection_url,
-                timeout_s=self._mavsdk_config.connection_timeout_s,
+                connection_url=self.config.connection_url,
+                timeout_s=self.config.connection_timeout_s,
             ) from error
         self._system = system
         self._connected = True
@@ -398,35 +368,35 @@ class FlightController(Module):
         ]
 
     @staticmethod
-    async def _wait_until_connected(system: MavsdkSystem) -> None:
+    async def _wait_until_connected(system: System) -> None:
         async for state in system.core.connection_state():
             if state.is_connected:
                 return
 
-    async def get_status(self) -> str:
-        """Return the latest MAVSDK connection and telemetry state as JSON."""
-        return json.dumps(
-            {
-                "connected": self._connected,
-                "armed": self._armed,
-                "in_air": self._in_air,
-                "flight_mode": self._flight_mode,
-            },
-            sort_keys=True,
-        )
+    @rpc
+    def get_status(self) -> dict[str, bool | str | None]:
+        """Return the latest MAVSDK connection and telemetry state."""
+        return {
+            "connected": self._connected,
+            "armed": self._armed,
+            "in_air": self._in_air,
+            "flight_mode": self._flight_mode,
+        }
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
-        _ = await self.move(twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z)
+        try:
+            await self._set_body_velocity(
+                twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z
+            )
+        except (ValueError, OffboardError) as error:
+            logger.warning("PX4 rejected cmd_vel: %s", error)
 
     async def handle_odometry(self, message: Odometry) -> None:
         try:
-            await self._send_odometry(_build_mavsdk_odometry_values(message))
-        except self._mavsdk_runtime.mocap_error as error:
-            logger.warning("external vision odometry was rejected: %s", error)
-
-    async def _send_odometry(self, values: MavsdkOdometryValues) -> None:
-        estimate = self._mavsdk_runtime.vision_position_estimate(values)
-        await self._system.mocap.set_vision_position_estimate(estimate)
+            estimate = _build_vision_position_estimate(message)
+            await self._system.mocap.set_vision_position_estimate(estimate)
+        except (_InvalidExternalVisionSampleError, MocapError) as error:
+            logger.warning("External vision odometry rejected: %s", error)
 
     async def _watch_armed(self) -> None:
         async for value in self._system.telemetry.armed():
@@ -464,8 +434,8 @@ class FlightController(Module):
         if self._offboard_active:
             try:
                 await system.offboard.stop()
-            except self._mavsdk_runtime.offboard_error as error:
-                logger.warning("failed to stop Offboard control during shutdown: %s", error)
+            except OffboardError as error:
+                logger.warning("Failed to stop Offboard control during shutdown: %s", error)
         self._connected = False
         self._offboard_active = False
         del self._system
