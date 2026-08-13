@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
+import os
 import platform
 import socket
 import threading
@@ -115,16 +117,36 @@ class ZenohConfig(BaseConfig):
         )
 
 
+@dataclass
+class _SessionPoolState:
+    """Zenoh sessions and their lock, owned by a single OS process."""
+
+    pid: int
+    sessions: dict[str, zenoh.Session] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 class ZenohSessionPool:
     def __init__(self) -> None:
-        self._sessions: dict[str, zenoh.Session] = {}
-        self._lock = threading.Lock()
+        self._state = _SessionPoolState(pid=os.getpid())
+
+    def _state_for_current_process(self) -> _SessionPoolState:
+        """Discard sessions and locks inherited from another process.
+
+        Forking copies Python objects but not Zenoh's runtime threads. The child
+        must open new sessions, and must not acquire or close the inherited ones.
+        """
+        pid = os.getpid()
+        if self._state.pid != pid:
+            self._state = _SessionPoolState(pid=pid)
+        return self._state
 
     def acquire(self, config: ZenohConfig) -> zenoh.Session:
         """Open a session for this config, or return the existing shared one."""
         key = config.session_key
-        with self._lock:
-            if key not in self._sessions:
+        state = self._state_for_current_process()
+        with state.lock:
+            if key not in state.sessions:
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
                 if config.connect:
@@ -140,16 +162,17 @@ class ZenohSessionPool:
                         "scouting/multicast/interface", json.dumps(LOOPBACK_INTERFACE)
                     )
                     zconfig.insert_json5("scouting/gossip/enabled", "false")
-                self._sessions[key] = zenoh.open(zconfig)
+                state.sessions[key] = zenoh.open(zconfig)
                 logger.debug(f"Zenoh session opened in {config.mode} mode")
-            return self._sessions[key]
+            return state.sessions[key]
 
     def close_all(self) -> None:
         """Close every pooled session and empty the pool."""
-        with self._lock:
-            for session in self._sessions.values():
+        state = self._state_for_current_process()
+        with state.lock:
+            for session in state.sessions.values():
                 session.close()
-            self._sessions.clear()
+            state.sessions.clear()
 
 
 # Process-default pool used by production code. Constructing it opens no sessions.

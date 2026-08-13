@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
@@ -45,6 +48,25 @@ def test_two_services_share_session(session_pool) -> None:
     svc1.start()
     svc2.start()
     assert svc1.session is svc2.session
+
+
+def test_pool_reopens_session_after_fork(
+    session_pool: ZenohSessionPool, mocker: MockerFixture
+) -> None:
+    parent_session = mocker.MagicMock()
+    child_session = mocker.MagicMock()
+    open_session = mocker.patch(
+        "dimos.protocol.service.zenohservice.zenoh.open",
+        side_effect=[parent_session, child_session],
+    )
+    config = ZenohConfig()
+
+    assert session_pool.acquire(config) is parent_session
+
+    mocker.patch("os.getpid", return_value=os.getpid() + 1)
+    assert session_pool.acquire(config) is child_session
+    assert open_session.call_count == 2
+    parent_session.close.assert_not_called()
 
 
 def test_stop_does_not_close_shared_session(session_pool) -> None:
