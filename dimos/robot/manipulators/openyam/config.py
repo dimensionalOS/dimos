@@ -39,6 +39,13 @@ OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 # gs_usb (candlelight-firmware) dongle — see hardware/manipulators/openyam.
 YAM_CAN = "can0"
 
+# The CANable 2.0 dongle is Full-Speed USB (~1 CAN frame per ~1 ms host
+# round-trip). 100 Hz x 7 motors saturates it and motor state goes stale;
+# 50 Hz stays well inside the budget. Trajectory execution is
+# rate-independent (time-based sampling), so this only affects control
+# granularity.
+OPENYAM_TICK_RATE_HZ = 50.0
+
 # Gripper motor endpoints in adapter-native units (motor rad) for
 # normalized-command mapping. Opening DECREASES motor position (per the
 # canonical OpenYamDamiaoAdapter in PR #3129). Calibrated on hardware
@@ -87,13 +94,24 @@ def openyam_hardware(
     return make_openyam_hardware(hw_id, home_joints=home_joints)
 
 
+# Wrist link that anchors a wrist-mounted camera in the TF tree — the
+# ManipulationModule publishes world->tf_extra_links transforms, and a
+# camera blueprint hangs its hand-eye base_transform off this frame.
+OPENYAM_WRIST_LINK = "yam_link_6"
+
+
 def make_openyam_model_config(
     name: str = "arm",
     *,
     joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
+    tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
-    """Build a planning config for the gripper-equipped OpenYAM."""
+    """Build a planning config for the gripper-equipped OpenYAM.
+
+    Pass ``tf_extra_links=[OPENYAM_WRIST_LINK]`` for perception blueprints
+    that mount a camera on the wrist.
+    """
     local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
         name=name,
@@ -119,5 +137,6 @@ def make_openyam_model_config(
             urdf_joint_prefix="yam_",
         ),
         gripper_hardware_id=name,
+        tf_extra_links=tf_extra_links or [],
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

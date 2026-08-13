@@ -21,6 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_TICK_RATE_HZ,
     YAM_CAN,
     make_openyam_hardware,
     make_openyam_model_config,
@@ -67,6 +68,7 @@ keyboard_teleop_openyam_can = autoconnect(
                 robot_model=_openyam_can_model,
             )
         ],
+        tick_rate=OPENYAM_TICK_RATE_HZ,
     ),
     ManipulationModule.blueprint(
         robots=[_openyam_can_model],

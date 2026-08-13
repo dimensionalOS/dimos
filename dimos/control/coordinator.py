@@ -903,7 +903,12 @@ class ControlCoordinator(Module):
 
         Args:
             hardware_id: ID of the hardware with the gripper
-            position: Gripper position in meters
+            position: Gripper opening. When the HardwareComponent declares
+                gripper_open_position/gripper_closed_position, this is a
+                normalized open fraction in [0, 1] mapped to the adapter's
+                native endpoint units (meters, radians, ...). Otherwise it is
+                passed to the adapter unmapped (legacy adapter-native units —
+                e.g. xArm meters).
         """
         with self._hardware_lock:
             hw = self._hardware.get(hardware_id)
@@ -913,11 +918,17 @@ class ControlCoordinator(Module):
             if isinstance(hw, ConnectedTwistBase):
                 logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
                 return False
-            return hw.adapter.write_gripper_position(position)
+            # _normalized_to_physical is an identity mapping when the
+            # component declares no endpoints, preserving legacy behavior.
+            return hw.adapter.write_gripper_position(hw._normalized_to_physical(position))
 
     @rpc
     def get_gripper_position(self, hardware_id: str) -> float | None:
         """Get gripper position from a specific hardware device.
+
+        Returns the normalized open fraction when the HardwareComponent
+        declares gripper endpoints, adapter-native units otherwise —
+        symmetric with set_gripper_position.
 
         Args:
             hardware_id: ID of the hardware with the gripper
@@ -928,7 +939,10 @@ class ControlCoordinator(Module):
                 return None
             if isinstance(hw, ConnectedTwistBase):
                 return None
-            return hw.adapter.read_gripper_position()
+            position = hw.adapter.read_gripper_position()
+            if position is None:
+                return None
+            return hw._physical_to_normalized(position)
 
     @rpc
     def start(self) -> None:

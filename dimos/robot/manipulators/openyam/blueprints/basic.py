@@ -20,6 +20,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_TICK_RATE_HZ,
     YAM_CAN,
     make_openyam_hardware,
     make_openyam_model_config,
@@ -54,6 +55,7 @@ _openyam_can_hw = make_openyam_hardware(
 coordinator_openyam_can = ControlCoordinator.blueprint(
     hardware=[_openyam_can_hw],
     tasks=[trajectory_task(_openyam_can_hw)],
+    tick_rate=OPENYAM_TICK_RATE_HZ,
 )
 
 _openyam_can_planner_hw = make_openyam_hardware(
@@ -67,5 +69,6 @@ openyam_can_planner_coordinator = autoconnect(
     coordinator(
         hardware=[_openyam_can_planner_hw],
         tasks=[trajectory_task(_openyam_can_planner_hw)],
+        tick_rate=OPENYAM_TICK_RATE_HZ,
     ),
 )
