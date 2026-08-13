@@ -1741,7 +1741,6 @@ all = [
     { name = "portal" },
     { name = "pycollada" },
     { name = "pygame" },
-    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pymavlink" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
@@ -1813,7 +1812,6 @@ dds = [
 ]
 drone = [
     { name = "mavsdk" },
-    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pymavlink" },
 ]
 graspgenx = [
@@ -2229,7 +2227,6 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pydantic-settings", specifier = ">=2.11.0,<3" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
-    { name = "pygobject", marker = "sys_platform == 'linux' and extra == 'drone'", specifier = ">=3.46,<3.52" },
     { name = "pymavlink", marker = "extra == 'drone'" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
@@ -6989,12 +6986,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pycairo"
-version = "1.29.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/22/d9/1728840a22a4ef8a8f479b9156aa2943cd98c3907accd3849fb0d5f82bfd/pycairo-1.29.0.tar.gz", hash = "sha256:f3f7fde97325cae80224c09f12564ef58d0d0f655da0e3b040f5807bd5bd3142", size = 665871, upload-time = "2025-11-11T19:13:01.584Z" }
-
-[[package]]
 name = "pycodestyle"
 version = "2.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7256,15 +7247,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b014
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
 ]
-
-[[package]]
-name = "pygobject"
-version = "3.50.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pycairo", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a7/5d/f2946cc6c1baf56dee6e942af8cfa16472538a8ad9d780d9f484e7554288/pygobject-3.50.2.tar.gz", hash = "sha256:ece6b860aab77cb649fdfc6e88d8a83765e7a62f7ffd39a628d6e2a0d397a7ff", size = 1085854, upload-time = "2025-10-18T13:44:45.634Z" }
 
 [[package]]
 name = "pyjwt"

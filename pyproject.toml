@@ -337,7 +337,6 @@ mapping = [
 drone = [
     "mavsdk>=3.17.2",
     "pymavlink",
-    "PyGObject>=3.46,<3.52; sys_platform == 'linux'",
 ]
 
 dds = [

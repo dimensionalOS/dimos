@@ -156,25 +156,34 @@ dimos mcp list-tools
 
 ### Python dependencies
 
-Run the following command from the DimOS repository root. The `drone` extra installs MAVSDK, pymavlink, and PyGObject:
-
-```bash
-uv sync --extra drone
-```
-
-### System dependencies
-
-Ubuntu 22.04 requires the following system packages. Jetson hardware encoding additionally requires the NVIDIA GStreamer plugins provided by JetPack, including `nvv4l2h264enc` and `nvvidconv`.
+On Ubuntu 24.04, install PyGObject and GStreamer from apt. `python3-gi`
+provides the Python bindings, while the GIR packages expose the `Gst` and
+`GstApp` APIs used by `GsTeeCamera`. The plugin packages provide camera input,
+conversion, H.264 decoding, and X264 encoding:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  gobject-introspection libgirepository1.0-dev libcairo2-dev pkg-config \
-  python3-gi python3-gi-cairo \
+  python3-gi \
+  gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
   gstreamer1.0-tools gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
   gstreamer1.0-plugins-ugly gstreamer1.0-libav
 ```
+
+Create the project environment with access to Ubuntu's system Python packages,
+then install the DimOS drone dependencies. A default isolated uv environment
+cannot import apt's `python3-gi` package:
+
+```bash
+uv venv --system-site-packages --python /usr/bin/python3
+uv sync --extra drone
+```
+
+The `drone` extra installs MAVSDK and pymavlink. PyGObject and pycairo are not
+installed from PyPI. Jetson hardware encoding additionally requires the NVIDIA
+GStreamer plugins provided by JetPack, including `nvv4l2h264enc` and
+`nvvidconv`.
 
 ### Native PointLIO and ray-tracing modules
 
