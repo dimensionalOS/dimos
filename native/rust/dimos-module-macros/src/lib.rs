@@ -284,6 +284,17 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         })?;
     }
 
+    // check_registry_ports reads Cargo.toml behind rustc's back, so cargo would
+    // not rerun the check on a manifest edit. Embedding the manifest records it
+    // in dep-info, making the cross-check hold on incremental builds too.
+    let manifest_dep: TokenStream2 = if registry_name.is_some() {
+        quote! {
+            const _: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+        }
+    } else {
+        quote!()
+    };
+
     let config_type: Type = classified
         .iter()
         .find_map(|f| matches!(f.kind, FieldKind::Config).then(|| f.ty.clone()))
@@ -362,6 +373,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
 
     Ok(quote! {
+        #manifest_dep
+
         impl ::dimos_module::Module for #struct_name {
             type Config = #config_type;
 
@@ -436,6 +449,16 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
 /// in the crate's own Cargo.toml, which `dimos bake` reads to draw the graph
 /// before anything is compiled. The two must not drift.
 fn check_registry_ports(name: &syn::LitStr, classified: &[ClassifiedField]) -> Result<(), String> {
+    if let Some(io) = classified
+        .iter()
+        .find(|f| matches!(f.kind, FieldKind::Io { .. }))
+    {
+        return Err(format!(
+            "port `{}` is #[io], which the bake registry does not support yet; \
+             split it into an #[input] and an #[output] field",
+            io.name
+        ));
+    }
     let dir = std::env::var("CARGO_MANIFEST_DIR")
         .map_err(|_| "CARGO_MANIFEST_DIR is unset, cannot locate Cargo.toml".to_string())?;
     let path = std::path::Path::new(&dir).join("Cargo.toml");
@@ -671,7 +694,30 @@ mod tests {
 
     // registry metadata cross-check
 
-    use super::{check_manifest_ports, port_payload_type, PortDecl};
+    use super::{
+        check_manifest_ports, check_registry_ports, port_payload_type, ClassifiedField, FieldKind,
+        PortDecl,
+    };
+    use syn::parse_quote;
+
+    #[test]
+    fn io_ports_are_rejected_by_the_registry_check() {
+        let name: syn::LitStr = parse_quote!("demo");
+        let ident: syn::Ident = parse_quote!(cmd);
+        let ty: syn::Type = parse_quote!(Io<Twist>);
+        let classified = [ClassifiedField {
+            name: &ident,
+            ty: &ty,
+            kind: FieldKind::Io {
+                decode: parse_quote!(demo::decode),
+                encode: parse_quote!(demo::encode),
+                handler: parse_quote!(on_cmd),
+            },
+        }];
+        let err = check_registry_ports(&name, &classified).expect_err("io ports are unsupported");
+        assert!(err.contains("cmd"), "{err}");
+        assert!(err.contains("#[io]"), "{err}");
+    }
 
     const MANIFEST: &str = r#"
         [package]

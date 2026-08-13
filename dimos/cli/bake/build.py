@@ -39,6 +39,10 @@ def build_command(builder: str, *, target: str | None = None, debug: bool = Fals
     if builder not in _INVOCATION:
         raise BakeError(f"unknown --builder {builder!r}; choose from {', '.join(BUILDERS)}")
     cmd = list(_INVOCATION[builder])
+    # Pin the output dir artifact_path reads. An inherited CARGO_TARGET_DIR
+    # would otherwise send the binary somewhere else. Relative so it also
+    # resolves inside a cross container.
+    cmd.extend(["--target-dir", "target"])
     if not debug:
         cmd.append("--release")
     if target:

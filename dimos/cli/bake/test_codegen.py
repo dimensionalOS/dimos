@@ -19,8 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from dimos.cli.bake.build import artifact_path, build_command
-from dimos.cli.bake.codegen import generate_crate, render_cargo_toml, render_main_rs
+from dimos.cli.bake.codegen import (
+    check_host_name,
+    generate_crate,
+    render_cargo_toml,
+    render_main_rs,
+)
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph
 from dimos.cli.bake.test_graph import MAPPER, PLANNER, module
@@ -73,26 +77,9 @@ def test_generate_crate_is_idempotent(tmp_path):
     assert (again / "src" / "main.rs").read_text() == before
 
 
-def test_build_command_per_builder():
-    assert build_command("cargo") == ["cargo", "build", "--release"]
-    assert build_command("cargo", debug=True) == ["cargo", "build"]
-    assert build_command("cross", target="aarch64-unknown-linux-musl") == [
-        "cross",
-        "build",
-        "--release",
-        "--target",
-        "aarch64-unknown-linux-musl",
-    ]
-    assert build_command("zigbuild")[:2] == ["cargo", "zigbuild"]
-    with pytest.raises(BakeError, match="unknown --builder"):
-        build_command("make")
-
-
-def test_artifact_path_follows_profile_and_target():
-    crate = Path("/crate")
-    assert artifact_path(crate, "host") == crate / "target" / "release" / "host"
-    assert artifact_path(crate, "host", debug=True) == crate / "target" / "debug" / "host"
-    assert (
-        artifact_path(crate, "host", target="aarch64-unknown-linux-musl")
-        == crate / "target" / "aarch64-unknown-linux-musl" / "release" / "host"
-    )
+def test_host_names_cargo_would_reject_are_refused():
+    check_host_name("go2-nav")
+    check_host_name("motion_host")
+    for bad in ("go2-nav.bin", "2fast", "go2 nav", ""):
+        with pytest.raises(BakeError, match="cannot name the host binary"):
+            check_host_name(bad)

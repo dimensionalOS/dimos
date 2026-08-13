@@ -25,7 +25,7 @@ from typing import Any, get_type_hints
 import typer
 
 from dimos.cli.bake.build import BUILDERS, build_host, install
-from dimos.cli.bake.codegen import generate_crate
+from dimos.cli.bake.codegen import check_host_name, generate_crate
 from dimos.cli.bake.discovery import ModuleInfo, discover_modules, render_registry, select_modules
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
@@ -126,6 +126,7 @@ def _bake(
     if out is None:
         raise BakeError("-o/--out is required: its filename names the host binary")
     host = out.name
+    check_host_name(host)
     selected = select_modules(registry, module_names)
     graph = build_graph(
         host, selected, remaps=dict(parse_remap(r) for r in remap), suppress=suppress
