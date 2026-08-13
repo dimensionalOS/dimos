@@ -85,7 +85,11 @@ def main() -> int:
     screen = pygame.display.set_mode((560, 330))
     pygame.display.set_caption("OpenYAM jog teleop")
     font = pygame.font.SysFont("monospace", 15)
-    clock = pygame.time.Clock()
+    # Pace with time.sleep, NOT pygame.time.Clock.tick: tick() holds the
+    # GIL during its wait, starving the USB reader thread — motor state goes
+    # stale within seconds (verified: identical traffic paced by time.sleep
+    # runs indefinitely clean).
+    next_tick = time.monotonic()
 
     selected = 5  # joint 6, the wrist — safest default
     running = True
@@ -142,8 +146,13 @@ def main() -> int:
             # HUD at 10 Hz only: per-tick font rendering holds the GIL long
             # enough to starve the USB reader thread, and the dongle's FIFO
             # overflows (observed as stale motor state mid-session).
+            next_tick += 1.0 / RATE_HZ
+            delay = next_tick - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                next_tick = time.monotonic()
             if tick % 5 != 0:
-                clock.tick(RATE_HZ)
                 continue
 
             screen.fill((18, 18, 24))
@@ -169,7 +178,6 @@ def main() -> int:
                 (14, 46 + 7 * 24 + 8),
             )
             pygame.display.flip()
-            clock.tick(RATE_HZ)
     finally:
         try:
             adapter.write_stop()
