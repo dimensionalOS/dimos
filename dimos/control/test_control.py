@@ -522,9 +522,7 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
-    def test_status_snapshot_is_non_destructive(
-        self, trajectory_task, simple_trajectory
-    ):
+    def test_status_snapshot_is_non_destructive(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
 

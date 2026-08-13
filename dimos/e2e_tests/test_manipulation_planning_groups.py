@@ -27,6 +27,7 @@ import time
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.rpc_client import RPCClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
@@ -37,7 +38,6 @@ from dimos.manipulation.manipulation_spec import (
     PlanningGroupInfo,
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 
 pytestmark = [pytest.mark.self_hosted_large]
 

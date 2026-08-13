@@ -218,8 +218,10 @@ class RoboPlanPlanner:
                     group,
                     trajectory,
                 )
-                collision_validation_failed = check_collision and bool(path) and not (
-                    self._combined_path_collision_free(ctx, path)
+                collision_validation_failed = (
+                    check_collision
+                    and bool(path)
+                    and not (self._combined_path_collision_free(ctx, path))
                 )
         except (KeyError, RuntimeError, ValueError) as exc:
             return PlanningResult(
