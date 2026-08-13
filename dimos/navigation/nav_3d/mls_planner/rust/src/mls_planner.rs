@@ -19,7 +19,9 @@ use dimos_module::native_config;
 use rayon::prelude::*;
 use validator::ValidationError;
 
-use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
+use crate::adjacency::{
+    build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId, NO_CELL,
+};
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
 use crate::nodes::{place_nodes, place_nodes_region};
 use crate::planner;
@@ -232,12 +234,18 @@ impl Planner {
     ) {
         let step = config.step_cells();
         let clearance = config.headroom_cells();
-        let mut dead: AHashMap<CellId, VoxelKey> = AHashMap::new();
-        for &c in &removed {
-            if let Some(id) = self.graph.cells.id(c) {
-                dead.insert(id, c);
-            }
-        }
+        // Removal frees cell ids and the insert loop below recycles them, so a
+        // node id captured here is not stable. Capture doomed nodes by
+        // coordinate while their ids still resolve.
+        let removed_set: AHashSet<VoxelKey> = removed.iter().copied().collect();
+        let dead_nodes: Vec<(usize, VoxelKey)> = self
+            .graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (i, self.graph.cells.coord(n.cell_id)))
+            .filter(|(_, c)| removed_set.contains(c))
+            .collect();
         for &c in &removed {
             self.graph.cells.remove(c);
         }
@@ -258,7 +266,7 @@ impl Planner {
             config.voxel_size,
             step,
         );
-        self.relocate_dead_nodes(&dead, config);
+        self.relocate_dead_nodes(&dead_nodes, config);
         let window = self.node_window(&seeds, config);
         place_nodes_region(
             &mut self.graph.cells,
@@ -416,21 +424,25 @@ impl Planner {
 
     /// Move nodes whose cell died onto a nearby live cell instead of dropping
     /// them, so transient surface flicker cannot delete and respawn graph
-    /// structure. Unrelocatable nodes keep their dead cell and are dropped by
-    /// the sticky retention pass.
-    fn relocate_dead_nodes(&mut self, dead: &AHashMap<CellId, VoxelKey>, config: &Config) {
-        if dead.is_empty() {
+    /// structure. Dead nodes are keyed by their captured coordinate because
+    /// their ids were freed and may now alias recycled live cells.
+    /// Unrelocatable nodes are marked NO_CELL and dropped by the sticky
+    /// retention pass.
+    fn relocate_dead_nodes(&mut self, dead_nodes: &[(usize, VoxelKey)], config: &Config) {
+        if dead_nodes.is_empty() {
             return;
         }
         let step = config.step_cells();
         let graph = &mut self.graph;
         let cells = &graph.cells;
         let lookup = &graph.surface_lookup;
+        let dead_idx: AHashSet<usize> = dead_nodes.iter().map(|&(i, _)| i).collect();
         let mut taken: AHashSet<CellId> = graph
             .nodes
             .iter()
-            .map(|n| n.cell_id)
-            .filter(|&id| cells.is_live(id))
+            .enumerate()
+            .filter(|(i, _)| !dead_idx.contains(i))
+            .map(|(_, n)| n.cell_id)
             .collect();
         // Spacing bins of live node positions: a relocation may not land where
         // another node is already close, so transient fragment fallbacks die
@@ -445,8 +457,8 @@ impl Planner {
             )
         };
         let mut bins: NodeBins = AHashMap::new();
-        for n in graph.nodes.iter() {
-            if cells.is_live(n.cell_id) {
+        for (i, n) in graph.nodes.iter().enumerate() {
+            if !dead_idx.contains(&i) {
                 bins.entry(bin_of(n.pos)).or_default().push(n.pos);
             }
         }
@@ -469,10 +481,7 @@ impl Planner {
             }
             false
         };
-        for n in graph.nodes.iter_mut() {
-            let Some(&(ix, iy, iz)) = dead.get(&n.cell_id) else {
-                continue;
-            };
+        for &(ni, (ix, iy, iz)) in dead_nodes {
             let mut best: Option<(i32, CellId, VoxelKey)> = None;
             for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
                 let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
@@ -496,14 +505,19 @@ impl Planner {
                     }
                 }
             }
-            if let Some((_, id, k)) = best {
-                let pos = surface_point_xyz(k.0, k.1, k.2, config.voxel_size);
-                if crowded(pos) {
-                    continue;
+            let n = &mut graph.nodes[ni];
+            match best {
+                Some((_, id, k)) => {
+                    let pos = surface_point_xyz(k.0, k.1, k.2, config.voxel_size);
+                    if crowded(pos) {
+                        n.cell_id = NO_CELL;
+                        continue;
+                    }
+                    taken.insert(id);
+                    n.cell_id = id;
+                    n.pos = pos;
                 }
-                taken.insert(id);
-                n.cell_id = id;
-                n.pos = pos;
+                None => n.cell_id = NO_CELL,
             }
         }
     }

@@ -150,11 +150,12 @@ pub fn place_nodes_region(
     dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
 
     let node_floor = wall_clearance_m;
-    // Drop only nodes whose cell died or whose fresh wall distance marks the
-    // cell impassable. The distance field is stale outside the window, so
-    // only in-window nodes are judged by it.
+    // Drop only nodes whose cell died (marked NO_CELL by relocation) or whose
+    // fresh wall distance marks the cell impassable. The distance field is
+    // stale outside the window, so only in-window nodes are judged by it.
     nodes.retain(|n| {
-        cells.is_live(n.cell_id)
+        n.cell_id != NO_CELL
+            && cells.is_live(n.cell_id)
             && !(window.contains(&n.cell_id) && wall_state.dist[n.cell_id as usize] < node_floor)
     });
     let kept: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();

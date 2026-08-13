@@ -561,6 +561,24 @@ fn chunks_in_bounds<'a>(
     voxel_size: f32,
 ) -> Vec<(ChunkKey, &'a AHashSet<VoxelKey>)> {
     let (lo, hi) = chunk_range_for_bounds(bounds, voxel_size);
+    // Work must scale with map contents, not the requested box. A huge query
+    // box would walk its full chunk range even where the map is empty, so
+    // filter the index instead when it holds fewer entries than the range.
+    let range_count = (hi.0 as i64 - lo.0 as i64 + 1) as u128
+        * (hi.1 as i64 - lo.1 as i64 + 1) as u128
+        * (hi.2 as i64 - lo.2 as i64 + 1) as u128;
+    if range_count > map.healthy_chunks.len() as u128 {
+        return map
+            .healthy_chunks
+            .iter()
+            .filter(|&(&(cx, cy, cz), _)| {
+                (lo.0..=hi.0).contains(&cx)
+                    && (lo.1..=hi.1).contains(&cy)
+                    && (lo.2..=hi.2).contains(&cz)
+            })
+            .map(|(&chunk, keys)| (chunk, keys))
+            .collect();
+    }
     let mut out = Vec::new();
     for cx in lo.0..=hi.0 {
         for cy in lo.1..=hi.1 {

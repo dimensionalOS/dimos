@@ -104,7 +104,16 @@ impl RayTracingVoxelMap {
         let fine_due = mapper.fine_due();
         let global_due = mapper.global_due();
 
-        let region = (local_due || fine_due).then(|| mapper.take_local_bounds());
+        // Only the local cadence consumes the batch. A fine-only frame reads
+        // it non-destructively so the next local cylinder still covers every
+        // frame since the last local emission.
+        let region = if local_due {
+            Some(mapper.take_local_bounds())
+        } else if fine_due {
+            Some(mapper.local_bounds())
+        } else {
+            None
+        };
         let cylinder = region.map(|(cx, cy, radius, z_min, z_max)| LocalBounds {
             origin_x: cx,
             origin_y: cy,

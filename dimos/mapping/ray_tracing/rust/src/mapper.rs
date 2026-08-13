@@ -121,20 +121,26 @@ impl Mapper {
     }
 
     /// Cylinder over the batched frames as (cx, cy, radius, z_min, z_max),
-    /// consuming the batch. An empty batch yields a zero-radius region at the
-    /// last origin.
-    pub fn take_local_bounds(&mut self) -> (f32, f32, f32, f32, f32) {
+    /// leaving the batch intact. An empty batch yields a zero-radius region at
+    /// the last origin.
+    pub fn local_bounds(&self) -> (f32, f32, f32, f32, f32) {
         if self.batch_origins.is_empty() {
             let (x, y, z) = self.last_origin;
             return (x, y, 0.0, z, z);
         }
         let margin = self.config.shadow_depth + self.config.voxel_size;
-        let bounds = batch_local_bounds(
+        batch_local_bounds(
             &self.batch_points,
             &self.batch_origins,
             self.config.region_percentile,
             margin,
-        );
+        )
+    }
+
+    /// Cylinder over the batched frames, consuming the batch. Only the local
+    /// map cadence may consume, so a faster fine cadence cannot starve it.
+    pub fn take_local_bounds(&mut self) -> (f32, f32, f32, f32, f32) {
+        let bounds = self.local_bounds();
         self.batch_points.clear();
         self.batch_origins.clear();
         bounds

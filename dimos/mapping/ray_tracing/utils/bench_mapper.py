@@ -142,6 +142,10 @@ def main(
                 break
     wall = time.perf_counter() - wall_start
 
+    if count == 0:
+        print("no posed frames matched, check the stream names and align tolerance")
+        raise typer.Exit(1)
+
     budget_ms = 1e3 / lidar_hz
     add_ms = np.asarray(add_t) * 1e3
     amortized = float(np.mean(add_ms))

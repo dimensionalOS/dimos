@@ -89,6 +89,7 @@ impl VoxelRayMapper {
         max_health = 5,
         graze_cos = 0.7,
         support_min = 4,
+        region_percentile = 95.0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -102,6 +103,7 @@ impl VoxelRayMapper {
         max_health: i32,
         graze_cos: f32,
         support_min: i32,
+        region_percentile: f32,
     ) -> PyResult<Self> {
         let config = Config {
             voxel_size,
@@ -117,7 +119,7 @@ impl VoxelRayMapper {
             emit_every: 1,
             global_emit_every: 1,
             fine_emit_every: 0,
-            region_percentile: 95.0,
+            region_percentile,
         };
         config
             .validate()
