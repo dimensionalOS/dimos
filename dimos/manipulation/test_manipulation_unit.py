@@ -147,6 +147,7 @@ def _install_generated_plan(
     """Install a generated plan and enough monitor state to derive robot paths."""
     global_joint_names = [f"{config.name}/{joint}" for joint in config.joint_names]
     module._robots = {config.name: ("robot_id", config)}
+    module.config = module.config.model_copy(update={"robots": [config]})
     module._world_monitor = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([config])
     module._world_monitor.get_current_joint_state.return_value = JointState(
@@ -431,8 +432,28 @@ class TestPlanningInitialization:
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
         with module:
-            initialize_planning.assert_called_once_with()
             initialize_execution.assert_called_once_with()
+            initialize_planning.assert_called_once_with()
+
+    def test_state_is_readable_during_planning_initialization(
+        self,
+        mocker: MockerFixture,
+    ) -> None:
+        module = ManipulationModule()
+        module._control_coordinator = _control_coordinator()
+        module.coordinator_joint_state = None
+        observed_status: list[ExecutionStatus] = []
+
+        def observe_state() -> None:
+            observed_status.append(module.get_state().execution_status)
+
+        mocker.patch.object(module, "_initialize_planning", side_effect=observe_state)
+
+        try:
+            module.start()
+            assert observed_status == [ExecutionStatus.IDLE]
+        finally:
+            module.stop()
 
     def test_kinematics_config_is_passed_to_factory(
         self,
@@ -832,6 +853,7 @@ class TestPlanningGroupApis:
             "left": ("left_id", left),
             "right": ("right_id", right),
         }
+        module.config = module.config.model_copy(update={"robots": [left, right]})
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
         module._last_plan = GeneratedPlan(

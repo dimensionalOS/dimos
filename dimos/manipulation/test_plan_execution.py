@@ -73,6 +73,7 @@ def _module_with_coordinator(coordinator: MagicMock, module_factory) -> Manipula
         ],
     )
     module._robots = {"arm": ("arm_id", config)}
+    module.config = module.config.model_copy(update={"robots": [config]})
     module._initialize_execution()
     return module
 

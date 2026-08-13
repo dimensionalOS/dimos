@@ -223,9 +223,9 @@ class ManipulationModule(Module):
         """Start the manipulation module."""
         super().start()
 
-        # Initialize planning stack
-        self._initialize_planning()
+        # Execution state must exist before planning starts observers such as visualization.
         self._initialize_execution()
+        self._initialize_planning()
 
         # Subscribe to joint state via port
         if self.coordinator_joint_state is not None:
@@ -1440,7 +1440,7 @@ class ManipulationModule(Module):
                 model_joint_names=config.joint_names,
                 coordinator_to_model=config.joint_name_mapping,
             )
-            for _, config in self._robots.values()
+            for config in self.config.robots
         ]
         self._execution_manager = PlanExecutionManager(
             targets=targets,
