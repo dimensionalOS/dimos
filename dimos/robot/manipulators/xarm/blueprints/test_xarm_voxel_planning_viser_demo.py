@@ -3,6 +3,8 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
+import xml.etree.ElementTree as ET
+
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
@@ -11,6 +13,7 @@ from dimos.robot.manipulators.xarm.blueprints.simulation import (
     XARM_VOXEL_PLANNING_RESOLUTION,
     xarm_voxel_planning_viser_demo,
 )
+from dimos.robot.manipulators.xarm.config import XARM7_SIM_PATH, make_xarm7_sim_robot_config
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 
@@ -37,6 +40,22 @@ def test_demo_composes_simulation_voxel_planning_modules() -> None:
     assert manip_kwargs["planning_voxel_resolution"] == 0.05
     assert manip_kwargs["planning_collision_max_age_s"] == 1.0
     assert "PickAndPlaceModule" not in {module.__name__ for module in modules}
+
+
+def test_sim_planning_world_matches_mujoco_robot_mount() -> None:
+    robot = make_xarm7_sim_robot_config()
+    model = ET.parse(XARM7_SIM_PATH.with_name("xarm7.xml")).getroot()
+    link_base = model.find("./worldbody/body[@name='link_base']")
+
+    assert link_base is not None
+    mujoco_base_position = [float(value) for value in link_base.attrib["pos"].split()]
+    assert robot.base_pose.x == 0.0
+    assert robot.base_pose.y == 0.0
+    assert robot.base_pose.z == 0.0
+    planning_base_position = [
+        float(value) for value in robot.xacro_args["attach_xyz"].split()
+    ]
+    assert planning_base_position == mujoco_base_position
 
 
 def test_demo_wires_camera_filter_voxel_map_and_snapshot() -> None:
