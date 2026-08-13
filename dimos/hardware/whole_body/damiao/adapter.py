@@ -196,7 +196,6 @@ class DamiaoWholeBodyAdapter(ABC):
                 arm.set_mode("mit")
             self._robot.enable()
             self._active = True
-            self._refresh()
             self.read_motor_states()
             return True
         except Exception:
@@ -237,6 +236,7 @@ class DamiaoWholeBodyAdapter(ABC):
     def read_motor_states(self) -> list[MotorState]:
         if not self._connected:
             raise RuntimeError("Damiao whole-body adapter is not connected")
+        self._refresh()
         states: list[MotorState] = []
         for name, expected_joints in self.arm_joints.items():
             arm = self._arms[name]

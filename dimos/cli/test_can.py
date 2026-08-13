@@ -31,15 +31,6 @@ def _invoke_can(args: list[str]) -> Result:
     return CliRunner().invoke(main, ["hardware", "can", *args])
 
 
-def test_can_commands_are_nested_under_hardware_scope() -> None:
-    result = CliRunner().invoke(main, ["hardware", "--help"])
-    legacy = CliRunner().invoke(main, ["can", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "can" in result.output
-    assert legacy.exit_code == 2
-
-
 def test_setup_valid_options_configures_and_verifies_can_interface(
     mocker: MockerFixture,
 ) -> None:

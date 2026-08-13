@@ -32,6 +32,7 @@ def _run_ip(*args: str, privileged: bool = False) -> subprocess.CompletedProcess
     if privileged:
         typer.echo(f"Running: {shlex.join(command)}")
     try:
+        # Let sudo prompt and report errors through the caller's terminal.
         return subprocess.run(
             command,
             check=True,

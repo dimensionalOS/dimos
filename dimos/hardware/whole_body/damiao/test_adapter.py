@@ -471,15 +471,17 @@ def test_read_motor_states_multiple_groups_returns_ordered_feedback(
     ]
 
 
-def test_read_motor_states_valid_feedback_does_not_tick_bus(
+def test_read_motor_states_refreshes_feedback_before_snapshot(
     active_dual_adapter: DualAdapter,
     dual_robot: FakeRobot,
 ) -> None:
+    refreshes_before = dual_robot.refresh_count
     ticks_before = dual_robot.tick_count
 
     active_dual_adapter.read_motor_states()
 
-    assert dual_robot.tick_count == ticks_before
+    assert dual_robot.refresh_count == refreshes_before + 1
+    assert dual_robot.tick_count == ticks_before + 1
 
 
 def test_read_motor_states_wrong_arm_length_raises_runtime_error(
