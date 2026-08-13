@@ -50,7 +50,10 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-MILLISECONDS_PER_SECOND = 1000.0
+
+def ms_to_s(milliseconds: float) -> float:
+    return milliseconds / 1000.0
+
 
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
@@ -321,7 +324,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             return
         data = motion.get_motion_data()
         # Hardware capture time, not host time.
-        ts = motion.get_timestamp() / MILLISECONDS_PER_SECOND
+        ts = ms_to_s(motion.get_timestamp())
         stream = motion.get_profile().stream_type()
         if stream == rs.stream.accel:
             self._accel_history.append((ts, (data.x, data.y, data.z)))
@@ -529,7 +532,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 self._dropped_frames[key],
             )
         self._last_frame_numbers[key] = number
-        stamp = float(frame.get_timestamp()) / MILLISECONDS_PER_SECOND
+        stamp = ms_to_s(float(frame.get_timestamp()))
         self._last_hardware_ts = stamp
         return stamp
 
