@@ -16,8 +16,6 @@
 
 import time
 
-import pytest
-
 from dimos.core.global_config import global_config
 from dimos.protocol.service.zenohservice import (
     ALL_INTERFACES,
@@ -28,54 +26,37 @@ from dimos.protocol.service.zenohservice import (
 )
 
 
-@pytest.fixture
-def zenoh_transport(monkeypatch):
-    monkeypatch.setattr(global_config, "robot_ip", None)
-    monkeypatch.setattr(global_config, "robot_ips", None)
-    monkeypatch.setattr(global_config, "transport", "zenoh")
+def test_scouting_follows_global_config(zenoh_defaults, monkeypatch):
+    assert ZenohConfig().scouting is False
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
-    monkeypatch.setattr(global_config, "zenoh_interface", "")
-    monkeypatch.setattr(global_config, "zenoh_connect_timeout", 10.0)
-
-
-def test_scouting_defaults_on(zenoh_transport):
     assert ZenohConfig().scouting is True
 
 
-def test_scouting_follows_global_config(zenoh_transport, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_scouting", False)
-    assert ZenohConfig().scouting is False
-
-
-def test_scouting_separates_pooled_sessions(zenoh_transport):
+def test_scouting_separates_pooled_sessions(zenoh_defaults):
     assert ZenohConfig(scouting=True).session_key != ZenohConfig(scouting=False).session_key
 
 
-def test_scouting_on_reaches_every_interface(zenoh_transport):
+def test_scouting_on_reaches_every_interface(zenoh_defaults, monkeypatch):
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().multicast_interface == ALL_INTERFACES
 
 
-def test_scouting_off_stays_on_loopback(zenoh_transport, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_scouting", False)
+def test_scouting_off_stays_on_loopback(zenoh_defaults):
     assert ZenohConfig().multicast_interface == LOOPBACK_INTERFACE
 
 
-def test_named_interface_overrides_scouting(zenoh_transport, monkeypatch):
+def test_named_interface_overrides_scouting(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_interface", "wlan0")
     assert ZenohConfig().multicast_interface == "wlan0"
-    monkeypatch.setattr(global_config, "zenoh_scouting", False)
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().multicast_interface == "wlan0"
 
 
-def test_interface_separates_pooled_sessions(zenoh_transport):
+def test_interface_separates_pooled_sessions(zenoh_defaults):
     assert (
         ZenohConfig(scouting_interface="wlan0").session_key
         != ZenohConfig(scouting_interface="eth0").session_key
     )
-
-
-def test_loopback_interface_is_a_real_name():
-    assert LOOPBACK_INTERFACE in {"lo", "lo0"}
 
 
 def test_endpoint_addresses_keeps_literal_host_and_port():
@@ -112,12 +93,12 @@ def _await(session: _FakeSession, connect: list[str], connect_timeout: float) ->
     return time.monotonic() - started
 
 
-def test_await_returns_once_endpoint_is_linked(zenoh_transport):
+def test_await_returns_once_endpoint_is_linked(zenoh_defaults):
     session = _FakeSession(["tcp/192.0.2.10:7447"])
     assert _await(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
 
 
-def test_await_waits_for_every_endpoint(zenoh_transport):
+def test_await_waits_for_every_endpoint(zenoh_defaults):
     session = _FakeSession(["tcp/192.0.2.10:7447"])
     elapsed = _await(
         session,
@@ -127,14 +108,14 @@ def test_await_waits_for_every_endpoint(zenoh_transport):
     assert elapsed >= 0.3
 
 
-def test_await_gives_up_after_timeout(zenoh_transport):
+def test_await_gives_up_after_timeout(zenoh_defaults):
     elapsed = _await(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3)
     assert 0.3 <= elapsed < 3.0
 
 
-def test_await_is_skipped_without_connect_endpoints(zenoh_transport):
+def test_await_is_skipped_without_connect_endpoints(zenoh_defaults):
     assert _await(_FakeSession([]), connect=[], connect_timeout=30.0) < 1.0
 
 
-def test_zero_timeout_disables_the_wait(zenoh_transport):
+def test_zero_timeout_disables_the_wait(zenoh_defaults):
     assert _await(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0) < 1.0

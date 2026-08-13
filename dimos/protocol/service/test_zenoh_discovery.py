@@ -22,25 +22,17 @@ from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 
-@pytest.fixture
-def clean_config(monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_scouting", False)
-    monkeypatch.setattr(global_config, "zenoh_interface", "")
-    monkeypatch.setattr(global_config, "zenoh_multicast", True)
-    monkeypatch.setattr(global_config, "zenoh_gossip", None)
-
-
-def test_multicast_defaults_on(clean_config):
+def test_multicast_defaults_on(zenoh_defaults):
     assert ZenohConfig().multicast is True
 
 
-def test_gossip_follows_scouting(clean_config, monkeypatch):
+def test_gossip_follows_scouting(zenoh_defaults, monkeypatch):
     assert ZenohConfig().gossip_enabled is False
     monkeypatch.setattr(global_config, "zenoh_scouting", True)
     assert ZenohConfig().gossip_enabled is True
 
 
-def test_explicit_gossip_wins_over_scouting(clean_config, monkeypatch):
+def test_explicit_gossip_wins_over_scouting(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_gossip", True)
     assert ZenohConfig().gossip_enabled is True
     monkeypatch.setattr(global_config, "zenoh_gossip", False)
@@ -48,11 +40,11 @@ def test_explicit_gossip_wins_over_scouting(clean_config, monkeypatch):
     assert ZenohConfig().gossip_enabled is False
 
 
-def test_caller_override_wins(clean_config):
+def test_caller_override_wins(zenoh_defaults):
     assert ZenohConfig(gossip=True).gossip_enabled is True
 
 
-def test_global_config_turns_multicast_off(clean_config, monkeypatch):
+def test_global_config_turns_multicast_off(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_multicast", False)
     assert ZenohConfig().multicast is False
 
@@ -73,15 +65,15 @@ def test_unset_env_keeps_the_defaults(monkeypatch):
     assert config.zenoh_gossip is None
 
 
-def test_multicast_separates_pooled_sessions(clean_config):
+def test_multicast_separates_pooled_sessions(zenoh_defaults):
     assert ZenohConfig(multicast=True).session_key != ZenohConfig(multicast=False).session_key
 
 
-def test_gossip_separates_pooled_sessions(clean_config):
+def test_gossip_separates_pooled_sessions(zenoh_defaults):
     assert ZenohConfig(gossip=True).session_key != ZenohConfig(gossip=False).session_key
 
 
-def test_unset_gossip_pools_with_its_resolved_value(clean_config):
+def test_unset_gossip_pools_with_its_resolved_value(zenoh_defaults):
     assert ZenohConfig(gossip=None).session_key == ZenohConfig(gossip=False).session_key
 
 
@@ -96,7 +88,7 @@ def test_zenoh_knows_both_discovery_keys():
 
 @pytest.mark.parametrize("multicast", [True, False])
 @pytest.mark.parametrize("gossip", [True, False])
-def test_pool_inserts_the_discovery_config(clean_config, monkeypatch, multicast, gossip):
+def test_pool_inserts_the_discovery_config(zenoh_defaults, monkeypatch, multicast, gossip):
     captured = {}
 
     def fake_open(zconfig):
