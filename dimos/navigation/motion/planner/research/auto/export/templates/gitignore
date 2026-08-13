@@ -1,0 +1,10 @@
+# evo state, shared caches, staged binaries, venv -- never tracked; the
+# tracked trust chain is bench/trust.lock -> .evo/* -> harness.lock -> files.
+.evo/
+.ext/
+.venv/
+candidate/target/
+__pycache__/
+*.pyc
+*.rrd
+*.tmp*

@@ -1,0 +1,24 @@
+[Unit]
+Description=dimos baked motion host (planner, follower, cmd_vel mux, go2 tf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/motion-host
+# 7448 because dimos-helper (the go2web zenoh bridge) owns 7447. The laptop
+# dials both: --robot-ips <ip>:7447,<ip>:7448.
+Environment=DIMOS_TRANSPORT=zenoh
+Environment=DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447
+Environment=DIMOS_ZENOH_MODE=client
+# This LAN filters multicast, so scouting finds nothing and only wastes time.
+Environment=DIMOS_ZENOH_SCOUTING=off
+Environment=RUST_LOG=info
+# The host reads its whole config from one line on stdin and exits if it is
+# missing a key, so the file is the unit is the wiring.
+ExecStart=/bin/sh -c "exec /root/motion-host/motion-host < /root/motion-host/motion-host.json"
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

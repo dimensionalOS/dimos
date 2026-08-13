@@ -127,7 +127,9 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
             return p
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
-    return get_data(p.name)
+    # keep the whole relative path: get_data() reads the first component as the LFS
+    # archive and the rest as the file inside it ("ml-trajectory-research/door.mcap")
+    return get_data(p)
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:

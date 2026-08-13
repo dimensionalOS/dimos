@@ -1,0 +1,35 @@
+# Provenance
+
+Facts about where this lab came from. The narrative project brief
+(`project.md`) is deliberately NOT written here — that is `/evo:discover`'s
+job; this file is its raw material.
+
+- **Exported:** $export_date
+- **Source:** `$source_repo` @ `$source_commit`$dirty_note
+  (package `dimos/navigation/motion/planner/autoresearch`, copied as `referee/`)
+- **Referee tree hash:** `$referee_sha256`
+  (sha256 over sorted relpath+bytes of `referee/**/*.py`; the value
+  `battery.py` records as `referee_sha256` in every summary)
+- **Seeded candidate:** the lab-run winner shipped in the source package
+  (autoresearch run_0000 exp_0016 lineage) — planner fingerprint
+  `$planner_sha256`
+- **Baseline at export** (56 worlds, gen 40 seed 0, serial):
+  referee $baseline_referee/111 · gold $baseline_gold · consistency
+  $baseline_consistency · speed $baseline_speed · dq 0 · gold_zero []
+- **Python deps resolved into .venv:** $dep_versions
+- **Caches:** $cache_note
+- **Epoch note:** this lab starts at what the source lab called epoch 3
+  (20 ms speed budget, CPU-time clock, BLAS pools pinned, gold-oracle
+  densify fix). Scores from earlier epochs are not comparable and are
+  deliberately not included.
+- **Re-export:** exported labs do not re-export. Regenerate from the dimos
+  repo: `python -m dimos.navigation.motion.planner.autoresearch.export <dest>`
+  (at the source commit above, or newer — newer means re-baselining).
+
+## Not included, on purpose
+
+- evo tool internals, dashboards, run trees — agents bring `/evo` skills.
+- cargo-test gates: `candidate/tests/invariants.rs` ships as optional crate
+  tests but is never registered as a gate. Policy: the crate is a black box
+  at harness level; behavior is gated through the referee.
+- the source lab's experiment history — superseded by the baseline above.

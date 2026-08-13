@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Integrity gate: bench/battery.py must measure exactly what the lab's own
+# ./eval measures, and curated quality must not regress.
+#
+# battery.py mirrors the referee CLI's scored path so it can emit per-world
+# traces. Any drift in that mirror -- a changed time limit, a dropped
+# scenario, a quietly softened comparison -- would silently redefine the
+# score. So every gate run scores the curated battery twice: once through
+# battery.py, once through ./eval (which shells straight to the referee's
+# own CLI), and the deterministic pillars must agree exactly.
+#
+# Curated-only (GEN=0) keeps this to ~1 min. Extra flags are forwarded to
+# battery.py, which is where the quality floors are enforced.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LAB="$(dirname "$HERE")"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# 1. The harness, curated only. Quality floors ride on "$@" and exit non-zero.
+"$HERE/run" --gen 0 --summary-json "$TMP/harness.json" "$@" >/dev/null
+
+# 2. The lab's own eval, same worlds, through the referee's CLI.
+#    JSON-only by default; take the last line regardless.
+GEN=0 "$LAB/eval" 2>/dev/null | tail -n 1 > "$TMP/eval.json"
+
+# 3. Compare. gold / consistency / dq are deterministic given a deterministic
+#    planner, so they must match exactly; only speed moves run to run.
+python3 - "$TMP/harness.json" "$TMP/eval.json" <<'PY'
+import json, sys
+
+h = json.load(open(sys.argv[1]))
+e = json.load(open(sys.argv[2]))
+
+bad = []
+for key, ours in (("gold", "gold"), ("consistency", "consistency"),
+                  ("dq", "dq"), ("worlds", "worlds")):
+    if h[ours] != e[key]:
+        bad.append(f"{key}: harness {h[ours]} vs eval {e[key]}")
+
+# Speed is a live timing, so the composite moves a little between runs.
+d = abs(h["referee_score"] - e["score"])
+if d > 1.0:
+    bad.append(f"referee_score: harness {h['referee_score']} vs eval {e['score']} (drift {d:.2f})")
+
+if bad:
+    print("PARITY FAILED -- bench/battery.py no longer measures what ./eval measures:",
+          file=sys.stderr)
+    for b in bad:
+        print(f"  {b}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"parity ok: curated referee_score harness {h['referee_score']} / eval {e['score']}, "
+      f"gold {h['gold']}, consistency {h['consistency']}, dq {h['dq']}", file=sys.stderr)
+PY

@@ -36,6 +36,7 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.cmu_nav.main import cmu_nav_rerun_config, create_cmu_nav
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -150,11 +151,14 @@ coordinator_flowbase_nav = (
                 "replan_cooldown": 2.0,
             },
         ),
-        # MovementManager: subscribes clicked_point + nav_cmd_vel + tele_cmd_vel,
-        # publishes muxed cmd_vel + goal (+ way_point, disconnected below).
+        # MovementManager: subscribes clicked_point + tele_cmd_vel, publishes
+        # goal (+ way_point, disconnected below).
         MovementManager.blueprint(),
+        # CmdVelMux: subscribes nav_cmd_vel + tele_cmd_vel, publishes the muxed
+        # cmd_vel. Teleop preempts nav, and nav going quiet zeros cmd_vel.
+        CmdVelMux.blueprint(),
         # FlowBase driver: ControlCoordinator with the existing JointVelocityTask
-        # passthrough; receives Twist from MovementManager on LCM /cmd_vel.
+        # passthrough; receives Twist from CmdVelMux on LCM /cmd_vel.
         ControlCoordinator.blueprint(
             hardware=[_flowbase_twist_base()],
             tasks=[
@@ -178,7 +182,7 @@ coordinator_flowbase_nav = (
             # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
             # redundant pass-through copy (matches unitree-g1-nav-onboard).
             (MovementManager, "way_point", "_mgr_way_point_unused"),
-            # MovementManager.cmd_vel publishes to LCM /cmd_vel by default; the
+            # CmdVelMux.cmd_vel publishes to LCM /cmd_vel by default; the
             # coordinator's twist_command listens on the same name.
             (ControlCoordinator, "twist_command", "cmd_vel"),
         ]

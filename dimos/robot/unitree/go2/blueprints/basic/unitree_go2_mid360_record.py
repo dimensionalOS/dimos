@@ -39,6 +39,7 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_recorder import Go2Mid360Recorder
@@ -69,6 +70,7 @@ _RECORDING_DIR = _default_recording_dir()
 
 unitree_go2_mid360_record = autoconnect(
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
     GO2Connection.blueprint(publish_tf=False).remappings(
         [
             (GO2Connection, "lidar", "go2_lidar"),
@@ -90,8 +92,8 @@ unitree_go2_mid360_record = autoconnect(
     Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),
     # Continuously republishes the rig's mount frames onto tf (no latched static tf).
     Go2Mid360StaticTf.blueprint(),
-    # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds
-    # MovementManager's tele_cmd_vel.
+    # Pygame keyboard teleop (WASD drive + Q/E strafe). Its cmd_vel feeds the
+    # tele_cmd_vel that both CmdVelMux and MovementManager listen on.
     KeyboardTeleop.blueprint(
         linear_speed=_TELEOP_LINEAR_SPEED, angular_speed=_TELEOP_ANGULAR_SPEED
     ).remappings(

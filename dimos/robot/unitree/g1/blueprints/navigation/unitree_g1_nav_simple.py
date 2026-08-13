@@ -19,6 +19,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard import _unitree_g1_onboard
@@ -50,5 +51,6 @@ unitree_g1_nav_simple = autoconnect(
         robot_rotation_diameter=g1_rotation_diameter,
     ),
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
     unitree_g1_vis,
 ).global_config(n_workers=10, robot_model="unitree_g1")

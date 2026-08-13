@@ -44,9 +44,16 @@ class Plot:
     - list[Observation[float]] → extracts obs.ts/obs.data into Series
     """
 
-    def __init__(self, time_axis: TimeAxis = TimeAxis.relative) -> None:
+    def __init__(
+        self,
+        time_axis: TimeAxis = TimeAxis.relative,
+        xlabel: str | None = None,
+        ylabel: str | None = None,
+    ) -> None:
         self._elements: list[PlotElement] = []
         self.time_axis = time_axis
+        self.xlabel = xlabel
+        self.ylabel = ylabel
 
     def add(self, element: Any, **kwargs: Any) -> Plot:
         """Add a plot element with smart dispatch."""

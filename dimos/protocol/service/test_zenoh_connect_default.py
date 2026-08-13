@@ -29,6 +29,7 @@ from dimos.protocol.service.zenohservice import ZenohConfig
 def clean_config(monkeypatch):
     monkeypatch.setattr(global_config, "robot_ip", None)
     monkeypatch.setattr(global_config, "robot_ips", None)
+    monkeypatch.setattr(global_config, "zenoh_connect", "")
     monkeypatch.setattr(global_config, "transport", "zenoh")
 
 
@@ -59,6 +60,24 @@ def test_robot_ips_list_dedupes_against_robot_ip(clean_config, monkeypatch):
         "tcp/192.0.2.10:7447",
         "tcp/192.0.2.11:7447",
     ]
+
+
+def test_zenoh_connect_overrides_robot_ip(clean_config, monkeypatch):
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/198.51.100.7:7447")
+    assert ZenohConfig().connect == ["tcp/198.51.100.7:7447"]
+
+
+def test_zenoh_connect_completes_a_bare_host(clean_config, monkeypatch):
+    monkeypatch.setattr(global_config, "zenoh_connect", "go2, 192.0.2.11:9000")
+    assert ZenohConfig().connect == ["tcp/go2:7447", "tcp/192.0.2.11:9000"]
+
+
+def test_zenoh_connect_dials_under_any_transport(clean_config, monkeypatch):
+    """Naming an endpoint is the intent to dial it -- `dimos spy` has no transport."""
+    monkeypatch.setattr(global_config, "transport", "lcm")
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/go2:7447")
+    assert ZenohConfig().connect == ["tcp/go2:7447"]
 
 
 def test_caller_override_wins(clean_config, monkeypatch):

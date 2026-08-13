@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Build this experiment's candidate and run the scored battery.
+#
+# The .so is staged into $LAB/.ext and reached via PYTHONPATH -- shared
+# mutable state (a venv install) is something every experiment worktree
+# would fight over. PYTHONPATH precedes site-packages, so this worktree's
+# binary always wins; $LAB itself rides along so `import referee` resolves
+# to THIS worktree's referee copy.
+#
+# The cargo build is a no-op when the sources are unchanged (~0.01 s), so
+# gates that re-invoke this pay nothing; leaving it out would risk scoring a
+# stale .so after an edit, which is the worst failure mode available here.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LAB="$(dirname "$HERE")"
+# The origin lab root holds .evo/ (locks, shared caches, the venv). For a
+# fresh lab it is $LAB itself; for an evo worktree, walk up. EVO_LAB_ROOT
+# overrides when worktrees live outside the lab tree.
+ORIGIN="${EVO_LAB_ROOT:-}"
+if [[ -z "$ORIGIN" ]]; then
+    d="$LAB"
+    while [[ "$d" != "/" && ! -e "$d/.evo/referee.lock" ]]; do d="$(dirname "$d")"; done
+    ORIGIN="$d"
+    [[ "$ORIGIN" == "/" ]] && ORIGIN="$LAB"
+fi
+EXT="$LAB/.ext"
+LOCK="${TMPDIR:-/tmp}/dimos-motion2-battery.lock"
+PY="$ORIGIN/.venv/bin/python"
+[[ -x "$PY" ]] || { echo "no venv at $ORIGIN/.venv -- run 'uv sync' in the lab root" >&2; exit 1; }
+
+# One battery at a time, machine-wide (the lock name is benchmark-specific
+# so a different benchmark's kit never serializes against this one). Two
+# things depend on this and neither can be enforced by convention:
+#   - `speed` is a scored pillar. Even measured as CPU time, concurrent runs
+#     contend for cache and memory bandwidth.
+#   - the referee's world and gold caches are whole-file pickles in the
+#     shared cache dir; concurrent writers lose entries.
+# Re-exec under flock rather than nesting a subshell, so the lock is held for
+# exactly this process's lifetime and released even on a hard kill. On
+# systems without flock(1) (stock macOS), degrade with a warning: timings
+# become advisory.
+if [[ -z "${MOTION2_BATTERY_LOCKED:-}" ]]; then
+    if command -v flock >/dev/null; then
+        export MOTION2_BATTERY_LOCKED=1
+        exec flock -w "${MOTION2_LOCK_WAIT:-3600}" "$LOCK" "$0" "$@"
+    else
+        echo "warning: no flock(1); battery runs are not serialized, timings advisory" >&2
+        export MOTION2_BATTERY_LOCKED=1
+    fi
+fi
+
+# stdout belongs to the result JSON when EVO_RESULT_PATH is unset (gate runs).
+# --locked: a dependency change must be a deliberate, reviewed act. Without
+# it cargo would silently rewrite Cargo.lock, which harness_intact pins,
+# and the tamper gate would fire for what is really a build-config drift.
+cargo build --release --locked --quiet --manifest-path "$LAB/candidate/Cargo.toml" 1>&2
+
+# Stage via rename, never `cp` onto the live path. Overwriting a .so in
+# place truncates the inode under any process that still has it mapped,
+# which surfaces as a SIGBUS or SIGSEGV in an unrelated run. rename(2) gives
+# the new build a fresh inode and leaves existing mappings intact.
+mkdir -p "$EXT"
+soname="libdimos_motion2_target.so"
+[[ -e "$LAB/candidate/target/release/$soname" ]] || soname="libdimos_motion2_target.dylib"
+staged="$EXT/.staging.$$.so"
+cp -f "$LAB/candidate/target/release/$soname" "$staged"
+mv -f "$staged" "$EXT/dimos_motion2_target.so"
+
+# BENCH_ENTRY lets the .so-level invariant gate reuse this exact environment
+# (venv, PYTHONPATH, staging, lock) instead of duplicating it.
+ENTRY="${BENCH_ENTRY:-$HERE/battery.py}"
+
+# BLAS pools pinned to 1 thread: avoid_ms is time.process_time(), which sums
+# CPU across ALL threads, and OpenBLAS's spinning pool would be charged to
+# the candidate (measured: identical-code score spread 0.334 -> 0.0069).
+# The shared cache dir keeps gold/world caches out of every worktree.
+exec env \
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
+    AUTORESEARCH_CACHE_DIR="$ORIGIN/.evo/cache" \
+    PYTHONPATH="$EXT:$LAB" \
+    "$PY" "$ENTRY" "$@"

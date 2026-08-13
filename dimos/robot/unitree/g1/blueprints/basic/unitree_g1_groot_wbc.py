@@ -71,6 +71,7 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
@@ -302,6 +303,7 @@ if global_config.simulation == "mujoco":
             robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
         ),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
     )
     _remappings = [
         (VoxelGridMapper, "lidar", "pointcloud"),
@@ -362,6 +364,7 @@ else:
             robot_rotation_diameter=_G1_NAV_ROTATION_DIAMETER,
         ),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
     )
     _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
 

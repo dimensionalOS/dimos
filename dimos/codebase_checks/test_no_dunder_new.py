@@ -23,6 +23,11 @@ WHITELIST = [
     # Pure threading-logic test; a real engine would need a MuJoCo model
     # compile and the `mujoco` marker, dropping it from the default CI lane.
     ("dimos/simulation/engines/test_mujoco_sim_module.py", "object.__new__(MujocoEngine)"),
+    # Pure geometry tests. The real constructors stand up the module's LCM RPC
+    # transport — a run_forever + _lcm_loop thread pair per instance that the
+    # test never uses and cannot tear down, tripping the leaked-thread check.
+    ("dimos/navigation/motion/adapter/test_follower.py", "object.__new__(TrajectoryFollower)"),
+    ("dimos/navigation/motion/adapter/test_planner.py", "object.__new__(MotionPlanner)"),
 ]
 
 

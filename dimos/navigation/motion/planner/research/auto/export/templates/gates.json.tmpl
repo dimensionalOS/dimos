@@ -1,0 +1,74 @@
+{
+  "benchmark": {
+    "command": "bash {worktree}/bench/run --gen 40 --seed 0",
+    "metric": "max",
+    "target": "candidate/src/planner.rs",
+    "per_exp_timeout_s": 1800,
+    "subagents": 1,
+    "why_serial": "speed is a scored pillar; bench/run holds a machine-wide flock"
+  },
+  "runtime_env": ".evo/bench.env",
+  "gates": [
+    {
+      "name": "harness_intact",
+      "phase": "pre",
+      "command": "python3 {lab}/.evo/bench_guard.py {worktree}",
+      "why": "the harness measures the candidate; it is not part of the candidate"
+    },
+    {
+      "name": "rules",
+      "phase": "pre",
+      "command": "python3 {worktree}/bench/check_rules.py",
+      "why": "static anti-cheat: determinism, honest inputs, frozen surface, dep allowlist, referee hash-pinned"
+    },
+    {
+      "name": "ext_invariants",
+      "phase": "post",
+      "command": "bash {worktree}/bench/extcheck",
+      "why": "against the BUILT .so: bit-determinism, no cross-call reuse, referee runtime + constants match the lock, gold-cache spot check"
+    },
+    {
+      "name": "curated_parity",
+      "phase": "post",
+      "command": "bash {worktree}/bench/parity --max-dq 0 --min-gold 0.95 --min-world-gold 0.80",
+      "why": "battery.py must measure exactly what ./eval measures; curated quality floor"
+    },
+    {
+      "name": "holdout",
+      "phase": "post",
+      "command": "bash {worktree}/bench/run --gen 8 --seed 991 --no-curated --max-dq 0 --min-gold 0.85 --min-world-gold 0.60",
+      "why": "unseen worlds; also writes the breadcrumb the generalization gate reads"
+    },
+    {
+      "name": "safety",
+      "phase": "post",
+      "command": "python3 {worktree}/bench/quality.py --gen 40 --seed 0 --max-dq 0 --max-timeouts 0 --min-gold 0.90 --max-gold-zero 0 --min-consistency 0.70 --min-referee-score 105",
+      "why": "deviation tolerated, collisions never; ship envelope on referee_score"
+    },
+    {
+      "name": "generalization",
+      "phase": "post",
+      "command": "python3 {worktree}/bench/generalization.py --min-ratio 0.5",
+      "why": "anti-memorization: held-out speed vs scored generated-world speed (run AFTER holdout)"
+    }
+  ],
+  "excluded_by_policy": [
+    "cargo-test gates: candidate/tests/invariants.rs ships as optional crate tests but is never registered as a gate -- the crate is a black box at harness level; behavior is gated through the referee"
+  ],
+  "fitness": {
+    "file": "bench/fitness.py",
+    "weights": [20, 5, 1],
+    "max": 26,
+    "note": "retuning fitness.py requires updating .evo/harness.lock and any fitness-denominated thresholds here; see the retune procedure in its docstring"
+  },
+  "baseline": {
+    "referee_score": $baseline_referee,
+    "referee_max": 111,
+    "gold": $baseline_gold,
+    "consistency": $baseline_consistency,
+    "speed": $baseline_speed,
+    "gold_zero": [],
+    "dq": 0,
+    "headroom": "gold ($baseline_gold -> 1.0 is ~$gold_headroom referee points; speed largely saturated)"
+  }
+}

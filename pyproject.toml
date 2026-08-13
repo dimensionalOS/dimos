@@ -158,6 +158,9 @@ dependencies = [
     # DimSim scene client (dimos/simulation/dimsim/scene_client.py) imports `websocket`
     # at module load; DimSim is a non-extra-gated robot connection backend.
     "websocket-client>=1.8",
+    "mnn>=3.6.1",
+    "optuna>=4.9.0",
+    "cmaes>=0.13.0",
 ]
 
 
@@ -539,6 +542,9 @@ line-length = 100
 exclude = [
     ".git",
     ".pytest_cache",
+    # export payloads: lab-convention code copied into exported labs verbatim,
+    # deliberately not held to repo lint config (see planner/research/auto/export/)
+    "dimos/navigation/motion/planner/research/auto/export/templates",
     ".ruff_cache",
     ".venv",
     ".vscode",
@@ -594,7 +600,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*|.*/research/auto/export/templates(/|$)"
 
 [[tool.mypy.overrides]]
 module = [
@@ -606,6 +612,8 @@ module = [
     "cyclonedds.*",
     "dimos_lcm.*",
     "dimos_mls_planner",
+    "dimos_motion2_target",
+    "dimos_motion2_tc",
     "dimos_voxel_ray_tracing",
     "etils",
     "faster_whisper",
@@ -708,6 +716,7 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
+    "dimos/navigation/motion/planner/rust/src/planner.rs",
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",

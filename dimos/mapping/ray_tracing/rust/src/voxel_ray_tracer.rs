@@ -53,9 +53,19 @@ pub struct Config {
     #[validate(range(min = 0))]
     pub global_emit_every: u32,
     /// Size the local region to this percentile of batch point distances, so a
-    /// stray far hit cannot inflate it.
+    /// stray far hit cannot inflate it. Ignored when `region_radius_m` is set.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Fixed emitted-cylinder radius (m). Zero keeps the percentile sizing.
+    ///
+    /// The percentile BREATHES: it follows what the last few sweeps happened to
+    /// see, so a doorway or a corridor glimpse inflates the window by metres and
+    /// the next batch collapses it again. Every collapse deletes thousands of
+    /// voxels a consumer was routing around and every expansion invents them
+    /// back -- 68 % of all voxel churn on the go2 motion stack. A fixed radius
+    /// makes the emitted set stable whenever the scene is.
+    #[validate(range(min = 0.0))]
+    pub region_radius_m: f32,
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -342,13 +352,16 @@ impl LocalBounds {
 }
 
 /// A cylinder (cx, cy, radius, z_min, z_max) on the mean origin, sized to a
-/// percentile of the point distances so a stray far hit cannot inflate it.
-/// Points must be finite. An empty batch yields a zero-radius region.
+/// percentile of the point distances so a stray far hit cannot inflate it --
+/// or to `fixed_radius` when that is positive, which is what stops the window
+/// from breathing frame to frame. Points must be finite. An empty batch yields
+/// a zero-radius region, fixed or not: there is nothing to emit either way.
 pub fn batch_local_bounds(
     points: &[(f32, f32, f32)],
     origins: &[(f32, f32, f32)],
     percentile_pct: f32,
     margin: f32,
+    fixed_radius: f32,
 ) -> (f32, f32, f32, f32, f32) {
     let n = origins.len().max(1) as f64;
     let cx = (origins.iter().map(|o| o.0 as f64).sum::<f64>() / n) as f32;
@@ -358,9 +371,13 @@ pub fn batch_local_bounds(
         return (cx, cy, 0.0, cz, cz);
     }
 
-    let mut dist: Vec<f32> = points.iter().map(|p| (p.0 - cx).hypot(p.1 - cy)).collect();
     let mut zs: Vec<f32> = points.iter().map(|p| p.2).collect();
-    let radius = percentile(&mut dist, percentile_pct) + margin;
+    let radius = if fixed_radius > 0.0 {
+        fixed_radius
+    } else {
+        let mut dist: Vec<f32> = points.iter().map(|p| (p.0 - cx).hypot(p.1 - cy)).collect();
+        percentile(&mut dist, percentile_pct) + margin
+    };
     let z_min = percentile(&mut zs, 100.0 - percentile_pct) - margin;
     let z_max = percentile(&mut zs, percentile_pct) + margin;
     (cx, cy, radius, z_min, z_max)
@@ -460,8 +477,16 @@ pub fn emit_points(
         }
         out.push((x, y, z));
     }
+    // A voxel hit THIS frame is real for the emitted cloud unless the map
+    // already carries it (healthy AND supported). Skipping merely-healthy
+    // hits made thin obstacles vanish after their first frame: hit -> healthy
+    // -> live-skipped, but a chair leg / box edge never reaches support_min
+    // neighbors, so the main loop filtered it forever — the more consistently
+    // the lidar saw it, the more invisible it was (field: three collisions).
     for &key in live.iter() {
-        if matches!(map.voxels.get(&key), Some(c) if c.health > 0) {
+        let carried = matches!(map.voxels.get(&key), Some(c) if c.health > 0)
+            && (support_min <= 0 || has_support(&map.voxels, key, support_min));
+        if carried {
             continue;
         }
         let (x, y, z) = center(key);
@@ -732,6 +757,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         }
     }
 
@@ -807,7 +833,7 @@ mod tests {
             })
             .collect();
         points.push((60.0, 1.0, 30.0));
-        let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&points, &origins, 95.0, 0.3);
+        let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&points, &origins, 95.0, 0.3, 0.0);
         assert_eq!(cx, 2.0);
         assert_eq!(cy, 1.0);
         assert!(radius < 2.0, "outlier inflated radius to {radius}");
@@ -818,7 +844,7 @@ mod tests {
     #[test]
     fn batch_bounds_empty_points_zero_radius() {
         let origins = [(1.0, 2.0, 3.0)];
-        let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&[], &origins, 95.0, 0.3);
+        let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&[], &origins, 95.0, 0.3, 0.0);
         assert_eq!((cx, cy, radius), (1.0, 2.0, 0.0));
         assert_eq!(z_min, 3.0);
         assert_eq!(z_max, 3.0);
@@ -939,6 +965,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
         // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
@@ -1094,6 +1121,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
 
         // Staircase
@@ -1168,6 +1196,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
 
         // Flat floor from the sensor out to a vertical wall.
@@ -1230,6 +1259,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
 
         // Staircase topped by a flat landing and a back wall.
@@ -1361,6 +1391,7 @@ mod tests {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
         let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
         let row: Vec<VoxelKey> = map
@@ -1410,5 +1441,163 @@ mod tests {
             !gated.contains(&isolated),
             "isolated voxel must be gated out"
         );
+    }
+}
+
+#[cfg(test)]
+mod thin_obstacle_tests {
+    use super::*;
+    use ahash::AHashSet;
+
+    #[test]
+    fn repeatedly_seen_thin_cluster_keeps_emitting() {
+        // A thin line of voxels (a box edge / chair leg) hit every frame must
+        // stay in the emitted cloud even though it never reaches support_min
+        // healthy neighbors. Regression: it vanished after frame 1 (hit ->
+        // healthy -> live-skipped -> support-filtered).
+        let cfg = Config {
+            voxel_size: 0.08,
+            max_range: 30.0,
+            ray_subsample: 1,
+            shadow_depth: 0.1,
+            grace_depth: 0.2,
+            min_health: -1,
+            max_health: 5,
+            graze_cos: 0.7,
+            support_min: 4,
+            emit_every: 1,
+            global_emit_every: 50,
+            region_percentile: 95.0,
+            region_radius_m: 0.0,
+        };
+        let mut map = VoxelMap::default();
+        let pts: Vec<(f32, f32, f32)> =
+            (0..8).map(|i| (2.0, i as f32 * 0.04 - 0.15, 0.3)).collect();
+        let origin = (0.0, 0.0, 0.5);
+        for frame in 0..5 {
+            let live: AHashSet<VoxelKey> = update_map(&mut map, origin, &pts, &cfg);
+            let out = emit_points(&map, cfg.voxel_size, None, 4, &live);
+            assert!(
+                !out.is_empty(),
+                "frame {frame}: repeatedly-hit cluster vanished from the emitted cloud"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod region_radius_tests {
+    use super::*;
+
+    fn origins() -> Vec<(f32, f32, f32)> {
+        vec![(0.0, 0.0, 0.5)]
+    }
+
+    /// A batch that saw out to `reach` metres -- the doorway glimpse that makes
+    /// the percentile window jump.
+    fn sweep(reach: f32) -> Vec<(f32, f32, f32)> {
+        (0..200)
+            .map(|i| {
+                let a = i as f32 / 200.0 * std::f32::consts::TAU;
+                let r = 1.0 + (reach - 1.0) * (i % 20) as f32 / 19.0;
+                (r * a.cos(), r * a.sin(), 0.3)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_percentile_window_breathes_with_what_the_sweep_saw() {
+        // the behaviour the fixed radius exists to replace, pinned so a change
+        // to it is visible
+        let near = batch_local_bounds(&sweep(2.5), &origins(), 95.0, 0.3, 0.0).2;
+        let far = batch_local_bounds(&sweep(6.0), &origins(), 95.0, 0.3, 0.0).2;
+        assert!(far - near > 2.0, "near {near} far {far}");
+    }
+
+    #[test]
+    fn a_fixed_radius_does_not_move_with_the_sweep() {
+        let near = batch_local_bounds(&sweep(2.5), &origins(), 95.0, 0.3, 5.0);
+        let far = batch_local_bounds(&sweep(6.0), &origins(), 95.0, 0.3, 5.0);
+        assert_eq!(near.2, 5.0);
+        assert_eq!(far.2, 5.0);
+    }
+
+    #[test]
+    fn a_fixed_radius_is_taken_as_given_not_margined() {
+        // the margin exists to cover the shadow depth the percentile might cut
+        // through; a radius the operator set is already the answer
+        assert_eq!(
+            batch_local_bounds(&sweep(3.0), &origins(), 95.0, 0.3, 5.0).2,
+            5.0
+        );
+    }
+
+    #[test]
+    fn a_fixed_radius_leaves_the_centre_and_the_z_bounds_alone() {
+        let (cx, cy, _, z_min, z_max) =
+            batch_local_bounds(&sweep(3.0), &[(1.0, 2.0, 0.5)], 95.0, 0.3, 5.0);
+        assert_eq!((cx, cy), (1.0, 2.0));
+        assert!(z_min < 0.3 && z_max > 0.3, "z {z_min}..{z_max}");
+    }
+
+    #[test]
+    fn an_empty_batch_still_emits_nothing() {
+        // no points is no map, fixed radius or not -- a 5 m cylinder of nothing
+        // is not an improvement on a 0 m one
+        assert_eq!(batch_local_bounds(&[], &origins(), 95.0, 0.3, 5.0).2, 0.0);
+    }
+
+    #[test]
+    fn a_stable_scene_emits_a_stable_set_under_a_fixed_radius() {
+        // The property the planner needs: what comes out depends on the MAP,
+        // not on how far the batch that triggered the emit happened to see. The
+        // same map cropped by a near batch's window and by a far batch's window
+        // has to be the same set of voxels, or the difference is churn the
+        // planner routes around and back.
+        let cfg = Config {
+            voxel_size: 0.08,
+            max_range: 30.0,
+            ray_subsample: 1,
+            shadow_depth: 0.1,
+            grace_depth: 0.2,
+            min_health: -1,
+            max_health: 5,
+            graze_cos: 0.7,
+            support_min: 0,
+            emit_every: 1,
+            global_emit_every: 0,
+            region_percentile: 95.0,
+            region_radius_m: 5.0,
+        };
+        let mut map = VoxelMap::default();
+        let live = update_map(&mut map, (0.0, 0.0, 0.5), &sweep(6.0), &cfg);
+
+        let crop = |cfg: &Config, reach: f32| {
+            let (cx, cy, radius, z_min, z_max) = batch_local_bounds(
+                &sweep(reach),
+                &origins(),
+                cfg.region_percentile,
+                cfg.shadow_depth + cfg.voxel_size,
+                cfg.region_radius_m,
+            );
+            let bounds = LocalBounds {
+                origin_x: cx,
+                origin_y: cy,
+                r_xy_max_sq: radius * radius,
+                z_min,
+                z_max,
+            };
+            let mut out = emit_points(&map, cfg.voxel_size, Some(&bounds), cfg.support_min, &live);
+            out.sort_by(|a, b| a.partial_cmp(b).expect("finite centres"));
+            out
+        };
+        assert_eq!(crop(&cfg, 2.5), crop(&cfg, 6.0));
+
+        // and that this is the fixed radius doing it, not the scene
+        let breathing = Config {
+            region_radius_m: 0.0,
+            ..cfg
+        };
+        assert_ne!(crop(&breathing, 2.5), crop(&breathing, 6.0));
     }
 }

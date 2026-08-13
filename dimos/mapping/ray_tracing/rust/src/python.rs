@@ -48,17 +48,26 @@ fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32,
 }
 
 /// Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
-/// Non-finite points are ignored.
+/// A positive `fixed_radius` pins the cylinder instead of sizing it to the
+/// percentile. Non-finite points are ignored.
 #[pyfunction]
+#[pyo3(signature = (points, origins, percentile, margin, fixed_radius = 0.0))]
 fn local_bounds(
     points: &Bound<'_, PyAny>,
     origins: &Bound<'_, PyAny>,
     percentile: f32,
     margin: f32,
+    fixed_radius: f32,
 ) -> PyResult<(f32, f32, f32, f32, f32)> {
     let pts = extract_tuples(points, "points")?;
     let origs = extract_tuples(origins, "origins")?;
-    Ok(batch_local_bounds(&pts, &origs, percentile, margin))
+    Ok(batch_local_bounds(
+        &pts,
+        &origs,
+        percentile,
+        margin,
+        fixed_radius,
+    ))
 }
 
 #[pyclass]
@@ -109,6 +118,7 @@ impl VoxelRayMapper {
             emit_every: 1,
             global_emit_every: 1,
             region_percentile: 95.0,
+            region_radius_m: 0.0,
         };
         config
             .validate()

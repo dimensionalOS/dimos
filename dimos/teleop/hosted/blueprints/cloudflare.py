@@ -20,8 +20,9 @@ share one worker so the Cloudflare transports resolve to a single session
 (GO2Connection is RPC/LCM only in its own worker — no session fragmentation).
 
 Drive routing: broker cmd_unreliable → Go2CommandModule ``cmd_vel_in`` → guard
-→ ``tele_cmd_vel`` → MovementManager (arbitrates manual vs nav, sole cmd_vel
-producer) → GO2Connection. ``state_reliable`` fans to stats AND command modules.
+→ ``tele_cmd_vel`` → CmdVelMux (arbitrates manual vs nav, sole cmd_vel
+producer) → GO2Connection. MovementManager takes the same tele_cmd_vel to
+cancel the nav goal. ``state_reliable`` fans to stats AND command modules.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
@@ -68,6 +70,7 @@ teleop_hosted_go2_transport = (
         CostMapper.blueprint(),
         ReplanningAStarPlanner.blueprint(),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
     )
     .remappings(
         [
@@ -114,6 +117,7 @@ teleop_hosted_go2_multicam = (
         CostMapper.blueprint(),
         ReplanningAStarPlanner.blueprint(),
         MovementManager.blueprint(),
+        CmdVelMux.blueprint(),
     )
     .remappings(
         [

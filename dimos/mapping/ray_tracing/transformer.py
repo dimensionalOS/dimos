@@ -49,6 +49,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         max_range: float = 30.0,
         emit_every: int = 1,
         region_percentile: float = 95.0,
+        region_radius_m: float = 0.0,
         **mapper_kwargs: Any,
     ) -> None:
         if emit_every < 0:
@@ -57,6 +58,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self.max_range = max_range
         self.emit_every = emit_every
         self.region_percentile = region_percentile
+        self.region_radius_m = region_radius_m
         self._mapper_kwargs = mapper_kwargs
 
     def _local_bounds(
@@ -66,7 +68,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         batch_origins: list[tuple[float, float, float]],
         last_obs: Observation[PointCloud2],
     ) -> tuple[float, float, float, float, float]:
-        """Robot-centered cylinder sized to a percentile of the observed points.
+        """Robot-centered cylinder, `region_radius_m` or a percentile of the points.
 
         An empty batch yields a zero-radius region at the robot.
         """
@@ -79,7 +81,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         points = np.concatenate(batch_points, axis=0)
         origins = np.asarray(batch_origins, dtype=np.float32)
         margin = mapper.shadow_depth + mapper.voxel_size
-        return local_bounds(points, origins, self.region_percentile, margin)
+        return local_bounds(points, origins, self.region_percentile, margin, self.region_radius_m)
 
     def _make_obs(
         self,

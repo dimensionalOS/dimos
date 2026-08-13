@@ -30,6 +30,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
@@ -46,6 +47,7 @@ unitree_go2 = autoconnect(
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2")
 
 

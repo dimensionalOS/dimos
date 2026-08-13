@@ -1,0 +1,181 @@
+{
+  "tag": "smoke",
+  "config": {
+    "tag": "smoke",
+    "track": "hinted",
+    "jobs": 6,
+    "episodes": 6,
+    "train_worlds": 8,
+    "val_worlds": 4,
+    "policy": "ml-trajectory-research/freewalk_mcf.bin",
+    "replan_hz": 5.0,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "lam": 0.95,
+    "clip": 0.2,
+    "epochs": 4,
+    "batch": 1024,
+    "vf_coef": 0.5,
+    "ent_coef": 0.003,
+    "max_grad_norm": 0.5,
+    "seed": 0,
+    "eval_every": 1,
+    "patience": 6,
+    "plateau_abs": 0.5,
+    "cap_min": 3.0,
+    "failfast_min": 999.0,
+    "obs_format": "tc-m8-s11-v1"
+  },
+  "params": 80135,
+  "evals": [
+    {
+      "iter": 0,
+      "elapsed_s": 0.0,
+      "score": 10.41,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 1,
+      "elapsed_s": 36.6,
+      "score": 10.358,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 2,
+      "elapsed_s": 66.6,
+      "score": 10.423,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 3,
+      "elapsed_s": 100.6,
+      "score": 10.423,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 4,
+      "elapsed_s": 134.8,
+      "score": 10.41,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 5,
+      "elapsed_s": 169.3,
+      "score": 10.37,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    },
+    {
+      "iter": 6,
+      "elapsed_s": 204.1,
+      "score": 10.42,
+      "dq": 0,
+      "arrived": 0.0,
+      "precision": 1.0,
+      "pace": 0.0,
+      "outcomes": {
+        "timeout": 4
+      }
+    }
+  ],
+  "iters": [
+    {
+      "iter": 1,
+      "transitions": 11850,
+      "loss": 0.245,
+      "train_score": 10.2,
+      "dq": 0,
+      "elapsed_s": 36.6
+    },
+    {
+      "iter": 2,
+      "transitions": 11850,
+      "loss": 0.254,
+      "train_score": 10.18,
+      "dq": 0,
+      "elapsed_s": 66.6
+    },
+    {
+      "iter": 3,
+      "transitions": 11850,
+      "loss": 0.2534,
+      "train_score": 10.18,
+      "dq": 0,
+      "elapsed_s": 100.6
+    },
+    {
+      "iter": 4,
+      "transitions": 11850,
+      "loss": 0.2647,
+      "train_score": 10.19,
+      "dq": 0,
+      "elapsed_s": 134.8
+    },
+    {
+      "iter": 5,
+      "transitions": 11850,
+      "loss": 0.271,
+      "train_score": 10.16,
+      "dq": 0,
+      "elapsed_s": 169.3
+    },
+    {
+      "iter": 6,
+      "transitions": 11850,
+      "loss": 1.0303,
+      "train_score": 9.16,
+      "dq": 0,
+      "elapsed_s": 204.1
+    }
+  ],
+  "baseline_eval": {
+    "score": 10.41,
+    "dq": 0,
+    "arrived": 0.0,
+    "precision": 1.0,
+    "pace": 0.0,
+    "outcomes": {
+      "timeout": 4
+    }
+  },
+  "stop_reason": "cap",
+  "iters_run": 6,
+  "wall_s": 218.5,
+  "best_eval": 10.423,
+  "checkpoint": "checkpoints/smoke.pt"
+}

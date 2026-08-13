@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import Field
 import zenoh
 
+from dimos.core.global_config import ZenohMode
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -42,6 +43,16 @@ _CONNECT_POLL_INTERVAL = 0.05
 # interface name, and Darwin spells loopback differently.
 LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 
+# Zenoh's own name for "every multicast-capable interface".
+ALL_INTERFACES = "auto"
+
+
+def _locator(host: str) -> str:
+    """Complete a bare host into a zenoh locator, leaving a full one as given."""
+    if "/" in host:
+        return host
+    return f"tcp/{host}" if ":" in host else f"tcp/{host}:{ROBOT_ZENOH_PORT}"
+
 
 def _default_connect_endpoints() -> list[str]:
     """Dial known robots directly instead of trusting multicast scouting.
@@ -51,17 +62,25 @@ def _default_connect_endpoints() -> list[str]:
     zenoh-transported and a robot IP is configured, it becomes an explicit
     endpoint; scouting stays on for everything else. An IP carrying its own
     ``:port`` is used as given.
+
+    ``--zenoh-connect`` overrides that derivation, and is honoured whatever the
+    stack's transport: naming an endpoint is itself the intent to dial it. That
+    is what a zenoh-only observer like `dimos spy` wants -- it watches every
+    transport, so it has no DIMOS_TRANSPORT to speak of.
     """
     from dimos.core.global_config import global_config
 
-    if global_config.transport != "zenoh":
+    if global_config.zenoh_connect.strip():
+        hosts = global_config.zenoh_connect.split(",")
+    elif global_config.transport == "zenoh":
+        hosts = [global_config.robot_ip or "", *(global_config.robot_ips or "").split(",")]
+    else:
         return []
-    ips = [global_config.robot_ip or "", *(global_config.robot_ips or "").split(",")]
     out: list[str] = []
-    for ip in (x.strip() for x in ips):
-        if not ip:
+    for host in (x.strip() for x in hosts):
+        if not host:
             continue
-        endpoint = f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}"
+        endpoint = _locator(host)
         if endpoint not in out:
             out.append(endpoint)
     return out
@@ -73,10 +92,34 @@ def _default_scouting() -> bool:
     return global_config.zenoh_scouting
 
 
+def _default_scouting_interface() -> str:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_interface.strip()
+
+
+def _default_multicast() -> bool:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_multicast
+
+
+def _default_gossip() -> bool:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_gossip
+
+
 def _default_connect_timeout() -> float:
     from dimos.core.global_config import global_config
 
     return global_config.zenoh_connect_timeout
+
+
+def _default_mode() -> ZenohMode:
+    from dimos.core.global_config import global_config
+
+    return global_config.zenoh_mode
 
 
 def endpoint_addresses(endpoint: str) -> set[str]:
@@ -99,19 +142,32 @@ def endpoint_addresses(endpoint: str) -> set[str]:
 
 
 class ZenohConfig(BaseConfig):
-    mode: str = "peer"
+    # `client` hands all routing to a zenohd router; `peer` meshes directly.
+    mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
     # Discover peers across the network. Off keeps discovery on loopback.
     scouting: bool = Field(default_factory=_default_scouting)
+    # Named interface to scout on, overriding `scouting`. Empty derives it.
+    scouting_interface: str = Field(default_factory=_default_scouting_interface)
+    # Whether multicast scouting runs at all, as opposed to how far it reaches.
+    multicast: bool = Field(default_factory=_default_multicast)
+    # Learn peers from the peers already linked, not only from the dialled ones.
+    gossip: bool = Field(default_factory=_default_gossip)
     # Seconds to block in start() waiting for `connect` endpoints to link.
     connect_timeout: float = Field(default_factory=_default_connect_timeout)
+
+    @property
+    def multicast_interface(self) -> str:
+        """Interface multicast scouting binds to."""
+        return self.scouting_interface or (ALL_INTERFACES if self.scouting else LOOPBACK_INTERFACE)
 
     @property
     def session_key(self) -> str:
         return (
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
-            f"|{json.dumps(sorted(self.listen))}|{self.scouting}"
+            f"|{json.dumps(sorted(self.listen))}|{self.multicast_interface}"
+            f"|{self.multicast}|{self.gossip}"
         )
 
 
@@ -131,15 +187,21 @@ class ZenohSessionPool:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
                     zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
-                if not config.scouting:
-                    # Loopback multicast stays on so sibling worker processes on
-                    # this host still discover each other -- cutting scouting
-                    # outright leaves them unable to reach one another at all,
-                    # since peers don't route each other's traffic.
-                    zconfig.insert_json5(
-                        "scouting/multicast/interface", json.dumps(LOOPBACK_INTERFACE)
-                    )
-                    zconfig.insert_json5("scouting/gossip/enabled", "false")
+                # Multicast scouting runs by default; the interface sets how far
+                # it reaches. Loopback by default, so sibling worker processes on
+                # this host still discover each other -- cutting scouting
+                # outright leaves them unable to reach one another at all,
+                # since peers don't route each other's traffic. Gossip is on by
+                # default too: it is what turns one dialled endpoint into the
+                # whole mesh, handing back the peers behind it instead of making
+                # every one of them a hand-written endpoint. Both are knobs only
+                # so a router deployment can stop its clients meshing around the
+                # router they were meant to funnel through.
+                zconfig.insert_json5("scouting/multicast/enabled", json.dumps(config.multicast))
+                zconfig.insert_json5(
+                    "scouting/multicast/interface", json.dumps(config.multicast_interface)
+                )
+                zconfig.insert_json5("scouting/gossip/enabled", json.dumps(config.gossip))
                 self._sessions[key] = zenoh.open(zconfig)
                 logger.debug(f"Zenoh session opened in {config.mode} mode")
             return self._sessions[key]

@@ -1,0 +1,26 @@
+[package]
+name = "dimos-motion2-target"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of the motion2 target planner (autoresearch candidate)"
+license = "Apache-2.0"
+
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_motion2_target"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
+numpy = { version = "0.25", optional = true }
+
+[features]
+# `cargo test --no-default-features` runs the pure-Rust tests without linking
+# Python; maturin builds with defaults and gets the extension module.
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

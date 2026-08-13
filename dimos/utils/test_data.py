@@ -100,6 +100,16 @@ def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
     assert list(tmp_path.glob("recording_go2.*.db")) == []
 
 
+def test_resolve_named_path_keeps_nested_dataset_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A nested name reaches get_data whole: first component is the LFS archive."""
+    seen = []
+    monkeypatch.setattr(data, "get_data", lambda name: seen.append(Path(name)) or Path(name))
+
+    data.resolve_named_path("ml-trajectory-research/door.zenoh.mcap", ".mcap")
+
+    assert seen == [Path("ml-trajectory-research/door.zenoh.mcap")]
+
+
 @pytest.mark.self_hosted
 def test_pull_file() -> None:
     repo_root = data.get_project_root()

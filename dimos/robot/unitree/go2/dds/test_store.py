@@ -112,6 +112,27 @@ def test_lowstate(store: Go2McapStore) -> None:
     assert np.isclose(np.linalg.norm(ls.imu_state.quaternion), 1.0, atol=1e-2)
 
 
+def test_lowstate_motor_alignment(store: Go2McapStore) -> None:
+    """The 12 leg motors hold a physical stance — pins the motor-array offset.
+
+    ``motor_state[]`` starts on an odd byte (a ``u8`` after ``imu_state``'s
+    trailing ``u8``); aligning it to 4 shifts every joint by one field and the
+    values come out as noise, so assert the pose, not just the shape.
+    """
+    ls = store.streams.lowstate.first().data
+    q = np.array([m.q for m in ls.motor_state[:12]])
+    hips, thighs, calves = q[0::3], q[1::3], q[2::3]
+    print(f"\nhips={hips.round(3)} thighs={thighs.round(3)} calves={calves.round(3)}")
+    assert np.all(np.abs(hips) < 0.6)
+    assert np.all((thighs > 0.2) & (thighs < 1.4))
+    assert np.all((calves > -2.7) & (calves < -0.7))
+    assert all(m.mode == 1 and 0 < m.temperature < 100 for m in ls.motor_state[:12])
+    # Everything downstream of the array rides on the same offset.
+    cells = ls.bms_state.cell_vol[ls.bms_state.cell_vol > 0]
+    assert 0 < ls.bms_state.soc <= 100
+    assert ls.power_v == pytest.approx(cells.sum() / 1000.0, abs=1.5)
+
+
 def test_sportmodestate(store: Go2McapStore) -> None:
     sm = store.streams.sportmodestate.first().data
     print(f"\n{sm}")

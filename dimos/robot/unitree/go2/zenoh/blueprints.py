@@ -22,8 +22,11 @@ so a failure can be bisected by dropping down a level:
 - ``go2-zenoh-basic`` — streams plus teleop; the bridge, tf and camera, no mapping.
 - ``go2-zenoh-raycaster`` — adds :class:`RayTracingVoxelMap`.
 - ``go2-zenoh-nav`` — the full stack: planner, goal relay and path follower.
-- ``go2-zenoh-htc`` — ``go2-zenoh-nav`` with the follower swapped for the
-  ``DanLocalPlanner`` + ``DanHolonomicTC`` pair from ``unitree-go2-mls-htc``.
+- ``go2-zenoh-motion`` — the motion stack: the evolved autoresearch planner and
+  the trajectory follower over the raycaster's local map, on the ``hinted`` track.
+- ``go2-zenoh-motion-blind`` — the same stack on the ``blind`` track: the follower
+  is handed no clearance array and reads required precision off the path stamps.
+  Same graph, so an A/B against ``go2-zenoh-motion`` isolates the law.
 """
 
 from typing import Any
@@ -32,8 +35,10 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
-from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.motion.adapter.follower import TrajectoryFollower
+from dimos.navigation.motion.adapter.planner import MotionPlanner
+from dimos.navigation.motion.adapter.viz import motion_visual_override
+from dimos.navigation.movement_manager.cmd_vel_mux import CmdVelMux
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
@@ -46,6 +51,11 @@ voxel_size = 0.08
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
 # cost-colored edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
+# Draw the local plan's expected BODY POSES as oriented boxes, coloured by the
+# required precision the planner stamped into the path (green = room, amber =
+# inside the governor's ramp, red = at the embodiment's floor). 0.0 = off.
+# Drives MotionPlanner's publishing and the rerun override together.
+motion_viz_hz = 2.0
 
 # GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
 MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
@@ -118,17 +128,21 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/global_map": _render_map,
             "world/path": _render_path,
             **planner_visual_override(planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1),
+            # keyed by entity path, so it is inert on the stacks that have no
+            # MotionPlanner to publish world/plan_body -- same as the MLS one
+            **motion_visual_override(motion_viz_hz),
             **(visual_override or {}),
         },
     }
 
 
-# Streams + teleop only. cmd_vel still reaches the robot through MovementManager, so this
+# Streams + teleop only. cmd_vel still reaches the robot through CmdVelMux, so this
 # is the layer to drive from when something upstream is suspect.
 go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
     GO2Zenoh.blueprint(mid360_mount_rpy_deg=MID360_MOUNT_RPY_DEG),
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 
 # global_map is remapped off so the planner runs purely on the
@@ -138,7 +152,7 @@ _mls_planner = MLSPlannerNative.blueprint(
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
     surface_closing_radius=0.3,
-    wall_clearance_m=0.1,
+    wall_clearance_m=0.0,
     wall_buffer_m=0.75,
     wall_buffer_weight=100.0,
     step_threshold_m=0.16,
@@ -158,8 +172,8 @@ go2_zenoh_raycaster = autoconnect(
     ),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
-        emit_every=1,
-        global_emit_every=50,
+        emit_every=10,
+        global_emit_every=100,
         min_health=-1,
         max_health=5,
         support_min=4,
@@ -173,17 +187,146 @@ go2_zenoh_nav = autoconnect(
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
 
-go2_zenoh_htc = autoconnect(
+# The motion stack's own raycaster tuning. The percentile-sized emit window BREATHES:
+# it follows what the last ten sweeps happened to see, so on 20260805-033007 its radius
+# swung 2.53 -> 5.88 m, up to 2.36 m in a single frame, and 68 % of all voxel churn the
+# local planner saw was that window moving rather than the world changing. Every
+# collapse deletes thousands of voxels the planner was routing around; every expansion
+# invents them back, and the plan flips. A fixed radius makes the emitted set stable
+# whenever the scene is. 5 m covers the 5 m carrot with room for the search's padding,
+# and is inside the map the sweeps actually fill.
+_motion_raycaster = dict(
+    voxel_size=voxel_size,
+    emit_every=10,
+    global_emit_every=100,
+    min_health=-1,
+    max_health=5,
+    support_min=4,
+    region_radius_m=5.0,
+)
+
+# The motion stack's own MLS tuning: the local planner + follower are the precision
+# layer (embodiment 0.05 floor, clearance-governed speed), so the global graph can be
+# permissive where _mls_planner has to be the safety margin for BasicPathFollower.
+# Hard clearance drops to the precision floor so tight gaps keep their node edges, and
+# the soft wall band narrows/cheapens so corridors are priced, not severed.
+_mls_planner_motion = MLSPlannerNative.blueprint(
+    world_frame="odom",
+    voxel_size=voxel_size,
+    robot_height=0.4,
+    surface_closing_radius=0.4,
+    wall_clearance_m=0.05,
+    wall_buffer_m=0.2,
+    wall_buffer_weight=20.0,
+    step_threshold_m=0.16,
+    step_penalty_weight=4.0,
+    viz_publish_hz=planner_viz_hz,
+).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
+
+# The motion stack (dimos/navigation/motion): MLS stays the global planner but its path
+# moves to planner_path and becomes a carrot source — the evolved autoresearch planner
+# replans to a point ~5 m of arc along it over the raycaster's local map, and the pursuit
+# follower tracks the local plan with the clearance-governed speed. Both resolve the
+# sensor odometry into base_link off tf, which GO2Zenoh publishes -- the mount is a
+# rotation AND a lever arm, and a stack that skips it plans for a body 0.30 m ahead of
+# the robot and 0.16 m above it.
+#
+# The follower's TRACK picks its law and what it is handed (control/tracks.py). Both are
+# wired so the two can be A/B'd on the robot; the graph is otherwise identical, so a
+# difference between them is the law and nothing else.
+#
+# SPEEDS ARE SIM-CALIBRATED. Each law's envelope was measured against the freewalk_mcf
+# policy in the matched MuJoCo env, NOT against the gait the robot actually runs:
+# `hinted` asks up to 0.95 m/s commanded, and `blind` feeds its twist through a gait-slip
+# inverse keyed to that same blob (~23% over-speed on a different gait). Re-measure with
+# `python -m dimos.navigation.motion.control.referee.probe_walk_slip` against the deployed gait
+# and re-key before trusting either at speed. Until then, dial the ceiling down here
+# rather than in the law -- e.g. controller_config=ControllerConfig(max_speed=0.5).
+#
+# Everything but the follower is shared, so it composes as a sub-blueprint the way
+# go2_zenoh_raycaster does above and the two tracks differ by one argument. Private
+# (leading underscore) so the generated registry does not offer a headless stack as a
+# runnable blueprint -- it has no follower and would plan without ever moving.
+_go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
-    _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    # Re-declared with the emitted window PINNED, and autoconnect keeps the
+    # newest duplicate, so this raycaster wins over go2_zenoh_raycaster's.
+    RayTracingVoxelMap.blueprint(**_motion_raycaster),
     GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
-        [(DanLocalPlanner, "odom", "start_pose")]
-    ),
-    DanHolonomicTC.blueprint(run_profile="walk").remappings(
-        [(DanHolonomicTC, "odom", "start_pose")]
-    ),
+    _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    # The obstacle band rides the BODY (obstacle_model="body_band", the
+    # default): the base sits a known height above the surface its feet stand
+    # on, so the cloud referenced to that surface says what the planner can
+    # hit. Nothing about the map's z origin -- which on a LIO stack is base
+    # height -- has to be guessed (motion/obstacles.py).
+    MotionPlanner.blueprint(viz_publish_hz=motion_viz_hz),
     MovementManager.blueprint(),
+    CmdVelMux.blueprint(),
+)
+
+# hinted: the follower is handed the per-waypoint clearance array recomputed from the
+# raycaster's local map, which on this stack is live -- so this is the honest default.
+# It reads that map through the planner's obstacle model (the shared default), because
+# the room hint has to be measured off the slice the plan was priced in.
+go2_zenoh_motion = autoconnect(
+    _go2_zenoh_motion_base,
+    TrajectoryFollower.blueprint(track="hinted"),
 ).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
+
+# blind: the same graph with the clearance hint withheld. The law recovers the required
+# precision from the path's own timestamps instead (control/profile.py), which is the
+# regime that survives when the local map is stale, empty, or not the follower's to read.
+go2_zenoh_motion_blind = autoconnect(
+    _go2_zenoh_motion_base,
+    TrajectoryFollower.blueprint(track="blind"),
+).global_config(transport="zenoh", n_workers=9, robot_model="unitree_go2")
+
+# go2-zenoh-motion-local: go2-zenoh-motion with the time-critical half lifted off
+# the laptop. The three modules below are ABSENT here because they run on the robot
+# as one baked host (`dimos/navigation/motion/deployment_plan.md`):
+#
+#     motion_planner -> trajectory_follower -> cmd_vel_mux
+#
+# So this composes from the module list rather than from go2_zenoh_raycaster, which
+# would drag in the CmdVelMux that now belongs on the robot. What stays here is
+# everything that is either expensive (the raycaster), global (the MLS graph), or
+# attached to the operator (rerun, clicks, teleop).
+#
+# THIS BLUEPRINT ALONE DOES NOT DRIVE. Without the baked host running there is no
+# planner, no follower and no mux, so clicks become goals and MLS plans a global
+# path that nothing tracks. Bring the robot host up first:
+#
+#     dimos bake motion_planner trajectory_follower cmd_vel_mux go2_tf \
+#         -o motion-host --builder zigbuild --target aarch64-unknown-linux-gnu.2.31
+#
+# Topology: go2web runs as the zenoh ROUTER on 7447 (GO2_ZENOH_MODE=router in
+# its unit) and everything hangs off it as a client. The host dials it over
+# loopback (DIMOS_ZENOH_MODE=client, DIMOS_ZENOH_CONNECT=tcp/127.0.0.1:7447 --
+# that link is where odometry comes from, and it keeps the 30 Hz stream off the
+# wifi); it listens on nothing. The laptop dials the same router once:
+# --robot-ip <robot>. A router forwards to its CLIENTS -- there is no second
+# port and no double dial anymore.
+#
+# tf is robot-local now: go2_tf is baked into the host and publishes the mount
+# tree there, so the base_link <- mid360_link leg no longer depends on the
+# laptop being up. Both baked modules still hold their pose until that leg
+# arrives on tf -- planning nothing rather than planning off-heading -- and say
+# so with one "dropping odometry" line per outage.
+#
+# cmd_vel still crosses back to the laptop, because GO2Zenoh is what talks to the
+# go2web bridge. This cut buys jitter immunity on the control loop, not fewer wire
+# crossings -- see "What this cut does and does not buy" in the deployment plan.
+go2_zenoh_motion_local = autoconnect(
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config({"world/pointlio_map": None, "world/lidar": None}),
+    ),
+    GO2Zenoh.blueprint(mid360_mount_rpy_deg=MID360_MOUNT_RPY_DEG),
+    RayTracingVoxelMap.blueprint(**_motion_raycaster),
+    _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    MovementManager.blueprint(),
+).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")

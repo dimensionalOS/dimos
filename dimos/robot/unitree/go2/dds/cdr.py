@@ -19,6 +19,12 @@ A spec class declares ``__cdr_fields__`` — an ordered list of ``(name, type)``
 class, or ``("array", elem, n)`` / ``("seq", elem)``. ``decode(buf, Cls)`` walks
 the body with CDR alignment and returns a populated instance.
 
+Only primitives align, each to its own size. A struct — nested or top-level — has
+no alignment of its own: it starts wherever the previous field ended, and its
+first primitive member does the aligning. ``LowState`` is the case that proves
+it: ``motor_state[]`` follows ``imu_state.temperature`` (a ``u8``) and its own
+first member is ``mode`` (a ``u8``), so the array starts on an odd byte.
+
 This replaces per-message hand-rolled decoders: the wire layout lives in the
 spec, not in code. The same spec also generates the IDL we embed into mcaps.
 """
@@ -44,30 +50,6 @@ _PRIM: dict[str, tuple[str, int, str]] = {
     "f64": ("d", 8, "<f8"),
     "bool": ("?", 1, "<?"),
 }
-
-
-def _align_of(t: Any) -> int:
-    """CDR alignment (bytes) of a field type."""
-    if isinstance(t, str):
-        if t == "string":
-            return 4  # u32 length prefix
-        return _PRIM[t][1]
-    if isinstance(t, tuple):
-        if t[0] == "array":
-            return _align_of(t[1])
-        if t[0] == "seq":
-            return 4  # u32 length prefix
-    if isinstance(t, type):
-        return _struct_align(t)
-    raise TypeError(f"unknown field type {t!r}")
-
-
-def _struct_align(cls: Any) -> int:
-    a = getattr(cls, "__cdr_align__", None)
-    if a is None:
-        a = max((_align_of(t) for _, t in cls.__cdr_fields__), default=1)
-        cls.__cdr_align__ = a
-    return a
 
 
 class Cursor:
@@ -115,7 +97,6 @@ def _read(cur: Cursor, t: Any) -> Any:
             return cur.prim_array(elem, n)
         return [_read(cur, elem) for _ in range(n)]
     if isinstance(t, type):
-        cur.align(_struct_align(t))
         return _read_struct(cur, t)
     raise TypeError(f"unknown field type {t!r}")
 
@@ -131,5 +112,4 @@ def decode(buf: bytes, cls: Any) -> tuple[Any, int]:
     cheapest correctness check against a real recording.
     """
     cur = Cursor(buf)
-    cur.align(_struct_align(cls))
     return _read_struct(cur, cls), cur.p

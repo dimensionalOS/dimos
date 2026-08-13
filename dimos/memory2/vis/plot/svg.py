@@ -104,11 +104,17 @@ def _break_on_gaps(
 
 def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
     """Render a Plot to an SVG string via matplotlib."""
-    with plt.style.context("dark_background"):
+    with plt.style.context("dark_background"), plt.rc_context({"svg.fonttype": "none"}):
+        # fonttype none: labels stay TEXT in the svg (selectable, greppable),
+        # not vector outlines
         fig, ax = plt.subplots(figsize=(width, height))
-        fig.patch.set_alpha(0.0)
+        # Solid, not transparent: the theme's text is white, and tick labels
+        # sit OUTSIDE the axes rectangle — on a light viewer they vanish.
+        fig.patch.set_facecolor("#0f1530")
         ax.set_facecolor("#16213e")
         ax.grid(True, color="#2a2a4a", linewidth=0.5)
+        if plot.ylabel:
+            ax.set_ylabel(plot.ylabel)
 
         # Lazily create twin y-axes for any element with axis != None.
         # All twins share the primary x-axis (matplotlib `ax.twinx()`).
@@ -238,7 +244,7 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
                 bbox_to_anchor=(1.02, 0.5),
             )
 
-        ax.set_xlabel("time (s)")
+        ax.set_xlabel(plot.xlabel or "time (s)")
         _apply_time_axis(ax, plot)
 
         # Make room on the right for offset twin spines (each extra twin past
