@@ -70,6 +70,32 @@ _RX_READ_TIMEOUT_MS = 20
 _UsbInitialization = TypeVar("_UsbInitialization")
 
 
+def _set_device_bitrate(gs: Any, bitrate: int) -> None:
+    """Program the adapter's bit timing for ``bitrate``.
+
+    ``GsUsb.set_bitrate`` only has hardcoded timing tables for 48 MHz and
+    80 MHz core clocks; adapters like the CANable 2.0 (STM32G431, 170 MHz
+    CAN clock) fall through them. Fall back to computing the timing from
+    the device's own reported clock and programming the registers directly,
+    the same way python-can's gs_usb backend does.
+    """
+    if gs.set_bitrate(bitrate):
+        return
+    timing = can.BitTiming.from_sample_point(
+        f_clock=gs.device_capability.fclk_can,
+        bitrate=bitrate,
+        sample_point=87.5,
+    )
+    prop_seg = 1
+    gs.set_timing(
+        prop_seg=prop_seg,
+        phase_seg1=timing.tseg1 - prop_seg,
+        phase_seg2=timing.tseg2,
+        sjw=timing.sjw,
+        brp=timing.brp,
+    )
+
+
 def _initialize_ready_usb_device(
     vendor_id: int,
     product_id: int,
@@ -137,8 +163,10 @@ class GsUsbMacBus(can.BusABC):
             if not out_eps:
                 raise can.CanInitializationError("gs_usb adapter has no OUT endpoint")
             gs = GsUsb(device)
-            if not gs.set_bitrate(bitrate):
-                raise can.CanInitializationError(f"failed to set bitrate {bitrate}")
+            try:
+                _set_device_bitrate(gs, bitrate)
+            except Exception as exc:
+                raise can.CanInitializationError(f"failed to set bitrate {bitrate}: {exc}") from exc
             gs.start(_GS_CAN_MODE_LISTEN_ONLY if listen_only else 0)
             return gs, out_eps[0].bEndpointAddress
 
