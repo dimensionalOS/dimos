@@ -64,7 +64,11 @@ def main() -> int:
 
     import pygame
 
-    adapter = OpenYamAdapter(address=args.channel)
+    # Set CTRL_MODE=MIT at connect (idempotent). The motors' persisted mode
+    # survives arm power cycles, and MIT frames do nothing in other modes —
+    # observed on hardware: state streams fine but the arm ignores motion
+    # commands. The canonical Linux adapter also sets MIT mode at startup.
+    adapter = OpenYamAdapter(address=args.channel, auto_set_mit_mode=True)
     if not adapter.connect():
         sys.exit("connect failed")
     if not adapter.write_enable(True):
