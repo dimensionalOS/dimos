@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,9 +104,9 @@ class _FakeSession:
         self.info = _FakeInfo([_FakeLink(dst) for dst in links])
 
 
-def _await(session: _FakeSession, **config) -> float:
+def _await(session: _FakeSession, connect: list[str], connect_timeout: float) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
-    service = ZenohService(**config)
+    service = ZenohService(connect=connect, connect_timeout=connect_timeout)
     started = time.monotonic()
     service._await_connect(session)
     return time.monotonic() - started
