@@ -20,6 +20,8 @@ Start ``dimos run xarm7-planner-coordinator``, then run this module with
 
 from __future__ import annotations
 
+from typing import cast
+
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import (
@@ -41,12 +43,12 @@ _client = RPCClient(None, ManipulationModule)
 
 def groups() -> tuple[PlanningGroupInfo, ...]:
     """List opaque planning-group IDs and capabilities."""
-    return _client.list_planning_groups()
+    return cast("tuple[PlanningGroupInfo, ...]", _client.list_planning_groups())
 
 
 def state() -> ManipulationSnapshot:
     """Get one snapshot containing every planning group."""
-    return _client.get_state()
+    return cast("ManipulationSnapshot", _client.get_state())
 
 
 def plan_joints(
@@ -57,7 +59,7 @@ def plan_joints(
     """Plan joint motion without executing it."""
     group = _select_group(planning_group)
     target = JointState(name=list(group.joint_names), position=positions)
-    return _client.plan_to_joints({group.id: target}, speed_scale)
+    return cast("PlanResult", _client.plan_to_joints({group.id: target}, speed_scale))
 
 
 def plan_pose(
@@ -77,17 +79,17 @@ def plan_pose(
         position=Vector3(x, y, z),
         orientation=current.orientation,
     )
-    return _client.plan_to_poses({group.id: target}, speed_scale)
+    return cast("PlanResult", _client.plan_to_poses({group.id: target}, speed_scale))
 
 
 def execute(blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
     """Consume and execute the pending plan."""
-    return _client.execute(blocking, timeout)
+    return cast("ExecutionResult", _client.execute(blocking, timeout))
 
 
 def wait(timeout: float | None = None) -> ExecutionResult:
     """Wait for the current execution's terminal JTT status."""
-    return _client.wait_for_execution(timeout)
+    return cast("ExecutionResult", _client.wait_for_execution(timeout))
 
 
 def move_linear(
@@ -99,26 +101,29 @@ def move_linear(
     blocking: bool = True,
 ) -> MoveResult:
     """Move an end effector by a world-frame translation."""
-    return _client.move_linear(
-        dx,
-        dy,
-        dz,
-        planning_group,
-        check_collision,
-        None,
-        blocking,
-        None,
+    return cast(
+        "MoveResult",
+        _client.move_linear(
+            dx,
+            dy,
+            dz,
+            planning_group,
+            check_collision,
+            None,
+            blocking,
+            None,
+        ),
     )
 
 
 def gripper(position: float, planning_group: str | None = None) -> CommandResult:
     """Set gripper opening in metres."""
-    return _client.set_gripper_position(position, planning_group)
+    return cast("CommandResult", _client.set_gripper_position(position, planning_group))
 
 
 def cancel() -> ExecutionResult:
     """Cancel planning or active execution."""
-    return _client.cancel()
+    return cast("ExecutionResult", _client.cancel())
 
 
 def _select_group(
@@ -148,7 +153,7 @@ def add_box(
 ) -> str | None:
     """Add a box obstacle."""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return _client.add_obstacle(name, pose, "box", [w, h, d], None)
+    return cast("str | None", _client.add_obstacle(name, pose, "box", [w, h, d], None))
 
 
 def update_obstacle(
@@ -160,7 +165,7 @@ def update_obstacle(
     color: list[float] | None = None,
 ) -> bool:
     """Replace a complete obstacle."""
-    return _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color)
+    return cast("bool", _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color))
 
 
 def update_box(
@@ -219,12 +224,12 @@ def update_pose(
         position=Vector3(x=x, y=y, z=z),
         orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
     )
-    return _client.update_obstacle_pose(name, pose)
+    return cast("bool", _client.update_obstacle_pose(name, pose))
 
 
 def remove(obstacle_id: str) -> bool:
     """Remove an obstacle by ID."""
-    return _client.remove_obstacle(obstacle_id)
+    return cast("bool", _client.remove_obstacle(obstacle_id))
 
 
 def stop() -> None:
