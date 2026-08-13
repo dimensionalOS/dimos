@@ -255,6 +255,11 @@ class NativeModule(Module):
         # set transport so native modules know which one to spawn
         env["DIMOS_TRANSPORT"] = global_config.transport
 
+        if global_config.transport == "zenoh":
+            from dimos.protocol.service.zenohservice import ZenohConfig, native_env
+
+            env.update(native_env(ZenohConfig()))
+
         # set Rust logging to match Python level
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
             os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
