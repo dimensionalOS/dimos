@@ -19,19 +19,16 @@ use dimos_module::native_config;
 use rayon::prelude::*;
 use validator::ValidationError;
 
-use crate::adjacency::{
-    build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId, NO_CELL,
-};
+use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
 use crate::edges::{build_node_edges, build_node_edges_region, PlannerGraph};
-use crate::nodes::{place_nodes, place_nodes_region};
+use crate::nodes::{place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams};
 use crate::planner;
 use crate::surfaces::{
     add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
 };
-use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
+use crate::voxel::{voxelize, VoxelKey};
 
 /// Node positions bucketed by spacing-sized grid cell, for crowding checks.
-type NodeBins = AHashMap<(i32, i32, i32), Vec<(f32, f32, f32)>>;
 
 #[native_config]
 #[derive(Clone)]
@@ -105,6 +102,20 @@ impl Config {
     /// Max traversable vertical step in cells.
     pub fn step_cells(&self) -> i32 {
         (self.step_threshold_m / self.voxel_size).floor() as i32
+    }
+
+    /// Config-derived scalars for node placement.
+    pub fn placement_params(&self) -> PlacementParams {
+        PlacementParams {
+            clearance_cells: self.headroom_cells(),
+            step_cells: self.step_cells(),
+            voxel_size: self.voxel_size,
+            node_spacing_m: self.node_spacing_m,
+            wall_clearance_m: self.wall_clearance_m,
+            wall_buffer_m: self.wall_buffer_m,
+            wall_buffer_weight: self.wall_buffer_weight,
+            step_penalty_weight: self.step_penalty_weight,
+        }
     }
 }
 
@@ -233,7 +244,6 @@ impl Planner {
         config: &Config,
     ) {
         let step = config.step_cells();
-        let clearance = config.headroom_cells();
         // Removal frees cell ids and the insert loop below recycles them, so a
         // node id captured here is not stable. Capture doomed nodes by
         // coordinate while their ids still resolve.
@@ -266,21 +276,21 @@ impl Planner {
             config.voxel_size,
             step,
         );
-        self.relocate_dead_nodes(&dead_nodes, config);
+        let params = config.placement_params();
+        relocate_dead_nodes(
+            &self.graph.cells,
+            &self.graph.surface_lookup,
+            &mut self.graph.nodes,
+            &dead_nodes,
+            &params,
+        );
         let window = self.node_window(&seeds, config);
         place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
-            clearance,
-            step,
+            &params,
             &added_ids,
             &window,
-            config.voxel_size,
-            config.node_spacing_m,
-            config.wall_clearance_m,
-            config.wall_buffer_m,
-            config.wall_buffer_weight,
-            config.step_penalty_weight,
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
             &mut self.graph.nodes,
@@ -422,115 +432,12 @@ impl Planner {
         self.rebuild_nodes(config);
     }
 
-    /// Move nodes whose cell died onto a nearby live cell instead of dropping
-    /// them, so transient surface flicker cannot delete and respawn graph
-    /// structure. Dead nodes are keyed by their captured coordinate because
-    /// their ids were freed and may now alias recycled live cells.
-    /// Unrelocatable nodes are marked NO_CELL and dropped by the sticky
-    /// retention pass.
-    fn relocate_dead_nodes(&mut self, dead_nodes: &[(usize, VoxelKey)], config: &Config) {
-        if dead_nodes.is_empty() {
-            return;
-        }
-        let step = config.step_cells();
-        let graph = &mut self.graph;
-        let cells = &graph.cells;
-        let lookup = &graph.surface_lookup;
-        let dead_idx: AHashSet<usize> = dead_nodes.iter().map(|&(i, _)| i).collect();
-        let mut taken: AHashSet<CellId> = graph
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !dead_idx.contains(i))
-            .map(|(_, n)| n.cell_id)
-            .collect();
-        // Spacing bins of live node positions: a relocation may not land where
-        // another node is already close, so transient fragment fallbacks die
-        // instead of crowding onto the main surface.
-        let spacing = config.node_spacing_m;
-        let crowd_sq = (0.9 * spacing) * (0.9 * spacing);
-        let bin_of = |p: (f32, f32, f32)| {
-            (
-                (p.0 / spacing).floor() as i32,
-                (p.1 / spacing).floor() as i32,
-                (p.2 / spacing).floor() as i32,
-            )
-        };
-        let mut bins: NodeBins = AHashMap::new();
-        for (i, n) in graph.nodes.iter().enumerate() {
-            if !dead_idx.contains(&i) {
-                bins.entry(bin_of(n.pos)).or_default().push(n.pos);
-            }
-        }
-        let crowded = |p: (f32, f32, f32)| {
-            let (bx, by, bz) = bin_of(p);
-            for dx in -1..=1_i32 {
-                for dy in -1..=1_i32 {
-                    for dz in -1..=1_i32 {
-                        let Some(near) = bins.get(&(bx + dx, by + dy, bz + dz)) else {
-                            continue;
-                        };
-                        for q in near {
-                            let d = (p.0 - q.0, p.1 - q.1, p.2 - q.2);
-                            if d.0 * d.0 + d.1 * d.1 + d.2 * d.2 < crowd_sq {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            false
-        };
-        for &(ni, (ix, iy, iz)) in dead_nodes {
-            let mut best: Option<(i32, CellId, VoxelKey)> = None;
-            for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
-                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
-                    continue;
-                };
-                for &nz in zs {
-                    let dz = (nz - iz).abs();
-                    if dz > step {
-                        continue;
-                    }
-                    let k = (ix + dx, iy + dy, nz);
-                    let Some(id) = cells.id(k) else {
-                        continue;
-                    };
-                    if taken.contains(&id) {
-                        continue;
-                    }
-                    let rank = 2 * dz + dx.abs() + dy.abs();
-                    if best.is_none_or(|(r, _, _)| rank < r) {
-                        best = Some((rank, id, k));
-                    }
-                }
-            }
-            let n = &mut graph.nodes[ni];
-            match best {
-                Some((_, id, k)) => {
-                    let pos = surface_point_xyz(k.0, k.1, k.2, config.voxel_size);
-                    if crowded(pos) {
-                        n.cell_id = NO_CELL;
-                        continue;
-                    }
-                    taken.insert(id);
-                    n.cell_id = id;
-                    n.pos = pos;
-                }
-                None => n.cell_id = NO_CELL,
-            }
-        }
-    }
-
-    /// Live cells within the node-graph margin of the changed cells, walked as
-    /// a BFS ball over cell adjacency. Wall distances and Voronoi labels
-    /// propagate along graph edges, so the ball is exactly the region a change
-    /// can reach, without paying for the hull between scattered changes.
+    /// Live cells within the node-graph margin of the changed cells, walked
+    /// as a BFS ball over cell adjacency. The ball is exactly the region a
+    /// change can reach.
     fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
-        // Wall distances only matter out to the penalty band, and nodes are
-        // sticky, so the ball covers the buffer reach of the changed surface
-        // cells plus slack. The morphology pad is already realized in the
-        // seeds, which are post-extraction surface diffs.
+        // Wall distances only matter out to the penalty band, so the ball
+        // covers the buffer reach of the changed cells plus slack.
         const SLACK_CELLS: i32 = 2;
         let voxel_size = config.voxel_size;
         let buffer_cells =
@@ -582,19 +489,10 @@ impl Planner {
 
     /// Full rebuild of nodes and node edges from the current cells.
     fn rebuild_nodes(&mut self, config: &Config) {
-        let clearance = config.headroom_cells();
-        let step = config.step_cells();
         place_nodes(
             &mut self.graph.cells,
             &self.by_col,
-            clearance,
-            step,
-            config.voxel_size,
-            config.node_spacing_m,
-            config.wall_clearance_m,
-            config.wall_buffer_m,
-            config.wall_buffer_weight,
-            config.step_penalty_weight,
+            &config.placement_params(),
             &mut self.graph.wall_state,
             &mut self.graph.node_scratch,
             &mut self.graph.nodes,
@@ -724,6 +622,11 @@ impl ChangeBounds {
 
 #[cfg(test)]
 mod region_tests {
+    /// Slack for comparing regional and full-rebuild path lengths. Node
+    /// placement differs between the two, so paths are equivalent, not equal.
+    const PATH_LEN_RATIO: f32 = 1.6;
+    const PATH_LEN_SLACK_M: f32 = 0.5;
+
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -887,12 +790,119 @@ mod region_tests {
         let pf = full.plan(s, g, &cfg).expect("full build plans");
         let pr = region.plan(s, g, &cfg).expect("region build plans");
         let (lf, lr) = (path_len(&pf), path_len(&pr));
-        assert!(lr <= lf * 1.6 + 0.5, "region path too long: {lr} vs {lf}");
-        assert!(lf <= lr * 1.6 + 0.5, "full path too long: {lf} vs {lr}");
+        assert!(
+            lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+            "region path too long: {lr} vs {lf}"
+        );
+        assert!(
+            lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+            "full path too long: {lf} vs {lr}"
+        );
     }
 
     /// A local change must not move nodes beyond its reach. Distant nodes are
     /// sticky by contract, which keeps refined paths stable frame to frame.
+    /// A floor patch raised by one voxel must relocate its nodes upward in
+    /// place. Every node's position must match the cell it claims, which a
+    /// stale-id relocation breaks by leaving nodes meters from their cell.
+    #[test]
+    fn raised_floor_relocates_nodes_in_place() {
+        use crate::voxel::surface_point_xyz;
+
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::default();
+        p.update_global_map(&all, &cfg);
+        let in_patch = |pos: (f32, f32, f32)| {
+            let d = (pos.0 - 1.5, pos.1 - 1.5);
+            (d.0 * d.0 + d.1 * d.1).sqrt() < 1.2
+        };
+        let doomed_xy: Vec<(f32, f32)> = p
+            .graph
+            .nodes
+            .iter()
+            .filter(|n| in_patch(n.pos))
+            .map(|n| (n.pos.0, n.pos.1))
+            .collect();
+        assert!(!doomed_xy.is_empty(), "test needs a node inside the patch");
+
+        let b = RegionBounds {
+            origin_x: 1.5,
+            origin_y: 1.5,
+            radius: 1.2,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let pts: Vec<(f32, f32, f32)> = slice(&all, &b, vs)
+            .iter()
+            .map(|&(x, y, _)| (x, y, 0.15))
+            .collect();
+        p.update_region(&pts, &b, &cfg);
+
+        for n in p.graph.nodes.iter() {
+            let k = p.graph.cells.coord(n.cell_id);
+            assert_eq!(
+                n.pos,
+                surface_point_xyz(k.0, k.1, k.2, vs),
+                "node pos must match its cell {k:?}"
+            );
+        }
+        // Relocation preserves each node's xy exactly. A drop-and-re-derive
+        // pass would place fresh NMS nodes at different cells.
+        for &(x, y) in &doomed_xy {
+            assert!(
+                p.graph
+                    .nodes
+                    .iter()
+                    .any(|n| n.pos.0 == x && n.pos.1 == y && (n.pos.2 - 0.2).abs() < 1e-6),
+                "node at ({x}, {y}) must relocate up in place"
+            );
+        }
+    }
+
+    /// A junk voxel near a node shifts the local wall-distance field. A
+    /// fresh re-derivation would move the node to the new local maximum, but
+    /// sticky retention must keep it exactly where it was.
+    #[test]
+    fn sticky_node_keeps_its_place_when_the_field_shifts() {
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::default();
+        p.update_global_map(&all, &cfg);
+
+        // The node nearest the center of the open left half.
+        let target = p
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.pos)
+            .min_by(|a, b| {
+                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
+                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
+                da.total_cmp(&db)
+            })
+            .unwrap();
+
+        // Junk appears 0.25 m from the node, shrinking its wall distance.
+        let b = RegionBounds {
+            origin_x: target.0,
+            origin_y: target.1,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        pts.push((target.0 + 0.25, target.1, 0.45));
+        p.update_region(&pts, &b, &cfg);
+
+        assert!(
+            p.graph.nodes.iter().any(|n| n.pos == target),
+            "sticky node moved on a nearby junk voxel: {target:?}"
+        );
+    }
+
     #[test]
     fn sticky_nodes_survive_distant_changes() {
         let cfg = test_config();
@@ -1013,8 +1023,14 @@ mod region_tests {
             );
             if let (Some(pf), Some(pr)) = (pf, pr) {
                 let (lf, lr) = (path_len(&pf), path_len(&pr));
-                assert!(lr <= lf * 1.6 + 0.5, "region path too long: {lr} vs {lf}");
-                assert!(lf <= lr * 1.6 + 0.5, "full path too long: {lf} vs {lr}");
+                assert!(
+                    lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+                    "region path too long: {lr} vs {lf}"
+                );
+                assert!(
+                    lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
+                    "full path too long: {lf} vs {lr}"
+                );
             }
         }
     }

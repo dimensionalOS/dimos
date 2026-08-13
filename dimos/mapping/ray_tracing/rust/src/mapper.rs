@@ -15,8 +15,8 @@
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, emit_points, emit_points_fine, update_map_timed, Config, FrameHits,
-    LocalBounds, UpdatePhases, VoxelMap,
+    batch_local_bounds, emit_points, emit_points_fine, update_map, Config, Cylinder, FrameHits,
+    LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -29,23 +29,20 @@ pub struct Pose {
 }
 
 /// The per-frame mapping loop shared by the native module and the Python
-/// binding: cloud registration, map update, region batching, and emission.
-/// Callers own transport only (stamp matching, message IO, publish cadence).
+/// binding. Callers own transport only.
 pub struct Mapper {
     config: Config,
     map: VoxelMap,
     live: FrameHits,
     batch_points: Vec<Point>,
     batch_origins: Vec<Point>,
+    last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
-    register_s: f64,
-    phases: UpdatePhases,
 }
 
 impl Mapper {
-    /// Callers validate the config at their boundary (module startup, pyo3
-    /// constructor) before handing it over.
+    /// The config must already be validated at the caller's boundary.
     pub fn new(config: Config) -> Self {
         Self {
             config,
@@ -53,10 +50,9 @@ impl Mapper {
             live: FrameHits::default(),
             batch_points: Vec::new(),
             batch_origins: Vec::new(),
+            last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
-            register_s: 0.0,
-            phases: UpdatePhases::default(),
         }
     }
 
@@ -68,10 +64,9 @@ impl Mapper {
         &self.map
     }
 
-    /// Register a sensor-frame cloud into the world by `pose`, fold it into the
-    /// map, and return the registered points.
-    pub fn add_frame(&mut self, sensor_points: &[Point], pose: Pose) -> Vec<Point> {
-        let t = std::time::Instant::now();
+    /// Register a sensor-frame cloud into the world by `pose` and fold it into
+    /// the map.
+    pub fn add_frame(&mut self, sensor_points: &[Point], pose: Pose) {
         let (px, py, pz) = pose.position;
         let (qx, qy, qz, qw) = pose.orientation;
         let translation = Vector3::new(px, py, pz);
@@ -84,25 +79,31 @@ impl Mapper {
                 (p.x, p.y, p.z)
             })
             .collect();
-        self.register_s += t.elapsed().as_secs_f64();
+        self.ingest(points, pose.position);
+    }
 
-        self.live = update_map_timed(
-            &mut self.map,
-            pose.position,
-            &points,
-            &self.config,
-            &mut self.phases,
-        );
+    /// Fold an already world-frame cloud into the map, raycasting from `origin`.
+    pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
+        self.ingest(world_points, origin);
+    }
+
+    fn ingest(&mut self, points: Vec<Point>, origin: Point) {
+        self.live = update_map(&mut self.map, origin, &points, &self.config);
 
         // The batch only feeds the local region bounds, so skip it when both
         // local maps are disabled.
         if self.config.emit_every > 0 || self.config.fine_emit_every > 0 {
             self.batch_points.extend_from_slice(&points);
-            self.batch_origins.push(pose.position);
+            self.batch_origins.push(origin);
         }
-        self.last_origin = pose.position;
+        self.last_registered = points;
+        self.last_origin = origin;
         self.frame_count += 1;
-        points
+    }
+
+    /// The last frame's world-frame points, for visualization tools.
+    pub fn registered_points(&self) -> &[Point] {
+        &self.last_registered
     }
 
     /// Whether the local map is due this frame.
@@ -120,13 +121,18 @@ impl Mapper {
         emit_due(self.frame_count, self.config.global_emit_every)
     }
 
-    /// Cylinder over the batched frames as (cx, cy, radius, z_min, z_max),
-    /// leaving the batch intact. An empty batch yields a zero-radius region at
-    /// the last origin.
-    pub fn local_bounds(&self) -> (f32, f32, f32, f32, f32) {
+    /// Cylinder over the batched frames, leaving the batch intact. An empty
+    /// batch yields a zero-radius region at the last origin.
+    pub fn local_bounds(&self) -> Cylinder {
         if self.batch_origins.is_empty() {
             let (x, y, z) = self.last_origin;
-            return (x, y, 0.0, z, z);
+            return Cylinder {
+                cx: x,
+                cy: y,
+                radius: 0.0,
+                z_min: z,
+                z_max: z,
+            };
         }
         let margin = self.config.shadow_depth + self.config.voxel_size;
         batch_local_bounds(
@@ -139,15 +145,15 @@ impl Mapper {
 
     /// Cylinder over the batched frames, consuming the batch. Only the local
     /// map cadence may consume, so a faster fine cadence cannot starve it.
-    pub fn take_local_bounds(&mut self) -> (f32, f32, f32, f32, f32) {
+    pub fn take_local_bounds(&mut self) -> Cylinder {
         let bounds = self.local_bounds();
         self.batch_points.clear();
         self.batch_origins.clear();
         bounds
     }
 
-    /// All healthy voxel centers plus this frame's live voxels.
-    pub fn global_points(&self) -> Vec<Point> {
+    /// All healthy voxel centers plus this frame's live voxels, flat triples.
+    pub fn global_points(&self) -> Vec<f32> {
         emit_points(
             &self.map,
             self.config.voxel_size,
@@ -157,8 +163,9 @@ impl Mapper {
         )
     }
 
-    /// Support-gated healthy voxel centers within `bounds`, plus live voxels.
-    pub fn local_points(&self, bounds: &LocalBounds) -> Vec<Point> {
+    /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
+    /// flat triples.
+    pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
         emit_points(
             &self.map,
             self.config.voxel_size,
@@ -170,7 +177,7 @@ impl Mapper {
 
     /// Fine cells within `bounds` under the same gates as `local_points`, or
     /// None when the fine layer is off.
-    pub fn fine_points(&self, bounds: &LocalBounds) -> Option<Vec<Point>> {
+    pub fn fine_points(&self, bounds: &LocalBounds) -> Option<Vec<f32>> {
         let (divisor, _) = self.config.fine_layer()?;
         Some(emit_points_fine(
             &self.map,
@@ -182,30 +189,14 @@ impl Mapper {
         ))
     }
 
-    /// Cumulative wall time (s) per add_frame phase, in execution order.
-    pub fn phase_times(&self) -> Vec<(&'static str, f64)> {
-        let p = &self.phases;
-        vec![
-            ("register", self.register_s),
-            ("filter", p.filter),
-            ("raycast", p.raycast),
-            ("hits", p.hits),
-            ("accumulate", p.accumulate),
-            ("misses", p.misses),
-            ("normals", p.normals),
-            ("fine_live", p.fine_live),
-        ]
-    }
-
     /// Reset to an empty map, keeping the config.
     pub fn clear(&mut self) {
         self.map.clear();
         self.live = FrameHits::default();
         self.batch_points.clear();
         self.batch_origins.clear();
+        self.last_registered.clear();
         self.frame_count = 0;
-        self.register_s = 0.0;
-        self.phases = UpdatePhases::default();
     }
 }
 
@@ -248,11 +239,20 @@ mod tests {
             position: (10.0, 0.0, 0.0),
             orientation: (0.0, 0.0, half, half),
         };
-        let world = mapper.add_frame(&[(3.5, 0.0, 0.5)], pose);
+        mapper.add_frame(&[(3.5, 0.0, 0.5)], pose);
+        let world = mapper.registered_points();
         assert!((world[0].0 - 10.0).abs() < 1e-5);
         assert!((world[0].1 - 3.5).abs() < 1e-5);
         let global = mapper.global_points();
-        assert_eq!(global, vec![(10.5, 3.5, 0.5)]);
+        assert_eq!(global, vec![10.5, 3.5, 0.5]);
+    }
+
+    #[test]
+    fn world_frame_add_skips_registration() {
+        let mut mapper = Mapper::new(config());
+        mapper.add_frame_world(vec![(5.5, 0.5, 0.5)], (0.0, 0.0, 0.0));
+        assert_eq!(mapper.registered_points(), &[(5.5, 0.5, 0.5)]);
+        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
     }
 
     #[test]
@@ -262,9 +262,9 @@ mod tests {
             position: (0.0, 0.0, 0.0),
             orientation: IDENTITY,
         };
-        let world = mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
-        assert_eq!(world, vec![(5.5, 0.5, 0.5)]);
-        assert_eq!(mapper.global_points(), vec![(5.5, 0.5, 0.5)]);
+        mapper.add_frame(&[(5.5, 0.5, 0.5)], pose);
+        assert_eq!(mapper.registered_points(), &[(5.5, 0.5, 0.5)]);
+        assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
     }
 
     #[test]
@@ -275,14 +275,14 @@ mod tests {
             orientation: IDENTITY,
         };
         mapper.add_frame(&[(2.0, 0.5, 0.5)], pose);
-        let (cx, cy, radius, ..) = mapper.take_local_bounds();
-        assert_eq!((cx, cy), (1.0, 2.0));
-        assert!(radius > 0.0);
+        let c = mapper.take_local_bounds();
+        assert_eq!((c.cx, c.cy), (1.0, 2.0));
+        assert!(c.radius > 0.0);
 
         // Batch consumed: the next call has nothing and centers on the pose.
-        let (cx, cy, radius, z_min, z_max) = mapper.take_local_bounds();
-        assert_eq!((cx, cy, radius), (1.0, 2.0, 0.0));
-        assert_eq!((z_min, z_max), (3.0, 3.0));
+        let c = mapper.take_local_bounds();
+        assert_eq!((c.cx, c.cy, c.radius), (1.0, 2.0, 0.0));
+        assert_eq!((c.z_min, c.z_max), (3.0, 3.0));
     }
 
     #[test]
@@ -338,6 +338,6 @@ mod tests {
             ..config()
         });
         fine.add_frame(&[(5.1, 0.1, 0.1)], pose);
-        assert_eq!(fine.fine_points(&bounds).unwrap(), vec![(5.25, 0.25, 0.25)]);
+        assert_eq!(fine.fine_points(&bounds).unwrap(), vec![5.25, 0.25, 0.25]);
     }
 }

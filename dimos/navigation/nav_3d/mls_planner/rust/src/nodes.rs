@@ -21,7 +21,7 @@ use std::cmp::Ordering;
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
-use crate::adjacency::{CellId, Edge, SurfaceCells, NO_CELL};
+use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::dijkstra::{dijkstra, dijkstra_region, DijkstraState, Weight};
 use crate::surfaces::{is_standable, ColumnIz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -34,19 +34,152 @@ pub struct NodeData {
     pub pos: (f32, f32, f32),
 }
 
+/// Config-derived scalars shared by the node placement passes.
+pub struct PlacementParams {
+    pub clearance_cells: i32,
+    pub step_cells: i32,
+    pub voxel_size: f32,
+    pub node_spacing_m: f32,
+    pub wall_clearance_m: f32,
+    pub wall_buffer_m: f32,
+    pub wall_buffer_weight: f32,
+    pub step_penalty_weight: f32,
+}
+
+/// A relocation may not land within this fraction of the node spacing of
+/// another node.
+const RELOCATION_CROWDING_FRAC: f32 = 0.9;
+
+type BinKey = (i32, i32, i32);
+
+/// Spacing bins of node positions for crowding checks during relocation.
+struct NodeBins {
+    spacing: f32,
+    crowd_sq: f32,
+    bins: AHashMap<BinKey, Vec<(f32, f32, f32)>>,
+}
+
+impl NodeBins {
+    fn new(spacing: f32) -> Self {
+        let crowd = RELOCATION_CROWDING_FRAC * spacing;
+        Self {
+            spacing,
+            crowd_sq: crowd * crowd,
+            bins: AHashMap::new(),
+        }
+    }
+
+    fn bin_of(&self, p: (f32, f32, f32)) -> (i32, i32, i32) {
+        (
+            (p.0 / self.spacing).floor() as i32,
+            (p.1 / self.spacing).floor() as i32,
+            (p.2 / self.spacing).floor() as i32,
+        )
+    }
+
+    fn insert(&mut self, p: (f32, f32, f32)) {
+        let bin = self.bin_of(p);
+        self.bins.entry(bin).or_default().push(p);
+    }
+
+    fn crowded(&self, p: (f32, f32, f32)) -> bool {
+        let (bx, by, bz) = self.bin_of(p);
+        for dx in -1..=1_i32 {
+            for dy in -1..=1_i32 {
+                for dz in -1..=1_i32 {
+                    let Some(near) = self.bins.get(&(bx + dx, by + dy, bz + dz)) else {
+                        continue;
+                    };
+                    for q in near {
+                        let d = (p.0 - q.0, p.1 - q.1, p.2 - q.2);
+                        if d.0 * d.0 + d.1 * d.1 + d.2 * d.2 < self.crowd_sq {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Move nodes whose cell died onto a nearby live cell instead of dropping
+/// them, so transient surface flicker cannot delete and respawn graph
+/// structure. Dead nodes are keyed by their captured coordinate because their
+/// ids were freed and may now alias recycled live cells. Unrelocatable nodes
+/// are marked NO_CELL and dropped by the sticky retention pass.
+pub fn relocate_dead_nodes(
+    cells: &SurfaceCells,
+    lookup: &SurfaceLookup,
+    nodes: &mut [NodeData],
+    dead_nodes: &[(usize, VoxelKey)],
+    params: &PlacementParams,
+) {
+    if dead_nodes.is_empty() {
+        return;
+    }
+    let step = params.step_cells;
+    let dead_idx: AHashSet<usize> = dead_nodes.iter().map(|&(i, _)| i).collect();
+    let mut taken: AHashSet<CellId> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !dead_idx.contains(i))
+        .map(|(_, n)| n.cell_id)
+        .collect();
+    // Fragment fallbacks whose relocation would crowd the main surface die
+    // instead of moving.
+    let mut bins = NodeBins::new(params.node_spacing_m);
+    for (i, n) in nodes.iter().enumerate() {
+        if !dead_idx.contains(&i) {
+            bins.insert(n.pos);
+        }
+    }
+    for &(ni, (ix, iy, iz)) in dead_nodes {
+        let mut best: Option<(i32, CellId, VoxelKey)> = None;
+        for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                continue;
+            };
+            for &nz in zs {
+                let dz = (nz - iz).abs();
+                if dz > step {
+                    continue;
+                }
+                let k = (ix + dx, iy + dy, nz);
+                let Some(id) = cells.id(k) else {
+                    continue;
+                };
+                if taken.contains(&id) {
+                    continue;
+                }
+                let rank = 2 * dz + dx.abs() + dy.abs();
+                if best.is_none_or(|(r, _, _)| rank < r) {
+                    best = Some((rank, id, k));
+                }
+            }
+        }
+        let n = &mut nodes[ni];
+        match best {
+            Some((_, id, k)) => {
+                let pos = surface_point_xyz(k.0, k.1, k.2, params.voxel_size);
+                if bins.crowded(pos) {
+                    n.cell_id = NO_CELL;
+                    continue;
+                }
+                taken.insert(id);
+                n.cell_id = id;
+                n.pos = pos;
+            }
+            None => n.cell_id = NO_CELL,
+        }
+    }
+}
+
 /// Place graph nodes across the surface, spaced out and biased away from walls.
-#[allow(clippy::too_many_arguments)]
 pub fn place_nodes(
     cells: &mut SurfaceCells,
     by_col: &ColumnIz,
-    clearance_cells: i32,
-    step_cells: i32,
-    voxel_size: f32,
-    node_spacing_m: f32,
-    wall_clearance_m: f32,
-    wall_buffer_m: f32,
-    wall_buffer_weight: f32,
-    step_penalty_weight: f32,
+    params: &PlacementParams,
     state: &mut DijkstraState,
     scratch: &mut NodeScratch,
     out_nodes: &mut Vec<NodeData>,
@@ -57,11 +190,17 @@ pub fn place_nodes(
     }
 
     let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_cells(cells, by_col, clearance_cells, step_cells, &mut wall_seeds);
+    collect_wall_adjacent_cells(
+        cells,
+        by_col,
+        params.clearance_cells,
+        params.step_cells,
+        &mut wall_seeds,
+    );
     dijkstra(cells, &wall_seeds, state, Weight::Base);
 
     // Floor is the hard clearance. NMS already prefers the clearest cells.
-    let node_floor = wall_clearance_m;
+    let node_floor = params.wall_clearance_m;
     let candidates: Vec<CellId> = cells
         .ids()
         .filter(|&id| state.dist[id as usize] >= node_floor)
@@ -71,21 +210,28 @@ pub fn place_nodes(
         candidates,
         &state.dist,
         &[],
-        voxel_size,
-        node_spacing_m,
+        params.voxel_size,
+        params.node_spacing_m,
         out_nodes,
     );
 
     let domain: Vec<CellId> = cells.ids().collect();
-    ensure_node_per_component(cells, &state.dist, voxel_size, &domain, scratch, out_nodes);
+    ensure_node_per_component(
+        cells,
+        &state.dist,
+        params.voxel_size,
+        &domain,
+        scratch,
+        out_nodes,
+    );
 
     apply_wall_safe_penalty(
         cells,
         &state.dist,
-        wall_clearance_m,
-        wall_buffer_m,
-        wall_buffer_weight,
-        step_penalty_weight,
+        params.wall_clearance_m,
+        params.wall_buffer_m,
+        params.wall_buffer_weight,
+        params.step_penalty_weight,
     );
 }
 
@@ -115,25 +261,16 @@ fn place_from_candidates(
     }
 }
 
-/// Regional counterpart to place_nodes: recompute the wall-distance field
-/// inside the window, then repair rather than re-derive the node set. Nodes
-/// are sticky: survivors keep their placement so the graph and the refined
-/// path stay stable frame to frame. New nodes are placed only on cells added
-/// by this update, spaced by NMS against every existing node.
+/// Regional counterpart to place_nodes. Nodes are sticky: survivors keep
+/// their placement, and new nodes are placed only on cells added by this
+/// update, spaced by NMS against every existing node.
 #[allow(clippy::too_many_arguments)]
 pub fn place_nodes_region(
     cells: &mut SurfaceCells,
     by_col: &ColumnIz,
-    clearance_cells: i32,
-    step_cells: i32,
+    params: &PlacementParams,
     added: &[CellId],
     window: &AHashSet<CellId>,
-    voxel_size: f32,
-    node_spacing_m: f32,
-    wall_clearance_m: f32,
-    wall_buffer_m: f32,
-    wall_buffer_weight: f32,
-    step_penalty_weight: f32,
     wall_state: &mut DijkstraState,
     scratch: &mut NodeScratch,
     nodes: &mut Vec<NodeData>,
@@ -142,14 +279,14 @@ pub fn place_nodes_region(
     collect_wall_adjacent_in_window(
         cells,
         by_col,
-        clearance_cells,
-        step_cells,
+        params.clearance_cells,
+        params.step_cells,
         window,
         &mut wall_seeds,
     );
     dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
 
-    let node_floor = wall_clearance_m;
+    let node_floor = params.wall_clearance_m;
     // Drop only nodes whose cell died (marked NO_CELL by relocation) or whose
     // fresh wall distance marks the cell impassable. The distance field is
     // stale outside the window, so only in-window nodes are judged by it.
@@ -161,20 +298,20 @@ pub fn place_nodes_region(
     let kept: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
 
     // New nodes only in comfortably open freshly-seen space: transient fringe
-    // cells near walls must not birth graph structure every frame.
-    let birth_floor = wall_clearance_m + 0.5 * wall_buffer_m;
+    // cells near walls must not spawn graph structure every frame.
+    let spawn_floor = params.wall_clearance_m + SPAWN_FLOOR_BUFFER_FRAC * params.wall_buffer_m;
     let candidates: Vec<CellId> = added
         .iter()
         .copied()
-        .filter(|&id| cells.is_live(id) && wall_state.dist[id as usize] >= birth_floor)
+        .filter(|&id| cells.is_live(id) && wall_state.dist[id as usize] >= spawn_floor)
         .collect();
     place_from_candidates(
         cells,
         candidates,
         &wall_state.dist,
         &kept,
-        voxel_size,
-        node_spacing_m,
+        params.voxel_size,
+        params.node_spacing_m,
         nodes,
     );
 
@@ -183,15 +320,22 @@ pub fn place_nodes_region(
         .copied()
         .filter(|&id| cells.is_live(id))
         .collect();
-    ensure_node_per_component(cells, &wall_state.dist, voxel_size, &domain, scratch, nodes);
+    ensure_node_per_component(
+        cells,
+        &wall_state.dist,
+        params.voxel_size,
+        &domain,
+        scratch,
+        nodes,
+    );
 
     apply_wall_safe_penalty_region(
         cells,
         &wall_state.dist,
-        wall_clearance_m,
-        wall_buffer_m,
-        wall_buffer_weight,
-        step_penalty_weight,
+        params.wall_clearance_m,
+        params.wall_buffer_m,
+        params.wall_buffer_weight,
+        params.step_penalty_weight,
         window,
         scratch,
     );
@@ -221,6 +365,10 @@ const HOLE_SPAN_CELLS: i32 = 4;
 
 /// Smallest unserved component the fallback seeding still gives a node.
 const MIN_COMPONENT_CELLS: u32 = 4;
+
+/// Fraction of the wall buffer added to the clearance before a fresh cell may
+/// spawn a node.
+const SPAWN_FLOOR_BUFFER_FRAC: f32 = 0.5;
 
 /// True when any missing 4-neighbor opens onto a real edge rather than a hole.
 fn real_wall_adjacent(
@@ -670,12 +818,145 @@ mod tests {
         c
     }
 
+    fn params(wall_clearance_m: f32, step_penalty_weight: f32) -> PlacementParams {
+        PlacementParams {
+            clearance_cells: 5,
+            step_cells: 2,
+            voxel_size: VOXEL,
+            node_spacing_m: 1.0,
+            wall_clearance_m,
+            wall_buffer_m: 0.3,
+            wall_buffer_weight: 1.0,
+            step_penalty_weight,
+        }
+    }
+
     fn build_cells(surface: &[VoxelKey], step_cells: i32) -> SurfaceCells {
         let mut lookup = SurfaceLookup::new();
         build_surface_lookup(surface, &mut lookup);
         let mut sc = SurfaceCells::default();
         build_surface_cells(&mut sc, &lookup, VOXEL, step_cells);
         sc
+    }
+
+    #[test]
+    fn relocation_moves_node_onto_replacement_cell() {
+        // The node's cell (5, 5, 0) died and the surviving surface is the
+        // same column one voxel up. The node must move there, not vanish.
+        let surface = [(5, 5, 1)];
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&surface, &mut lookup);
+        let sc = build_cells(&surface, 2);
+        let mut nodes = vec![NodeData {
+            cell_id: 0,
+            pos: surface_point_xyz(5, 5, 0, VOXEL),
+        }];
+        relocate_dead_nodes(
+            &sc,
+            &lookup,
+            &mut nodes,
+            &[(0, (5, 5, 0))],
+            &params(0.0, 0.0),
+        );
+        let id = sc.id((5, 5, 1)).unwrap();
+        assert_eq!(nodes[0].cell_id, id, "node must move to the raised cell");
+        assert_eq!(nodes[0].pos, surface_point_xyz(5, 5, 1, VOXEL));
+    }
+
+    #[test]
+    fn crowded_relocation_drops_the_node() {
+        // A live node already sits next to the dead node's only free
+        // relocation target, so the relocation is rejected and the node
+        // marked dead.
+        let surface = [(5, 5, 1), (5, 6, 0)];
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&surface, &mut lookup);
+        let sc = build_cells(&surface, 2);
+        let live_id = sc.id((5, 6, 0)).unwrap();
+        let mut nodes = vec![
+            NodeData {
+                cell_id: NO_CELL,
+                pos: surface_point_xyz(5, 5, 0, VOXEL),
+            },
+            NodeData {
+                cell_id: live_id,
+                pos: surface_point_xyz(5, 6, 0, VOXEL),
+            },
+        ];
+        relocate_dead_nodes(
+            &sc,
+            &lookup,
+            &mut nodes,
+            &[(0, (5, 5, 0))],
+            &params(0.0, 0.0),
+        );
+        assert_eq!(
+            nodes[0].cell_id, NO_CELL,
+            "crowded relocation must mark the node dead"
+        );
+        assert_eq!(nodes[1].cell_id, live_id, "live node untouched");
+    }
+
+    #[test]
+    fn spawn_floor_blocks_new_nodes_near_walls() {
+        // Region placement spawns nodes only on added cells that clear
+        // wall_clearance + half the buffer. A cell one ring in from the patch
+        // edge (0.1 m) sits under the 0.15 m spawn floor. The center (~0.5 m)
+        // clears it.
+        let surface = open_patch(0, 0, 10);
+        let mut sc = build_cells(&surface, 2);
+        let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
+        let corner = sc.id((0, 0, 0)).unwrap();
+        let mut nodes = vec![NodeData {
+            cell_id: corner,
+            pos: surface_point_xyz(0, 0, 0, VOXEL),
+        }];
+        let window: AHashSet<CellId> = sc.ids().collect();
+        let near_wall = sc.id((1, 5, 0)).unwrap();
+        let open = sc.id((5, 5, 0)).unwrap();
+        let p = PlacementParams {
+            node_spacing_m: 0.2,
+            ..params(0.0, 0.0)
+        };
+        place_nodes_region(
+            &mut sc,
+            &ColumnIz::default(),
+            &p,
+            &[near_wall, open],
+            &window,
+            &mut state,
+            &mut scratch,
+            &mut nodes,
+        );
+        let ids: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
+        assert!(ids.contains(&open), "open added cell must spawn a node");
+        assert!(
+            !ids.contains(&near_wall),
+            "added cell under the spawn floor must not spawn a node"
+        );
+    }
+
+    #[test]
+    fn tiny_component_gets_no_fallback_node() {
+        // A 3-cell fragment is below MIN_COMPONENT_CELLS, so only the 8-cell
+        // strip earns a fallback node.
+        let mut cells_in: Vec<VoxelKey> = (0..8).map(|ix| (ix, 0, 0)).collect();
+        cells_in.extend((0..3).map(|ix| (ix, 20, 0)));
+        let mut sc = build_cells(&cells_in, 2);
+        let mut state = DijkstraState::default();
+        let mut scratch = NodeScratch::default();
+        let mut nodes = Vec::new();
+        place_nodes(
+            &mut sc,
+            &ColumnIz::default(),
+            &params(0.5, 0.0),
+            &mut state,
+            &mut scratch,
+            &mut nodes,
+        );
+        assert_eq!(nodes.len(), 1, "only the big strip gets a node");
+        assert_eq!(sc.coord(nodes[0].cell_id).1, 0);
     }
 
     #[test]
@@ -687,14 +968,7 @@ mod tests {
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
-            5,
-            2,
-            VOXEL,
-            1.0,
-            0.0,
-            0.3,
-            1.0,
-            0.0,
+            &params(0.0, 0.0),
             &mut state,
             &mut scratch,
             &mut nodes,
@@ -720,14 +994,7 @@ mod tests {
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
-            5,
-            2,
-            VOXEL,
-            1.0,
-            0.5,
-            0.3,
-            1.0,
-            0.0,
+            &params(0.5, 0.0),
             &mut state,
             &mut scratch,
             &mut nodes,
@@ -752,14 +1019,7 @@ mod tests {
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
-            5,
-            2,
-            VOXEL,
-            1.0,
-            0.0,
-            0.3,
-            1.0,
-            0.0,
+            &params(0.0, 0.0),
             &mut state,
             &mut scratch,
             &mut nodes,
@@ -801,14 +1061,7 @@ mod tests {
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
-            5,
-            2,
-            VOXEL,
-            1.0,
-            0.0,
-            0.3,
-            1.0,
-            0.0,
+            &params(0.0, 0.0),
             &mut state,
             &mut scratch,
             &mut nodes,
@@ -830,14 +1083,7 @@ mod tests {
             place_nodes(
                 &mut sc,
                 &ColumnIz::default(),
-                5,
-                2,
-                VOXEL,
-                1.0,
-                0.0,
-                0.3,
-                1.0,
-                step_weight,
+                &params(0.0, step_weight),
                 &mut state,
                 &mut scratch,
                 &mut nodes,

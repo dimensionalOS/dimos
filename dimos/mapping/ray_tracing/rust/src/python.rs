@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::{batch_local_bounds, iter_global_normals, Config, LocalBounds};
+use crate::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -33,40 +33,37 @@ fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32,
         )));
     }
     let view = arr.as_array();
+    let finite = |x: f32, y: f32, z: f32| {
+        (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+    };
+    // Contiguous input skips per-element bounds checks.
+    if let Some(slice) = view.as_slice() {
+        return Ok(slice
+            .chunks_exact(3)
+            .filter_map(|p| finite(p[0], p[1], p[2]))
+            .collect());
+    }
     Ok((0..shape[0])
-        .filter_map(|i| {
-            let x = view[[i, 0]];
-            let y = view[[i, 1]];
-            let z = view[[i, 2]];
-            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
-        })
+        .filter_map(|i| finite(view[[i, 0]], view[[i, 1]], view[[i, 2]]))
         .collect())
 }
 
 fn points_to_array<'py>(py: Python<'py>, points: &[(f32, f32, f32)]) -> Bound<'py, PyArray2<f32>> {
     let mut out: Vec<f32> = Vec::with_capacity(points.len() * 3);
     for &(x, y, z) in points {
-        out.push(x);
-        out.push(y);
-        out.push(z);
+        out.extend_from_slice(&[x, y, z]);
     }
     Array2::from_shape_vec((points.len(), 3), out)
         .expect("3 elements pushed per point")
         .into_pyarray(py)
 }
 
-/// Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
-/// Non-finite points are ignored.
-#[pyfunction]
-fn local_bounds(
-    points: &Bound<'_, PyAny>,
-    origins: &Bound<'_, PyAny>,
-    percentile: f32,
-    margin: f32,
-) -> PyResult<(f32, f32, f32, f32, f32)> {
-    let pts = extract_tuples(points, "points")?;
-    let origs = extract_tuples(origins, "origins")?;
-    Ok(batch_local_bounds(&pts, &origs, percentile, margin))
+/// Zero-copy hand-off of flat (x, y, z) triples to a (N, 3) numpy array.
+fn flat_to_array(py: Python<'_>, points: Vec<f32>) -> Bound<'_, PyArray2<f32>> {
+    let n = points.len() / 3;
+    Array2::from_shape_vec((n, 3), points)
+        .expect("emitters produce whole triples")
+        .into_pyarray(py)
 }
 
 #[pyclass]
@@ -139,44 +136,53 @@ impl VoxelRayMapper {
         self.mapper.config().shadow_depth
     }
 
-    /// Register a sensor-frame cloud by the pose, fold it into the map, and
-    /// return the registered points as (N, 3) float32.
-    fn add_frame<'py>(
+    /// Register a sensor-frame cloud by the pose and fold it into the map.
+    fn add_frame(
         &mut self,
-        py: Python<'py>,
-        points: &Bound<'py, PyAny>,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
         position: (f32, f32, f32),
         orientation: (f32, f32, f32, f32),
-    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    ) -> PyResult<()> {
         let pts = extract_tuples(points, "points")?;
         let pose = Pose {
             position,
             orientation,
         };
         let mapper = &mut self.mapper;
-        let world = py.allow_threads(move || mapper.add_frame(&pts, pose));
-        Ok(points_to_array(py, &world))
+        py.allow_threads(move || mapper.add_frame(&pts, pose));
+        Ok(())
+    }
+
+    /// Fold an already world-frame cloud into the map, raycasting from origin.
+    fn add_frame_world(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        origin: (f32, f32, f32),
+    ) -> PyResult<()> {
+        let pts = extract_tuples(points, "points")?;
+        let mapper = &mut self.mapper;
+        py.allow_threads(move || mapper.add_frame_world(pts, origin));
+        Ok(())
+    }
+
+    /// The last frame's registered points as (N, 3) float32.
+    fn registered_points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        points_to_array(py, self.mapper.registered_points())
     }
 
     /// Cylinder over the frames batched since the last call, as
     /// (cx, cy, radius, z_min, z_max). Consumes the batch.
     fn take_local_bounds(&mut self) -> (f32, f32, f32, f32, f32) {
-        self.mapper.take_local_bounds()
-    }
-
-    /// Cumulative wall seconds per add_frame phase, in execution order.
-    fn phase_times(&self) -> Vec<(String, f64)> {
-        self.mapper
-            .phase_times()
-            .into_iter()
-            .map(|(name, secs)| (name.to_string(), secs))
-            .collect()
+        let c = self.mapper.take_local_bounds();
+        (c.cx, c.cy, c.radius, c.z_min, c.z_max)
     }
 
     fn global_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let mapper = &self.mapper;
         let points = py.allow_threads(|| mapper.global_points());
-        points_to_array(py, &points)
+        flat_to_array(py, points)
     }
 
     /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
@@ -225,7 +231,7 @@ impl VoxelRayMapper {
         };
         let mapper = &self.mapper;
         let points = py.allow_threads(|| mapper.local_points(&bounds));
-        points_to_array(py, &points)
+        flat_to_array(py, points)
     }
 
     /// Fine-cell centers inside the cylinder as (M, 3) float32.
@@ -248,7 +254,7 @@ impl VoxelRayMapper {
         let points = py
             .allow_threads(|| mapper.fine_points(&bounds))
             .ok_or_else(|| PyValueError::new_err("fine_divisor is not set"))?;
-        Ok(points_to_array(py, &points))
+        Ok(flat_to_array(py, points))
     }
 
     fn voxel_count(&self) -> usize {
@@ -275,6 +281,5 @@ impl VoxelRayMapper {
 #[pymodule]
 fn dimos_voxel_ray_tracing(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
-    m.add_function(wrap_pyfunction!(local_bounds, m)?)?;
     Ok(())
 }

@@ -105,21 +105,43 @@ fn batch_bounds_ignore_far_outlier() {
         })
         .collect();
     points.push((60.0, 1.0, 30.0));
-    let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&points, &origins, 95.0, 0.3);
-    assert_eq!(cx, 2.0);
-    assert_eq!(cy, 1.0);
-    assert!(radius < 2.0, "outlier inflated radius to {radius}");
-    assert!(z_max < 2.0, "outlier inflated z_max to {z_max}");
-    assert!((-0.5..=0.0).contains(&z_min), "z_min out of range: {z_min}");
+    let c = batch_local_bounds(&points, &origins, 95.0, 0.3);
+    assert_eq!(c.cx, 2.0);
+    assert_eq!(c.cy, 1.0);
+    assert!(c.radius < 2.0, "outlier inflated radius to {}", c.radius);
+    assert!(c.z_max < 2.0, "outlier inflated z_max to {}", c.z_max);
+    assert!(
+        (-0.5..=0.0).contains(&c.z_min),
+        "z_min out of range: {}",
+        c.z_min
+    );
 }
 
 #[test]
 fn batch_bounds_empty_points_zero_radius() {
     let origins = [(1.0, 2.0, 3.0)];
-    let (cx, cy, radius, z_min, z_max) = batch_local_bounds(&[], &origins, 95.0, 0.3);
-    assert_eq!((cx, cy, radius), (1.0, 2.0, 0.0));
-    assert_eq!(z_min, 3.0);
-    assert_eq!(z_max, 3.0);
+    let c = batch_local_bounds(&[], &origins, 95.0, 0.3);
+    assert_eq!((c.cx, c.cy, c.radius), (1.0, 2.0, 0.0));
+    assert_eq!(c.z_min, 3.0);
+    assert_eq!(c.z_max, 3.0);
+}
+
+/// clear() must empty the healthy-chunk index too. With support_min 0,
+/// emit_points reads only the index, so a stale entry would resurface here.
+#[test]
+fn clear_empties_healthy_chunk_index() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
+    let no_live = AHashSet::new();
+    assert!(!emit_points(&map, 1.0, None, 0, &no_live).is_empty());
+
+    map.clear();
+    assert!(map.voxels.is_empty());
+    assert!(
+        emit_points(&map, 1.0, None, 0, &no_live).is_empty(),
+        "cleared map must not emit from a stale chunk index"
+    );
 }
 
 #[test]
@@ -701,13 +723,13 @@ fn support_gate_drops_isolated_voxels() {
     let no_live = AHashSet::new();
     // support_min 0 emits every surface voxel.
     assert_eq!(
-        emit_points(&map, voxel_size, Some(&bounds), 0, &no_live).len(),
+        tuples(emit_points(&map, voxel_size, Some(&bounds), 0, &no_live)).len(),
         10
     );
 
     // Every patch cell has at least 3 surface neighbors (the corners exactly
     // 3), so support_min 3 keeps the patch and drops only the isolated voxel.
-    let gated = emit_points(&map, voxel_size, Some(&bounds), 3, &no_live);
+    let gated = tuples(emit_points(&map, voxel_size, Some(&bounds), 3, &no_live));
     assert_eq!(gated.len(), 9);
     let half = voxel_size * 0.5;
     let isolated = (20.0 + half, 20.0 + half, half);
@@ -759,6 +781,11 @@ fn sort_points(mut pts: Vec<(f32, f32, f32)>) -> Vec<(f32, f32, f32)> {
     pts
 }
 
+/// Flat emitter output as (x, y, z) tuples for assertions.
+fn tuples(flat: Vec<f32>) -> Vec<(f32, f32, f32)> {
+    flat.chunks_exact(3).map(|p| (p[0], p[1], p[2])).collect()
+}
+
 /// The chunk-indexed `emit_points` must return exactly what the old whole-map
 /// scan did, across randomized maps that straddle chunk boundaries, sparse and
 /// dense regions, and both bounded and unbounded queries.
@@ -797,7 +824,7 @@ fn emit_points_matches_naive_scan_on_random_maps() {
 
         for (support_min, use_bounds) in [(0, false), (0, true), (2, false), (2, true), (4, true)] {
             let b = use_bounds.then_some(&bounds);
-            let got = sort_points(emit_points(&map, voxel_size, b, support_min, &live));
+            let got = sort_points(tuples(emit_points(&map, voxel_size, b, support_min, &live)));
             let want = sort_points(emit_points_naive(&map, voxel_size, b, support_min, &live));
             assert_eq!(
                 got, want,
@@ -808,8 +835,8 @@ fn emit_points_matches_naive_scan_on_random_maps() {
 }
 
 /// The healthy-chunk index must stay lean regardless of how many unhealthy
-/// entries pile up in `voxels` — this is the whole point of indexing on health
-/// transitions instead of scanning every entry at emit time.
+/// entries pile up in `voxels`. Indexing on health transitions instead of
+/// scanning every entry at emit time is its whole point.
 #[test]
 fn healthy_chunk_index_excludes_dead_entries_regardless_of_count() {
     let mut map = VoxelMap::default();
@@ -823,7 +850,7 @@ fn healthy_chunk_index_excludes_dead_entries_regardless_of_count() {
     }
 
     let live = AHashSet::new();
-    let points = emit_points(&map, 1.0, None, 0, &live);
+    let points = tuples(emit_points(&map, 1.0, None, 0, &live));
     assert_eq!(points.len(), 9, "only the healthy patch is emitted");
 
     let indexed: usize = map.healthy_chunks.values().map(|s| s.len()).sum();
@@ -834,7 +861,7 @@ fn healthy_chunk_index_excludes_dead_entries_regardless_of_count() {
 }
 
 /// `update_map` drives both `record_hit` (new voxel becomes healthy) and
-/// `record_miss` (healthy voxel cleared) — the index must track both.
+/// `record_miss` (healthy voxel cleared). The index must track both.
 #[test]
 fn healthy_chunk_index_tracks_health_transitions_through_update_map() {
     let cfg = basic_config(); // min_health=0, max_health=1
@@ -865,10 +892,9 @@ fn healthy_chunk_index_tracks_health_transitions_through_update_map() {
 }
 
 /// Every voxel's incremental `support` field must equal a from-scratch
-/// 26-neighbor scan, after any sequence of hits, misses, and direct
-/// `set_health` calls in any order — including transitions that happen after
-/// a voxel's neighbors already exist (the case a naive "only seed the count on
-/// this voxel's own creation" implementation would get wrong).
+/// 26-neighbor scan after any sequence of hits, misses, and direct
+/// `set_health` calls. Covers transitions that happen after a voxel's
+/// neighbors already exist, which seeding only at creation would miss.
 #[test]
 fn support_field_matches_neighbor_scan_after_random_transitions() {
     let mut state = 5573589319906701683_u64;
@@ -995,7 +1021,7 @@ fn fine_emission_nests_inside_healthy_voxels() {
         &cfg,
     );
     let no_live = AHashSet::new();
-    let got = sort_points(emit_points_fine(&map, 1.0, 2, None, 0, &no_live));
+    let got = sort_points(tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live)));
     assert_eq!(got, vec![(5.25, 0.25, 0.25), (5.75, 0.75, 0.75)]);
 }
 
@@ -1012,7 +1038,7 @@ fn cleared_voxel_drops_fine_detail() {
     // Re-observing the voxel starts fresh instead of resurrecting old detail.
     update_map(&mut map, (0.0, 0.0, 0.0), &[(5.6, 0.6, 0.6)], &cfg);
     let no_live = AHashSet::new();
-    let got = emit_points_fine(&map, 1.0, 2, None, 0, &no_live);
+    let got = tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live));
     assert!(got.contains(&(5.75, 0.75, 0.75)));
     assert!(
         !got.contains(&(5.25, 0.25, 0.25)),
@@ -1033,7 +1059,7 @@ fn live_fine_cells_emit_before_confirmation() {
     let no_live = AHashSet::new();
     assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
     assert_eq!(
-        emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine),
+        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine)),
         vec![(5.25, 0.25, 0.25)],
         "this frame's returns show through the live merge"
     );
@@ -1041,7 +1067,7 @@ fn live_fine_cells_emit_before_confirmation() {
     // Once the voxel confirms healthy the gated path covers the live cell.
     let hits = update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
     assert_eq!(
-        emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine),
+        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &hits.fine)),
         vec![(5.25, 0.25, 0.25)],
         "a covered live cell is not emitted twice"
     );
@@ -1060,8 +1086,11 @@ fn fine_emission_applies_support_min() {
     map.observe_fine((20.5, 20.5, 0.5), 2, 1.0);
 
     let no_live = AHashSet::new();
-    assert_eq!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).len(), 10);
-    let gated = emit_points_fine(&map, 1.0, 2, None, 3, &no_live);
+    assert_eq!(
+        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live)).len(),
+        10
+    );
+    let gated = tuples(emit_points_fine(&map, 1.0, 2, None, 3, &no_live));
     assert_eq!(gated.len(), 9, "isolated voxel's fine cell is gated out");
 }
 
@@ -1186,7 +1215,14 @@ fn emit_points_fine_matches_naive_scan_on_random_maps() {
 
         for (support_min, use_bounds) in [(0, false), (0, true), (2, true), (4, true)] {
             let b = use_bounds.then_some(&bounds);
-            let got = sort_points(emit_points_fine(&map, 1.0, 3, b, support_min, &no_live));
+            let got = sort_points(tuples(emit_points_fine(
+                &map,
+                1.0,
+                3,
+                b,
+                support_min,
+                &no_live,
+            )));
             let want = sort_points(emit_points_fine_naive(&map, 1.0, 3, b, support_min));
             assert_eq!(
                 got, want,
@@ -1218,12 +1254,12 @@ fn fine_children_bin_exactly_to_their_parents() {
     update_map(&mut map, (20.0, 20.0, 20.0), &points, &cfg);
 
     let no_live = AHashSet::new();
-    let fine = emit_points_fine(&map, 1.0, 3, None, 0, &no_live);
+    let fine = tuples(emit_points_fine(&map, 1.0, 3, None, 0, &no_live));
     let binned: AHashSet<VoxelKey> = fine
         .iter()
         .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
         .collect();
-    let healthy: AHashSet<VoxelKey> = emit_points(&map, 1.0, None, 0, &no_live)
+    let healthy: AHashSet<VoxelKey> = tuples(emit_points(&map, 1.0, None, 0, &no_live))
         .iter()
         .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
         .collect();

@@ -282,7 +282,7 @@ pub fn truncate_to_safe(
         return Vec::new();
     }
 
-    // Hold the standoff only when blocked; a clean run to the goal has nothing
+    // Hold the standoff only when blocked. A clean run to the goal has nothing
     // to stand off from.
     if blocked {
         return back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
@@ -1211,6 +1211,85 @@ mod tests {
             xs.windows(2).all(|p| p[1] >= p[0]),
             "lead-in walked backward: {xs:?}"
         );
+    }
+
+    #[test]
+    fn select_entry_anchors_lead_at_the_nearest_candidate() {
+        // The nearest candidate connects, so the lead-in starts at the
+        // robot's own cell even though other candidates exist.
+        let plg = graph_with_nodes(&strip(20), &[(12, 0, 0)]);
+        let near = plg.cells.id((10, 0, 0)).unwrap();
+        let goal = plg.cells.id((19, 0, 0)).unwrap();
+        let goal_node = plg.nodes[0].cell_id;
+        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        )
+        .unwrap();
+        assert_eq!(
+            lead.first(),
+            Some(&near),
+            "lead must anchor at the robot's cell"
+        );
+        assert_eq!(lead.last(), Some(&goal_node));
+        assert_eq!(node_seq, vec![goal_node]);
+    }
+
+    #[test]
+    fn select_entry_falls_back_to_merged_rest_candidates() {
+        // The nearest candidate sits on a disconnected fragment. The fallback
+        // runs one merged wavefront over the rest, and only the candidate
+        // that actually reaches the node roots the lead-in.
+        let mut surface = strip(20);
+        surface.extend((0..3).map(|x| (x, 10, 0)));
+        let plg = graph_with_nodes(&surface, &[(12, 0, 0)]);
+        let near = plg.cells.id((1, 10, 0)).unwrap();
+        let far_rest = plg.cells.id((5, 0, 0)).unwrap();
+        let reaching_rest = plg.cells.id((14, 0, 0)).unwrap();
+        let goal = plg.cells.id((19, 0, 0)).unwrap();
+        let goal_node = plg.nodes[0].cell_id;
+        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+
+        let entry = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        );
+        assert!(entry.is_none(), "disconnected candidate must not connect");
+
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[far_rest, reaching_rest],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        )
+        .unwrap();
+        assert_eq!(
+            lead.first(),
+            Some(&reaching_rest),
+            "lead must root at the candidate that reaches the node"
+        );
+        assert_eq!(lead.last(), Some(&goal_node));
+        assert_eq!(node_seq, vec![goal_node]);
     }
 
     #[test]

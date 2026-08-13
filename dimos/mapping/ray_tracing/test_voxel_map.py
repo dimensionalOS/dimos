@@ -42,11 +42,12 @@ def test_add_frame_registers_by_pose() -> None:
     mapper = make_mapper()
     # Yaw 90 deg about z: sensor +x becomes world +y.
     half = np.sqrt(2.0) / 2.0
-    world = mapper.add_frame(
+    mapper.add_frame(
         np.array([[3.5, 0.0, 0.5]], dtype=np.float32),
         (10.0, 0.0, 0.0),
         (0.0, 0.0, half, half),
     )
+    world = mapper.registered_points()
     np.testing.assert_allclose(world[0], [10.0, 3.5, 0.5], atol=1e-5)
     np.testing.assert_allclose(mapper.global_map()[0], [10.5, 3.5, 0.5], atol=1e-5)
 
@@ -92,6 +93,28 @@ def test_local_map_filters_by_cylinder() -> None:
     local = mapper.local_map(ORIGIN, radius=10.0, z_min=-5.0, z_max=5.0)
     assert local.shape == (1, 3)
     np.testing.assert_allclose(local[0], [2.5, 0.5, 0.5])
+
+
+def test_add_frame_world_registers_at_world_coordinates() -> None:
+    mapper = make_mapper()
+    points = np.array([[105.55, 200.05, 3.05]], dtype=np.float32)
+    mapper.add_frame_world(points, (100.0, 200.0, 3.0))
+    np.testing.assert_allclose(mapper.registered_points(), points)
+    np.testing.assert_allclose(mapper.global_map()[0], [105.5, 200.5, 3.5])
+
+
+def test_local_map_fine_emits_fine_centers() -> None:
+    mapper = VoxelRayMapper(voxel_size=1.0, max_range=100.0, fine_divisor=2, support_min=0)
+    mapper.add_frame(np.array([[5.1, 0.1, 0.1]], dtype=np.float32), ORIGIN, IDENTITY)
+    fine = mapper.local_map_fine((5.0, 0.0, 0.0), 5.0, -1.0, 1.0)
+    np.testing.assert_allclose(fine, [[5.25, 0.25, 0.25]])
+
+
+def test_local_map_fine_requires_fine_divisor() -> None:
+    mapper = make_mapper()
+    mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
+    with pytest.raises(ValueError, match="fine_divisor"):
+        mapper.local_map_fine((0.0, 0.0, 0.0), 10.0, -1.0, 1.0)
 
 
 def test_clear_resets_map() -> None:

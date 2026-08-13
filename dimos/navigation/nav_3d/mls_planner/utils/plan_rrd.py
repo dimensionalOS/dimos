@@ -32,6 +32,11 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.tf import StreamTF
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
+from dimos.memory2.vis.utils import (
+    DEFAULT_RENDER_VOXEL,
+    attach_pose_from_odom,
+    default_render_voxel,
+)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -52,7 +57,6 @@ AXIS_RADIUS_RATIO = 25
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
 DEFAULT_VOXEL_SIZE = 0.08
-DEFAULT_RENDER_VOXEL = 0.05
 
 # Mount frames as recorded on the tf stream.
 BASE_FRAME = "base_link"
@@ -80,7 +84,7 @@ TURBO_ORANGE = [245, 105, 24]
 TURBO_RED = [195, 37, 3]
 
 # Each series is (metric key, entity suffix, legend label, color). The suffix
-# sorts the legend top-to-bottom; the label overrides the displayed name.
+# sorts the legend top-to-bottom. The label overrides the displayed name.
 TIMING_SERIES = [
     ("total_ms", "1_total", "total", TURBO_ORANGE),
     ("update_ms", "2_update", "update", TURBO_GREEN),
@@ -120,24 +124,6 @@ def _parse_configs(
         c, b, w = (float(p) for p in parts)
         out.append((c, b, w))
     return out
-
-
-PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
-
-
-def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs, odom_obs = pair_obs.data
-    odom = odom_obs.data
-    pose_tuple = (
-        float(odom.position.x),
-        float(odom.position.y),
-        float(odom.position.z),
-        float(odom.orientation.x),
-        float(odom.orientation.y),
-        float(odom.orientation.z),
-        float(odom.orientation.w),
-    )
-    return lidar_obs.with_pose(pose_tuple)
 
 
 def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
@@ -582,7 +568,7 @@ def main(
     import rerun as rr
 
     if render_voxel is None:
-        render_voxel = DEFAULT_RENDER_VOXEL * (voxel_size / DEFAULT_VOXEL_SIZE)
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
 
     db_path = resolve_named_path(dataset, ".db")
     crop = LocalCrop(local_radius, local_above, local_below)
@@ -598,7 +584,7 @@ def main(
         odom = store.stream(odom_stream, Odometry).order_by("ts")
 
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(_attach_pose_from_odom)
+            FnTransformer(attach_pose_from_odom)
         )
         ray_pipeline = pose_tagged.transform(
             RayTraceMap(

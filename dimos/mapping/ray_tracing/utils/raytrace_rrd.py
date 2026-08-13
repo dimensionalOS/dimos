@@ -25,12 +25,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import FnTransformer
-from dimos.memory2.type.observation import Observation
+from dimos.memory2.vis.utils import (
+    DEFAULT_RENDER_VOXEL,
+    attach_pose_from_odom,
+    default_render_voxel,
+)
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
@@ -39,9 +44,6 @@ TIMELINE = "ts"
 
 # --voxel-size default, and the render size --render-voxel scales from when unset.
 DEFAULT_VOXEL_SIZE = 0.1
-DEFAULT_RENDER_VOXEL = 0.05
-
-PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
 
 COLORS = {
     "naive": [90, 200, 90],
@@ -50,28 +52,27 @@ COLORS = {
 # Variants whose normal gate is active, so their normals are worth drawing.
 NORMAL_VARIANTS = {"defaults"}
 
-# Z-gradient stops, all bright enough to read on the viewer's black background.
-# The low end buys its contrast with chroma, not darkness, so floor points stay
-# visible. The coarse map climbs the cool family (violet to ice) and the fine
-# map the warm one (red to pale yellow), keeping the clouds separable at every
-# height, including under red-green colorblindness.
+# Z half-extent of the fine local map query around the robot (m).
+FINE_Z_HALF_EXTENT_M = 50.0
+
+# Z-gradient stops: coarse map climbs a cool family, fine map a warm one, so
+# the clouds stay separable at every height.
 COARSE_RAMP = np.array(
     [[150, 70, 255], [60, 130, 255], [70, 220, 255], [215, 250, 255]], np.float32
 )
 FINE_RAMP = np.array([[255, 60, 50], [255, 130, 30], [255, 200, 60], [255, 250, 170]], np.float32)
-# Normal arrows blend their voxel's gradient color toward magenta, the one hue
-# family neither ramp uses: still height-coded, never mistaken for a point.
+# Normal arrows blend toward magenta, the one hue family neither ramp uses.
 NORMAL_TINT = np.array([255, 60, 235], np.float32)
 NORMAL_TINT_BLEND = 0.45
 
 
-def _normal_colors(voxel_colors: np.ndarray) -> np.ndarray:
+def _normal_colors(voxel_colors: NDArray[np.float32]) -> NDArray[np.uint8]:
     """Magenta-cast copies of the voxel colors for their normal arrows."""
     mixed = (1.0 - NORMAL_TINT_BLEND) * voxel_colors + NORMAL_TINT_BLEND * NORMAL_TINT
     return mixed.astype(np.uint8)
 
 
-def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
+def _height_colors(centers: NDArray[np.float32], base: list[int]) -> NDArray[np.uint8]:
     """Shade each voxel by height, keeping the method's base hue."""
     if len(centers) == 0:
         return np.empty((0, 3), np.uint8)
@@ -83,7 +84,7 @@ def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
     return (np.asarray(base, np.float32) * brightness[:, None]).astype(np.uint8)
 
 
-def _z_gradient(centers: np.ndarray, ramp: np.ndarray) -> np.ndarray:
+def _z_gradient(centers: NDArray[np.float32], ramp: NDArray[np.float32]) -> NDArray[np.uint8]:
     """Color each point by height, interpolated along the ramp's stops.
 
     Normalizes to the 2nd-98th height percentiles so a few stray points cannot
@@ -102,21 +103,6 @@ def _z_gradient(centers: np.ndarray, ramp: np.ndarray) -> np.ndarray:
     lo = np.minimum(pos.astype(np.int32), len(ramp) - 2)
     frac = (pos - lo)[:, None]
     return (ramp[lo] * (1.0 - frac) + ramp[lo + 1] * frac).astype(np.uint8)
-
-
-def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
-    lidar_obs, odom_obs = pair_obs.data
-    odom = odom_obs.data
-    pose_tuple = (
-        float(odom.position.x),
-        float(odom.position.y),
-        float(odom.position.z),
-        float(odom.orientation.x),
-        float(odom.orientation.y),
-        float(odom.orientation.z),
-        float(odom.orientation.w),
-    )
-    return lidar_obs.with_pose(pose_tuple)
 
 
 def main(
@@ -157,7 +143,7 @@ def main(
     import rerun as rr
 
     if render_voxel is None:
-        render_voxel = DEFAULT_RENDER_VOXEL * (voxel_size / DEFAULT_VOXEL_SIZE)
+        render_voxel = default_render_voxel(voxel_size, DEFAULT_VOXEL_SIZE)
 
     db_path = resolve_named_path(dataset, ".db")
 
@@ -196,7 +182,7 @@ def main(
             lidar = lidar.from_time(from_time)
         odom = store.stream(odom_stream, Odometry).order_by("ts")
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
-            FnTransformer(_attach_pose_from_odom)
+            FnTransformer(attach_pose_from_odom)
         )
 
         trajectory: list[tuple[float, float, float]] = []
@@ -208,11 +194,14 @@ def main(
             # Sensor-frame cloud: the mapper registers it by the odom pose.
             raw = obs.data.points_f32()
             for mapper in mappers.values():
-                pts = mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
+                mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1
 
             if count % emit_every != 0:
                 continue
+
+            # Both mappers register the same cloud, so any one's copy serves.
+            pts = next(iter(mappers.values())).registered_points()
 
             rr.set_time(TIMELINE, timestamp=obs.ts)
             robot = np.asarray([x, y, z], np.float32)
@@ -249,7 +238,7 @@ def main(
                 )
             if fine_divisor:
                 fine_centers = mappers["defaults"].local_map_fine(
-                    (x, y, z), max_range, z - 50.0, z + 50.0
+                    (x, y, z), max_range, z - FINE_Z_HALF_EXTENT_M, z + FINE_Z_HALF_EXTENT_M
                 )
                 rr.log(
                     "world/maps/fine",

@@ -16,7 +16,8 @@
 
 use ahash::{AHashMap, AHashSet};
 use arrayvec::ArrayVec;
-use nalgebra::{Matrix3, Vector3};
+use nalgebra::linalg::SymmetricEigen;
+use nalgebra::{Matrix3, Vector3, U3};
 use rayon::prelude::*;
 
 use super::{Voxel, VoxelKey, VoxelMap};
@@ -31,8 +32,13 @@ const NORMAL_PLANE_SIGMA_FRAC: f32 = 0.5;
 const NORMAL_MIN_SUPPORT: f32 = 0.5;
 
 /// The surface normal of a covariance, or None unless it is clearly planar.
+#[cfg(test)]
 pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<Vector3<f32>> {
-    let eig = cov.symmetric_eigen();
+    classify(&cov.symmetric_eigen())
+}
+
+/// fit_normal on an already-computed eigendecomposition.
+fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<Vector3<f32>> {
     let mut idx = [0usize, 1, 2];
     idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
     let e2 = eig.eigenvalues[idx[2]].max(0.0);
@@ -101,7 +107,8 @@ pub(super) fn pooled_normal(
     let sigma = NORMAL_PLANE_SIGMA_FRAC * voxel_size;
     let two_sig2 = 2.0 * sigma * sigma;
     let mut weights = [1.0_f32; NEIGHBORHOOD_CAP];
-    let mut cov = Matrix3::zeros();
+    // The last iteration's decomposition doubles as the final fit input.
+    let mut last_eig: Option<SymmetricEigen<f32, U3>> = None;
     for _ in 0..NORMAL_REWEIGHT_ITERS {
         let (mut wn, mut s, mut t) = (0.0_f32, Vector3::zeros(), Matrix3::zeros());
         for (nb, &w) in nbs.iter().zip(&weights) {
@@ -113,7 +120,7 @@ pub(super) fn pooled_normal(
             break;
         }
         let mean = s / wn;
-        cov = t / wn - mean * mean.transpose();
+        let cov = t / wn - mean * mean.transpose();
         let eig = cov.symmetric_eigen();
         let smallest = eig
             .eigenvalues
@@ -127,13 +134,14 @@ pub(super) fn pooled_normal(
             let dist = normal.dot(&(nb.centroid - mean)).abs();
             *w = (-(dist * dist) / two_sig2).exp();
         }
+        last_eig = Some(eig);
     }
     // Reject the plane if too many points had to be discarded to fit it.
     let kept: f32 = nbs.iter().zip(&weights).map(|(nb, &w)| w * nb.n).sum();
     if kept < NORMAL_MIN_SUPPORT * n_raw as f32 {
         return None;
     }
-    fit_normal(cov)
+    classify(&last_eig?)
 }
 
 /// Refit the cached normal of every voxel whose neighborhood changed
@@ -146,7 +154,9 @@ pub(super) fn refresh_voxels(
     voxel_size: f32,
 ) {
     let r = NORMAL_NEIGHBOR_RADIUS;
-    let mut dirty: AHashSet<VoxelKey> = AHashSet::new();
+    // Sized for the dilation's typical overlap so the serial loop never rehashes.
+    let mut dirty: AHashSet<VoxelKey> =
+        AHashSet::with_capacity(8 * (changed.len() + removed.len()));
     for &c in changed.iter().chain(removed.iter()) {
         for dx in -r..=r {
             for dy in -r..=r {

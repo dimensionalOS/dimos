@@ -42,12 +42,23 @@ class VoxelRayMapper:
         points: NDArray[np.float32],
         position: tuple[float, float, float],
         orientation: tuple[float, float, float, float],
-    ) -> NDArray[np.float32]:
+    ) -> None:
         """Register a sensor-frame cloud by the pose and fold it into the map.
 
         Points are (N, 3) float32. Orientation is an (x, y, z, w) quaternion.
-        Returns the registered world-frame points.
         """
+        ...
+
+    def add_frame_world(
+        self,
+        points: NDArray[np.float32],
+        origin: tuple[float, float, float],
+    ) -> None:
+        """Fold an already world-frame cloud into the map, raycasting from origin."""
+        ...
+
+    def registered_points(self) -> NDArray[np.float32]:
+        """Return the last frame's registered points as (N, 3) float32."""
         ...
 
     def take_local_bounds(self) -> tuple[float, float, float, float, float]:
@@ -55,10 +66,6 @@ class VoxelRayMapper:
 
         Returns (cx, cy, radius, z_min, z_max) and consumes the batch.
         """
-        ...
-
-    def phase_times(self) -> list[tuple[str, float]]:
-        """Cumulative wall seconds per add_frame phase, in execution order."""
         ...
 
     def global_map(self) -> NDArray[np.float32]:
@@ -106,16 +113,4 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-def local_bounds(
-    points: NDArray[np.float32],
-    origins: NDArray[np.float32],
-    percentile: float,
-    margin: float,
-) -> tuple[float, float, float, float, float]:
-    """Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
-
-    Non-finite points are ignored.
-    """
-    ...
-
-__all__ = ["VoxelRayMapper", "local_bounds"]
+__all__ = ["VoxelRayMapper"]
