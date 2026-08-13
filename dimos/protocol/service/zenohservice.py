@@ -89,7 +89,7 @@ def _default_multicast() -> bool:
     return global_config.zenoh_multicast
 
 
-def _default_gossip() -> bool:
+def _default_gossip() -> bool | None:
     from dimos.core.global_config import global_config
 
     return global_config.zenoh_gossip
@@ -127,7 +127,7 @@ def endpoint_addresses(endpoint: str) -> set[str]:
 
 
 class ZenohConfig(BaseConfig):
-    # client hands all routing to a zenohd router; peer meshes directly.
+    # client hands all routing to an external zenohd router. peer meshes directly.
     mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
     listen: list[str] = []
@@ -138,7 +138,8 @@ class ZenohConfig(BaseConfig):
     # Whether multicast scouting runs at all, as opposed to how far it reaches.
     multicast: bool = Field(default_factory=_default_multicast)
     # Learn peers from the peers already linked, not only from the dialed ones.
-    gossip: bool = Field(default_factory=_default_gossip)
+    # None follows scouting.
+    gossip: bool | None = Field(default_factory=_default_gossip)
     # Seconds to block in start() waiting for `connect` endpoints to link.
     connect_timeout: float = Field(default_factory=_default_connect_timeout)
 
@@ -148,11 +149,16 @@ class ZenohConfig(BaseConfig):
         return self.scouting_interface or (ALL_INTERFACES if self.scouting else LOOPBACK_INTERFACE)
 
     @property
+    def gossip_enabled(self) -> bool:
+        """Gossip discovery, following scouting unless set explicitly."""
+        return self.gossip if self.gossip is not None else self.scouting
+
+    @property
     def session_key(self) -> str:
         return (
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen))}|{self.multicast_interface}"
-            f"|{self.multicast}|{self.gossip}"
+            f"|{self.multicast}|{self.gossip_enabled}"
         )
 
 
@@ -163,7 +169,7 @@ def native_env(config: ZenohConfig) -> dict[str, str]:
         "DIMOS_ZENOH_LISTEN": ",".join(config.listen),
         "DIMOS_ZENOH_MODE": config.mode,
         "DIMOS_ZENOH_MULTICAST": "true" if config.multicast else "false",
-        "DIMOS_ZENOH_GOSSIP": "true" if config.gossip else "false",
+        "DIMOS_ZENOH_GOSSIP": "true" if config.gossip_enabled else "false",
         "DIMOS_ZENOH_INTERFACE": config.multicast_interface,
     }
 
@@ -192,7 +198,7 @@ class ZenohSessionPool:
                 zconfig.insert_json5(
                     "scouting/multicast/interface", json.dumps(config.multicast_interface)
                 )
-                zconfig.insert_json5("scouting/gossip/enabled", json.dumps(config.gossip))
+                zconfig.insert_json5("scouting/gossip/enabled", json.dumps(config.gossip_enabled))
                 self._sessions[key] = zenoh.open(zconfig)
                 logger.debug(f"Zenoh session opened in {config.mode} mode")
             return self._sessions[key]
@@ -200,8 +206,13 @@ class ZenohSessionPool:
     def close_all(self) -> None:
         """Close every pooled session and empty the pool."""
         with self._lock:
-            for session in self._sessions.values():
-                session.close()
+            for key, session in self._sessions.items():
+                # A close can time out while the session still holds links to
+                # unreachable peers. The pool is torn down either way.
+                try:
+                    session.close()
+                except zenoh.ZError as e:
+                    logger.warning(f"Zenoh session close failed for {key}: {e}")
             self._sessions.clear()
 
 
@@ -220,7 +231,15 @@ class ZenohService(Service):
         self._session: zenoh.Session | None = None
 
     def start(self) -> None:
-        self._session = self._session_pool.acquire(self.config)
+        try:
+            self._session = self._session_pool.acquire(self.config)
+        except zenoh.ZError as e:
+            if self.config.mode == "client":
+                raise RuntimeError(
+                    "zenoh client mode needs a reachable router, none at "
+                    f"{self.config.connect or 'any scouted locator'}"
+                ) from e
+            raise
         self._await_connect(self._session)
         super().start()
 
@@ -233,7 +252,8 @@ class ZenohService(Service):
         in start() for the same reason.
 
         Unreachable endpoints are a warning, not an error: one robot being down
-        should not stop the rest of the graph from coming up.
+        should not stop the rest of the graph from coming up. Client mode is
+        the exception, since zenoh refuses to open a session without a router.
         """
         pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
         if not pending or self.config.connect_timeout <= 0:
