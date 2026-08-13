@@ -228,6 +228,7 @@ class NativeModule(Module):
         env["DIMOS_TRANSPORT"] = global_config.transport
 
         if global_config.transport == "zenoh":
+            # Deferred so lcm-only runs never import the zenoh package.
             from dimos.protocol.service.zenohservice import ZenohConfig, native_env
 
             env.update(native_env(ZenohConfig()))
