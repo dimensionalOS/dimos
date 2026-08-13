@@ -77,8 +77,8 @@ if(APPLE)
 endif()
 install(TARGETS cuvslam_odometry RUNTIME DESTINATION bin)
 
-# The tf client's test suite (a mirror of the rust one's). Off by default so the
-# module build stays lean; flip on to run them locally.
+# The tf client's test suite (a mirror of the rust one's; tf.hpp is std-only, so the
+# tests need doctest alone). Off by default; flip on to run them locally.
 option(CUVSLAM_UTIL_TESTS "Build the cuvslam util tests" OFF)
 if(CUVSLAM_UTIL_TESTS)
   enable_testing()
@@ -92,7 +92,7 @@ if(CUVSLAM_UTIL_TESTS)
   target_compile_definitions(cuvslam_util_tests
     PRIVATE DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN)
   target_compile_options(cuvslam_util_tests PRIVATE -Wall -Wextra -Werror)
-  target_link_libraries(cuvslam_util_tests PRIVATE Eigen3::Eigen doctest::doctest)
+  target_link_libraries(cuvslam_util_tests PRIVATE doctest::doctest)
   include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
   doctest_discover_tests(cuvslam_util_tests)
 endif()

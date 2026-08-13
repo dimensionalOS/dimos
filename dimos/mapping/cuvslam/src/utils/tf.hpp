@@ -17,13 +17,15 @@
 // Each tf edge is buffered per (parent, child), and Tf::lookup composes the shortest
 // path through the frame graph. Lookups are nearest-in-time within a tolerance, not
 // interpolated. Tf::publish feeds the local graph and forwards to a caller-provided
-// sink (the module wires its tf output port there). Depends on Eigen and the standard
-// library only; warnings go through an injectable sink.
+// sink (the module wires its tf output port there). Standard library only — rotation
+// algebra is a self-contained xyzw quaternion; warnings go through an injectable sink.
 
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -36,8 +38,6 @@
 #include <utility>
 #include <vector>
 
-#include <Eigen/Geometry>
-
 namespace tf_client {
 
 /// How many seconds of history each edge keeps.
@@ -49,21 +49,67 @@ inline double now_secs() {
         .count();
 }
 
+/// A rigid body transform: rotation as an xyzw quaternion plus a translation.
+/// Self-contained so tf.hpp depends on the standard library alone.
+struct Rigid {
+    std::array<double, 4> rotation{0.0, 0.0, 0.0, 1.0};  // xyzw
+    std::array<double, 3> translation{0.0, 0.0, 0.0};
+
+    static std::array<double, 4> quat_multiply(const std::array<double, 4>& left,
+                                               const std::array<double, 4>& right) {
+        return {
+            left[3] * right[0] + left[0] * right[3] + left[1] * right[2] - left[2] * right[1],
+            left[3] * right[1] - left[0] * right[2] + left[1] * right[3] + left[2] * right[0],
+            left[3] * right[2] + left[0] * right[1] - left[1] * right[0] + left[2] * right[3],
+            left[3] * right[3] - left[0] * right[0] - left[1] * right[1] - left[2] * right[2]};
+    }
+
+    static std::array<double, 3> quat_rotate(const std::array<double, 4>& rotation,
+                                             const std::array<double, 3>& vector) {
+        const std::array<double, 3> axis{rotation[0], rotation[1], rotation[2]};
+        std::array<double, 3> inner{axis[1] * vector[2] - axis[2] * vector[1],
+                                    axis[2] * vector[0] - axis[0] * vector[2],
+                                    axis[0] * vector[1] - axis[1] * vector[0]};
+        for (int component = 0; component < 3; ++component) {
+            inner[component] += rotation[3] * vector[component];
+        }
+        const std::array<double, 3> outer{axis[1] * inner[2] - axis[2] * inner[1],
+                                          axis[2] * inner[0] - axis[0] * inner[2],
+                                          axis[0] * inner[1] - axis[1] * inner[0]};
+        return {vector[0] + 2.0 * outer[0], vector[1] + 2.0 * outer[1],
+                vector[2] + 2.0 * outer[2]};
+    }
+
+    Rigid operator*(const Rigid& other) const {
+        const std::array<double, 3> rotated = quat_rotate(rotation, other.translation);
+        return Rigid{quat_multiply(rotation, other.rotation),
+                     {translation[0] + rotated[0], translation[1] + rotated[1],
+                      translation[2] + rotated[2]}};
+    }
+
+    Rigid inverse() const {
+        const std::array<double, 4> conjugate{-rotation[0], -rotation[1], -rotation[2],
+                                              rotation[3]};
+        const std::array<double, 3> rotated = quat_rotate(conjugate, translation);
+        return Rigid{conjugate, {-rotated[0], -rotated[1], -rotated[2]}};
+    }
+};
+
 /// A rigid transform from `parent` to `child` at a point in time. It maps a point
 /// expressed in `child` coordinates into `parent` coordinates.
 struct Transform {
     std::string parent;
     std::string child;
     double ts = 0.0;
-    Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
+    Rigid rigid;
 
-    Eigen::Vector3d translation() const { return iso.translation(); }
-    Eigen::Quaterniond rotation() const { return Eigen::Quaterniond(iso.linear()); }
+    const std::array<double, 3>& translation() const { return rigid.translation; }
+    const std::array<double, 4>& rotation() const { return rigid.rotation; }
 
-    Transform inverse() const { return Transform{child, parent, ts, iso.inverse()}; }
+    Transform inverse() const { return Transform{child, parent, ts, rigid.inverse()}; }
 
     Transform compose(const Transform& other) const {
-        return Transform{parent, other.child, ts, iso * other.iso};
+        return Transform{parent, other.child, ts, rigid * other.rigid};
     }
 };
 
@@ -73,12 +119,12 @@ class TBuffer {
 public:
     struct Sample {
         double ts;
-        Eigen::Isometry3d iso;
+        Rigid rigid;
     };
 
     explicit TBuffer(double window_secs) : window_secs_(window_secs) {}
 
-    void add(double ts, const Eigen::Isometry3d& iso) {
+    void add(double ts, const Rigid& rigid) {
         // A stamp a whole window behind the newest is a clock reset, not jitter.
         if (!samples_.empty() && ts < samples_.back().ts - window_secs_) {
             samples_.clear();
@@ -86,7 +132,7 @@ public:
         const auto position = std::upper_bound(
             samples_.begin(), samples_.end(), ts,
             [](double value, const Sample& sample) { return value < sample.ts; });
-        samples_.insert(position, Sample{ts, iso});
+        samples_.insert(position, Sample{ts, rigid});
         // Anchored to the newest sample so a late message cannot widen the window.
         const double newest = samples_.back().ts;
         prune(newest - window_secs_);
@@ -132,7 +178,7 @@ public:
         if (found == nullptr) {
             return std::nullopt;
         }
-        return Transform{parent, child, found->ts, found->iso};
+        return Transform{parent, child, found->ts, found->rigid};
     }
 
 private:
@@ -171,20 +217,31 @@ public:
         warn_sink_ = std::move(sink);
     }
 
-    /// Ingest one wire edge. A zero or non-finite rotation would normalize to NaN and
-    /// poison every lookup through it, so it is dropped instead of stored.
+    /// Ingest one wire edge, rotation as xyzw. A zero or non-finite rotation would
+    /// normalize to NaN and poison every lookup through it, so it is dropped instead
+    /// of stored.
     void receive(const std::string& parent, const std::string& child, double ts,
-                 const Eigen::Quaterniond& rotation, const Eigen::Vector3d& translation) {
-        const double norm = rotation.norm();
-        if (!std::isfinite(norm) || norm < 1e-12 || !translation.allFinite()) {
+                 const std::array<double, 4>& rotation_xyzw,
+                 const std::array<double, 3>& translation) {
+        double norm_squared = 0.0;
+        bool finite = true;
+        for (double component : rotation_xyzw) {
+            norm_squared += component * component;
+            finite = finite && std::isfinite(component);
+        }
+        for (double component : translation) {
+            finite = finite && std::isfinite(component);
+        }
+        if (!finite || norm_squared < 1e-24) {
             return;
         }
-        Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
-        iso.linear() = rotation.normalized().toRotationMatrix();
-        iso.translation() = translation;
+        const double norm = std::sqrt(norm_squared);
+        Rigid rigid{{rotation_xyzw[0] / norm, rotation_xyzw[1] / norm,
+                     rotation_xyzw[2] / norm, rotation_xyzw[3] / norm},
+                    translation};
         {
             const std::lock_guard<std::mutex> guard(mutex_);
-            edge_buffer(parent, child).add(ts, iso);
+            edge_buffer(parent, child).add(ts, rigid);
         }
         changed_.notify_all();
     }
@@ -204,7 +261,7 @@ public:
         {
             const std::lock_guard<std::mutex> guard(mutex_);
             for (const Transform& transform : transforms) {
-                edge_buffer(transform.parent, transform.child).add(transform.ts, transform.iso);
+                edge_buffer(transform.parent, transform.child).add(transform.ts, transform.rigid);
             }
             sink = publish_sink_;
         }
@@ -243,8 +300,7 @@ private:
                                   std::optional<double> time,
                                   std::optional<double> tolerance) const {
         if (parent == child) {
-            return Transform{parent, child, time.value_or(now_secs()),
-                             Eigen::Isometry3d::Identity()};
+            return Transform{parent, child, time.value_or(now_secs()), Rigid{}};
         }
         auto direct = buffers_.find(std::make_pair(parent, child));
         if (direct != buffers_.end()) {

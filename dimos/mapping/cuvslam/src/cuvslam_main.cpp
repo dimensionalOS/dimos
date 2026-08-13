@@ -158,14 +158,13 @@ public:
                     static_cast<std::int64_t>(std::llround(transform.ts * 1.0e9)));
                 stamped.header.frame_id = transform.parent;
                 stamped.child_frame_id = transform.child;
-                const Eigen::Quaterniond rotation = transform.rotation();
-                stamped.transform.translation.x = transform.translation().x();
-                stamped.transform.translation.y = transform.translation().y();
-                stamped.transform.translation.z = transform.translation().z();
-                stamped.transform.rotation.x = rotation.x();
-                stamped.transform.rotation.y = rotation.y();
-                stamped.transform.rotation.z = rotation.z();
-                stamped.transform.rotation.w = rotation.w();
+                stamped.transform.translation.x = transform.translation()[0];
+                stamped.transform.translation.y = transform.translation()[1];
+                stamped.transform.translation.z = transform.translation()[2];
+                stamped.transform.rotation.x = transform.rotation()[0];
+                stamped.transform.rotation.y = transform.rotation()[1];
+                stamped.transform.rotation.z = transform.rotation()[2];
+                stamped.transform.rotation.w = transform.rotation()[3];
                 message.transforms.push_back(stamped);
             }
             message.transforms_length = static_cast<std::int32_t>(message.transforms.size());
@@ -219,11 +218,10 @@ private:
             tf_client_.receive(
                 stamped.header.frame_id, stamped.child_frame_id,
                 static_cast<double>(stamp_to_ns(stamped.header)) / 1.0e9,
-                Eigen::Quaterniond(stamped.transform.rotation.w, stamped.transform.rotation.x,
-                                   stamped.transform.rotation.y, stamped.transform.rotation.z),
-                Eigen::Vector3d(stamped.transform.translation.x,
-                                stamped.transform.translation.y,
-                                stamped.transform.translation.z));
+                {stamped.transform.rotation.x, stamped.transform.rotation.y,
+                 stamped.transform.rotation.z, stamped.transform.rotation.w},
+                {stamped.transform.translation.x, stamped.transform.translation.y,
+                 stamped.transform.translation.z});
         }
         resolve_rig();
     }
@@ -268,7 +266,8 @@ private:
             if (!rig_from_camera || info == camera_info_.end()) {
                 return;
             }
-            cameras.push_back(RigCamera{frame, rig_from_camera->iso, info->second});
+            cameras.push_back(
+                RigCamera{frame, to_isometry(rig_from_camera->rigid), info->second});
         }
         // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
         // partner sits at +x (optical convention, x to the right).
@@ -377,7 +376,7 @@ private:
             const auto camera_from_depth =
                 tf_client_.get_latest(camera.frame, depth_.header.frame_id);
             camera_from_depth_ = camera_from_depth.has_value()
-                                     ? std::optional<Transform>(camera_from_depth->iso)
+                                     ? std::optional<Transform>(to_isometry(camera_from_depth->rigid))
                                      : std::nullopt;
             if (!camera_from_depth_) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
@@ -423,8 +422,8 @@ private:
                                 logging::Field("base_frame", cfg_.base_frame));
             return;
         }
-        base_from_rig_ = base_from_rig->iso;
-        rig_from_base_ = base_from_rig->iso.inverse();
+        base_from_rig_ = to_isometry(base_from_rig->rigid);
+        rig_from_base_ = base_from_rig_.inverse();
         cuvslam::Rig rig;
         for (const RigCamera& rig_camera : cameras_) {
             const sensor_msgs::CameraInfo& info = rig_camera.info;
@@ -447,7 +446,7 @@ private:
                 return;
             }
             cuvslam::ImuCalibration imu{};
-            imu.rig_from_imu = to_pose(rig_from_imu->iso);
+            imu.rig_from_imu = to_pose(to_isometry(rig_from_imu->rigid));
             imu.gyroscope_noise_density = static_cast<float>(cfg_.imu_gyro_noise_density);
             imu.gyroscope_random_walk = static_cast<float>(cfg_.imu_gyro_random_walk);
             imu.accelerometer_noise_density = static_cast<float>(cfg_.imu_accel_noise_density);
@@ -700,7 +699,7 @@ private:
 
         tf_client_.publish({tf_client::Transform{cfg_.map_frame, cfg_.odom_frame,
                                                  static_cast<double>(timestamp_ns) / 1.0e9,
-                                                 map_from_odom_raw}});
+                                                 to_rigid(map_from_odom_raw)}});
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
@@ -744,12 +743,12 @@ private:
         odometry_.publish(msg);
         tf_client_.publish({tf_client::Transform{cfg_.odom_frame, cfg_.base_frame,
                                                  static_cast<double>(timestamp_ns) / 1.0e9,
-                                                 world_from_rig_}});
+                                                 to_rigid(world_from_rig_)}});
         // With Slam running, map->odom is its correction; only one publisher per edge.
         if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
             tf_client_.publish({tf_client::Transform{cfg_.map_frame, cfg_.odom_frame,
                                                      static_cast<double>(timestamp_ns) / 1.0e9,
-                                                     Transform::Identity()}});
+                                                     to_rigid(Transform::Identity())}});
         }
     }
 
