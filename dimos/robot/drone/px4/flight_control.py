@@ -153,7 +153,6 @@ def _build_vision_position_estimate(message: Odometry) -> VisionPositionEstimate
                 )
             )
         ),
-        reset_counter=0,
     )
 
 
