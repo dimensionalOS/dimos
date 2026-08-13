@@ -17,11 +17,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import Enum, auto
 import threading
 from types import MappingProxyType
+from typing import Annotated
 
-import attrs
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -36,11 +40,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_NON_EMPTY_STRING = attrs.validators.and_(
-    attrs.validators.instance_of(str),
-    attrs.validators.min_len(1),
-)
-
 
 class ExecutionOutcome(Enum):
     """Safety-aware outcome of dispatching planned execution."""
@@ -50,7 +49,7 @@ class ExecutionOutcome(Enum):
     UNCERTAIN = auto()
 
 
-@attrs.frozen(slots=False)
+@dataclass(frozen=True)
 class ExecutionDispatchResult:
     """Structured result of mapping and dispatching one generated plan."""
 
@@ -72,54 +71,43 @@ def _to_immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
     return MappingProxyType(dict(value))
 
 
-@attrs.frozen(slots=False)
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", validate_default=True),
+)
 class ExecutionTarget:
     """Immutable coordinator joint mapping for one robot."""
 
-    robot_name: RobotName = attrs.field(validator=_NON_EMPTY_STRING)
-    model_joint_names: tuple[str, ...] = attrs.field(
-        converter=_to_model_joint_names,
-        validator=attrs.validators.deep_iterable(
-            member_validator=attrs.validators.instance_of(str),
-        ),
-    )
-    model_to_coordinator: Mapping[str, str] = attrs.field(
-        converter=_to_immutable_joint_mapping,
-        validator=attrs.validators.deep_mapping(
-            key_validator=attrs.validators.instance_of(str),
-            value_validator=attrs.validators.instance_of(str),
-        ),
-        repr=False,
-    )
+    robot_name: Annotated[RobotName, Field(min_length=1)]
+    model_joint_names: Annotated[
+        tuple[str, ...],
+        BeforeValidator(_to_model_joint_names),
+    ]
+    model_to_coordinator: Annotated[
+        Mapping[str, str],
+        AfterValidator(_to_immutable_joint_mapping),
+    ] = field(repr=False)
 
-    @model_joint_names.validator
-    def _validate_model_joint_names(
-        self,
-        _attribute: attrs.Attribute[tuple[str, ...]],
-        value: tuple[str, ...],
-    ) -> None:
-        if not value or any(not name or "/" in name for name in value):
+    @model_validator(mode="after")
+    def _validate_target(self) -> Self:
+        if not self.model_joint_names or any(
+            not name or "/" in name for name in self.model_joint_names
+        ):
             raise ValueError(f"Execution target '{self.robot_name}' has invalid local model joints")
-        if len(set(value)) != len(value):
+        if len(set(self.model_joint_names)) != len(self.model_joint_names):
             raise ValueError(
                 f"Execution target '{self.robot_name}' has duplicate local model joints"
             )
-
-    @model_to_coordinator.validator
-    def _validate_model_to_coordinator(
-        self,
-        _attribute: attrs.Attribute[Mapping[str, str]],
-        value: Mapping[str, str],
-    ) -> None:
-        if set(value) != set(self.model_joint_names):
+        if set(self.model_to_coordinator) != set(self.model_joint_names):
             raise ValueError(f"Execution target '{self.robot_name}' must resolve every model joint")
-        resolved_names = list(value.values())
+        resolved_names = list(self.model_to_coordinator.values())
         if any(not name for name in resolved_names) or len(set(resolved_names)) != len(
             resolved_names
         ):
             raise ValueError(
                 f"Execution target '{self.robot_name}' has ambiguous coordinator joints"
             )
+        return self
 
     @classmethod
     def from_coordinator_mapping(
