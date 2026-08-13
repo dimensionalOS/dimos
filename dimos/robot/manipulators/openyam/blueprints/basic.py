@@ -20,6 +20,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.openyam.config import (
+    YAM_CAN,
     make_openyam_hardware,
     make_openyam_model_config,
 )
@@ -39,4 +40,32 @@ _openyam_hw = make_openyam_hardware("arm")
 coordinator_openyam = ControlCoordinator.blueprint(
     hardware=[_openyam_hw],
     tasks=[trajectory_task(_openyam_hw)],
+)
+
+# Real hardware over CAN. Damiao motors only report state in reply to
+# command frames, so servos must auto-enable for coordinator init to see
+# joint positions. Probe the bus first on a new unit (scripts/openyam_can_probe.py).
+_openyam_can_hw = make_openyam_hardware(
+    "arm",
+    adapter_type="openyam",
+    address=YAM_CAN,
+)
+
+coordinator_openyam_can = ControlCoordinator.blueprint(
+    hardware=[_openyam_can_hw],
+    tasks=[trajectory_task(_openyam_can_hw)],
+)
+
+_openyam_can_planner_hw = make_openyam_hardware(
+    "arm",
+    adapter_type="openyam",
+    address=YAM_CAN,
+)
+
+openyam_can_planner_coordinator = autoconnect(
+    planner(robots=[make_openyam_model_config(name="arm")]),
+    coordinator(
+        hardware=[_openyam_can_planner_hw],
+        tasks=[trajectory_task(_openyam_can_planner_hw)],
+    ),
 )

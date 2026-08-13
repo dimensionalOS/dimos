@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -33,26 +34,46 @@ OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper.urdf.xacro"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
+# Default CAN address for a single real arm. On Linux this is a SocketCAN
+# interface name; on macOS the openyam adapter transparently falls back to a
+# gs_usb (candlelight-firmware) dongle — see hardware/manipulators/openyam.
+YAM_CAN = "can0"
+
+# Gripper motor endpoints in adapter-native units (motor rad) for
+# normalized-command mapping. PLACEHOLDERS pending calibration on a real
+# unit: with the gripper motor zeroed at fully-closed, opening winds the
+# motor positive. Re-zero or override after calibrating.
+OPENYAM_GRIPPER_OPEN_RAD = 1.5
+OPENYAM_GRIPPER_CLOSED_RAD = 0.0
+
 
 def make_openyam_hardware(
     hw_id: str = "arm",
     *,
+    adapter_type: str = "mock",
+    address: str | None = None,
+    adapter_kwargs: dict[str, Any] | None = None,
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    """Create OpenYAM hardware, defaulting to the generic mock adapter."""
-    adapter_kwargs: dict[str, object] = {}
-    if home_joints is not None:
-        adapter_kwargs["initial_positions"] = home_joints
+    """Create OpenYAM hardware, defaulting to the generic mock adapter.
+
+    Pass ``adapter_type="openyam"`` and ``address=YAM_CAN`` for a real arm.
+    """
+    kwargs: dict[str, object] = dict(adapter_kwargs or {})
+    if home_joints is not None and adapter_type == "mock":
+        kwargs["initial_positions"] = home_joints
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
         joints=make_joints(hw_id, OPENYAM_DOF),
-        adapter_type="mock",
-        address=None,
+        adapter_type=adapter_type,
+        address=address,
         auto_enable=auto_enable,
         gripper_joints=[f"{hw_id}/gripper"],
-        adapter_kwargs=adapter_kwargs,
+        adapter_kwargs=kwargs,
+        gripper_open_position=OPENYAM_GRIPPER_OPEN_RAD,
+        gripper_closed_position=OPENYAM_GRIPPER_CLOSED_RAD,
     )
 
 

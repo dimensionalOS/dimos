@@ -1,0 +1,409 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""OpenYAM (Anvil Robotics) ManipulatorAdapter — Damiao MIT mode. SI units.
+
+See ``driver.py`` for the hardware assumptions baked into the defaults and
+how to override them; run the probe script before first enable.
+"""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+import time
+from typing import Any
+
+from dimos.hardware.manipulators.openyam.driver import (
+    CTRL_MODE_MIT,
+    DEFAULT_BITRATE,
+    DEFAULT_GRIPPER_MOTOR_TYPE,
+    DEFAULT_GRIPPER_SEND_ID,
+    DamiaoMotor,
+    MotorType,
+    YamBus,
+    make_yam_motors,
+    resolve_transport,
+)
+from dimos.hardware.manipulators.spec import (
+    ControlMode,
+    JointLimits,
+    ManipulatorInfo,
+)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+def _socketcan_iface_up(name: str) -> bool:
+    try:
+        flags_path = Path("/sys/class/net") / name / "flags"
+        if not flags_path.exists():
+            return False
+        return (int(flags_path.read_text().strip(), 16) & 0x1) == 0x1
+    except OSError:
+        return False
+
+
+# Default MIT gains per joint for POSITION mode (kp ∈ [0,500], kd ∈ [0,5]).
+# Conservative starting point for an unverified arm — raise once tracking is
+# confirmed sluggish rather than the other way around.
+_DEFAULT_KP = [80.0, 80.0, 80.0, 50.0, 50.0, 50.0]
+_DEFAULT_KD = [1.2, 1.2, 1.2, 0.8, 0.8, 0.8]
+_GRIPPER_KP = 20.0
+_GRIPPER_KD = 0.5
+
+# Placeholder joint limits until Anvil publishes the OpenYAM URDF (their
+# description repo is currently empty). ±π keeps commands out of hard stops
+# on YAM-class geometry; override via adapter kwargs once calibrated.
+_DEFAULT_POS_LOWER = [-math.pi] * 6
+_DEFAULT_POS_UPPER = [math.pi] * 6
+
+_STATE_MAX_AGE_S = 0.1
+
+
+class OpenYamAdapter:
+    """6-DOF OpenYAM + CAN gripper on one bus.
+
+    ``address`` accepts a SocketCAN name (``can0``), a ``gs_usb[:N]``
+    selector, or a serial device path for SLCAN — see
+    ``driver.resolve_transport`` for how each maps to a python-can backend.
+    """
+
+    def __init__(
+        self,
+        address: str = "can0",
+        dof: int = 6,
+        *,
+        interface: str | None = None,
+        bitrate: int = DEFAULT_BITRATE,
+        fd: bool = False,
+        kp: list[float] | None = None,
+        kd: list[float] | None = None,
+        arm_motor_types: list[str] | None = None,
+        motor_ids: list[int] | None = None,
+        recv_id_offset: int = 0x10,
+        gripper_motor_id: int | None = DEFAULT_GRIPPER_SEND_ID,
+        gripper_motor_type: str = DEFAULT_GRIPPER_MOTOR_TYPE.value,
+        position_lower: list[float] | None = None,
+        position_upper: list[float] | None = None,
+        auto_set_mit_mode: bool = True,
+        **_: Any,
+    ) -> None:
+        if dof != 6:
+            raise ValueError(f"OpenYamAdapter only supports 6 DOF (got {dof})")
+        self._address = address
+        self._dof = dof
+        self._fd = fd
+        resolved_interface, channel, bus_kwargs = resolve_transport(
+            address, interface=interface, bitrate=bitrate
+        )
+        self._interface = resolved_interface
+        self._channel = channel
+        self._bus_kwargs = bus_kwargs
+        self._kp = list(kp) if kp is not None else list(_DEFAULT_KP)
+        self._kd = list(kd) if kd is not None else list(_DEFAULT_KD)
+        if len(self._kp) != dof or len(self._kd) != dof:
+            raise ValueError(f"kp/kd must be length {dof}")
+        self._pos_lower = list(position_lower) if position_lower else list(_DEFAULT_POS_LOWER)
+        self._pos_upper = list(position_upper) if position_upper else list(_DEFAULT_POS_UPPER)
+        self._auto_set_mit_mode = auto_set_mit_mode
+
+        types = [MotorType(t) for t in arm_motor_types] if arm_motor_types is not None else None
+        self._motors = make_yam_motors(
+            dof,
+            arm_motor_types=types,
+            motor_ids=motor_ids,
+            recv_id_offset=recv_id_offset,
+        )
+        self._gripper_motor: DamiaoMotor | None = None
+        if gripper_motor_id is not None:
+            self._gripper_motor = DamiaoMotor(
+                gripper_motor_id,
+                MotorType(gripper_motor_type),
+                recv_id=gripper_motor_id | recv_id_offset,
+            )
+
+        self._bus: YamBus | None = None
+        self._control_mode: ControlMode = ControlMode.POSITION
+        self._enabled: bool = False
+        # Last successful position command — anchor for VELOCITY mode
+        self._last_cmd_q: list[float] | None = None
+        self._last_gripper_cmd: float | None = None
+
+    # ------------------------------------------------------------------ setup
+
+    def connect(self) -> bool:
+        # Preflight only applies to SocketCAN, where bringing the interface up
+        # needs root and so can't be done here.
+        if self._interface == "socketcan" and not _socketcan_iface_up(self._channel):
+            logger.error(
+                f"SocketCAN interface '{self._channel}' is not UP. "
+                f"Run: sudo ./dimos/robot/manipulators/openyam/scripts/openyam_can_up.sh {self._channel}"
+            )
+            return False
+
+        all_motors = list(self._motors)
+        if self._gripper_motor is not None:
+            all_motors.append(self._gripper_motor)
+        try:
+            self._bus = YamBus(
+                channel=self._channel,
+                motors=all_motors,
+                fd=self._fd,
+                interface=self._interface,
+                bus_kwargs=self._bus_kwargs,
+            )
+            self._bus.open()
+        except Exception as e:
+            logger.error(f"OpenYAM @{self._address} ({self._interface}) connect failed: {e}")
+            if self._interface == "gs_usb":
+                logger.error(
+                    "gs_usb needs the 'gs_usb' pip package and libusb "
+                    "(macOS: brew install libusb). If the dongle runs serial "
+                    "firmware instead of candlelight, pass its /dev/tty* path "
+                    "as address to use slcan."
+                )
+            self._bus = None
+            return False
+
+        # Idempotent: setting CTRL_MODE=MIT when already MIT is a no-op.
+        if self._auto_set_mit_mode:
+            try:
+                for m in all_motors:
+                    self._bus.write_ctrl_mode(m.send_id, CTRL_MODE_MIT)
+            except Exception as e:
+                logger.error(f"failed to set MIT mode on {self._address}: {e}")
+                self._bus.close()
+                self._bus = None
+                return False
+
+        return True
+
+    def disconnect(self) -> None:
+        if self._bus is None:
+            return
+        try:
+            self._bus.disable_all()
+        except Exception:
+            pass
+        self._enabled = False
+        self._bus.close()
+        self._bus = None
+
+    def is_connected(self) -> bool:
+        return self._bus is not None
+
+    def activate(self) -> bool:
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        stopped = self.write_stop()
+        disabled = self.write_enable(False)
+        return stopped and disabled
+
+    # ------------------------------------------------------------------- info
+
+    def get_info(self) -> ManipulatorInfo:
+        return ManipulatorInfo(
+            vendor="Anvil Robotics",
+            model="OpenYAM",
+            dof=self._dof,
+            firmware_version=None,
+            serial_number=None,
+        )
+
+    def get_dof(self) -> int:
+        return self._dof
+
+    def get_limits(self) -> JointLimits:
+        return JointLimits(
+            position_lower=list(self._pos_lower),
+            position_upper=list(self._pos_upper),
+            velocity_max=[m.limits[1] for m in self._motors],
+        )
+
+    def set_control_mode(self, mode: ControlMode) -> bool:
+        # Runs exclusively in Damiao MIT register mode; dimos ControlModes are
+        # emulated by tuning kp/kd/q/dq/tau per MIT frame.
+        if mode in (
+            ControlMode.POSITION,
+            ControlMode.SERVO_POSITION,
+            ControlMode.VELOCITY,
+            ControlMode.TORQUE,
+        ):
+            self._control_mode = mode
+            return True
+        return False
+
+    def get_control_mode(self) -> ControlMode:
+        return self._control_mode
+
+    # ------------------------------------------------------------------- read
+
+    def _states_or_raise(self) -> list[Any]:
+        # Raises on missing/stale data so hardware_interface.py can retry
+        # (init) or skip the tick (steady-state).
+        if self._bus is None:
+            raise RuntimeError("OpenYamAdapter not connected")
+        now = time.monotonic()
+        states = [self._bus.get_state(m.send_id) for m in self._motors]
+        for i, s in enumerate(states):
+            if s is None:
+                raise RuntimeError(f"motor {i + 1} has no state yet")
+            if now - s.timestamp > _STATE_MAX_AGE_S:
+                age_ms = (now - s.timestamp) * 1000
+                raise RuntimeError(f"motor {i + 1} state stale ({age_ms:.0f} ms)")
+        return states
+
+    def read_joint_positions(self) -> list[float]:
+        return [s.q for s in self._states_or_raise()]
+
+    def read_joint_velocities(self) -> list[float]:
+        return [s.dq for s in self._states_or_raise()]
+
+    def read_joint_efforts(self) -> list[float]:
+        return [s.tau for s in self._states_or_raise()]
+
+    def read_state(self) -> dict[str, int]:
+        if self._bus is None:
+            return {"state": 0, "mode": 0}
+        states = [self._bus.get_state(m.send_id) for m in self._motors]
+        t_rotor = max((s.t_rotor for s in states if s is not None), default=0)
+        return {
+            "state": 1 if self._enabled else 0,
+            "mode": 1,  # MIT
+            "t_rotor_max": int(t_rotor),
+        }
+
+    def read_error(self) -> tuple[int, str]:
+        # Damiao state frames carry no structured error code; surface a soft
+        # thermal warning from the temperature fields.
+        if self._bus is None:
+            return 0, ""
+        states = [self._bus.get_state(m.send_id) for m in self._motors]
+        t_rotor = max((s.t_rotor for s in states if s is not None), default=0)
+        if t_rotor >= 85:
+            return 1, f"rotor over-temperature ({t_rotor}°C)"
+        return 0, ""
+
+    def read_enabled(self) -> bool:
+        return self._enabled
+
+    # ------------------------------------------------------------------ write
+
+    def write_joint_positions(
+        self,
+        positions: list[float],
+        velocity: float = 1.0,
+    ) -> bool:
+        if self._bus is None or not self._enabled:
+            return False
+        if len(positions) != self._dof:
+            return False
+        velocity = max(0.0, min(1.0, velocity))
+        for motor, q, kp, kd in zip(self._motors, positions, self._kp, self._kd, strict=False):
+            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp * velocity, kd, 0.0))
+        self._last_cmd_q = list(positions)
+        return True
+
+    def write_joint_velocities(self, velocities: list[float]) -> bool:
+        # MIT velocity tracking: kp=0, dq direct, q anchored at the last
+        # commanded position so the motor doesn't drift.
+        if self._bus is None or not self._enabled:
+            return False
+        if len(velocities) != self._dof:
+            return False
+        if self._last_cmd_q is None:
+            try:
+                self._last_cmd_q = self.read_joint_positions()
+            except RuntimeError:
+                return False
+        anchor = self._last_cmd_q
+        for motor, q_anchor, dq, kd in zip(
+            self._motors, anchor, velocities, self._kd, strict=False
+        ):
+            self._bus.send_mit_one(motor.send_id, (q_anchor, dq, 0.0, kd, 0.0))
+        return True
+
+    def write_stop(self) -> bool:
+        if self._bus is None:
+            return False
+        # Without current positions we can't safely command "hold here".
+        try:
+            q_now = self.read_joint_positions()
+        except RuntimeError:
+            return False
+        for motor, q, kp, kd in zip(self._motors, q_now, self._kp, self._kd, strict=False):
+            self._bus.send_mit_one(motor.send_id, (q, 0.0, kp, kd, 0.0))
+        self._last_cmd_q = q_now
+        return True
+
+    def write_enable(self, enable: bool) -> bool:
+        if self._bus is None:
+            return False
+        self._enabled = False
+        try:
+            if enable:
+                self._bus.enable_all()
+            else:
+                self._bus.disable_all()
+        except Exception:
+            return False
+        self._enabled = enable
+        return True
+
+    def write_clear_errors(self) -> bool:
+        # No separate clear-error command; disable/enable is the recovery path.
+        if self._bus is None:
+            return False
+        self._enabled = False
+        try:
+            self._bus.disable_all()
+            self._bus.enable_all()
+        except Exception:
+            return False
+        self._enabled = True
+        return True
+
+    # -------------------------------------------------------------- cartesian
+
+    def read_cartesian_position(self) -> dict[str, float] | None:
+        return None
+
+    def write_cartesian_position(self, pose: dict[str, float], velocity: float = 1.0) -> bool:
+        return False
+
+    # ---------------------------------------------------------------- gripper
+
+    def read_gripper_position(self) -> float | None:
+        """Gripper motor position in rad (adapter-native units)."""
+        if self._bus is None or self._gripper_motor is None:
+            return None
+        state = self._bus.get_state(self._gripper_motor.send_id)
+        return None if state is None else state.q
+
+    def write_gripper_position(self, position: float) -> bool:
+        """Command the gripper motor to ``position`` rad via an MIT frame."""
+        if self._bus is None or not self._enabled or self._gripper_motor is None:
+            return False
+        self._bus.send_mit_one(
+            self._gripper_motor.send_id,
+            (position, 0.0, _GRIPPER_KP, _GRIPPER_KD, 0.0),
+        )
+        self._last_gripper_cmd = position
+        return True
+
+    def read_force_torque(self) -> list[float] | None:
+        return None

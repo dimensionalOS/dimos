@@ -202,6 +202,7 @@ class OpenArmBus:
         *,
         fd: bool = False,
         interface: str = "socketcan",
+        bus_kwargs: dict[str, object] | None = None,
     ) -> None:
         if not motors:
             raise ValueError("OpenArmBus needs at least one motor")
@@ -217,6 +218,9 @@ class OpenArmBus:
         self._motors = list(motors)
         self._fd = fd
         self._interface = interface
+        # Extra kwargs for can.Bus — non-socketcan backends (gs_usb, slcan)
+        # need e.g. bitrate/index passed in-process instead of via `ip link`.
+        self._bus_kwargs = dict(bus_kwargs or {})
         self._by_recv: dict[int, DamiaoMotor] = {m.effective_recv_id: m for m in motors}
 
         self._bus: can.BusABC | None = None
@@ -231,7 +235,9 @@ class OpenArmBus:
             return
         import can  # local import — python-can is optional
 
-        self._bus = can.Bus(interface=self._interface, channel=self._channel, fd=self._fd)
+        self._bus = can.Bus(
+            interface=self._interface, channel=self._channel, fd=self._fd, **self._bus_kwargs
+        )
         self._rx_stop.clear()
         self._rx_thread = threading.Thread(
             target=self._rx_loop, name=f"openarm-rx-{self._channel}", daemon=True
@@ -275,6 +281,14 @@ class OpenArmBus:
             q, dq, kp, kd, tau = cmd
             data = pack_mit_frame(motor.motor_type, q, dq, kp, kd, tau)
             self._send_raw(motor.send_id, data)
+
+    def send_mit_one(self, send_id: int, command: tuple[float, float, float, float, float]) -> None:
+        """One MIT frame to a single motor; command = (q, dq, kp, kd, tau)."""
+        motor = next((m for m in self._motors if m.send_id == send_id), None)
+        if motor is None:
+            raise ValueError(f"no motor with send_id 0x{send_id:02X} on this bus")
+        q, dq, kp, kd, tau = command
+        self._send_raw(motor.send_id, pack_mit_frame(motor.motor_type, q, dq, kp, kd, tau))
 
     def get_state(self, send_id: int) -> MotorState | None:
         motor = next((m for m in self._motors if m.send_id == send_id), None)
