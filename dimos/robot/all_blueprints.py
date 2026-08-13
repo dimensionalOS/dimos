@@ -166,7 +166,10 @@ all_blueprints = {
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
+    "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
+    "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
+    "arm-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmTwistCoordinator",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "basic-path-follower": "dimos.navigation.basic_path_follower.module.BasicPathFollower",

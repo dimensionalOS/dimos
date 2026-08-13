@@ -35,7 +35,6 @@ import pytest
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 from dimos.utils.testing.waiting import wait_until
@@ -46,12 +45,10 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
     """A real ArmCommandModule with only the framework ``Module.__init__``
     skipped — the quest-layer and command-plane inits (engage state, decoder
     table, estop/twist gates) run for real. Ports / coordinator ref / config
-    are mocked; config is seeded by the patched init since the quest layer
-    reads ``config.task_names`` while constructing."""
+    are mocked; config is seeded by the patched init."""
 
     def _fake_init(self: Any, **kwargs: Any) -> None:
         self.config = SimpleNamespace(
-            task_names={"right": "teleop_xarm"},
             control_loop_hz=50.0,
             cmd_stale_after_sec=0.5,
         )
@@ -64,7 +61,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
         "buttons",
         "cmd_ack",
         "robot_state",
-        "coordinator_ee_twist_command",
+        "ee_twist_command",
         "gripper_command",
         "coordinator",
     ):
@@ -157,38 +154,38 @@ def test_pose_watermark_is_per_hand(module: ArmCommandModule) -> None:
 # ─── Browser keyboard EE-twist → coordinator eef_twist ─────────────────
 
 
-def test_twist_routes_to_eef_twist_task(module: ArmCommandModule) -> None:
+def test_twist_republished_without_task_address(module: ArmCommandModule) -> None:
     module._on_cmd_raw(_twist_bytes(0.2))
-    module.coordinator_ee_twist_command.publish.assert_called_once()
-    out = module.coordinator_ee_twist_command.publish.call_args.args[0]
-    assert out.frame_id == EEF_TWIST_TASK_NAME
+    module.ee_twist_command.publish.assert_called_once()
+    out = module.ee_twist_command.publish.call_args.args[0]
+    assert out.frame_id == ""  # addressing is the port wiring, not the payload
     assert out.linear.x == pytest.approx(0.2)
 
 
 def test_twist_dropped_while_estopped(module: ArmCommandModule) -> None:
     module._estopped = True
     module._on_cmd_raw(_twist_bytes(0.2))
-    module.coordinator_ee_twist_command.publish.assert_not_called()
+    module.ee_twist_command.publish.assert_not_called()
 
 
 def test_stale_twist_dropped(module: ArmCommandModule) -> None:
     module._on_cmd_raw(_twist_bytes(0.2, ts=time.time() - 1.0))  # > cmd_stale_after_sec
-    module.coordinator_ee_twist_command.publish.assert_not_called()
+    module.ee_twist_command.publish.assert_not_called()
 
 
 def test_future_stamped_twist_dropped(module: ArmCommandModule) -> None:
     module._on_cmd_raw(_twist_bytes(0.2, ts=time.time() + 5.0))
-    module.coordinator_ee_twist_command.publish.assert_not_called()
+    module.ee_twist_command.publish.assert_not_called()
     # ...and it must not advance the ordering watermark (would stall real cmds).
     module._on_cmd_raw(_twist_bytes(0.3))
-    module.coordinator_ee_twist_command.publish.assert_called_once()
+    module.ee_twist_command.publish.assert_called_once()
 
 
 def test_out_of_order_twist_dropped(module: ArmCommandModule) -> None:
     t = time.time()
     module._on_cmd_raw(_twist_bytes(0.2, ts=t))
     module._on_cmd_raw(_twist_bytes(0.3, ts=t - 0.1))  # older than the last accepted
-    assert module.coordinator_ee_twist_command.publish.call_count == 1
+    assert module.ee_twist_command.publish.call_count == 1
 
 
 def test_stale_twist_warning_rate_limited(module: ArmCommandModule) -> None:
@@ -216,15 +213,15 @@ def test_gripper_dropped_while_estopped(module: ArmCommandModule) -> None:
     module.gripper_command.publish.assert_not_called()
 
 
-# ─── Engage → publish with task-name routing ───────────────────────────
+# ─── Engage → publish on the hand's own port ───────────────────────────
 
 
-def test_engage_publishes_task_routed_pose(module: ArmCommandModule) -> None:
+def test_engage_publishes_on_hand_port(module: ArmCommandModule) -> None:
     _engage_right(module)
     assert module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_called()
     out = module.right_controller_output.publish.call_args.args[0]
-    assert out.frame_id == "teleop_xarm"
+    assert out.frame_id == "right"  # handedness preserved; no task-name overwrite
     module.left_controller_output.publish.assert_not_called()
 
 

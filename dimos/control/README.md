@@ -222,17 +222,18 @@ back to the caller. `describe_task()` reports those signatures live.
 |------|---------------|---------|
 | `claim_overlap` | the message names a joint the task currently claims | `joint_command` |
 | `broadcast` | always, to every task on the port | `teleop_buttons`, `gripper_command` |
-| `direct` | always, but the port is meant for one task (a second logs a warning) | `path`, `speed` |
-| `by_task_name` | `msg.frame_id == task.name` | `coordinator_cartesian_command`, `coordinator_ee_twist_command` |
+| `direct` | always, but the port is meant for one task (a second logs a warning) | `path`, `speed`, `cartesian_command`, `ee_twist_command` |
 
-`by_task_name` uses `frame_id` as an address rather than a coordinate frame. It
-is legacy, slated for replacement by a targeted message; don't add new bindings.
+Addressing is topology: which task gets a message is decided by which port it
+reads (wired once at startup), never by message content. Multi-instance
+deployments give each instance its own port via `stream_bind`.
 
 ## Deployment I/O
 
 `ControlCoordinator` declares the shared streams (`joint_command`,
-`twist_command`, `teleop_buttons`, `gripper_command`, cartesian and EEF twist).
-A deployment needing more subclasses it and annotates the extra ports:
+`twist_command`, `teleop_buttons`, `gripper_command`). Per-instance inputs —
+`cartesian_command`, `ee_twist_command` — are deployment I/O: a deployment
+subclasses the coordinator and annotates one port per consuming task instance:
 
 ```python
 class _Go2Coordinator(PathFollowingCoordinator):
@@ -249,10 +250,13 @@ registry, since a subclass can declare ports the registry never sees. A missing
 port fails `add_task()` with the annotation to add, before any route registers.
 
 `TaskConfig.stream_bind` remaps a card input per instance, so two tasks of the
-same type can read different ports (task-level remapping, ROS sense):
+same type can read different ports (task-level remapping, ROS sense). The
+dual-arm teleop coordinator declares `left_cartesian` / `right_cartesian` and
+binds each arm's `teleop_ik` task to its side:
 
 ```python
-TaskConfig(name="left", type="path_follower", stream_bind={"path": "left_path"})
+TaskConfig(name="teleop_xarm", type="teleop_ik",
+           stream_bind={"cartesian_command": "left_cartesian"})
 ```
 
 ## Joint State Views
