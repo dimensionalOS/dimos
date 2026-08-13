@@ -182,6 +182,7 @@ class GscPGO(NativeModule):
         TFMessage
     ]  # i know, kinda redundant, but makes visuals much easier to make and is low-cost
     tf_deformation_nodes: Out[DeformationNode]  # important for future fast-tf-graph lookup
+    tf: Out[TFMessage]
     # debug only
     _global_map: Out[PointCloud2]
 
@@ -189,9 +190,11 @@ class GscPGO(NativeModule):
     def start(self) -> None:
         super().start()
         self.tf.publish(
-            Transform(
-                frame_id=self.config.map_frame,
-                child_frame_id=self.config.child_frame_id,
+            TFMessage(
+                Transform(
+                    frame_id=self.config.map_frame,
+                    child_frame_id=self.config.child_frame_id,
+                )
             )
         )
         self.register_disposable(
@@ -201,7 +204,7 @@ class GscPGO(NativeModule):
         )
 
     def _on_correction_for_tf(self, correction: TFMessage) -> None:
-        self.tf.publish(*correction.transforms)
+        self.tf.publish(TFMessage(*correction.transforms))
 
     @rpc
     def stop(self) -> None:
