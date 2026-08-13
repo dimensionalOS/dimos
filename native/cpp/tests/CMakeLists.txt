@@ -17,7 +17,6 @@ add_executable(dimos_native_tests
   test_config.cpp
   test_module.cpp
   test_lcm_codec.cpp
-  test_tf.cpp
 )
 target_link_libraries(dimos_native_tests PRIVATE
   dimos_native

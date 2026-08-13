@@ -31,7 +31,7 @@
 #include "utils/depth_reproject.hpp"
 #include <Eigen/Geometry>
 
-#include "dimos/native/tf.hpp"
+#include "utils/tf.hpp"
 #include "utils/msg_convert.hpp"
 
 using dimos::native::Builder;
@@ -41,7 +41,7 @@ using dimos::native::Output;
 namespace logging = dimos::native::log;
 using namespace depth_reproject;
 using namespace msg_convert;
-using dimos::native::TfTree;
+using tf_client::Tf;
 using Transform = Eigen::Isometry3d;
 
 namespace {
@@ -150,25 +150,29 @@ public:
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
         tf_ = builder.output<tf2_msgs::TFMessage>("tf");
-        tf_tree_.set_publish_sink([this](const std::string& parent, const std::string& child,
-                                         const Eigen::Isometry3d& parent_from_child,
-                                         std::int64_t timestamp_ns) {
-            geometry_msgs::TransformStamped stamped{};
-            stamped.header.stamp = to_stamp(timestamp_ns);
-            stamped.header.frame_id = parent;
-            stamped.child_frame_id = child;
-            const Eigen::Quaterniond rotation(parent_from_child.linear());
-            stamped.transform.translation.x = parent_from_child.translation().x();
-            stamped.transform.translation.y = parent_from_child.translation().y();
-            stamped.transform.translation.z = parent_from_child.translation().z();
-            stamped.transform.rotation.x = rotation.x();
-            stamped.transform.rotation.y = rotation.y();
-            stamped.transform.rotation.z = rotation.z();
-            stamped.transform.rotation.w = rotation.w();
+        tf_client_.set_publish_sink([this](const std::vector<tf_client::Transform>& transforms) {
             tf2_msgs::TFMessage message{};
-            message.transforms = {stamped};
-            message.transforms_length = 1;
+            for (const tf_client::Transform& transform : transforms) {
+                geometry_msgs::TransformStamped stamped{};
+                stamped.header.stamp = to_stamp(
+                    static_cast<std::int64_t>(std::llround(transform.ts * 1.0e9)));
+                stamped.header.frame_id = transform.parent;
+                stamped.child_frame_id = transform.child;
+                const Eigen::Quaterniond rotation = transform.rotation();
+                stamped.transform.translation.x = transform.translation().x();
+                stamped.transform.translation.y = transform.translation().y();
+                stamped.transform.translation.z = transform.translation().z();
+                stamped.transform.rotation.x = rotation.x();
+                stamped.transform.rotation.y = rotation.y();
+                stamped.transform.rotation.z = rotation.z();
+                stamped.transform.rotation.w = rotation.w();
+                message.transforms.push_back(stamped);
+            }
+            message.transforms_length = static_cast<std::int32_t>(message.transforms.size());
             tf_.publish(message);
+        });
+        tf_client_.set_warn_sink([](const std::string& message) {
+            DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(1), message.c_str());
         });
     }
 
@@ -212,8 +216,14 @@ private:
                 stamped.header.frame_id == cfg_.odom_frame) {
                 continue;
             }
-            tf_tree_.set(stamped.header.frame_id, stamped.child_frame_id,
-                         to_isometry(stamped.transform));
+            tf_client_.receive(
+                stamped.header.frame_id, stamped.child_frame_id,
+                static_cast<double>(stamp_to_ns(stamped.header)) / 1.0e9,
+                Eigen::Quaterniond(stamped.transform.rotation.w, stamped.transform.rotation.x,
+                                   stamped.transform.rotation.y, stamped.transform.rotation.z),
+                Eigen::Vector3d(stamped.transform.translation.x,
+                                stamped.transform.translation.y,
+                                stamped.transform.translation.z));
         }
         resolve_rig();
     }
@@ -252,12 +262,13 @@ private:
 
         std::vector<RigCamera> cameras;
         for (const std::string& frame : frames) {
-            const std::optional<Transform> rig_from_camera = tf_tree_.get(rig_frame(), frame);
+            const std::optional<tf_client::Transform> rig_from_camera =
+                tf_client_.get_latest(rig_frame(), frame);
             const auto info = camera_info_.find(frame);
             if (!rig_from_camera || info == camera_info_.end()) {
                 return;
             }
-            cameras.push_back(RigCamera{frame, *rig_from_camera, info->second});
+            cameras.push_back(RigCamera{frame, rig_from_camera->iso, info->second});
         }
         // cuVSLAM wants camera 0 to be the left of a pair, which is the one whose
         // partner sits at +x (optical convention, x to the right).
@@ -363,7 +374,11 @@ private:
             return nullptr;
         }
         if (!camera_from_depth_) {
-            camera_from_depth_ = tf_tree_.get(camera.frame, depth_.header.frame_id);
+            const auto camera_from_depth =
+                tf_client_.get_latest(camera.frame, depth_.header.frame_id);
+            camera_from_depth_ = camera_from_depth.has_value()
+                                     ? std::optional<Transform>(camera_from_depth->iso)
+                                     : std::nullopt;
             if (!camera_from_depth_) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: tf does not connect the depth frame to the camera",
@@ -399,7 +414,8 @@ private:
         if (tracker_) {
             return;
         }
-        const std::optional<Transform> base_from_rig = tf_tree_.get(cfg_.base_frame, rig_frame());
+        const std::optional<tf_client::Transform> base_from_rig =
+            tf_client_.get_latest(cfg_.base_frame, rig_frame());
         if (!base_from_rig) {
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam: tf does not place the rig frame against base_frame",
@@ -407,8 +423,8 @@ private:
                                 logging::Field("base_frame", cfg_.base_frame));
             return;
         }
-        base_from_rig_ = *base_from_rig;
-        rig_from_base_ = base_from_rig->inverse();
+        base_from_rig_ = base_from_rig->iso;
+        rig_from_base_ = base_from_rig->iso.inverse();
         cuvslam::Rig rig;
         for (const RigCamera& rig_camera : cameras_) {
             const sensor_msgs::CameraInfo& info = rig_camera.info;
@@ -421,8 +437,9 @@ private:
             rig.cameras.push_back(camera);
         }
         if (cfg_.enable_imu) {
-            const std::optional<Transform> rig_from_imu =
-                imu_frame_.empty() ? std::nullopt : tf_tree_.get(rig_frame(), imu_frame_);
+            const std::optional<tf_client::Transform> rig_from_imu =
+                imu_frame_.empty() ? std::nullopt
+                                   : tf_client_.get_latest(rig_frame(), imu_frame_);
             if (!rig_from_imu) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: enable_imu is on but tf does not place the IMU",
@@ -430,7 +447,7 @@ private:
                 return;
             }
             cuvslam::ImuCalibration imu{};
-            imu.rig_from_imu = to_pose(*rig_from_imu);
+            imu.rig_from_imu = to_pose(rig_from_imu->iso);
             imu.gyroscope_noise_density = static_cast<float>(cfg_.imu_gyro_noise_density);
             imu.gyroscope_random_walk = static_cast<float>(cfg_.imu_gyro_random_walk);
             imu.accelerometer_noise_density = static_cast<float>(cfg_.imu_accel_noise_density);
@@ -681,7 +698,9 @@ private:
         fill_pose(corrected, map_from_base, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
-        tf_tree_.publish(cfg_.map_frame, cfg_.odom_frame, map_from_odom_raw, timestamp_ns);
+        tf_client_.publish({tf_client::Transform{cfg_.map_frame, cfg_.odom_frame,
+                                                 static_cast<double>(timestamp_ns) / 1.0e9,
+                                                 map_from_odom_raw}});
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
@@ -723,10 +742,14 @@ private:
             msg.pose.covariance[i] = covariance_[i];
         }
         odometry_.publish(msg);
-        tf_tree_.publish(cfg_.odom_frame, cfg_.base_frame, world_from_rig_, timestamp_ns);
+        tf_client_.publish({tf_client::Transform{cfg_.odom_frame, cfg_.base_frame,
+                                                 static_cast<double>(timestamp_ns) / 1.0e9,
+                                                 world_from_rig_}});
         // With Slam running, map->odom is its correction; only one publisher per edge.
         if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
-            tf_tree_.publish(cfg_.map_frame, cfg_.odom_frame, Transform::Identity(), timestamp_ns);
+            tf_client_.publish({tf_client::Transform{cfg_.map_frame, cfg_.odom_frame,
+                                                     static_cast<double>(timestamp_ns) / 1.0e9,
+                                                     Transform::Identity()}});
         }
     }
 
@@ -752,7 +775,7 @@ private:
     std::string imu_frame_;
 
     /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
-    TfTree tf_tree_;
+    Tf tf_client_;
 
     /// covariance gate
     cuvslam::PoseCovariance covariance_{};
