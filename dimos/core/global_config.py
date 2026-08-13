@@ -30,6 +30,7 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
+ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -61,6 +62,15 @@ class GlobalConfig(BaseSettings):
     # Sibling worker processes still find each other,
     # remote peers come solely from the connect endpoints derived from --robot-ip
     zenoh_scouting: bool = False
+    # Interface multicast scouting binds to, e.g. wlan0.
+    # Empty derives it from zenoh_scouting.
+    zenoh_interface: str = ""
+    # Whether multicast scouting runs at all.
+    zenoh_multicast: bool = True
+    # Whether peers propagate the peers they already know over established links.
+    zenoh_gossip: bool = True
+    # Session mode. client routes through a single router instead of meshing.
+    zenoh_mode: ZenohMode = "peer"
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = 1.0
