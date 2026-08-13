@@ -34,7 +34,6 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
-from dimos.control.routing import Routing
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -50,6 +49,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -240,8 +240,10 @@ def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
     """Factory for real coordinators, all stopped on teardown."""
     coordinators: list[ControlCoordinator] = []
 
-    def make(**kwargs: Any) -> ControlCoordinator:
-        coordinator = ControlCoordinator(publish_joint_state=False, **kwargs)
+    def make(
+        cls: type[ControlCoordinator] = ControlCoordinator, **kwargs: Any
+    ) -> ControlCoordinator:
+        coordinator = cls(publish_joint_state=False, **kwargs)
         coordinators.append(coordinator)
         return coordinator
 
@@ -252,36 +254,19 @@ def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
             coordinator.stop()
 
 
+class _EEFTwistCoordinator(ControlCoordinator):
+    ee_twist_command: In[TwistStamped]
+
+
 class TestControlCoordinatorLifecycle:
-    def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
-        coordinator = make_coordinator()
-        matching_task = RecordingTask("eef")
-        other_task = RecordingTask("other")
-        coordinator._tasks = {"eef": matching_task, "other": other_task}
-        coordinator._routes = {
-            "coordinator_ee_twist_command": [
-                (matching_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-                (other_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-            ]
-        }
-
-        for frame_id in ("eef", "missing", ""):
-            coordinator._dispatch(
-                "coordinator_ee_twist_command",
-                TwistStamped(frame_id=frame_id, linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
-            )
-
-        assert len(matching_task.ee_twist_calls) == 1
-        assert other_task.ee_twist_calls == []
-
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")
 
         def start_coordinator(tasks):
-            coordinator = make_coordinator(tasks=tasks)
+            coordinator = make_coordinator(cls=_EEFTwistCoordinator, tasks=tasks)
             coordinator._create_task_from_config = lambda cfg: RecordingTask(cfg.name)
-            subscribe = mocker.patch.object(coordinator.coordinator_ee_twist_command, "subscribe")
+            subscribe = mocker.patch.object(coordinator.ee_twist_command, "subscribe")
             coordinator.start()
             return coordinator, subscribe
 
@@ -305,7 +290,7 @@ class TestControlCoordinatorLifecycle:
     def test_stop_unsubscribes_ee_twist_subscription(self, make_coordinator, mocker):
         coordinator = make_coordinator()
         unsubscribe = mocker.Mock()
-        coordinator._stream_unsubs = {"coordinator_ee_twist_command": unsubscribe}
+        coordinator._stream_unsubs = {"ee_twist_command": unsubscribe}
 
         coordinator.stop()
 
@@ -350,6 +335,11 @@ class TestControlCoordinatorLifecycle:
                 return None
 
             def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+                pass
+
+            def on_twist_command(self, msg: Any, t_now: float) -> None:
+                # The g1_groot_wbc card binds twist_command; add_task now
+                # resolves handlers at registration, so the stub needs it.
                 pass
 
             def reset_runtime_state(self, reactivate: bool | None = None) -> bool:

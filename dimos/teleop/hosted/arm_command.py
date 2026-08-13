@@ -33,9 +33,9 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
-from dimos.teleop.quest.quest_extensions import ArmTeleopConfig, ArmTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig
 from dimos.teleop.quest.quest_types import Hand
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
@@ -43,7 +43,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class ArmCommandConfig(ArmTeleopConfig):
+class ArmCommandConfig(QuestTeleopConfig):
     cmd_stale_after_sec: float = 0.5
 
 
@@ -59,7 +59,7 @@ class ArmCommandModule(ArmTeleopModule):
     cmd_ack: Out[bytes]
     robot_state: Out[bytes]
 
-    coordinator_ee_twist_command: Out[TwistStamped]
+    ee_twist_command: Out[TwistStamped]
     gripper_command: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -166,9 +166,8 @@ class ArmCommandModule(ArmTeleopModule):
         if ts <= self._last_twist_ts:  # out-of-order
             return
         self._last_twist_ts = ts
-        self.coordinator_ee_twist_command.publish(
+        self.ee_twist_command.publish(
             TwistStamped(
-                frame_id=EEF_TWIST_TASK_NAME,
                 linear=[msg.linear.x, msg.linear.y, msg.linear.z],
                 angular=[msg.angular.x, msg.angular.y, msg.angular.z],
                 ts=msg.ts,
