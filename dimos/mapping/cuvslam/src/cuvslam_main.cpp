@@ -41,7 +41,7 @@ using dimos::native::Output;
 namespace logging = dimos::native::log;
 using namespace depth_reproject;
 using namespace msg_convert;
-using dimos::native::StaticTfTree;
+using dimos::native::TfTree;
 using Transform = Eigen::Isometry3d;
 
 namespace {
@@ -150,6 +150,26 @@ public:
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
         corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
         tf_ = builder.output<tf2_msgs::TFMessage>("tf");
+        tf_tree_.set_publish_sink([this](const std::string& parent, const std::string& child,
+                                         const Eigen::Isometry3d& parent_from_child,
+                                         std::int64_t timestamp_ns) {
+            geometry_msgs::TransformStamped stamped{};
+            stamped.header.stamp = to_stamp(timestamp_ns);
+            stamped.header.frame_id = parent;
+            stamped.child_frame_id = child;
+            const Eigen::Quaterniond rotation(parent_from_child.linear());
+            stamped.transform.translation.x = parent_from_child.translation().x();
+            stamped.transform.translation.y = parent_from_child.translation().y();
+            stamped.transform.translation.z = parent_from_child.translation().z();
+            stamped.transform.rotation.x = rotation.x();
+            stamped.transform.rotation.y = rotation.y();
+            stamped.transform.rotation.z = rotation.z();
+            stamped.transform.rotation.w = rotation.w();
+            tf2_msgs::TFMessage message{};
+            message.transforms = {stamped};
+            message.transforms_length = 1;
+            tf_.publish(message);
+        });
     }
 
     void teardown() override {
@@ -232,7 +252,7 @@ private:
 
         std::vector<RigCamera> cameras;
         for (const std::string& frame : frames) {
-            const std::optional<Transform> rig_from_camera = tf_tree_.lookup(rig_frame(), frame);
+            const std::optional<Transform> rig_from_camera = tf_tree_.get(rig_frame(), frame);
             const auto info = camera_info_.find(frame);
             if (!rig_from_camera || info == camera_info_.end()) {
                 return;
@@ -343,7 +363,7 @@ private:
             return nullptr;
         }
         if (!camera_from_depth_) {
-            camera_from_depth_ = tf_tree_.lookup(camera.frame, depth_.header.frame_id);
+            camera_from_depth_ = tf_tree_.get(camera.frame, depth_.header.frame_id);
             if (!camera_from_depth_) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: tf does not connect the depth frame to the camera",
@@ -379,7 +399,7 @@ private:
         if (tracker_) {
             return;
         }
-        const std::optional<Transform> base_from_rig = tf_tree_.lookup(cfg_.base_frame, rig_frame());
+        const std::optional<Transform> base_from_rig = tf_tree_.get(cfg_.base_frame, rig_frame());
         if (!base_from_rig) {
             DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                 "cuvslam: tf does not place the rig frame against base_frame",
@@ -402,7 +422,7 @@ private:
         }
         if (cfg_.enable_imu) {
             const std::optional<Transform> rig_from_imu =
-                imu_frame_.empty() ? std::nullopt : tf_tree_.lookup(rig_frame(), imu_frame_);
+                imu_frame_.empty() ? std::nullopt : tf_tree_.get(rig_frame(), imu_frame_);
             if (!rig_from_imu) {
                 DIMOS_LOG_THROTTLED(logging::Level::Warn, logging::from_secs(10),
                                     "cuvslam: enable_imu is on but tf does not place the IMU",
@@ -661,7 +681,7 @@ private:
         fill_pose(corrected, map_from_base, timestamp_ns, cfg_.map_frame, cfg_.base_frame);
         corrected_odometry_.publish(corrected);
 
-        publish_tf(map_from_odom_raw, timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
+        tf_tree_.publish(cfg_.map_frame, cfg_.odom_frame, map_from_odom_raw, timestamp_ns);
 
         cuvslam::Slam::Metrics metrics{};
         slam_->GetSlamMetrics(metrics);
@@ -693,26 +713,6 @@ private:
         msg.pose.pose.orientation.w = rotation.w();
     }
 
-    void publish_tf(const Transform& pose, std::int64_t timestamp_ns, const std::string& frame,
-                    const std::string& child) {
-        geometry_msgs::TransformStamped stamped{};
-        stamped.header.stamp = to_stamp(timestamp_ns);
-        stamped.header.frame_id = frame;
-        stamped.child_frame_id = child;
-        const Eigen::Quaterniond rotation(pose.linear());
-        stamped.transform.translation.x = pose.translation().x();
-        stamped.transform.translation.y = pose.translation().y();
-        stamped.transform.translation.z = pose.translation().z();
-        stamped.transform.rotation.x = rotation.x();
-        stamped.transform.rotation.y = rotation.y();
-        stamped.transform.rotation.z = rotation.z();
-        stamped.transform.rotation.w = rotation.w();
-
-        tf2_msgs::TFMessage message{};
-        message.transforms = {stamped};
-        message.transforms_length = 1;
-        tf_.publish(message);
-    }
 
     void publish(std::int64_t timestamp_ns) {
         nav_msgs::Odometry msg{};
@@ -723,10 +723,10 @@ private:
             msg.pose.covariance[i] = covariance_[i];
         }
         odometry_.publish(msg);
-        publish_tf(world_from_rig_, timestamp_ns, cfg_.odom_frame, cfg_.base_frame);
+        tf_tree_.publish(cfg_.odom_frame, cfg_.base_frame, world_from_rig_, timestamp_ns);
         // With Slam running, map->odom is its correction; only one publisher per edge.
         if (!cfg_.enable_slam && cfg_.publish_map_to_odom) {
-            publish_tf(Transform::Identity(), timestamp_ns, cfg_.map_frame, cfg_.odom_frame);
+            tf_tree_.publish(cfg_.map_frame, cfg_.odom_frame, Transform::Identity(), timestamp_ns);
         }
     }
 
@@ -752,7 +752,7 @@ private:
     std::string imu_frame_;
 
     /// child frame -> (its parent, parent_from_child). The bound is a cycle guard.
-    StaticTfTree tf_tree_;
+    TfTree tf_tree_;
 
     /// covariance gate
     cuvslam::PoseCovariance covariance_{};
