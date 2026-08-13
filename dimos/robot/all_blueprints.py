@@ -193,6 +193,7 @@ all_modules = {
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
+    "eval-module": "dimos.evals.module.EvalModule",
     "far-planner": "dimos.navigation.cmu_nav.modules.far_planner.far_planner.FarPlanner",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",
     "fast-lio2-recorder": "dimos.hardware.sensors.lidar.fastlio2.recorder.FastLio2Recorder",

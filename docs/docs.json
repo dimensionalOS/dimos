@@ -293,6 +293,10 @@
       "destination": "/usage/tool_streams"
     },
     {
+      "source": "/docs/usage/evals.md",
+      "destination": "/usage/evals"
+    },
+    {
       "source": "/docs/usage/data_streams/index.md",
       "destination": "/usage/data_streams/index"
     },
