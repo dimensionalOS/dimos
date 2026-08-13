@@ -21,6 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import eef_twist_task
 from dimos.robot.manipulators.openyam.config import (
+    YAM_CAN,
     make_openyam_hardware,
     make_openyam_model_config,
 )
@@ -42,6 +43,33 @@ keyboard_teleop_openyam = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_openyam_model],
+        visualization={"backend": "viser"},
+    ),
+)
+
+# Real hardware over CAN (macOS: the default can0 address auto-resolves to
+# the gs_usb dongle). Motors enable on connect and hold pose PD-only — start
+# from a stable rest pose with the workspace clear.
+_openyam_can_keyboard_hw = make_openyam_hardware(
+    "arm",
+    adapter_type="openyam",
+    address=YAM_CAN,
+)
+_openyam_can_model = make_openyam_model_config(name="arm")
+
+keyboard_teleop_openyam_can = autoconnect(
+    KeyboardTeleopModule.blueprint(),
+    ControlCoordinator.blueprint(
+        hardware=[_openyam_can_keyboard_hw],
+        tasks=[
+            eef_twist_task(
+                _openyam_can_keyboard_hw,
+                robot_model=_openyam_can_model,
+            )
+        ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[_openyam_can_model],
         visualization={"backend": "viser"},
     ),
 )
