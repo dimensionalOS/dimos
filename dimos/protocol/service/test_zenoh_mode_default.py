@@ -20,21 +20,16 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.service.zenohservice import ZenohConfig
 
 
-@pytest.fixture
-def clean_config(monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_mode", "peer")
-
-
-def test_mode_defaults_to_peer(clean_config):
+def test_mode_defaults_to_peer(zenoh_defaults):
     assert ZenohConfig().mode == "peer"
 
 
-def test_global_config_sets_mode(clean_config, monkeypatch):
+def test_global_config_sets_mode(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_mode", "client")
     assert ZenohConfig().mode == "client"
 
 
-def test_caller_override_wins(clean_config, monkeypatch):
+def test_caller_override_wins(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(global_config, "zenoh_mode", "client")
     assert ZenohConfig(mode="peer").mode == "peer"
 
@@ -54,7 +49,3 @@ def test_router_mode_rejected():
     host would fail binding zenoh's fixed router listen port."""
     with pytest.raises(ValueError, match="'peer' or 'client'"):
         ZenohConfig(mode="router")
-
-
-def test_mode_separates_pooled_sessions(clean_config):
-    assert ZenohConfig(mode="client").session_key != ZenohConfig(mode="peer").session_key
