@@ -1120,6 +1120,82 @@ fn milestone_gated_normals_match_full_refit() {
     assert!(checked > 100, "expected a real floor, checked {checked}");
 }
 
+/// Whole-map fine scan kept as the reference for the parallel, interior-hoisted
+/// `emit_points_fine`.
+fn emit_points_fine_naive(
+    map: &VoxelMap,
+    voxel_size: f32,
+    divisor: i32,
+    bounds: Option<&LocalBounds>,
+    support_min: i32,
+) -> Vec<(f32, f32, f32)> {
+    let fine_size = voxel_size / divisor as f32;
+    let mut out = Vec::new();
+    for (&key, v) in map.voxels.iter() {
+        if v.health <= 0 {
+            continue;
+        }
+        if support_min > 0 && v.support < support_min as u32 {
+            continue;
+        }
+        let mut bits = v.fine;
+        while bits != 0 {
+            let i = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let (x, y, z) = voxel_center(join_fine_key(key, i, divisor), fine_size);
+            if bounds.is_none_or(|b| b.contains(x, y, z)) {
+                out.push((x, y, z));
+            }
+        }
+    }
+    out
+}
+
+/// The parallel fine emission with chunk and voxel interior hoisting must
+/// return exactly what a whole-map scan does, across randomized maps and both
+/// bounded and unbounded queries.
+#[test]
+fn emit_points_fine_matches_naive_scan_on_random_maps() {
+    let mut state = 3141592653589793238_u64;
+    let mut next_u64 = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_coord = move || (next_u64() % 2400) as f32 / 100.0 - 12.0;
+
+    let cfg = fine_config(3);
+    let bounds = LocalBounds {
+        origin_x: 0.5,
+        origin_y: -0.5,
+        r_xy_max_sq: 36.0,
+        z_min: -3.0,
+        z_max: 3.0,
+    };
+    let no_live = AHashSet::new();
+
+    for trial in 0..10 {
+        let mut map = VoxelMap::default();
+        for _ in 0..4 {
+            let points: Vec<(f32, f32, f32)> = (0..200)
+                .map(|_| (next_coord(), next_coord(), next_coord()))
+                .collect();
+            update_map(&mut map, (20.0, 20.0, 20.0), &points, &cfg);
+        }
+
+        for (support_min, use_bounds) in [(0, false), (0, true), (2, true), (4, true)] {
+            let b = use_bounds.then_some(&bounds);
+            let got = sort_points(emit_points_fine(&map, 1.0, 3, b, support_min, &no_live));
+            let want = sort_points(emit_points_fine_naive(&map, 1.0, 3, b, support_min));
+            assert_eq!(
+                got, want,
+                "trial {trial} support_min={support_min} bounds={use_bounds}"
+            );
+        }
+    }
+}
+
 /// Binning fine-emitted points by the divisor recovers exactly the healthy
 /// voxel set: every fine child nests inside its parent and every healthy
 /// voxel that saw returns emits at least one child.
