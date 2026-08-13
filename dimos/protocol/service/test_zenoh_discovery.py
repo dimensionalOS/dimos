@@ -13,34 +13,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multicast and gossip are knobs, and both stay on unless a deployment says no."""
+"""Multicast and gossip are knobs. Gossip follows scouting unless set explicitly."""
 
 import pytest
 import zenoh
 
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 
 @pytest.fixture
 def clean_config(monkeypatch):
+    monkeypatch.setattr(global_config, "zenoh_scouting", False)
+    monkeypatch.setattr(global_config, "zenoh_interface", "")
     monkeypatch.setattr(global_config, "zenoh_multicast", True)
-    monkeypatch.setattr(global_config, "zenoh_gossip", True)
-
-
-@pytest.fixture
-def session_pool():
-    pool = ZenohSessionPool()
-    yield pool
-    pool.close_all()
+    monkeypatch.setattr(global_config, "zenoh_gossip", None)
 
 
 def test_multicast_defaults_on(clean_config):
     assert ZenohConfig().multicast is True
 
 
-def test_gossip_defaults_on(clean_config):
-    assert ZenohConfig().gossip is True
+def test_gossip_follows_scouting(clean_config, monkeypatch):
+    assert ZenohConfig().gossip_enabled is False
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().gossip_enabled is True
+
+
+def test_explicit_gossip_wins_over_scouting(clean_config, monkeypatch):
+    monkeypatch.setattr(global_config, "zenoh_gossip", True)
+    assert ZenohConfig().gossip_enabled is True
+    monkeypatch.setattr(global_config, "zenoh_gossip", False)
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().gossip_enabled is False
+
+
+def test_caller_override_wins(clean_config):
+    assert ZenohConfig(gossip=True).gossip_enabled is True
 
 
 def test_global_config_turns_multicast_off(clean_config, monkeypatch):
@@ -48,30 +58,20 @@ def test_global_config_turns_multicast_off(clean_config, monkeypatch):
     assert ZenohConfig().multicast is False
 
 
-def test_global_config_turns_gossip_off(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_gossip", False)
-    assert ZenohConfig().gossip is False
-
-
-def test_caller_override_wins(clean_config, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_gossip", False)
-    assert ZenohConfig(gossip=True).gossip is True
-
-
 def test_env_vars_set_the_knobs(monkeypatch):
     monkeypatch.setenv("ZENOH_MULTICAST", "false")
-    monkeypatch.setenv("ZENOH_GOSSIP", "false")
+    monkeypatch.setenv("ZENOH_GOSSIP", "true")
     config = GlobalConfig()
     assert config.zenoh_multicast is False
-    assert config.zenoh_gossip is False
+    assert config.zenoh_gossip is True
 
 
-def test_unset_env_leaves_both_on(monkeypatch):
+def test_unset_env_keeps_the_defaults(monkeypatch):
     monkeypatch.delenv("ZENOH_MULTICAST", raising=False)
     monkeypatch.delenv("ZENOH_GOSSIP", raising=False)
     config = GlobalConfig()
     assert config.zenoh_multicast is True
-    assert config.zenoh_gossip is True
+    assert config.zenoh_gossip is None
 
 
 def test_multicast_separates_pooled_sessions(clean_config):
@@ -80,6 +80,10 @@ def test_multicast_separates_pooled_sessions(clean_config):
 
 def test_gossip_separates_pooled_sessions(clean_config):
     assert ZenohConfig(gossip=True).session_key != ZenohConfig(gossip=False).session_key
+
+
+def test_unset_gossip_pools_with_its_resolved_value(clean_config):
+    assert ZenohConfig(gossip=None).session_key == ZenohConfig(gossip=False).session_key
 
 
 def test_zenoh_knows_both_discovery_keys():
@@ -93,6 +97,18 @@ def test_zenoh_knows_both_discovery_keys():
 
 @pytest.mark.parametrize("multicast", [True, False])
 @pytest.mark.parametrize("gossip", [True, False])
-def test_every_combination_opens_a_session(clean_config, session_pool, multicast, gossip):
-    config = ZenohConfig(multicast=multicast, gossip=gossip)
-    assert session_pool.acquire(config) is not None
+def test_pool_inserts_the_discovery_config(clean_config, monkeypatch, multicast, gossip):
+    captured = {}
+
+    def fake_open(zconfig):
+        captured["multicast"] = zconfig.get_json("scouting/multicast/enabled")
+        captured["gossip"] = zconfig.get_json("scouting/gossip/enabled")
+        captured["interface"] = zconfig.get_json("scouting/multicast/interface")
+        return object()
+
+    monkeypatch.setattr(zenohservice.zenoh, "open", fake_open)
+    ZenohSessionPool().acquire(ZenohConfig(multicast=multicast, gossip=gossip))
+
+    assert captured["multicast"] == str(multicast).lower()
+    assert captured["gossip"] == str(gossip).lower()
+    assert captured["interface"] == f'"{zenohservice.LOOPBACK_INTERFACE}"'
