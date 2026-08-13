@@ -37,8 +37,7 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 import dimos.control.coordinator as coord_mod
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME

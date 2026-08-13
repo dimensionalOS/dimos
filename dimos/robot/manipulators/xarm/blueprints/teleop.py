@@ -18,8 +18,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule

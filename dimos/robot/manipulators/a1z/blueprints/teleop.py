@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a1z.config import (

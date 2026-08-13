@@ -50,8 +50,8 @@ Benchmarker in one process.
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
-from dimos.control.task_config import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport

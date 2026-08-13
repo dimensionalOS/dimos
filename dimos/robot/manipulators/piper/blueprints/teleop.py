@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import make_gripper_joints
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule

@@ -42,9 +42,9 @@ from dimos.control.routing import (
 if TYPE_CHECKING:
     from types import ModuleType
 
+    from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.control.task import ControlTask
-    from dimos.control.task_config import TaskConfig
 
 TaskFactory = Callable[..., "ControlTask"]
 

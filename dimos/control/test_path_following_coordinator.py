@@ -23,9 +23,9 @@ import pytest
 
 from dimos.control.benchmarking.paths import straight_rotate
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.control.task import CoordinatorState, JointStateSnapshot
-from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.msgs.std_msgs.Float32 import Float32
 

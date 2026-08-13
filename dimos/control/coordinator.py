@@ -26,7 +26,7 @@ Features:
 """
 
 from contextlib import suppress
-from dataclasses import field
+from dataclasses import dataclass, field
 import inspect
 import threading
 import time
@@ -48,7 +48,6 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
-from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     TrajectoryCancellationResult,
@@ -78,6 +77,19 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = setup_logger()
+
+
+@dataclass
+class TaskConfig:
+    """Configuration for a registered control task."""
+
+    name: str
+    type: str = "trajectory"
+    joint_names: list[str] = field(default_factory=list)
+    priority: int = 10
+    auto_start: bool = False
+    params: dict[str, Any] = field(default_factory=dict)
+    stream_bind: dict[str, str] = field(default_factory=dict)
 
 
 class ControlCoordinatorConfig(ModuleConfig):

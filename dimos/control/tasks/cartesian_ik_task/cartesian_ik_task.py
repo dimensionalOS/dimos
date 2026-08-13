@@ -29,6 +29,7 @@ import numpy as np
 import pinocchio
 from pydantic import FiniteFloat
 
+from dimos.control.coordinator import TaskConfig
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -36,7 +37,6 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     PinkControlIK,
     PinkControlIKConfig,

@@ -32,8 +32,7 @@ from dimos.control.components import (
     make_joints,
     make_twist_base_joints,
 )
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2

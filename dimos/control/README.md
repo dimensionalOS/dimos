@@ -100,7 +100,7 @@ dimos/control/
 ```python
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 my_robot = ControlCoordinator.blueprint(

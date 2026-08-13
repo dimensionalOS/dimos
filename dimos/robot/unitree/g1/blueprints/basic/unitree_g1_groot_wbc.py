@@ -50,8 +50,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.task_config import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     ARM_DEFAULT_POSE,
     G1_GROOT_KD,

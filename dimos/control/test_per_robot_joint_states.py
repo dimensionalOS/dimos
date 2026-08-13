@@ -25,9 +25,8 @@ import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 import dimos.control.coordinator as coord_mod
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware
-from dimos.control.task_config import TaskConfig
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry

@@ -32,7 +32,7 @@ from dimos.control.components import (
     make_joints,
     make_twist_base_joints,
 )
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import (
     BaseControlTask,
@@ -42,7 +42,6 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,

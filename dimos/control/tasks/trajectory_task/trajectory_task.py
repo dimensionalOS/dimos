@@ -26,7 +26,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -38,11 +38,13 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.control.task_config import TaskConfig
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.control.coordinator import TaskConfig
 
 logger = setup_logger()
 
@@ -55,6 +57,9 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
+    # The coordinator imports this module to recognize the canonical JTT.
+    from dimos.control.coordinator import TaskConfig
+
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
