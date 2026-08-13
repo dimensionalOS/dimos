@@ -115,15 +115,18 @@ fn place_from_candidates(
     }
 }
 
-/// Regional counterpart to place_nodes: recompute the wall-distance field and
-/// node placement inside the window, keeping cached nodes outside it as NMS
-/// seeds so spacing holds across the seam.
+/// Regional counterpart to place_nodes: recompute the wall-distance field
+/// inside the window, then repair rather than re-derive the node set. Nodes
+/// are sticky: survivors keep their placement so the graph and the refined
+/// path stay stable frame to frame. New nodes are placed only on cells added
+/// by this update, spaced by NMS against every existing node.
 #[allow(clippy::too_many_arguments)]
 pub fn place_nodes_region(
     cells: &mut SurfaceCells,
     by_col: &ColumnIz,
     clearance_cells: i32,
     step_cells: i32,
+    added: &[CellId],
     window: &AHashSet<CellId>,
     voxel_size: f32,
     node_spacing_m: f32,
@@ -146,14 +149,23 @@ pub fn place_nodes_region(
     );
     dijkstra_region(cells, &wall_seeds, window, wall_state, Weight::Base);
 
-    nodes.retain(|n| cells.is_live(n.cell_id) && !window.contains(&n.cell_id));
+    let node_floor = wall_clearance_m;
+    // Drop only nodes whose cell died or whose fresh wall distance marks the
+    // cell impassable. The distance field is stale outside the window, so
+    // only in-window nodes are judged by it.
+    nodes.retain(|n| {
+        cells.is_live(n.cell_id)
+            && !(window.contains(&n.cell_id) && wall_state.dist[n.cell_id as usize] < node_floor)
+    });
     let kept: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
 
-    let node_floor = wall_clearance_m;
-    let candidates: Vec<CellId> = window
+    // New nodes only in comfortably open freshly-seen space: transient fringe
+    // cells near walls must not birth graph structure every frame.
+    let birth_floor = wall_clearance_m + 0.5 * wall_buffer_m;
+    let candidates: Vec<CellId> = added
         .iter()
         .copied()
-        .filter(|&id| cells.is_live(id) && wall_state.dist[id as usize] >= node_floor)
+        .filter(|&id| cells.is_live(id) && wall_state.dist[id as usize] >= birth_floor)
         .collect();
     place_from_candidates(
         cells,
@@ -205,6 +217,9 @@ fn collect_wall_adjacent_in_window(
 
 /// Empty columns a gap may span before it counts as a real edge, not a hole.
 const HOLE_SPAN_CELLS: i32 = 4;
+
+/// Smallest unserved component the fallback seeding still gives a node.
+const MIN_COMPONENT_CELLS: u32 = 4;
 
 /// True when any missing 4-neighbor opens onto a real edge rather than a hole.
 fn real_wall_adjacent(
@@ -499,12 +514,13 @@ fn ensure_node_per_component(
         }
     }
 
-    // Clearest cell per still-unserved component, indexed by root.
+    // Clearest cell and size per still-unserved component, indexed by root.
     for &id in domain {
         let root = scratch.uf.find(id) as usize;
         if scratch.served[root] {
             continue;
         }
+        scratch.size[root] += 1;
         let cur = scratch.best[root];
         if cur == NO_CELL || is_clearer(cells, dist, id, cur) {
             scratch.best[root] = id;
@@ -512,9 +528,14 @@ fn ensure_node_per_component(
     }
 
     // Emit one node per unserved component: the cell that won its root's slot.
+    // Fragments below the size floor are transient sensor noise, not places to
+    // grow graph structure.
     for &id in domain {
         let root = scratch.uf.find(id) as usize;
-        if !scratch.served[root] && scratch.best[root] == id {
+        if !scratch.served[root]
+            && scratch.best[root] == id
+            && scratch.size[root] >= MIN_COMPONENT_CELLS
+        {
             let (ix, iy, iz) = cells.coord(id);
             out_nodes.push(NodeData {
                 cell_id: id,
@@ -529,6 +550,7 @@ fn ensure_node_per_component(
         scratch.uf.clear(id);
         scratch.served[id as usize] = false;
         scratch.best[id as usize] = NO_CELL;
+        scratch.size[id as usize] = 0;
     }
     for nd in out_nodes.iter() {
         scratch.node_flag[nd.cell_id as usize] = false;
@@ -551,6 +573,7 @@ pub struct NodeScratch {
     node_flag: Vec<bool>,
     served: Vec<bool>,
     best: Vec<CellId>,
+    size: Vec<u32>,
     seen: Vec<bool>,
 }
 
@@ -561,6 +584,7 @@ impl NodeScratch {
             self.node_flag.resize(n, false);
             self.served.resize(n, false);
             self.best.resize(n, NO_CELL);
+            self.size.resize(n, 0);
             self.seen.resize(n, false);
         }
     }

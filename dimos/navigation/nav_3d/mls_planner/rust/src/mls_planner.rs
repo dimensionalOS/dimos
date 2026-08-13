@@ -14,7 +14,7 @@
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use dimos_module::native_config;
 use rayon::prelude::*;
 use validator::ValidationError;
@@ -26,7 +26,10 @@ use crate::planner;
 use crate::surfaces::{
     add_to_by_col, extract_surfaces, extract_surfaces_region, remove_from_by_col, ColumnIz,
 };
-use crate::voxel::{voxelize, VoxelKey};
+use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
+
+/// Node positions bucketed by spacing-sized grid cell, for crowding checks.
+type NodeBins = AHashMap<(i32, i32, i32), Vec<(f32, f32, f32)>>;
 
 #[native_config]
 #[derive(Clone)]
@@ -219,8 +222,8 @@ impl Planner {
         self.rebuild_region_graph(added, removed, config);
     }
 
-    /// Patch changed cells, then re-place nodes and edges over the change
-    /// window. A no-op when no surface cell changed.
+    /// Patch changed cells, then repair nodes and edges around the change.
+    /// A no-op when no surface cell changed.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
@@ -229,11 +232,18 @@ impl Planner {
     ) {
         let step = config.step_cells();
         let clearance = config.headroom_cells();
+        let mut dead: AHashMap<CellId, VoxelKey> = AHashMap::new();
+        for &c in &removed {
+            if let Some(id) = self.graph.cells.id(c) {
+                dead.insert(id, c);
+            }
+        }
         for &c in &removed {
             self.graph.cells.remove(c);
         }
+        let mut added_ids: Vec<CellId> = Vec::with_capacity(added.len());
         for &c in &added {
-            self.graph.cells.insert(c);
+            added_ids.push(self.graph.cells.insert(c));
         }
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
@@ -248,12 +258,14 @@ impl Planner {
             config.voxel_size,
             step,
         );
+        self.relocate_dead_nodes(&dead, config);
         let window = self.node_window(&seeds, config);
         place_nodes_region(
             &mut self.graph.cells,
             &self.by_col,
             clearance,
             step,
+            &added_ids,
             &window,
             config.voxel_size,
             config.node_spacing_m,
@@ -384,52 +396,156 @@ impl Planner {
         self.rebuild_nodes(config);
     }
 
-    /// Live cells within the changed-cell bbox grown by the node-graph margin,
-    /// which covers the reach of any node, edge, or Voronoi change.
-    fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
-        // Slack beyond the morphology, wall-buffer, and spacing reach.
-        const SLACK_CELLS: i32 = 2;
-        let voxel_size = config.voxel_size;
-        let pad = (2 * config.closing_passes()) as i32;
-        let buffer_cells =
-            ((config.wall_clearance_m + config.wall_buffer_m) / voxel_size).ceil() as i32;
-        let spacing_cells = (config.node_spacing_m / voxel_size).ceil() as i32;
-        let margin = pad + buffer_cells + spacing_cells + SLACK_CELLS;
-
-        let mut bb = ChangeBounds::new();
-        for &(ix, iy, _) in changed {
-            bb.add(ix, iy);
+    /// Move nodes whose cell died onto a nearby live cell instead of dropping
+    /// them, so transient surface flicker cannot delete and respawn graph
+    /// structure. Unrelocatable nodes keep their dead cell and are dropped by
+    /// the sticky retention pass.
+    fn relocate_dead_nodes(&mut self, dead: &AHashMap<CellId, VoxelKey>, config: &Config) {
+        if dead.is_empty() {
+            return;
         }
-        let Some((min_x, max_x, min_y, max_y)) = bb.bounds() else {
-            return AHashSet::new();
+        let step = config.step_cells();
+        let graph = &mut self.graph;
+        let cells = &graph.cells;
+        let lookup = &graph.surface_lookup;
+        let mut taken: AHashSet<CellId> = graph
+            .nodes
+            .iter()
+            .map(|n| n.cell_id)
+            .filter(|&id| cells.is_live(id))
+            .collect();
+        // Spacing bins of live node positions: a relocation may not land where
+        // another node is already close, so transient fragment fallbacks die
+        // instead of crowding onto the main surface.
+        let spacing = config.node_spacing_m;
+        let crowd_sq = (0.9 * spacing) * (0.9 * spacing);
+        let bin_of = |p: (f32, f32, f32)| {
+            (
+                (p.0 / spacing).floor() as i32,
+                (p.1 / spacing).floor() as i32,
+                (p.2 / spacing).floor() as i32,
+            )
         };
-        let (x0, x1, y0, y1) = (
-            min_x - margin,
-            max_x + margin,
-            min_y - margin,
-            max_y + margin,
-        );
-
-        let lookup = &self.graph.surface_lookup;
-        let cells = &self.graph.cells;
-        let ids: Vec<CellId> = (x0..(x1 + 1))
-            .into_par_iter()
-            .flat_map_iter(|ix| {
-                let mut local: Vec<CellId> = Vec::new();
-                for iy in y0..=y1 {
-                    let Some(zs) = lookup.get(&(ix, iy)) else {
-                        continue;
-                    };
-                    for &iz in zs {
-                        if let Some(id) = cells.id((ix, iy, iz)) {
-                            local.push(id);
+        let mut bins: NodeBins = AHashMap::new();
+        for n in graph.nodes.iter() {
+            if cells.is_live(n.cell_id) {
+                bins.entry(bin_of(n.pos)).or_default().push(n.pos);
+            }
+        }
+        let crowded = |p: (f32, f32, f32)| {
+            let (bx, by, bz) = bin_of(p);
+            for dx in -1..=1_i32 {
+                for dy in -1..=1_i32 {
+                    for dz in -1..=1_i32 {
+                        let Some(near) = bins.get(&(bx + dx, by + dy, bz + dz)) else {
+                            continue;
+                        };
+                        for q in near {
+                            let d = (p.0 - q.0, p.1 - q.1, p.2 - q.2);
+                            if d.0 * d.0 + d.1 * d.1 + d.2 * d.2 < crowd_sq {
+                                return true;
+                            }
                         }
                     }
                 }
-                local
-            })
-            .collect();
-        ids.into_iter().collect()
+            }
+            false
+        };
+        for n in graph.nodes.iter_mut() {
+            let Some(&(ix, iy, iz)) = dead.get(&n.cell_id) else {
+                continue;
+            };
+            let mut best: Option<(i32, CellId, VoxelKey)> = None;
+            for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in zs {
+                    let dz = (nz - iz).abs();
+                    if dz > step {
+                        continue;
+                    }
+                    let k = (ix + dx, iy + dy, nz);
+                    let Some(id) = cells.id(k) else {
+                        continue;
+                    };
+                    if taken.contains(&id) {
+                        continue;
+                    }
+                    let rank = 2 * dz + dx.abs() + dy.abs();
+                    if best.is_none_or(|(r, _, _)| rank < r) {
+                        best = Some((rank, id, k));
+                    }
+                }
+            }
+            if let Some((_, id, k)) = best {
+                let pos = surface_point_xyz(k.0, k.1, k.2, config.voxel_size);
+                if crowded(pos) {
+                    continue;
+                }
+                taken.insert(id);
+                n.cell_id = id;
+                n.pos = pos;
+            }
+        }
+    }
+
+    /// Live cells within the node-graph margin of the changed cells, walked as
+    /// a BFS ball over cell adjacency. Wall distances and Voronoi labels
+    /// propagate along graph edges, so the ball is exactly the region a change
+    /// can reach, without paying for the hull between scattered changes.
+    fn node_window(&self, changed: &[VoxelKey], config: &Config) -> AHashSet<CellId> {
+        // Wall distances only matter out to the penalty band, and nodes are
+        // sticky, so the ball covers the buffer reach of the changed surface
+        // cells plus slack. The morphology pad is already realized in the
+        // seeds, which are post-extraction surface diffs.
+        const SLACK_CELLS: i32 = 2;
+        let voxel_size = config.voxel_size;
+        let buffer_cells =
+            ((config.wall_clearance_m + config.wall_buffer_m) / voxel_size).ceil() as i32;
+        let steps = buffer_cells + SLACK_CELLS;
+        let step_dz = config.step_cells();
+
+        let lookup = &self.graph.surface_lookup;
+        let cells = &self.graph.cells;
+        let mut ball: AHashSet<CellId> = AHashSet::new();
+        let mut frontier: Vec<CellId> = Vec::new();
+
+        // Roots: the changed cells themselves, plus the live column neighbors
+        // that carry the change when the cell itself was removed.
+        for &(ix, iy, iz) in changed {
+            for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in zs {
+                    if (nz - iz).abs() > step_dz {
+                        continue;
+                    }
+                    if let Some(id) = cells.id((ix + dx, iy + dy, nz)) {
+                        if ball.insert(id) {
+                            frontier.push(id);
+                        }
+                    }
+                }
+            }
+        }
+
+        for _ in 0..steps {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next: Vec<CellId> = Vec::new();
+            for &u in &frontier {
+                for e in cells.neighbors(u) {
+                    if ball.insert(e.dest) {
+                        next.push(e.dest);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        ball
     }
 
     /// Full rebuild of nodes and node edges from the current cells.
@@ -732,12 +848,52 @@ mod region_tests {
             cell_edges(&full),
             "cell edges mismatch"
         );
-        assert_eq!(node_coords(&region), node_coords(&full), "node mismatch");
-        assert_eq!(
-            node_edge_pairs(&region),
-            node_edge_pairs(&full),
-            "node edge mismatch"
-        );
+        // Nodes are sticky, not re-derived, so their positions may differ
+        // from a fresh build. Equivalent planning is the contract.
+        let s = (0.5, 0.5, 0.1);
+        let g = (1.5, 3.5, 0.1);
+        let pf = full.plan(s, g, &cfg).expect("full build plans");
+        let pr = region.plan(s, g, &cfg).expect("region build plans");
+        let (lf, lr) = (path_len(&pf), path_len(&pr));
+        assert!(lr <= lf * 1.6 + 0.5, "region path too long: {lr} vs {lf}");
+        assert!(lf <= lr * 1.6 + 0.5, "full path too long: {lf} vs {lr}");
+    }
+
+    /// A local change must not move nodes beyond its reach. Distant nodes are
+    /// sticky by contract, which keeps refined paths stable frame to frame.
+    #[test]
+    fn sticky_nodes_survive_distant_changes() {
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::default();
+        p.update_global_map(&all, &cfg);
+        let before = node_coords(&p);
+
+        // A junk voxel appears in one corner: a genuine local change.
+        let b = RegionBounds {
+            origin_x: 1.0,
+            origin_y: 1.0,
+            radius: 1.0,
+            z_min: -1.0,
+            z_max: 2.0,
+        };
+        let mut pts = slice(&all, &b, vs);
+        pts.push((1.05, 1.05, 0.45));
+        p.update_region(&pts, &b, &cfg);
+
+        let after = node_coords(&p);
+        let far = |c: &VoxelKey| {
+            let x = c.0 as f32 * vs;
+            let y = c.1 as f32 * vs;
+            ((x - 1.0).powi(2) + (y - 1.0).powi(2)).sqrt() > 3.5
+        };
+        for c in before.iter().filter(|c| far(c)) {
+            assert!(
+                after.contains(c),
+                "distant node {c:?} moved on a local change"
+            );
+        }
     }
 
     /// A point outside the region bounds must not enter the planner's voxel
