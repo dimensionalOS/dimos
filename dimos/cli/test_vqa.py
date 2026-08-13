@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from click import unstyle
 from typer.testing import CliRunner
@@ -59,41 +61,21 @@ def test_generation_spec_rejects_mixed_cli_options(tmp_path: Path) -> None:
     assert "cannot be combined" in result.output
 
 
-def test_generation_run_records_resolved_request(tmp_path: Path) -> None:
-    vqa._write_generation_run(
-        tmp_path,
-        VqaGenerationSpecification(recording="go2.db", stop_index=10),
-        {"frame_count": 2, "accepted_question_count": 3, "rejected_question_count": 1},
+def test_generate_delegates_resolved_specification(monkeypatch: Any) -> None:
+    captured: dict[str, object] = {}
+
+    def execute(generation: VqaGenerationSpecification, **kwargs: object) -> object:
+        captured["generation"] = generation
+        captured.update(kwargs)
+        return SimpleNamespace(summary={"frame_count": 1})
+
+    monkeypatch.setattr(vqa, "execute_generation", execute)
+
+    result = CliRunner().invoke(
+        vqa.app,
+        ["generate", "--recording", "go2.db", "--stop-index", "1"],
     )
 
-    payload = json.loads((tmp_path / "audit" / "run.json").read_text())
-
-    assert payload["generation"]["recording"] == "go2.db"
-    assert payload["generation"]["output"] == str(tmp_path)
-    assert payload["summary"]["accepted_question_count"] == 3
-
-
-def test_completed_frame_must_match_generation_settings(tmp_path: Path) -> None:
-    frame = tmp_path / "audit" / "frame-000001"
-    frame.mkdir(parents=True)
-    (frame / "frame.json").write_text(
-        json.dumps(
-            {
-                "recording": "go2.db",
-                "frame_index": 1,
-                "question_source": "openai_image_agent",
-                "question_model": vqa.QUESTION_MODEL,
-                "oracle_model": None,
-                "grounding": {"min_mask_area_px": 128, "min_foreground_points": 3},
-            }
-        )
-    )
-
-    vqa._validate_completed_frame(frame, "go2.db", 1, "constrained", 128, 3)
-
-    try:
-        vqa._validate_completed_frame(frame, "other.db", 1, "constrained", 128, 3)
-    except Exception as exc:
-        assert "different settings" in str(exc)
-    else:
-        raise AssertionError("mismatched completed frame was accepted")
+    assert result.exit_code == 0
+    assert captured["generation"] == VqaGenerationSpecification(recording="go2.db", stop_index=1)
+    assert captured["progress"] is not None

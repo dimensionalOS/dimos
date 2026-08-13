@@ -7,8 +7,9 @@ from typing import Literal
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.geometry import project_visible_points
 from dimos.benchmark.vqa.models import CalibratedFrame, GroundPlaneEstimate, OracleMeasurement
+
+from .projection import project_visible_points
 
 
 @dataclass(frozen=True)

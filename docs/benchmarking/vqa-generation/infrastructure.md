@@ -42,24 +42,29 @@ dimos/benchmark/vqa/
     primitives/
       frame.py                 cached frame-scoped perception runtime
       contracts.py             typed private primitive results
+      projection.py            calibrated point-cloud-to-image projection
+      grounding.py             mask-to-point-cloud object grounding
       geometry.py              plane fitting and masked-point helpers
       selection.py             nearest-object selection
       choices.py               deterministic answer-choice resolution
-    ground_truth_generator.py  primitive-owning answer dispatch and grounding coordinator
-    families.py                deterministic constrained family recipes and result helpers
+    deterministic_question_answerer.py  constrained family dispatch
+    family_context.py          shared frame state and grounding workflow
+    family_common.py           shared deterministic result construction
+    families.py                end-to-end deterministic family recipes and answer policy
     oracle_tools.py            opaque-ID and LangChain adapter for primitives
     oracle.py                  bounded tool-calling and evidence validation
     question_agent.py          image-only question author
     specification.py           validated generation-specification schema
+    runner.py                  model lifecycle, frame iteration, and publication
     dataset.py                 frame records and evaluation export
   evaluation.py                shared point-cloud-vqa Evaluation plugin
 
-dimos/cli/vqa.py              generation CLI commands
+dimos/cli/vqa.py              dependency-light generation CLI adapter
 ```
 
 ## Generation Runtime
 
-`dimos vqa generate` and `dimos vqa single-frame` load a frozen Go2 recording frame containing:
+`dimos vqa generate` loads each selected frozen Go2 recording frame containing:
 
 - A rectified RGB image.
 - A calibrated visible point cloud.

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Static calibrated point-cloud projection for single-frame VQA."""
+"""Static calibrated point-cloud projection for private VQA primitives."""
 
 from __future__ import annotations
 

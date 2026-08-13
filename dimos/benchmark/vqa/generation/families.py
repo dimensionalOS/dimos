@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
 
+from dimos.benchmark.vqa.generation.family_common import rejected_result, render_question
+from dimos.benchmark.vqa.generation.family_context import FamilyContext
 from dimos.benchmark.vqa.generation.primitives.choices import (
     CAMERA_RANGE_CHOICES,
     COUNT_CHOICES,
@@ -15,10 +15,8 @@ from dimos.benchmark.vqa.generation.primitives.choices import (
     count_choice,
     opening_width_choice,
 )
-from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
 from dimos.benchmark.vqa.models import (
-    CalibratedFrame,
     GroundedObject,
     GroundTruthResult,
     QuestionIntent,
@@ -26,61 +24,62 @@ from dimos.benchmark.vqa.models import (
     VqaExample,
 )
 
-Ground = Callable[[CalibratedFrame, str], tuple[list[GroundedObject], tuple[ToolTrace, ...]]]
 
-
-def render_question(intent: QuestionIntent) -> str:
-    if intent.kind == "presence":
-        return f"Is there a {intent.object_query} in the image? Answer yes or no."
-    if intent.kind == "horizontal_direction":
-        return f"Where is the nearest {intent.object_query}: left, center, or right?"
-    if intent.kind == "visible_count":
-        return f"How many {intent.object_query}s are visible?"
-    if intent.kind == "camera_range":
-        return f"How far is the nearest {intent.object_query} from the camera?"
-    if intent.kind == "compare_nearest_by_side":
-        return f"Which {intent.object_query} is closer: the left one or the right one?"
-    if intent.kind == "compare_left_right":
-        return (
-            f"Is the {intent.object_query} to the left or right of the {intent.comparison_query}?"
+def answer_basic_object_question(
+    intent: QuestionIntent, context: FamilyContext
+) -> GroundTruthResult:
+    """Ground one query and answer presence, direction, or distance deterministically."""
+    grounded = context.ground(intent.object_query)
+    if not grounded.objects:
+        return rejected_result(
+            context, intent, grounded.objects, grounded.trace, "no_grounded_object"
         )
-    if intent.kind == "compare_height":
-        return f"Which is taller: the {intent.object_query} or the {intent.comparison_query}?"
-    if intent.kind == "object_on_support":
-        return f"Is the {intent.object_query} on the {intent.comparison_query}? Answer yes or no."
-    if intent.kind == "opening_width":
-        return f"How wide is the {intent.object_query}?"
-    if intent.kind == "door_state":
-        return f"Is the {intent.object_query} open or closed?"
-    if intent.kind == "closest_object":
-        return f"Which object is closest to the {intent.object_query}: {', '.join(intent.candidate_queries)}?"
-    if intent.kind == "forward_path":
-        return "Is the path directly ahead clear or blocked?"
-    return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
-
-
-def rejected_result(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    reason: str,
-) -> GroundTruthResult:
-    rejected = VqaExample(
-        f"{frame.id}-{intent.object_query}-{intent.kind}", render_question(intent), "", "", ()
+    nearest = select_nearest_object(list(grounded.objects))
+    if nearest is None:
+        return rejected_result(
+            context, intent, grounded.objects, grounded.trace, "no_grounded_object"
+        )
+    choices: tuple[str, ...]
+    if intent.kind == "presence":
+        suffix, answer, answer_type, choices = "presence", "yes", "boolean", ("yes", "no")
+    elif intent.kind == "horizontal_direction":
+        suffix = "direction"
+        answer = nearest.horizontal_direction
+        answer_type, choices = "choice", ("left", "center", "right")
+    else:
+        threshold_m = intent.threshold_m or 3.0
+        if threshold_m <= 0:
+            raise ValueError("distance threshold must be positive")
+        suffix = "range"
+        answer = "yes" if nearest.range_m <= threshold_m else "no"
+        answer_type, choices = "boolean", ("yes", "no")
+    example = VqaExample(
+        f"{context.frame.id}-{intent.object_query}-{suffix}",
+        render_question(intent),
+        answer,
+        answer_type,
+        (nearest.id,),
+        choices,
     )
-    return GroundTruthResult(intent, rejected, "rejected", None, reason, tuple(objects), trace)
+    return GroundTruthResult(
+        intent,
+        example,
+        "answered",
+        answer,
+        None,
+        grounded.objects,
+        grounded.trace,
+    )
 
 
-def count_visible_objects(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-) -> GroundTruthResult:
+def count_visible_objects(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
+    if not objects:
+        return rejected_result(context, intent, objects, trace, "no_grounded_object")
     answer = count_choice(len(objects))
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-visible-count",
+        f"{context.frame.id}-{intent.object_query}-visible-count",
         render_question(intent),
         answer,
         "choice",
@@ -90,18 +89,15 @@ def count_visible_objects(
     return GroundTruthResult(intent, example, "answered", answer, None, tuple(objects), trace)
 
 
-def bucket_camera_range(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-) -> GroundTruthResult:
-    selected = select_nearest_object(objects)
+def bucket_camera_range(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
+    selected = select_nearest_object(list(objects))
     if selected is None:
-        return rejected_result(frame, intent, objects, trace, "no_grounded_object")
+        return rejected_result(context, intent, objects, trace, "no_grounded_object")
     answer = camera_range_choice(selected.range_m)
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-camera-range",
+        f"{context.frame.id}-{intent.object_query}-camera-range",
         render_question(intent),
         answer,
         "choice",
@@ -111,34 +107,30 @@ def bucket_camera_range(
     return GroundTruthResult(intent, example, "answered", answer, None, (selected,), trace)
 
 
-def compare_heights(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    primitives: FramePerceptionPrimitives,
-    ground: Ground,
-) -> GroundTruthResult:
+def compare_heights(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
     if len(objects) != 1 or intent.comparison_query is None:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_first_height_object")
-    other_objects, other_trace = ground(frame, intent.comparison_query)
-    trace = (*trace, *other_trace)
+        return rejected_result(context, intent, objects, trace, "ambiguous_first_height_object")
+    other = context.ground(intent.comparison_query)
+    other_objects = other.objects
+    trace = (*trace, *other.trace)
     if len(other_objects) != 1:
         return rejected_result(
-            frame, intent, [*objects, *other_objects], trace, "ambiguous_second_height_object"
+            context, intent, [*objects, *other_objects], trace, "ambiguous_second_height_object"
         )
-    plane_fit = primitives.fit_ground_plane()
+    plane_fit = context.primitives.fit_ground_plane()
     trace = (*trace, ToolTrace("fit_ground_plane", plane_fit.rejection_reason or "accepted"))
     if plane_fit.estimate is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             [*objects, *other_objects],
             trace,
             plane_fit.rejection_reason or "ground_plane_rejected",
         )
-    first = primitives.measure_height(objects[0], plane_fit.estimate)
-    second = primitives.measure_height(other_objects[0], plane_fit.estimate)
+    first = context.primitives.measure_height(objects[0], plane_fit.estimate)
+    second = context.primitives.measure_height(other_objects[0], plane_fit.estimate)
     trace = (
         *trace,
         ToolTrace("measure_height", first.rejection_reason or objects[0].id),
@@ -146,7 +138,7 @@ def compare_heights(
     )
     if first.measurement is None or second.measurement is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             [*objects, *other_objects],
             trace,
@@ -158,11 +150,11 @@ def compare_heights(
     second_upper = second.measurement.value + second.measurement.tolerance
     if first_lower <= second_upper and second_lower <= first_upper:
         return rejected_result(
-            frame, intent, [*objects, *other_objects], trace, "ambiguous_height_comparison"
+            context, intent, [*objects, *other_objects], trace, "ambiguous_height_comparison"
         )
     answer = intent.object_query if first_lower > second_upper else intent.comparison_query
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-{intent.comparison_query}-height-comparison",
+        f"{context.frame.id}-{intent.object_query}-{intent.comparison_query}-height-comparison",
         render_question(intent),
         answer,
         "choice",
@@ -174,23 +166,19 @@ def compare_heights(
     )
 
 
-def compare_left_right(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    primitives: FramePerceptionPrimitives,
-    ground: Ground,
-) -> GroundTruthResult:
+def compare_left_right(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
     if len(objects) != 1 or intent.comparison_query is None:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_first_relation_object")
-    other_objects, other_trace = ground(frame, intent.comparison_query)
-    trace = (*trace, *other_trace)
+        return rejected_result(context, intent, objects, trace, "ambiguous_first_relation_object")
+    other = context.ground(intent.comparison_query)
+    other_objects = other.objects
+    trace = (*trace, *other.trace)
     if len(other_objects) != 1:
         return rejected_result(
-            frame, intent, [*objects, *other_objects], trace, "ambiguous_second_relation_object"
+            context, intent, [*objects, *other_objects], trace, "ambiguous_second_relation_object"
         )
-    relation = primitives.classify_horizontal_relation(objects[0], other_objects[0])
+    relation = context.primitives.classify_horizontal_relation(objects[0], other_objects[0])
     trace = (
         *trace,
         ToolTrace(
@@ -200,14 +188,14 @@ def compare_left_right(
     )
     if relation.relation is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             [*objects, *other_objects],
             trace,
             relation.rejection_reason or "horizontal_relation_rejected",
         )
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-{intent.comparison_query}-left-right",
+        f"{context.frame.id}-{intent.object_query}-{intent.comparison_query}-left-right",
         render_question(intent),
         relation.relation,
         "choice",
@@ -219,24 +207,20 @@ def compare_left_right(
     )
 
 
-def classify_object_on_support(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    primitives: FramePerceptionPrimitives,
-    ground: Ground,
-) -> GroundTruthResult:
+def classify_object_on_support(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
     if len(objects) != 1 or intent.comparison_query is None:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_supported_object")
-    supports, support_trace = ground(frame, intent.comparison_query)
-    trace = (*trace, *support_trace)
+        return rejected_result(context, intent, objects, trace, "ambiguous_supported_object")
+    support = context.ground(intent.comparison_query)
+    supports = support.objects
+    trace = (*trace, *support.trace)
     if len(supports) != 1:
         return rejected_result(
-            frame, intent, [*objects, *supports], trace, "ambiguous_support_object"
+            context, intent, [*objects, *supports], trace, "ambiguous_support_object"
         )
-    ground_fit = primitives.fit_ground_plane()
-    support_fit = primitives.fit_object_surface_plane(supports[0])
+    ground_fit = context.primitives.fit_ground_plane()
+    support_fit = context.primitives.fit_object_surface_plane(supports[0])
     trace = (
         *trace,
         ToolTrace("fit_ground_plane", ground_fit.rejection_reason or "accepted"),
@@ -244,7 +228,7 @@ def classify_object_on_support(
     )
     if ground_fit.estimate is None or support_fit.estimate is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             [*objects, *supports],
             trace,
@@ -256,9 +240,9 @@ def classify_object_on_support(
         np.radians(12.0)
     ):
         return rejected_result(
-            frame, intent, [*objects, *supports], trace, "support_not_horizontal"
+            context, intent, [*objects, *supports], trace, "support_not_horizontal"
         )
-    relation = primitives.measure_object_plane_relation(
+    relation = context.primitives.measure_object_plane_relation(
         objects[0], supports[0], support_fit.estimate, ground_fit.estimate.normal
     )
     trace = (
@@ -267,7 +251,7 @@ def classify_object_on_support(
     )
     if relation.rejection_reason is not None:
         return rejected_result(
-            frame, intent, [*objects, *supports], trace, relation.rejection_reason
+            context, intent, [*objects, *supports], trace, relation.rejection_reason
         )
     if relation.planar_separation_m is not None and relation.planar_separation_m > 0.2:
         answer = "no"
@@ -286,10 +270,10 @@ def classify_object_on_support(
         answer = "yes"
     else:
         return rejected_result(
-            frame, intent, [*objects, *supports], trace, "insufficient_contact_evidence"
+            context, intent, [*objects, *supports], trace, "insufficient_contact_evidence"
         )
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-{intent.comparison_query}-on-support",
+        f"{context.frame.id}-{intent.object_query}-{intent.comparison_query}-on-support",
         render_question(intent),
         answer,
         "boolean",
@@ -301,32 +285,30 @@ def classify_object_on_support(
     )
 
 
-def measure_opening_width(
-    frame: CalibratedFrame, intent: QuestionIntent, primitives: FramePerceptionPrimitives
-) -> GroundTruthResult:
-    primitives.detect_objects(intent.object_query)
-    masks = primitives.segment_detections(intent.object_query)
+def measure_opening_width(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    context.primitives.detect_objects(intent.object_query)
+    masks = context.primitives.segment_detections(intent.object_query)
     trace: tuple[ToolTrace, ...] = (
         ToolTrace("detect_objects", intent.object_query),
         ToolTrace("segment_detections", f"count={len(masks)}"),
     )
     if len(masks) != 1:
-        return rejected_result(frame, intent, [], trace, "ambiguous_opening_instances")
-    ground_fit = primitives.fit_ground_plane()
+        return rejected_result(context, intent, [], trace, "ambiguous_opening_instances")
+    ground_fit = context.primitives.fit_ground_plane()
     trace = (*trace, ToolTrace("fit_ground_plane", ground_fit.rejection_reason or "accepted"))
     if ground_fit.estimate is None:
         return rejected_result(
-            frame, intent, [], trace, ground_fit.rejection_reason or "ground_plane_rejected"
+            context, intent, [], trace, ground_fit.rejection_reason or "ground_plane_rejected"
         )
-    result = primitives.measure_opening_width_from_mask(masks[0], ground_fit.estimate)
+    result = context.primitives.measure_opening_width_from_mask(masks[0], ground_fit.estimate)
     trace = (*trace, ToolTrace("measure_opening_width", result.rejection_reason or "accepted"))
     if result.measurement is None:
         return rejected_result(
-            frame, intent, [], trace, result.rejection_reason or "opening_width_rejected"
+            context, intent, [], trace, result.rejection_reason or "opening_width_rejected"
         )
     answer = opening_width_choice(result.measurement.value)
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-opening-width",
+        f"{context.frame.id}-{intent.object_query}-opening-width",
         render_question(intent),
         answer,
         "choice",
@@ -336,21 +318,20 @@ def measure_opening_width(
     return GroundTruthResult(intent, example, "answered", answer, None, (), trace)
 
 
-def compare_nearest_by_side(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-) -> GroundTruthResult:
-    left = select_nearest_object(objects, "left")
-    right = select_nearest_object(objects, "right")
+def compare_nearest_by_side(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
+    if not objects:
+        return rejected_result(context, intent, objects, trace, "no_grounded_object")
+    left = select_nearest_object(list(objects), "left")
+    right = select_nearest_object(list(objects), "right")
     if left is None or right is None:
-        return rejected_result(frame, intent, objects, trace, "missing_grounded_side")
+        return rejected_result(context, intent, objects, trace, "missing_grounded_side")
     if left.range_m == right.range_m:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_nearest_by_side")
+        return rejected_result(context, intent, objects, trace, "ambiguous_nearest_by_side")
     answer = "left" if left.range_m < right.range_m else "right"
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-nearest-by-side",
+        f"{context.frame.id}-{intent.object_query}-nearest-by-side",
         render_question(intent),
         answer,
         "choice",
@@ -360,19 +341,15 @@ def compare_nearest_by_side(
     return GroundTruthResult(intent, example, "answered", answer, None, (left, right), trace)
 
 
-def classify_door_state(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    primitives: FramePerceptionPrimitives,
-) -> GroundTruthResult:
+def classify_door_state(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
     if "door" not in intent.object_query.lower():
-        return rejected_result(frame, intent, objects, trace, "door_state_requires_door_query")
+        return rejected_result(context, intent, objects, trace, "door_state_requires_door_query")
     if len(objects) != 1:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_door_instances")
-    door_fit = primitives.fit_object_surface_plane(objects[0])
-    surrounding_fit = primitives.fit_object_surrounding_plane(objects[0])
+        return rejected_result(context, intent, objects, trace, "ambiguous_door_instances")
+    door_fit = context.primitives.fit_object_surface_plane(objects[0])
+    surrounding_fit = context.primitives.fit_object_surrounding_plane(objects[0])
     trace = (
         *trace,
         ToolTrace("fit_object_surface_plane", door_fit.rejection_reason or "accepted"),
@@ -380,22 +357,24 @@ def classify_door_state(
     )
     if door_fit.estimate is None or surrounding_fit.estimate is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             objects,
             trace,
             door_fit.rejection_reason or surrounding_fit.rejection_reason or "door_state_rejected",
         )
-    angle = primitives.measure_relative_plane_angle(door_fit.estimate, surrounding_fit.estimate)
+    angle = context.primitives.measure_relative_plane_angle(
+        door_fit.estimate, surrounding_fit.estimate
+    )
     trace = (*trace, ToolTrace("measure_relative_plane_angle", f"{angle.value:.1f} deg"))
     if angle.value <= 12.0:
         state = "closed"
     elif angle.value >= 25.0:
         state = "open"
     else:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_door_angle")
+        return rejected_result(context, intent, objects, trace, "ambiguous_door_angle")
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-state",
+        f"{context.frame.id}-{intent.object_query}-state",
         render_question(intent),
         state,
         "choice",
@@ -405,30 +384,26 @@ def classify_door_state(
     return GroundTruthResult(intent, example, "answered", state, None, tuple(objects), trace)
 
 
-def select_closest_object(
-    frame: CalibratedFrame,
-    intent: QuestionIntent,
-    objects: list[GroundedObject],
-    trace: tuple[ToolTrace, ...],
-    primitives: FramePerceptionPrimitives,
-    ground: Ground,
-) -> GroundTruthResult:
+def select_closest_object(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    grounded = context.ground(intent.object_query)
+    objects, trace = grounded.objects, grounded.trace
     if len(objects) != 1:
-        return rejected_result(frame, intent, objects, trace, "ambiguous_target_object")
+        return rejected_result(context, intent, objects, trace, "ambiguous_target_object")
     candidates: list[GroundedObject] = []
     for query in intent.candidate_queries:
-        matches, candidate_trace = ground(frame, query)
-        trace = (*trace, *candidate_trace)
+        grounded_candidate = context.ground(query)
+        matches = grounded_candidate.objects
+        trace = (*trace, *grounded_candidate.trace)
         if len(matches) != 1:
             return rejected_result(
-                frame,
+                context,
                 intent,
                 [*objects, *candidates, *matches],
                 trace,
                 "ambiguous_candidate_object",
             )
         candidates.append(matches[0])
-    selected = primitives.select_closest_object(objects[0], candidates)
+    selected = context.primitives.select_closest_object(objects[0], candidates)
     trace = (
         *trace,
         ToolTrace(
@@ -438,14 +413,14 @@ def select_closest_object(
     )
     if selected.object is None:
         return rejected_result(
-            frame,
+            context,
             intent,
             [*objects, *candidates],
             trace,
             selected.rejection_reason or "closest_object_rejected",
         )
     example = VqaExample(
-        f"{frame.id}-{intent.object_query}-closest-object",
+        f"{context.frame.id}-{intent.object_query}-closest-object",
         render_question(intent),
         selected.object.label,
         "choice",
@@ -463,19 +438,17 @@ def select_closest_object(
     )
 
 
-def classify_forward_path(
-    frame: CalibratedFrame, intent: QuestionIntent, primitives: FramePerceptionPrimitives
-) -> GroundTruthResult:
-    result = primitives.classify_forward_path()
+def classify_forward_path(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
+    result = context.primitives.classify_forward_path()
     trace = (
         ToolTrace("classify_forward_path", result.state or result.rejection_reason or "rejected"),
     )
     if result.state is None:
         return rejected_result(
-            frame, intent, [], trace, result.rejection_reason or "forward_path_rejected"
+            context, intent, [], trace, result.rejection_reason or "forward_path_rejected"
         )
     example = VqaExample(
-        f"{frame.id}-forward-path",
+        f"{context.frame.id}-forward-path",
         render_question(intent),
         result.state,
         "choice",

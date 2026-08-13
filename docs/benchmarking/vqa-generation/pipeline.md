@@ -26,7 +26,8 @@ Flags:
 - `--output`: dataset root; frames with a completed `frame.json` marker are skipped, while partial
   frame directories are safely rewritten on rerun.
 
-`dimos vqa single-frame` accepts the same generation settings and uses `--frame-index` instead of frame bounds.
+To generate one frame, set `--start-index` to that frame and `--stop-index` to the next index. For
+example, use `--start-index 40 --stop-index 41` for frame 40.
 
 ### Generation Specification
 
@@ -121,7 +122,9 @@ Missing, sparse, or ambiguous evidence rejects the question.
 ### Constrained
 
 Each deterministic family runs its own fixed sequence. `ground(A)` below is always the same private
-primitive chain:
+primitive chain supplied by the shared family context. The deterministic question answerer only
+dispatches the intent to the matching family; the family owns grounding, measurements, quality
+gates, and answer selection:
 
 ```text
 ground(A)

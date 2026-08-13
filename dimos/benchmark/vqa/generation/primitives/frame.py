@@ -6,14 +6,11 @@ from dataclasses import replace
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.geometry import project_visible_points
-from dimos.benchmark.vqa.generation.grounding import ground_segmented_objects
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     ClosestObjectResult,
     ForwardPathResult,
     HeightMeasurementResult,
     HorizontalRelationResult,
-    ObjectOnSupportResult,
     ObjectPlaneRelationResult,
     OpeningWidthResult,
 )
@@ -29,6 +26,8 @@ from dimos.benchmark.vqa.generation.primitives.geometry import (
     points_around_mask,
     points_in_mask,
 )
+from dimos.benchmark.vqa.generation.primitives.grounding import ground_segmented_objects
+from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.benchmark.vqa.models import (
     CalibratedFrame,
     GroundedObject,
@@ -335,97 +334,6 @@ class FramePerceptionPrimitives:
             return HorizontalRelationResult(None, (), "ambiguous_horizontal_relation")
         return HorizontalRelationResult(
             "left" if horizontal_offset_m < 0 else "right", ("camera_frame_support_centroids",)
-        )
-
-    def classify_object_on_support(
-        self, object: GroundedObject, support: GroundedObject
-    ) -> ObjectOnSupportResult:
-        """Verify direct contact between an object and a horizontal support surface."""
-        if object.id == support.id:
-            return ObjectOnSupportResult(object, support, (), "duplicate_object_id")
-        object_points = self._object_points(object)
-        support_points = self._object_points(support)
-        if object_points is None or support_points is None:
-            return ObjectOnSupportResult(object, support, (), "insufficient_object_support")
-        ground_fit = self.fit_ground_plane()
-        if ground_fit.estimate is None:
-            return ObjectOnSupportResult(
-                object,
-                support,
-                ground_fit.quality_flags,
-                ground_fit.rejection_reason or "ground_plane_rejected",
-            )
-        support_fit = fit_surface_plane(support_points)
-        if support_fit.estimate is None:
-            return ObjectOnSupportResult(
-                object,
-                support,
-                support_fit.quality_flags,
-                support_fit.rejection_reason or "support_plane_rejected",
-            )
-        normal = np.asarray(support_fit.estimate.normal)
-        ground_normal = np.asarray(ground_fit.estimate.normal)
-        if abs(float(normal @ ground_normal)) < np.cos(np.radians(12.0)):
-            return ObjectOnSupportResult(
-                object, support, support_fit.quality_flags, "support_not_horizontal"
-            )
-        if float(normal @ ground_normal) < 0:
-            normal = -normal
-        elevation = object_points @ normal + support_fit.estimate.offset_m
-        projected_support = support_points - np.outer(
-            support_points @ normal + support_fit.estimate.offset_m, normal
-        )
-        projected_object = object_points - np.outer(
-            object_points @ normal + support_fit.estimate.offset_m, normal
-        )
-        nearest_support_distance = np.linalg.norm(
-            projected_object[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
-        ).min(axis=1)
-        if float(nearest_support_distance.min()) > 0.2:
-            return ObjectOnSupportResult(
-                object,
-                support,
-                (*support_fit.quality_flags, "objects_separated_in_plane"),
-                answer="no",
-            )
-        if float(np.percentile(elevation, 15)) > 0.2:
-            return ObjectOnSupportResult(
-                object,
-                support,
-                (*support_fit.quality_flags, "object_clearly_above_support"),
-                answer="no",
-            )
-        contact_points = object_points[np.abs(elevation) <= 0.08]
-        if (
-            len(contact_points) < 4
-            or float(np.percentile(elevation, 15)) > 0.08
-            or float(np.percentile(elevation, 85)) < 0.15
-            or float((elevation >= 0.02).mean()) < 0.7
-        ):
-            return ObjectOnSupportResult(
-                object, support, support_fit.quality_flags, "insufficient_contact_evidence"
-            )
-        projected_contact = contact_points - np.outer(
-            contact_points @ normal + support_fit.estimate.offset_m, normal
-        )
-        distances = np.linalg.norm(
-            projected_contact[:, np.newaxis, :] - projected_support[np.newaxis, :, :], axis=2
-        )
-        if int((distances.min(axis=1) <= 0.1).sum()) < 3:
-            return ObjectOnSupportResult(
-                object, support, support_fit.quality_flags, "insufficient_in_plane_support_overlap"
-            )
-        return ObjectOnSupportResult(
-            object,
-            support,
-            (
-                *ground_fit.quality_flags,
-                *support_fit.quality_flags,
-                "support_horizontal",
-                "contact_band_supported",
-                "in_plane_support_overlap",
-            ),
-            answer="yes",
         )
 
     def measure_opening_width(self, query: str) -> OpeningWidthResult:

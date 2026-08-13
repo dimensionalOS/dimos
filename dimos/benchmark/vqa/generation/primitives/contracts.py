@@ -39,17 +39,6 @@ class HorizontalRelationResult:
 
 
 @dataclass(frozen=True)
-class ObjectOnSupportResult:
-    """Verified direct support/contact separation, or an explicit conservative rejection."""
-
-    object: GroundedObject
-    support: GroundedObject
-    quality_flags: tuple[str, ...]
-    rejection_reason: str | None = None
-    answer: Literal["yes", "no"] | None = None
-
-
-@dataclass(frozen=True)
 class ObjectPlaneRelationResult:
     """Private geometric relation of one visible object to a selected support plane."""
 

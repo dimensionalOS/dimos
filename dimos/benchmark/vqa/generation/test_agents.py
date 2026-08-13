@@ -6,7 +6,10 @@ from typing import cast
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.ground_truth_generator import VqaGroundTruthGenerator
+from dimos.benchmark.vqa.generation.deterministic_question_answerer import (
+    DeterministicQuestionAnswerer,
+)
+from dimos.benchmark.vqa.generation.family_context import GroundingResult
 from dimos.benchmark.vqa.generation.primitives.contracts import (
     HeightMeasurementResult,
     HorizontalRelationResult,
@@ -67,8 +70,8 @@ def _agent(
     localizer: _PointLocalizer | None = None,
     point_segmenter: _PointSegmenter | None = None,
     config: GroundingConfig = GroundingConfig(),
-) -> VqaGroundTruthGenerator:
-    return VqaGroundTruthGenerator(
+) -> DeterministicQuestionAnswerer:
+    return DeterministicQuestionAnswerer(
         FramePerceptionPrimitives(frame, detector, segmenter, localizer, point_segmenter, config)
     )
 
@@ -224,12 +227,10 @@ def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> 
     )
 
     answered = agent.answer(
-        frame, QuestionIntent(kind="within_distance", object_query="chair", threshold_m=3.0)
+        QuestionIntent(kind="within_distance", object_query="chair", threshold_m=3.0)
     )
-    rejected = agent.answer(
-        frame, QuestionIntent(kind="horizontal_direction", object_query="table")
-    )
-    absent = agent.answer(frame, QuestionIntent(kind="presence", object_query="table"))
+    rejected = agent.answer(QuestionIntent(kind="horizontal_direction", object_query="table"))
+    absent = agent.answer(QuestionIntent(kind="presence", object_query="table"))
 
     assert answered.status == "answered"
     assert answered.answer == "yes"
@@ -253,7 +254,7 @@ def test_ground_truth_agent_rejects_small_masks() -> None:
         config=GroundingConfig(min_mask_area_px=37),
     )
 
-    result = agent.answer(frame, QuestionIntent(kind="presence", object_query="chair"))
+    result = agent.answer(QuestionIntent(kind="presence", object_query="chair"))
 
     assert result.status == "rejected"
 
@@ -279,7 +280,7 @@ def test_ground_truth_agent_falls_back_to_point_prompt() -> None:
         config=GroundingConfig(min_mask_area_px=1),
     )
 
-    result = agent.answer(frame, QuestionIntent(kind="presence", object_query="plant"))
+    result = agent.answer(QuestionIntent(kind="presence", object_query="plant"))
 
     assert result.answer == "yes"
     assert [item.tool for item in result.trace] == [
@@ -327,9 +328,7 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
         config=GroundingConfig(min_mask_area_px=1),
     )
 
-    result = agent.answer(
-        frame, QuestionIntent(kind="compare_nearest_by_side", object_query="chair")
-    )
+    result = agent.answer(QuestionIntent(kind="compare_nearest_by_side", object_query="chair"))
 
     assert result.status == "answered"
     assert result.answer == "left"
@@ -348,9 +347,7 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
         config=GroundingConfig(min_mask_area_px=1),
     )
 
-    result = agent.answer(
-        frame, QuestionIntent(kind="compare_nearest_by_side", object_query="chair")
-    )
+    result = agent.answer(QuestionIntent(kind="compare_nearest_by_side", object_query="chair"))
 
     assert result.status == "rejected"
     assert result.reason == "missing_grounded_side"
@@ -365,8 +362,8 @@ def test_ground_truth_agent_buckets_visible_count_and_camera_range() -> None:
         config=GroundingConfig(min_mask_area_px=1),
     )
 
-    count = agent.answer(frame, QuestionIntent(kind="visible_count", object_query="chair"))
-    camera_range = agent.answer(frame, QuestionIntent(kind="camera_range", object_query="chair"))
+    count = agent.answer(QuestionIntent(kind="visible_count", object_query="chair"))
+    camera_range = agent.answer(QuestionIntent(kind="camera_range", object_query="chair"))
 
     assert count.answer == "1-2"
     assert count.question.allowed_answers == ("0", "1-2", "3-4", "5-7", "8+")
@@ -391,9 +388,9 @@ def test_ground_truth_agent_compares_ground_plane_relative_heights(monkeypatch: 
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
     monkeypatch.setattr(
-        agent,
+        agent.context,
         "ground",
-        lambda _frame, query: ([chair] if query == "chair" else [table], ()),
+        lambda query: GroundingResult((chair,) if query == "chair" else (table,), ()),
     )
     monkeypatch.setattr(
         agent.primitives,
@@ -412,8 +409,7 @@ def test_ground_truth_agent_compares_ground_plane_relative_heights(monkeypatch: 
     )
 
     result = agent.answer(
-        frame,
-        QuestionIntent(kind="compare_height", object_query="chair", comparison_query="table"),
+        QuestionIntent(kind="compare_height", object_query="chair", comparison_query="table")
     )
 
     assert result.status == "answered"
@@ -432,9 +428,9 @@ def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) ->
     chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
     monkeypatch.setattr(
-        agent,
+        agent.context,
         "ground",
-        lambda _frame, query: ([chair] if query == "chair" else [table], ()),
+        lambda query: GroundingResult((chair,) if query == "chair" else (table,), ()),
     )
     monkeypatch.setattr(
         agent.primitives,
@@ -443,8 +439,7 @@ def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) ->
     )
 
     result = agent.answer(
-        frame,
-        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
+        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table")
     )
 
     assert result.status == "answered"
@@ -465,9 +460,9 @@ def test_ground_truth_agent_generates_verified_support_and_opening_width(
     box = GroundedObject("box-0", "box", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
     monkeypatch.setattr(
-        agent,
+        agent.context,
         "ground",
-        lambda _frame, query: ([box] if query == "box" else [table], ()),
+        lambda query: GroundingResult((box,) if query == "box" else (table,), ()),
     )
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
     monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
@@ -495,10 +490,9 @@ def test_ground_truth_agent_generates_verified_support_and_opening_width(
     monkeypatch.setattr(agent.primitives, "segment_detections", lambda query: [detection])
 
     support = agent.answer(
-        frame,
-        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table"),
+        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table")
     )
-    opening = agent.answer(frame, QuestionIntent(kind="opening_width", object_query="doorway"))
+    opening = agent.answer(QuestionIntent(kind="opening_width", object_query="doorway"))
 
     assert support.answer == "yes"
     assert support.question.allowed_answers == ("yes", "no")
@@ -516,9 +510,9 @@ def test_ground_truth_agent_keeps_verified_non_support_cases(monkeypatch: object
     box = GroundedObject("box-0", "box", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
     monkeypatch.setattr(
-        agent,
+        agent.context,
         "ground",
-        lambda _frame, query: ([box] if query == "box" else [table], ()),
+        lambda query: GroundingResult((box,) if query == "box" else (table,), ()),
     )
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
     monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
@@ -540,8 +534,7 @@ def test_ground_truth_agent_keeps_verified_non_support_cases(monkeypatch: object
     )
 
     result = agent.answer(
-        frame,
-        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table"),
+        QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table")
     )
 
     assert result.status == "answered"

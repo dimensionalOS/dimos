@@ -127,6 +127,7 @@
             "pages": [
               "capabilities/perception/index",
               "benchmarking/vqa-generation/pipeline",
+              "benchmarking/vqa-generation/flowchart",
               "benchmarking/vqa-generation/infrastructure"
             ]
           },

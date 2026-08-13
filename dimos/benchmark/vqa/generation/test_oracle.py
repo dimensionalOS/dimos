@@ -9,7 +9,6 @@ from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
 
-from dimos.benchmark.vqa.generation.geometry import project_visible_points
 from dimos.benchmark.vqa.generation.oracle import (
     PrivateToolCallingOracle,
     SemanticEvidenceValidation,
@@ -24,12 +23,12 @@ from dimos.benchmark.vqa.generation.primitives.choices import (
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     ForwardCorridorMeasurement,
-    PlaneFitResult,
     classify_forward_corridor,
     estimate_ground_plane,
     measure_opening_width,
     measure_relative_plane_angle,
 )
+from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.benchmark.vqa.generation.question_agent import (
     AGENTIC_QUESTION_PROMPT,
     OpenAIFreeformQuestionAuthor,
@@ -616,28 +615,6 @@ def test_horizontal_relation_uses_camera_frame_support_centroids(monkeypatch: An
         primitives.classify_horizontal_relation(left, right).rejection_reason
         == "ambiguous_horizontal_relation"
     )
-
-
-def test_object_on_support_keeps_clearly_separated_objects_as_no(monkeypatch: Any) -> None:
-    box = GroundedObject("box", "box", 8, 1.0, "left")
-    support = GroundedObject("table", "table", 8, 2.0, "right")
-    plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
-    primitives = _frame_primitives(_measurement_frame())
-    points = {
-        box.id: np.tile((2.0, 0.5, 4.0), (6, 1)),
-        support.id: np.tile((0.0, 1.0, 4.0), (6, 1)),
-    }
-    monkeypatch.setattr(primitives, "_object_points", lambda item: points[item.id])
-    monkeypatch.setattr(primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
-    monkeypatch.setattr(
-        "dimos.benchmark.vqa.generation.primitives.frame.fit_surface_plane",
-        lambda support_points: PlaneFitResult(plane, ("surface_plane_accepted",)),
-    )
-
-    result = primitives.classify_object_on_support(box, support)
-
-    assert result.answer == "no"
-    assert "objects_separated_in_plane" in result.quality_flags
 
 
 def test_forward_corridor_requires_ground_support_and_detects_obstacles() -> None:

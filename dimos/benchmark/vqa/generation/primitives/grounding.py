@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Foreground-mask point-cloud grounding for one calibrated frame."""
+"""Foreground-mask point-cloud grounding primitive for one calibrated frame."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.geometry import project_visible_points
+from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.benchmark.vqa.models import CalibratedFrame, GroundedObject, ProjectionConfig
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 

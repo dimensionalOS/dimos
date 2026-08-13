@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.benchmark.vqa.generation.geometry import project_visible_points
+from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.benchmark.vqa.models import CalibratedFrame
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
