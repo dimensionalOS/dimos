@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dimos.benchmark.vqa.models import GroundedObject
+from dimos.benchmark.vqa.contracts import GroundedObject
 
 
 def select_nearest_object(

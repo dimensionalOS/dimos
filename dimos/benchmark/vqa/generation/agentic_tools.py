@@ -9,19 +9,19 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.primitives.geometry import ForwardCorridorMeasurement
-from dimos.benchmark.vqa.models import (
+from dimos.benchmark.vqa.contracts import (
     GroundedObject,
     GroundPlaneEstimate,
     OracleEvidence,
     OracleMeasurement,
     OracleToolResult,
 )
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.geometry import ForwardCorridorMeasurement
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 
-class LocalOracleToolRegistry:
+class VqaPrimitiveToolRegistry:
     """Expose the same private perception primitives used by constrained recipes."""
 
     def __init__(self, primitives: FramePerceptionPrimitives) -> None:

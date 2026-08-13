@@ -37,26 +37,25 @@ recording + calibration + point cloud
 
 ```text
 dimos/benchmark/vqa/
-  models.py                    shared immutable VQA contracts
+  contracts.py                 shared immutable VQA messages and interfaces
   generation/
+    answer_choices.py          deterministic public-answer resolution
+    config.py                  validated generation configuration
     primitives/
       frame.py                 cached frame-scoped perception runtime
-      contracts.py             typed private primitive results
+      results.py               typed private primitive results
       projection.py            calibrated point-cloud-to-image projection
       grounding.py             mask-to-point-cloud object grounding
       geometry.py              plane fitting and masked-point helpers
       selection.py             nearest-object selection
-      choices.py               deterministic answer-choice resolution
-    deterministic_question_answerer.py  constrained family dispatch
-    family_context.py          shared frame state and grounding workflow
-    family_common.py           shared deterministic result construction
+    deterministic_answerer.py  constrained family dispatch
     families.py                end-to-end deterministic family recipes and answer policy
-    oracle_tools.py            opaque-ID and LangChain adapter for primitives
-    oracle.py                  bounded tool-calling and evidence validation
-    question_agent.py          image-only question author
-    specification.py           validated generation-specification schema
+    agentic_tools.py           opaque-ID and LangChain adapter for primitives
+    agentic_answerer.py        bounded tool-calling and evidence validation
+    question_authors.py        constrained and agentic image-only authors
+    model_adapters.py          MoonDream and EdgeTAM primitive adapters
     runner.py                  model lifecycle, frame iteration, and publication
-    dataset.py                 frame records and evaluation export
+    dataset.py                 resume state, frame records, and evaluation export
   evaluation.py                shared point-cloud-vqa Evaluation plugin
 
 dimos/cli/vqa.py              dependency-light generation CLI adapter
@@ -70,13 +69,18 @@ dimos/cli/vqa.py              dependency-light generation CLI adapter
 - A calibrated visible point cloud.
 - Camera intrinsics and the point-cloud-to-camera transform.
 
+The recording adapter uses Memory2 nearest-timestamp alignment. It resolves the point-cloud-to-camera
+transform from recorded `tf` when available. Legacy recordings without `tf` store the robot pose on
+the image observation, so the adapter combines that captured pose with the static Go2 camera mount.
+Static Go2 camera intrinsics remain the fallback for recordings without a `camera_info` stream.
+
 The generator accepts either explicit CLI flags or a reproducible JSON specification through
 `dimos vqa generate --spec <generation.json>`. It writes the resolved generation request and
 aggregate counts to `audit/run.json`. The generator constructs one
 `FramePerceptionPrimitives` instance per frame. It owns MoonDream and
 EdgeTAM calls, intermediate-result caches, grounded masks, and the accepted ground-plane fit.
 Projected visible point-cloud samples establish whether a mask has enough foreground support to
-become a grounded object. The generation runtime writes complete frame directories, so multi-frame
+become a grounded object. `GenerationDataset` writes complete frame directories, so multi-frame
 generation can skip frames whose `frame.json` completion marker was atomically written last after an
 interrupted run. Partial directories without that marker are safely rewritten.
 

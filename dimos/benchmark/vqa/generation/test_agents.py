@@ -6,27 +6,25 @@ from typing import cast
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.deterministic_question_answerer import (
-    DeterministicQuestionAnswerer,
+from dimos.benchmark.vqa.contracts import (
+    CalibratedFrame,
+    GroundedObject,
+    GroundPlaneEstimate,
+    OracleMeasurement,
+    PrimitiveGroundingConfig,
+    QuestionIntent,
 )
-from dimos.benchmark.vqa.generation.family_context import GroundingResult
-from dimos.benchmark.vqa.generation.primitives.contracts import (
+from dimos.benchmark.vqa.generation.deterministic_answerer import DeterministicAnswerer
+from dimos.benchmark.vqa.generation.families import GroundingResult
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
+from dimos.benchmark.vqa.generation.primitives.geometry import PlaneFitResult
+from dimos.benchmark.vqa.generation.primitives.results import (
     HeightMeasurementResult,
     HorizontalRelationResult,
     ObjectPlaneRelationResult,
     OpeningWidthResult,
 )
-from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.primitives.geometry import PlaneFitResult
-from dimos.benchmark.vqa.generation.question_agent import OpenAIQuestionAgent
-from dimos.benchmark.vqa.models import (
-    CalibratedFrame,
-    GroundedObject,
-    GroundingConfig,
-    GroundPlaneEstimate,
-    OracleMeasurement,
-    QuestionIntent,
-)
+from dimos.benchmark.vqa.generation.question_authors import ConstrainedQuestionAuthor
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -69,9 +67,9 @@ def _agent(
     *,
     localizer: _PointLocalizer | None = None,
     point_segmenter: _PointSegmenter | None = None,
-    config: GroundingConfig = GroundingConfig(),
-) -> DeterministicQuestionAnswerer:
-    return DeterministicQuestionAnswerer(
+    config: PrimitiveGroundingConfig = PrimitiveGroundingConfig(),
+) -> DeterministicAnswerer:
+    return DeterministicAnswerer(
         FramePerceptionPrimitives(frame, detector, segmenter, localizer, point_segmenter, config)
     )
 
@@ -115,7 +113,9 @@ def _frame_and_detection() -> tuple[CalibratedFrame, Detection2DSeg]:
 def test_question_agent_returns_constrained_intents() -> None:
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _QuestionModel())).propose(frame.image)
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(
+        frame.image
+    )
 
     assert intents == [
         QuestionIntent(kind="presence", object_query="chair"),
@@ -136,7 +136,7 @@ def test_question_agent_uses_image_selected_structured_intents() -> None:
 
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _StructuredQuestionModel())).propose(
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _StructuredQuestionModel())).propose(
         frame.image
     )
 
@@ -151,7 +151,9 @@ def test_question_agent_accepts_door_state_intent() -> None:
 
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _DoorQuestionModel())).propose(frame.image)
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _DoorQuestionModel())).propose(
+        frame.image
+    )
 
     assert intents == [QuestionIntent(kind="door_state", object_query="door")]
 
@@ -167,7 +169,7 @@ def test_question_agent_accepts_closest_object_intent() -> None:
 
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _ClosestQuestionModel())).propose(
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _ClosestQuestionModel())).propose(
         frame.image
     )
 
@@ -182,7 +184,7 @@ def test_question_agent_accepts_forward_path_intent() -> None:
 
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _ForwardPathQuestionModel())).propose(
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _ForwardPathQuestionModel())).propose(
         frame.image
     )
 
@@ -204,7 +206,7 @@ def test_question_agent_accepts_count_range_and_height_comparison_intents() -> N
 
     frame, _ = _frame_and_detection()
 
-    intents = OpenAIQuestionAgent(cast("OpenAIVlModel", _GeometryQuestionModel())).propose(
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _GeometryQuestionModel())).propose(
         frame.image
     )
 
@@ -223,7 +225,7 @@ def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> 
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
     answered = agent.answer(
@@ -251,7 +253,7 @@ def test_ground_truth_agent_rejects_small_masks() -> None:
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=37),
+        config=PrimitiveGroundingConfig(min_mask_area_px=37),
     )
 
     result = agent.answer(QuestionIntent(kind="presence", object_query="chair"))
@@ -277,7 +279,7 @@ def test_ground_truth_agent_falls_back_to_point_prompt() -> None:
         _Segmenter(),
         localizer=_PointLocalizer(),
         point_segmenter=_PointSegmenter(point_detection),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
     result = agent.answer(QuestionIntent(kind="presence", object_query="plant"))
@@ -325,7 +327,7 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
         frame,
         _MultiDetector(image, detections),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
     result = agent.answer(QuestionIntent(kind="compare_nearest_by_side", object_query="chair"))
@@ -344,7 +346,7 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
     result = agent.answer(QuestionIntent(kind="compare_nearest_by_side", object_query="chair"))
@@ -359,7 +361,7 @@ def test_ground_truth_agent_buckets_visible_count_and_camera_range() -> None:
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
     count = agent.answer(QuestionIntent(kind="visible_count", object_query="chair"))
@@ -382,7 +384,7 @@ def test_ground_truth_agent_compares_ground_plane_relative_heights(monkeypatch: 
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
     chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
@@ -393,12 +395,12 @@ def test_ground_truth_agent_compares_ground_plane_relative_heights(monkeypatch: 
         lambda query: GroundingResult((chair,) if query == "chair" else (table,), ()),
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives,
         "fit_ground_plane",
         lambda: type("Fit", (), {"estimate": plane, "rejection_reason": None})(),
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives,
         "measure_height",
         lambda item, accepted_plane: HeightMeasurementResult(
             item,
@@ -423,7 +425,7 @@ def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) ->
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
     chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
@@ -433,7 +435,7 @@ def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) ->
         lambda query: GroundingResult((chair,) if query == "chair" else (table,), ()),
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives,
         "classify_horizontal_relation",
         lambda first, second: HorizontalRelationResult("left", ("camera_frame_support_centroids",)),
     )
@@ -455,7 +457,7 @@ def test_ground_truth_agent_generates_verified_support_and_opening_width(
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
     box = GroundedObject("box-0", "box", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
@@ -465,12 +467,14 @@ def test_ground_truth_agent_generates_verified_support_and_opening_width(
         lambda query: GroundingResult((box,) if query == "box" else (table,), ()),
     )
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
-    monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
     monkeypatch.setattr(
-        agent.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+        agent.context.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ())
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+    )
+    monkeypatch.setattr(
+        agent.context.primitives,
         "measure_object_plane_relation",
         lambda item, support, support_plane, normal: ObjectPlaneRelationResult(
             0.0,
@@ -483,11 +487,11 @@ def test_ground_truth_agent_generates_verified_support_and_opening_width(
         ),
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives,
         "measure_opening_width_from_mask",
         lambda mask, ground: OpeningWidthResult(OracleMeasurement(0.6, "m", 0.05, (), ()), ()),
     )
-    monkeypatch.setattr(agent.primitives, "segment_detections", lambda query: [detection])
+    monkeypatch.setattr(agent.context.primitives, "segment_detections", lambda query: [detection])
 
     support = agent.answer(
         QuestionIntent(kind="object_on_support", object_query="box", comparison_query="table")
@@ -505,7 +509,7 @@ def test_ground_truth_agent_keeps_verified_non_support_cases(monkeypatch: object
         frame,
         _Detector(frame.image, detection),
         _Segmenter(),
-        config=GroundingConfig(min_mask_area_px=1),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
     box = GroundedObject("box-0", "box", 8, 1.0, "left")
     table = GroundedObject("table-0", "table", 8, 2.0, "right")
@@ -515,12 +519,14 @@ def test_ground_truth_agent_keeps_verified_non_support_cases(monkeypatch: object
         lambda query: GroundingResult((box,) if query == "box" else (table,), ()),
     )
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
-    monkeypatch.setattr(agent.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ()))
     monkeypatch.setattr(
-        agent.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+        agent.context.primitives, "fit_ground_plane", lambda: PlaneFitResult(plane, ())
     )
     monkeypatch.setattr(
-        agent.primitives,
+        agent.context.primitives, "fit_object_surface_plane", lambda item: PlaneFitResult(plane, ())
+    )
+    monkeypatch.setattr(
+        agent.context.primitives,
         "measure_object_plane_relation",
         lambda item, support, support_plane, normal: ObjectPlaneRelationResult(
             0.0,

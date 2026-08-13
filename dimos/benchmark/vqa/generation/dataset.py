@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dimos.benchmark.vqa.models import (
+from dimos.benchmark.vqa.contracts import (
     AcceptedOracleResult,
     BooleanAnswerContract,
     CalibratedFrame,
@@ -18,6 +18,41 @@ from dimos.benchmark.vqa.models import (
     QuestionProposal,
     RejectedOracleResult,
 )
+from dimos.benchmark.vqa.generation.config import ORACLE_MODEL, QUESTION_MODEL, GenerationConfig
+
+
+class GenerationDataset:
+    """Own resumable frame state and publication for one generated dataset."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def completed_frame(self, frame_index: int, generation: GenerationConfig) -> bool:
+        """Return whether a compatible completed frame record already exists."""
+        frame = frame_audit_path(self.root, frame_index)
+        if not (frame / "frame.json").is_file():
+            return False
+        _validate_completed_frame(frame, generation, frame_index)
+        return True
+
+    def write_frame(
+        self,
+        frame: CalibratedFrame,
+        recording: str,
+        frame_index: int,
+        intents: list[QuestionIntent | QuestionProposal],
+        results: list[GroundTruthResult | AcceptedOracleResult | RejectedOracleResult],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Write one frame and its private audit record."""
+        write_frame_record(self.root, frame, recording, frame_index, intents, results, metadata)
+
+    def finalize(self, generation: GenerationConfig) -> dict[str, int]:
+        """Publish aggregate manifests and the resolved generation record."""
+        summary = write_dataset_manifest(self.root)
+        _write_generation_run(self.root, generation, summary)
+        return summary
 
 
 def write_frame_record(
@@ -99,6 +134,52 @@ def write_dataset_manifest(output: Path) -> dict[str, int]:
 def frame_audit_path(output: Path, frame_index: int) -> Path:
     """Return the private resumable audit directory for one sampled frame."""
     return output / "audit" / f"frame-{frame_index:06d}"
+
+
+def _write_generation_run(
+    output: Path,
+    generation: GenerationConfig,
+    summary: dict[str, int],
+) -> None:
+    """Record the resolved request that produced one generated dataset."""
+    payload = {
+        "schema_version": "1.0",
+        "generation": {**generation.model_dump(mode="json"), "output": str(output)},
+        "models": {
+            "question_author": QUESTION_MODEL,
+            "oracle": ORACLE_MODEL if generation.question_mode == "agentic" else None,
+        },
+        "summary": summary,
+    }
+    audit = output / "audit"
+    audit.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(audit / "run.json", payload)
+
+
+def _validate_completed_frame(
+    output: Path,
+    generation: GenerationConfig,
+    frame_index: int,
+) -> None:
+    """Reject completed frame records created by a different generation request."""
+    try:
+        payload = json.loads((output / "frame.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid completed frame marker: {output}") from exc
+    expected_source = (
+        "agentic_image_author" if generation.question_mode == "agentic" else "openai_image_agent"
+    )
+    grounding = payload.get("grounding")
+    if (
+        payload.get("recording") != generation.recording
+        or payload.get("frame_index") != frame_index
+        or payload.get("question_source") != expected_source
+        or payload.get("question_model") != QUESTION_MODEL
+        or payload.get("oracle_model")
+        != (ORACLE_MODEL if generation.question_mode == "agentic" else None)
+        or grounding != generation.grounding.model_dump(mode="json")
+    ):
+        raise ValueError(f"completed frame {output.name} was generated with different settings")
 
 
 def _is_accepted(result: GroundTruthResult | AcceptedOracleResult | RejectedOracleResult) -> bool:

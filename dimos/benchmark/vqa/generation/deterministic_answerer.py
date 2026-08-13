@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from dimos.benchmark.vqa.contracts import GroundTruthResult, QuestionIntent, QuestionKind
 from dimos.benchmark.vqa.generation import families
-from dimos.benchmark.vqa.generation.family_context import FamilyContext
+from dimos.benchmark.vqa.generation.families import FamilyContext
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.models import GroundTruthResult, QuestionIntent, QuestionKind
 
 Family = Callable[[QuestionIntent, FamilyContext], GroundTruthResult]
 
@@ -29,16 +29,11 @@ FAMILIES: dict[QuestionKind, Family] = {
 }
 
 
-class DeterministicQuestionAnswerer:
+class DeterministicAnswerer:
     """Dispatch intents while sharing one frame-scoped family context."""
 
     def __init__(self, primitives: FramePerceptionPrimitives) -> None:
         self.context = FamilyContext(primitives.frame, primitives)
-
-    @property
-    def primitives(self) -> FramePerceptionPrimitives:
-        """Expose shared primitives to the agentic tool adapter."""
-        return self.context.primitives
 
     def answer(self, intent: QuestionIntent) -> GroundTruthResult:
         """Run the complete deterministic family recipe for one intent."""

@@ -8,7 +8,7 @@ from typing import Any
 from click import unstyle
 from typer.testing import CliRunner
 
-from dimos.benchmark.vqa.generation.specification import VqaGenerationSpecification
+from dimos.benchmark.vqa.generation.config import GenerationConfig
 from dimos.cli import vqa
 
 
@@ -64,7 +64,7 @@ def test_generation_spec_rejects_mixed_cli_options(tmp_path: Path) -> None:
 def test_generate_delegates_resolved_specification(monkeypatch: Any) -> None:
     captured: dict[str, object] = {}
 
-    def execute(generation: VqaGenerationSpecification, **kwargs: object) -> object:
+    def execute(generation: GenerationConfig, **kwargs: object) -> object:
         captured["generation"] = generation
         captured.update(kwargs)
         return SimpleNamespace(summary={"frame_count": 1})
@@ -77,5 +77,5 @@ def test_generate_delegates_resolved_specification(monkeypatch: Any) -> None:
     )
 
     assert result.exit_code == 0
-    assert captured["generation"] == VqaGenerationSpecification(recording="go2.db", stop_index=1)
+    assert captured["generation"] == GenerationConfig(recording="go2.db", stop_index=1)
     assert captured["progress"] is not None

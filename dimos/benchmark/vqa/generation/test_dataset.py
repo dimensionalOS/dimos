@@ -6,13 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dimos.benchmark.vqa.generation.dataset import (
-    _evaluation_rows,
-    frame_audit_path,
-    write_dataset_manifest,
-    write_frame_record,
-)
-from dimos.benchmark.vqa.models import (
+from dimos.benchmark.vqa.contracts import (
     AcceptedOracleResult,
     CalibratedFrame,
     ChoiceAnswerContract,
@@ -22,6 +16,12 @@ from dimos.benchmark.vqa.models import (
     QuestionProposal,
     ToolTrace,
     VqaExample,
+)
+from dimos.benchmark.vqa.generation.dataset import (
+    _evaluation_rows,
+    frame_audit_path,
+    write_dataset_manifest,
+    write_frame_record,
 )
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo

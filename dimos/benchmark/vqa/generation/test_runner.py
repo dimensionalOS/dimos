@@ -5,18 +5,17 @@ from pathlib import Path
 
 import pytest
 
-from dimos.benchmark.vqa.generation.runner import (
-    QUESTION_MODEL,
+from dimos.benchmark.vqa.generation.config import QUESTION_MODEL, GenerationConfig
+from dimos.benchmark.vqa.generation.dataset import (
     _validate_completed_frame,
     _write_generation_run,
 )
-from dimos.benchmark.vqa.generation.specification import VqaGenerationSpecification
 
 
 def test_generation_run_records_resolved_request(tmp_path: Path) -> None:
     _write_generation_run(
         tmp_path,
-        VqaGenerationSpecification(recording="go2.db", stop_index=10),
+        GenerationConfig(recording="go2.db", stop_index=10),
         {"frame_count": 2, "accepted_question_count": 3, "rejected_question_count": 1},
     )
 
@@ -42,13 +41,13 @@ def test_completed_frame_must_match_generation_settings(tmp_path: Path) -> None:
             }
         )
     )
-    generation = VqaGenerationSpecification(recording="go2.db", stop_index=10)
+    generation = GenerationConfig(recording="go2.db", stop_index=10)
 
     _validate_completed_frame(frame, generation, 1)
 
     with pytest.raises(ValueError, match="different settings"):
         _validate_completed_frame(
             frame,
-            VqaGenerationSpecification(recording="other.db", stop_index=10),
+            GenerationConfig(recording="other.db", stop_index=10),
             1,
         )

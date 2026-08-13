@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.benchmark.vqa.contracts import CalibratedFrame, GroundedObject, ProjectionConfig
 from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
-from dimos.benchmark.vqa.models import CalibratedFrame, GroundedObject, ProjectionConfig
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 

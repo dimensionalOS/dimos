@@ -1,7 +1,7 @@
 # Copyright 2026 Dimensional Inc.
 
+from dimos.benchmark.vqa.contracts import GroundedObject
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
-from dimos.benchmark.vqa.models import GroundedObject
 
 
 def test_select_nearest_object_optionally_restricts_to_image_side() -> None:

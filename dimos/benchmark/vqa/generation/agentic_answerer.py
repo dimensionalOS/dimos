@@ -8,9 +8,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
-from dimos.benchmark.vqa.generation.primitives.choices import height_choice_window
-from dimos.benchmark.vqa.models import (
+from dimos.benchmark.vqa.contracts import (
     AcceptedOracleResult,
     AnswerContract,
     BooleanAnswerContract,
@@ -22,6 +20,8 @@ from dimos.benchmark.vqa.models import (
     RejectedOracleResult,
     ResolvedAnswerContract,
 )
+from dimos.benchmark.vqa.generation.agentic_tools import VqaPrimitiveToolRegistry
+from dimos.benchmark.vqa.generation.answer_choices import height_choice_window
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
@@ -94,7 +94,7 @@ class OpenAISemanticEvidenceValidator:
         return SemanticEvidenceValidation(accepted, reason)
 
 
-class PrivateToolCallingOracle:
+class AgenticAnswerer:
     """Use direct local tools only, then validate a model's final JSON response."""
 
     def __init__(
@@ -110,7 +110,7 @@ class PrivateToolCallingOracle:
         self._semantic_validator = semantic_validator
 
     def answer(
-        self, proposal: QuestionProposal, registry: LocalOracleToolRegistry
+        self, proposal: QuestionProposal, registry: VqaPrimitiveToolRegistry
     ) -> AcceptedOracleResult | RejectedOracleResult:
         from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
@@ -181,11 +181,11 @@ class PrivateToolCallingOracle:
         return _rejected(proposal, "tool_call_limit", registry.results, trace)
 
 
-def create_openai_oracle(model: str, max_tool_calls: int = 25) -> PrivateToolCallingOracle:
+def create_openai_oracle(model: str, max_tool_calls: int = 25) -> AgenticAnswerer:
     """Construct the private-only OpenAI tool-calling oracle."""
     from langchain_openai import ChatOpenAI
 
-    return PrivateToolCallingOracle(
+    return AgenticAnswerer(
         ChatOpenAI(model=model),
         max_tool_calls=max_tool_calls,
         semantic_validator=OpenAISemanticEvidenceValidator(ChatOpenAI(model=model)),

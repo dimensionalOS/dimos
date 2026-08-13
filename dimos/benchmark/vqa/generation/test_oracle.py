@@ -9,13 +9,27 @@ from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
 
-from dimos.benchmark.vqa.generation.oracle import (
-    PrivateToolCallingOracle,
+from dimos.benchmark.vqa.contracts import (
+    BooleanAnswerContract,
+    CalibratedFrame,
+    ChoiceAnswerContract,
+    DeferredHeightChoiceContract,
+    GroundedObject,
+    GroundPlaneEstimate,
+    OracleEvidence,
+    OracleMeasurement,
+    OracleToolResult,
+    PrimitiveGroundingConfig,
+    QuestionProposal,
+    RejectedOracleResult,
+)
+from dimos.benchmark.vqa.generation.agentic_answerer import (
+    AgenticAnswerer,
     SemanticEvidenceValidation,
     validate_oracle_answer,
 )
-from dimos.benchmark.vqa.generation.oracle_tools import LocalOracleToolRegistry
-from dimos.benchmark.vqa.generation.primitives.choices import (
+from dimos.benchmark.vqa.generation.agentic_tools import VqaPrimitiveToolRegistry
+from dimos.benchmark.vqa.generation.answer_choices import (
     camera_range_choice,
     count_choice,
     height_choice_window,
@@ -29,23 +43,9 @@ from dimos.benchmark.vqa.generation.primitives.geometry import (
     measure_relative_plane_angle,
 )
 from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
-from dimos.benchmark.vqa.generation.question_agent import (
+from dimos.benchmark.vqa.generation.question_authors import (
     AGENTIC_QUESTION_PROMPT,
-    OpenAIFreeformQuestionAuthor,
-)
-from dimos.benchmark.vqa.models import (
-    BooleanAnswerContract,
-    CalibratedFrame,
-    ChoiceAnswerContract,
-    DeferredHeightChoiceContract,
-    GroundedObject,
-    GroundingConfig,
-    GroundPlaneEstimate,
-    OracleEvidence,
-    OracleMeasurement,
-    OracleToolResult,
-    QuestionProposal,
-    RejectedOracleResult,
+    AgenticQuestionAuthor,
 )
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -140,7 +140,10 @@ def _frame_primitives(
     if mask is None:
         mask = np.full((frame.image.height, frame.image.width), 255, dtype=np.uint8)
     return FramePerceptionPrimitives(
-        frame, _MaskDetector(mask), _IdentitySegmenter(), config=GroundingConfig(min_mask_area_px=1)
+        frame,
+        _MaskDetector(mask),
+        _IdentitySegmenter(),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
 
 
@@ -198,7 +201,7 @@ class _SemanticValidator:
 def test_freeform_question_author_parses_public_contract() -> None:
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposals = OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(image)
+    proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(image)
 
     assert proposals == [
         QuestionProposal(
@@ -222,9 +225,7 @@ def test_freeform_question_author_assigns_missing_ids() -> None:
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposals = OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _ModelWithoutId())).propose(
-        image
-    )
+    proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithoutId())).propose(image)
 
     assert proposals[0].id == "proposal-01"
 
@@ -240,7 +241,7 @@ def test_freeform_question_author_rejects_numeric_contracts() -> None:
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
     try:
-        OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _NumericContractModel())).propose(image)
+        AgenticQuestionAuthor(cast("OpenAIVlModel", _NumericContractModel())).propose(image)
     except ValueError as exc:
         assert "unsupported answer contract" in str(exc)
     else:
@@ -258,9 +259,9 @@ def test_freeform_question_author_parses_deferred_height_contract() -> None:
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposal = OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _HeightContractModel())).propose(
-        image
-    )[0]
+    proposal = AgenticQuestionAuthor(cast("OpenAIVlModel", _HeightContractModel())).propose(image)[
+        0
+    ]
 
     assert proposal.answer_contract == DeferredHeightChoiceContract()
     assert proposal.object_queries == ("chair",)
@@ -277,9 +278,9 @@ def test_freeform_question_author_normalizes_optional_query_hints() -> None:
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposal = OpenAIFreeformQuestionAuthor(cast("OpenAIVlModel", _ModelWithStringHints())).propose(
-        image
-    )[0]
+    proposal = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithStringHints())).propose(image)[
+        0
+    ]
 
     assert proposal.object_queries == ("chair",)
     assert proposal.tool_hints == ()
@@ -296,9 +297,9 @@ def test_freeform_question_author_ignores_malformed_optional_query_hints() -> No
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposal = OpenAIFreeformQuestionAuthor(
-        cast("OpenAIVlModel", _ModelWithMalformedHints())
-    ).propose(image)[0]
+    proposal = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithMalformedHints())).propose(
+        image
+    )[0]
 
     assert proposal.object_queries == ()
 
@@ -306,7 +307,7 @@ def test_freeform_question_author_ignores_malformed_optional_query_hints() -> No
 def test_freeform_question_author_filters_questions_not_answerable_from_rgb() -> None:
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposals = OpenAIFreeformQuestionAuthor(
+    proposals = AgenticQuestionAuthor(
         cast("OpenAIVlModel", _QuestionModel()),
         answerability_model=cast("OpenAIVlModel", _AnswerabilityModel()),
     ).propose(image)
@@ -315,7 +316,7 @@ def test_freeform_question_author_filters_questions_not_answerable_from_rgb() ->
 
 
 def test_local_tool_returns_geometry_and_evidence_ids() -> None:
-    registry = LocalOracleToolRegistry(_frame_primitives(_measurement_frame()))
+    registry = VqaPrimitiveToolRegistry(_frame_primitives(_measurement_frame()))
 
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
@@ -329,8 +330,8 @@ def test_local_tool_returns_geometry_and_evidence_ids() -> None:
 
 def test_grounding_reuses_canonical_object_across_queries_and_registries() -> None:
     primitives = _frame_primitives(_measurement_frame())
-    chair_registry = LocalOracleToolRegistry(primitives)
-    seat_registry = LocalOracleToolRegistry(primitives)
+    chair_registry = VqaPrimitiveToolRegistry(primitives)
+    seat_registry = VqaPrimitiveToolRegistry(primitives)
 
     chair_detection = json.loads(chair_registry.detect_objects("chair"))
     chair_masks = json.loads(
@@ -350,7 +351,7 @@ def test_grounding_reuses_canonical_object_across_queries_and_registries() -> No
 
 
 def test_grounding_reuses_canonical_object_for_repeated_mask() -> None:
-    registry = LocalOracleToolRegistry(_frame_primitives(_measurement_frame()))
+    registry = VqaPrimitiveToolRegistry(_frame_primitives(_measurement_frame()))
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
 
@@ -380,7 +381,7 @@ def test_grounding_does_not_merge_ambiguous_overlapping_masks() -> None:
 
 
 def test_pair_measurement_rejects_aliases_of_the_same_canonical_object() -> None:
-    registry = LocalOracleToolRegistry(_frame_primitives(_measurement_frame()))
+    registry = VqaPrimitiveToolRegistry(_frame_primitives(_measurement_frame()))
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
     grounded = json.loads(registry.ground_mask(masks["mask_ids"][0]))
@@ -405,7 +406,7 @@ def test_ground_plane_estimator_fits_visible_lower_band() -> None:
 
 def test_ground_plane_tool_returns_quality_gated_rejection() -> None:
     frame = _measurement_frame(np.asarray([[0.0, 1.0, 3.0]], dtype=np.float32))
-    registry = LocalOracleToolRegistry(_frame_primitives(frame))
+    registry = VqaPrimitiveToolRegistry(_frame_primitives(frame))
 
     payload = json.loads(registry.fit_ground_plane())
 
@@ -421,7 +422,7 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
     for (x, y), point in zip(projected.pixels, projected.camera_points, strict=True):
         if point[0] > 1.5:
             mask[y, x] = 255
-    registry = LocalOracleToolRegistry(_frame_primitives(frame, mask))
+    registry = VqaPrimitiveToolRegistry(_frame_primitives(frame, mask))
 
     detection = json.loads(registry.detect_objects("chair"))
     masks = json.loads(registry.segment_detection(detection["detections"][0]["detection_id"]))
@@ -437,7 +438,7 @@ def test_height_tool_measures_visible_object_points_above_plane() -> None:
 
 
 def test_local_registry_exposes_geometry_tools() -> None:
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
 
     assert {tool.name for tool in registry.tools()} == {
         "detect_objects",
@@ -458,7 +459,7 @@ def test_local_registry_exposes_geometry_tools() -> None:
 
 def test_local_registry_exposes_forward_corridor_metrics(monkeypatch: Any) -> None:
     primitives = _frame_primitives(_measurement_frame())
-    registry = LocalOracleToolRegistry(primitives)
+    registry = VqaPrimitiveToolRegistry(primitives)
     plane = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
     registry._planes["ground"] = plane
     registry._ground_planes.add("ground")
@@ -519,7 +520,7 @@ def test_count_and_camera_range_choices_are_fixed_and_non_overlapping() -> None:
 
 def test_height_tools_reject_non_ground_plane_handles() -> None:
     primitives = _frame_primitives(_measurement_frame())
-    registry = LocalOracleToolRegistry(primitives)
+    registry = VqaPrimitiveToolRegistry(primitives)
     chair = GroundedObject("chair", "chair", 8, 1.0, "left")
     registry._objects = {chair.id: chair}
     registry._planes["surface"] = GroundPlaneEstimate((0.0, -1.0, 0.0), 1.0, 20, 20, 0.01)
@@ -690,15 +691,15 @@ def test_oracle_derives_deferred_height_answer_from_cited_measurement() -> None:
 
 def test_private_oracle_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     registry._objects["synthetic-chair-0"] = GroundedObject(
         "synthetic-chair-0", "chair", 4, 1.0, "left"
     )
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
-    result = PrivateToolCallingOracle(
-        cast("Any", _BoundModel()), semantic_validator=validator
-    ).answer(proposal, registry)
+    result = AgenticAnswerer(cast("Any", _BoundModel()), semantic_validator=validator).answer(
+        proposal, registry
+    )
 
     assert result.answer == "yes"
     assert result.evidence_ids == ("grounding:v1:synthetic-chair-0",)
@@ -728,21 +729,21 @@ def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
     proposal = QuestionProposal(
         "q", "How tall is the chair?", ChoiceAnswerContract(("under 0.5 m", "0.5-1.0 m"))
     )
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     validator = _SemanticValidator(
         SemanticEvidenceValidation(False, "range and side do not measure height")
     )
 
-    result = PrivateToolCallingOracle(
-        cast("Any", _ChoiceModel()), semantic_validator=validator
-    ).answer(proposal, registry)
+    result = AgenticAnswerer(cast("Any", _ChoiceModel()), semantic_validator=validator).answer(
+        proposal, registry
+    )
 
     assert result.reason == "invalid_final_answer:answer cites unknown evidence"
 
 
 def test_private_oracle_allows_explicit_rejection_without_answer_resolution() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "should not be called"))
     model = _ScriptedModel(
         [
@@ -756,7 +757,7 @@ def test_private_oracle_allows_explicit_rejection_without_answer_resolution() ->
         ]
     )
 
-    result = PrivateToolCallingOracle(cast("Any", model), semantic_validator=validator).answer(
+    result = AgenticAnswerer(cast("Any", model), semantic_validator=validator).answer(
         proposal, registry
     )
 
@@ -770,7 +771,7 @@ def test_private_oracle_allows_explicit_rejection_without_answer_resolution() ->
 
 def test_private_oracle_returns_tool_errors_to_model() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", _Grounding()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     model = _ScriptedModel(
         [
             AIMessage(
@@ -783,7 +784,7 @@ def test_private_oracle_returns_tool_errors_to_model() -> None:
         ]
     )
 
-    result = PrivateToolCallingOracle(cast("Any", model)).answer(proposal, registry)
+    result = AgenticAnswerer(cast("Any", model)).answer(proposal, registry)
 
     assert isinstance(result, RejectedOracleResult)
     assert result.reason == "tool unavailable"
@@ -808,8 +809,8 @@ def test_private_oracle_rejects_malformed_tool_call_id() -> None:
         ]
     )
 
-    result = PrivateToolCallingOracle(cast("Any", model)).answer(
-        proposal, LocalOracleToolRegistry(cast("Any", _Grounding()))
+    result = AgenticAnswerer(cast("Any", model)).answer(
+        proposal, VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     )
 
     assert isinstance(result, RejectedOracleResult)
@@ -821,8 +822,8 @@ def test_private_oracle_rejects_malformed_explicit_rejection() -> None:
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "should not be called"))
     model = _ScriptedModel([AIMessage(content='{"status":"rejected","reason":""}')])
 
-    result = PrivateToolCallingOracle(cast("Any", model), semantic_validator=validator).answer(
-        proposal, LocalOracleToolRegistry(cast("Any", _Grounding()))
+    result = AgenticAnswerer(cast("Any", model), semantic_validator=validator).answer(
+        proposal, VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     )
 
     assert isinstance(result, RejectedOracleResult)
@@ -836,14 +837,14 @@ def test_agentic_oracle_never_uses_legacy_answer_program() -> None:
             raise AssertionError("agentic oracle must not call legacy answer")
 
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = LocalOracleToolRegistry(cast("Any", _GroundingWithoutLegacyAnswer()))
+    registry = VqaPrimitiveToolRegistry(cast("Any", _GroundingWithoutLegacyAnswer()))
     registry._objects["synthetic-chair-0"] = GroundedObject(
         "synthetic-chair-0", "chair", 4, 1.0, "left"
     )
     validator = _SemanticValidator(SemanticEvidenceValidation(True, "chair grounding supports yes"))
 
-    result = PrivateToolCallingOracle(
-        cast("Any", _BoundModel()), semantic_validator=validator
-    ).answer(proposal, registry)
+    result = AgenticAnswerer(cast("Any", _BoundModel()), semantic_validator=validator).answer(
+        proposal, registry
+    )
 
     assert result.answer == "yes"

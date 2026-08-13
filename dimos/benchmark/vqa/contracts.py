@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contracts shared by the single-frame perception VQA pipeline."""
+"""Typed messages shared across the VQA generation and evaluation pipeline."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class ProjectionConfig:
 
 
 @dataclass(frozen=True)
-class GroundingConfig:
+class PrimitiveGroundingConfig:
     """Quality thresholds for accepting an image mask as a grounded object."""
 
     min_mask_area_px: int = 128

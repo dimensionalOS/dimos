@@ -8,9 +8,9 @@ from typing import Any, Literal, cast
 
 import typer
 
-from dimos.benchmark.vqa.generation.specification import (
-    VqaGenerationSpecification,
-    VqaGroundingSpecification,
+from dimos.benchmark.vqa.generation.config import (
+    GenerationConfig,
+    GroundingConfig,
 )
 
 app = typer.Typer(help="Generate point-cloud-grounded VQA benchmark examples")
@@ -69,7 +69,7 @@ def _resolve_generation_spec(
     min_mask_area_px: int | None,
     min_foreground_points: int | None,
     output: Path | None,
-) -> VqaGenerationSpecification:
+) -> GenerationConfig:
     """Load a JSON generation specification or resolve the explicit CLI alternatives."""
     values = (
         recording,
@@ -85,7 +85,7 @@ def _resolve_generation_spec(
         if any(value is not None for value in values):
             raise typer.BadParameter("--spec cannot be combined with generation options")
         try:
-            return VqaGenerationSpecification.model_validate_json(spec.read_bytes())
+            return GenerationConfig.model_validate_json(spec.read_bytes())
         except ValueError as exc:
             raise typer.BadParameter(f"invalid generation specification: {exc}") from exc
     if recording is None or stop_index is None:
@@ -97,13 +97,13 @@ def _resolve_generation_spec(
         "constrained" if question_mode is None else question_mode,
     )
     try:
-        return VqaGenerationSpecification(
+        return GenerationConfig(
             recording=recording,
             start_index=0 if start_index is None else start_index,
             stop_index=stop_index,
             stride=1 if stride is None else stride,
             question_mode=resolved_question_mode,
-            grounding=VqaGroundingSpecification(
+            grounding=GroundingConfig(
                 min_mask_area_px=128 if min_mask_area_px is None else min_mask_area_px,
                 min_foreground_points=3 if min_foreground_points is None else min_foreground_points,
             ),

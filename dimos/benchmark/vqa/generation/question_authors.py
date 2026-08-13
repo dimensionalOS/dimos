@@ -7,8 +7,7 @@ import json
 import re
 from typing import Any
 
-from dimos.benchmark.vqa.generation.primitives.choices import COUNT_CHOICES
-from dimos.benchmark.vqa.models import (
+from dimos.benchmark.vqa.contracts import (
     AnswerContract,
     BooleanAnswerContract,
     ChoiceAnswerContract,
@@ -16,6 +15,7 @@ from dimos.benchmark.vqa.models import (
     QuestionIntent,
     QuestionProposal,
 )
+from dimos.benchmark.vqa.generation.answer_choices import COUNT_CHOICES
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -88,7 +88,7 @@ Proposals:
 _UNSUPPORTED_QUERIES = {"background", "ceiling", "floor", "ground", "room", "wall"}
 
 
-class OpenAIQuestionAgent:
+class ConstrainedQuestionAuthor:
     """Propose constrained VQA intents from an image without geometry access."""
 
     def __init__(self, model: OpenAIVlModel) -> None:
@@ -162,7 +162,7 @@ class OpenAIQuestionAgent:
         return intents
 
 
-class OpenAIFreeformQuestionAuthor:
+class AgenticQuestionAuthor:
     """Image-only author for generic public questions and answer contracts."""
 
     def __init__(

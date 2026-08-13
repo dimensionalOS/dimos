@@ -6,13 +6,16 @@ from dataclasses import replace
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.primitives.contracts import (
-    ClosestObjectResult,
-    ForwardPathResult,
-    HeightMeasurementResult,
-    HorizontalRelationResult,
-    ObjectPlaneRelationResult,
-    OpeningWidthResult,
+from dimos.benchmark.vqa.contracts import (
+    CalibratedFrame,
+    GroundedObject,
+    GroundPlaneEstimate,
+    ObjectDetector,
+    ObjectPointLocalizer,
+    ObjectSegmenter,
+    OracleMeasurement,
+    PointObjectSegmenter,
+    PrimitiveGroundingConfig,
 )
 from dimos.benchmark.vqa.generation.primitives.geometry import (
     ForwardCorridorMeasurement,
@@ -28,16 +31,13 @@ from dimos.benchmark.vqa.generation.primitives.geometry import (
 )
 from dimos.benchmark.vqa.generation.primitives.grounding import ground_segmented_objects
 from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
-from dimos.benchmark.vqa.models import (
-    CalibratedFrame,
-    GroundedObject,
-    GroundingConfig,
-    GroundPlaneEstimate,
-    ObjectDetector,
-    ObjectPointLocalizer,
-    ObjectSegmenter,
-    OracleMeasurement,
-    PointObjectSegmenter,
+from dimos.benchmark.vqa.generation.primitives.results import (
+    ClosestObjectResult,
+    ForwardPathResult,
+    HeightMeasurementResult,
+    HorizontalRelationResult,
+    ObjectPlaneRelationResult,
+    OpeningWidthResult,
 )
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -55,7 +55,7 @@ class FramePerceptionPrimitives:
         segmenter: ObjectSegmenter,
         localizer: ObjectPointLocalizer | None = None,
         point_segmenter: PointObjectSegmenter | None = None,
-        config: GroundingConfig = GroundingConfig(),
+        config: PrimitiveGroundingConfig = PrimitiveGroundingConfig(),
     ) -> None:
         if config.min_mask_area_px < 1 or config.min_foreground_points < 1:
             raise ValueError("grounding thresholds must be positive")

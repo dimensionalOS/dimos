@@ -15,12 +15,12 @@ flowchart TD
 
     subgraph CLI["dimos/cli/vqa.py"]
         GENERATE["generate()<br/>Receive Typer options"]
-        RESOLVE["_resolve_generation_spec()<br/>Build VqaGenerationSpecification"]
+        RESOLVE["_resolve_generation_spec()<br/>Build GenerationConfig"]
         DISPATCH["execute_generation()<br/>Lazy import and dispatch"]
     end
 
-    subgraph SPEC["generation/specification.py"]
-        SPEC_MODEL["VqaGenerationSpecification<br/>Validate frame bounds, mode,<br/>grounding settings, and output"]
+    subgraph SPEC["generation/config.py"]
+        SPEC_MODEL["GenerationConfig<br/>Validate frame bounds, mode,<br/>grounding settings, and output"]
     end
 
     subgraph RUNNER["generation/runner.py"]
@@ -40,13 +40,13 @@ flowchart TD
     end
 
     subgraph RECORDING["generation/recording.py"]
-        LOAD_FRAME["load_go2_frame()<br/>Read image, point cloud, intrinsics,<br/>and point-cloud-to-camera transform"]
+        LOAD_FRAME["load_go2_frame()<br/>Nearest-time Memory2 alignment;<br/>recorded TF or legacy pose + mount fallback"]
         CALIBRATED["CalibratedFrame"]
     end
 
-    subgraph AUTHORING["generation/question_agent.py"]
-        CONSTRAINED_AUTHOR["OpenAIQuestionAgent.propose(image)<br/>Return QuestionIntent list"]
-        AGENTIC_AUTHOR["OpenAIFreeformQuestionAuthor.propose(image)<br/>Return QuestionProposal list"]
+    subgraph AUTHORING["generation/question_authors.py"]
+        CONSTRAINED_AUTHOR["ConstrainedQuestionAuthor.propose(image)<br/>Return QuestionIntent list"]
+        AGENTIC_AUTHOR["AgenticQuestionAuthor.propose(image)<br/>Return QuestionProposal list"]
     end
 
     subgraph PRIMITIVES["generation/primitives/"]
@@ -62,27 +62,27 @@ flowchart TD
     end
 
     subgraph DETERMINISTIC["Constrained path"]
-        ANSWERER_FILE["generation/deterministic_question_answerer.py"]
-        ANSWERER["DeterministicQuestionAnswerer.answer(intent)"]
+        ANSWERER_FILE["generation/deterministic_answerer.py"]
+        ANSWERER["DeterministicAnswerer.answer(intent)"]
         REGISTRY["FAMILIES registry<br/>Map QuestionKind to family function"]
         FAMILY["generation/families.py<br/>family(intent, context)"]
-        CONTEXT["generation/family_context.py<br/>FamilyContext"]
+        CONTEXT["families.py<br/>FamilyContext"]
         GROUND_SEQUENCE["FamilyContext.ground(query)<br/>Detect -> segment -> ground<br/>or reuse cached grounding"]
         FAMILY_POLICY["Family-owned sequence<br/>measure -> quality gate -> classify<br/>-> choose or bucket answer"]
-        COMMON["generation/family_common.py<br/>Render question and construct<br/>shared rejection result"]
+        COMMON["families.py<br/>Render question and construct<br/>shared rejection result"]
         GROUND_TRUTH["GroundTruthResult"]
     end
 
     subgraph AGENTIC["Agentic path"]
-        TOOLS_FILE["generation/oracle_tools.py"]
-        TOOL_REGISTRY["LocalOracleToolRegistry<br/>Expose low-level primitives<br/>through opaque IDs"]
-        ORACLE_FILE["generation/oracle.py"]
-        ORACLE["PrivateOracle.answer(proposal, tools)<br/>Select iterative tool calls"]
+        TOOLS_FILE["generation/agentic_tools.py"]
+        TOOL_REGISTRY["VqaPrimitiveToolRegistry<br/>Expose low-level primitives<br/>through opaque IDs"]
+        ORACLE_FILE["generation/agentic_answerer.py"]
+        ORACLE["AgenticAnswerer.answer(proposal, tools)<br/>Select iterative tool calls"]
         VALIDATE_ORACLE["Validate answer contract,<br/>citations, and semantic support"]
         ORACLE_RESULT["AcceptedOracleResult<br/>or RejectedOracleResult"]
     end
 
-    subgraph DATASET["generation/dataset.py"]
+    subgraph DATASET["generation/dataset.py<br/>GenerationDataset"]
         SERIALIZE["_evaluation_rows()<br/>Accepted results -> public cases<br/>and private labels"]
         PRIVATE_RESULT["_private_result()<br/>Serialize evidence and traces"]
         ATOMIC["Atomic JSON, JSONL,<br/>and JPEG writes"]
@@ -163,5 +163,5 @@ The primary code boundary is:
 - `runner.py` owns execution and model lifecycle.
 - `FramePerceptionPrimitives` owns reusable frame-scoped perception, measurements, and caches.
 - Constrained functions in `families.py` own complete deterministic answer recipes.
-- The agentic oracle selects low-level primitive calls through `LocalOracleToolRegistry`.
+- The agentic answerer selects low-level primitive calls through `VqaPrimitiveToolRegistry`.
 - `dataset.py` owns serialization and atomic publication; it does not generate answers.

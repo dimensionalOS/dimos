@@ -6,8 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+QUESTION_MODEL = "gpt-4o-mini"
+ORACLE_MODEL = "gpt-4o-mini"
 
-class VqaGroundingSpecification(BaseModel):
+
+class GroundingConfig(BaseModel):
     """Private grounding quality thresholds for generated VQA labels."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -16,7 +19,7 @@ class VqaGroundingSpecification(BaseModel):
     min_foreground_points: int = Field(default=3, ge=1)
 
 
-class VqaGenerationSpecification(BaseModel):
+class GenerationConfig(BaseModel):
     """One reproducible multi-frame VQA generation request."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -26,5 +29,5 @@ class VqaGenerationSpecification(BaseModel):
     stop_index: int = Field(gt=0)
     stride: int = Field(default=1, ge=1)
     question_mode: Literal["constrained", "agentic"] = "constrained"
-    grounding: VqaGroundingSpecification = VqaGroundingSpecification()
+    grounding: GroundingConfig = GroundingConfig()
     output: str | None = None

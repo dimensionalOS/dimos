@@ -3,11 +3,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
-from dimos.benchmark.vqa.generation.family_common import rejected_result, render_question
-from dimos.benchmark.vqa.generation.family_context import FamilyContext
-from dimos.benchmark.vqa.generation.primitives.choices import (
+from dimos.benchmark.vqa.contracts import (
+    CalibratedFrame,
+    GroundedObject,
+    GroundTruthResult,
+    QuestionIntent,
+    ToolTrace,
+    VqaExample,
+)
+from dimos.benchmark.vqa.generation.answer_choices import (
     CAMERA_RANGE_CHOICES,
     COUNT_CHOICES,
     OPENING_WIDTH_CHOICES,
@@ -15,14 +23,94 @@ from dimos.benchmark.vqa.generation.primitives.choices import (
     count_choice,
     opening_width_choice,
 )
+from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
-from dimos.benchmark.vqa.models import (
-    GroundedObject,
-    GroundTruthResult,
-    QuestionIntent,
-    ToolTrace,
-    VqaExample,
-)
+
+
+@dataclass(frozen=True)
+class GroundingResult:
+    """Grounded objects and the operations used to establish them."""
+
+    objects: tuple[GroundedObject, ...]
+    trace: tuple[ToolTrace, ...]
+
+
+@dataclass
+class FamilyContext:
+    """Shared calibrated frame and cached primitives for deterministic families."""
+
+    frame: CalibratedFrame
+    primitives: FramePerceptionPrimitives
+
+    def ground(self, object_query: str) -> GroundingResult:
+        """Detect, segment, and ground one semantic query with traceable cache reuse."""
+        if self.primitives.has_grounding(object_query):
+            return GroundingResult(
+                tuple(self.primitives.ground_masks(object_query)),
+                (ToolTrace("reuse_grounding", object_query),),
+            )
+        trace: list[ToolTrace] = [ToolTrace("detect_objects", object_query)]
+        detections = self.primitives.detect_objects(object_query)
+        if len(detections):
+            trace.append(ToolTrace("segment_objects", f"count={len(detections)}"))
+        elif self.primitives.can_localize_points:
+            trace.append(ToolTrace("locate_object_point", object_query))
+        masks = self.primitives.segment_detections(object_query)
+        if not len(detections) and self.primitives.used_point_localization(object_query):
+            trace.append(ToolTrace("segment_object_point", object_query))
+        trace.append(ToolTrace("get_foreground_geometry", f"masks={len(masks)}"))
+        return GroundingResult(tuple(self.primitives.ground_masks(object_query)), tuple(trace))
+
+
+def render_question(intent: QuestionIntent) -> str:
+    """Render the public question for one constrained intent."""
+    if intent.kind == "presence":
+        return f"Is there a {intent.object_query} in the image? Answer yes or no."
+    if intent.kind == "horizontal_direction":
+        return f"Where is the nearest {intent.object_query}: left, center, or right?"
+    if intent.kind == "visible_count":
+        return f"How many {intent.object_query}s are visible?"
+    if intent.kind == "camera_range":
+        return f"How far is the nearest {intent.object_query} from the camera?"
+    if intent.kind == "compare_nearest_by_side":
+        return f"Which {intent.object_query} is closer: the left one or the right one?"
+    if intent.kind == "compare_left_right":
+        return (
+            f"Is the {intent.object_query} to the left or right of the {intent.comparison_query}?"
+        )
+    if intent.kind == "compare_height":
+        return f"Which is taller: the {intent.object_query} or the {intent.comparison_query}?"
+    if intent.kind == "object_on_support":
+        return f"Is the {intent.object_query} on the {intent.comparison_query}? Answer yes or no."
+    if intent.kind == "opening_width":
+        return f"How wide is the {intent.object_query}?"
+    if intent.kind == "door_state":
+        return f"Is the {intent.object_query} open or closed?"
+    if intent.kind == "closest_object":
+        return f"Which object is closest to the {intent.object_query}: {', '.join(intent.candidate_queries)}?"
+    if intent.kind == "forward_path":
+        return "Is the path directly ahead clear or blocked?"
+    if intent.kind == "within_distance":
+        return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
+    raise ValueError(f"unsupported deterministic question kind: {intent.kind}")
+
+
+def rejected_result(
+    context: FamilyContext,
+    intent: QuestionIntent,
+    objects: tuple[GroundedObject, ...] | list[GroundedObject],
+    trace: tuple[ToolTrace, ...],
+    reason: str,
+) -> GroundTruthResult:
+    """Build a rejected deterministic result with private evidence and trace."""
+    rejected = VqaExample(
+        f"{context.frame.id}-{intent.object_query}-{intent.kind}",
+        render_question(intent),
+        "",
+        "",
+        (),
+    )
+    return GroundTruthResult(intent, rejected, "rejected", None, reason, tuple(objects), trace)
 
 
 def answer_basic_object_question(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from dimos.benchmark.vqa.models import GroundedObject, GroundPlaneEstimate, OracleMeasurement
+from dimos.benchmark.vqa.contracts import GroundedObject, GroundPlaneEstimate, OracleMeasurement
 
 
 @dataclass(frozen=True)
