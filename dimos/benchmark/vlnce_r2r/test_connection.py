@@ -1,16 +1,41 @@
 # Copyright 2026 Dimensional Inc.
-# Licensed under the Apache License, Version 2.0.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
 
 from dimos.benchmark.vlnce_r2r.connection import (
+    VlnceConnection,
     VlnceConnectionError,
     _decode_occupancy,
     _habitat_pose_to_dimos,
     decode_observation,
 )
 from dimos.benchmark.vlnce_r2r.protocol import vlnce_public_v1_pb2 as pb
+from dimos.benchmark.vlnce_r2r.protocol.contract import (
+    CONTROL_PERIOD_SECONDS,
+    MAX_ANGULAR_Z,
+)
+
+
+@pytest.fixture
+def connection() -> Iterator[VlnceConnection]:
+    connection = VlnceConnection(socket_path="/tmp/unused-vlnce.sock")
+    yield connection
+    connection.stop()
 
 
 def test_observation_decodes_to_public_sensor_geometry() -> None:
@@ -66,3 +91,17 @@ def test_habitat_coordinates_are_converted_to_dimos_world() -> None:
     position, orientation = _habitat_pose_to_dimos(pb.Pose(x=1, y=2, z=3, qw=1))
     assert position.tolist() == [-3.0, -1.0, 2.0]
     assert np.isclose(np.linalg.norm(orientation), 1.0)
+
+
+def test_turn_sends_bounded_controls_for_the_requested_angle(connection, mocker) -> None:
+    move = mocker.patch.object(connection, "move", return_value=True)
+
+    result = connection.turn(90.0)
+
+    commands = [call.args[0] for call in move.call_args_list]
+    assert result == "Turned counterclockwise 90.0 degrees."
+    assert sum(command.angular.z * CONTROL_PERIOD_SECONDS for command in commands) == pytest.approx(
+        np.pi / 2
+    )
+    assert all(command.linear.is_zero() for command in commands)
+    assert all(0.0 < command.angular.z <= MAX_ANGULAR_Z for command in commands)

@@ -216,6 +216,32 @@ class VlnceConnection(Module):
             }
         return True
 
+    @rpc
+    def turn(self, angle_degrees: float) -> str:
+        """Turn in place by a relative angle of at most 180 degrees.
+
+        Positive angles turn counterclockwise; negative angles turn clockwise.
+        The call blocks until the requested fixed-period controls have completed.
+        """
+
+        if not math.isfinite(angle_degrees) or abs(angle_degrees) > 180.0:
+            raise VlnceConnectionError("turn angle must be finite and within 180 degrees")
+        if angle_degrees == 0.0:
+            return "No turn requested."
+
+        remaining = math.radians(angle_degrees)
+        while not math.isclose(remaining, 0.0, abs_tol=1e-9):
+            angular_z = math.copysign(
+                min(MAX_ANGULAR_Z, abs(remaining) / CONTROL_PERIOD_SECONDS),
+                remaining,
+            )
+            if not self.move(Twist(angular=[0.0, 0.0, angular_z])):
+                raise VlnceConnectionError("turn was rejected before it completed")
+            remaining -= angular_z * CONTROL_PERIOD_SECONDS
+
+        direction = "counterclockwise" if angle_degrees > 0.0 else "clockwise"
+        return f"Turned {direction} {abs(angle_degrees):.1f} degrees."
+
     @skill
     def submit_route(self) -> str:
         """Submit VLN-CE STOP once and end this evaluation.
