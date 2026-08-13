@@ -15,10 +15,9 @@
 from __future__ import annotations
 
 import time
-from typing import BinaryIO, TypeAlias
+from typing import Any, BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
@@ -40,11 +39,27 @@ class TwistStamped(Twist, Timestamped):
     ts: float
     frame_id: str
 
-    @dispatch
-    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize a stamped twist.
+
+        Takes ``(ts, frame_id)`` positionally, plus every Twist keyword. Any other
+        positional form belongs to Twist, so ``TwistStamped(linear, angular)``
+        works as it does on the base class.
+        """
+        ts: Any
+        # A leading number or string is a timestamp; anything else is a Twist argument.
+        if args and isinstance(args[0], int | float | str):
+            ts = args[0]
+            frame_id = args[1] if len(args) > 1 else kwargs.pop("frame_id", "")
+            twist_args: tuple[Any, ...] = ()
+        else:
+            ts = kwargs.pop("ts", None)
+            frame_id = kwargs.pop("frame_id", "")
+            twist_args = args
+
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
-        super().__init__(**kwargs)
+        self.ts = time.time() if ts is None else ts
+        super().__init__(*twist_args, **kwargs)
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMTwistStamped()

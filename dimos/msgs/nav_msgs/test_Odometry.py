@@ -171,9 +171,11 @@ def test_odometry_lcm_roundtrip() -> None:
 
 
 def test_odometry_zero_timestamp() -> None:
-    odom = Odometry(ts=0.0)
-    assert odom.ts > 0
-    assert odom.ts <= time.time()
+    """An explicit zero timestamp is kept; an omitted one stamps now."""
+    assert Odometry(ts=0.0).ts == 0.0
+
+    before = time.time()
+    assert before <= Odometry().ts <= time.time()
 
 
 def test_odometry_with_just_pose() -> None:

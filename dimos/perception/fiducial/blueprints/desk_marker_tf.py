@@ -23,6 +23,7 @@ import time
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -30,6 +31,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
@@ -83,6 +85,9 @@ class DeskStaticTfModule(Module):
     """Publish the fixed desk TF chain needed by marker pose estimation."""
 
     config: DeskStaticTfModuleConfig
+
+    tf: Out[TFMessage]
+
     _last_publish_ts: float | None = None
     _republish_stop: threading.Event | None = None
     _republish_thread: threading.Thread | None = None
@@ -125,21 +130,23 @@ class DeskStaticTfModule(Module):
         x, y, z = self.config.camera_translation_m
 
         self.tf.publish(
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self.config.world_frame,
-                child_frame_id=self.config.base_frame,
-                ts=ts,
-            ),
-            Transform(
-                # Default desk camera pose: about 25 cm forward and 15 cm above base_link.
-                translation=Vector3(x, y, z),
-                rotation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
-                frame_id=self.config.base_frame,
-                child_frame_id=self.config.camera_optical_frame,
-                ts=ts,
-            ),
+            TFMessage(
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id=self.config.world_frame,
+                    child_frame_id=self.config.base_frame,
+                    ts=ts,
+                ),
+                Transform(
+                    # Default desk camera pose: about 25 cm forward and 15 cm above base_link.
+                    translation=Vector3(x, y, z),
+                    rotation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
+                    frame_id=self.config.base_frame,
+                    child_frame_id=self.config.camera_optical_frame,
+                    ts=ts,
+                ),
+            )
         )
 
 

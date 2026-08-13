@@ -44,6 +44,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 
@@ -175,7 +176,7 @@ class GO2Zenoh(StaticTfPublisher):
 
     def _publish_tf(self, odom: Odometry) -> None:
         """The one moving edge, odom -> mid360_link; the bridge publishes no tf."""
-        self.tf.publish(Transform.from_pose(odom.child_frame_id, odom.to_pose_stamped()))
+        self.tf.publish(TFMessage(Transform.from_pose(odom.child_frame_id, odom.to_pose_stamped())))
 
     async def _publish_camera_info(self) -> None:
         period = 1.0 / self.config.camera_info_hz

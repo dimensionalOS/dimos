@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 

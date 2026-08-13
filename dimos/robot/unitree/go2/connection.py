@@ -24,7 +24,6 @@ from pydantic import Field
 from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -43,6 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
@@ -75,6 +75,9 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
+    # Turn off where another module owns the base_link edge. The odom port
+    # keeps publishing either way.
+    publish_tf: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -273,6 +276,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
@@ -282,6 +286,8 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
+        import rerun.blueprint as rrb
+
         """Return Rerun view blueprints for GO2 camera visualization."""
         return [
             rrb.Spatial2DView(
@@ -394,8 +400,9 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
-        transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
-        self.tf.publish(*transforms)
+        if self.config.publish_tf:
+            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
 
