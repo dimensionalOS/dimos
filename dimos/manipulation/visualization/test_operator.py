@@ -19,7 +19,7 @@ from pathlib import Path
 from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, PlanningStatus
 from dimos.manipulation.planning.spec.models import (

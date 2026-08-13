@@ -80,12 +80,11 @@ def _one_joint_config(name: str = "arm") -> RobotModelConfig:
 def _install_generated_plan(
     module: ManipulationModule,
     config: RobotModelConfig,
-    traj_gen: MagicMock,
     *points: list[float],
 ) -> None:
     """Install a generated plan and enough monitor state to derive robot paths."""
     global_joint_names = [f"{config.name}/{joint}" for joint in config.joint_names]
-    module._robots = {config.name: ("robot_id", config, traj_gen)}
+    module._robots = {config.name: ("robot_id", config)}
     module._world_monitor = MagicMock()
     module._world_monitor.planning_groups = PlanningGroupRegistry([config])
     module._world_monitor.get_current_joint_state.return_value = JointState(
@@ -126,7 +125,7 @@ def _make_module_with_monitor(
     module._init_joints = {}
     for config in configs:
         robot_id = f"robot_{config.name}"
-        module._robots[config.name] = (robot_id, config, MagicMock())
+        module._robots[config.name] = (robot_id, config)
     return module
 
 
@@ -300,7 +299,7 @@ class TestOnJointState:
     def test_no_monitor_returns_early(self, robot_config_with_mapping, module_factory):
         """When world_monitor is None, _on_joint_state returns without error."""
         module = module_factory()
-        module._robots = {"left_arm": ("id", robot_config_with_mapping, MagicMock())}
+        module._robots = {"left_arm": ("id", robot_config_with_mapping)}
         module._world_monitor = None
 
         # Should not raise
@@ -397,8 +396,7 @@ class TestManipulationPreview:
     def test_preview_routes_one_complete_plan_with_default_duration(self, module_factory):
         module = module_factory()
         config = _one_joint_config()
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0], [2.0])
+        _install_generated_plan(module, config, [0.0], [2.0])
 
         assert module.preview_plan() is True
 
@@ -410,10 +408,9 @@ class TestManipulationPreview:
         module = module_factory()
         left = _one_joint_config("left")
         right = _one_joint_config("right")
-        traj_gen = MagicMock()
         module._robots = {
-            "left": ("left_id", left, traj_gen),
-            "right": ("right_id", right, traj_gen),
+            "left": ("left_id", left),
+            "right": ("right_id", right),
         }
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
@@ -436,8 +433,7 @@ class TestManipulationPreview:
     def test_preview_rejects_unaffected_compatibility_robot(self, module_factory):
         module = module_factory()
         config = _one_joint_config()
-        traj_gen = MagicMock()
-        _install_generated_plan(module, config, traj_gen, [0.0], [1.0])
+        _install_generated_plan(module, config, [0.0], [1.0])
 
         assert module.preview_plan(robot_name="other") is False
         module._world_monitor.animate_trajectory.assert_not_called()

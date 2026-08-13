@@ -20,7 +20,7 @@ Use this README to cook and load a package. See
 Python dependencies:
 
 ```bash
-uv sync --extra scene
+uv sync --extra scene --inexact
 ```
 
 External tools:

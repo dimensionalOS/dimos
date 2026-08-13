@@ -22,8 +22,14 @@ import pytest
 
 pytest.importorskip("roboplan.cartesian_planning")
 roboplan_world_module = importlib.import_module("dimos.manipulation.planning.world.roboplan_world")
+roboplan_planner_module = importlib.import_module(
+    "dimos.manipulation.planning.planners.roboplan_planner"
+)
 
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -36,9 +42,11 @@ pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
-def roboplan_world_type() -> type[Any]:
+def roboplan_types() -> tuple[type[Any], type[Any]]:
     """Reload real bindings after any fake-binding tests in the same pytest process."""
-    return importlib.reload(roboplan_world_module).RoboPlanWorld
+    world_type = importlib.reload(roboplan_world_module).RoboPlanWorld
+    planner_type = importlib.reload(roboplan_planner_module).RoboPlanPlanner
+    return world_type, planner_type
 
 
 def _sync_zero_state(
@@ -53,15 +61,17 @@ def _sync_zero_state(
 
 
 def test_real_roboplan_plans_fixed_orientation_cartesian_path(
-    roboplan_world_type: type[Any],
+    roboplan_types: tuple[type[Any], type[Any]],
 ) -> None:
     config = make_xarm6_model_config(name="arm")
     if not Path(config.model_path).exists():
         pytest.skip(f"xArm model is unavailable: {config.model_path}")
 
-    world = roboplan_world_type()
+    world_type, planner_type = roboplan_types
+    world = world_type()
     robot_id = world.add_robot(config)
     world.finalize()
+    planner = planner_type(world, RoboPlanPlannerConfig())
     _sync_zero_state(world, robot_id, config.joint_names)
     group_id = world._planning_groups.primary_pose_group_id_for_robot("arm")
     assert group_id == "arm/manipulator"
@@ -70,10 +80,10 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
         name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
     )
     with world.scratch_context() as ctx:
-        world._apply_selected_state(ctx, start)
+        planner._apply_selected_state(ctx, start)
         start_pose = world.get_group_ee_pose(ctx, group_id)
 
-    result = world.plan_cartesian_path(
+    result = planner.plan_cartesian_path(
         world,
         selection,
         start,
@@ -94,7 +104,7 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     assert result.timestamps is not None
     assert len(result.timestamps) == len(result.path)
     with world.scratch_context() as ctx:
-        world._apply_selected_state(ctx, result.path[-1])
+        planner._apply_selected_state(ctx, result.path[-1])
         final_pose = world.get_group_ee_pose(ctx, group_id)
     expected = pose_to_matrix(start_pose)
     expected[0, 3] += 0.005
@@ -104,17 +114,19 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
 
 
 def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
-    roboplan_world_type: type[Any],
+    roboplan_types: tuple[type[Any], type[Any]],
 ) -> None:
     left_config = make_xarm6_model_config(name="left_arm", y_offset=0.3)
     right_config = make_xarm6_model_config(name="right_arm", y_offset=-0.3)
     if not Path(left_config.model_path).exists():
         pytest.skip(f"xArm model is unavailable: {left_config.model_path}")
 
-    world = roboplan_world_type()
+    world_type, planner_type = roboplan_types
+    world = world_type()
     left_id = world.add_robot(left_config)
     right_id = world.add_robot(right_config)
     world.finalize()
+    planner = planner_type(world, RoboPlanPlannerConfig())
     _sync_zero_state(world, left_id, left_config.joint_names)
     _sync_zero_state(world, right_id, right_config.joint_names)
     left_group_id = world._planning_groups.primary_pose_group_id_for_robot("left_arm")
@@ -126,7 +138,7 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
         name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
     )
 
-    result = world.plan_cartesian_path(
+    result = planner.plan_cartesian_path(
         world,
         selection,
         start,

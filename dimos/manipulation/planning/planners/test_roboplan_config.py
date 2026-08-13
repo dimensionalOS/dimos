@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for typed manipulation planner configuration."""
+"""Tests for typed RoboPlan planning configuration."""
 
 from pydantic import ValidationError
 import pytest
 
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
+from dimos.manipulation.planning.planners.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPathShortcuttingConfig,
+)
 
 
 @pytest.mark.parametrize(
@@ -35,3 +38,19 @@ def test_roboplan_cartesian_path_config_rejects_invalid_limits(
 ) -> None:
     with pytest.raises(ValidationError):
         RoboPlanCartesianPathConfig(**path_config)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "shortcutting_config",
+    [
+        {"max_step_size": 0.0},
+        {"max_iters": -1},
+        {"max_convergence_iters": -1},
+        {"redundant_removal_iters": -1},
+    ],
+)
+def test_roboplan_path_shortcutting_config_rejects_invalid_limits(
+    shortcutting_config: dict[str, float],
+) -> None:
+    with pytest.raises(ValidationError):
+        RoboPlanPathShortcuttingConfig.model_validate(shortcutting_config)

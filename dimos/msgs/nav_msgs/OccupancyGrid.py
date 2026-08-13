@@ -132,7 +132,7 @@ class OccupancyGrid(Timestamped):
         resolution: float = 0.05,
         origin: Pose | None = None,
         frame_id: str = "world",
-        ts: float = 0.0,
+        ts: float | None = None,
     ) -> None:
         """Initialize OccupancyGrid.
 
@@ -147,7 +147,7 @@ class OccupancyGrid(Timestamped):
         """
 
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
 
         if grid is not None:
             # Initialize from numpy array
