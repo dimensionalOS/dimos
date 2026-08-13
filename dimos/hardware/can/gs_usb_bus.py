@@ -163,6 +163,14 @@ class GsUsbMacBus(can.BusABC):
             if not out_eps:
                 raise can.CanInitializationError("gs_usb adapter has no OUT endpoint")
             gs = GsUsb(device)
+            # Reset the CAN core before configuring it. If a previous session
+            # left the core started (crash, kill, or a close whose stop()
+            # didn't land), configuring and starting it again wedges RX on
+            # some firmware (observed on CANable 2.0) — every later session
+            # then opens fine but never receives a frame.
+            with contextlib.suppress(Exception):
+                gs.stop()
+            time.sleep(0.05)
             try:
                 _set_device_bitrate(gs, bitrate)
             except Exception as exc:

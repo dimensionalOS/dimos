@@ -85,7 +85,11 @@ def main() -> int:
         sys.exit("--delta capped at 0.3 rad for this smoke test")
     j = args.joint - 1
 
-    adapter = OpenYamAdapter(address=args.channel)
+    # auto_set_mit_mode=False: skip the OpenArm-style CTRL_MODE register
+    # broadcast. YAM motors ship in MIT mode, and this write is suspected of
+    # faulting/silencing their firmware (bus went quiet right after the
+    # first sessions that sent it; the probe, which never sends it, worked).
+    adapter = OpenYamAdapter(address=args.channel, auto_set_mit_mode=False)
     if not adapter.connect():
         sys.exit("connect failed")
     try:
@@ -126,8 +130,9 @@ def main() -> int:
 
         stream(adapter, back, args.ramp, args.abort_error)
         adapter.write_stop()
-        time.sleep(0.2)
-
+        # Damiao motors only reply when commanded, so read immediately —
+        # waiting here lets the state cache go stale (>0.1 s) by design.
+        time.sleep(0.02)
         q_end = adapter.read_joint_positions()
         print("end pose:  ", [f"{q:+.3f}" for q in q_end])
         ok = abs(moved - args.delta) < 0.05 and abs(q_end[j] - q0[j]) < 0.05
