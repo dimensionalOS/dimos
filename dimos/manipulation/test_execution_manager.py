@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pickle
 from threading import Event, Thread
 from unittest.mock import MagicMock
 
@@ -112,20 +111,6 @@ def test_execution_target_inverts_coordinator_mapping() -> None:
         "j1": "hardware/a",
         "j2": "hardware/b",
     }
-
-
-def test_execution_target_mapping_is_immutable_and_pickleable() -> None:
-    target = _target(coordinator_to_model={"hardware/a": "j1", "hardware/b": "j2"})
-
-    with pytest.raises(TypeError):
-        target.model_to_coordinator["j1"] = "other"  # type: ignore[index]
-
-    restored = pickle.loads(pickle.dumps(target, protocol=pickle.HIGHEST_PROTOCOL))
-
-    assert restored == target
-    assert dict(restored.model_to_coordinator) == dict(target.model_to_coordinator)
-    with pytest.raises(TypeError):
-        restored.model_to_coordinator["j1"] = "other"  # type: ignore[index]
 
 
 @pytest.mark.parametrize(

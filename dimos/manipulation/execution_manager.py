@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 import threading
 from types import MappingProxyType
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -108,24 +108,6 @@ class ExecutionTarget:
                 f"Execution target '{self.robot_name}' has ambiguous coordinator joints"
             )
         return self
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Return pickle state without the unpickleable mapping proxy."""
-        return {
-            "robot_name": self.robot_name,
-            "model_joint_names": self.model_joint_names,
-            "model_to_coordinator": tuple(self.model_to_coordinator.items()),
-        }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore immutable state from its pickle representation."""
-        object.__setattr__(self, "robot_name", state["robot_name"])
-        object.__setattr__(self, "model_joint_names", state["model_joint_names"])
-        object.__setattr__(
-            self,
-            "model_to_coordinator",
-            MappingProxyType(dict(state["model_to_coordinator"])),
-        )
 
     @classmethod
     def from_coordinator_mapping(

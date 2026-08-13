@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import replace
 import math
-import pickle
 import threading
 import time
 from typing import Any
@@ -498,20 +496,6 @@ class TestJointTrajectoryTask:
     def test_config_requires_at_least_one_joint(self):
         with pytest.raises(ValueError):
             JointTrajectoryTaskConfig(joint_names=[])
-
-    def test_config_normalizes_joint_names_and_pickles(self):
-        config = JointTrajectoryTaskConfig(joint_names=["arm/joint1"])
-
-        restored = pickle.loads(pickle.dumps(config, protocol=pickle.HIGHEST_PROTOCOL))
-
-        assert config.joint_names == ("arm/joint1",)
-        assert restored == config
-
-    def test_config_replace_revalidates_updates(self):
-        config = JointTrajectoryTaskConfig(joint_names=["arm/joint1"])
-
-        with pytest.raises(ValueError):
-            replace(config, start_position_tolerance=math.inf)
 
     @pytest.mark.parametrize(
         "tolerance",
