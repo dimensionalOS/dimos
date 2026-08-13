@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import numpy as np
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.navigation.nav_3d.evaluator.config import EvalConfig
@@ -75,7 +76,10 @@ class MLSPipeline:
         self._mapped = False
 
     def add_frame(self, points: NDArray[np.float32], origin: Point, ts: float) -> None:
-        self._mapper.add_frame(points, origin)
+        # The cloud is already world-frame, so shift it to the origin and let
+        # the mapper re-register with an identity rotation.
+        local = points - np.asarray(origin, dtype=np.float32)
+        self._mapper.add_frame(local, origin, (0.0, 0.0, 0.0, 1.0))
         self._pending = True
 
     def sync_map(self) -> None:
