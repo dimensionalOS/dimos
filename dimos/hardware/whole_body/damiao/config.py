@@ -14,34 +14,21 @@
 
 from __future__ import annotations
 
-import attrs
+from typing import Annotated
+
+from pydantic import ConfigDict, Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+_NonEmptyString = Annotated[str, Field(min_length=1, strict=True)]
 
 
-@attrs.frozen
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", validate_default=True),
+)
 class DamiaoRuntimeConfig:
     """Deployment values that may vary without changing robot topology."""
 
-    bus_addresses: dict[str, str] = attrs.field(
-        factory=dict,
-        validator=attrs.validators.deep_mapping(
-            key_validator=attrs.validators.and_(
-                attrs.validators.instance_of(str),
-                attrs.validators.min_len(1),
-            ),
-            value_validator=attrs.validators.and_(
-                attrs.validators.instance_of(str),
-                attrs.validators.min_len(1),
-            ),
-        ),
-    )
-    gravity_comp: bool = attrs.field(
-        default=True,
-        validator=attrs.validators.instance_of(bool),
-    )
-    tick_deadline_us: int = attrs.field(
-        default=1_000,
-        validator=attrs.validators.and_(
-            attrs.validators.instance_of(int),
-            attrs.validators.ge(1),
-        ),
-    )
+    bus_addresses: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
+    gravity_comp: bool = Field(default=True, strict=True)
+    tick_deadline_us: int = Field(default=1_000, ge=1, strict=True)
