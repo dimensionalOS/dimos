@@ -49,8 +49,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, Unpack, cast
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.memory2.transform import Transformer
@@ -672,6 +670,8 @@ def _icp(
     this directly as sigma_trans squared. On rejection (too few points or
     zero correspondences) returns the identity transform and inf fitness.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+    import open3d.core as o3c  # type: ignore[import-untyped]
 
     if len(source) < min_inliers or len(target) < min_inliers:
         return Transform.identity(), float("inf")

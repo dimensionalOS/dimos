@@ -52,7 +52,7 @@ if not os.path.exists(VENV_PYTHON):
 
 def run_dimos(*args: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
     """Run a dimos CLI command."""
-    cmd = [VENV_PYTHON, "-m", "dimos.robot.cli.dimos", *args]
+    cmd = [VENV_PYTHON, "-m", "dimos.cli.dimos", *args]
     env = {**os.environ, "CI": "1", "PYTHONPATH": REPO_DIR}
     result = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout, cwd=REPO_DIR, env=env

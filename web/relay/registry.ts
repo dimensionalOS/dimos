@@ -55,6 +55,14 @@ export interface ViewerPeer {
   sendMsg(msg: Msg): void;
 }
 
+/** Dispose and drop every delivery policy of `viewer` (queued frames from the
+ * old watch must not reach the viewer, and persistent writers must release
+ * their streams). */
+function disposePolicies(viewer: ViewerPeer): void {
+  for (const policy of viewer.policies.values()) policy.dispose();
+  viewer.policies.clear();
+}
+
 interface ChannelInStats {
   delivery: Delivery;
   framesIn: number;
@@ -84,6 +92,7 @@ export class Registry {
 
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
+    disposePolicies(viewer);
     if (viewer.watched !== null) this.#syncSubs(viewer.watched);
   }
 
@@ -175,7 +184,7 @@ export class Registry {
         const previous = viewer.watched;
         if (previous !== null && previous !== msg.robotId) {
           viewer.subs.clear();
-          viewer.policies.clear();
+          disposePolicies(viewer);
         }
         viewer.watched = msg.robotId;
         if (previous !== null && previous !== msg.robotId) this.#syncSubs(previous);
@@ -211,6 +220,8 @@ export class Registry {
           viewer.subs.add(msg.ch);
         } else {
           viewer.subs.delete(msg.ch);
+          viewer.policies.get(msg.ch)?.dispose();
+          viewer.policies.delete(msg.ch);
         }
         this.#syncSubs(viewer.watched);
         break;
@@ -250,6 +261,7 @@ export class Registry {
       if (viewer.watched !== id || !viewer.subs.has(ch)) continue;
       let policy = viewer.policies.get(ch);
       if (policy === undefined || policy.delivery !== delivery) {
+        policy?.dispose();
         policy = delivery === "reliable"
           ? new ReliableChannel(viewer.sink)
           : new LatestChannel(viewer.sink);

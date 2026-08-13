@@ -182,11 +182,13 @@ class CameraInfo(Timestamped):
         )
 
     @classmethod
-    def from_yaml(cls, yaml_file: str) -> CameraInfo:
+    def from_yaml(cls, yaml_file: str, frame_id: str = "camera_optical") -> CameraInfo:
         """Create CameraInfo from YAML file.
 
         Args:
             yaml_file: Path to YAML file containing camera calibration data
+            frame_id: Optical frame the intrinsics apply to; must match the
+                ``Image.frame_id`` published for that camera
 
         Returns:
             CameraInfo instance with loaded calibration data
@@ -223,7 +225,7 @@ class CameraInfo(Timestamped):
             K=K,
             R=R,
             P=P,
-            frame_id="camera_optical",
+            frame_id=frame_id,
         )
 
     def get_K_matrix(self) -> np.ndarray:

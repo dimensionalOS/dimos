@@ -30,7 +30,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import rerun as rr
 import typer
 
 from dimos.memory2.store.sqlite import SqliteStore
@@ -63,6 +62,8 @@ def main(
         7.5, "--smoothing-window", help="Buffer window for averaged-track pass (s); 0 disables"
     ),
 ) -> None:
+    import rerun as rr
+
     db_path = resolve_named_path(dataset, ".db")
     cam_info = _camera_info_static()
 

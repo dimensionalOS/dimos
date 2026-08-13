@@ -44,10 +44,11 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.utils.logging_config import setup_logger
@@ -64,11 +65,12 @@ class MarkerTfModuleConfig(ModuleConfig):
 
 
 class MarkerTfModule(Module):
-    """Subscribe to marker detections and publish marker poses on ``self.tf``."""
+    """Subscribe to marker detections and publish marker poses on the tf stream."""
 
     config: MarkerTfModuleConfig
 
     detections: In[Detection3DArray]
+    tf: Out[TFMessage]
 
     def _markers_parent_frame(self) -> str:
         p = self.config.marker_namespace_prefix
@@ -121,7 +123,7 @@ class MarkerTfModule(Module):
         # In that case, skip TF entirely rather than publishing only the
         # namespace anchor without any marker child frames.
         if len(out) > 1:
-            self.tf.publish(*out)
+            self.tf.publish(TFMessage(*out))
 
     @staticmethod
     def _marker_id_from_detection(detection: Detection3D) -> str | None:

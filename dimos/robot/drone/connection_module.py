@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -69,6 +70,7 @@ class DroneConnectionModule(Module):
     telemetry: Out[Any]  # Full telemetry JSON
     video: Out[Image]
     follow_object_cmd: Out[Any]
+    tf: Out[TFMessage]
 
     # Internal state
     _odom: PoseStamped | None = None
@@ -185,7 +187,6 @@ class DroneConnectionModule(Module):
             child_frame_id="base_link",
             ts=msg.ts if hasattr(msg, "ts") else time.time(),
         )
-        self.tf.publish(base_link)
 
         # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
         camera_link = Transform(
@@ -195,7 +196,7 @@ class DroneConnectionModule(Module):
             child_frame_id="camera_link",
             ts=time.time(),
         )
-        self.tf.publish(camera_link)
+        self.tf.publish(TFMessage(base_link, camera_link))
 
     def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""

@@ -65,6 +65,7 @@ class LCMService(Service):
     _stop_event: threading.Event
     _loop_running: threading.Event
     _l_lock: threading.Lock
+    _pending_unsubs: list[lcm_mod.LCMSubscription]
     _start_lock: threading.Lock
     _thread: threading.Thread | None
     _call_thread_pool: ThreadPoolExecutor | None = None
@@ -82,6 +83,7 @@ class LCMService(Service):
         self._l_lock = threading.Lock()
         self._start_lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._pending_unsubs = []
         self._loop_running = threading.Event()
         self._thread = None
 
@@ -94,6 +96,7 @@ class LCMService(Service):
         state.pop("_loop_running", None)
         state.pop("_thread", None)
         state.pop("_l_lock", None)
+        state.pop("_pending_unsubs", None)
         state.pop("_start_lock", None)
         state.pop("_call_thread_pool", None)
         state.pop("_call_thread_pool_lock", None)
@@ -109,6 +112,7 @@ class LCMService(Service):
         self._thread = None
         self._l_lock = threading.Lock()
         self._start_lock = threading.Lock()
+        self._pending_unsubs = []
         self._call_thread_pool = None
         self._call_thread_pool_lock = threading.RLock()
 
@@ -119,6 +123,8 @@ class LCMService(Service):
 
             # Reinitialize LCM if it's None (e.g., after unpickling)
             if self.l is None:
+                # Any pending unsubscribes reference the destroyed instance.
+                self._pending_unsubs.clear()
                 if self.config.lcm:
                     self.l = self.config.lcm
                 else:
@@ -132,6 +138,21 @@ class LCMService(Service):
             if not self._loop_running.wait(timeout=5.0):
                 raise RuntimeError("LCM handler thread failed to start within 5s")
 
+    def _defer_unsubscribe(self, subscription: lcm_mod.LCMSubscription) -> None:
+        """Queue an unsubscribe for the loop thread to apply between polls.
+
+        lcm-python's unsubscribe is not safe against a concurrently
+        dispatching handle_timeout (it frees the subscription's state under
+        the handler → segfault), and excluding the loop with a lock would
+        block the caller for up to a poll cycle — a deadlock hazard for
+        callers on event-loop threads. Deferring to the dispatch thread
+        makes unsubscribe non-blocking and race-free; the subscription may
+        receive callbacks for at most one more poll.
+        """
+        if self.l is None:
+            return
+        self._pending_unsubs.append(subscription)
+
     def _lcm_loop(self) -> None:
         """LCM message handling loop."""
         primed = False
@@ -140,6 +161,8 @@ class LCMService(Service):
                 with self._l_lock:
                     if self.l is None:
                         break
+                    while self._pending_unsubs:
+                        self.l.unsubscribe(self._pending_unsubs.pop())
                     self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
             except Exception as e:
                 stack_trace = traceback.format_exc()
@@ -166,6 +189,9 @@ class LCMService(Service):
             # Clean up LCM instance if we created it
             if not self.config.lcm:
                 with self._l_lock:
+                    # Destroying the instance frees its subscriptions; drop
+                    # pendings so a restart doesn't apply them to a new one.
+                    self._pending_unsubs.clear()
                     if self.l is not None:
                         del self.l
                         self.l = None

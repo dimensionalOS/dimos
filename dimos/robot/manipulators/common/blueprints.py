@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -34,47 +33,122 @@ from dimos.robot.manipulators.common.topics import (
 )
 
 
+class PinkControlIKOverrides(TypedDict, total=False):
+    """Pink tuning values that may be overridden by a manipulator blueprint."""
+
+    solver: str
+    max_velocity: float
+    lm_damping: float
+    task_gain: float
+    position_cost: float
+    orientation_cost: float
+    posture_cost: float
+    joint_centering_cost: float
+    damping_cost: float
+    position_limit_margin: float
+    seed_limit_tolerance: float
+    reference_q: list[float] | None
+    qpsolver_options: dict[str, float]
+
+
+class GripperTaskOverrides(TypedDict, total=False):
+    """Optional gripper fields shared by teleop and EEF-twist tasks."""
+
+    gripper_joint: str
+    gripper_open_pos: float
+    gripper_closed_pos: float
+
+
 def trajectory_task(
     hardware: HardwareComponent,
-    *,
+    *additional_hardware: HardwareComponent,
     name: str | None = None,
     priority: int = 10,
+    start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
+    hardware_components = (hardware, *additional_hardware)
     return TaskConfig(
-        name=name or trajectory_task_name(hardware.hardware_id),
+        name=name
+        or (
+            trajectory_task_name(hardware.hardware_id)
+            if not additional_hardware
+            else DEFAULT_TRAJECTORY_TASK_NAME
+        ),
         type="trajectory",
-        joint_names=hardware.joints,
+        joint_names=[
+            joint_name for component in hardware_components for joint_name in component.joints
+        ],
         priority=priority,
+        params={"start_position_tolerance": start_position_tolerance},
     )
+
+
+def _resolve_control_ik(
+    hardware: HardwareComponent,
+    robot_model: RobotModelConfig,
+    control_ik: PinkControlIKOverrides | None,
+) -> dict[str, Any]:
+    coordinator_joints = robot_model.get_coordinator_joint_names()
+    if hardware.joints != coordinator_joints:
+        raise ValueError("hardware joints must match RobotModelConfig coordinator joints")
+    payload = dict(control_ik or {})
+    payload["robot_model"] = robot_model
+    return payload
 
 
 def cartesian_ik_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     name: str = CARTESIAN_IK_TASK_NAME,
     priority: int = 10,
+    timeout: float = 0.5,
+    max_joint_delta_deg: float = 15.0,
+    max_tracking_error_deg: float = 10.0,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: PinkControlIKOverrides | None = None,
+    robot_model: RobotModelConfig,
 ) -> TaskConfig:
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     return TaskConfig(
         name=name,
         type="cartesian_ik",
         joint_names=hardware.joints,
         priority=priority,
-        params={"model_path": model_path, "ee_joint_id": ee_joint_id},
+        params={
+            "control_ik": resolved_control_ik,
+            "timeout": timeout,
+            "max_joint_delta_deg": max_joint_delta_deg,
+            "max_tracking_error_deg": max_tracking_error_deg,
+            "min_dt": min_dt,
+            "max_dt": max_dt,
+        },
     )
 
 
 def eef_twist_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     name: str = EEF_TWIST_TASK_NAME,
     priority: int = 10,
-    params: dict[str, Any] | None = None,
+    timeout: float = 0.3,
+    max_joint_delta_deg: float = 15.0,
+    max_tracking_error_deg: float = 10.0,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: PinkControlIKOverrides | None = None,
+    robot_model: RobotModelConfig,
+    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
-    task_params: dict[str, Any] = {"model_path": model_path, "ee_joint_id": ee_joint_id}
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
+    task_params: dict[str, Any] = {
+        "control_ik": resolved_control_ik,
+        "timeout": timeout,
+        "max_joint_delta_deg": max_joint_delta_deg,
+        "max_tracking_error_deg": max_tracking_error_deg,
+        "min_dt": min_dt,
+        "max_dt": max_dt,
+    }
     if params:
         task_params.update(params)
     return TaskConfig(
@@ -89,17 +163,27 @@ def eef_twist_task(
 def teleop_ik_task(
     hardware: HardwareComponent,
     *,
-    model_path: Path,
-    ee_joint_id: int,
     hand: str,
     name: str,
+    robot_model: RobotModelConfig,
     priority: int = 10,
-    params: dict[str, Any] | None = None,
+    timeout: float = 0.5,
+    max_joint_delta_deg: float = 5.0,
+    max_tracking_error_deg: float = 10.0,
+    min_dt: float = 1e-4,
+    max_dt: float = 0.05,
+    control_ik: PinkControlIKOverrides | None = None,
+    params: GripperTaskOverrides | None = None,
 ) -> TaskConfig:
+    resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
-        "model_path": model_path,
-        "ee_joint_id": ee_joint_id,
+        "control_ik": resolved_control_ik,
         "hand": hand,
+        "timeout": timeout,
+        "max_joint_delta_deg": max_joint_delta_deg,
+        "max_tracking_error_deg": max_tracking_error_deg,
+        "min_dt": min_dt,
+        "max_dt": max_dt,
     }
     if params:
         task_params.update(params)
@@ -119,11 +203,18 @@ def coordinator(
     tick_rate: float = 100.0,
     publish_joint_state: bool = True,
     joint_state_frame_id: str = COORDINATOR_FRAME_ID,
+    cls: type[ControlCoordinator] = ControlCoordinator,
+    instance_name: str | None = None,
+    publish_robot_joint_states: bool = False,
 ) -> Blueprint:
-    return ControlCoordinator.blueprint(
+    """*cls* is the subclass declaring the `{hardware_id}_joints` outputs; pass
+    instance_name="ControlCoordinator" with it so RPC clients still find it."""
+    return cls.blueprint(
         tick_rate=tick_rate,
         publish_joint_state=publish_joint_state,
+        publish_robot_joint_states=publish_robot_joint_states,
         joint_state_frame_id=joint_state_frame_id,
+        instance_name=instance_name,
         hardware=list(hardware),
         tasks=list(tasks),
     )

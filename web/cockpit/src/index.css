@@ -1,0 +1,17 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #14171a;
+  color: #d7dde3;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}

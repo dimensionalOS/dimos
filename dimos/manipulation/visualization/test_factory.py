@@ -71,6 +71,12 @@ class FakeVisualization:
     def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         return None
 
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        return None
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        return None
+
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         return None
 
@@ -107,6 +113,9 @@ class FakeWorld:
         return obstacle.name
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
+        return True
+
+    def update_obstacle(self, obstacle: Obstacle) -> bool:
         return True
 
     def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
@@ -215,6 +224,12 @@ class FakeMeshcatWorld(FakeWorld):
 
     def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         self.visualization_calls.append(("add_vis_obstacle", obstacle_id, obstacle))
+
+    def update_vis_obstacle(self, obstacle: Obstacle) -> None:
+        self.visualization_calls.append(("update_vis_obstacle", obstacle))
+
+    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
+        self.visualization_calls.append(("update_vis_obstacle_pose", obstacle_id, pose))
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         self.visualization_calls.append(("remove_vis_obstacle", obstacle_id))

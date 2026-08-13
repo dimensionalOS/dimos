@@ -13,7 +13,7 @@ flag_management:
   individual_flags:
     - name: SelfHosted-Linux
       carryforward: true
-    - name: SelfHosted-macos
+    - name: SelfHosted-macOS
       carryforward: true
     - name: SelfHosted-Large
       carryforward: true

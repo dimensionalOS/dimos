@@ -68,7 +68,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
@@ -863,6 +862,8 @@ def _simplify_mesh_geom(
     faces: NDArray[np.int32],
     target_faces: int,
 ) -> tuple[NDArray[np.float32], NDArray[np.int32]]:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     if target_faces <= 0 or len(faces) <= target_faces:
         return vertices, faces
 
@@ -950,6 +951,8 @@ def _write_visual_obj(
 def _write_mesh_obj(
     obj_file: Path, vertices: NDArray[np.floating[Any]], faces: NDArray[np.int32]
 ) -> None:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     o3d_mesh = o3d.geometry.TriangleMesh()
     o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices.astype(np.float64))
     o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)

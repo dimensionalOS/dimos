@@ -1,100 +1,66 @@
-// PGO NativeModule — faithful port of pgo_node.cpp from ROS2 to LCM.
-// Subscribes to registered_scan + odometry, runs SimplePGO (iSAM2 + PCL ICP),
-// publishes corrected_odometry, global_map, and TF correction offset.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// PGO native module. Runs SimplePGO over registered_scan + odometry and
+// publishes corrected_odometry, global_map, and the map->odom TF correction.
+// The solve runs on its own thread, so the correction stays at most one round
+// behind the sensor.
 
-#include <atomic>
 #include <chrono>
-#include <cstdio>
+#include <cstdint>
+#include <memory>
 #include <mutex>
-#include <queue>
-#include <signal.h>
+#include <optional>
+#include <string>
 #include <thread>
+#include <utility>
 
-#include <lcm/lcm-cpp.hpp>
 #include <Eigen/Geometry>
+#include <pcl/common/transforms.h>
 #include <pcl/console/print.h>
+#include <pcl/filters/voxel_grid.h>
+
+#include "dimos/native.hpp"
 
 #include "commons.h"
-#include "simple_pgo.h"
-#include "dimos_native_module.hpp"
 #include "point_cloud_utils.hpp"
+#include "simple_pgo.h"
 
 #include "nav_msgs/Odometry.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
-#include "geometry_msgs/Pose.hpp"
-#include "geometry_msgs/Quaternion.hpp"
-#include "geometry_msgs/Point.hpp"
 
-static std::atomic<bool> g_running{true};
-static void signal_handler(int) { g_running.store(false); }
+using dimos::native::Builder;
+using dimos::native::Module;
+using dimos::native::Output;
 
-// Shared state between LCM callbacks and main loop
-static std::mutex g_buffer_mutex;
-static std::queue<CloudWithPose> g_cloud_buffer;
-static double g_last_message_time = 0.0;
+struct PGOConfig {
+    std::string world_frame;
+    std::string local_frame;
+    double key_pose_delta_deg;
+    double key_pose_delta_trans;
+    double loop_search_radius;
+    double loop_time_thresh;
+    double loop_score_thresh;
+    int loop_submap_half_range;
+    double submap_resolution;
+    double min_loop_detect_duration;
+    bool unregister_input;
+    double global_map_voxel_size;
+    double global_map_publish_rate;
+    bool debug;
 
-// Latest odometry for non-keyframe TF broadcasting
-static std::mutex g_odom_mutex;
-static M3D g_latest_r = M3D::Identity();
-static V3D g_latest_t = V3D::Zero();
-static double g_latest_time = 0.0;
-static bool g_has_odom = false;
-
-class Handlers {
-public:
-    void on_odometry(const lcm::ReceiveBuffer*, const std::string&,
-                     const nav_msgs::Odometry* msg) {
-        M3D r = Eigen::Quaterniond(
-            msg->pose.pose.orientation.w,
-            msg->pose.pose.orientation.x,
-            msg->pose.pose.orientation.y,
-            msg->pose.pose.orientation.z
-        ).toRotationMatrix();
-
-        V3D t(msg->pose.pose.position.x,
-               msg->pose.pose.position.y,
-               msg->pose.pose.position.z);
-
-        double ts = msg->header.stamp.sec + msg->header.stamp.nsec / 1e9;
-
-        std::lock_guard<std::mutex> lock(g_odom_mutex);
-        g_latest_r = r;
-        g_latest_t = t;
-        g_latest_time = ts;
-        g_has_odom = true;
-    }
-
-    void on_registered_scan(const lcm::ReceiveBuffer*, const std::string&,
-                            const sensor_msgs::PointCloud2* msg) {
-        std::lock_guard<std::mutex> odom_lock(g_odom_mutex);
-        if (!g_has_odom)
-            return;
-
-        double ts = g_latest_time;
-
-        // Reject out-of-order messages
-        if (ts < g_last_message_time)
-            return;
-        g_last_message_time = ts;
-
-        CloudWithPose cp;
-        cp.pose.r = g_latest_r;
-        cp.pose.t = g_latest_t;
-        cp.pose.setTime(static_cast<int32_t>(ts),
-                        static_cast<uint32_t>((ts - static_cast<int32_t>(ts)) * 1e9));
-
-        // Parse PointCloud2 to PCL
-        cp.cloud = CloudType::Ptr(new CloudType);
-        smartnav::to_pcl(*msg, *cp.cloud);
-
-        std::lock_guard<std::mutex> buf_lock(g_buffer_mutex);
-        g_cloud_buffer.push(cp);
+    void validate() const {
+        dimos::native::require_positive(global_map_publish_rate, "global_map_publish_rate");
     }
 };
 
-static nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
-                                          const std::string& frame_id,
-                                          const std::string& child_frame_id) {
+namespace {
+
+constexpr std::chrono::milliseconds kProcessPeriod{50};
+
+nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
+                                  const std::string& frame_id,
+                                  const std::string& child_frame_id) {
     nav_msgs::Odometry odom;
     odom.header = dimos::make_header(frame_id, ts);
     odom.child_frame_id = child_frame_id;
@@ -107,103 +73,124 @@ static nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
     odom.pose.pose.orientation.y = q.y();
     odom.pose.pose.orientation.z = q.z();
     odom.pose.pose.orientation.w = q.w();
-
     return odom;
 }
 
-int main(int argc, char** argv)
-{
-    signal(SIGTERM, signal_handler);
-    signal(SIGINT, signal_handler);
+}  // namespace
 
-    dimos::NativeModule mod(argc, argv);
+class PGO : public Module {
+public:
+    void build(Builder& builder, dimos::native::Config& config) override {
+        cfg_ = config.parse<PGOConfig>();
 
-    // Port topics
-    std::string scan_topic = mod.topic("registered_scan");
-    std::string odom_topic = mod.topic("odometry");
-    std::string corrected_odom_topic = mod.topic("corrected_odometry");
-    std::string global_map_topic = mod.topic("global_map");
-    std::string tf_topic = mod.topic("pgo_tf");
+        Config pgo_cfg;
+        pgo_cfg.key_pose_delta_deg = cfg_.key_pose_delta_deg;
+        pgo_cfg.key_pose_delta_trans = cfg_.key_pose_delta_trans;
+        pgo_cfg.loop_search_radius = cfg_.loop_search_radius;
+        pgo_cfg.loop_time_tresh = cfg_.loop_time_thresh;
+        pgo_cfg.loop_score_tresh = cfg_.loop_score_thresh;
+        pgo_cfg.loop_submap_half_range = cfg_.loop_submap_half_range;
+        pgo_cfg.submap_resolution = cfg_.submap_resolution;
+        pgo_cfg.min_loop_detect_duration = cfg_.min_loop_detect_duration;
+        pgo_ = std::make_unique<SimplePGO>(pgo_cfg);
 
-    // Config parameters
-    Config config;
-    config.key_pose_delta_deg = mod.arg_float("key_pose_delta_deg", 10.0f);
-    config.key_pose_delta_trans = mod.arg_float("key_pose_delta_trans", 0.5f);
-    config.loop_search_radius = mod.arg_float("loop_search_radius", 1.0f);
-    config.loop_time_tresh = mod.arg_float("loop_time_thresh", 60.0f);
-    config.loop_score_tresh = mod.arg_float("loop_score_thresh", 0.15f);
-    config.loop_submap_half_range = mod.arg_int("loop_submap_half_range", 5);
-    config.submap_resolution = mod.arg_float("submap_resolution", 0.1f);
-    config.min_loop_detect_duration = mod.arg_float("min_loop_detect_duration", 5.0f);
+        global_map_interval_ = 1.0 / cfg_.global_map_publish_rate;
 
-    // Node-level config
-    std::string world_frame = mod.arg("world_frame", "map");
-    std::string local_frame = mod.arg("local_frame", "odom");
-    float global_map_voxel_size = mod.arg_float("global_map_voxel_size", 0.1f);
-    float global_map_publish_rate = mod.arg_float("global_map_publish_rate", 1.0f);
-    double global_map_interval = global_map_publish_rate > 0
-        ? 1.0 / global_map_publish_rate : 2.0;
+        pcl::console::setVerbosityLevel(
+            cfg_.debug ? pcl::console::L_INFO : pcl::console::L_ERROR);
 
-    // Unregister mode: transform world-frame scans to body-frame
-    bool unregister_input = mod.arg_bool("unregister_input", true);
+        corrected_odometry_ = builder.output<nav_msgs::Odometry>("corrected_odometry");
+        global_map_ = builder.output<sensor_msgs::PointCloud2>("global_map");
+        pgo_tf_ = builder.output<nav_msgs::Odometry>("pgo_tf");
 
-    bool debug = mod.arg_bool("debug", false);
-
-    pcl::console::setVerbosityLevel(
-        debug ? pcl::console::L_INFO : pcl::console::L_ERROR);
-
-    SimplePGO pgo(config);
-
-    lcm::LCM lcm;
-    if (!lcm.good()) {
-        fprintf(stderr, "PGO: LCM init failed\n");
-        return 1;
+        builder.input<nav_msgs::Odometry>("odometry", &PGO::on_odometry, this);
+        builder.input<sensor_msgs::PointCloud2>(
+            "registered_scan", dimos::native::lcm_decode<sensor_msgs::PointCloud2>,
+            [this](sensor_msgs::PointCloud2 msg) { on_scan(std::move(msg)); });
     }
 
-    Handlers handlers;
-    lcm.subscribe(odom_topic, &Handlers::on_odometry, &handlers);
-    lcm.subscribe(scan_topic, &Handlers::on_registered_scan, &handlers);
+    void setup() override { worker_ = std::thread(&PGO::run_pgo, this); }
 
-    if (debug) {
-        fprintf(stderr, "PGO native module started\n");
-        fprintf(stderr, "  registered_scan: %s\n", scan_topic.c_str());
-        fprintf(stderr, "  odometry: %s\n", odom_topic.c_str());
-        fprintf(stderr, "  corrected_odometry: %s\n", corrected_odom_topic.c_str());
-        fprintf(stderr, "  global_map: %s\n", global_map_topic.c_str());
-        fprintf(stderr, "  pgo_tf: %s\n", tf_topic.c_str());
+    void teardown() override {
+        if (worker_.joinable()) {
+            worker_.join();
+        }
     }
 
-    double last_global_map_time = 0.0;
-    int timer_period_ms = 50;  // 20 Hz, matching original
+private:
+    struct StampedPose {
+        M3D r = M3D::Identity();
+        V3D t = V3D::Zero();
+        double time = 0.0;
+        bool has = false;
+    };
 
-    while (g_running.load()) {
-        // Drain all pending LCM messages
-        while (lcm.handleTimeout(0) > 0) {}
+    struct StampedScan {
+        sensor_msgs::PointCloud2 cloud;
+        StampedPose pose;
+    };
 
-        // Check buffer
-        CloudWithPose cp;
-        bool has_data = false;
-        {
-            std::lock_guard<std::mutex> lock(g_buffer_mutex);
-            if (!g_cloud_buffer.empty()) {
-                cp = g_cloud_buffer.front();
-                // Drain entire queue (matching original: process oldest, discard rest)
-                while (!g_cloud_buffer.empty()) {
-                    g_cloud_buffer.pop();
-                }
-                has_data = true;
+    // Dispatch thread: record the pose each odometry carries.
+    void on_odometry(const nav_msgs::Odometry& msg) {
+        latest_odom_.r = Eigen::Quaterniond(msg.pose.pose.orientation.w,
+                                            msg.pose.pose.orientation.x,
+                                            msg.pose.pose.orientation.y,
+                                            msg.pose.pose.orientation.z)
+                             .toRotationMatrix();
+        latest_odom_.t = V3D(msg.pose.pose.position.x, msg.pose.pose.position.y,
+                             msg.pose.pose.position.z);
+        latest_odom_.time = msg.header.stamp.sec + msg.header.stamp.nsec / 1e9;
+        latest_odom_.has = true;
+    }
+
+    // Dispatch thread: stamp the scan with the odometry handled just before it
+    // and hand it to the PGO thread, replacing any scan not picked up yet.
+    void on_scan(sensor_msgs::PointCloud2 msg) {
+        if (!latest_odom_.has) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_ = StampedScan{std::move(msg), latest_odom_};
+    }
+
+    void run_pgo() {
+        while (!shutdown_requested()) {
+            std::optional<StampedScan> scan;
+            {
+                std::lock_guard<std::mutex> lock(pending_mutex_);
+                scan.swap(pending_);
             }
+            if (scan) {
+                try {
+                    process_scan(*scan);
+                } catch (const std::exception& e) {
+                    DIMOS_ERROR_THROTTLED(dimos::native::log::from_secs(1),
+                                          "pgo round failed",
+                                          dimos::native::log::Field(
+                                              "error", std::string(e.what())));
+                }
+            }
+            std::this_thread::sleep_for(kProcessPeriod);
         }
+    }
 
-        if (!has_data) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
-            continue;
+    void process_scan(const StampedScan& scan) {
+        double ts = scan.pose.time;
+        if (ts < last_message_time_) {  // reject out-of-order
+            return;
         }
+        last_message_time_ = ts;
 
-        // Optionally transform world-frame scan to body-frame
-        if (unregister_input && cp.cloud && cp.cloud->size() > 0) {
+        CloudWithPose cp;
+        cp.pose.r = scan.pose.r;
+        cp.pose.t = scan.pose.t;
+        cp.pose.setTime(static_cast<int32_t>(ts),
+                        static_cast<uint32_t>((ts - static_cast<int32_t>(ts)) * 1e9));
+        cp.cloud = CloudType::Ptr(new CloudType);
+        smartnav::to_pcl(scan.cloud, *cp.cloud);
+
+        if (cfg_.unregister_input && cp.cloud->size() > 0) {
             CloudType::Ptr body_cloud(new CloudType);
-            // body = R_odom^T * (world_pts - t_odom)
             M3D r_inv = cp.pose.r.transpose();
             for (const auto& pt : *cp.cloud) {
                 V3D world_pt(pt.x, pt.y, pt.z);
@@ -220,77 +207,74 @@ int main(int argc, char** argv)
 
         double cur_time = cp.pose.second;
 
-        if (!pgo.addKeyPose(cp)) {
-            // Not a keyframe — still broadcast TF and corrected odom
-            M3D corr_r = pgo.offsetR() * cp.pose.r;
-            V3D corr_t = pgo.offsetR() * cp.pose.t + pgo.offsetT();
-
-            nav_msgs::Odometry corrected = build_odometry(
-                corr_r, corr_t, cur_time, world_frame, "base_link");
-            lcm.publish(corrected_odom_topic, &corrected);
-
-            nav_msgs::Odometry tf_msg = build_odometry(
-                pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
-            lcm.publish(tf_topic, &tf_msg);
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
-            continue;
+        if (!pgo_->addKeyPose(cp)) {
+            publish_corrected_and_tf(cp, cur_time);
+            return;
         }
 
-        // Keyframe added
-        pgo.searchForLoopPairs();
-        pgo.smoothAndUpdate();
+        pgo_->searchForLoopPairs();
+        pgo_->smoothAndUpdate();
+        publish_corrected_and_tf(cp, cur_time);
 
-        if (debug) {
-            fprintf(stderr, "PGO: keyframe %zu at (%.1f, %.1f, %.1f)\n",
-                    pgo.keyPoses().size(),
-                    cp.pose.t.x(), cp.pose.t.y(), cp.pose.t.z());
+        if (cur_time - last_global_map_time_ >= global_map_interval_) {
+            last_global_map_time_ = cur_time;
+            publish_global_map(cur_time);
         }
-
-        // Publish corrected odometry
-        M3D corr_r = pgo.offsetR() * cp.pose.r;
-        V3D corr_t = pgo.offsetR() * cp.pose.t + pgo.offsetT();
-        nav_msgs::Odometry corrected = build_odometry(
-            corr_r, corr_t, cur_time, world_frame, "base_link");
-        lcm.publish(corrected_odom_topic, &corrected);
-
-        // Publish TF correction (map -> odom offset)
-        nav_msgs::Odometry tf_msg = build_odometry(
-            pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
-        lcm.publish(tf_topic, &tf_msg);
-
-        // Publish global map (throttled)
-        double now = cur_time;
-        if (now - last_global_map_time >= global_map_interval) {
-            last_global_map_time = now;
-
-            if (!pgo.keyPoses().empty()) {
-                CloudType::Ptr global_cloud(new CloudType);
-                for (size_t i = 0; i < pgo.keyPoses().size(); i++) {
-                    CloudType::Ptr world_cloud(new CloudType);
-                    pcl::transformPointCloud(
-                        *pgo.keyPoses()[i].body_cloud,
-                        *world_cloud,
-                        pgo.keyPoses()[i].t_global,
-                        Eigen::Quaterniond(pgo.keyPoses()[i].r_global));
-                    *global_cloud += *world_cloud;
-                }
-
-                // Voxel downsample
-                CloudType::Ptr filtered(new CloudType);
-                pcl::VoxelGrid<PointType> voxel;
-                voxel.setInputCloud(global_cloud);
-                voxel.setLeafSize(global_map_voxel_size, global_map_voxel_size, global_map_voxel_size);
-                voxel.filter(*filtered);
-
-                sensor_msgs::PointCloud2 map_msg = smartnav::from_pcl(*filtered, world_frame, now);
-                lcm.publish(global_map_topic, &map_msg);
-            }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
     }
 
-    if (debug) fprintf(stderr, "PGO native module shutting down\n");
+    void publish_corrected_and_tf(const CloudWithPose& cp, double cur_time) {
+        M3D corr_r = pgo_->offsetR() * cp.pose.r;
+        V3D corr_t = pgo_->offsetR() * cp.pose.t + pgo_->offsetT();
+        corrected_odometry_.publish(
+            build_odometry(corr_r, corr_t, cur_time, cfg_.world_frame, "base_link"));
+        pgo_tf_.publish(build_odometry(pgo_->offsetR(), pgo_->offsetT(), cur_time,
+                                       cfg_.world_frame, cfg_.local_frame));
+    }
+
+    void publish_global_map(double now) {
+        if (pgo_->keyPoses().empty()) {
+            return;
+        }
+        CloudType::Ptr global_cloud(new CloudType);
+        for (size_t i = 0; i < pgo_->keyPoses().size(); i++) {
+            CloudType::Ptr world_cloud(new CloudType);
+            pcl::transformPointCloud(*pgo_->keyPoses()[i].body_cloud, *world_cloud,
+                                     pgo_->keyPoses()[i].t_global,
+                                     Eigen::Quaterniond(pgo_->keyPoses()[i].r_global));
+            *global_cloud += *world_cloud;
+        }
+
+        CloudType::Ptr filtered(new CloudType);
+        pcl::VoxelGrid<PointType> voxel;
+        voxel.setInputCloud(global_cloud);
+        voxel.setLeafSize(cfg_.global_map_voxel_size, cfg_.global_map_voxel_size,
+                          cfg_.global_map_voxel_size);
+        voxel.filter(*filtered);
+
+        global_map_.publish(smartnav::from_pcl(*filtered, cfg_.world_frame, now));
+    }
+
+    PGOConfig cfg_;
+    std::unique_ptr<SimplePGO> pgo_;
+
+    Output<nav_msgs::Odometry> corrected_odometry_;
+    Output<sensor_msgs::PointCloud2> global_map_;
+    Output<nav_msgs::Odometry> pgo_tf_;
+
+    // Written and read only by the handlers, which the runtime serializes on
+    // the dispatch thread, so this needs no lock.
+    StampedPose latest_odom_;
+
+    std::thread worker_;
+    std::mutex pending_mutex_;
+    std::optional<StampedScan> pending_;
+
+    double last_message_time_ = 0.0;
+    double last_global_map_time_ = 0.0;
+    double global_map_interval_ = 0.0;  // from config
+};
+
+int main() {
+    dimos::native::run_with_transport<PGO>();
     return 0;
 }

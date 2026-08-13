@@ -24,8 +24,6 @@ from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -36,6 +34,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
 from dimos.utils.logging_config import setup_logger
 
@@ -329,6 +328,7 @@ class SimplePlanner(Module):
     way_point: Out[PointStamped]
     goal_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
+    tf: In[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -416,12 +416,13 @@ class SimplePlanner(Module):
 
         Returns True if a pose was obtained from any chain.
         """
-        tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
+        tf_view = self.tfbuffer
+        tf = resolve_tf_chain(tf_view, list(self._tf_pose_queries))
         if tf is None:
             now = time.monotonic()
             if now - self._last_tf_warn > _TF_WARN_THROTTLE:
                 self._last_tf_warn = now
-                buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
+                buffers = list(tf_view.buffers.keys())
                 logger.warning(
                     "TF lookup failed — no robot pose available",
                     tried=[(p, c) for p, c in self._tf_pose_queries],
@@ -632,6 +633,9 @@ class SimplePlanner(Module):
         Per-point colors: red for true obstacles (cells whose recorded height
         clears ``obstacle_height``), orange for inflation padding around them.
         """
+        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
+
         if now - self._last_costmap_pub < _COSTMAP_PUBLISH_PERIOD:
             return
         self._last_costmap_pub = now

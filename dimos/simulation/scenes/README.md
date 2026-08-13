@@ -160,7 +160,7 @@ dimos \
 ```
 
 Prefer headless MuJoCo with Rerun native for normal testing. Opening the MuJoCo
-viewer with `mujocosimmodule.headless=false` is useful for contact debugging,
+viewer with `--headless=false` is useful for contact debugging,
 but it can run much slower.
 
 ## Boundaries

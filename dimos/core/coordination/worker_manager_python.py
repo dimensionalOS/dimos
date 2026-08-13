@@ -14,10 +14,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.blueprints import config_key
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -29,17 +28,6 @@ if TYPE_CHECKING:
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
 logger = setup_logger()
-
-
-def _merge_config_kwargs(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, override_value in overrides.items():
-        base_value = merged.get(key)
-        if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
-            merged[key] = _merge_config_kwargs(base_value, override_value)
-        else:
-            merged[key] = override_value
-    return merged
 
 
 class WorkerManagerPython:
@@ -147,9 +135,7 @@ class WorkerManagerPython:
             self._workers.remove(target)
             self._n_workers = max(0, self._n_workers - 1)
 
-    def deploy_parallel(
-        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
-    ) -> list[ModuleProxyProtocol]:
+    def deploy_parallel(self, specs: Iterable[ModuleSpec]) -> list[ModuleProxyProtocol]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
@@ -170,15 +156,9 @@ class WorkerManagerPython:
         workers_by_index: dict[int, PythonWorker] = {}
         order = sorted(range(len(specs)), key=lambda i: not specs[i][0].dedicated_worker)
         for i in order:
-            module_class, _, kwargs = specs[i]
+            module_class, _, _ = specs[i]
             worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
-            instance_key = kwargs.get("instance_name") or module_class.name
-            args = blueprint_args.get(config_key(instance_key), {})
-            # instance_name is assigned by the blueprint; a user-supplied value
-            # would desync the module's RPC topic from the coordinator's proxy.
-            args = {k: v for k, v in args.items() if k != "instance_name"}
-            kwargs.update(_merge_config_kwargs(kwargs, args))
             workers_by_index[i] = worker
 
         assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]

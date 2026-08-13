@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import typer
 
 from dimos.mapping.occupancy.gradient import gradient
@@ -28,6 +30,9 @@ from dimos.mapping.pointclouds.util import (
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
+
+if TYPE_CHECKING:
+    from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 
 app = typer.Typer()
 
@@ -50,6 +55,8 @@ def _get_occupancy_grid() -> OccupancyGrid:
 
 
 def _show_occupancy_grid(og: OccupancyGrid) -> None:
+    import cv2
+
     cost_map = visualize_occupancy_grid(og, "turbo").to_opencv()
     cost_map = cv2.flip(cost_map, 0)
 

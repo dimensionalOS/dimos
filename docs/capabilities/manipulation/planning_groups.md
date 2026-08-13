@@ -125,6 +125,10 @@ manip.preview_plan(plan)
 manip.execute_plan(plan)
 ```
 
+A generated plan is the execution boundary: execution never filters a
+multi-robot plan. To execute one robot, first plan only that robot's planning
+group.
+
 For robot-scoped compatibility APIs, unnamed joint vectors are interpreted in
 the selected default planning group's joint order. If names are provided, they
 may be all local model joint names or all global joint names. Missing joints,
@@ -143,16 +147,13 @@ A `GeneratedPlan` stores:
 Preview and execution consume the stored trajectory; they do not lazily
 parameterize the geometric path. Preview forwards the raw globally named
 trajectory through the visualization boundary, where renderers project it to
-their robot-local visuals while preserving stored timestamps. Execution splits
-the stored trajectory by affected trajectory task, translates selected joint
-names at the coordinator boundary, and invokes each trajectory controller
-without filling or commanding omitted joints. Controllers remain planning-group
-agnostic, and trajectory tasks still claim their full configured joint set while
-executing only the active planned subset.
-
-Multi-task dispatch is not atomic: if one trajectory task accepts and a later
-task rejects, DimOS reports the rejection but does not roll back the accepted
-task.
+their robot-local visuals while preserving stored timestamps. Execution
+translates selected joint names at the coordinator boundary and invokes the
+coordinator's sole trajectory task once without filling omitted joints in the
+RPC trajectory. The task remains planning-group agnostic, claims its full
+configured joint set, and holds omitted joints while executing the active
+planned subset. A newly accepted trajectory replaces the task's current
+trajectory.
 
 ## Robot placement config
 

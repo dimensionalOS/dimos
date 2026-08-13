@@ -18,10 +18,14 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.a1z.config import make_a1z_hardware, make_a1z_model_config
+from dimos.robot.manipulators.a1z.config import (
+    A1Z_G1Z_MODEL_PATH,
+    a1z_hardware,
+    make_a1z_model_config,
+)
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 
-_a1z_planner_hw = make_a1z_hardware("arm")
+_a1z_planner_hw = a1z_hardware("arm")
 
 a1z_planner_coordinator = autoconnect(
     planner(robots=[make_a1z_model_config(name="arm")]),
@@ -31,7 +35,10 @@ a1z_planner_coordinator = autoconnect(
     ),
 )
 
-_coordinator_a1z_hw = make_a1z_hardware("arm")
+_coordinator_a1z_hw = a1z_hardware(
+    "arm",
+    dynamics_urdf_path=A1Z_G1Z_MODEL_PATH,
+)
 
 coordinator_a1z = ControlCoordinator.blueprint(
     hardware=[_coordinator_a1z_hw],

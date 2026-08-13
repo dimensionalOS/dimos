@@ -38,7 +38,7 @@ from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.detection.type.detection3d.object import (
+from dimos.perception.experimental.object import (
     Object as DetObject,
 )
 from dimos.utils.logging_config import setup_logger
@@ -482,7 +482,7 @@ then refreshes perception obstacles.
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        rname, _, config = robot
         pre_grasp_offset = config.pre_grasp_offset
 
         # 1. Generate grasps (uses already-cached detections — call scan_objects first)
@@ -589,7 +589,7 @@ then refreshes perception obstacles.
         robot = self._get_robot(robot_name)
         if robot is None:
             return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
+        rname, _, config = robot
         pre_place_offset = config.pre_grasp_offset
 
         # Reduce pre-place height for far targets

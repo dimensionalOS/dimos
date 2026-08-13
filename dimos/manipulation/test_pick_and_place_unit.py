@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.detection.type.detection3d.object import Object as DetObject
+from dimos.perception.experimental.object import Object as DetObject
 
 
 def _make_det_object(

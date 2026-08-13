@@ -31,6 +31,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 from dimos.visualization.vis_module import vis_module
 
@@ -55,6 +56,7 @@ class CameraModule(Module, perception.Camera):
     config: CameraModuleConfig
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     hardware: CameraHardware
     _latest_image: Image | None = None
@@ -103,7 +105,7 @@ class CameraModule(Module, perception.Camera):
             ts=camera_link.ts,
         )
 
-        self.tf.publish(camera_link, camera_optical)
+        self.tf.publish(TFMessage(camera_link, camera_optical))
 
     @skill
     def take_a_picture(self) -> Image:

@@ -157,16 +157,17 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
+    simple_kwargs = {}
     modules = worker_manager.deploy_parallel(
         [
-            (SimpleModule, global_config, {}),
+            (SimpleModule, global_config, simple_kwargs),
             (AnotherModule, global_config, {}),
             (ThirdModule, global_config, {}),
         ],
-        {},
     )
 
     assert len(modules) == 3
+    assert simple_kwargs == {}
     module1, module2, module3 = modules
 
     # Start all modules

@@ -4,7 +4,10 @@ This provides vision language model implementations for processing images and te
 
 ## QwenVL Model
 
-The `QwenVlModel` class provides access to Alibaba's Qwen2.5-VL model for vision-language tasks.
+The `QwenVlModel` class provides access to Alibaba's Qwen-VL models for vision-language tasks.
+The default is set by `DEFAULT_QWEN_VL_MODEL` in `qwen.py`; override it per instance with
+`QwenVlModel(model_name=...)`. Note that `query_detections` and `query_points` assume the model
+returns absolute pixel coordinates, which rules out the `qwen3-vl-*` models.
 
 ### Example Usage
 

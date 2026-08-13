@@ -57,10 +57,7 @@ def test_patrol_step_transitions_to_following_on_detection(
         image=person_image, detections=[det]
     )
     # patch to avoid cv2 dep issues
-    mocker.patch(
-        "dimos.experimental.security_demo.security_module.draw_bounding_box",
-        return_value=person_image.data.copy(),
-    )
+    mocker.patch.object(type(det), "draw_on", autospec=True)
 
     module._patrol_step()
 

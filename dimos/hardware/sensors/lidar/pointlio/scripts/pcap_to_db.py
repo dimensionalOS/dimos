@@ -79,18 +79,8 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
     ("cut_frame_time_interval", "float", "sub-frame interval (s) when cut_frame"),
     ("time_lag_imu_to_lidar", "float", "IMU->lidar clock offset (s)"),
     # preprocess
-    (
-        "lidar_type",
-        ("avia", "velodyne", "ouster", "hesai", "unilidar"),
-        "lidar driver branch (avia = Livox Mid-360)",
-    ),
     ("scan_line", "int", "number of scan lines"),
     ("scan_rate", "int", "scan rate (Hz)"),
-    (
-        "timestamp_unit",
-        ("second", "millisecond", "microsecond", "nanosecond"),
-        "per-point timestamp unit",
-    ),
     ("blind", "float", "spherical min range (m); nearer points dropped"),
     ("point_filter_num", "int", "keep every Nth raw point (1 = all)"),
     # mapping

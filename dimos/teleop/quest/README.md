@@ -14,11 +14,25 @@ Quest Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  Quest
 ```bash
 dimos run teleop-quest-rerun    # Quest teleop + Rerun viz
 dimos run teleop-quest-xarm7   # XArm7
+dimos run teleop-quest-hand-xarm7  # XArm7 hand tracking; pinch to toggle
 dimos run teleop-quest-piper   # Piper
+dimos run teleop-quest-a1z     # A1Z with mock hardware
 dimos run teleop-quest-dual    # Dual arm
 ```
 
+Select a CAN interface explicitly to control real A1Z hardware:
+
+```bash
+dimos --can-port a1zcan run teleop-quest-a1z
+```
+
 Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
+
+For hand teleop, remove the controllers. Pinch the thumb and index finger on
+the selected hand to engage it, move the wrist to control the arm, then pinch
+again to disengage. Pinch the thumb and middle finger to close the gripper;
+release it to open the gripper. Hand tracking must be enabled for the Quest
+browser.
 
 ## Subclassing
 

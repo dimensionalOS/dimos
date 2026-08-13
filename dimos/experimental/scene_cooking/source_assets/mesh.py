@@ -34,13 +34,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
+
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 
@@ -212,6 +214,8 @@ def _load_usd_mesh(path: Path) -> o3d.geometry.TriangleMesh:
     present so downstream consumers can render textured-looking Sketchfab
     exports without having to chase materials/textures.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     try:
         from pxr import Usd, UsdGeom  # type: ignore[import-not-found, import-untyped]
     except ImportError as e:
@@ -300,6 +304,8 @@ def load_scene_mesh(
         an ``open3d.geometry.TriangleMesh`` in dimos world frame with vertex
         normals computed.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"scene mesh not found: {path}")

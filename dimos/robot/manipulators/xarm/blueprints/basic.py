@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -29,19 +28,6 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
-)
-
-xarm6_planner_only = ManipulationModule.blueprint(
-    robots=[make_xarm6_model_config(name="arm")],
-    planning_timeout=10.0,
-)
-
-dual_xarm6_planner = ManipulationModule.blueprint(
-    robots=[
-        make_xarm6_model_config(name="left_arm", y_offset=0.5),
-        make_xarm6_model_config(name="right_arm", y_offset=-0.5),
-    ],
-    planning_timeout=10.0,
 )
 
 _mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
@@ -57,10 +43,7 @@ dual_xarm6_planner_coordinator = autoconnect(
     ),
     coordinator(
         hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
-        tasks=[
-            trajectory_task(_mock_left_xarm6_hw),
-            trajectory_task(_mock_right_xarm6_hw),
-        ],
+        tasks=[trajectory_task(_mock_left_xarm6_hw, _mock_right_xarm6_hw)],
     ),
 )
 
@@ -101,10 +84,10 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[
         TaskConfig(
-            name="traj_left", type="trajectory", joint_names=_xarm7_left.joints, priority=10
-        ),
-        TaskConfig(
-            name="traj_right", type="trajectory", joint_names=_xarm6_right.joints, priority=10
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
+            priority=10,
         ),
     ],
 )

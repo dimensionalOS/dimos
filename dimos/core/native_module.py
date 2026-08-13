@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NativeModule: blueprint-integrated wrapper for native (C/C++) executables.
+"""NativeModule: blueprint-integrated wrapper for native executables.
 
-A NativeModule is a thin Python Module subclass that declares In/Out ports
+A NativeModule is a thin Python Module subclass that declares In/Out/IO ports
 for blueprint wiring but delegates all real work to a managed subprocess.
-The native process receives its LCM topic names via CLI args and does
-pub/sub directly on the LCM multicast bus.
+The native process receives its topic names via CLI args, or as a JSON line on
+stdin when ``stdin_config`` is set, and does pub/sub on them directly.
 
 Example usage::
 
@@ -129,18 +129,29 @@ class NativeModuleConfig(ModuleConfig):
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
+    # Native config structs reject unknown fields, so a base field only crosses
+    # the boundary if that module's native struct declares it.
+    base_fields: frozenset[str] = frozenset()
+
+    def _ignore_fields(self) -> set[str]:
+        return set(NativeModuleConfig.model_fields) - self.base_fields
+
     def to_config_dict(self) -> dict[str, Any]:
         """
         Return module-specific config fields as a plain dict (for stdin JSON).
         """
-        ignore_fields = set(NativeModuleConfig.model_fields)
+        ignore_fields = self._ignore_fields()
+        # An opted-in base field is sent even when None, so the native struct
+        # reports a null it can name rather than a field that looks unset.
         return {
-            k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
+            k: v
+            for k, v in self.model_dump().items()
+            if k not in ignore_fields and (v is not None or k in self.base_fields)
         }
 
     def to_cli_args(self) -> list[str]:
         """Convert subclass config fields to CLI args (--name value)."""
-        ignore_fields = {f for f in NativeModuleConfig.model_fields if f != "frame_id"}
+        ignore_fields = self._ignore_fields()
         args: list[str] = []
         for f in self.__class__.model_fields:
             if f in ignore_fields:
@@ -167,15 +178,19 @@ class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and annotate ``config`` with a
+    Subclass this, declare In/Out/IO ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
 
-        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
+        <executable> --<port_name> <topic> ... --<config_field> <value> ... <extra_args>
 
-    The native process should parse these args and pub/sub on the given
-    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
+    Each topic is the wire channel for that port on the transport named by the
+    ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, those same topics plus
+    the config and any publisher QoS also arrive as one JSON line on stdin.
+
+    The native process should parse whichever it uses and pub/sub on the given
+    topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
     config: NativeModuleConfig
@@ -224,6 +239,17 @@ class NativeModule(Module):
         cmd.extend(self.config.to_cli_args())
         cmd.extend(self.config.extra_args)
 
+        # Built before the spawn: a config that cannot be serialized must fail
+        # without leaving a child blocked on a stdin line it will never get.
+        stdin_blob: bytes | None = None
+        if self.config.stdin_config:
+            config_dict = self.config.to_config_dict()
+            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+            qos = self._collect_output_qos()
+            if qos:
+                blob["qos"] = qos
+            stdin_blob = json.dumps(blob).encode() + b"\n"
+
         env = {**os.environ, **self.config.extra_env}
 
         # set transport so native modules know which one to spawn
@@ -253,13 +279,7 @@ class NativeModule(Module):
             preexec_fn=_set_process_to_die_when_parent_dies,
         )
         assert self._process.stdin is not None
-        if self.config.stdin_config:
-            config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
-            qos = self._collect_output_qos()
-            if qos:
-                blob["qos"] = qos
-            stdin_blob = json.dumps(blob).encode() + b"\n"
+        if stdin_blob is not None:
             self._process.stdin.write(stdin_blob)
         self._process.stdin.close()
         logger.info(
@@ -411,7 +431,7 @@ class NativeModule(Module):
                 )
             return
 
-        if exe.exists() and not self.config.auto_build and not global_config.build_native:
+        if exe.exists() and not self.config.auto_build and not self.config.g.build_native:
             return
 
         logger.info(
@@ -426,20 +446,15 @@ class NativeModule(Module):
             cwd=self.config.cwd,
             env={**os.environ, **self.config.extra_env},
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
-        stdout, stderr = proc.communicate()
-        build_elapsed = time.perf_counter() - build_start
-
-        stdout_lines = stdout.decode("utf-8", errors="replace").splitlines()
-        stderr_lines = stderr.decode("utf-8", errors="replace").splitlines()
-
-        for line in stdout_lines:
-            if line.strip():
+        assert proc.stdout is not None
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if line:
                 logger.info(line, module=self._module_label)
-        for line in stderr_lines:
-            if line.strip():
-                logger.warning(line, module=self._module_label)
+        proc.wait()
+        build_elapsed = time.perf_counter() - build_start
 
         if proc.returncode != 0:
             raise RuntimeError(
@@ -460,7 +475,7 @@ class NativeModule(Module):
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
-        for name in list(self.inputs) + list(self.outputs):
+        for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue
@@ -473,9 +488,9 @@ class NativeModule(Module):
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:
-        """Publisher QoS per output channel, keyed by channel."""
+        """Publisher QoS per published channel, keyed by channel."""
         qos_map: dict[str, dict[str, str]] = {}
-        for name in self.outputs:
+        for name in list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
                 continue

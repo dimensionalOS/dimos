@@ -1,7 +1,9 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
   ControlFrameReader,
-  DataFrameReader,
+  type DataFrame,
+  DataFrameStreamError,
+  DataFrameStreamReader,
   decodeDataFrame,
   decodeDatagram,
   encodeControlFrame,
@@ -87,31 +89,108 @@ Deno.test("data frame decode round-trips the golden vectors", () => {
   }
 });
 
-Deno.test("data frame reader completes at exact byte count, split anywhere", () => {
+Deno.test("data frame stream reader completes at exact byte count, split anywhere", () => {
   const v = dataFixture.vectors.find((v) => v.name === "image_latest_meta")!;
   const frame = fromB64(v.frame_b64);
   for (let split = 0; split <= frame.length; split++) {
-    const reader = new DataFrameReader();
+    const reader = new DataFrameStreamReader();
     const first = reader.push(frame.subarray(0, split));
     const second = reader.push(frame.subarray(split));
     if (split < frame.length) {
-      assertEquals(first, null, `complete before full frame at split ${split}`);
+      assertEquals(first, [], `complete before full frame at split ${split}`);
     }
-    const out = first ?? second;
-    assertEquals(out !== null, true, `incomplete after full frame at split ${split}`);
-    assertEquals(out!.header, v.header as FrameHeader);
-    assertEquals(out!.payload, fromB64(v.payload_b64));
+    const out = [...first, ...second];
+    assertEquals(out.length, 1, `frames after full push at split ${split}`);
+    assertEquals(out[0].header, v.header as FrameHeader);
+    assertEquals(out[0].payload, fromB64(v.payload_b64));
   }
 });
 
-Deno.test("data frame reader ignores bytes past the frame (no EOF dependence)", () => {
+Deno.test("data frame stream reader parses back-to-back frames (persistent stream)", () => {
+  const parts = dataFixture.vectors.map((v) => fromB64(v.frame_b64));
+  const all = new Uint8Array(parts.reduce((n, f) => n + f.length, 0));
+  let off = 0;
+  for (const part of parts) {
+    all.set(part, off);
+    off += part.length;
+  }
+  const whole = new DataFrameStreamReader().push(all);
+  assertEquals(whole.length, dataFixture.vectors.length);
+  whole.forEach((frame, i) => {
+    assertEquals(frame.header, dataFixture.vectors[i].header as FrameHeader);
+    assertEquals(frame.payload, fromB64(dataFixture.vectors[i].payload_b64));
+  });
+
+  const trickle = new DataFrameStreamReader();
+  const out = [];
+  for (const byte of all) out.push(...trickle.push(Uint8Array.of(byte)));
+  assertEquals(out.length, dataFixture.vectors.length);
+});
+
+Deno.test("data frame stream reader throws on garbage between frames", () => {
   const v = dataFixture.vectors.find((v) => v.name === "odom_reliable")!;
+  const reader = new DataFrameStreamReader();
+  assertEquals(reader.push(fromB64(v.frame_b64)).length, 1);
+  // Framing is unrecoverable mid-stream; the caller drops the stream.
+  assertThrows(() => reader.push(new Uint8Array(32)));
+});
+
+Deno.test("data frame stream reader assembles a large fragmented frame with one copy", () => {
+  const payload = new Uint8Array(8 * 1024 * 1024);
+  for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+  const header: FrameHeader = { ch: "cam", seq: 1, ts: 0.5, delivery: "latest" };
+  const frame = encodeDataFrame(header, payload);
+  const reader = new DataFrameStreamReader();
+  const out: DataFrame[] = [];
+  for (let off = 0; off < frame.length; off += 64 * 1024) {
+    out.push(...reader.push(frame.subarray(off, Math.min(off + 64 * 1024, frame.length))));
+  }
+  assertEquals(out.length, 1);
+  assertEquals(out[0].header, header);
+  assertEquals(out[0].payload.byteLength, payload.byteLength);
+  let mismatch = -1;
+  for (let i = 0; i < payload.length; i++) {
+    if (out[0].payload[i] !== payload[i]) {
+      mismatch = i;
+      break;
+    }
+  }
+  assertEquals(mismatch, -1);
+});
+
+Deno.test("data frame stream reader surfaces corruption with the decoded batch", () => {
+  const v = dataFixture.vectors.find((v) => v.name === "odom_reliable")!;
+  const good = fromB64(v.frame_b64);
+  const badBody = new TextEncoder().encode("{not json");
+  const bad = new Uint8Array(8 + badBody.length);
+  new DataView(bad.buffer).setUint32(0, badBody.length, true);
+  bad.set(badBody, 8);
+  const reader = new DataFrameStreamReader();
+  const err = assertThrows(
+    () => reader.push(new Uint8Array([...good, ...bad])),
+    DataFrameStreamError,
+  );
+  // The valid frame preceding the corrupt one is delivered, not dropped.
+  assertEquals(err.frames.length, 1);
+  assertEquals(err.frames[0].header, v.header as FrameHeader);
+  assertEquals(err.frames[0].payload, fromB64(v.payload_b64));
+  // Poisoned: further input keeps throwing with an empty batch.
+  const again = assertThrows(() => reader.push(good), DataFrameStreamError);
+  assertEquals(again.frames, []);
+});
+
+Deno.test("data frame stream reader handles a prefix split across chunk boundaries", () => {
+  const v = dataFixture.vectors.find((v) => v.name === "image_latest_meta")!;
   const frame = fromB64(v.frame_b64);
-  const padded = new Uint8Array(frame.length + 32);
-  padded.set(frame, 0);
-  const out = new DataFrameReader().push(padded);
-  assertEquals(out !== null, true);
-  assertEquals(out!.header, v.header as FrameHeader);
+  const reader = new DataFrameStreamReader();
+  // 3-byte chunks force the 8-byte length prefix to straddle chunks.
+  const out: DataFrame[] = [];
+  for (let off = 0; off < frame.length; off += 3) {
+    out.push(...reader.push(frame.subarray(off, Math.min(off + 3, frame.length))));
+  }
+  assertEquals(out.length, 1);
+  assertEquals(out[0].payload, fromB64(v.payload_b64));
+  assert(reader.push(new Uint8Array(0)).length === 0);
 });
 
 Deno.test("peek and decode guard against truncation and absurd headers", () => {

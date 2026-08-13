@@ -12,30 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Command-integrating end-effector twist control."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
 import pinocchio
 
-from dimos.control.task import (
-    BaseControlTask,
-    ControlMode,
-    CoordinatorState,
-    JointCommandOutput,
-    ResourceClaim,
+from dimos.control.coordinator import TaskConfig
+from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
+from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
+    CartesianIKTask,
+    CartesianIKTaskConfig,
+    CartesianIKTaskParams,
+    append_gripper_position,
+    claim_with_gripper,
 )
-from dimos.manipulation.planning.kinematics.pinocchio_ik import (
-    PinocchioIK,
-    check_joint_delta,
-    get_worst_joint_delta,
-)
-from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import twist_to_numpy
 
@@ -45,210 +41,173 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-_MAX_DT = 0.05
-
 
 @dataclass
-class EEFTwistTaskConfig:
-    joint_names: list[str]
-    model_path: str | Path
-    ee_joint_id: int
-    timeout: float
-    max_joint_delta_deg: float
-    priority: int = 10
+class EEFTwistTaskConfig(CartesianIKTaskConfig):
+    """Configuration for command-relative EEF twist control."""
+
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
 
 
-class EEFTwistTask(BaseControlTask):
-    def __init__(self, name: str, config: EEFTwistTaskConfig) -> None:
-        if not config.joint_names:
-            raise ValueError(f"EEFTwistTask '{name}' requires at least one joint")
-        if not config.model_path:
-            raise ValueError(f"EEFTwistTask '{name}' requires model_path for IK solver")
-        self._name = name
-        self._config = config
-        self._joint_names = frozenset(config.joint_names)
-        self._joint_names_list = list(config.joint_names)
-        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id)
-        if self._ik.nq != len(config.joint_names):
-            raise ValueError(
-                f"EEFTwistTask {name}: model DOF ({self._ik.nq}) != "
-                f"joint_names count ({len(config.joint_names)})"
-            )
-        self._lock = threading.Lock()
-        self._latest_twist: TwistStamped | None = None
-        self._last_update_time = 0.0
-        self._estopped = False
+class EEFTwistTask(CartesianIKTask):
+    """Integrate twists from the last accepted command while the stream is active."""
 
-        self._hold_target: NDArray[np.floating[Any]] | None = None
-        self._gripper_target: float = config.gripper_open_pos
+    _config: EEFTwistTaskConfig
+
+    def __init__(self, name: str, config: EEFTwistTaskConfig) -> None:
+        super().__init__(name, config)
+        self._twist_lock = threading.Lock()
+        self._latest_twist: TwistStamped | None = None
+        self._estopped = False
+        self._gripper_target = config.gripper_open_pos
+        self._gripper_active = config.gripper_joint is not None
 
     def claim(self) -> ResourceClaim:
-        joints = self._joint_names
-        if self._config.gripper_joint:
-            joints = joints | frozenset([self._config.gripper_joint])
-        return ResourceClaim(joints, self._config.priority, ControlMode.SERVO_POSITION)
+        return claim_with_gripper(super().claim(), self._config.gripper_joint)
 
     def is_active(self) -> bool:
+        with self._twist_lock:
+            has_twist = self._latest_twist is not None
+            estopped = self._estopped
         with self._lock:
-            return not self._estopped
+            has_gripper_hold = self._config.gripper_joint is not None and self._active
+            return not estopped and (has_twist or has_gripper_hold) and self._active
 
-    def set_estop(self, estopped: bool) -> None:
-        """Latch/clear E-STOP. On latch, drop the pending jog and hold anchor so
-        clearing resumes from the current pose, not a stale target. The gripper
-        target is kept so a held payload isn't released."""
-        with self._lock:
-            self._estopped = estopped
-            if estopped:
-                self._latest_twist = None
-                self._hold_target = None
+    def is_tracking(self) -> bool:
+        return self.is_active()
+
+    def _uses_prepared_target(self) -> bool:
+        return True
+
+    def on_cartesian_command(self, pose: object, t_now: float) -> bool:
+        """Reject Cartesian stream commands; twist is this task's only input."""
+        logger.warning("EEFTwistTask rejects Cartesian commands", task=self.name)
+        return False
 
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
         values = twist_to_numpy(twist)
-        if not np.all(np.isfinite(values)):
-            logger.warning("EEFTwistTask rejecting non-finite twist", task=self._name)
+        if values.shape != (6,) or not np.all(np.isfinite(values)):
+            logger.warning("EEFTwistTask rejecting invalid twist", task=self.name)
             return False
-        with self._lock:
+        with self._twist_lock:
             if self._estopped:
-                # A twist in transit when E-STOP latched must not be stored, or
-                # it would replay on the next tick after the latch clears.
                 return False
+            if np.allclose(values, 0.0):
+                self._latest_twist = None
+                cleared = True
+            else:
+                self._latest_twist = twist
+                cleared = False
+        if cleared:
+            self._reset_command_state()
+        if cleared and self._config.gripper_joint is None:
+            super().clear()
+            return True
+        with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
             self._last_update_time = t_now
-            # Zero twist → hold (None); non-zero → jog. The anchor persists either way.
-            self._latest_twist = None if np.allclose(values, 0.0) else twist
+            self._active = True
         return True
 
     def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        if not self._config.gripper_joint:
+        if self._config.gripper_joint is None:
             return False
-        with self._lock:
+        with self._twist_lock:
             if self._estopped:
-                # Reject new grip changes during a stop; the held target (from
-                # before E-STOP) is kept so a payload isn't dropped.
                 return False
             self._gripper_target = (
                 self._config.gripper_closed_pos if msg.data else self._config.gripper_open_pos
             )
+            self._gripper_active = True
+        with self._lock:
+            if not self._active:
+                self._last_commanded_joints = None
+            self._last_update_time = t_now
+            self._active = True
         return True
 
-    def _with_gripper(self, joint_names: list[str], positions: list[float]) -> JointCommandOutput:
-        if self._config.gripper_joint:
-            with self._lock:
-                gripper_pos = self._gripper_target
-            joint_names = [*joint_names, self._config.gripper_joint]
-            positions = [*positions, gripper_pos]
-        return JointCommandOutput(
-            joint_names=joint_names,
-            positions=positions,
-            mode=ControlMode.SERVO_POSITION,
-        )
+    def set_estop(self, estopped: bool) -> None:
+        with self._twist_lock:
+            self._estopped = estopped
+            if estopped:
+                self._latest_twist = None
+                self._gripper_active = False
+        if estopped:
+            super().clear()
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        with self._lock:
-            if (
-                self._latest_twist is not None
-                and self._config.timeout > 0
-                and state.t_now - self._last_update_time > self._config.timeout
-            ):
-                self._latest_twist = None
+        output = super().compute(state)
+        with self._twist_lock:
+            gripper_target = self._gripper_target
+            gripper_joint = self._config.gripper_joint if self._gripper_active else None
+        return append_gripper_position(
+            output,
+            gripper_joint,
+            gripper_target,
+        )
+
+    def _prepare_target(
+        self,
+        state: CoordinatorState,
+        q_current: np.ndarray,
+        dt: float,
+    ) -> pinocchio.SE3 | None:
+        with self._twist_lock:
             twist = self._latest_twist
-            anchor = self._hold_target  # last commanded joint target (not live pos)
-
-        q_current = self._get_current_joints(state)
-        if q_current is None or not np.all(np.isfinite(q_current)):
-            return None
-
-        if anchor is None:
-            anchor = q_current
-            with self._lock:
-                self._hold_target = anchor
-
         if twist is None:
-            return self._with_gripper(self._joint_names_list, anchor.flatten().tolist())
-
-        target_pose = self._ik.forward_kinematics(anchor)
-        dt = min(max(state.dt, 0.0), _MAX_DT)
-        candidate = self._integrate_twist(target_pose, twist, dt)
-
-        q_solution, converged, final_error = self._ik.solve(candidate, anchor)
-        if not np.all(np.isfinite(q_solution)):
             return None
-        if not converged:
-            logger.debug(
-                "EEFTwistTask IK did not converge, using partial solution",
-                task=self._name,
-                error=final_error,
-            )
-        if not check_joint_delta(q_solution, anchor, self._config.max_joint_delta_deg):
-            worst_idx, worst_deg = get_worst_joint_delta(q_solution, anchor)
-            logger.warning(
-                "EEFTwistTask rejecting solution: joint delta exceeds limit",
-                task=self._name,
-                joint=self._joint_names_list[worst_idx],
-                delta_deg=worst_deg,
-                max_delta_deg=self._config.max_joint_delta_deg,
-            )
-            return None
-
-        # Advance the anchor so the next tick (and any hold) continues from here.
-        q_solution = q_solution.flatten()
-        with self._lock:
-            self._hold_target = q_solution
-        return self._with_gripper(self._joint_names_list, q_solution.tolist())
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        if joints & self._joint_names:
-            logger.warning(
-                "EEFTwistTask preempted", task=self._name, by_task=by_task, joints=joints
-            )
-            with self._lock:
-                self._hold_target = None
-                self._latest_twist = None
-
-    def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
-        positions = []
-        for joint_name in self._joint_names_list:
-            pos = state.joints.get_position(joint_name)
-            if pos is None:
-                return None
-            positions.append(pos)
-        return np.array(positions, dtype=np.float64)
-
-    def _integrate_twist(
-        self, pose: pinocchio.SE3, twist: TwistStamped, dt: float
-    ) -> pinocchio.SE3:
-        candidate = pose.copy()
+        pose = self.forward_kinematics(q_current)
         values = twist_to_numpy(twist)
-        candidate.translation = candidate.translation + values[:3] * dt
+        pose.translation = pose.translation + values[:3] * dt
         angular_step = values[3:] * dt
         if np.linalg.norm(angular_step) > 0.0:
-            candidate.rotation = pinocchio.exp3(angular_step) @ candidate.rotation
-        return candidate
+            pose.rotation = pinocchio.exp3(angular_step) @ pose.rotation
+        if not np.all(np.isfinite(pose.translation)) or not np.all(np.isfinite(pose.rotation)):
+            return None
+        return pose
+
+    def stop(self) -> None:
+        self._clear_inputs()
+        super().stop()
+
+    def _clear_inputs(self) -> None:
+        """Discard twist and gripper commands owned by this specialization."""
+        with self._twist_lock:
+            self._latest_twist = None
+            self._gripper_active = False
+
+    def _on_timeout(self) -> None:
+        with self._twist_lock:
+            self._latest_twist = None
+
+    def clear(self) -> None:
+        self._clear_inputs()
+        super().clear()
 
 
-class EEFTwistTaskParams(BaseConfig):
-    model_path: str | Path
-    ee_joint_id: int = 6
+class EEFTwistTaskParams(CartesianIKTaskParams):
     timeout: float = 0.3
-    max_joint_delta_deg: float = 15.0
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
 
 
-def create_task(cfg: Any, hardware: Any) -> EEFTwistTask:
+def create_task(cfg: TaskConfig, hardware: object) -> EEFTwistTask:
     params = EEFTwistTaskParams.model_validate(cfg.params)
     return EEFTwistTask(
         cfg.name,
         EEFTwistTaskConfig(
             joint_names=cfg.joint_names,
-            model_path=params.model_path,
-            ee_joint_id=params.ee_joint_id,
             priority=cfg.priority,
             timeout=params.timeout,
             max_joint_delta_deg=params.max_joint_delta_deg,
+            max_tracking_error_deg=params.max_tracking_error_deg,
+            min_dt=params.min_dt,
+            max_dt=params.max_dt,
+            control_ik=params.control_ik,
             gripper_joint=params.gripper_joint,
             gripper_open_pos=params.gripper_open_pos,
             gripper_closed_pos=params.gripper_closed_pos,

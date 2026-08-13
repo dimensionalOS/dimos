@@ -14,7 +14,7 @@
 
 import pickle
 
-from dimos.mapping.voxels import VoxelGrid
+from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data_dir
 from dimos.utils.testing.replay import TimedSensorReplay

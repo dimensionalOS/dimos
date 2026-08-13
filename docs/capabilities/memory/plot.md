@@ -199,7 +199,7 @@ Looks better, these are some very obvious peaks, I'm curious let's see what was 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
 ```python skip session=robotdata
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory2.vis.space.space import Space
 from dimos.memory2.transform import peaks
 from dimos.memory2.vis.color import ColorRange

@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Keep in sync with the `web` job in .github/workflows/ci.yml.
+# CI installs this exact version by grepping this line (lint, web, and tests jobs in ci.yml).
 DENO_VERSION = "v2.6.10"
 _DENO_CACHE_DIR = CACHE_DIR / "deno"
 

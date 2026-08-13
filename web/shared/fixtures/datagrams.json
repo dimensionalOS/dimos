@@ -4,7 +4,7 @@
       "name": "hello_robot",
       "message": {
         "t": "hello",
-        "v": 1,
+        "v": 2,
         "role": "robot",
         "robot": {
           "id": "go2-lab",
@@ -28,24 +28,24 @@
           ]
         }
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41fSx7ImNoIjoib2RvbSIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41fV19fQ=="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoyLCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41fSx7ImNoIjoib2RvbSIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41fV19fQ=="
     },
     {
       "name": "hello_viewer",
       "message": {
         "t": "hello",
-        "v": 1,
+        "v": 2,
         "role": "viewer"
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoxLCJyb2xlIjoidmlld2VyIn0="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2IjoyLCJyb2xlIjoidmlld2VyIn0="
     },
     {
       "name": "welcome",
       "message": {
         "t": "welcome",
-        "v": 1
+        "v": 2
       },
-      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjF9"
+      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjJ9"
     },
     {
       "name": "ping",
@@ -70,9 +70,9 @@
       "message": {
         "t": "error",
         "code": "version_mismatch",
-        "message": "protocol v1 required, versiune neacceptată"
+        "message": "protocol v2 required, versiune neacceptată"
       },
-      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2MSByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
+      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2MiByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
     },
     {
       "name": "robots_two",

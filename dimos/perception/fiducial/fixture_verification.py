@@ -20,13 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
 from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.units import mm
 import yaml
 
-from dimos.utils.cli.apriltag import _grid_layout
+from dimos.cli.apriltag import _grid_layout
 
 PAGE_SIZES_PT = {
     "a4": A4,
@@ -179,6 +178,8 @@ def generated_apriltag_board_layout(
 
 def detect_apriltag_frame(image_path: Path, dictionary_name: str) -> DetectionResult:
     """Run OpenCV AprilTag detection on a fixture image."""
+    import cv2
+
     if not hasattr(cv2.aruco, dictionary_name):
         raise ValueError(f"Unknown ArUco dictionary {dictionary_name!r}")
     image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
@@ -310,6 +311,8 @@ def verify_board_layout_geometry(
     This is a 2D PDF-layout check: it fits a homography from generated board
     corners to detected image corners and measures residuals.
     """
+    import cv2
+
     source_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
     edges_px: list[float] = []
@@ -416,6 +419,8 @@ def verify_fixture_frame(
 
 
 def _convex_hull_area(points: np.ndarray) -> float:
+    import cv2
+
     if len(points) < 3:
         return 0.0
     return float(cv2.contourArea(cv2.convexHull(points.reshape(-1, 1, 2))))

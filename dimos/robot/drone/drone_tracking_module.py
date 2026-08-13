@@ -20,7 +20,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 from dimos_lcm.std_msgs import String
 import numpy as np
 from numpy.typing import NDArray
@@ -148,6 +147,8 @@ class DroneTrackingModule(Module):
         Returns:
             String status message
         """
+        import cv2
+
         if self._tracking_active:
             return "Already tracking an object"
 
@@ -325,6 +326,8 @@ class DroneTrackingModule(Module):
         Returns:
             Frame with overlay drawn
         """
+        import cv2
+
         overlay: NDArray[np.uint8] = frame.copy()
         x, y, w, h = bbox
 

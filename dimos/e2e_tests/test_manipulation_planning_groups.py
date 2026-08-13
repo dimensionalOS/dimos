@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -34,7 +34,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.robot.manipulators.common.topics import DEFAULT_TRAJECTORY_TASK_NAME
 
 pytestmark = [pytest.mark.self_hosted_large]
 
@@ -54,27 +54,26 @@ def _wait_for_robot_info(
         try:
             info = client.get_robot_info(robot_name)
             if info and info.get("planning_groups"):
-                return info
-        except BaseException as exc:
+                return cast("dict[str, Any]", info)
+        except Exception as exc:
             last_error = exc
         time.sleep(0.5)
     raise TimeoutError(f"Timed out waiting for {robot_name!r} robot info") from last_error
 
 
 def _wait_for_trajectory_completion(
-    client: RPCClient,
-    robot_name: str,
+    coordinator_client: RPCClient,
     *,
     timeout: float = 10.0,
 ) -> None:
     deadline = time.time() + timeout
-    last_status: dict[str, Any] | None = None
+    last_active: list[str] = []
     while time.time() < deadline:
-        last_status = client.get_trajectory_status(robot_name)
-        if last_status is not None and last_status.get("state") == TrajectoryState.COMPLETED:
+        last_active = coordinator_client.get_active_tasks()
+        if not last_active:
             return
         time.sleep(0.1)
-    raise TimeoutError(f"{robot_name!r} trajectory did not complete; last={last_status}")
+    raise TimeoutError(f"Trajectory did not complete; active={last_active}")
 
 
 def _wait_for_manipulation_state(
@@ -102,11 +101,16 @@ def _wait_for_current_joints(
     deadline = time.time() + timeout
     missing = robot_names
     while time.time() < deadline:
-        missing = tuple(
-            robot_name
-            for robot_name in robot_names
-            if client.get_current_joints(robot_name) is None
-        )
+        try:
+            missing = tuple(
+                robot_name
+                for robot_name in robot_names
+                if client.get_current_joints(robot_name) is None
+            )
+        except Exception:
+            # Robot metadata becomes visible while the planning world is still
+            # finalizing. Treat that readiness race like a missing joint state.
+            missing = robot_names
         if not missing:
             return
         time.sleep(0.1)
@@ -163,7 +167,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         left_id = _planning_group_id(left_info)
 
         tasks = coordinator_client.list_tasks()
-        assert left_info["coordinator_task_name"] in tasks
+        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, ("left_arm",))
 
@@ -172,7 +176,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
         assert client.has_planned_path()
         assert client.execute_plan()
 
-        _wait_for_trajectory_completion(client, "left_arm")
+        _wait_for_trajectory_completion(coordinator_client)
     finally:
         coordinator_client.stop_rpc_client()
         client.stop_rpc_client()
@@ -182,7 +186,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[..., DimosCliCall],
 ) -> None:
-    """Plan one generated plan over both arms and dispatch both JTC tasks."""
+    """Plan one generated plan over both arms and dispatch through one trajectory task."""
     _start_openarm_mock_planner(start_blueprint, lcm_spy)
 
     client = RPCClient(None, ManipulationModule)
@@ -194,8 +198,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         right_id = _planning_group_id(right_info)
 
         tasks = coordinator_client.list_tasks()
-        assert left_info["coordinator_task_name"] in tasks
-        assert right_info["coordinator_task_name"] in tasks
+        assert tasks == [DEFAULT_TRAJECTORY_TASK_NAME]
 
         _prepare_for_planning(client, ("left_arm", "right_arm"))
 
@@ -209,8 +212,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         assert client.has_planned_path()
         assert client.execute_plan()
 
-        _wait_for_trajectory_completion(client, "left_arm")
-        _wait_for_trajectory_completion(client, "right_arm")
+        _wait_for_trajectory_completion(coordinator_client)
     finally:
         coordinator_client.stop_rpc_client()
         client.stop_rpc_client()

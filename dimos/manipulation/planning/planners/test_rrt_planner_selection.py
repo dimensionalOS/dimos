@@ -27,11 +27,13 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupDefinition,
     PlanningGroupSelection,
 )
+from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -197,3 +199,25 @@ def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselecte
     assert world.projected_states
     assert all(state.name == ["joint_a", "joint_b", "gripper"] for state in world.projected_states)
     assert all(state.position[2] == 0.77 for state in world.projected_states)
+
+
+def test_plan_cartesian_path_is_explicitly_unsupported() -> None:
+    group = _group("arm", ("joint_a", "joint_b"))
+    selection = PlanningGroupSelection.from_groups((group,))
+
+    result = RRTConnectPlanner().plan_cartesian_path(
+        _World(),
+        selection,
+        JointState({"position": [0.0, 0.0]}),
+        {
+            group.id: (
+                Transform.identity(),
+                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+            )
+        },
+        RoboPlanCartesianPathConfig(),
+    )
+
+    assert result.status == PlanningStatus.UNSUPPORTED
+    assert result.path == []
+    assert "does not support Cartesian" in result.message

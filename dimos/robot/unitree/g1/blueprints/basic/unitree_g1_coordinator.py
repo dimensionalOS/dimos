@@ -25,6 +25,7 @@ import os
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -33,6 +34,11 @@ from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
 _g1_joints = make_humanoid_joints("g1")
 
+
+class _G1Coordinator(ControlCoordinator):
+    g1_joints: Out[JointState]
+
+
 # ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
 unitree_g1_coordinator = (
     autoconnect(
@@ -40,7 +46,9 @@ unitree_g1_coordinator = (
             release_sport_mode=True,
             network_interface=os.getenv("ROBOT_INTERFACE", ""),
         ),
-        ControlCoordinator.blueprint(
+        _G1Coordinator.blueprint(
+            instance_name="ControlCoordinator",
+            publish_robot_joint_states=True,
             tick_rate=500,
             hardware=[
                 HardwareComponent(
@@ -70,6 +78,7 @@ unitree_g1_coordinator = (
                 "/g1/motor_command", MotorCommandArray
             ),
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
+            ("g1_joints", JointState): LCMTransport("/g1/joints", JointState),
         }
     )
 )

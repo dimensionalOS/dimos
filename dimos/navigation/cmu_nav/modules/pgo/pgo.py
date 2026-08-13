@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.cmu_nav.frames import FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
@@ -42,6 +43,7 @@ class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent / "cpp")
     executable: str = "result/bin/pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
+    stdin_config: bool = True
 
     # Frame names
     world_frame: str = FRAME_MAP
@@ -79,6 +81,7 @@ class PGO(NativeModule):
     corrected_odometry: Out[Odometry]
     global_map: Out[PointCloud2]
     pgo_tf: Out[Odometry]
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -122,11 +125,13 @@ class PGO(NativeModule):
         ts: float,
     ) -> None:
         self.tf.publish(
-            Transform(
-                frame_id=self.config.world_frame,
-                child_frame_id=self.config.local_frame,
-                translation=Vector3(*translation),
-                rotation=Quaternion(*rotation),
-                ts=ts,
+            TFMessage(
+                Transform(
+                    frame_id=self.config.world_frame,
+                    child_frame_id=self.config.local_frame,
+                    translation=Vector3(*translation),
+                    rotation=Quaternion(*rotation),
+                    ts=ts,
+                )
             )
         )

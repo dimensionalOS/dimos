@@ -56,7 +56,7 @@ _MACOS_IFACE = "lo0"
 class VirtualMid360Config(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/virtual_mid360"
-    build_command: str | None = "nix build .#default"
+    build_command: str | None = "nix build -L .#default"
     # The rust binary reads its config as a JSON object on stdin (required).
     stdin_config: bool = True
     # Keep the Python-only NIC knobs out of the CLI args mirrored to the binary.

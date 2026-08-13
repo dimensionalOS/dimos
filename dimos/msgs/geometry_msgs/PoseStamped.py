@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -48,11 +47,27 @@ class PoseStamped(Pose, Timestamped):
     ts: float
     frame_id: str
 
-    @dispatch
-    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize a stamped pose.
+
+        Takes ``(ts, frame_id)`` positionally, plus every Pose keyword. Any other
+        positional form belongs to Pose, so ``PoseStamped(x, y, z)`` and
+        ``PoseStamped(x, y, z, qx, qy, qz, qw)`` work as they do on the base class.
+        """
+        ts: Any
+        # A leading number or string is a timestamp; anything else is a Pose argument.
+        if args and len(args) < 3 and isinstance(args[0], int | float | str):
+            ts = args[0]
+            frame_id = args[1] if len(args) > 1 else kwargs.pop("frame_id", "")
+            pose_args: tuple[Any, ...] = ()
+        else:
+            ts = kwargs.pop("ts", None)
+            frame_id = kwargs.pop("frame_id", "")
+            pose_args = args
+
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
-        super().__init__(**kwargs)
+        self.ts = time.time() if ts is None else ts
+        super().__init__(*pose_args, **kwargs)
 
     def lcm_encode(self) -> bytes:
         lcm_mgs = LCMPoseStamped()

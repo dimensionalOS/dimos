@@ -46,13 +46,13 @@ class LineSegments3D(Timestamped):
 
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "map",
         segments: list[tuple[tuple[float, float, float], tuple[float, float, float]]] | None = None,
         traversability: list[float] | None = None,
     ) -> None:
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self._segments = segments or []
         self._traversability = traversability or [1.0] * len(self._segments)
 

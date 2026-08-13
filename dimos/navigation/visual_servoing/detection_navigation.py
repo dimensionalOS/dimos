@@ -23,7 +23,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-from dimos.protocol.tf.tf import LCMTF
+from dimos.protocol.tf.tf import TFLookup
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -37,10 +37,10 @@ class DetectionNavigation:
     _linear_gain_3d: float = 0.8
     _angular_gain_3d: float = 1.5
 
-    _tf: LCMTF
+    _tf: TFLookup
     _camera_info: CameraInfo
 
-    def __init__(self, tf: LCMTF, camera_info: CameraInfo) -> None:
+    def __init__(self, tf: TFLookup, camera_info: CameraInfo) -> None:
         self._tf = tf
         self._camera_info = camera_info
 

@@ -14,16 +14,28 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
+
+from dimos.porcelain.module_handle import ModuleHandle
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleDescriptor
 
 
 class ModuleSource(Protocol):
-    """Common interface for local and remote module sources."""
+    """Common interface for owned and coordinator-connected module sources.
+
+    "Local" is backed by the coordinator owned by ``Dimos.run()``. "Remote" is
+    relative to the client: it connects to a separately running coordinator,
+    which may still be on the same host.
+    """
 
     is_remote: bool
 
     def list_module_names(self) -> list[str]: ...
 
-    def get_module(self, name: str) -> Any: ...
+    def list_module_descriptors(self) -> list[ModuleDescriptor]: ...
+
+    def get_module(self, name: str) -> ModuleHandle: ...
 
     def close(self) -> None: ...

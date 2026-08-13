@@ -80,6 +80,11 @@ class ActionStatus(str, Enum):
     FAILED = "failed"
 
 
+class PlanningMode(str, Enum):
+    JOINT_SPACE = "joint_space"
+    CARTESIAN_SPACE = "cartesian_space"
+
+
 PreviewSource = Literal["cartesian", "joints"]
 
 
@@ -103,6 +108,7 @@ class PanelPlanState:
 class PanelState:
     selected_robot: str | None = None
     selected_group_ids: tuple[PlanningGroupID, ...] = ()
+    planning_mode: PlanningMode = PlanningMode.JOINT_SPACE
     selection_epoch: int = 0
     pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
     group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)

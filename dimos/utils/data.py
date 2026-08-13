@@ -202,7 +202,9 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
     for attempt in range(1, retries + 2):  # retries + 1 total attempts
         try:
             subprocess.run(
-                ["git", "lfs", "pull", "--include", str(relative_path)],
+                # --exclude= overrides lfs.fetchexclude from .lfsconfig, which
+                # otherwise silently skips data/.lfs/* even when --include matches.
+                ["git", "lfs", "pull", "--include", str(relative_path), "--exclude="],
                 cwd=repo_root,
                 check=True,
                 env=env,

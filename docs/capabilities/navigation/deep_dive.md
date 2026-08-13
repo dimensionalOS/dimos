@@ -51,9 +51,9 @@ We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC client 
 
 ![LiDAR frame](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/1-lidar.png)
 
-### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels.py))
+### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels/module.py))
 
-The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
+The [`VoxelGridMapper`](/dimos/mapping/voxels/module.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
 
 Voxel hash map provides O(1) insert/erase/lookup, so this is efficient even with millions of voxels. The grid runs on **CUDA** by default for speed, with CPU fallback.
 
@@ -168,7 +168,7 @@ The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.svg import to_svg
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )

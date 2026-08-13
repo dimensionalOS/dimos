@@ -26,42 +26,29 @@ so a failure can be bisected by dropping down a level:
   ``DanLocalPlanner`` + ``DanHolonomicTC`` pair from ``unitree-go2-mls-htc``.
 """
 
-import math
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.odom_body_frame import OdomBodyFrame
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
-# cost-coloured edges. Drives both its publishing and the rerun overrides.
+# cost-colored edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
 
-# Feeds both the static tf GO2Zenoh publishes and the rotation that levels its odometry —
-# they must agree or nav steers off-heading. Verified against Point-LIO's own attitude.
+# GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
 MID360_MOUNT_RPY_DEG = (-60.0, 0.0, -90.0)
-
-
-def _mount_rotation() -> list[float]:
-    """base_link <- lidar rotation, so nav reads odometry in the level body frame.
-
-    base_link -> front_camera carries no rotation, so this is just the mount rpy above.
-    """
-    rpy = Vector3(*(math.radians(d) for d in MID360_MOUNT_RPY_DEG))
-    return list(Quaternion.from_euler(rpy).to_tuple())
 
 
 def _camera_info_to_pinhole(camera_info: Any) -> Any:
@@ -149,7 +136,7 @@ go2_zenoh_basic = autoconnect(
 _mls_planner = MLSPlannerNative.blueprint(
     world_frame="odom",
     voxel_size=voxel_size,
-    robot_height=0.3,
+    robot_height=ROBOT_HEIGHT,
     surface_closing_radius=0.3,
     wall_clearance_m=0.1,
     wall_buffer_m=0.75,
@@ -183,26 +170,15 @@ go2_zenoh_raycaster = autoconnect(
 go2_zenoh_nav = autoconnect(
     go2_zenoh_raycaster,
     _mls_planner,
-    OdomBodyFrame.blueprint(mount_rotation=_mount_rotation()),
-    GoalRelay.blueprint(),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6).remappings(
-        [(BasicPathFollower, "odometry", "body_odometry")]
-    ),
+    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=8, robot_model="unitree_go2")
 
-# The nav stack with BasicPathFollower swapped for the DanLocalPlanner + DanHolonomicTC
-# pair from unitree-go2-mls-htc. The raw planner stream moves to planner_path; the gate
-# forwards committed paths on path, so world/planner_path is muted in rerun.
 go2_zenoh_htc = autoconnect(
     go2_zenoh_raycaster,
-    OdomBodyFrame.blueprint(mount_rotation=_mount_rotation()),
     _mls_planner.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    # Fed the leveled odometry, so its start_pose doubles as the body-frame PoseStamped
-    # the Dan modules consume — mirroring mls_htc, where planner start and follower odom
-    # are the same topic.
-    GoalRelay.blueprint().remappings([(GoalRelay, "odometry", "body_odometry")]),
-    # Setting resample_spacing_m to > 0.0 will smooth out jagged paths returned by MLSP
+    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
     DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
         [(DanLocalPlanner, "odom", "start_pose")]
     ),

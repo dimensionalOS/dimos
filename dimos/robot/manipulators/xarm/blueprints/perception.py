@@ -24,7 +24,7 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(

@@ -64,7 +64,7 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     bridge._min_intervals = {}
 
     try:
-        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
+        with patch("rerun.log") as mock_log:
             bridge._on_message(_detection_array(), Topic("/marker_detection/detections"))
     finally:
         bridge.stop()

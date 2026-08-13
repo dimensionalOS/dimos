@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import MappingProxyType
+from typing import Any
 
 import pytest
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-
-_BUILD_WITHOUT_RERUN = MappingProxyType(
-    {
-        "g": {"viewer": "none"},
-    }
-)
 
 
 class Cloud:
@@ -97,12 +94,20 @@ def _fleet_blueprint():
     ).remappings([(FleetCommander, "cmd", "robot0/cmd")])
 
 
+def _parsed_config(
+    blueprint: Blueprint,
+    overrides: dict[str, Any] | None = None,
+) -> ParsedBlueprintConfig:
+    all_overrides: dict[str, Any] = {"g": {"viewer": "none"}}
+    all_overrides.update(overrides or {})
+    return BlueprintConfigParser(blueprint).parse(environ={}, overrides=all_overrides)
+
+
 @pytest.fixture
 def fleet_coordinator():
-    args = dict(_BUILD_WITHOUT_RERUN)
-    args["robot0_sensor"] = {"sensitivity": 2.0}
-
-    coordinator = ModuleCoordinator.build(_fleet_blueprint(), args)
+    blueprint = _fleet_blueprint()
+    parsed = _parsed_config(blueprint, {"robot0_sensor": {"sensitivity": 2.0}})
+    coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         yield coordinator
     finally:
@@ -160,27 +165,65 @@ def test_fleet_blueprint(fleet_coordinator: ModuleCoordinator):
     assert sensor1.cmd.transport.topic != sensor0.cmd.transport.topic
 
 
-def test_fleet_blueprint_config_keys():
-    config = _fleet_blueprint().config()
-    assert {
-        "robot0_sensor",
-        "robot1_sensor",
-        "robot0_localmapper",
-        "robot1_localmapper",
+def test_restart_preserves_parsed_instance_config(fleet_coordinator: ModuleCoordinator):
+    fleet_coordinator.restart_module("robot0/sensor", reload_source=False)
+
+    restarted_sensor = fleet_coordinator.get_instance("robot0/sensor")
+    assert restarted_sensor.get_sensitivity() == 2.0
+
+
+def test_load_blueprint_accepts_parsed_module_config() -> None:
+    blueprint = Sensor.blueprint()
+    parsed = _parsed_config(blueprint, {"sensor": {"sensitivity": 3.0}})
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+    coordinator.start()
+    try:
+        coordinator.load_blueprint(blueprint, parsed)
+
+        sensor = coordinator.get_instance(Sensor)
+        assert sensor.get_sensitivity() == 3.0
+    finally:
+        coordinator.stop()
+
+
+def test_load_blueprint_preserves_unrelated_global_config() -> None:
+    blueprint = Sensor.blueprint()
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+    coordinator = ModuleCoordinator(g=GlobalConfig(viewer="none", robot_ip="10.9.8.7", n_workers=0))
+    coordinator.start()
+    try:
+        coordinator.load_blueprint(blueprint, parsed)
+
+        config = coordinator._global_config
+        assert config.viewer == "none"
+        assert config.robot_ip == "10.9.8.7"
+        assert config.n_workers == 0
+    finally:
+        coordinator.stop()
+
+
+def test_fleet_blueprint_config_keys() -> None:
+    parsed = BlueprintConfigParser(_fleet_blueprint()).parse(
+        environ={}, overrides={"robot0_sensor": {"sensitivity": 5.0}}
+    )
+    assert set(parsed.module_configs) == {
+        "robot0/sensor",
+        "robot1/sensor",
+        "robot0/localmapper",
+        "robot1/localmapper",
         "aggregator",
         "fleetcommander",
-        "g",
-    } == set(config.model_fields.keys())
+    }
+    # Escaped roots resolve back to the namespaced instances.
+    assert parsed.module_kwargs("robot0/sensor")["sensitivity"] == 5.0
 
 
 def test_load_blueprint_resolves_existing_provider_in_same_namespace():
-    coordinator = ModuleCoordinator.build(
-        autoconnect(
-            Sensor.blueprint().namespace("robot0"),
-            Sensor.blueprint().namespace("robot1"),
-        ),
-        dict(_BUILD_WITHOUT_RERUN),
+    blueprint = autoconnect(
+        Sensor.blueprint().namespace("robot0"),
+        Sensor.blueprint().namespace("robot1"),
     )
+    coordinator = ModuleCoordinator.build(blueprint, _parsed_config(blueprint))
     try:
         coordinator.load_blueprint(LocalMapper.blueprint().namespace("robot0"))
 

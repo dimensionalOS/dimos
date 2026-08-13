@@ -69,7 +69,6 @@ def make_openyam_model_config(
     name: str = "arm",
     *,
     joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     """Build a planning config for the gripper-equipped OpenYAM."""
@@ -97,7 +96,6 @@ def make_openyam_model_config(
             joint_prefix=joint_prefix,
             urdf_joint_prefix="yam_",
         ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
         gripper_hardware_id=name,
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

@@ -17,6 +17,7 @@
 import asyncio
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+import threading
 import time
 from typing import Any
 
@@ -268,6 +269,76 @@ def test_unsubscribe(pubsub_context: Callable[[], Any], topic: Any, values: list
 
         # Verify the callback was not called after unsubscribing
         assert len(received_messages) == 0
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_nonblocking_during_dispatch(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """unsubscribe() must not wait for an in-flight callback.
+
+    Unsubscribing threads may be ones the system needs for progress (an
+    asyncio event loop tearing down a module); a dispatch thread stuck in a
+    slow callback must not be able to wedge them.
+    """
+    with pubsub_context() as x:
+        in_callback = threading.Event()
+        release = threading.Event()
+
+        def slow_callback(message: Any, topic: Any) -> None:
+            in_callback.set()
+            release.wait(timeout=10.0)
+
+        unsubscribe = x.subscribe(topic, slow_callback)
+
+        # Publish from a helper thread: in-process backends dispatch
+        # synchronously on the publishing thread.
+        publisher = threading.Thread(target=x.publish, args=(topic, values[0]), daemon=True)
+        publisher.start()
+        assert in_callback.wait(timeout=5.0), "callback was never dispatched"
+
+        unsubscribed = threading.Event()
+
+        def do_unsubscribe() -> None:
+            unsubscribe()
+            unsubscribed.set()
+
+        unsubscriber = threading.Thread(target=do_unsubscribe, daemon=True)
+        unsubscriber.start()
+        try:
+            assert unsubscribed.wait(timeout=2.0), (
+                "unsubscribe blocked behind an in-flight callback"
+            )
+        finally:
+            release.set()
+            unsubscriber.join(timeout=5.0)
+            publisher.join(timeout=5.0)
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe_from_callback(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
+    """A callback may tear down its own subscription (one-shot receivers)
+    without deadlocking, and delivery stops once it has."""
+    with pubsub_context() as x:
+        received: list[Any] = []
+        done = threading.Event()
+        unsubscribe: Callable[[], None] | None = None
+
+        def one_shot(message: Any, topic: Any) -> None:
+            received.append(message)
+            assert unsubscribe is not None
+            unsubscribe()
+            done.set()
+
+        unsubscribe = x.subscribe(topic, one_shot)
+        x.publish(topic, values[0])
+        assert done.wait(timeout=5.0), "self-unsubscribing callback deadlocked"
+
+        x.publish(topic, values[0])
+        time.sleep(0.1)
+        assert len(received) == 1
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)

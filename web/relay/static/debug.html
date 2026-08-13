@@ -134,50 +134,72 @@
         };
       }
 
-      // Read one data frame by byte count; never wait for EOF (the relay's FIN can
-      // arrive up to ~1 s late on Deno 2.6.x).
-      async function readDataFrame(stream) {
+      // Read data frames by byte count; never wait for EOF (the relay's FIN
+      // can arrive up to ~1 s late on Deno 2.6.x). A latest stream carries
+      // one frame, a reliable channel's persistent stream carries them back
+      // to back; no cancel, which would reset a persistent stream. Chunks are
+      // queued behind a read cursor so each frame is copied out exactly once
+      // (keep in sync with DataFrameStreamReader in web/shared/protocol.ts).
+      async function readDataFrames(stream, onFrame) {
         const reader = stream.getReader();
         const chunks = [];
-        let size = 0;
-        let total = null;
-        let head = new Uint8Array(0);
+        let head = 0; // index of the chunk holding the read cursor
+        let cursor = 0; // byte offset into chunks[head]
+        let size = 0; // unread bytes across all queued chunks
+        // First `n` unread bytes; consuming advances the cursor.
+        const gather = (n, consume) => {
+          const first = chunks[head];
+          if (!consume && first.byteLength - cursor >= n) {
+            return first.subarray(cursor, cursor + n);
+          }
+          const out = new Uint8Array(n);
+          let off = 0;
+          let i = head;
+          let at = cursor;
+          while (off < n) {
+            const chunk = chunks[i];
+            const step = Math.min(chunk.byteLength - at, n - off);
+            out.set(chunk.subarray(at, at + step), off);
+            off += step;
+            at += step;
+            if (at === chunk.byteLength) {
+              i++;
+              at = 0;
+            }
+          }
+          if (consume) {
+            head = i;
+            cursor = at;
+            size -= n;
+          }
+          return out;
+        };
         try {
-          while (total === null || size < total) {
+          while (true) {
             const { value, done } = await reader.read();
             if (value && value.byteLength) {
               chunks.push(value);
               size += value.byteLength;
-              if (total === null) {
-                const merged = new Uint8Array(Math.min(size, 8));
-                let off = 0;
-                for (const c of chunks) {
-                  for (let i = 0; i < c.byteLength && off < 8; i++) merged[off++] = c[i];
-                }
-                head = merged;
-                if (size >= 8) {
-                  const dv = new DataView(head.buffer);
-                  total = 8 + dv.getUint32(0, true) + dv.getUint32(4, true);
-                }
+              while (size >= 8) {
+                const prefix = gather(8, false);
+                const dv = new DataView(prefix.buffer, prefix.byteOffset);
+                const hlen = dv.getUint32(0, true);
+                const total = 8 + hlen + dv.getUint32(4, true);
+                if (size < total) break;
+                const frame = gather(total, true);
+                onFrame(
+                  JSON.parse(dec.decode(frame.subarray(8, 8 + hlen))),
+                  frame.subarray(8 + hlen),
+                );
               }
+              chunks.splice(0, head);
+              head = 0;
             }
             if (done) break;
           }
         } finally {
-          reader.releaseLock(); // no cancel: the late FIN closes the stream
+          reader.releaseLock();
         }
-        if (total === null || size < total) throw new Error("stream ended mid-frame");
-        const buf = new Uint8Array(size);
-        let off = 0;
-        for (const c of chunks) {
-          buf.set(c, off);
-          off += c.byteLength;
-        }
-        const hlen = new DataView(buf.buffer).getUint32(0, true);
-        return {
-          header: JSON.parse(dec.decode(buf.subarray(8, 8 + hlen))),
-          payload: buf.subarray(8 + hlen, total),
-        };
       }
 
       // ---- per-channel stats ----
@@ -389,10 +411,10 @@
             }
           })().catch(() => {});
 
-          // data plane: one uni stream per frame; ends with the session
+          // data plane: latest = one uni stream per frame, reliable = one
+          // persistent stream per channel; both end with the session
           for await (const stream of wt.incomingUnidirectionalStreams) {
-            readDataFrame(stream).then(({ header, payload }) => onFrame(header, payload))
-              .catch(() => {});
+            readDataFrames(stream, onFrame).catch(() => {});
           }
         } finally {
           for (const t of timers) clearInterval(t);

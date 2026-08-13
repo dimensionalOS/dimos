@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import global_config
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from dimos.protocol.rpc.spec import RPCInspectable, RPCSpec
 
 logger = setup_logger()
+
+_CONNECT_ATTEMPT_TIMEOUT = 0.25
 
 
 class CoordinatorRPC:
@@ -51,8 +54,23 @@ class CoordinatorRPC:
         rpc = rpc_backend()()
         rpc.start()
         client = cls(rpc)
+        deadline = time.monotonic() + timeout
+        last_timeout: TimeoutError | None = None
         try:
-            client.call("ping", rpc_timeout=timeout)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Coordinator did not respond within {timeout} seconds"
+                    ) from last_timeout
+                try:
+                    client.call(
+                        "ping",
+                        rpc_timeout=min(_CONNECT_ATTEMPT_TIMEOUT, remaining),
+                    )
+                    break
+                except TimeoutError as exc:
+                    last_timeout = exc
         except BaseException:
             rpc.stop()
             raise

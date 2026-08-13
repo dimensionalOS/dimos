@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import functools
+import inspect
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
@@ -25,7 +27,7 @@ from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import ModuleBase
+    from dimos.core.module import ModuleBase, SkillInfo
 
 logger = setup_logger()
 
@@ -52,10 +54,25 @@ class RpcCall:
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
 
-        if original_method:
-            self.__doc__ = original_method.__doc__
-            self.__name__ = original_method.__name__
-            self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
+        self.__name__ = name
+        self.__qualname__ = f"{self.__class__.__name__}.{name}"
+        if original_method is not None:
+            functools.update_wrapper(self, original_method)
+            signature = inspect.signature(original_method)
+            parameters = list(signature.parameters.values())
+            if parameters and parameters[0].name in {"self", "cls"}:
+                parameters = parameters[1:]
+            self.__signature__ = signature.replace(parameters=parameters)
+
+    @property
+    def rpc_name(self) -> str:
+        """The method name advertised by the remote module."""
+        return self._name
+
+    @property
+    def remote_name(self) -> str:
+        """The exact deployed module-instance name."""
+        return self._remote_name
 
     def set_rpc(self, rpc: RPCSpec) -> None:
         self._rpc = rpc
@@ -93,9 +110,12 @@ class RpcCall:
 class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
+    remote_name: str
+
     def build(self) -> None: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...
+    def get_skills(self) -> list[SkillInfo]: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
 
 

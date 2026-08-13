@@ -28,13 +28,14 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import (
+    CloudflareAudioTransport,
     CloudflareTransport,
     CloudflareVideoTransport,
     LCMTransport,
 )
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
@@ -45,8 +46,10 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm7,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
+from dimos.teleop.hosted.go2_audio_bridge import Go2AudioBridgeModule
 from dimos.teleop.hosted.go2_command import Go2CommandModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.map_compress import MapCompressModule
@@ -57,6 +60,7 @@ teleop_hosted_go2_transport = (
     autoconnect(
         GO2Connection.blueprint(),
         Go2CommandModule.blueprint(allow_acrobatics=True),
+        Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1"]),
         HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
@@ -79,6 +83,7 @@ teleop_hosted_go2_transport = (
             ),
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("operator_audio", AudioEvent): CloudflareAudioTransport.spec(),
             # outbound operator planes
             ("mux_image", Image): CloudflareVideoTransport.spec(),
             ("map_out", bytes): CloudflareTransport.spec("map_unreliable"),
@@ -100,6 +105,7 @@ teleop_hosted_go2_multicam = (
     autoconnect(
         GO2Connection.blueprint(),
         Go2CommandModule.blueprint(allow_acrobatics=True),
+        Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
@@ -124,6 +130,7 @@ teleop_hosted_go2_multicam = (
             ),
             ("camera_select", bytes): CloudflareTransport.spec("state_reliable"),
             ("cmd_raw", bytes): CloudflareTransport.spec("cmd_unreliable"),
+            ("operator_audio", AudioEvent): CloudflareAudioTransport.spec(),
             ("cam2", Image): LCMTransport.spec("cam2", Image),
             # outbound operator planes
             ("mux_image", Image): CloudflareVideoTransport.spec(),
@@ -144,7 +151,7 @@ teleop_hosted_go2_multicam = (
 
 
 # Distinct classes only because blueprints can't yet run two instances of one
-# module. Serials: -o frontcamera.serial_number=... -o wristcamera.serial_number=...
+# module. Serials: --frontcamera.serial-number=... --wristcamera.serial-number=...
 class FrontCamera(RealSenseCamera):
     pass
 

@@ -22,9 +22,14 @@ is compute-only and relies on the coordinator for timing.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum, auto
 import math
 from typing import Any
+
+import attrs
+from pydantic import Field
 
 from dimos.control.task import (
     BaseControlTask,
@@ -35,22 +40,94 @@ from dimos.control.task import (
 )
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-@dataclass
+class TrajectoryExecutionStatus(Enum):
+    """Semantic outcome of a trajectory execution request."""
+
+    ACCEPTED = auto()
+    NO_TRAJECTORY_TASK = auto()
+    INVALID_TRAJECTORY = auto()
+    START_STATE_UNAVAILABLE = auto()
+    START_STATE_MISMATCH = auto()
+
+
+@dataclass(frozen=True)
+class TrajectoryExecutionResult:
+    """Result returned by the coordinator trajectory execution RPC."""
+
+    status: TrajectoryExecutionStatus
+    message: str = ""
+
+
+class TrajectoryCancellationStatus(Enum):
+    """Semantic outcome of a trajectory cancellation request."""
+
+    CANCELLED = auto()
+    ALREADY_STOPPED = auto()
+    NO_TRAJECTORY_TASK = auto()
+    UNCERTAIN = auto()
+
+
+@dataclass(frozen=True)
+class TrajectoryCancellationResult:
+    """Result returned by the coordinator trajectory cancellation RPC."""
+
+    status: TrajectoryCancellationStatus
+    message: str = ""
+
+    @property
+    def safe(self) -> bool:
+        """Return whether cancellation reached a deterministic coordinator state."""
+        return self.status is not TrajectoryCancellationStatus.UNCERTAIN
+
+    @property
+    def cancelled(self) -> bool:
+        """Return whether an active trajectory was cancelled."""
+        return self.status is TrajectoryCancellationStatus.CANCELLED
+
+
+def _to_joint_names(value: Sequence[str]) -> tuple[str, ...]:
+    return tuple(value)
+
+
+@attrs.frozen(slots=False)
 class JointTrajectoryTaskConfig:
     """Configuration for trajectory task.
 
     Attributes:
         joint_names: List of joint names this task controls
         priority: Priority for arbitration (higher wins)
+        start_position_tolerance: Maximum difference between current joint
+            position and the first trajectory point.
     """
 
-    joint_names: list[str]
-    priority: int = 10
+    joint_names: tuple[str, ...] = attrs.field(
+        converter=_to_joint_names,
+        validator=attrs.validators.deep_iterable(
+            member_validator=attrs.validators.and_(
+                attrs.validators.instance_of(str),
+                attrs.validators.min_len(1),
+            ),
+            iterable_validator=attrs.validators.min_len(1),
+        ),
+    )
+    priority: int = attrs.field(
+        default=10,
+        validator=attrs.validators.instance_of(int),
+    )
+    start_position_tolerance: float = attrs.field(
+        default=0.05,
+        converter=float,
+        validator=attrs.validators.and_(
+            attrs.validators.ge(0.0),
+            attrs.validators.lt(math.inf),
+        ),
+    )
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -75,7 +152,7 @@ class JointTrajectoryTask(BaseControlTask):
         ...     ),
         ... )
         >>> coordinator.add_task(task)
-        >>> task.execute(my_trajectory, t_now=coordinator_t_now)
+        >>> task.execute(my_trajectory, current_positions)
     """
 
     def __init__(self, name: str, config: JointTrajectoryTaskConfig) -> None:
@@ -85,8 +162,6 @@ class JointTrajectoryTask(BaseControlTask):
             name: Unique task name
             config: Task configuration
         """
-        if not config.joint_names:
-            raise ValueError(f"JointTrajectoryTask '{name}' requires at least one joint")
         self._name = name
         self._config = config
         self._joint_names = frozenset(config.joint_names)
@@ -222,25 +297,57 @@ class JointTrajectoryTask(BaseControlTask):
             return False
         return True
 
-    def execute(self, trajectory: JointTrajectory) -> bool:
+    def execute(
+        self,
+        trajectory: JointTrajectory,
+        current_positions: Mapping[str, float],
+    ) -> TrajectoryExecutionResult:
         """Start executing a trajectory.
 
         Args:
             trajectory: Trajectory to execute
+            current_positions: Authoritative positions from the coordinator.
 
         Returns:
-            True if accepted, False if invalid or in FAULT state
+            Semantic execution acceptance result.
         """
         if self._state == TrajectoryState.FAULT:
             logger.warning(f"Cannot execute: {self._name} in FAULT state")
-            return False
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.INVALID_TRAJECTORY,
+                f"Trajectory task '{self._name}' is in FAULT state",
+            )
 
         if trajectory is None:
             logger.warning(f"Invalid trajectory for {self._name}")
-            return False
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.INVALID_TRAJECTORY,
+                "Trajectory is missing",
+            )
 
         if not self._validate_trajectory(trajectory):
-            return False
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.INVALID_TRAJECTORY,
+                "Trajectory structure or joints are invalid",
+            )
+
+        first_positions = trajectory.points[0].positions
+        for joint_name, planned_position in zip(
+            trajectory.joint_names, first_positions, strict=True
+        ):
+            current_position = current_positions.get(joint_name)
+            if current_position is None or not math.isfinite(current_position):
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+                    f"Current position for joint '{joint_name}' is unavailable",
+                )
+            error = abs(current_position - planned_position)
+            if error > self._config.start_position_tolerance:
+                return TrajectoryExecutionResult(
+                    TrajectoryExecutionStatus.START_STATE_MISMATCH,
+                    f"Trajectory start for joint '{joint_name}' differs from current "
+                    f"position by {error:.6f}",
+                )
 
         # Preempt any active trajectory
         if self._state == TrajectoryState.EXECUTING:
@@ -255,20 +362,20 @@ class JointTrajectoryTask(BaseControlTask):
             f"Executing trajectory on {self._name}: "
             f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
         )
-        return True
+        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
-    def cancel(self) -> bool:
+    def cancel(self) -> TrajectoryCancellationResult:
         """Cancel current trajectory.
 
         Returns:
-            True if cancelled, False if not executing
+            Semantic cancellation result.
         """
         if self._state != TrajectoryState.EXECUTING:
-            return False
+            return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         self._state = TrajectoryState.ABORTED
         self._clear_active_trajectory()
         logger.info(f"Trajectory {self._name} cancelled")
-        return True
+        return TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
 
     def reset(self) -> bool:
         """Reset to idle state.
@@ -303,11 +410,23 @@ class JointTrajectoryTask(BaseControlTask):
         return min(1.0, t_elapsed / self._trajectory.duration)
 
 
+class JointTrajectoryTaskParams(BaseConfig):
+    """Task-specific trajectory execution parameters."""
+
+    start_position_tolerance: float = Field(
+        default=0.05,
+        ge=0.0,
+        allow_inf_nan=False,
+    )
+
+
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+    params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
         cfg.name,
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,
+            start_position_tolerance=params.start_position_tolerance,
         ),
     )

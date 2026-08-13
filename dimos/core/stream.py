@@ -86,8 +86,9 @@ class Transport(Resource, ObservableMixin[T]):
     # means "no overridable config" (LCM/SHM transports).
     _config_cls: type[BaseModel] | None = None
 
-    # used by local Output; selfstream is None when publishing without a source stream
-    def broadcast(self, selfstream: Out[T] | None, value: T) -> None:
+    # used by any local publishing stream (Out/IO); selfstream is None when
+    # publishing without a source stream
+    def broadcast(self, selfstream: Stream[T] | None, value: T) -> None:
         raise NotImplementedError
 
     # used by local Input
@@ -101,14 +102,14 @@ class Transport(Resource, ObservableMixin[T]):
 
 
 class Stream(Generic[T]):
-    _transport: Transport | None  # type: ignore[type-arg]
+    _transport: Transport[T] | None
 
     def __init__(
         self,
         type: type[T],
         name: str,
         owner: Any | None = None,
-        transport: Transport | None = None,  # type: ignore[type-arg]
+        transport: Transport[T] | None = None,
     ) -> None:
         self.name = name
         self.owner = owner
@@ -147,7 +148,7 @@ class Stream(Generic[T]):
 
 
 class Out(Stream[T], ObservableMixin[T]):
-    _transport: Transport  # type: ignore[type-arg]
+    _transport: Transport[T]
     _subscribers: list[Callable[[T], Any]]
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -218,11 +219,54 @@ class RemoteOut(RemoteStream[T]):
         return self.transport.subscribe(cb, self)
 
 
+class IO(Stream[T], ObservableMixin[T]):
+    """Bidirectional stream: publishes to and subscribes on the same topic.
+
+    An IO port sees the whole topic, including its own publishes (delivered
+    back through transport loopback).
+    """
+
+    _transport: Transport[T]
+
+    @property
+    def transport(self) -> Transport[T]:
+        return self._transport
+
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        self._transport = value
+
+    @property
+    def state(self) -> State:
+        return State.UNBOUND if self.owner is None else State.READY
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        if self.owner is None or not hasattr(self.owner, "ref"):
+            raise ValueError("Cannot serialise IO without an owner ref")
+        return (RemoteIO, (self.type, self.name, self.owner.ref, self._transport))
+
+    def publish(self, msg: T) -> None:
+        self._transport.broadcast(self, msg)
+
+    # returns unsubscribe function
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
+
+
+# representation of an IO port outside of the module
+class RemoteIO(RemoteStream[T]):
+    def publish(self, msg: T) -> None:
+        self.transport.broadcast(self, msg)
+
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
+
+
 # representation of Input
 # as views from inside of the module
 class In(Stream[T], ObservableMixin[T]):
     connection: RemoteOut[T] | None = None
-    _transport: Transport  # type: ignore[type-arg]
+    _transport: Transport[T]
 
     def __str__(self) -> str:
         mystr = super().__str__()
@@ -271,7 +315,7 @@ class RemoteIn(RemoteStream[T]):
         return self._transport  # type: ignore[return-value]
 
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
-        self.transport.broadcast(self, msg)  # type: ignore[arg-type]
+        self.transport.broadcast(self, msg)
 
     @transport.setter  # type: ignore[attr-defined, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:

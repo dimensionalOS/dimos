@@ -64,9 +64,11 @@ coordinator_dual_mock = _DualMockCoordinator.blueprint(
     publish_robot_joint_states=True,
     hardware=[_mock_left, _mock_right],
     tasks=[
-        TaskConfig(name="traj_left", type="trajectory", joint_names=_mock_left.joints, priority=10),
         TaskConfig(
-            name="traj_right", type="trajectory", joint_names=_mock_right.joints, priority=10
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[*_mock_left.joints, *_mock_right.joints],
+            priority=10,
         ),
     ],
 )

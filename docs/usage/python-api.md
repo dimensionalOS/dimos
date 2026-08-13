@@ -51,6 +51,55 @@ app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.0
 app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
+## Discovering modules and RPCs
+
+Discovery works in both local and remote mode:
+
+```python skip
+# Live structured records for exact deployed instances.
+app.list_modules()
+
+# Resolve an exact instance name.
+camera = app.get_module("robot0/camera")
+
+# A class name also works when exactly one instance has that class.
+planner = app.get_module("ReplanningAStarPlanner")
+
+# Discover every advertised RPC, or filter by a name or proxy.
+app.list_rpcs()
+app.list_rpcs(camera)
+
+# Describe proxies or a fully qualified RPC name.
+app.describe(camera)
+app.describe(camera.start)
+app.describe("robot0/camera.start")
+```
+
+Each discovery call refreshes coordinator descriptors, so newly loaded modules
+appear without a refresh step. Module records include `instance_name`,
+`class_name`, `qualified_path`, documentation, and RPC records. RPC records
+include their module instance, parameters, return type, documentation, and
+signature when the module class can be imported locally.
+
+If multiple instances share a class, class-name lookup raises an ambiguity error
+that lists their exact instance names. RPC strings passed to `describe()` must be
+qualified as `module.rpc`.
+
+RPC proxies preserve the local method signature and docstring for standard Python
+inspection:
+
+```python skip
+import inspect
+
+move = app.get_module("GO2Connection").move
+print(inspect.signature(move))
+help(move)
+```
+
+When the client cannot import the deployed module class, advertised RPC names
+remain callable, but unavailable parameter and documentation metadata is reported
+as unknown.
+
 ## Peeking streams
 
 `peek_stream(name, timeout)` pulls the next message from any running
@@ -69,7 +118,7 @@ cv2.waitKey(0)
 
 ## Remote mode
 
-Start a daemon first (via CLI or another script), then connect to it:
+Start a coordinator first (via CLI or another script), then connect to it:
 
 ```bash
 dimos run unitree-go2-agentic
@@ -87,9 +136,11 @@ app.skills.relative_move(forward=2.0)
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
 
-`Dimos.connect()` finds the daemon on the local LCM bus. DimOS supports
-one daemon per LCM bus; set `LCM_DEFAULT_URL` to put daemons on different
-buses or to connect across hosts.
+`Dimos.connect()` probes the coordinator on the configured transport bus. It does
+not require a CLI run-registry entry, so it also attaches to
+`ModuleCoordinator.build(...).loop()` launched directly from Python. DimOS
+supports one coordinator per bus; configure the transport bus consistently to
+connect across processes or hosts.
 
 `run()` and `restart()` also work against a daemon:
 

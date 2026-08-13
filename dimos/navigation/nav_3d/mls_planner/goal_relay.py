@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -22,10 +24,19 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.tf_pose import OdomBasePose, base_height_above_ground
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class GoalRelayConfig(ModuleConfig):
-    pass
+    base_frame: str = "base_link"
+    # Lidar height above the ground while standing. None skips the ground
+    # correction, leaving it to the planner's start_z_offset_m. Set exactly one
+    # of the two: both set drops the start pose to the ground twice.
+    lidar_height: float | None = None
 
 
 class GoalRelay(Module):
@@ -35,9 +46,16 @@ class GoalRelay(Module):
 
     odometry: In[Odometry]
     goal: In[PointStamped]
+    tf: In[TFMessage]
 
     start_pose: Out[PoseStamped]
     goal_pose: Out[PoseStamped]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._base_pose: OdomBasePose | None = None
+        self._base_height: float | None = None
+        self._warned_base_frame = False
 
     @rpc
     def start(self) -> None:
@@ -46,7 +64,37 @@ class GoalRelay(Module):
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
 
     def _on_odometry(self, msg: Odometry) -> None:
-        self.start_pose.publish(msg.to_pose_stamped())
+        if self._base_pose is None:
+            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
+        start = self._base_pose.resolve(msg)
+        if start is None:
+            return
+        if self.config.lidar_height is not None:
+            base_height = self._resolve_base_height(msg.child_frame_id, self.config.lidar_height)
+            if base_height is None:
+                return
+            start.position.z -= base_height
+        self.start_pose.publish(start)
+
+    def _resolve_base_height(self, sensor_frame: str, lidar_height: float) -> float | None:
+        # The base height comes from subtracting the mount leg, which
+        # base-frame odometry does not have.
+        if sensor_frame == self.config.base_frame:
+            if not self._warned_base_frame:
+                self._warned_base_frame = True
+                logger.warning(
+                    "Odometry is stamped at %s, so lidar_height cannot ground-project it. "
+                    "Dropping frames until odometry arrives stamped at a sensor.",
+                    sensor_frame,
+                )
+            return None
+        if self._base_height is None:
+            assert self._base_pose is not None
+            leg = self._base_pose.sensor_to_base(sensor_frame)
+            if leg is None:
+                return None
+            self._base_height = base_height_above_ground(lidar_height, -leg)
+        return self._base_height
 
     def _on_goal(self, point: PointStamped) -> None:
         self.goal_pose.publish(point.to_pose_stamped())

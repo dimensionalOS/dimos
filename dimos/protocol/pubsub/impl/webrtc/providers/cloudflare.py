@@ -23,7 +23,7 @@ loopback pubsub through the CF edge: exactly what the integration tests and
 the pubsub benchmark need, and nothing else.
 
 ``app_id`` / ``app_secret`` reach ``CloudflareConfig`` via the standard
-blueprint config flow (``-o transports.cloudflare.app_id=...`` or
+blueprint config flow (``--transports.cloudflare.app-id=...`` or
 ``TRANSPORTS__CLOUDFLARE__APP_ID=...``).
 """
 
@@ -105,7 +105,8 @@ class CloudflareProvider(AsyncProviderBase):
         if not config.app_id or not config.app_secret:
             raise RuntimeError(
                 "CloudflareConfig.app_id and app_secret required "
-                "(set -o transports.cloudflare.app_id=... and app_secret=..., or the "
+                "(set --transports.cloudflare.app-id=... and "
+                "--transports.cloudflare.app-secret=..., or the "
                 "TRANSPORTS__CLOUDFLARE__APP_ID / TRANSPORTS__CLOUDFLARE__APP_SECRET env form)"
             )
         self._app_secret = config.app_secret

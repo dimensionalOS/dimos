@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
 import { startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["host", "static-dir"],
+  string: ["host", "static-dir", "cockpit-dir"],
   default: { port: 7780, host: "127.0.0.1" },
 });
 
@@ -25,6 +25,7 @@ const relay = await startRelay({
   port: Number(args.port),
   host,
   staticDir: args["static-dir"],
+  cockpitDir: args["cockpit-dir"],
 });
 
 console.log(JSON.stringify({
@@ -35,6 +36,9 @@ console.log(JSON.stringify({
   v: PROTOCOL_VERSION,
 }));
 const pageHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+if (args["cockpit-dir"] !== undefined) {
+  console.log(`[relay] cockpit: http://${pageHost}:${relay.httpPort}/`);
+}
 console.log(`[relay] debug page: http://${pageHost}:${relay.httpPort}/debug.html`);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

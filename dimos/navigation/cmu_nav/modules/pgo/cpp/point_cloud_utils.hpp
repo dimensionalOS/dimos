@@ -1,24 +1,48 @@
-// Point cloud utility functions for SmartNav native modules.
-// Provides PointCloud2 building/parsing helpers that work with dimos-lcm types.
-// When USE_PCL is defined, also provides PCL interop utilities.
+// Copyright 2026 Dimensional Inc.
+// SPDX-License-Identifier: Apache-2.0
+//
+// PointCloud2 build/parse helpers over dimos-lcm types, plus PCL interop when
+// USE_PCL is defined.
 
 #pragma once
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "sensor_msgs/PointCloud2.hpp"
 #include "sensor_msgs/PointField.hpp"
 #include "std_msgs/Header.hpp"
-
-#include "dimos_native_module.hpp"
+#include "std_msgs/Time.hpp"
 
 #ifdef USE_PCL
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
 #endif
+
+namespace dimos {
+
+inline std_msgs::Time time_from_seconds(double t) {
+    std_msgs::Time ts;
+    ts.sec = static_cast<int32_t>(t);
+    ts.nsec = static_cast<int32_t>((t - ts.sec) * 1e9);
+    return ts;
+}
+
+// Stamped Header with auto-incrementing sequence number.
+inline std_msgs::Header make_header(const std::string& frame_id, double ts) {
+    static std::atomic<int32_t> seq{0};
+    std_msgs::Header h;
+    h.seq = seq.fetch_add(1, std::memory_order_relaxed);
+    h.stamp = time_from_seconds(ts);
+    h.frame_id = frame_id;
+    return h;
+}
+
+}  // namespace dimos
 
 namespace smartnav {
 

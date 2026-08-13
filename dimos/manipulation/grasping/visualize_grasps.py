@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
 GRIPPER_WIDTH = 0.086
 FINGER_LENGTH = 0.052
@@ -30,6 +29,8 @@ VISUALIZATION_FILE = "/tmp/grasp_visualization.json"
 
 
 def create_gripper_geometry(transform: np.ndarray[Any, Any], color: list[float]) -> list[Any]:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     w = GRIPPER_WIDTH / 2.0
     fl = FINGER_LENGTH
     pd = PALM_DEPTH
@@ -52,6 +53,8 @@ def create_gripper_geometry(transform: np.ndarray[Any, Any], color: list[float])
 
 
 def visualize_grasps(point_cloud: np.ndarray[Any, Any], grasps: list[np.ndarray[Any, Any]]) -> None:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     geometries = []
 
     pcd = o3d.geometry.PointCloud()

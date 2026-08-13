@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
 import numpy as np
 
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
@@ -29,6 +28,8 @@ def visualize_path(
     thickness: int = 1,
     scale: int = 8,
 ) -> Image:
+    import cv2
+
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
     bgr = image.data
 

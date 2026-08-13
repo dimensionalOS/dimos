@@ -20,7 +20,7 @@ Use this README to cook and load a package. See
 Python dependencies:
 
 ```bash
-uv sync --extra scene
+uv sync --extra scene --inexact
 ```
 
 External tools:
@@ -196,11 +196,11 @@ dimos --simulation mujoco \
   --viewer rerun \
   --n-workers 12 \
   run unitree-g1-groot-wbc \
-  -o mujocosimmodule.headless=true
+  --headless=true
 ```
 
-Use `headless=true` for normal testing and inspect Rerun. Use
-`headless=false` only when the native MuJoCo window is needed for contact or
+Use `--headless=true` for normal testing and inspect Rerun. Use
+`--headless=false` only when the native MuJoCo window is needed for contact or
 render debugging; it can run much slower.
 
 ## Data Publishing

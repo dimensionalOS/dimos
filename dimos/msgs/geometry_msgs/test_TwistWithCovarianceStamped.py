@@ -161,12 +161,11 @@ def test_twist_with_covariance_stamped_lcm_encode_decode() -> None:
 
 
 def test_twist_with_covariance_stamped_zero_timestamp() -> None:
-    """Test that zero timestamp gets replaced with current time."""
-    twist_cov_stamped = TwistWithCovarianceStamped(ts=0.0)
+    """Test that an explicit zero timestamp is kept, and an omitted one stamps now."""
+    assert TwistWithCovarianceStamped(ts=0.0).ts == 0.0
 
-    # Should have been replaced with current time
-    assert twist_cov_stamped.ts > 0
-    assert twist_cov_stamped.ts <= time.time()
+    before = time.time()
+    assert before <= TwistWithCovarianceStamped().ts <= time.time()
 
 
 def test_twist_with_covariance_stamped_inheritance() -> None:
