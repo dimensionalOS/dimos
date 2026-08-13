@@ -30,6 +30,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import STATE_DIR
 from dimos.core.resource import CompositeResource
 from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, Suite
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -61,7 +62,7 @@ class EvalRunnerConfig(BaseConfig):
     # House convention (StoreConfig): pass an instance to inject, e.g. a fake
     # chat model in tests. None -> built from `model` like McpClient does.
     chat_model: Any | None = None
-    mcp_url: str = "http://localhost:9990/mcp"
+    mcp_url: str | None = None  # None -> localhost:{global_config.mcp_port}/mcp
     live_db: str = "recording.db"  # store the Recorder writes (interactive)
     blind: bool = False  # ablation: context withheld (SPACE guessing check)
     threshold: float = 1.0  # passed = score >= threshold
@@ -69,7 +70,7 @@ class EvalRunnerConfig(BaseConfig):
     context_budget: int = 8  # max observations encoded per context Select
     attach: bool = False  # True: drive an already-running dimos
     launch_timeout_s: float = 1200.0  # blueprint + MCP readiness (e2e parity)
-    out_dir: Path = Path("~/.local/state/dimos/evals").expanduser()
+    out_dir: Path = STATE_DIR / "evals"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -187,7 +188,11 @@ class EvalRunner(Configurable, CompositeResource):
 
     @property
     def mcp_url(self) -> str:
-        return self.config.mcp_url
+        if self.config.mcp_url is not None:
+            return self.config.mcp_url
+        from dimos.core.global_config import global_config
+
+        return f"http://localhost:{global_config.mcp_port}/mcp"
 
     def open_dataset(self, name: str) -> Store:
         from dimos.memory2.cli.dataset import open_dataset
@@ -262,12 +267,12 @@ class EvalRunner(Configurable, CompositeResource):
     def call_skill(self, name: str, args: Mapping[str, object]) -> str:
         from dimos.agents.mcp.mcp_adapter import McpAdapter
 
-        return McpAdapter(self.config.mcp_url).call_tool_text(name, dict(args))
+        return McpAdapter(self.mcp_url).call_tool_text(name, dict(args))
 
     def mcp_ready(self) -> bool:
         from dimos.agents.mcp.mcp_adapter import McpAdapter
 
-        return McpAdapter(self.config.mcp_url).wait_for_ready(timeout=2.0)
+        return McpAdapter(self.mcp_url).wait_for_ready(timeout=2.0)
 
     def agent_loop(self, case: EvalCase) -> str:
         """Fresh create_agent per case over the MCP toolset — the McpClient loop
@@ -278,7 +283,7 @@ class EvalRunner(Configurable, CompositeResource):
 
         from dimos.agents.mcp.mcp_adapter import McpAdapter
 
-        adapter = McpAdapter(self.config.mcp_url)
+        adapter = McpAdapter(self.mcp_url)
         tools = [
             StructuredTool(
                 name=t["name"],
@@ -318,7 +323,7 @@ class EvalRunner(Configurable, CompositeResource):
             proc.start()
             self._proc = proc
         if not self._wait_mcp(self.config.launch_timeout_s):
-            raise RuntimeError(f"MCP at {self.config.mcp_url} not ready — is dimos up?")
+            raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
         if case.setup is not _no_setup:
             from dimos.e2e_tests.dim_sim_client import DimSimClient
 
@@ -330,7 +335,7 @@ class EvalRunner(Configurable, CompositeResource):
         if self.config.attach or not case.simulator:
             if not self.mcp_ready():
                 raise RuntimeError(
-                    f"{case.id}: attach mode needs a running dimos at {self.config.mcp_url}"
+                    f"{case.id}: attach mode needs a running dimos at {self.mcp_url}"
                 )
             return
         import shutil
@@ -341,7 +346,7 @@ class EvalRunner(Configurable, CompositeResource):
     def _wait_mcp(self, timeout: float) -> bool:
         from dimos.agents.mcp.mcp_adapter import McpAdapter
 
-        return McpAdapter(self.config.mcp_url).wait_for_ready(timeout=timeout, interval=2.0)
+        return McpAdapter(self.mcp_url).wait_for_ready(timeout=timeout, interval=2.0)
 
     def instruct(self, text: str) -> None:
         from dimos.core.transport_factory import make_transport
