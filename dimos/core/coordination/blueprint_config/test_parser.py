@@ -264,6 +264,20 @@ def test_transport_options_support_relative_full_and_environment_forms() -> None
     assert from_cli.transport_overrides() == {"provider": {"api_key": "cli-key", "retries": 3}}
 
 
+def test_environment_ignores_unknown_transport_section() -> None:
+    blueprint = PrimaryModule.blueprint()
+    parser = BlueprintConfigParser(blueprint)
+
+    parsed = parser.parse(
+        environ={
+            "TRANSPORTS__BROKER__BROKER_URL": "https://teleop.dimensionalos.com",
+            "TRANSPORTS__BROKER__API_KEY": "",
+        },
+    )
+
+    assert parsed.transport_configs == {}
+
+
 def test_environment_values_coerce_null_and_json_like_cli() -> None:
     parsed = BlueprintConfigParser(PrimaryModule.blueprint(map_file="pinned")).parse(
         environ={
