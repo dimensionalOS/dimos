@@ -40,7 +40,13 @@ import time
 
 from dimos.hardware.manipulators.openyam.adapter import OpenYamAdapter
 
-RATE_HZ = 100.0
+# The CANable 2.0 is a Full-Speed USB device: ~1 CAN frame per ~1 ms libusb
+# round-trip, so sustained bus traffic must stay well under ~1000 frames/s
+# (each command produces a reply AND a TX echo). 50 Hz x 6 joints + 10 Hz
+# gripper ≈ 700 frames/s. At 100 Hz the reader falls behind and motor state
+# goes stale mid-session (observed).
+RATE_HZ = 50.0
+GRIPPER_EVERY_N_TICKS = 5
 
 
 def main() -> int:
@@ -118,7 +124,7 @@ def main() -> int:
                 print("write failed — aborting")
                 exit_code = 2
                 break
-            if gripper_target is not None:
+            if gripper_target is not None and tick % GRIPPER_EVERY_N_TICKS == 0:
                 adapter.write_gripper_position(gripper_target)
 
             try:
@@ -136,7 +142,7 @@ def main() -> int:
             # HUD at 10 Hz only: per-tick font rendering holds the GIL long
             # enough to starve the USB reader thread, and the dongle's FIFO
             # overflows (observed as stale motor state mid-session).
-            if tick % 10 != 0:
+            if tick % 5 != 0:
                 clock.tick(RATE_HZ)
                 continue
 
