@@ -37,7 +37,11 @@ _GRIPPER_BLUEPRINTS = [
 
 
 def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
-    kwargs = next(atom.kwargs for atom in blueprint.blueprints if atom.module is ControlCoordinator)
+    kwargs = next(
+        atom.kwargs
+        for atom in blueprint.blueprints
+        if isinstance(atom.module, type) and issubclass(atom.module, ControlCoordinator)
+    )
     return kwargs["tasks"]
 
 

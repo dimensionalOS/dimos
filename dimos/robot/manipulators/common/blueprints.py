@@ -163,6 +163,7 @@ def teleop_ik_task(
     min_dt: float = 1e-4,
     max_dt: float = 0.05,
     control_ik: PinkControlIKOverrides | None = None,
+    stream_bind: dict[str, str] | None = None,
 ) -> TaskConfig:
     resolved_control_ik = _resolve_control_ik(hardware, robot_model, control_ik)
     task_params: dict[str, Any] = {
@@ -180,6 +181,7 @@ def teleop_ik_task(
         joint_names=robot_model.get_coordinator_joint_names(),
         priority=priority,
         params=task_params,
+        stream_bind=stream_bind or {},
     )
 
 

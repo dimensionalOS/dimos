@@ -204,6 +204,12 @@ misc = [
     "portal",
 ]
 
+spot = [
+    "bosdyn-client>=4.0.0",
+    "bosdyn-api>=4.0.0",
+    "bosdyn-core>=4.0.0",
+]
+
 visualization = [
     "rerun-sdk==0.32.0",
     "dimos-viewer==0.32.0a2",
@@ -226,6 +232,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
 
     # Audio
     "openai",
@@ -594,6 +601,8 @@ exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
 module = [
     "a750_control",
     "a750_control.*",
+    "bosdyn",
+    "bosdyn.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -612,6 +621,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
     "pink",
     "pink.*",

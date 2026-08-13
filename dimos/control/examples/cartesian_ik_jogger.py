@@ -14,8 +14,8 @@
 
 """Pygame-based cartesian jogger for CartesianIKTask.
 
-Publishes PoseStamped commands to the coordinator via LCM.
-The frame_id is used as the task name for routing.
+Publishes PoseStamped commands to the coordinator's cartesian_command
+port via LCM.
 
 Keyboard controls for jogging robot end-effector in world frame:
     W/S: +X/-X (forward/backward)
@@ -123,12 +123,8 @@ class JogState:
             yaw=float(rpy[2]),
         )
 
-    def to_pose_stamped(self, task_name: str) -> Any:
-        """Convert to PoseStamped for LCM publishing.
-
-        Args:
-            task_name: Task name to use as frame_id for routing
-        """
+    def to_pose_stamped(self) -> Any:
+        """Convert to PoseStamped for LCM publishing."""
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -138,7 +134,6 @@ class JogState:
 
         return PoseStamped(
             ts=time.time(),
-            frame_id=task_name,  # Used for task routing
             position=position,
             orientation=orientation,
         )
@@ -152,9 +147,6 @@ ANGULAR_SPEED = 0.5  # rad/s
 X_LIMITS = (-0.5, 0.5)
 Y_LIMITS = (-0.5, 0.5)
 Z_LIMITS = (-0.2, 0.6)
-
-# Task name for routing (must match blueprint config)
-TASK_NAME = "cartesian_ik_arm"
 
 
 def clamp(value: float, min_val: float, max_val: float) -> float:
@@ -188,13 +180,11 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
         model_path = _get_piper_model_path()
 
     print("Starting Cartesian IK Jogger UI...")
-    print("Publishing to /coordinator_cartesian_command")
+    print("Publishing to /cartesian_command")
     print("(Coordinator must be running separately to receive commands)")
 
     # Create LCM publisher for sending cartesian commands
-    transport: LCMTransport[PoseStamped] = LCMTransport(
-        "/coordinator_cartesian_command", PoseStamped
-    )
+    transport: LCMTransport[PoseStamped] = LCMTransport("/cartesian_command", PoseStamped)
 
     # Initialize pygame
     pygame.init()
@@ -209,7 +199,7 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
     current_pose = home_pose.copy()
 
     # Send initial pose via LCM
-    transport.publish(current_pose.to_pose_stamped(TASK_NAME))
+    transport.publish(current_pose.to_pose_stamped())
 
     running = True
     last_time = time.perf_counter()
@@ -276,8 +266,8 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
         current_pose.y = clamp(current_pose.y, *Y_LIMITS)
         current_pose.z = clamp(current_pose.z, *Z_LIMITS)
 
-        # Publish pose via LCM (frame_id = task name for routing)
-        transport.publish(current_pose.to_pose_stamped(TASK_NAME))
+        # Publish pose via LCM
+        transport.publish(current_pose.to_pose_stamped())
 
         # Draw UI
         screen.fill((30, 30, 30))
