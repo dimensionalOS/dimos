@@ -156,6 +156,18 @@ class ZenohConfig(BaseConfig):
         )
 
 
+def native_env(config: ZenohConfig) -> dict[str, str]:
+    """DIMOS_ZENOH_* env vars that mirror this config into a native module."""
+    return {
+        "DIMOS_ZENOH_CONNECT": ",".join(config.connect),
+        "DIMOS_ZENOH_LISTEN": ",".join(config.listen),
+        "DIMOS_ZENOH_MODE": config.mode,
+        "DIMOS_ZENOH_MULTICAST": "true" if config.multicast else "false",
+        "DIMOS_ZENOH_GOSSIP": "true" if config.gossip else "false",
+        "DIMOS_ZENOH_INTERFACE": config.multicast_interface,
+    }
+
+
 class ZenohSessionPool:
     def __init__(self) -> None:
         self._sessions: dict[str, zenoh.Session] = {}
