@@ -56,8 +56,8 @@ LIMITS: dict[str, tuple[float, float, float]] = {
     "DM4340": (12.5, 8.0, 28.0),
 }
 
-# Presumed OpenYAM layout (I2RT YAM convention). If motors don't reply here,
-# check the unexpected-frame log below for the real IDs.
+# OpenYAM layout per PR #3129's OpenYamDamiaoAdapter. If motors don't reply
+# here, check the unexpected-frame log below for the real IDs.
 DEFAULT_MOTORS: list[tuple[int, str]] = [
     (0x01, "DM4340"),  # joint1
     (0x02, "DM4340"),  # joint2
@@ -65,7 +65,7 @@ DEFAULT_MOTORS: list[tuple[int, str]] = [
     (0x04, "DM4310"),  # joint4
     (0x05, "DM4310"),  # joint5
     (0x06, "DM4310"),  # joint6
-    (0x07, "DM4310"),  # gripper
+    (0x08, "DM4310"),  # gripper (0x07 is unused on the bus)
 ]
 
 ENABLE = bytes([0xFF] * 7 + [0xFC])
@@ -160,7 +160,14 @@ def main() -> int:
     )
     print(f"Opening {channel} via {interface} {bus_kwargs or ''}...")
     try:
-        bus = can.Bus(interface=interface, channel=channel, **bus_kwargs)
+        if interface == "gs_usb":
+            # Shared libusb bus: handles candlelight quirks (no kernel
+            # driver to detach, TX endpoint discovery, echo filtering).
+            from dimos.hardware.manipulators.openyam.driver import gs_usb_mac_bus_factory
+
+            bus = gs_usb_mac_bus_factory(bitrate=args.bitrate)()
+        else:
+            bus = can.Bus(interface=interface, channel=channel, **bus_kwargs)
     except Exception as e:
         print(f"ERROR opening {channel}: {e}", file=sys.stderr)
         if interface == "socketcan":

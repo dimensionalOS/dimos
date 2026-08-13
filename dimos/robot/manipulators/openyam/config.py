@@ -40,11 +40,12 @@ OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 YAM_CAN = "can0"
 
 # Gripper motor endpoints in adapter-native units (motor rad) for
-# normalized-command mapping. PLACEHOLDERS pending calibration on a real
-# unit: with the gripper motor zeroed at fully-closed, opening winds the
-# motor positive. Re-zero or override after calibrating.
-OPENYAM_GRIPPER_OPEN_RAD = 1.5
-OPENYAM_GRIPPER_CLOSED_RAD = 0.0
+# normalized-command mapping. Opening DECREASES motor position (per the
+# canonical OpenYamDamiaoAdapter in PR #3129). Magnitudes are PLACEHOLDERS
+# pending calibration: with the motor zeroed fully open, closing winds it
+# positive. Re-zero or override after calibrating.
+OPENYAM_GRIPPER_OPEN_RAD = 0.0
+OPENYAM_GRIPPER_CLOSED_RAD = 1.5
 
 
 def make_openyam_hardware(

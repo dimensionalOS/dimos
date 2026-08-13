@@ -26,6 +26,8 @@ import time
 from typing import Any
 
 from dimos.hardware.manipulators.openyam.driver import (
+    CANABLE_PRODUCT_ID,
+    CANABLE_VENDOR_ID,
     CTRL_MODE_MIT,
     DEFAULT_BITRATE,
     DEFAULT_GRIPPER_MOTOR_TYPE,
@@ -33,6 +35,7 @@ from dimos.hardware.manipulators.openyam.driver import (
     DamiaoMotor,
     MotorType,
     YamBus,
+    gs_usb_mac_bus_factory,
     make_yam_motors,
     resolve_transport,
 )
@@ -99,6 +102,8 @@ class OpenYamAdapter:
         position_lower: list[float] | None = None,
         position_upper: list[float] | None = None,
         auto_set_mit_mode: bool = True,
+        usb_vendor_id: int = CANABLE_VENDOR_ID,
+        usb_product_id: int = CANABLE_PRODUCT_ID,
         **_: Any,
     ) -> None:
         if dof != 6:
@@ -112,6 +117,17 @@ class OpenYamAdapter:
         self._interface = resolved_interface
         self._channel = channel
         self._bus_kwargs = bus_kwargs
+        # gs_usb goes through the shared libusb bus (quirk-handling, macOS
+        # validated) instead of python-can's stock gs_usb backend.
+        self._bus_factory = (
+            gs_usb_mac_bus_factory(
+                bitrate=bitrate,
+                vendor_id=usb_vendor_id,
+                product_id=usb_product_id,
+            )
+            if resolved_interface == "gs_usb"
+            else None
+        )
         self._kp = list(kp) if kp is not None else list(_DEFAULT_KP)
         self._kd = list(kd) if kd is not None else list(_DEFAULT_KD)
         if len(self._kp) != dof or len(self._kd) != dof:
@@ -164,6 +180,7 @@ class OpenYamAdapter:
                 fd=self._fd,
                 interface=self._interface,
                 bus_kwargs=self._bus_kwargs,
+                bus_factory=self._bus_factory,
             )
             self._bus.open()
         except Exception as e:

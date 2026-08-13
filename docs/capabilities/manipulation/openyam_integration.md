@@ -31,9 +31,12 @@ variants (`coordinator-openyam`, …) are unchanged.
 |-------|---------|----------|----------------|
 | joint1–3 | 0x01–0x03 | send \| 0x10 | DM4340 |
 | joint4–6 | 0x04–0x06 | send \| 0x10 | DM4310 |
-| gripper | 0x07 | 0x17 | DM4310 |
+| gripper | 0x08 | 0x18 | DM4310 |
 
-Classical CAN @ 1 Mbit/s, MIT control mode. Overrides (all
+Classical CAN @ 1 Mbit/s, MIT control mode. This matches the topology in
+the canonical Linux-side integration (PR #3129, `OpenYamDamiaoAdapter` on
+`can-motor-control`); opening the gripper decreases motor position.
+Overrides (all
 `adapter_kwargs`): `arm_motor_types`, `motor_ids`, `recv_id_offset`,
 `gripper_motor_id`, `gripper_motor_type`, `kp`, `kd`, `position_lower`,
 `position_upper`, `bitrate`, `interface`.
@@ -66,9 +69,14 @@ sudo ./dimos/robot/manipulators/openyam/scripts/openyam_can_up.sh can0
 
 ### 2b. macOS (no SocketCAN)
 
-The arm ships with a CAN-USB dongle; candlelight/gs_usb firmware (CANable
-2.0 class) is expected. python-can's cross-platform `gs_usb` backend drives
-it via libusb:
+The arm ships with a candlelight-firmware CANable 2.0 (VID:PID
+`1d50:606f`). The adapter drives it through the shared
+`dimos.hardware.can.gs_usb_bus.GsUsbMacBus` — the libusb userspace bus
+hardware-validated on the Galaxea A1Z at a 250 Hz control loop — NOT
+python-can's stock `gs_usb` backend, which mis-handles candlelight
+devices from userspace (kernel-driver detach on a driverless OS, hardcoded
+TX endpoint, unfiltered TX echoes; observed as a wedged dongle that drops
+off USB). Dependencies:
 
 ```bash
 brew install libusb
@@ -92,9 +100,9 @@ anything latency-critical.
 1. Probe → correct `arm_motor_types` / `motor_ids` in
    `dimos/hardware/manipulators/openyam/driver.py` defaults.
 2. Gripper endpoints: `OPENYAM_GRIPPER_OPEN_RAD` / `_CLOSED_RAD` in
-   `dimos/robot/manipulators/openyam/config.py` are placeholders (0.0
-   closed, 1.5 open). Zero the gripper motor closed, open it by hand, read
-   the probe's `q`, set the constant.
+   `dimos/robot/manipulators/openyam/config.py` are placeholders (0.0 open,
+   1.5 closed — opening decreases position). Zero the gripper motor open,
+   close it by hand, read the probe's `q`, set the constant.
 3. Joint limits default to ±π — replace with measured values (or Anvil's
    URDF when published) via `position_lower`/`position_upper`.
 4. No gravity feedforward yet: unlike OpenArm there is no published mass

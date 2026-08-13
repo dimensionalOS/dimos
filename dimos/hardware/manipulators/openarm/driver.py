@@ -20,6 +20,7 @@ Ported from ``enactic/openarm_can`` (C++). No dimos deps — testable with
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import enum
 import errno
@@ -203,6 +204,7 @@ class OpenArmBus:
         fd: bool = False,
         interface: str = "socketcan",
         bus_kwargs: dict[str, object] | None = None,
+        bus_factory: Callable[[], can.BusABC] | None = None,
     ) -> None:
         if not motors:
             raise ValueError("OpenArmBus needs at least one motor")
@@ -221,6 +223,9 @@ class OpenArmBus:
         # Extra kwargs for can.Bus — non-socketcan backends (gs_usb, slcan)
         # need e.g. bitrate/index passed in-process instead of via `ip link`.
         self._bus_kwargs = dict(bus_kwargs or {})
+        # Full override: construct the bus via a caller-supplied factory
+        # (e.g. GsUsbMacBus on macOS) instead of can.Bus(interface=...).
+        self._bus_factory = bus_factory
         self._by_recv: dict[int, DamiaoMotor] = {m.effective_recv_id: m for m in motors}
 
         self._bus: can.BusABC | None = None
@@ -235,9 +240,12 @@ class OpenArmBus:
             return
         import can  # local import — python-can is optional
 
-        self._bus = can.Bus(
-            interface=self._interface, channel=self._channel, fd=self._fd, **self._bus_kwargs
-        )
+        if self._bus_factory is not None:
+            self._bus = self._bus_factory()
+        else:
+            self._bus = can.Bus(
+                interface=self._interface, channel=self._channel, fd=self._fd, **self._bus_kwargs
+            )
         self._rx_stop.clear()
         self._rx_thread = threading.Thread(
             target=self._rx_loop, name=f"openarm-rx-{self._channel}", daemon=True

@@ -24,12 +24,11 @@ YAM-specific:
   userspace backend (``gs_usb``/``slcan``) on macOS, where SocketCAN does
   not exist.
 
-CAUTION — hardware assumptions, not yet vendor-confirmed: Anvil has not
-published the OpenYAM's motor BOM or CAN ID map (their docs list Damiao,
-Robstride and MyActuator as candidate vendors, "MIT / POS" control). The
-defaults below follow the I2RT YAM convention the OpenYAM is patterned
-after: Damiao motors, send IDs 1..6 for joints + 7 for the gripper,
-1 Mbit/s classical CAN, reply ID = send ID | 0x10. Verify with
+Motor layout matches the topology in the canonical Linux-side integration
+(PR #3129, ``OpenYamDamiaoAdapter``): Damiao DM4340 x3 + DM4310 x3 on send
+IDs 1..6 (reply = send | 0x10), DM4310 gripper on 0x08/0x18, 1 Mbit/s
+classical CAN. Opening the gripper *decreases* motor position. Not yet
+validated against physical hardware from this driver — verify with
 ``dimos/robot/manipulators/openyam/scripts/openyam_can_probe.py`` before
 enabling motors, and override via adapter kwargs where reality differs.
 Wrong motor *types* mis-scale velocity/torque quantization (position range
@@ -49,6 +48,8 @@ from dimos.hardware.manipulators.openarm.driver import (
 )
 
 __all__ = [
+    "CANABLE_PRODUCT_ID",
+    "CANABLE_VENDOR_ID",
     "CTRL_MODE_MIT",
     "DEFAULT_ARM_MOTOR_TYPES",
     "DEFAULT_BITRATE",
@@ -58,6 +59,7 @@ __all__ = [
     "MotorState",
     "MotorType",
     "YamBus",
+    "gs_usb_mac_bus_factory",
     "resolve_transport",
 ]
 
@@ -78,8 +80,14 @@ DEFAULT_ARM_MOTOR_TYPES: list[MotorType] = [
     MotorType.DM4310,  # joint5
     MotorType.DM4310,  # joint6
 ]
-DEFAULT_GRIPPER_SEND_ID = 0x07
+# Gripper per PR #3129's OpenYamDamiaoAdapter: DM4310 at 0x08/0x18, and
+# opening the gripper decreases motor position.
+DEFAULT_GRIPPER_SEND_ID = 0x08
 DEFAULT_GRIPPER_MOTOR_TYPE = MotorType.DM4310
+
+# candlelight-firmware CANable 2.0, the dongle Anvil ships with the OpenYAM
+CANABLE_VENDOR_ID = 0x1D50
+CANABLE_PRODUCT_ID = 0x606F
 
 
 def resolve_transport(
@@ -124,6 +132,34 @@ def resolve_transport(
     if interface == "slcan":
         return interface, address, {"bitrate": bitrate}
     return interface, address, {}
+
+
+def gs_usb_mac_bus_factory(
+    *,
+    bitrate: int = DEFAULT_BITRATE,
+    vendor_id: int = CANABLE_VENDOR_ID,
+    product_id: int = CANABLE_PRODUCT_ID,
+):
+    """Return a zero-arg factory building the shared libusb gs_usb bus.
+
+    This is the macOS transport: python-can's stock ``gs_usb`` backend
+    mis-handles candlelight adapters from userspace (kernel-driver detach,
+    hardcoded TX endpoint, unfiltered TX echoes), while
+    ``dimos.hardware.can.gs_usb_bus.GsUsbMacBus`` handles those quirks and
+    is hardware-validated at a 250 Hz control loop on the Galaxea A1Z.
+    """
+
+    def _factory():
+        from dimos.hardware.can.gs_usb_bus import GsUsbMacBus
+
+        return GsUsbMacBus(
+            "gs_usb",
+            vendor_id=vendor_id,
+            product_id=product_id,
+            bitrate=bitrate,
+        )
+
+    return _factory
 
 
 def make_yam_motors(
