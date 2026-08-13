@@ -300,12 +300,6 @@ def test_build_native_forces_build(tmp_path: Path) -> None:
 
 def _spawn_env(monkeypatch, transport: str) -> dict[str, str]:
     """Env the native subprocess would be spawned with, without spawning it."""
-    captured: dict[str, str] = {}
-
-    def fake_popen(cmd: list[str], **kwargs: object) -> None:
-        captured.update(kwargs["env"])  # type: ignore[call-overload]
-        raise RuntimeError("spawn intercepted")
-
     for key in list(os.environ):
         if key.startswith("DIMOS_ZENOH_"):
             monkeypatch.delenv(key)
@@ -314,16 +308,13 @@ def _spawn_env(monkeypatch, transport: str) -> dict[str, str]:
     monkeypatch.setattr(native_module_mod.global_config, "robot_ips", None)
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_interface", "")
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
-    # Built before Popen is patched: pydantic resolves the class's
-    # subprocess.Popen annotation during construction.
-    module = StubNativeModule(executable=_ECHO)
-    monkeypatch.setattr(native_module_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
+    # A port-less module: constructing one with ports opens its transports.
+    module = StubBuildModule(executable=_ECHO)
     try:
-        with pytest.raises(RuntimeError, match="spawn intercepted"):
-            module.start()
+        return module._spawn_env()
     finally:
         module.stop()
-    return captured
 
 
 def test_zenoh_spawn_env_pins_the_session(monkeypatch) -> None:

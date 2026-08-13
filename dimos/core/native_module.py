@@ -220,6 +220,24 @@ class NativeModule(Module):
         super().build()
         self._maybe_build()
 
+    def _spawn_env(self) -> dict[str, str]:
+        """Env for the native subprocess, carrying transport and logging config."""
+        env = {**os.environ, **self.config.extra_env}
+
+        # set transport so native modules know which one to spawn
+        env["DIMOS_TRANSPORT"] = global_config.transport
+
+        if global_config.transport == "zenoh":
+            from dimos.protocol.service.zenohservice import ZenohConfig, native_env
+
+            env.update(native_env(ZenohConfig()))
+
+        # set Rust logging to match Python level
+        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+        )
+        return env
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -250,20 +268,7 @@ class NativeModule(Module):
                 blob["qos"] = qos
             stdin_blob = json.dumps(blob).encode() + b"\n"
 
-        env = {**os.environ, **self.config.extra_env}
-
-        # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = global_config.transport
-
-        if global_config.transport == "zenoh":
-            from dimos.protocol.service.zenohservice import ZenohConfig, native_env
-
-            env.update(native_env(ZenohConfig()))
-
-        # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env = self._spawn_env()
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
