@@ -220,7 +220,11 @@ fn merge_qos(defaults: &Value, overrides: Option<&Value>, suppress: &[String]) -
 }
 
 /// The effective suppression list: the baked one unless stdin replaces it.
-fn resolve_suppress(spec: &HostSpec, stdin: &Value) -> io::Result<Vec<String>> {
+///
+/// A stdin entry names a channel (`local_map`) or a full topic, like the CLI's
+/// `--suppress`. An entry matching nothing this host touches is an error: a
+/// typo must not silently publish the topic it meant to keep in-process.
+fn resolve_suppress(spec: &HostSpec, stdin: &Value, known: &[String]) -> io::Result<Vec<String>> {
     let Some(value) = stdin.get("suppress") else {
         return Ok(spec
             .default_suppress
@@ -231,13 +235,27 @@ fn resolve_suppress(spec: &HostSpec, stdin: &Value) -> io::Result<Vec<String>> {
     let list = value
         .as_array()
         .ok_or_else(|| invalid("`suppress` must be an array of topic strings"))?;
-    list.iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_string)
-                .ok_or_else(|| invalid("`suppress` entries must be topic strings"))
-        })
-        .collect()
+    let mut resolved: Vec<String> = Vec::new();
+    for value in list {
+        let entry = value
+            .as_str()
+            .ok_or_else(|| invalid("`suppress` entries must be topic strings"))?;
+        let matches: Vec<&String> = known
+            .iter()
+            .filter(|t| t.as_str() == entry || t.split('/').nth(1) == Some(entry))
+            .collect();
+        if matches.is_empty() {
+            return Err(invalid(format!(
+                "`suppress` names `{entry}`, which no baked module touches"
+            )));
+        }
+        for topic in matches {
+            if !resolved.contains(topic) {
+                resolved.push(topic.clone());
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 /// Deserialize and validate every module's config before anything runs, so a
@@ -282,6 +300,22 @@ fn prepare_all(spec: &HostSpec, stdin: &Value) -> io::Result<Vec<Prepared>> {
         prepared.push(one);
     }
     Ok(prepared)
+}
+
+/// Refuse an LCM session over zenoh-shaped topics. The keys a bake emits
+/// (`dimos/<name>/<type>`) name nothing on the LCM bus, so the host would run,
+/// log a clean wiring table and exchange no messages at all.
+fn check_topics_match_transport(transport: &str, known: &[String]) -> io::Result<()> {
+    if transport != "lcm" {
+        return Ok(());
+    }
+    if let Some(topic) = known.iter().find(|t| t.starts_with("dimos/")) {
+        return Err(invalid(format!(
+            "DIMOS_TRANSPORT=lcm but topic `{topic}` is zenoh-shaped; this config \
+             was baked for zenoh"
+        )));
+    }
+    Ok(())
 }
 
 async fn open_transport(launch: &Value) -> io::Result<SharedTransport> {
@@ -332,8 +366,15 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         .build()?;
 
     let stdin = main_rt.block_on(read_launch_config())?;
-    let suppress = resolve_suppress(spec, &stdin)?;
     let prepared = prepare_all(spec, &stdin)?;
+    let known: Vec<String> = prepared
+        .iter()
+        .flat_map(|p| p.topics.values().cloned())
+        .collect();
+    let suppress = resolve_suppress(spec, &stdin, &known)?;
+    if let Ok(transport) = std::env::var("DIMOS_TRANSPORT") {
+        check_topics_match_transport(&transport, &known)?;
+    }
 
     let transport = Arc::new(main_rt.block_on(open_transport(&stdin))?);
     let qos = merge_qos(
@@ -519,7 +560,7 @@ mod tests {
     fn suppress_defaults_to_the_baked_list() {
         let spec = spec_with("{}");
         assert_eq!(
-            resolve_suppress(&spec, &json!({})).unwrap(),
+            resolve_suppress(&spec, &json!({}), &[]).unwrap(),
             vec!["dimos/global_map".to_string()]
         );
     }
@@ -527,7 +568,7 @@ mod tests {
     #[test]
     fn an_empty_stdin_suppress_list_unsuppresses_everything() {
         let spec = spec_with("{}");
-        assert!(resolve_suppress(&spec, &json!({"suppress": []}))
+        assert!(resolve_suppress(&spec, &json!({"suppress": []}), &[])
             .unwrap()
             .is_empty());
     }
@@ -535,7 +576,41 @@ mod tests {
     #[test]
     fn a_non_array_suppress_is_rejected() {
         let spec = spec_with("{}");
-        assert!(resolve_suppress(&spec, &json!({"suppress": "dimos/x"})).is_err());
+        assert!(resolve_suppress(&spec, &json!({"suppress": "dimos/x"}), &[]).is_err());
+    }
+
+    #[test]
+    fn lcm_over_zenoh_shaped_topics_is_refused() {
+        let known = vec!["dimos/local_map/sensor_msgs.PointCloud2".to_string()];
+        assert!(check_topics_match_transport("lcm", &known).is_err());
+        assert!(check_topics_match_transport("zenoh", &known).is_ok());
+        assert!(check_topics_match_transport("lcm", &["/local_map".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn a_channel_name_suppress_entry_resolves_to_the_full_topic() {
+        let spec = spec_with("{}");
+        let known = vec!["dimos/local_map/sensor_msgs.PointCloud2".to_string()];
+        assert_eq!(
+            resolve_suppress(&spec, &json!({"suppress": ["local_map"]}), &known).unwrap(),
+            known
+        );
+    }
+
+    #[test]
+    fn a_full_topic_suppress_entry_is_kept() {
+        let spec = spec_with("{}");
+        let known = vec!["dimos/local_map/sensor_msgs.PointCloud2".to_string()];
+        let stdin = json!({"suppress": ["dimos/local_map/sensor_msgs.PointCloud2"]});
+        assert_eq!(resolve_suppress(&spec, &stdin, &known).unwrap(), known);
+    }
+
+    #[test]
+    fn a_suppress_entry_matching_no_topic_is_rejected() {
+        let spec = spec_with("{}");
+        let known = vec!["dimos/local_map/sensor_msgs.PointCloud2".to_string()];
+        let err = resolve_suppress(&spec, &json!({"suppress": ["local_mpa"]}), &known).unwrap_err();
+        assert!(err.to_string().contains("local_mpa"));
     }
 
     #[test]
