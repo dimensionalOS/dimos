@@ -70,13 +70,26 @@ def main() -> int:
     if not adapter.write_enable(True):
         adapter.disconnect()
         sys.exit("enable failed")
-    time.sleep(0.05)
-    try:
-        q_start = adapter.read_joint_positions()
-    except RuntimeError as e:
+    # Motors reply only to command frames; retry the initial read for a
+    # couple of seconds, re-pulsing enable (each pulse elicits one state
+    # reply per motor) instead of failing on the first 50 ms.
+    q_start = None
+    last_err: Exception | None = None
+    deadline = time.monotonic() + 2.5
+    while q_start is None and time.monotonic() < deadline:
+        try:
+            q_start = adapter.read_joint_positions()
+        except RuntimeError as e:
+            last_err = e
+            adapter.write_enable(True)
+            # Short wait only: the state reply lands within ms of the enable
+            # pulse, and the freshness window is 100 ms — sleeping 0.1 s here
+            # made every read exactly stale.
+            time.sleep(0.03)
+    if q_start is None:
         adapter.write_enable(False)
         adapter.disconnect()
-        sys.exit(f"no joint state — replug the dongle and retry ({e})")
+        sys.exit(f"no joint state after 2.5s — replug the dongle and retry ({last_err})")
 
     q_target = list(q_start)
     gripper_target = adapter.read_gripper_position()
@@ -95,6 +108,9 @@ def main() -> int:
     running = True
     exit_code = 0
     tick = 0
+    t0 = time.monotonic()
+    stall_started: float | None = None
+    q_now = list(q_start)
     try:
         while running:
             tick += 1
@@ -131,12 +147,27 @@ def main() -> int:
             if gripper_target is not None and tick % GRIPPER_EVERY_N_TICKS == 0:
                 adapter.write_gripper_position(gripper_target)
 
+            # Tolerate sub-second state dropouts (transient RX stalls happen
+            # on this dongle): hold the last known state, log the stall, and
+            # abort only if the blackout exceeds 1.0 s. Jog speed and range
+            # clamps bound the blind travel to well under 0.2 rad.
             try:
                 q_now = adapter.read_joint_positions()
+                if stall_started is not None:
+                    print(
+                        f"t={time.monotonic() - t0:7.2f}s stall ended after "
+                        f"{time.monotonic() - stall_started:.2f}s",
+                        flush=True,
+                    )
+                    stall_started = None
             except RuntimeError as e:
-                print(f"state loss — aborting ({e})")
-                exit_code = 2
-                break
+                if stall_started is None:
+                    stall_started = time.monotonic()
+                    print(f"t={time.monotonic() - t0:7.2f}s stall began ({e})", flush=True)
+                elif time.monotonic() - stall_started > 1.0:
+                    print(f"state blackout >1s — aborting ({e})")
+                    exit_code = 2
+                    break
             worst = max(abs(a - b) for a, b in zip(q_now, q_target, strict=True))
             if worst > args.abort_error:
                 print(f"tracking error {worst:.3f} rad — aborting")
