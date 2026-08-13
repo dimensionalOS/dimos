@@ -26,10 +26,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
-from typing import Any
+from typing import Annotated, Any
 
-import attrs
-from pydantic import Field
+from pydantic import BeforeValidator, ConfigDict, Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from dimos.control.task import (
     BaseControlTask,
@@ -95,7 +95,10 @@ def _to_joint_names(value: Sequence[str]) -> tuple[str, ...]:
     return tuple(value)
 
 
-@attrs.frozen(slots=False)
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", validate_default=True),
+)
 class JointTrajectoryTaskConfig:
     """Configuration for trajectory task.
 
@@ -106,27 +109,15 @@ class JointTrajectoryTaskConfig:
             position and the first trajectory point.
     """
 
-    joint_names: tuple[str, ...] = attrs.field(
-        converter=_to_joint_names,
-        validator=attrs.validators.deep_iterable(
-            member_validator=attrs.validators.and_(
-                attrs.validators.instance_of(str),
-                attrs.validators.min_len(1),
-            ),
-            iterable_validator=attrs.validators.min_len(1),
-        ),
-    )
-    priority: int = attrs.field(
-        default=10,
-        validator=attrs.validators.instance_of(int),
-    )
-    start_position_tolerance: float = attrs.field(
+    joint_names: Annotated[
+        tuple[Annotated[str, Field(min_length=1)], ...],
+        BeforeValidator(_to_joint_names),
+    ] = Field(min_length=1)
+    priority: int = Field(default=10, strict=True)
+    start_position_tolerance: float = Field(
         default=0.05,
-        converter=float,
-        validator=attrs.validators.and_(
-            attrs.validators.ge(0.0),
-            attrs.validators.lt(math.inf),
-        ),
+        ge=0.0,
+        allow_inf_nan=False,
     )
 
 

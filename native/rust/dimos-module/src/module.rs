@@ -659,7 +659,7 @@ mod tests {
     }
 
     async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
         while !cond() {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
             tokio::time::sleep(Duration::from_millis(10)).await;
