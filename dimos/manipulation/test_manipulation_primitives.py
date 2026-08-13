@@ -36,6 +36,7 @@ from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -106,7 +107,8 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
     assert result.succeeded
     targets, config = generate.call_args.args
-    [relative] = targets["arm/tool"]
+    start, relative = targets["arm/tool"]
+    assert start == Transform.identity()
     assert relative.translation.x == pytest.approx(0.02)
     assert relative.translation.y == pytest.approx(0.0)
     assert relative.translation.z == pytest.approx(-0.01)

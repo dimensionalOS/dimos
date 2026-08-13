@@ -1086,7 +1086,7 @@ class ManipulationModule(Module):
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
         plan = self.generate_cartesian_plan(
-            {group.id: (relative,)},
+            {group.id: (Transform.identity(), relative)},
             config,
             speed_scale=resolved_speed,
             check_collision=check_collision,
