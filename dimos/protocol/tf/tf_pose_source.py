@@ -20,7 +20,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 class TfPoseSourceConfig(ModuleConfig):
     target_frame: str = "world"
     source_frame: str = "base_link"
-    tf_tolerance_s: float = 0.1
     publish_rate_hz: float = 10.0
 
 
@@ -34,8 +33,6 @@ class TfPoseSource(Module):
         super().__init__(**kwargs)
         if self.pose_config.publish_rate_hz <= 0.0:
             raise ValueError("publish_rate_hz must be positive")
-        if self.pose_config.tf_tolerance_s < 0.0:
-            raise ValueError("tf_tolerance_s must be non-negative")
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -55,13 +52,14 @@ class TfPoseSource(Module):
         super().stop()
 
     def tick(self) -> bool:
-        """Publish one sample, returning false when TF is unavailable or stale."""
+        """Publish one sample, returning false when TF is unavailable."""
         config = self.pose_config
+        # Forward the latest sample with its original source timestamp. The consumer
+        # compares that timestamp with the sensor capture timestamp; wall-clock age
+        # here includes normal render and transport latency and is not synchronization.
         transform = self.tf.get(
             config.target_frame,
             config.source_frame,
-            time_point=time.time(),
-            time_tolerance=config.tf_tolerance_s,
         )
         if transform is None:
             return False

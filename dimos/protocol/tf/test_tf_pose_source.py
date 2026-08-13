@@ -28,7 +28,7 @@ def _module(**kwargs: object) -> TfPoseSource:
 
 
 def test_pose_source_publishes_pose_only_odometry() -> None:
-    module = _module(target_frame="world", source_frame="camera", tf_tolerance_s=1.0)
+    module = _module(target_frame="world", source_frame="camera")
     published: list[Odometry] = []
     module.odometry.publish = published.append  # type: ignore[method-assign]
     transform = Transform(
@@ -49,22 +49,35 @@ def test_pose_source_publishes_pose_only_odometry() -> None:
     module.stop()
 
 
-def test_pose_source_reports_missing_or_stale_tf_without_publishing() -> None:
-    module = _module(tf_tolerance_s=0.05)
+def test_pose_source_reports_missing_tf_without_publishing() -> None:
+    module = _module()
     published: list[Odometry] = []
     module.odometry.publish = published.append  # type: ignore[method-assign]
 
-    assert not module.tick()
-    module.tf.receive_transform(
-        Transform(frame_id="world", child_frame_id="base_link", ts=time.time() - 10.0)
-    )
     assert not module.tick()
     assert published == []
     module.stop()
 
 
+def test_pose_source_forwards_latest_capture_even_when_publication_is_delayed() -> None:
+    module = _module()
+    published: list[Odometry] = []
+    module.odometry.publish = published.append  # type: ignore[method-assign]
+    capture_time = time.time() - 0.05
+    try:
+        module.tf.receive_transform(
+            Transform(frame_id="world", child_frame_id="base_link", ts=capture_time)
+        )
+
+        assert module.tick()
+        assert len(published) == 1
+        assert published[0].ts == capture_time
+    finally:
+        module.stop()
+
+
 def test_pose_source_fixed_rate_lifecycle() -> None:
-    module = _module(publish_rate_hz=20.0, tf_tolerance_s=1.0)
+    module = _module(publish_rate_hz=20.0)
     published: list[Odometry] = []
     module.odometry.publish = published.append  # type: ignore[method-assign]
     module.tf.receive_transform(

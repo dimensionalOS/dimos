@@ -78,7 +78,6 @@ def test_demo_is_simulation_only_and_pose_feeds_voxel_odometry() -> None:
     pose_kwargs = _atom(TfPoseSource).kwargs
     assert pose_kwargs["target_frame"] == "world"
     assert pose_kwargs["source_frame"] == "wrist_camera_color_optical_frame"
-    assert pose_kwargs["tf_tolerance_s"] == 0.02
     assert pose_kwargs["publish_rate_hz"] == 50.0
 
     pose_out = next(stream for stream in _atom(TfPoseSource).streams if stream.name == "odometry")

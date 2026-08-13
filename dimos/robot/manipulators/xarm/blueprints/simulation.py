@@ -86,7 +86,6 @@ xarm_voxel_planning_viser_demo = (
         TfPoseSource.blueprint(
             target_frame="world",
             source_frame="wrist_camera_color_optical_frame",
-            tf_tolerance_s=0.02,
             publish_rate_hz=50.0,
         ),
         RayTracingVoxelMap.blueprint(
