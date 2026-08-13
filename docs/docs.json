@@ -54,6 +54,7 @@
           "usage/camera_calibration",
           "usage/native_modules",
           "usage/tool_streams",
+          "usage/evals",
           {
             "group": "Data streams",
             "pages": [
@@ -290,6 +291,10 @@
     {
       "source": "/docs/usage/tool_streams.md",
       "destination": "/usage/tool_streams"
+    },
+    {
+      "source": "/docs/usage/evals.md",
+      "destination": "/usage/evals"
     },
     {
       "source": "/docs/usage/data_streams/index.md",

@@ -232,6 +232,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
 
     # Audio
     "openai",
@@ -620,6 +621,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
     "pink",
     "pink.*",

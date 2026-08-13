@@ -803,6 +803,10 @@ from dimos.memory2.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
 
+from dimos.evals.cli import app as evals_app
+
+main.add_typer(evals_app, name="evals")
+
 
 @main.command()
 def cameracalibrate(
