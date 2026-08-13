@@ -23,7 +23,8 @@ from __future__ import annotations
 import os
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task_config import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport

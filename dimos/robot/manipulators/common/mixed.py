@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, joint_trajectory_task
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

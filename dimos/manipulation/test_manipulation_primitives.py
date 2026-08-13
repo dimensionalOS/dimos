@@ -41,18 +41,26 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
-def _robot() -> RobotModelConfig:
+def _robot(
+    name: str = "arm",
+    *,
+    tip_link: str | None = "tcp",
+    gripper: bool = False,
+    home: list[float] | None = None,
+) -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
+        name=name,
         model_path=Path("/robot.urdf"),
         joint_names=["j0"],
         base_link="base",
+        home_joints=home,
+        gripper_hardware_id="gripper" if gripper else None,
         planning_groups=[
             PlanningGroupDefinition(
                 name="tool",
                 joint_names=("j0",),
                 base_link="base",
-                tip_link="tcp",
+                tip_link=tip_link,
             )
         ],
     )
@@ -63,18 +71,20 @@ def _plan() -> GeneratedPlan:
     return GeneratedPlan(
         group_ids=("arm/tool",),
         status=PlanningStatus.SUCCESS,
-        path=[
-            JointState(name=names, position=[0.0]),
-            JointState(name=names, position=[0.1]),
-        ],
         trajectory=JointTrajectory(
             joint_names=names,
             points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[0.1], velocities=[0.0], time_from_start=1.0),
+                TrajectoryPoint(positions=[0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[0.1], time_from_start=1.0),
             ],
         ),
     )
+
+
+def _set_groups(module, *robots: RobotModelConfig) -> None:
+    module._robots = {robot.name: (f"{robot.name}_id", robot) for robot in robots}
+    module._world_monitor = MagicMock()
+    module._world_monitor.planning_groups = PlanningGroupRegistry(robots)
 
 
 def test_move_linear_uses_world_relative_target_and_default_speed(
@@ -83,9 +93,7 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 ) -> None:
     module = module_factory()
     robot = _robot()
-    module._robots = {"arm": ("arm_id", robot)}
-    module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([robot])
+    _set_groups(module, robot)
     generated = _plan()
     generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=generated)
     execute = mocker.patch.object(
@@ -109,16 +117,9 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
-    robot = _robot().model_copy(
-        update={
-            "home_joints": [0.3],
-            "gripper_hardware_id": "gripper",
-        }
-    )
-    module._robots = {"arm": ("arm_id", robot)}
+    robot = _robot(gripper=True, home=[0.3])
+    _set_groups(module, robot)
     module._init_joints = {"arm": JointState(name=["j0"], position=[-0.2])}
-    module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([robot])
     module._world_monitor.current_group_joint_state.return_value = JointState(
         name=["arm/j0"], position=[0.1]
     )
@@ -137,13 +138,8 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
     module = module_factory()
     left = _robot()
-    right = _robot().model_copy(update={"name": "other"})
-    module._robots = {
-        "arm": ("arm_id", left),
-        "other": ("other_id", right),
-    }
-    module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([left, right])
+    right = _robot("other")
+    _set_groups(module, left, right)
 
     result = module.move_linear(dx=0.01)
 
@@ -153,20 +149,8 @@ def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
 
 def test_explicit_group_must_support_requested_capability(module_factory) -> None:
     module = module_factory()
-    robot = _robot().model_copy(
-        update={
-            "planning_groups": [
-                PlanningGroupDefinition(
-                    name="tool",
-                    joint_names=("j0",),
-                    base_link="base",
-                )
-            ]
-        }
-    )
-    module._robots = {"arm": ("arm_id", robot)}
-    module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([robot])
+    robot = _robot(tip_link=None)
+    _set_groups(module, robot)
 
     pose_result = module._resolve_pose_group("arm/tool")
     gripper_result = module._resolve_gripper_group("arm/tool")
@@ -180,18 +164,8 @@ def test_explicit_group_must_support_requested_capability(module_factory) -> Non
 def test_omitted_group_selects_unique_capable_group(module_factory) -> None:
     module = module_factory()
     plain = _robot()
-    gripper = _robot().model_copy(
-        update={
-            "name": "gripper_arm",
-            "gripper_hardware_id": "gripper",
-        }
-    )
-    module._robots = {
-        "arm": ("arm_id", plain),
-        "gripper_arm": ("gripper_arm_id", gripper),
-    }
-    module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([plain, gripper])
+    gripper = _robot("gripper_arm", gripper=True)
+    _set_groups(module, plain, gripper)
 
     result = module._resolve_gripper_group(None)
 

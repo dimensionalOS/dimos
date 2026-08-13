@@ -24,8 +24,8 @@ import numpy as np
 import pinocchio
 from pydantic import Field, FiniteFloat
 
-from dimos.control.coordinator import TaskConfig
 from dimos.control.task import CoordinatorState, JointCommandOutput, ResourceClaim
+from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
     CartesianIKTask,
     CartesianIKTaskConfig,

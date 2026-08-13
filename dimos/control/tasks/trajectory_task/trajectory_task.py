@@ -38,6 +38,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.task_config import TaskConfig
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.service.spec import BaseConfig
@@ -46,6 +47,21 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
+
+
+def joint_trajectory_task(
+    joint_names: Sequence[str],
+    priority: int = 10,
+    start_position_tolerance: float = 0.05,
+) -> TaskConfig:
+    """Build the coordinator's single canonical joint-trajectory task."""
+    return TaskConfig(
+        name=JOINT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(joint_names),
+        priority=priority,
+        params={"start_position_tolerance": start_position_tolerance},
+    )
 
 
 class TrajectoryExecutionStatus(Enum):

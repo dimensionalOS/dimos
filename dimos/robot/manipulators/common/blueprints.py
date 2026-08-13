@@ -20,7 +20,9 @@ from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
-from dimos.control.coordinator import ControlCoordinator, TaskConfig, joint_trajectory_task
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task_config import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig

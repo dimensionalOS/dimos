@@ -16,7 +16,8 @@ from typing import Any, cast
 
 import pytest
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task_config import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z

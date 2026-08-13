@@ -25,9 +25,8 @@ Features:
 - Aggregated preemption notifications
 """
 
-from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import field
 import inspect
 import threading
 import time
@@ -49,8 +48,8 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
+from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -79,35 +78,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = setup_logger()
-
-
-@dataclass
-class TaskConfig:
-    """Configuration for a registered control task."""
-
-    name: str
-    type: str = "trajectory"
-    joint_names: list[str] = field(default_factory=lambda: [])
-    priority: int = 10
-    auto_start: bool = False
-    params: dict[str, Any] = field(default_factory=dict)
-    # card input name -> the port this instance reads instead
-    stream_bind: dict[str, str] = field(default_factory=dict)
-
-
-def joint_trajectory_task(
-    joint_names: Sequence[str],
-    priority: int = 10,
-    start_position_tolerance: float = 0.05,
-) -> TaskConfig:
-    """Build the coordinator's single canonical joint-trajectory task."""
-    return TaskConfig(
-        name=JOINT_TRAJECTORY_TASK_NAME,
-        type="trajectory",
-        joint_names=list(joint_names),
-        priority=priority,
-        params={"start_position_tolerance": start_position_tolerance},
-    )
 
 
 class ControlCoordinatorConfig(ModuleConfig):
@@ -147,7 +117,8 @@ class ControlCoordinator(Module):
     Example:
         >>> from dimos.control.components import HardwareComponent, HardwareType
         >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator, joint_trajectory_task
+        >>> from dimos.control.coordinator import ControlCoordinator
+        >>> from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
         >>>
         >>> coordinator = ControlCoordinator.blueprint(
         ...     tick_rate=100.0,

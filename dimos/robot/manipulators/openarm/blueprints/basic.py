@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task_config import TaskConfig
 from dimos.robot.manipulators.common.blueprints import trajectory_task
 from dimos.robot.manipulators.openarm.config import (
     LEFT_CAN,

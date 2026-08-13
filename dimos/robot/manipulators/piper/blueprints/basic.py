@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, joint_trajectory_task
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import PIPER_SIM_PATH, piper_hardware

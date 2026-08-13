@@ -23,8 +23,8 @@ import pinocchio
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.control.coordinator import TaskConfig
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.task_config import TaskConfig
 from dimos.control.tasks.cartesian_ik_task.pink_control_ik import (
     ControlIKResult,
     IKControlRuntimeError,
