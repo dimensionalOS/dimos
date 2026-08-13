@@ -72,6 +72,28 @@ PATH_PALETTE = [
     [255, 255, 120],
 ]
 
+# Sampled from the turbo colormap, low to high. Shared across both metric plots
+# so a given color reads the same in either.
+TURBO_BLUE = [70, 102, 221]
+TURBO_GREEN = [121, 254, 89]
+TURBO_ORANGE = [245, 105, 24]
+TURBO_RED = [195, 37, 3]
+
+# Each series is (metric key, entity suffix, legend label, color). The suffix
+# sorts the legend top-to-bottom; the label overrides the displayed name.
+TIMING_SERIES = [
+    ("total_ms", "1_total", "total", TURBO_ORANGE),
+    ("update_ms", "2_update", "update", TURBO_GREEN),
+    ("plan_ms", "3_plan", "plan", TURBO_BLUE),
+]
+
+SIZE_SERIES = [
+    ("voxels", "1_voxels", "voxels", TURBO_RED),
+    ("surface_cells", "2_surfaces", "surfaces", TURBO_ORANGE),
+    ("edges", "3_edges", "edges", TURBO_GREEN),
+    ("nodes", "4_nodes", "nodes", TURBO_BLUE),
+]
+
 
 class LocalCrop(NamedTuple):
     """Cylinder around the robot's feet that the close-up view shows."""
@@ -358,6 +380,13 @@ def _init_recording(db_path: FsPath, out: FsPath | None, live: bool, crop: Local
         rr.spawn()
     rr.send_blueprint(_blueprint(crop))
     register_colormap_annotation("turbo")
+    for group, series in (("timing", TIMING_SERIES), ("size", SIZE_SERIES)):
+        for _key, suffix, name, color in series:
+            rr.log(
+                f"metrics/{group}/{suffix}",
+                rr.SeriesLines(colors=[color], names=[name]),
+                static=True,
+            )
 
 
 def _build_planners(
@@ -430,16 +459,16 @@ def _process_frame(
                 start, planner, render_voxel, clearance_clamp, hard_clearance, crop
             )
 
-    for key, value in ref_timing.items():
-        rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in TIMING_SERIES:
+        rr.log(f"metrics/timing/{suffix}", rr.Scalars(ref_timing[key]))
     sizes = {
         "voxels": planners[0][2].voxel_count(),
         "surface_cells": len(surface),
         "nodes": len(nodes),
         "edges": len(edges),
     }
-    for key, value in sizes.items():
-        rr.log(f"metrics/size/{key}", rr.Scalars(value))
+    for key, suffix, _name, _color in SIZE_SERIES:
+        rr.log(f"metrics/size/{suffix}", rr.Scalars(sizes[key]))
     return ref_timing
 
 
