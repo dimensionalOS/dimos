@@ -46,6 +46,7 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+StepGate = Callable[[], bool]
 
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
@@ -172,6 +173,7 @@ class MujocoEngine(SimulationEngine):
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
+        self._step_gate: StepGate | None = None
         self._spawn_xy = spawn_xy
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
@@ -258,6 +260,17 @@ class MujocoEngine(SimulationEngine):
         """
         self._on_before_step = before
         self._on_after_step = after
+
+    def set_step_gate(self, gate: StepGate | None) -> None:
+        """Pause physics while ``gate`` is false, without pausing state publication.
+
+        This lets simulated hardware publish its initial state and complete a
+        controller handshake before gravity advances a floating-base robot.
+        The before/after hooks still run while paused, so the controller can
+        attach through shared memory and provide the command that opens the
+        gate.
+        """
+        self._step_gate = gate
 
     def _resolve_model_path(self, config_path: Path) -> Path:
         if config_path is None:
@@ -621,8 +634,10 @@ class MujocoEngine(SimulationEngine):
                     self._on_before_step(self)
                 except Exception as exc:
                     logger.error("on_before_step failed", error=str(exc))
-            self._apply_control()
-            mujoco.mj_step(self._model, self._data)
+            should_step = self._step_gate is None or self._step_gate()
+            if should_step:
+                self._apply_control()
+                mujoco.mj_step(self._model, self._data)
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()

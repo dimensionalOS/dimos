@@ -25,7 +25,11 @@ import numpy as np
 import pytest
 
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
 
 
 class _FakeData:
@@ -79,6 +83,22 @@ class _FakeSimHooks:
 
     def clear_latched_commands(self) -> None:
         self.cleared = True
+
+
+def test_whole_body_step_gate_requires_a_complete_pd_command() -> None:
+    hooks = _WholeBodySimHooks(MagicMock(), dof=2)
+
+    assert hooks.control_ready is False
+
+    hooks._latest_pd_pos_target = np.zeros(2)
+    hooks._latest_pd_kp = np.ones(2)
+    assert hooks.control_ready is False
+
+    hooks._latest_pd_kd = np.ones(2)
+    assert hooks.control_ready is True
+
+    hooks.clear_latched_commands()
+    assert hooks.control_ready is False
 
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:
@@ -374,6 +394,44 @@ f 1 3 4
 f 2 3 4
 """.strip()
     )
+
+
+@pytest.mark.mujoco
+def test_compose_legacy_model_loads_include_and_mesh_assets_locally(tmp_path: Path) -> None:
+    import mujoco
+
+    base_xml = tmp_path / "legacy.xml"
+    included_xml = tmp_path / "included.xml"
+    extra_xml = tmp_path / "plant.xml"
+    mesh_dir = tmp_path / "meshes"
+    mesh_dir.mkdir()
+    _write_hull_obj(mesh_dir / "tetra.obj")
+    included_xml.write_text("""<mujocoinclude><body name="included_body"/></mujocoinclude>""")
+    base_xml.write_text(
+        """
+<mujoco>
+  <asset><mesh name="tetra" file="tetra.obj"/></asset>
+  <worldbody>
+    <include file="included.xml"/>
+    <geom name="mesh_geom" type="mesh" mesh="tetra"/>
+  </worldbody>
+</mujoco>
+""".strip()
+    )
+    extra_xml.write_text("""<mujoco><worldbody><body name="plant_body"/></worldbody></mujoco>""")
+
+    module = object.__new__(MujocoSimModule)
+    module.config = MujocoSimModuleConfig(
+        address=base_xml,
+        robot_meshdir=mesh_dir,
+        extra_mjcf=[extra_xml],
+    )
+
+    model = module._compose_legacy_model(None)
+
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "included_body") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "plant_body") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "mesh_geom") >= 0
 
 
 def _mesh_scene_entity(entity_id: str, hull_path: Path) -> dict[str, object]:

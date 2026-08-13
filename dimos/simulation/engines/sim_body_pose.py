@@ -42,6 +42,7 @@ class SimBodyPoseConfig(ModuleConfig):
     body_name: str = ""
     frame_id: str = "world"
     publish_hz: float = Field(default=5.0, gt=0.0)
+    missing_body_grace_seconds: float = Field(default=5.0, ge=0.0)
 
 
 class SimBodyPose(Module):
@@ -58,6 +59,7 @@ class SimBodyPose(Module):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._missing_logged = False
+        self._started_at = 0.0
 
     @rpc
     def start(self) -> None:
@@ -66,6 +68,7 @@ class SimBodyPose(Module):
             logger.warning("SimBodyPose has no body_name; nothing will be published")
             return
         self._stop_event.clear()
+        self._started_at = time.monotonic()
         self._thread = threading.Thread(target=self._publish_loop, name="SimBodyPose", daemon=True)
         self._thread.start()
         logger.info(f"SimBodyPose publishing '{self.config.body_name}'")
@@ -102,7 +105,8 @@ class SimBodyPose(Module):
         poses = self._sim.get_body_poses([name])
         values = poses.get(name)
         if values is None:
-            if not self._missing_logged:
+            grace_elapsed = time.monotonic() - self._started_at
+            if not self._missing_logged and grace_elapsed >= self.config.missing_body_grace_seconds:
                 logger.error(f"SimBodyPose: no body named '{name}' in the loaded scene")
                 self._missing_logged = True
             return None

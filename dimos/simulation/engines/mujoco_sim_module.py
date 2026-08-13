@@ -31,6 +31,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -156,6 +157,17 @@ class _WholeBodySimHooks:
         self._latest_pd_kp: NDArray[np.float64] | None = None
         self._latest_pd_kd: NDArray[np.float64] | None = None
         self._latest_pd_tau: NDArray[np.float64] | None = None
+        self._non_pd_command_seen = False
+
+    @property
+    def control_ready(self) -> bool:
+        """Whether a complete command is available for the next physics step."""
+        pd_ready = (
+            self._latest_pd_pos_target is not None
+            and self._latest_pd_kp is not None
+            and self._latest_pd_kd is not None
+        )
+        return pd_ready or self._non_pd_command_seen
 
     def pre_step(self, engine: MujocoEngine) -> None:
         shm = self._shm
@@ -167,10 +179,12 @@ class _WholeBodySimHooks:
                 self._latest_pd_pos_target = pos_cmd
             else:
                 engine.write_joint_command(JointState(position=pos_cmd.tolist()))
+                self._non_pd_command_seen = True
 
         vel_cmd = shm.read_velocity_command(dof)
         if vel_cmd is not None:
             engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
+            self._non_pd_command_seen = True
 
         kp_cmd = shm.read_kp_command(dof)
         if kp_cmd is not None:
@@ -221,6 +235,7 @@ class _WholeBodySimHooks:
         self._latest_pd_kp = None
         self._latest_pd_kd = None
         self._latest_pd_tau = None
+        self._non_pd_command_seen = False
 
     def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
         jlo, jhi = self._gripper_joint_range
@@ -255,6 +270,10 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    # Floating-base robots fall while a controller in another worker loads.
+    # Keep publishing initial state but do not advance physics until the first
+    # complete shared-memory command arrives.
+    wait_for_control_command: bool = False
     headless: bool = False
     dof: int = 7
 
@@ -491,7 +510,10 @@ class MujocoSimModule(
             engine_kwargs["model"] = self._compose_model()
         else:
             engine_kwargs["config_path"] = Path(self.config.address)
-            engine_kwargs["assets"] = engine_assets
+            if self.config.extra_mjcf:
+                engine_kwargs["model"] = self._compose_legacy_model(engine_assets)
+            else:
+                engine_kwargs["assets"] = engine_assets
             engine_kwargs["spawn_xy"] = self.config.spawn_xy
             engine_kwargs["spawn_z"] = self.config.spawn_z
             engine_kwargs["spawn_yaw"] = self.config.spawn_yaw
@@ -554,13 +576,17 @@ class MujocoSimModule(
             before=self._sim_hooks.pre_step,
             after=self._publish_shm_and_lcm,
         )
+        if self.config.wait_for_control_command:
+            self._engine.set_step_gate(lambda: self._sim_hooks.control_ready)
 
         # Start physics (sim thread spawned inside engine.connect()).
         if not self._engine.connect():
             raise RuntimeError("MujocoSimModule: engine.connect() failed")
 
-        # Camera intrinsics.
-        self._build_camera_info()
+        # Camera intrinsics. Camera-less control simulations intentionally have
+        # no camera to probe and should not emit a false startup error.
+        if primary_needed:
+            self._build_camera_info()
 
         self._stop_event.clear()
         self._publish_thread = threading.Thread(
@@ -569,13 +595,14 @@ class MujocoSimModule(
         self._publish_thread.start()
 
         # Periodic camera_info publishing.
-        interval_sec = 1.0 / self.config.camera_info_fps
-        self.register_disposable(
-            rx.interval(interval_sec).subscribe(
-                on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
+        if self._camera_info_base is not None:
+            interval_sec = 1.0 / self.config.camera_info_fps
+            self.register_disposable(
+                rx.interval(interval_sec).subscribe(
+                    on_next=lambda _: self._publish_camera_info(),
+                    on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
+                )
             )
-        )
 
         # Optional pointcloud generation. Default mode preserves the legacy
         # RGB-D camera pointcloud; MuJoCo lidar mode publishes native raycast
@@ -663,6 +690,47 @@ class MujocoSimModule(
                 )
                 model = build_spec(force_static=penetrators).compile()
         return model
+
+    def _compose_legacy_model(self, assets: dict[str, bytes] | None) -> mujoco.MjModel:
+        """Add repo-owned world props to a self-contained legacy robot scene."""
+        address = Path(self.config.address)
+        root = ET.parse(address).getroot()
+        worldbody = root.find("worldbody")
+        if worldbody is None:
+            worldbody = ET.SubElement(root, "worldbody")
+
+        for extra_path in self.config.extra_mjcf:
+            extra_root = ET.parse(Path(extra_path)).getroot()
+            extra_worldbody = extra_root.find("worldbody")
+            if extra_worldbody is None:
+                raise ValueError(f"Extra MJCF has no worldbody: {extra_path}")
+            worldbody.extend(extra_worldbody)
+
+        if assets is None:
+            # ``from_xml_string`` has no source directory from which to resolve
+            # MJCF includes. The legacy G1 model also references meshes by bare
+            # filename, so provide only the local files the model can address.
+            # This keeps the sim path independent of the optional
+            # ``mujoco_playground`` asset helper.
+            asset_directories = [address.parent]
+            if self.config.robot_meshdir is not None:
+                asset_directories.append(Path(self.config.robot_meshdir))
+            assets = {}
+            for directory in asset_directories:
+                for asset_path in directory.iterdir():
+                    if asset_path.is_file() and asset_path.suffix.lower() in {
+                        ".jpeg",
+                        ".jpg",
+                        ".obj",
+                        ".png",
+                        ".stl",
+                        ".tga",
+                        ".xml",
+                    }:
+                        assets.setdefault(asset_path.name, asset_path.read_bytes())
+
+        xml = ET.tostring(root, encoding="unicode")
+        return mujoco.MjModel.from_xml_string(xml, assets=assets)
 
     @rpc
     def stop(self) -> None:
