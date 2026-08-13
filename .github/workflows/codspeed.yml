@@ -49,7 +49,14 @@ jobs:
       - base
     container:
       image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
-      options: --memory=6g --memory-swap=6g --cap-add PERFMON
+      # Walltime flamegraphs need the runner HOSTS to set (via /etc/sysctl.d)
+      #   kernel.perf_event_paranoid=-1  kernel.kptr_restrict=0
+      # The codspeed runner's samply/perf profilers gate on those exact sysctl
+      # VALUES and self-remediate with `sudo sysctl -w`, which cannot work
+      # in-container (CAP_PERFMON doesn't help: the values are checked, not
+      # the syscall). Until then results show "Execution profile not
+      # available".
+      options: --memory=6g --memory-swap=6g
       volumes:
         - /var/cache/dimos-nix:/nix
         - /var/cache/dimos-root-cache:/root/.cache
