@@ -4,7 +4,7 @@
 
 | Hardware: camera, MID360 point cloud, and voxel map | Simulation: Gazebo gimbal camera |
 |---|---|
-| ![PX4 hardware frontend](assets/px4_basic.png) | ![PX4 Gazebo Harmonic simulation frontend](assets/px4_gazebo_harmonic.jpg) |
+| ![PX4 hardware frontend](https://github.com/user-attachments/assets/adaaa34b-1ced-4229-98da-02f1e9f4e9f5) | ![PX4 Gazebo Harmonic simulation frontend](https://github.com/user-attachments/assets/19358c12-3d02-4c18-b7b1-687e05fb6f2c) |
 
 DimOS integration for PX4 drones using MAVSDK. The module combines flight control, MID360 localization, voxel mapping, GStreamer video distribution, Rerun visualization, Gazebo Harmonic simulation, and optional LLM agent control. The hardware stack currently targets a PX4 flight controller connected at `serial:///dev/ttyTHS3:921600` and a Livox MID360 at `192.168.1.3`.
 
