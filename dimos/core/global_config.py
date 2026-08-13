@@ -30,7 +30,10 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
-ZenohMode: TypeAlias = Literal["peer", "client", "router"]
+# Routers are external zenohd processes. A dimos process never hosts one:
+# every process opens its own session, and a second router-mode session on a
+# host would fail binding zenoh's fixed router listen port.
+ZenohMode: TypeAlias = Literal["peer", "client"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -68,7 +71,8 @@ class GlobalConfig(BaseSettings):
     # Whether multicast scouting runs at all.
     zenoh_multicast: bool = True
     # Whether peers propagate the peers they already know over established links.
-    zenoh_gossip: bool = True
+    # None follows zenoh_scouting, preserving its isolation contract above.
+    zenoh_gossip: bool | None = None
     # Session mode. client routes through a single router instead of meshing.
     zenoh_mode: ZenohMode = "peer"
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
