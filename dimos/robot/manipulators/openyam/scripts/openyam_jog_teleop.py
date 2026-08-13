@@ -148,7 +148,14 @@ def main() -> int:
                     gripper_target -= args.gripper_speed * dt  # opening decreases position
                 if keys[pygame.K_RIGHTBRACKET]:
                     gripper_target += args.gripper_speed * dt
-                gripper_target = max(-0.2, min(1.6, gripper_target))
+                # Wide exploratory range; the leash below bounds endstop
+                # torque, so full travel can be discovered safely. Note the
+                # extremes reached in the HUD — they are the calibration
+                # values for OPENYAM_GRIPPER_OPEN/CLOSED_RAD in config.py.
+                gripper_target = max(-3.0, min(3.0, gripper_target))
+                g_actual = adapter.read_gripper_position()
+                if g_actual is not None:
+                    gripper_target = max(g_actual - 0.3, min(g_actual + 0.3, gripper_target))
 
             if not adapter.write_joint_positions(q_target):
                 print("write failed — aborting")
