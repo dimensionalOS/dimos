@@ -51,7 +51,7 @@ type RunFn = Box<dyn FnOnce(Arc<SharedTransport>, watch::Receiver<bool>) -> Modu
 /// One module's config, deserialized and validated, with a closure that runs it
 /// once the transport is open. Produced before anything is spawned so a bad
 /// config kills the host instead of half-starting it.
-pub struct Prepared {
+struct Prepared {
     topics: HashMap<String, String>,
     run: RunFn,
 }
