@@ -1,0 +1,362 @@
+<?xml version="1.0" ?>
+<!-- =================================================================================== -->
+<!-- derived from github.com/clearpathrobotics/spot_ros -->
+<!-- =================================================================================== -->
+<robot name="spot">
+  <link name="body">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/body.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/body_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="base_link"/>
+  <joint name="base_link_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="body"/>
+  </joint>
+  <link name="front_rail"/>
+  <joint name="front_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.223 0 0.0805"/>
+    <parent link="body"/>
+    <child link="front_rail"/>
+  </joint>
+  <link name="real_front_rail"/>
+  <joint name="real_front_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.2075 0 0.0805"/>
+    <parent link="body"/>
+    <child link="real_front_rail"/>
+  </joint>
+  <link name="rear_rail"/>
+  <joint name="rear_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.223 0 0.0805"/>
+    <parent link="body"/>
+    <child link="rear_rail"/>
+  </joint>
+  <link name="real_rear_rail"/>
+  <joint name="real_rear_rail_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="-0.415 0 0"/>
+    <parent link="real_front_rail"/>
+    <child link="real_rear_rail"/>
+  </joint>
+  <link name="front_left_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="0.29785 0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="front_left_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="front_left_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_left_hip"/>
+    <child link="front_left_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="front_left_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_left_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_left_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_left_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_left_upper_leg"/>
+    <child link="front_left_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.254801" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="0.29785 -0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="front_right_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 -0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_right_hip"/>
+    <child link="front_right_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="front_right_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/front_right_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/front_right_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="front_right_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="front_right_upper_leg"/>
+    <child link="front_right_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.247563" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.29785 0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="rear_left_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_left_hip"/>
+    <child link="rear_left_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="rear_left_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_left_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_left_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_left_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_left_upper_leg"/>
+    <child link="rear_left_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.267153" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_hip">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_hip.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_hip_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_hip_x" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.29785 -0.05500 0.00000"/>
+    <axis xyz="1 0 0"/>
+    <parent link="body"/>
+    <child link="rear_right_hip"/>
+    <limit effort="1000" lower="-0.78539816339744827899" upper="0.78539816339744827899" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_upper_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_upper_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_upper_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_hip_y" type="revolute">
+    <origin rpy="0 0 0" xyz="0.0 -0.110945 0.0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_right_hip"/>
+    <child link="rear_right_upper_leg"/>
+    <limit effort="1000" lower="-0.89884456477707963539" upper="2.2951079663725435509" velocity="1000.00"/>
+  </joint>
+  <link name="rear_right_lower_leg">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/rear_right_lower_leg.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/rear_right_lower_leg_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rear_right_knee" type="revolute">
+    <origin rpy="0 0 0" xyz="0.025 0.000 -0.3205"/>
+    <axis xyz="0 1 0"/>
+    <parent link="rear_right_upper_leg"/>
+    <child link="rear_right_lower_leg"/>
+    <limit effort="1000" lower="-2.7929" upper="-0.257725" velocity="1000.00"/>
+  </joint>
+  <link name="cover">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/spot_cover.stl"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.15 0.15 0.15 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="meshes/spot_cover.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cover to body_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0.0429 0 0.0597"/>
+    <parent link="body"/>
+    <child link="cover"/>
+  </joint>
+  <!-- Static fisheye camera mounts. Boston Dynamics does not ship camera frames
+       in spot_description, so these are the CoSTAR/subt estimates (osrf/subt
+       bosdyn_spot), which were fit against a real Spot. Each position has a
+       gazebo camera_link (X-forward, Y-left, Z-up) and a ROS optical child
+       (Z-forward, X-right, Y-down; the canonical rpy="-pi/2 0 -pi/2"). The same
+       physical mount feeds both the grayscale and depth stream at that position. -->
+  <link name="frontleft_camera"/>
+  <joint name="frontleft_camera_joint" type="fixed">
+    <origin rpy="1.355558 0.353917 -0.554196" xyz="0.415 0.037 -0.01"/>
+    <parent link="body"/>
+    <child link="frontleft_camera"/>
+  </joint>
+  <link name="frontleft_camera_optical"/>
+  <joint name="frontleft_camera_optical_joint" type="fixed">
+    <origin rpy="-1.5707963 0 -1.5707963" xyz="0 0 0"/>
+    <parent link="frontleft_camera"/>
+    <child link="frontleft_camera_optical"/>
+  </joint>
+  <link name="frontright_camera"/>
+  <joint name="frontright_camera_joint" type="fixed">
+    <origin rpy="-1.355558 0.353917 0.554196" xyz="0.415 -0.037 -0.01"/>
+    <parent link="body"/>
+    <child link="frontright_camera"/>
+  </joint>
+  <link name="frontright_camera_optical"/>
+  <joint name="frontright_camera_optical_joint" type="fixed">
+    <origin rpy="-1.5707963 0 -1.5707963" xyz="0 0 0"/>
+    <parent link="frontright_camera"/>
+    <child link="frontright_camera_optical"/>
+  </joint>
+  <link name="left_camera"/>
+  <joint name="left_camera_joint" type="fixed">
+    <origin rpy="0 0.2 1.5707963" xyz="-0.125 0.12 0.035"/>
+    <parent link="body"/>
+    <child link="left_camera"/>
+  </joint>
+  <link name="left_camera_optical"/>
+  <joint name="left_camera_optical_joint" type="fixed">
+    <origin rpy="-1.5707963 0 -1.5707963" xyz="0 0 0"/>
+    <parent link="left_camera"/>
+    <child link="left_camera_optical"/>
+  </joint>
+  <link name="right_camera"/>
+  <joint name="right_camera_joint" type="fixed">
+    <origin rpy="0 0.2 -1.5707963" xyz="-0.125 -0.12 0.035"/>
+    <parent link="body"/>
+    <child link="right_camera"/>
+  </joint>
+  <link name="right_camera_optical"/>
+  <joint name="right_camera_optical_joint" type="fixed">
+    <origin rpy="-1.5707963 0 -1.5707963" xyz="0 0 0"/>
+    <parent link="right_camera"/>
+    <child link="right_camera_optical"/>
+  </joint>
+  <link name="back_camera"/>
+  <joint name="back_camera_joint" type="fixed">
+    <origin rpy="0 0.3 -3.1415927" xyz="-0.425 0 0.01"/>
+    <parent link="body"/>
+    <child link="back_camera"/>
+  </joint>
+  <link name="back_camera_optical"/>
+  <joint name="back_camera_optical_joint" type="fixed">
+    <origin rpy="-1.5707963 0 -1.5707963" xyz="0 0 0"/>
+    <parent link="back_camera"/>
+    <child link="back_camera_optical"/>
+  </joint>
+</robot>

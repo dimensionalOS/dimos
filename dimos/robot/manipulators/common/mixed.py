@@ -19,6 +19,8 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
@@ -70,7 +72,16 @@ _piper_teleop_hw = make_piper_hardware(
 _xarm6_teleop_model = make_xarm6_model_config(name="xarm_arm", add_gripper=False)
 _piper_teleop_model = make_piper_model_config(name="piper_arm")
 
-coordinator_teleop_dual = ControlCoordinator.blueprint(
+
+class _DualTeleopCoordinator(ControlCoordinator):
+    """One cartesian port per arm; stream_bind gives each task its own."""
+
+    left_cartesian: In[PoseStamped]
+    right_cartesian: In[PoseStamped]
+
+
+coordinator_teleop_dual = _DualTeleopCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_xarm6_teleop_hw, _piper_teleop_hw],
     tasks=[
         teleop_ik_task(
@@ -79,6 +90,7 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
             hand="left",
             robot_model=_xarm6_teleop_model,
             priority=10,
+            stream_bind={"cartesian_command": "left_cartesian"},
         ),
         teleop_ik_task(
             _piper_teleop_hw,
@@ -86,6 +98,7 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
             hand="right",
             robot_model=_piper_teleop_model,
             priority=10,
+            stream_bind={"cartesian_command": "right_cartesian"},
         ),
     ],
 )

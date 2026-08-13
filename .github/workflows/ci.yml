@@ -233,7 +233,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Fetch LFS data needed by doc code blocks
-        run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz"
+        run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz" --exclude=""
       # Docs decode JPEG from SQLite via PyTurboJPEG; pyaudio needs portaudio.
       - name: Install system dependencies
         run: |
