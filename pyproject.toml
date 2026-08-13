@@ -113,7 +113,6 @@ dependencies = [
     "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
-    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
