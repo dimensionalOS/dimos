@@ -21,6 +21,7 @@ The echo script writes received CLI args to a temp file for assertions.
 import contextlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -295,6 +296,46 @@ def test_existing_executable_skips_build(tmp_path: Path) -> None:
 
 def test_build_native_forces_build(tmp_path: Path) -> None:
     assert run_build(tmp_path, build_native=True).exists()
+
+
+def _spawn_env(monkeypatch, transport: str) -> dict[str, str]:
+    """Env the native subprocess would be spawned with, without spawning it."""
+    captured: dict[str, str] = {}
+
+    def fake_popen(cmd: list[str], **kwargs: object) -> None:
+        captured.update(kwargs["env"])  # type: ignore[call-overload]
+        raise RuntimeError("spawn intercepted")
+
+    for key in list(os.environ):
+        if key.startswith("DIMOS_ZENOH_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setattr(native_module_mod.global_config, "transport", transport)
+    monkeypatch.setattr(native_module_mod.global_config, "robot_ip", "192.0.2.10")
+    monkeypatch.setattr(native_module_mod.global_config, "robot_ips", None)
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_interface", "")
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
+    # Built before Popen is patched: pydantic resolves the class's
+    # subprocess.Popen annotation during construction.
+    module = StubNativeModule(executable=_ECHO)
+    monkeypatch.setattr(native_module_mod.subprocess, "Popen", fake_popen)
+    try:
+        with pytest.raises(RuntimeError, match="spawn intercepted"):
+            module.start()
+    finally:
+        module.stop()
+    return captured
+
+
+def test_zenoh_spawn_env_pins_the_session(monkeypatch) -> None:
+    env = _spawn_env(monkeypatch, "zenoh")
+    assert env["DIMOS_ZENOH_CONNECT"] == "tcp/192.0.2.10:7447"
+    assert env["DIMOS_ZENOH_MODE"] == "peer"
+
+
+def test_lcm_spawn_env_has_no_zenoh_vars(monkeypatch) -> None:
+    env = _spawn_env(monkeypatch, "lcm")
+    assert env["DIMOS_TRANSPORT"] == "lcm"
+    assert not any(key.startswith("DIMOS_ZENOH_") for key in env)
 
 
 def test_base_field_not_sent_without_opt_in() -> None:
