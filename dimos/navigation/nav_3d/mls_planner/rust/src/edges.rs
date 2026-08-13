@@ -137,6 +137,10 @@ pub fn build_node_edges_region(
         if !live_node.contains(&e.a) || !live_node.contains(&e.b) {
             continue;
         }
+        // A dead boundary cell makes the edge's cached cell path unusable.
+        if !cells.is_live(e.boundary_u) || !cells.is_live(e.boundary_v) {
+            continue;
+        }
         merged.insert((e.a, e.b), *e);
     }
 
@@ -241,7 +245,13 @@ pub fn edges_to_segments(
             let mut from_a = walk_preds(state, edge.boundary_u);
             from_a.reverse();
             let to_b = walk_preds(state, edge.boundary_v);
-            let path: Vec<CellId> = from_a.into_iter().chain(to_b).collect();
+            // Stale out-of-window chains can cross freed slots whose coords
+            // are garbage.
+            let path: Vec<CellId> = from_a
+                .into_iter()
+                .chain(to_b)
+                .filter(|&c| cells.is_live(c))
+                .collect();
             let cost = edge.cost;
             path.windows(2)
                 .map(|pair| (cells.coord(pair[0]), cells.coord(pair[1]), cost))

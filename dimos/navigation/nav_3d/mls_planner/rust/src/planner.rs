@@ -143,10 +143,10 @@ pub fn plan(
 
     // The penalized Voronoi cannot own sub-clearance goals, so fall back to the
     // nearest node by hops. A real failure then reports as disconnected below.
-    let mut goal_segment = walk_preds(&plg.cell_state, goal_cell);
+    let mut goal_segment = walk_live_preds(plg, goal_cell);
     let mut goal_node = *goal_segment
         .last()
-        .expect("walk_preds returns at least the start cell");
+        .expect("the goal cell is live, so the walk keeps at least it");
     if !node_cells.contains(&goal_node) {
         let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
             tracing::debug!(
@@ -484,10 +484,10 @@ fn select_entry(
     }
 
     for &start_cell in start_cells {
-        let start_segment = walk_preds(&plg.cell_state, start_cell);
+        let start_segment = walk_live_preds(plg, start_cell);
         let region_node = *start_segment
             .last()
-            .expect("walk_preds returns at least the start cell");
+            .expect("the start cell is live, so the walk keeps at least it");
         if !node_cells.contains(&region_node)
             || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
         {
@@ -580,6 +580,17 @@ fn nearest_node(
 }
 
 /// Walk predecessors back to the search source.
+/// walk_preds through the persistent Voronoi state, truncated at the first
+/// cell that died since the state was written. Regional updates leave
+/// out-of-window pred chains stale, and a freed slot's coord is garbage.
+fn walk_live_preds(plg: &PlannerGraph, from: CellId) -> Vec<CellId> {
+    let mut chain = walk_preds(&plg.cell_state, from);
+    if let Some(cut) = chain.iter().position(|&c| !plg.cells.is_live(c)) {
+        chain.truncate(cut);
+    }
+    chain
+}
+
 fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId> {
     let mut path = vec![from];
     let mut cur = from;
@@ -673,9 +684,9 @@ fn assemble_cells(
             (edge.boundary_v, edge.boundary_u)
         };
 
-        let mut from_a = walk_preds(&plg.cell_state, start_side);
+        let mut from_a = walk_live_preds(plg, start_side);
         from_a.reverse();
-        let to_b = walk_preds(&plg.cell_state, end_side);
+        let to_b = walk_live_preds(plg, end_side);
 
         for c in from_a.into_iter().chain(to_b) {
             push_cell(&mut cells, c);
