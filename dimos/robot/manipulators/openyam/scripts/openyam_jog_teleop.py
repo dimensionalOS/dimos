@@ -132,6 +132,12 @@ def main() -> int:
             lo = q_start[selected] - args.range
             hi = q_start[selected] + args.range
             q_target[selected] = max(lo, min(hi, q_target[selected]))
+            # Leash: never let any target run further than 0.25 rad ahead of
+            # the measured position. Jogging into an obstacle or a joint that
+            # can't keep up then stalls gently (bounded torque) instead of
+            # diverging until the tracking abort fires.
+            for i in range(6):
+                q_target[i] = max(q_now[i] - 0.25, min(q_now[i] + 0.25, q_target[i]))
 
             if gripper_target is not None:
                 if keys[pygame.K_LEFTBRACKET]:
