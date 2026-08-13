@@ -41,11 +41,11 @@ YAM_CAN = "can0"
 
 # Gripper motor endpoints in adapter-native units (motor rad) for
 # normalized-command mapping. Opening DECREASES motor position (per the
-# canonical OpenYamDamiaoAdapter in PR #3129). Magnitudes are PLACEHOLDERS
-# pending calibration: with the motor zeroed fully open, closing winds it
-# positive. Re-zero or override after calibrating.
-OPENYAM_GRIPPER_OPEN_RAD = 0.0
-OPENYAM_GRIPPER_CLOSED_RAD = 1.5
+# canonical OpenYamDamiaoAdapter in PR #3129). Calibrated on hardware
+# (Aug 2026): jaws pressed closed read +0.02 (motor zeroed at closed),
+# fully open read -2.94.
+OPENYAM_GRIPPER_OPEN_RAD = -2.94
+OPENYAM_GRIPPER_CLOSED_RAD = 0.0
 
 
 def make_openyam_hardware(
