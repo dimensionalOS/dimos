@@ -1,20 +1,16 @@
 # PX4 Module
 
-DimOS integration for PX4 drones using MAVSDK. The module combines flight
-control, MID360 localization, voxel mapping, GStreamer video distribution,
-Rerun visualization, Gazebo Harmonic simulation, and optional LLM agent
-control.
+## Demo
 
-The hardware stack currently targets a PX4 flight controller connected at
-`serial:///dev/ttyTHS3:921600` and a Livox MID360 at `192.168.1.3`.
+| Hardware: camera, MID360 point cloud, and voxel map | Simulation: Gazebo gimbal camera |
+|---|---|
+| ![PX4 hardware frontend](assets/px4_basic.png) | ![PX4 Gazebo Harmonic simulation frontend](assets/px4_gazebo_harmonic.jpg) |
+
+DimOS integration for PX4 drones using MAVSDK. The module combines flight control, MID360 localization, voxel mapping, GStreamer video distribution, Rerun visualization, Gazebo Harmonic simulation, and optional LLM agent control. The hardware stack currently targets a PX4 flight controller connected at `serial:///dev/ttyTHS3:921600` and a Livox MID360 at `192.168.1.3`.
 
 ## Quick Start
 
-The following commands assume that the [installation](#installation) is
-complete. They explicitly provide the minimum hardware inputs used by the
-current setup: MID360 network addresses, MAVSDK serial connection, and V4L2
-camera pipeline. Replace the device paths and local host address when the
-hardware differs.
+The following commands assume that the [installation](#installation) is complete. They explicitly provide the minimum hardware inputs used by the current setup: MID360 network addresses, MAVSDK serial connection, and V4L2 camera pipeline. Replace the device paths and local host address when the hardware differs.
 
 ### Hardware stack: `px4-basic`
 
@@ -27,6 +23,41 @@ dimos run px4-basic \
   --gsteecamera.input-pipeline='v4l2src device=/dev/video0 ! video/x-raw,width=640,height=480,framerate=30/1' \
   --gsteecamera.input-format=raw
 ```
+
+For a headless onboard computer that only accepts a remote `dimos-viewer`, use:
+
+```bash
+dimos --viewer rerun --rerun-open none --no-rerun-web --rerun-host 0.0.0.0 run px4-basic \
+  --pointlio.lidar-ip=192.168.1.3 \
+  --pointlio.host-ip=192.168.1.50 \
+  --flightcontroller.connection-url='serial:///dev/ttyTHS3:921600' \
+  --flightcontroller.connection-timeout-s=20 \
+  --gsteecamera.input-pipeline='v4l2src device=/dev/video0 ! video/x-raw,width=640,height=480,framerate=30/1' \
+  --gsteecamera.input-format=raw
+```
+
+Connect from the remote computer, replacing `<ONBOARD_IP>` with the address of the computer running DimOS:
+
+```bash
+dimos-viewer \
+  --connect rerun+http://<ONBOARD_IP>:9877/proxy \
+  --ws-url ws://<ONBOARD_IP>:3030/ws
+```
+
+`dimos-viewer` currently sends directional commands only. It does not arm, take off, or enter Offboard mode. Before its direction controls can work, open another terminal on the onboard computer, enter `dimos shell`, verify that the flight area is safe, and run these commands in order:
+
+```bash
+dimos shell
+```
+
+```python
+app.FlightController.arm()
+app.FlightController.takeoff(3.0)
+# Wait until the vehicle reaches a safe altitude and stabilizes, then run:
+app.FlightController.enter_offboard()
+```
+
+The remote viewer controls become active only after `enter_offboard()` returns `offboard mode entered`. Run `app.FlightController.hold()` to stop directional control, then `app.FlightController.land()` after confirming that the landing area is safe. Do not call `disarm()` while airborne.
 
 ### Hardware stack with agent: `px4-agentic`
 
@@ -51,29 +82,31 @@ dimos agent-send "take off to 2 meters"
 
 ### Simulation: `px4-gazebo-harmonic`
 
-Terminal 1:
+The simulation scene comes from [PX4-AeroFusion-Sim](https://github.com/weyne-Jiang/PX4-AeroFusion-Sim). Start PX4 SITL and Gazebo in terminal 1:
 
 ```bash
 cd /path/to/PX4-Autopilot
-PX4_GZ_NO_FOLLOW=1 make px4_sitl gz_x500_mono_cam
+PX4_GZ_NO_FOLLOW=1 make px4_sitl gz_x500_gimbal_windy
 ```
 
-After PX4 reports its MAVLink endpoint, start DimOS in terminal 2:
+After PX4 reports its MAVLink endpoint, start DimOS in terminal 2. Use `dimos status`, `dimos log -f`, and `dimos stop` to inspect or stop the running stack.
 
 ```bash
 cd /path/to/dimos
 dimos run px4-gazebo-harmonic
 ```
 
-Use `dimos status`, `dimos log -f`, and `dimos stop` to inspect and stop a
-running stack.
-
 ## Blueprints and Modules
 
-### `px4-basic`
+The PX4 integration provides three runnable blueprints. `px4-basic` is the complete hardware stack for flight, localization, mapping, video, and visualization; `px4-agentic` adds an LLM agent; and `px4-gazebo-harmonic` targets Gazebo SITL without PointLIO or voxel mapping.
 
-The complete hardware stack for flight, localization, mapping, video, and
-visualization.
+| Blueprint | Composition and data flow |
+|-----------|---------------------------|
+| `px4-basic` | Connects real PX4 hardware, MID360, and a camera, providing external vision, voxel mapping, and Rerun visualization |
+| `px4-agentic` | Adds `McpServer`, `McpClient`, and `WebInput` to `px4-basic`, exposing `@skill` flight methods to the LLM agent |
+| `px4-gazebo-harmonic` | Connects to PX4 SITL at `udpin://0.0.0.0:14540`, receives Gazebo H.264 video on UDP `5600`, and shows only the camera view in Rerun |
+
+`px4-basic` and `px4-agentic` use these core modules:
 
 | Module | Purpose |
 |--------|---------|
@@ -84,35 +117,54 @@ visualization.
 | `GsTeeCamera` | One GStreamer input split into raw BGR and Annex-B H.264 streams |
 | Rerun visualization modules | Camera, point-cloud, map, TF, and teleoperation visualization |
 
-### `px4-agentic`
+## Available Skills
 
-Builds on `px4-basic` and adds `McpServer`, `McpClient`, and `WebInput`. Flight
-methods marked with `@skill` become MCP tools available to the LLM agent. The
-MCP server uses the configured DimOS MCP port.
+`FlightController` provides the flight skills below. They can be called through `dimos shell` in every PX4 blueprint. `px4-agentic` also exposes them to the agent through MCP.
 
-### `px4-gazebo-harmonic`
+| Skill | Parameters | Purpose and prerequisites |
+|-------|------------|---------------------------|
+| `arm()` | None | Arm the motors; first verify that the flight area is safe and PX4 permits arming |
+| `disarm()` | None | Disarm the motors; call only after landing and when PX4 permits it |
+| `takeoff(altitude=3.0)` | `altitude`: height above the takeoff point in meters | Take off to the target height; normally call after `arm()` succeeds |
+| `land()` | None | Land at the current position |
+| `enter_offboard()` | None | Send a zero-velocity setpoint and enter Offboard mode; must succeed before viewer direction controls are used |
+| `exit_offboard()` | None | Exit Offboard mode |
+| `hold()` | None | Exit Offboard control and switch PX4 to Hold mode |
+| `move(forward=0, left=0, up=0, yaw_rate=0)` | Body-FLU velocity in m/s; counter-clockwise `yaw_rate` in rad/s | Set a body-frame velocity; requires Offboard mode |
+| `goto(north, east, down, yaw=0)` | Local-NED position in meters; clockwise `yaw` in degrees | Set a local position and heading target; requires Offboard mode and valid local position data |
+| `hover()` | None | Hold the latest local-NED position and heading; requires valid position data |
 
-Runs `FlightController` against PX4 SITL at `udpin://0.0.0.0:14540`, consumes
-the Gazebo UDP/RTP H.264 stream on port `5600`, and publishes it through the
-same DimOS camera streams used by the hardware stack. PointLIO and voxel
-mapping are not part of this simulation blueprint. Its Rerun layout therefore
-contains one large camera view and no 3D mapping view.
+For example, run the following basic flight sequence in `dimos shell`. A successful RPC return means that the command was sent, not that the maneuver has completed, so check PX4 telemetry between steps. In particular, wait until the vehicle reaches a safe altitude and stabilizes before entering Offboard mode.
+
+```python
+app.FlightController.arm()
+app.FlightController.takeoff(3.0)
+# Wait until the vehicle reaches a safe altitude and stabilizes.
+app.FlightController.enter_offboard()
+app.FlightController.move(forward=0.5)
+app.FlightController.hold()
+app.FlightController.land()
+```
+
+With `px4-agentic`, list the skills actually registered with MCP using:
+
+```bash
+dimos mcp list-tools
+```
 
 ## Installation
 
 ### Python dependencies
 
-From the DimOS repository root:
+Run the following command from the DimOS repository root. The `drone` extra installs MAVSDK, pymavlink, and PyGObject:
 
 ```bash
 uv sync --extra drone
 ```
 
-The `drone` extra installs MAVSDK, pymavlink, and PyGObject.
-
 ### System dependencies
 
-On Ubuntu 22.04:
+Ubuntu 22.04 requires the following system packages. Jetson hardware encoding additionally requires the NVIDIA GStreamer plugins provided by JetPack, including `nvv4l2h264enc` and `nvvidconv`.
 
 ```bash
 sudo apt-get update
@@ -123,9 +175,6 @@ sudo apt-get install -y \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
   gstreamer1.0-plugins-ugly gstreamer1.0-libav
 ```
-
-Jetson hardware encoding additionally requires the NVIDIA GStreamer plugins
-provided by JetPack, including `nvv4l2h264enc` and `nvvidconv`.
 
 ### Native PointLIO and ray-tracing modules
 
@@ -139,60 +188,47 @@ cd ../../../../../mapping/ray_tracing/rust
 nix build -L path:.
 ```
 
-Each build creates a `result` link in its module directory. The corresponding
-DimOS `NativeModule` starts `result/bin/pointlio_native` or
-`result/bin/voxel_ray_tracing` from that directory.
+Each build creates a `result` link in its module directory. The corresponding DimOS `NativeModule` starts `result/bin/pointlio_native` or `result/bin/voxel_ray_tracing` from that directory.
 
 ## Hardware Configuration
 
 ### MAVLink
 
-The default endpoint is `serial:///dev/ttyTHS3:921600`. Override it when the
-flight controller uses another serial device or network transport:
+The default MAVLink endpoint is `serial:///dev/ttyTHS3:921600`, with a 10-second connection timeout. Override the endpoint with `--flightcontroller.connection-url` when the flight controller uses another serial device, and adjust the timeout with `--flightcontroller.connection-timeout-s`. The following complete hardware example changes only the serial device to `/dev/ttyUSB0`:
 
 ```bash
 dimos run px4-basic \
-  --flightcontroller.connection-url=udpin://0.0.0.0:14540 \
+  --flightcontroller.connection-url='serial:///dev/ttyUSB0:921600' \
   --pointlio.lidar-ip=192.168.1.3 \
-  --pointlio.host-ip=192.168.1.50
+  --pointlio.host-ip=192.168.1.50 \
+  --gsteecamera.input-pipeline='v4l2src device=/dev/video0 ! video/x-raw,width=640,height=480,framerate=30/1' \
+  --gsteecamera.input-format=raw
 ```
 
-The connection timeout defaults to 10 seconds and can be changed with
-`--flightcontroller.connection-timeout-s`.
+The SITL endpoint `udpin://0.0.0.0:14540` belongs to `px4-gazebo-harmonic` and should not be mixed into a `px4-basic` hardware configuration that also enables PointLIO.
 
 ### MID360 and external vision
 
-The MID360 address is `192.168.1.3`. `--pointlio.host-ip` must be an address on
-the local lidar-facing interface in the same subnet. It may be omitted when
-PointLIO can select that interface automatically.
+The MID360 address is `192.168.1.3`. `--pointlio.host-ip` must be an address on the local lidar-facing interface in the same subnet. It may be omitted when PointLIO can select that interface automatically.
 
-Point-LIO publishes the sensor pose and the mount publisher completes this TF
-chain:
+Point-LIO publishes the sensor pose and the mount publisher completes this TF chain:
 
 ```text
 odom -> mid360_link -> base_link
 ```
 
-`mid360_link -> base_link` applies the inverse of the calibrated 15-degree
-sensor mount transform. `FlightController` uses the same conversion to derive
-the body pose, converts FLU to FRD, and sends it to PX4 through MAVSDK
-`set_vision_position_estimate`.
+`mid360_link -> base_link` applies the inverse of the calibrated 15-degree sensor mount transform. `FlightController` uses the same conversion to derive the body pose, converts FLU to FRD, and sends it to PX4 through MAVSDK `set_vision_position_estimate`.
 
 ## Video Pipeline
 
-`GsTeeCamera` accepts a trusted GStreamer pipeline ending in raw video or
-H.264. It always publishes both outputs:
+`GsTeeCamera` accepts a trusted GStreamer pipeline ending in raw video or H.264 and always publishes both outputs. Rerun records H.264 at `drone/video`; raw lidar visualization is limited to 5 Hz, while camera calibration and camera TF publication remain outside this stack.
 
 | Stream | Transport | Content |
 |--------|-----------|---------|
 | `color_image` at `/color_image` | pSHM | Raw BGR frames |
 | `video_h264` at `/video_h264` | Typed LCM | Annex-B H.264 access units |
 
-Rerun records H.264 at `drone/video`. Raw lidar visualization is limited to
-5 Hz. Camera calibration and camera TF publication are intentionally outside
-this stack.
-
-Raw input is split before conversion and encoding:
+Raw input is split before conversion and encoding. `bitrate` is measured in bits per second and `gop` is the maximum keyframe interval in frames; both NVV4L2 and X264 use these values:
 
 ```bash
 dimos run px4-basic \
@@ -205,11 +241,7 @@ dimos run px4-basic \
   --pointlio.host-ip=192.168.1.50
 ```
 
-For raw input, `bitrate` is in bits per second and `gop` is the maximum
-keyframe interval in frames. Both NVV4L2 and X264 consume these values.
-
-H.264 input is forwarded without re-encoding and decoded only for the BGR
-branch:
+H.264 input is forwarded without re-encoding and decoded only for the BGR branch. This mode rejects explicit `encoder`, `bitrate`, or `gop` settings because they would be unused:
 
 ```bash
 dimos run px4-basic \
@@ -219,41 +251,9 @@ dimos run px4-basic \
   --pointlio.host-ip=192.168.1.50
 ```
 
-Explicit `encoder`, `bitrate`, or `gop` overrides are rejected for H.264 input
-because they would otherwise be unused.
-
-## Gazebo Harmonic Details
-
-Use a PX4 model with a camera, such as `gz_x500_mono_cam`. For a separately
-launched gz-server, start it with the official `simulation-gazebo` script and
-then run:
-
-```bash
-PX4_GZ_STANDALONE=1 make px4_sitl gz_x500_mono_cam
-```
-
-If PX4 needs longer to establish its Onboard MAVLink link:
-
-```bash
-dimos run px4-gazebo-harmonic \
-  --flightcontroller.connection-timeout-s=20
-```
-
-To change the Gazebo video port, configure the upstream PX4 world plugin and
-override the complete input pipeline:
-
-```bash
-dimos run px4-gazebo-harmonic \
-  --gsteecamera.input-pipeline='udpsrc port=5601 caps=application/x-rtp,media=video,encoding-name=H264,payload=96 ! rtph264depay ! h264parse config-interval=-1' \
-  --gsteecamera.input-format=h264
-```
-
-QGroundControl and DimOS cannot both receive the unicast stream on UDP `5600`.
-Close QGroundControl video reception before starting DimOS, or configure the
-PX4 `GstCameraSystem` world plugin and the DimOS input pipeline to use another
-port.
-
 ## File Structure
+
+PX4 blueprints and dedicated modules live under `dimos/robot/drone/px4/`. PointLIO and ray tracing are shared DimOS modules under `dimos/hardware/sensors/lidar/pointlio/` and `dimos/mapping/ray_tracing/`, respectively:
 
 ```text
 dimos/robot/drone/px4/
@@ -269,20 +269,14 @@ dimos/robot/drone/px4/
 ├── test_external_vision.py
 ├── test_gstreamer_tee_camera.py
 ├── test_mid360_mount_tf.py
-├── README.md
-└── README.zh-CN.md
+└── README.md
 ```
 
-PointLIO and ray tracing are shared DimOS modules under
-`dimos/hardware/sensors/lidar/pointlio/` and
-`dimos/mapping/ray_tracing/` respectively.
-
 ## Validation and Safety
+
+Validate command paths against PX4 SITL before connecting real hardware, and do not arm or enter Offboard mode during telemetry-only checks. Run the following code checks:
 
 ```bash
 uv run pytest dimos/robot/drone/px4 -q
 uv run ruff check dimos/robot/drone/px4
 ```
-
-Validate command paths against PX4 SITL before connecting real hardware. Do
-not arm or enter Offboard mode during telemetry-only checks.
