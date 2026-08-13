@@ -21,16 +21,16 @@ from logging import Logger
 import math
 from typing import Final, TypeAlias
 
-from mavsdk import System  # type: ignore[import-untyped]
-from mavsdk.action import ActionError  # type: ignore[import-untyped]
-from mavsdk.mocap import (  # type: ignore[import-untyped]
+from mavsdk import System  # type: ignore[import-not-found,import-untyped]
+from mavsdk.action import ActionError  # type: ignore[import-not-found,import-untyped]
+from mavsdk.mocap import (  # type: ignore[import-not-found,import-untyped]
     AngleBody,
     Covariance,
     MocapError,
     PositionBody,
     VisionPositionEstimate,
 )
-from mavsdk.offboard import (  # type: ignore[import-untyped]
+from mavsdk.offboard import (  # type: ignore[import-not-found,import-untyped]
     OffboardError,
     PositionNedYaw,
     VelocityBodyYawspeed,

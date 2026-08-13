@@ -15,6 +15,8 @@
 import pytest
 from pytest_mock import MockerFixture
 
+pytest.importorskip("gi", reason="GStreamer camera tests require system bindings")
+
 from dimos.robot.drone.px4 import gstreamer_tee_camera as camera
 
 

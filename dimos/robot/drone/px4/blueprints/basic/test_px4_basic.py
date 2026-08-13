@@ -14,6 +14,11 @@
 
 from collections import Counter
 
+import pytest
+
+pytest.importorskip("gi", reason="PX4 camera tests require system GStreamer bindings")
+pytest.importorskip("mavsdk", reason="PX4 blueprint tests require the drone extra")
+
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.web_human_input import WebInput
