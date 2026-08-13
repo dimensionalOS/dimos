@@ -153,10 +153,17 @@ class ImuCalibration(BaseModel):
     frequency: float
 
 
+# The C++ lives in dim-slam (cuVSLAM + the module built on it); dimos just builds
+# the pinned tag. `nix build` drops the `result` symlink in MODULE_DIR (the cwd).
+DIM_SLAM_TAG = "v0.1.0"
+
+
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    build_command: str | None = Field(default_factory=lambda: f"nix build .#{sdk_variant()}")
+    build_command: str | None = Field(
+        default_factory=lambda: f"nix build github:jeff-hykin/dim-slam/{DIM_SLAM_TAG}#{sdk_variant()}"
+    )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
 
