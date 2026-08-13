@@ -20,8 +20,19 @@ use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
 use ::zenoh::Session;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use crate::transport::{Dispatch, Transport};
+
+/// Zenoh takes an interface name, and Darwin spells loopback differently.
+const LOOPBACK_INTERFACE: &str = if cfg!(target_os = "macos") {
+    "lo0"
+} else {
+    "lo"
+};
+
+/// Zenoh's own name for "every multicast-capable interface".
+const ALL_INTERFACES: &str = "auto";
 
 /// Publisher QoS for one channel. `None` fields keep zenoh's defaults.
 #[derive(Clone, Default)]
@@ -61,11 +72,117 @@ pub struct ZenohTransport {
     publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
+/// Interface multicast scouting binds to, mirroring the python session config.
+fn scouting_interface() -> String {
+    resolve_scouting_interface(
+        std::env::var("DIMOS_ZENOH_INTERFACE").ok().as_deref(),
+        std::env::var("DIMOS_ZENOH_SCOUTING").ok().as_deref(),
+    )
+}
+
+fn resolve_scouting_interface(iface: Option<&str>, scouting: Option<&str>) -> String {
+    match iface.map(str::trim) {
+        Some(iface) if !iface.is_empty() => iface.to_string(),
+        _ if matches!(scouting.map(str::trim), Some("on" | "true" | "1")) => {
+            ALL_INTERFACES.to_string()
+        }
+        _ => LOOPBACK_INTERFACE.to_string(),
+    }
+}
+
+/// Values that turn a discovery knob off, case-folded.
+const OFF_VALUES: [&str; 4] = ["off", "false", "0", "no"];
+
+/// Whether a discovery knob is on. Unset, blank and unrecognized keep it on.
+fn resolve_enabled(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some(value) if OFF_VALUES.contains(&value)
+    )
+}
+
+/// Session modes zenoh accepts.
+const ZENOH_MODES: [&str; 3] = ["peer", "client", "router"];
+
+/// Validated session mode, or `None` to leave zenoh's default alone.
+fn resolve_mode(mode: Option<&str>) -> Option<&'static str> {
+    let mode = mode.map(str::trim).filter(|m| !m.is_empty())?;
+    ZENOH_MODES.into_iter().find(|known| *known == mode)
+}
+
+/// Comma-separated locator list as a JSON5 array, `None` if nothing remains.
+fn connect_endpoints_json5(endpoints: &str) -> Option<String> {
+    let list: Vec<String> = endpoints
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|e| format!("\"{e}\""))
+        .collect();
+    if list.is_empty() {
+        None
+    } else {
+        Some(format!("[{}]", list.join(",")))
+    }
+}
+
 impl ZenohTransport {
     pub async fn new() -> io::Result<Self> {
-        let session = ::zenoh::open(::zenoh::Config::default())
-            .await
-            .map_err(to_io)?;
+        let mut config = ::zenoh::Config::default();
+        // APs often filter multicast, so the launcher passes explicit
+        // endpoints to dial.
+        if let Some(json5) = std::env::var("DIMOS_ZENOH_CONNECT")
+            .ok()
+            .as_deref()
+            .and_then(connect_endpoints_json5)
+        {
+            config
+                .insert_json5("connect/endpoints", &json5)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        // Fixed listen endpoints so remote peers can dial this module directly.
+        if let Some(json5) = std::env::var("DIMOS_ZENOH_LISTEN")
+            .ok()
+            .as_deref()
+            .and_then(connect_endpoints_json5)
+        {
+            config
+                .insert_json5("listen/endpoints", &json5)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        // Scouting stays on loopback unless asked otherwise.
+        config
+            .insert_json5(
+                "scouting/multicast/enabled",
+                &resolve_enabled(std::env::var("DIMOS_ZENOH_MULTICAST").ok().as_deref())
+                    .to_string(),
+            )
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        config
+            .insert_json5(
+                "scouting/multicast/interface",
+                &format!("\"{}\"", scouting_interface()),
+            )
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        // Gossip stays on by default. Off is how a router deployment stops
+        // its clients meshing around the router.
+        config
+            .insert_json5(
+                "scouting/gossip/enabled",
+                &resolve_enabled(std::env::var("DIMOS_ZENOH_GOSSIP").ok().as_deref()).to_string(),
+            )
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        // client hands routing to a zenohd instead of meshing peer to peer.
+        let raw_mode = std::env::var("DIMOS_ZENOH_MODE").unwrap_or_default();
+        match resolve_mode(Some(&raw_mode)) {
+            Some(mode) => config
+                .insert_json5("mode", &format!("\"{mode}\""))
+                .map_err(|e| io::Error::other(e.to_string()))?,
+            None if !raw_mode.trim().is_empty() => {
+                warn!(mode = raw_mode, "ignoring unknown DIMOS_ZENOH_MODE")
+            }
+            None => {}
+        }
+        let session = ::zenoh::open(config).await.map_err(to_io)?;
         Ok(Self {
             session,
             qos: OnceLock::new(),
@@ -138,6 +255,109 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn scouting_stays_on_loopback_by_default() {
+        assert_eq!(resolve_scouting_interface(None, None), LOOPBACK_INTERFACE);
+        assert_eq!(
+            resolve_scouting_interface(Some("  "), Some("off")),
+            LOOPBACK_INTERFACE
+        );
+    }
+
+    #[test]
+    fn scouting_on_reaches_every_interface() {
+        assert_eq!(resolve_scouting_interface(None, Some("on")), ALL_INTERFACES);
+        assert_eq!(resolve_scouting_interface(None, Some("1")), ALL_INTERFACES);
+    }
+
+    #[test]
+    fn named_interface_overrides_scouting() {
+        assert_eq!(
+            resolve_scouting_interface(Some("wlan0"), Some("on")),
+            "wlan0"
+        );
+        assert_eq!(resolve_scouting_interface(Some(" wlan0 "), None), "wlan0");
+    }
+
+    #[test]
+    fn discovery_knobs_are_on_unless_told_otherwise() {
+        assert!(resolve_enabled(None));
+        assert!(resolve_enabled(Some("  ")));
+        assert!(resolve_enabled(Some("on")));
+    }
+
+    #[test]
+    fn discovery_knobs_read_every_spelling_of_off() {
+        assert!(!resolve_enabled(Some("off")));
+        assert!(!resolve_enabled(Some("false")));
+        assert!(!resolve_enabled(Some("0")));
+        assert!(!resolve_enabled(Some("no")));
+        assert!(!resolve_enabled(Some(" False ")));
+    }
+
+    #[test]
+    fn unknown_knob_value_leaves_discovery_on() {
+        assert!(resolve_enabled(Some("offf")));
+    }
+
+    #[test]
+    fn zenoh_knows_both_discovery_keys() {
+        // zenoh rejects unknown config keys, so a typo'd key fails here.
+        let mut config = ::zenoh::Config::default();
+        config
+            .insert_json5("scouting/multicast/enabled", "false")
+            .expect("multicast key");
+        config
+            .insert_json5("scouting/gossip/enabled", "false")
+            .expect("gossip key");
+        assert_eq!(
+            config.get_json("scouting/multicast/enabled").unwrap(),
+            "false"
+        );
+        assert_eq!(config.get_json("scouting/gossip/enabled").unwrap(), "false");
+    }
+
+    #[test]
+    fn unset_mode_keeps_zenohs_default() {
+        assert_eq!(resolve_mode(None), None);
+        assert_eq!(resolve_mode(Some("  ")), None);
+    }
+
+    #[test]
+    fn known_modes_pass_through_trimmed() {
+        assert_eq!(resolve_mode(Some("client")), Some("client"));
+        assert_eq!(resolve_mode(Some(" peer ")), Some("peer"));
+        assert_eq!(resolve_mode(Some("router")), Some("router"));
+    }
+
+    #[test]
+    fn unknown_mode_is_ignored_rather_than_fatal() {
+        assert_eq!(resolve_mode(Some("clientt")), None);
+        assert_eq!(resolve_mode(Some("Client")), None);
+    }
+
+    #[test]
+    fn connect_endpoints_json5_empty_yields_none() {
+        assert_eq!(connect_endpoints_json5(""), None);
+        assert_eq!(connect_endpoints_json5("  , ,  "), None);
+    }
+
+    #[test]
+    fn connect_endpoints_json5_lists_all_locators() {
+        assert_eq!(
+            connect_endpoints_json5("tcp/a:7447, tcp/b:7447"),
+            Some(r#"["tcp/a:7447","tcp/b:7447"]"#.to_string())
+        );
+    }
+
+    #[test]
+    fn connect_endpoints_json5_filters_blank_segments() {
+        assert_eq!(
+            connect_endpoints_json5(" ,tcp/go2:7447,, "),
+            Some(r#"["tcp/go2:7447"]"#.to_string())
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn round_trip_delivers_payload() {
