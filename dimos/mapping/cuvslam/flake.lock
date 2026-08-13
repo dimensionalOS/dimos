@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "cuvslam-fork": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786569277,
+        "narHash": "sha256-EGq0MfPHQIAjCN7f504iCC9cHcp/gtJ5/iM91pPuRG8=",
+        "owner": "jeff-hykin",
+        "repo": "dim-slam",
+        "rev": "e9d0f7f3133b453b25efcfcc4167006790420a30",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jeff-hykin",
+        "repo": "dim-slam",
+        "rev": "e9d0f7f3133b453b25efcfcc4167006790420a30",
+        "type": "github"
+      }
+    },
     "dimos-lcm": {
       "flake": false,
       "locked": {
@@ -93,6 +110,7 @@
     },
     "root": {
       "inputs": {
+        "cuvslam-fork": "cuvslam-fork",
         "dimos-lcm": "dimos-lcm",
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",
