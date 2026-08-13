@@ -46,6 +46,12 @@ class SimpleModule(Module):
     def get_counter(self) -> int:
         return self.counter
 
+    @rpc
+    def read_global_robot_ip(self) -> str | None:
+        from dimos.core.global_config import global_config as worker_config
+
+        return worker_config.robot_ip
+
 
 class AnotherModule(Module):
     value: int = 100
@@ -128,6 +134,18 @@ def test_worker_manager_basic(create_worker_manager):
 
     result = module.get_counter()
     assert result == 2
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_worker_inherits_host_global_config(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    host_config = GlobalConfig(robot_ip="10.11.12.13")
+    module = worker_manager.deploy(SimpleModule, host_config, {})
+    module.start()
+
+    assert module.read_global_robot_ip() == "10.11.12.13"
 
     module.stop()
 
