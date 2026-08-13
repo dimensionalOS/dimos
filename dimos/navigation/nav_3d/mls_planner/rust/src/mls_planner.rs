@@ -340,45 +340,63 @@ impl Planner {
         bb.bounds()
     }
 
-    /// Replace the surface_lookup entries for columns in the write box with
-    /// the freshly extracted cells. Returns the added and removed cells so
-    /// only the affected parts of the graph get patched.
+    /// Replace the surface_lookup entries for write-box columns whose cells
+    /// changed, leaving identical columns untouched. Returns the added and
+    /// removed cells so only the affected parts of the graph get patched.
     fn replace_surface_region(
         &mut self,
         write: (i32, i32, i32, i32),
         new_cells: &[VoxelKey],
     ) -> (Vec<VoxelKey>, Vec<VoxelKey>) {
         let (x0, x1, y0, y1) = write;
-        let mut old: AHashSet<VoxelKey> = AHashSet::new();
-        for ix in x0..=x1 {
-            for iy in y0..=y1 {
-                if let Some(zs) = self.graph.surface_lookup.remove(&(ix, iy)) {
-                    for iz in zs {
-                        old.insert((ix, iy, iz));
+        let mut new_by_col: AHashMap<(i32, i32), Vec<i32>> = AHashMap::new();
+        for &(ix, iy, iz) in new_cells {
+            new_by_col.entry((ix, iy)).or_default().push(iz);
+        }
+        for zs in new_by_col.values_mut() {
+            zs.sort_unstable();
+            zs.dedup();
+        }
+
+        let lookup = &self.graph.surface_lookup;
+        let changed: Vec<((i32, i32), Vec<i32>)> = (x0..(x1 + 1))
+            .into_par_iter()
+            .flat_map_iter(|ix| {
+                let mut local: Vec<((i32, i32), Vec<i32>)> = Vec::new();
+                for iy in y0..=y1 {
+                    let col = (ix, iy);
+                    let old = lookup.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    let new = new_by_col.get(&col).map(Vec::as_slice).unwrap_or(&[]);
+                    if old != new {
+                        local.push((col, new.to_vec()));
                     }
+                }
+                local
+            })
+            .collect();
+
+        let mut added: Vec<VoxelKey> = Vec::new();
+        let mut removed: Vec<VoxelKey> = Vec::new();
+        for (col, new_zs) in changed {
+            let old_zs = if new_zs.is_empty() {
+                self.graph.surface_lookup.remove(&col).unwrap_or_default()
+            } else {
+                self.graph
+                    .surface_lookup
+                    .insert(col, new_zs.clone())
+                    .unwrap_or_default()
+            };
+            for &iz in &new_zs {
+                if old_zs.binary_search(&iz).is_err() {
+                    added.push((col.0, col.1, iz));
+                }
+            }
+            for &iz in &old_zs {
+                if new_zs.binary_search(&iz).is_err() {
+                    removed.push((col.0, col.1, iz));
                 }
             }
         }
-        let new: AHashSet<VoxelKey> = new_cells.iter().copied().collect();
-
-        let mut touched: AHashSet<(i32, i32)> = AHashSet::new();
-        for &(ix, iy, iz) in new_cells {
-            self.graph
-                .surface_lookup
-                .entry((ix, iy))
-                .or_default()
-                .push(iz);
-            touched.insert((ix, iy));
-        }
-        for col in touched {
-            if let Some(zs) = self.graph.surface_lookup.get_mut(&col) {
-                zs.sort_unstable();
-                zs.dedup();
-            }
-        }
-
-        let added: Vec<VoxelKey> = new.iter().filter(|c| !old.contains(c)).copied().collect();
-        let removed: Vec<VoxelKey> = old.iter().filter(|c| !new.contains(c)).copied().collect();
         (added, removed)
     }
 
