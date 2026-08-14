@@ -474,6 +474,13 @@ function processTracking(frame) {
     }
     lastSendTime = now;
 
+    // Humanoid retargeting needs the headset pose in the same reference space
+    // as both hands. Other teleop modules ignore the "head" frame.
+    const viewerPose = frame.getViewerPose(xrRefSpace);
+    if (viewerPose) {
+        sendPose('head', viewerPose);
+    }
+
     // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
         const handedness = inputSource.handedness;
@@ -532,8 +539,13 @@ function processTracking(frame) {
             // [4] = X/A button
             // [5] = Y/B button
             // [6] = menu (if exposed)
+            // Pad to at least 7 entries: the Python side
+            // (QuestControllerState.from_joy) requires the full layout,
+            // but browsers only report the buttons the controller has
+            // (e.g. 6 when no menu/thumbrest is exposed).
             const buttons = [];
-            for (let i = 0; i < gamepad.buttons.length; i++) {
+            const buttonCount = Math.max(gamepad.buttons.length, 7);
+            for (let i = 0; i < buttonCount; i++) {
                 buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
             }
 

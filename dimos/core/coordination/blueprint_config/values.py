@@ -55,6 +55,41 @@ def plain(value: Any) -> Any:
     return _copy_opaque(value)
 
 
+def validated_model_values(model: BaseModel, *, exclude_unset: bool = False) -> dict[str, Any]:
+    """Export validated fields while preserving opaque Python values.
+
+    Pydantic's ``model_dump`` expands dataclass instances, including callable
+    factories, into dictionaries. Module kwargs cross another validation
+    boundary in their worker process, where those dictionaries no longer
+    satisfy callable-typed fields.
+    """
+    included = model.model_fields_set if exclude_unset else type(model).model_fields
+    return {
+        name: _validated_value(getattr(model, name), exclude_unset=exclude_unset)
+        for name in type(model).model_fields
+        if name in included
+    }
+
+
+def _validated_value(value: Any, *, exclude_unset: bool) -> Any:
+    if isinstance(value, BaseModel):
+        return validated_model_values(value, exclude_unset=exclude_unset)
+    if isinstance(value, Mapping):
+        return {
+            _copy_opaque(key): _validated_value(item, exclude_unset=exclude_unset)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_validated_value(item, exclude_unset=exclude_unset) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_validated_value(item, exclude_unset=exclude_unset) for item in value)
+    if isinstance(value, set):
+        return {_validated_value(item, exclude_unset=exclude_unset) for item in value}
+    if isinstance(value, frozenset):
+        return frozenset(_validated_value(item, exclude_unset=exclude_unset) for item in value)
+    return _copy_opaque(value)
+
+
 def deep_merge(destination: dict[str, Any], incoming: Mapping[str, Any]) -> None:
     for key, value in incoming.items():
         if key in destination and isinstance(destination[key], dict) and isinstance(value, Mapping):
