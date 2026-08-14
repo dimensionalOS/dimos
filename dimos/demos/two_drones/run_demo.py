@@ -65,8 +65,10 @@ SPAWNS = {"droneA": (-19.0, -30.0), "droneB": (-19.0, 30.0)}
 SCENARIOS: dict[str, dict] = {  # type: ignore[type-arg]
     "open": {
         "obstacles": [],
-        "target_path": [(16, -20), (16, 20), (4, 20), (4, -20)],
-        "target_speed": 1.4,
+        # The cube patrols most of the arena, so exploring drones cross its
+        # path instead of having to reach a far corner it hides in.
+        "target_path": [(15, -25), (15, 25), (-12, 25), (-12, -25)],
+        "target_speed": 1.7,
     },
     "obstacles": {
         "obstacles": [
