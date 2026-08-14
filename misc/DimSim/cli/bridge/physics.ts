@@ -121,6 +121,18 @@ const CH_ODOM = "/odom#geometry_msgs.PoseStamped";
 const CH_CMD_VEL = "/cmd_vel#geometry_msgs.Twist";
 const CMD_VEL_TIMEOUT_MS = 500;
 
+/** Per-robot options for multi-robot worlds. */
+export interface ServerPhysicsOptions {
+  /** Topic prefix, e.g. "/droneA" → "/droneA/cmd_vel#...". Empty = legacy topics. */
+  topicPrefix?: string;
+  /** Robot name echoed in pose updates to the browser ("" = default). */
+  robotName?: string;
+  /** Whether this instance advances the shared Rapier world. Exactly one
+   * ServerPhysics per world should step it; the others only enqueue their
+   * kinematic translations, which the stepper applies. */
+  stepWorld?: boolean;
+}
+
 // -- ServerPhysics ------------------------------------------------------------
 
 export class ServerPhysics {
@@ -150,6 +162,12 @@ export class ServerPhysics {
   private maxSlopeAngle: number;
   private wheelBase: number;
   private maxSteerAngle: number;
+
+  // Multi-robot options
+  private chOdom: string;
+  private chCmdVel: string;
+  private robotName: string;
+  private stepWorld: boolean;
 
   // Agent state
   private yaw = 0;
@@ -186,11 +204,18 @@ export class ServerPhysics {
     RAPIER: any,
     sentSeqs: Set<number>,
     embodiment?: EmbodimentConfig,
+    options?: ServerPhysicsOptions,
   ) {
     this.lcm = lcm;
     this.world = rapierWorld;
     this.RAPIER = RAPIER;
     this.sentSeqs = sentSeqs;
+
+    const prefix = options?.topicPrefix ?? "";
+    this.chOdom = prefix ? `${prefix}/odom#geometry_msgs.PoseStamped` : CH_ODOM;
+    this.chCmdVel = prefix ? `${prefix}/cmd_vel#geometry_msgs.Twist` : CH_CMD_VEL;
+    this.robotName = options?.robotName ?? "";
+    this.stepWorld = options?.stepWorld ?? true;
 
     // Apply embodiment config with defaults
     this.embodimentType = embodiment?.embodimentType ?? "ground";
@@ -333,10 +358,15 @@ export class ServerPhysics {
 
   /** Subscribe to cmd_vel on LCM. */
   subscribeCmdVel(): void {
-    this.lcm.subscribe(CH_CMD_VEL, geometry_msgs.Twist, (msg: any) => {
+    this.lcm.subscribe(this.chCmdVel, geometry_msgs.Twist, (msg: any) => {
       this.handleCmdVel(msg.data);
     });
     // quiet
+  }
+
+  /** Robot name for pose routing ("" = default/single robot). */
+  getRobotName(): string {
+    return this.robotName;
   }
 
   /** Start fixed-rate physics stepping + odom publish. */
@@ -420,8 +450,10 @@ export class ServerPhysics {
 
     const computeEnd = this.profile ? performance.now() : 0;
 
-    // Step world to apply kinematic translation (needed for next computeColliderMovement)
-    this.world.step();
+    // Step world to apply kinematic translation (needed for next computeColliderMovement).
+    // In multi-robot worlds only the designated stepper advances the world;
+    // the other robots' queued kinematic translations are applied by its step.
+    if (this.stepWorld) this.world.step();
 
     const stepEnd = this.profile ? performance.now() : 0;
 
@@ -501,7 +533,7 @@ export class ServerPhysics {
 
     try {
       this.sentSeqs.add(this.lcm.getNextSeq());
-      this.lcm.publishRaw(CH_ODOM, odom.encode()).catch(() => {});
+      this.lcm.publishRaw(this.chOdom, odom.encode()).catch(() => {});
     } catch (e: unknown) {
       if (this.seq <= 3) console.warn("[physics] odom publish error:", e);
     }

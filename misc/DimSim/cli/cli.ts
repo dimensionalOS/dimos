@@ -124,6 +124,8 @@ Dev:
   --lidar-rate <ms>              LiDAR publish interval in ms (default: 200 = 5 Hz)
   --no-depth                     Disable depth image publishing
   --camera-fov <deg>             Camera FOV in degrees (default: 80)
+  --robots <a,b,...>             Named robots sharing ONE world; topics get
+                                 /name/ prefixes (/a/cmd_vel, /a/odom, /a/lidar)
 
 Eval:
   --connect                      Connect to existing bridge (use with dimos)
@@ -143,7 +145,7 @@ const KNOWN_FLAGS = new Set([
   "help", "version",
   "scene", "port", "headless", "render", "channels", "eval", "env",
   "output", "parallel", "connect", "timeout", "workflow",
-  "camera-fov", "image-rate", "lidar-rate", "no-depth",
+  "camera-fov", "image-rate", "lidar-rate", "no-depth", "robots",
 ]);
 
 function parseArgs(args: string[]) {
@@ -220,6 +222,12 @@ async function main() {
       ? Array.from({ length: numChannels }, (_, i) => `page-${i}`)
       : undefined;
 
+    // Multi-robot roster (one shared world, prefixed topics per robot)
+    const robots = typeof opts.robots === "string" && opts.robots.length > 0
+      ? (opts.robots as string).split(",").map((r) => r.trim()).filter((r) => r.length > 0)
+      : undefined;
+    if (robots) console.log(`[dimsim] Robots: ${robots.join(", ")}`);
+
     console.log(`[dimsim] Dev mode — scene: ${scene}, port: ${port}${headless ? " (headless)" : ""}${channels ? ` (${numChannels} channels)` : ""}`);
     console.log(`[dimsim] Serving from: ${distDir}`);
 
@@ -229,6 +237,7 @@ async function main() {
       sensorRates: Object.keys(sensorRates).length > 0 ? sensorRates : undefined,
       sensorEnable: Object.keys(sensorEnable).length > 0 ? sensorEnable : undefined,
       cameraFov,
+      robots,
     });
 
     if (headless) {

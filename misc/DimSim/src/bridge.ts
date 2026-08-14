@@ -51,6 +51,9 @@ export interface SensorSources {
 export interface DimosBridgeOptions {
   wsUrl?: string;
   agent: any;
+  /** Multi-robot worlds: robot name → avatar. Pose messages carrying a `robot`
+   * field are routed here; `agent` stays the default/primary avatar. */
+  agents?: Map<string, any>;
   sensorSources: SensorSources;
   rates?: Partial<PublishRates>;
   sensorEnable?: Partial<SensorEnable>;
@@ -59,6 +62,7 @@ export interface DimosBridgeOptions {
 export class DimosBridge {
   wsUrl: string;
   agent: any;
+  agents: Map<string, any>;
   sensors: SensorSources;
   rates: PublishRates;
   sensorEnable: SensorEnable;
@@ -75,10 +79,11 @@ export class DimosBridge {
   _timers: Record<string, ReturnType<typeof setInterval>>;
   _connected: boolean;
 
-  constructor({ wsUrl, agent, sensorSources, rates, sensorEnable }: DimosBridgeOptions) {
+  constructor({ wsUrl, agent, agents, sensorSources, rates, sensorEnable }: DimosBridgeOptions) {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     this.wsUrl = wsUrl || `${protocol}//${location.host}`;
     this.agent = agent;
+    this.agents = agents ?? new Map();
     this.sensors = sensorSources;
     this.rates = { ...DEFAULT_RATES, ...rates };
     this.sensorEnable = { depth: true, ...sensorEnable };
@@ -112,7 +117,7 @@ export class DimosBridge {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === "pose") {
-            this._handleServerPose(msg.x, msg.y, msg.z, msg.yaw);
+            this._handleServerPose(msg.x, msg.y, msg.z, msg.yaw, msg.robot);
           } else if (msg.type === "embodimentConfig") {
             this._handleEmbodimentConfig(msg);
           }
@@ -160,28 +165,49 @@ export class DimosBridge {
 
   // -- Incoming messages ------------------------------------------------------
 
-  /** Handle server-side physics pose update (Three.js Y-up frame). */
-  _handleServerPose(x: number, y: number, z: number, yaw: number): void {
-    if (!this.agent) return;
+  /** Handle server-side physics pose update (Three.js Y-up frame).
+   * `robot` selects the avatar in multi-robot worlds; undefined/"" or an
+   * unknown name falls back to the primary agent (legacy single-robot). */
+  _handleServerPose(x: number, y: number, z: number, yaw: number, robot?: string): void {
+    const target = (robot && this.agents.get(robot)) || this.agent;
+    if (!target) return;
     // Move the agent body to the server-authoritative position
-    if (this.agent.body) {
-      this.agent.body.setNextKinematicTranslation({ x, y, z });
+    if (target.body) {
+      target.body.setNextKinematicTranslation({ x, y, z });
     }
-    if (this.agent.group) {
-      this.agent.group.rotation.y = yaw;
+    if (target.group) {
+      target.group.rotation.y = yaw;
     }
-    // Update engine's _dimosYaw for sensor capture / odom pose reading
-    if ((window as any).__dimosSetYaw) {
-      (window as any).__dimosSetYaw(yaw);
+    if (robot) this._serverPoses.set(robot, { x, y, z, yaw });
+    if (target === this.agent) {
+      // Update engine's _dimosYaw for sensor capture / odom pose reading
+      if ((window as any).__dimosSetYaw) {
+        (window as any).__dimosSetYaw(yaw);
+      }
+      // Store for odom/sensor capture
+      this._serverPose = { x, y, z, yaw };
     }
-    // Store for odom/sensor capture
-    this._serverPose = { x, y, z, yaw };
   }
 
   _serverPose: { x: number; y: number; z: number; yaw: number } | null = null;
+  _serverPoses: Map<string, { x: number; y: number; z: number; yaw: number }> = new Map();
 
   _handleEmbodimentConfig(msg: any): void {
-    console.log("[DimosBridge] embodiment config received:", msg.embodimentType || "quadruped");
+    console.log("[DimosBridge] embodiment config received:", msg.embodimentType || "quadruped", msg.robot ? `(robot=${msg.robot})` : "");
+    const target = (msg.robot && this.agents.get(msg.robot)) || this.agent;
+    if (target && target !== this.agent && msg.avatarUrl) {
+      const urls = Array.isArray(msg.avatarUrl) ? msg.avatarUrl : [msg.avatarUrl];
+      target.avatarUrl = urls;
+      if (msg.radius != null) target.radius = msg.radius;
+      if (msg.halfHeight != null) target.halfHeight = msg.halfHeight;
+      if (target.model) {
+        target.group.remove(target.model);
+        target.model = null;
+      }
+      target._loadGLB();
+      if (target.group) target.group.visible = true;
+      return;
+    }
     // Swap the agent's avatar model if avatarUrl changed
     if (this.agent && msg.avatarUrl) {
       const urls = Array.isArray(msg.avatarUrl) ? msg.avatarUrl : [msg.avatarUrl];

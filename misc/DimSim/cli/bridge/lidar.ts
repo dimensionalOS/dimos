@@ -125,10 +125,12 @@ export class ServerLidar {
 
   private ray: any; // Reusable Ray object (avoids 20k allocations per scan)
   private rateMs: number; // publish interval (ms); from --lidar-rate, else RATE_MS default
+  private chLidar: string; // publish channel (prefixed in multi-robot worlds)
 
-  constructor(lcm: LCM, rapierWorld: any, RAPIER: any, sentSeqs: Set<number>, embodiment?: LidarEmbodimentConfig, rateMs?: number) {
+  constructor(lcm: LCM, rapierWorld: any, RAPIER: any, sentSeqs: Set<number>, embodiment?: LidarEmbodimentConfig, rateMs?: number, topicPrefix?: string) {
     this.lcm = lcm;
     this.rateMs = rateMs && rateMs > 0 ? rateMs : RATE_MS;
+    this.chLidar = topicPrefix ? `${topicPrefix}/lidar#sensor_msgs.PointCloud2` : CH_LIDAR;
     this.world = rapierWorld;
     this.RAPIER = RAPIER;
     this.sentSeqs = sentSeqs;
@@ -305,7 +307,7 @@ export class ServerLidar {
       // Mark seq for echo filtering (prevent server re-forwarding to browser WS)
       this.sentSeqs.add(this.lcm.getNextSeq());
       // Publish directly to LCM — no WS hop (await so buffer pressure is felt)
-      await this.lcm.publish(CH_LIDAR, msg);
+      await this.lcm.publish(this.chLidar, msg);
 
       if (profile) {
         const total = performance.now() - scanStart;

@@ -707,8 +707,12 @@ return true;
         max_slope_angle: float | None = None,
         friction: float | None = None,
         max_altitude: float | None = None,
+        robot: str | None = None,
     ) -> dict[str, Any]:
         """Set the robot embodiment — from a preset or fully custom.
+
+        In multi-robot worlds (bridge started with ``--robots a,b``), pass
+        ``robot="a"`` to target that robot; omit for the first/only robot.
 
         Use a named preset as a starting point, then override any field.
         Or skip the preset and specify everything manually.
@@ -814,6 +818,8 @@ return true;
             cfg["maxAltitude"] = max_altitude
 
         msg = {"type": "embodimentConfig", **cfg}
+        if robot is not None:
+            msg["robot"] = robot
         if self.channel:
             msg["channel"] = self.channel
         self._ws.send(json.dumps(msg))  # type: ignore[union-attr]
@@ -824,15 +830,19 @@ return true;
             urls_js = json.dumps(avatar_urls)
             r = cfg.get("radius", 0.12)
             hh = cfg.get("halfHeight", 0.25)
+            target_js = (
+                f"(agents.get({json.dumps(robot)}) || agent)" if robot is not None else "agent"
+            )
             self.exec(f"""
-                if (agent.model) {{
-                    agent.group.remove(agent.model);
-                    agent.model = null;
+                const target = {target_js};
+                if (target.model) {{
+                    target.group.remove(target.model);
+                    target.model = null;
                 }}
-                agent.avatarUrl = {urls_js};
-                agent.radius = {r};
-                agent.halfHeight = {hh};
-                agent._loadGLB();
+                target.avatarUrl = {urls_js};
+                target.radius = {r};
+                target.halfHeight = {hh};
+                target._loadGLB();
                 return "avatar_swap_initiated";
             """)
 
@@ -896,6 +906,7 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
         x: float,
         y: float,
         z: float,
+        robot: str | None = None,
     ) -> None:
         """Teleport the agent to a world position.
 
@@ -907,22 +918,34 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
         ----------
         x, y, z : float
             Target position in Three.js world coordinates (Y-up).
+        robot : str, optional
+            Robot name in multi-robot worlds; omit for the first/only robot.
         """
         cmd: dict[str, Any] = {"type": "teleport", "x": x, "y": y, "z": z}
+        if robot is not None:
+            cmd["robot"] = robot
         if self.channel:
             cmd["channel"] = self.channel
         self._ws.send(json.dumps(cmd))  # type: ignore[union-attr]
 
-    def get_agent_position(self) -> dict[str, Any]:
+    def get_agent_position(self, robot: str | None = None) -> dict[str, Any]:
         """Get the agent's current world position.
+
+        Parameters
+        ----------
+        robot : str, optional
+            Robot name in multi-robot worlds; omit for the first/only robot.
 
         Returns
         -------
         dict
             ``{x, y, z}``
         """
-        code = """
-const p = agent.group.position;
-return { x: p.x, y: p.y, z: p.z };
+        target_js = (
+            f"(agents.get({json.dumps(robot)}) || agent)" if robot is not None else "agent"
+        )
+        code = f"""
+const p = {target_js}.group.position;
+return {{ x: p.x, y: p.y, z: p.z }};
 """
         return cast("dict[str, Any]", self.exec(code))

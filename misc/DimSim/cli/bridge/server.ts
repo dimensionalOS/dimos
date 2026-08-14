@@ -60,9 +60,22 @@ export interface BridgeServerOptions {
   sensorRates?: Record<string, number>;
   sensorEnable?: Record<string, boolean>;
   cameraFov?: number;
+  /** Robot names sharing ONE world per channel. Each named robot gets its own
+   * physics body + lidar publishing on prefixed topics (/name/cmd_vel, /name/odom,
+   * /name/lidar). Default: a single unnamed robot on the legacy unprefixed topics. */
+  robots?: string[];
 }
 
-/** Per-channel state: each channel gets its own LCM, physics, lidar, and WS client sets. */
+/** Per-robot state within a channel's shared physics world. */
+interface RobotState {
+  name: string; // "" = default single robot (legacy topics)
+  physics: ServerPhysics | null;
+  lidar: ServerLidar | null;
+  embodiment: Record<string, any> | null;
+}
+
+/** Per-channel state: each channel gets its own LCM, one shared physics world,
+ * per-robot physics/lidar, and WS client sets. */
 interface ChannelState {
   name: string;
   controlClients: Set<WebSocket>;
@@ -70,9 +83,7 @@ interface ChannelState {
   sensorClients: Set<WebSocket>;
   lcm: LCM | null;
   sentSeqs: Set<number>;
-  serverLidar: ServerLidar | null;
-  serverPhysics: ServerPhysics | null;
-  embodiment: Record<string, any> | null;
+  robots: Map<string, RobotState>;
 }
 
 export async function startBridgeServer(options: BridgeServerOptions) {
@@ -82,6 +93,16 @@ export async function startBridgeServer(options: BridgeServerOptions) {
     channels,
     sensorRates, sensorEnable, cameraFov,
   } = options;
+
+  // Robot roster per channel. Default: one unnamed robot on legacy topics.
+  const robotNames: string[] = options.robots && options.robots.length > 0
+    ? options.robots
+    : [""];
+  for (const rn of robotNames) {
+    if (rn && !/^[a-zA-Z0-9_-]+$/.test(rn)) {
+      throw new Error(`invalid robot name "${rn}" — must match [a-zA-Z0-9_-]+`);
+    }
+  }
 
   // Scene the engine boots into.  Injected as window.__dimosScene below so
   // engine.js dynamically imports /scenes/<name>/index.js. Sanitize to a
@@ -159,9 +180,12 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       sensorClients: new Set(),
       lcm: null,
       sentSeqs: new Set(),
-      serverLidar: null,
-      serverPhysics: null,
-      embodiment: null,
+      robots: new Map(robotNames.map((rn) => [rn, {
+        name: rn,
+        physics: null,
+        lidar: null,
+        embodiment: null,
+      } as RobotState])),
     };
 
     if (!evalOnly) {
@@ -202,13 +226,18 @@ export async function startBridgeServer(options: BridgeServerOptions) {
   }
 
   // -- Server-side init from Rapier snapshot ----------------------------------
+  // Restores ONE world per channel and creates per-robot physics + lidar in it.
+  // Robots collide with each other and see each other in lidar (only their own
+  // body is excluded from their scan).
   async function initServerSystems(
     chState: ChannelState,
     snapshot: Uint8Array,
     spawnPos?: { x: number; y: number; z: number },
   ): Promise<void> {
-    if (chState.serverLidar) { chState.serverLidar.stop(); chState.serverLidar = null; }
-    if (chState.serverPhysics) { chState.serverPhysics.stop(); chState.serverPhysics = null; }
+    for (const robot of chState.robots.values()) {
+      if (robot.lidar) { robot.lidar.stop(); robot.lidar = null; }
+      if (robot.physics) { robot.physics.stop(); robot.physics = null; }
+    }
     if (!chState.lcm) return;
 
     try {
@@ -227,35 +256,51 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       // Single canonical "physics live" marker — test fixtures grep for this.
       console.log(`[bridge:${chState.name || "default"}] ready`);
 
-      chState.serverPhysics = new ServerPhysics(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined);
-      if (spawnPos) {
-        chState.serverPhysics.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
+      let idx = 0;
+      for (const robot of chState.robots.values()) {
+        const prefix = robot.name ? `/${robot.name}` : "";
+        robot.physics = new ServerPhysics(
+          chState.lcm, world, RAPIER, chState.sentSeqs,
+          robot.embodiment ?? undefined,
+          // Only the first robot advances the shared world; the rest enqueue
+          // kinematic translations that its step applies.
+          { topicPrefix: prefix, robotName: robot.name, stepWorld: idx === 0 },
+        );
+        if (spawnPos) {
+          // Offset extra robots so they don't spawn inside each other.
+          robot.physics.setPosition(spawnPos.x + idx * 1.5, spawnPos.y, spawnPos.z);
+        }
+
+        robot.lidar = new ServerLidar(
+          chState.lcm, world, RAPIER, chState.sentSeqs,
+          robot.embodiment ?? undefined, sensorRates?.lidar, prefix,
+        );
+        robot.lidar.setExcludeBody(robot.physics.getBody());
+
+        const thisRobot = robot;
+        robot.physics.setOnPoseUpdate((x, y, z, yaw) => {
+          const t0 = PROFILE ? performance.now() : 0;
+          const qw = Math.cos(yaw / 2);
+          const qy = Math.sin(yaw / 2);
+          thisRobot.lidar!.updatePose(x, y, z, 0, qy, 0, qw);
+
+          const msg = JSON.stringify({ type: "pose", robot: thisRobot.name, x, y, z, yaw });
+          const client = chState.activeControlClient;
+          if (client && client.readyState === WebSocket.OPEN) {
+            try { client.send(msg); } catch { /* ignore */ }
+          }
+          if (PROFILE) {
+            const dt = performance.now() - t0;
+            profPose.n++;
+            profPose.sum += dt;
+            if (dt > profPose.max) profPose.max = dt;
+          }
+        });
+
+        robot.physics.start();
+        robot.lidar.start();
+        idx++;
       }
-
-      chState.serverLidar = new ServerLidar(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined, sensorRates?.lidar);
-      chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
-
-      chState.serverPhysics.setOnPoseUpdate((x, y, z, yaw) => {
-        const t0 = PROFILE ? performance.now() : 0;
-        const qw = Math.cos(yaw / 2);
-        const qy = Math.sin(yaw / 2);
-        chState.serverLidar!.updatePose(x, y, z, 0, qy, 0, qw);
-
-        const msg = JSON.stringify({ type: "pose", x, y, z, yaw });
-        const client = chState.activeControlClient;
-        if (client && client.readyState === WebSocket.OPEN) {
-          try { client.send(msg); } catch { /* ignore */ }
-        }
-        if (PROFILE) {
-          const dt = performance.now() - t0;
-          profPose.n++;
-          profPose.sum += dt;
-          if (dt > profPose.max) profPose.max = dt;
-        }
-      });
-
-      chState.serverPhysics.start();
-      chState.serverLidar.start();
     } catch (e) {
       console.error(`[bridge:${chState.name || "default"}] server systems init error:`, e);
     }
@@ -385,17 +430,26 @@ export async function startBridgeServer(options: BridgeServerOptions) {
             try {
               const msg = JSON.parse(event.data);
 
+              // Robot routing: messages may carry a `robot` field naming which
+              // robot they target. Default: the first robot in the roster.
+              const resolveRobot = (): RobotState | undefined =>
+                chState.robots.get(msg.robot ?? "") ??
+                chState.robots.values().next().value;
+
               // -- Embodiment config: store & reconfigure running systems --
               if (msg.type === "embodimentConfig") {
-                chState.embodiment = msg.config ?? msg;
-                console.log(`${logPrefix} embodiment config stored:`, JSON.stringify(chState.embodiment));
-                if (chState.serverPhysics) chState.serverPhysics.reconfigure(chState.embodiment as any);
-                if (chState.serverLidar) {
-                  chState.serverLidar.reconfigure(chState.embodiment as any);
-                  // reconfigure() above replaced the agent's rigid body; re-point
-                  // the lidar exclusion at the new one or scans hit the agent itself.
-                  if (chState.serverPhysics) {
-                    chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
+                const robot = resolveRobot();
+                if (robot) {
+                  robot.embodiment = msg.config ?? msg;
+                  console.log(`${logPrefix} embodiment config stored (robot="${robot.name || "default"}"):`, JSON.stringify(robot.embodiment));
+                  if (robot.physics) robot.physics.reconfigure(robot.embodiment as any);
+                  if (robot.lidar) {
+                    robot.lidar.reconfigure(robot.embodiment as any);
+                    // reconfigure() above replaced the agent's rigid body; re-point
+                    // the lidar exclusion at the new one or scans hit the agent itself.
+                    if (robot.physics) {
+                      robot.lidar.setExcludeBody(robot.physics.getBody());
+                    }
                   }
                 }
                 // fall through to relay to browser
@@ -403,9 +457,10 @@ export async function startBridgeServer(options: BridgeServerOptions) {
 
               // -- Teleport: reposition physics agent, don't relay --
               if (msg.type === "teleport") {
-                if (chState.serverPhysics && msg.x != null && msg.y != null && msg.z != null) {
-                  chState.serverPhysics.setPosition(msg.x, msg.y, msg.z);
-                  console.log(`${logPrefix} teleport to (${msg.x},${msg.y},${msg.z})`);
+                const robot = resolveRobot();
+                if (robot?.physics && msg.x != null && msg.y != null && msg.z != null) {
+                  robot.physics.setPosition(msg.x, msg.y, msg.z);
+                  console.log(`${logPrefix} teleport robot="${robot.name || "default"}" to (${msg.x},${msg.y},${msg.z})`);
                 }
                 return; // don't relay teleport commands
               }
@@ -429,7 +484,10 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           try {
             const decoded = decodePacket(packet);
             if (decoded && decoded.type === "small") {
-              if (chState.serverPhysics && decoded.channel === "/odom#geometry_msgs.PoseStamped") {
+              // Drop browser-originated odom for any robot: server physics is
+              // authoritative for /odom and /<name>/odom alike.
+              const hasPhysics = [...chState.robots.values()].some((r) => r.physics);
+              if (hasPhysics && decoded.channel.endsWith("/odom#geometry_msgs.PoseStamped")) {
                 return;
               }
 
@@ -450,7 +508,10 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         const ratesJs = sensorRates ? `window.__dimosSensorRates=${JSON.stringify(sensorRates)};` : "";
         const enableJs = sensorEnable ? `window.__dimosSensorEnable=${JSON.stringify(sensorEnable)};` : "";
         const fovJs = cameraFov ? `window.__dimosCameraFov=${cameraFov};` : "";
-        const inject = `<script>window.__dimosMode=true;window.__dimosScene="${activeSceneName}";${headless ? "window.__dimosHeadless=true;" : ""}${ratesJs}${enableJs}${fovJs}</script>`;
+        const robotsJs = robotNames.length > 1 || robotNames[0] !== ""
+          ? `window.__dimosRobots=${JSON.stringify(robotNames)};`
+          : "";
+        const inject = `<script>window.__dimosMode=true;window.__dimosScene="${activeSceneName}";${headless ? "window.__dimosHeadless=true;" : ""}${ratesJs}${enableJs}${fovJs}${robotsJs}</script>`;
         html = html.replace("</head>", `${inject}\n</head>`);
         return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
       } catch {

@@ -5565,26 +5565,41 @@ if (dimosMode) {
       // "hide the group when no embodiment" path predates dimos integration and
       // is no longer reached here.
       const pendingEmb = sceneApi._getPendingEmbodiment?.();
-      const agent = createAiAgent({
-        ephemeral: false,
-        avatarUrl: pendingEmb?.avatarUrl,
-        radius: pendingEmb?.radius,
-        halfHeight: pendingEmb?.halfHeight,
-      });
-      aiAgents.push(agent);
-      sceneApi._setAgent(agent);
+      // Multi-robot roster injected by the bridge server (--robots a,b).
+      // One avatar per robot in ONE world; the first is the primary `agent`
+      // (legacy code paths + sensor capture POV).
+      const robotNames = Array.isArray(window.__dimosRobots) && window.__dimosRobots.length > 0
+        ? window.__dimosRobots
+        : [""];
+      const robotAvatars = new Map();
       const spawnPos = sceneCfg.spawnPoint || { x: 2, y: 0.5, z: 3 };
-      agent.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
+      let agent = null;
+      robotNames.forEach((rn, i) => {
+        const av = createAiAgent({
+          ephemeral: false,
+          avatarUrl: pendingEmb?.avatarUrl,
+          radius: pendingEmb?.radius,
+          halfHeight: pendingEmb?.halfHeight,
+        });
+        aiAgents.push(av);
+        // Offset extra robots — must match the server-side spawn offsets.
+        av.setPosition(spawnPos.x + i * 1.5, spawnPos.y, spawnPos.z);
+        if (rn) robotAvatars.set(rn, av);
+        if (i === 0) agent = av;
+      });
+      sceneApi._setAgent(agent);
       renderAgentTaskUi(); // update UI: hide spawn button, enable task controls
       // Server-side physics: agent pose is driven by ServerPhysics (Deno).
       // Browser just receives position updates and moves the visual avatar.
       let _dimosYaw = 0;
       // Bridge updates _dimosYaw via this setter when server sends pose
       window.__dimosSetYaw = (yaw) => { _dimosYaw = yaw; };
-      agent.update = function(_dt) {
-        this._syncVisual();
-      };
-      console.log(`[dimos] Agent spawned: ${agent.id}`);
+      for (const av of [agent, ...robotAvatars.values()]) {
+        av.update = function(_dt) {
+          this._syncVisual();
+        };
+      }
+      console.log(`[dimos] Agent spawned: ${agent.id} (robots: ${robotNames.map(r => r || "default").join(", ")})`);
 
       // 3. Set up fixed-size offscreen capture for dimos.
       // Keep sensor cost independent of the headed browser window size.
@@ -5768,6 +5783,7 @@ if (dimosMode) {
       const { DimosBridge } = await import("./bridge.ts");
       const bridge = new DimosBridge({
         agent,
+        agents: robotAvatars,
         rates: window.__dimosSensorRates || undefined,
         sensorEnable: window.__dimosSensorEnable || undefined,
         sensorSources: {
@@ -5906,7 +5922,7 @@ if (dimosMode) {
       const sceneEditor = new SceneEditor({
         bridge,
         channel,
-        globals: { scene, THREE, RAPIER, rapierWorld, renderer, camera, agent, assets, assetsGroup, gltfLoader },
+        globals: { scene, THREE, RAPIER, rapierWorld, renderer, camera, agent, agents: robotAvatars, assets, assetsGroup, gltfLoader },
       });
 
       // Agent POV only in headless (sensor capture needs it). Headed = free orbit.

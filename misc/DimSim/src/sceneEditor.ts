@@ -361,12 +361,14 @@ export class SceneEditor {
         "scene", "THREE", "RAPIER", "rapierWorld", "renderer", "camera",
         "agent", "playerBody", "assets", "assetsGroup",
         "loadGLTF", "addCollider", "removeCollider", "addNPC", "removeNPC", "autoScale",
+        "agents",
         code,
       );
       const result = await fn(
         g.scene, g.THREE, g.RAPIER, g.rapierWorld, g.renderer, g.camera,
         g.agent, g.agent, g.assets, g.assetsGroup,
         loadGLTF, addCollider, removeCollider, addNPC, removeNPC, autoScale,
+        (g as any).agents ?? new Map(),
       );
       this._send({ type: "execResult", id, success: true, result: _serialize(result) });
     } catch (err: any) {
