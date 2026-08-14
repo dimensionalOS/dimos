@@ -65,6 +65,8 @@ openyam_pickplace = autoconnect(
         # viser: works with the default roboplan world backend (meshcat
         # requires a VisualizationSpec world, e.g. drake)
         visualization={"backend": "viser"},
-        floor_z=-0.02,
+        # No floor obstacle: its box is hardcoded for the xArm table
+        # footprint and collides with the YAM's folded rest pose. Re-add
+        # once the world box placement is configurable.
     ),
 )
