@@ -20,7 +20,12 @@ import threading
 
 import pytest
 
-from dimos.benchmark.evaluation.pi_process import PiCliRunner, PiRunError, parse_pi_events
+from dimos.benchmark.evaluation.pi_process import (
+    PiCliRunner,
+    PiExportError,
+    PiRunError,
+    parse_pi_events,
+)
 
 
 def test_parse_stock_pi_events_uses_final_message_and_counts_tools() -> None:
@@ -191,6 +196,9 @@ def test_stock_cli_timeout_terminates_the_child(mocker, tmp_path: Path) -> None:
         subprocess.TimeoutExpired("pi", 0.01),
         0,
     ]
+    transcript = tmp_path / "pi-session" / "session.jsonl"
+    transcript.parent.mkdir()
+    transcript.write_text('{"type":"session"}\n')
     mocker.patch("dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process)
     runner = PiCliRunner(
         cli=cli,
@@ -200,7 +208,7 @@ def test_stock_cli_timeout_terminates_the_child(mocker, tmp_path: Path) -> None:
         timeout_s=0.01,
     )
 
-    with pytest.raises(PiRunError, match="timed out"):
+    with pytest.raises(PiRunError, match="timed out") as caught:
         runner.run(
             prompt="Count",
             system_prompt="Use memory",
@@ -211,3 +219,92 @@ def test_stock_cli_timeout_terminates_the_child(mocker, tmp_path: Path) -> None:
 
     process.terminate.assert_called_once_with()
     process.kill.assert_not_called()
+    assert caught.value.transcript_path == transcript
+
+
+def test_stock_cli_exports_transcript_through_rpc_with_extension(mocker, tmp_path: Path) -> None:
+    cli = tmp_path / "cli.js"
+    extension = tmp_path / "extension.js"
+    transcript = tmp_path / "pi-transcript.jsonl"
+    output = tmp_path / "pi-transcript.html"
+    for path in (cli, extension, transcript, output):
+        path.touch()
+    process = mocker.Mock(returncode=0)
+    process.stdin = mocker.Mock()
+    process.stdout = StringIO(
+        json.dumps(
+            {
+                "id": "dimos-transcript-export",
+                "type": "response",
+                "success": True,
+                "data": {"path": str(output)},
+            }
+        )
+        + "\n"
+    )
+    process.stderr = StringIO()
+    process.wait.return_value = 0
+    popen = mocker.patch(
+        "dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process
+    )
+    runner = PiCliRunner(
+        cli=cli,
+        extension=extension,
+        model="gpt-5.6-luna",
+        thinking_level="medium",
+        timeout_s=10,
+    )
+
+    runner.export_transcript(
+        transcript_path=transcript,
+        output_path=output,
+        mcp_url="http://127.0.0.1:1234/mcp",
+        api_key="secret",
+    )
+
+    command = popen.call_args.args[0]
+    assert command[command.index("--mode") + 1] == "rpc"
+    assert command[command.index("--session") + 1] == str(transcript)
+    assert command[command.index("--extension") + 1] == str(extension)
+    assert "--offline" in command
+    assert "secret" not in command
+    request = json.loads(process.stdin.write.call_args.args[0])
+    assert request == {
+        "id": "dimos-transcript-export",
+        "type": "export_html",
+        "outputPath": str(output),
+    }
+    process.stdin.close.assert_called_once_with()
+
+
+def test_transcript_export_reports_redacted_startup_error(mocker, tmp_path: Path) -> None:
+    cli = tmp_path / "cli.js"
+    extension = tmp_path / "extension.js"
+    transcript = tmp_path / "pi-transcript.jsonl"
+    for path in (cli, extension, transcript):
+        path.touch()
+    process = mocker.Mock(returncode=1)
+    process.stdin = mocker.Mock()
+    process.stdout = StringIO()
+    process.stderr = StringIO("provider rejected secret\n")
+    process.poll.return_value = 1
+    process.wait.return_value = 1
+    mocker.patch("dimos.benchmark.evaluation.pi_process.subprocess.Popen", return_value=process)
+    runner = PiCliRunner(
+        cli=cli,
+        extension=extension,
+        model="gpt-5.6-luna",
+        thinking_level="medium",
+        timeout_s=10,
+    )
+
+    with pytest.raises(
+        PiExportError,
+        match=r"exited with status 1: provider rejected \[REDACTED\]",
+    ):
+        runner.export_transcript(
+            transcript_path=transcript,
+            output_path=tmp_path / "pi-transcript.html",
+            mcp_url="http://127.0.0.1:1234/mcp",
+            api_key="secret",
+        )

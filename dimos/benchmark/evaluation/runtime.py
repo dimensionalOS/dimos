@@ -28,7 +28,7 @@ from typing import Any, Literal
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeIdentity
 from dimos.benchmark.evaluation.pi_process import PI_VERSION, PiCliRunner, PiRunError
-from dimos.benchmark.evaluation.progress import ProgressSink
+from dimos.benchmark.evaluation.progress import ProgressSink, StatusProgress, emit_progress
 from dimos.benchmark.evaluation.protocol import (
     DebugTrialSubmitter,
     ExplorationOutcome,
@@ -144,13 +144,21 @@ class CodePolicyRuntimeFactory:
                 )
             except PiRunError as exc:
                 self._record_text(path, relative, "stderr.log", exc.stderr, "Pi stderr")
-                raise
-            if result.transcript_path is not None:
-                target = path / "pi-transcript.jsonl"
-                shutil.copy2(result.transcript_path, target)
-                self._runtime_artifacts.append(
-                    _artifact(relative / target.name, "Pi transcript", "application/x-ndjson")
+                self._record_pi_transcript(
+                    path=path,
+                    relative=relative,
+                    source=exc.transcript_path,
+                    runner=runner,
+                    mcp_url=server.mcp_url,
                 )
+                raise
+            self._record_pi_transcript(
+                path=path,
+                relative=relative,
+                source=result.transcript_path,
+                runner=runner,
+                mcp_url=server.mcp_url,
+            )
             if result.stderr:
                 self._record_text(path, relative, "stderr.log", result.stderr, "Pi stderr")
             policy = manager.last_policy
@@ -292,6 +300,49 @@ class CodePolicyRuntimeFactory:
             return
         (path / filename).write_text(value, encoding="utf-8")
         self._runtime_artifacts.append(_artifact(relative / filename, label, "text/plain"))
+
+    def _record_pi_transcript(
+        self,
+        *,
+        path: Path,
+        relative: Path,
+        source: Path | None,
+        runner: PiCliRunner,
+        mcp_url: str,
+    ) -> None:
+        if source is None:
+            return
+        transcript = path / "pi-transcript.jsonl"
+        shutil.copy2(source, transcript)
+        self._runtime_artifacts.append(
+            _artifact(relative / transcript.name, "Pi transcript", "application/x-ndjson")
+        )
+        viewer = path / "pi-transcript.html"
+        try:
+            runner.export_transcript(
+                transcript_path=source,
+                output_path=viewer,
+                mcp_url=mcp_url,
+                api_key=self.api_key,
+            )
+        except Exception as exc:
+            viewer.unlink(missing_ok=True)
+            message = f"{type(exc).__name__}: {exc}".replace(self.api_key, "[REDACTED]")
+            emit_progress(
+                self.progress,
+                StatusProgress(channel="pi", message=f"transcript export failed: {message}"),
+            )
+            self._record_text(
+                path,
+                relative,
+                "pi-transcript-export-error.log",
+                message + "\n",
+                "Pi transcript export error",
+            )
+            return
+        self._runtime_artifacts.append(
+            _artifact(relative / viewer.name, "Pi transcript viewer", "text/html")
+        )
 
 
 class _SubmissionManager:
