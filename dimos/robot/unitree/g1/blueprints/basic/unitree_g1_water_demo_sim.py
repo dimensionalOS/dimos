@@ -48,13 +48,14 @@ from dimos.manipulation.mobile.pose_target_observation_module import (
 from dimos.navigation.holonomic_path_follower.module import HolonomicPathFollower
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_NUM_MOTORS,
+    _G1_ROOT,
     _MJCF_PATH,
     _ROBOT_MESHDIR,
     _SCENE_PROPS,
     _g1_sim_spec,
     _G1GrootCoordinator,
     _n_workers,
-    _viewer,
+    _rerun_config,
     g1_groot_coordinator,
     g1_groot_task_config,
 )
@@ -62,9 +63,16 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     _ARM_TRAJECTORY_TASK,
     g1_manipulation,
 )
-from dimos.robot.unitree.g1.watering_task import WateringTaskModule
+from dimos.robot.unitree.g1.g1_rerun import g1_attached_frame
+from dimos.robot.unitree.g1.manip_stance import (
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
+    RIGHT_PALM_FRAME,
+    WATERING_SPOUT_FRAME,
+)
+from dimos.robot.unitree.g1.watering_task import G1WateringSpoutTf, WateringTaskModule
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.simulation.engines.sim_body_pose import SimBodyPose
+from dimos.visualization.vis_module import vis_module
 
 if global_config.simulation != "mujoco":
     raise ValueError(
@@ -91,6 +99,21 @@ _TWIST_SOURCES = (
     TwistSourceConfig("operator", "operator_twist_command", priority=100, timeout=0.35),
     TwistSourceConfig("autonomy", "autonomy_twist_command", priority=50, timeout=0.25),
 )
+
+_SPOUT_OFFSET_IN_PALM = DEFAULT_SPOUT_OFFSET_IN_PALM
+
+_demo_rerun_config: dict[str, Any] = {
+    **_rerun_config,
+    "static": {
+        **_rerun_config["static"],
+        "g1_watering_spout": g1_attached_frame(
+            root_path=_G1_ROOT,
+            parent_link=RIGHT_PALM_FRAME,
+            frame_name=WATERING_SPOUT_FRAME,
+            translation=_SPOUT_OFFSET_IN_PALM,
+        ),
+    },
+}
 
 _watering_backend = MujocoSimModule.blueprint(
     address=_MJCF_PATH,
@@ -138,12 +161,15 @@ unitree_g1_water_demo_sim = (
         WateringTaskModule.blueprint(
             target_id="plant_pot_1",
             # Match the physical can: spout is 20 cm left of the right palm.
-            spout_offset_in_palm=(0.0, 0.20, 0.0),
+            spout_offset_in_palm=_SPOUT_OFFSET_IN_PALM,
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,
         ),
-        _viewer(),
+        G1WateringSpoutTf.blueprint(
+            spout_offset_in_palm=_SPOUT_OFFSET_IN_PALM,
+        ),
+        vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))
     .global_config(robot_model="unitree_g1", n_workers=_n_workers + 1)

@@ -47,6 +47,7 @@ def test_demo_graph_has_one_task_and_no_navigation_modules() -> None:
         "manipulationmodule",
         "holonomicpathfollower",
         "wateringtaskmodule",
+        "g1wateringspouttf",
         "websocketvismodule",
     }
     assert required <= names

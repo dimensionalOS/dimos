@@ -20,9 +20,11 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.g1.manip_stance import (
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
     POUR_Z,
     PourReachMap,
     Stance,
+    palm_position_for_spout,
     palm_to_capability_tcp,
     pot_in_base_frame,
     select_stance,
@@ -38,6 +40,7 @@ def _map(reachable, cell=0.05, x0=0.0, y0=-0.2):
         {
             "pour_z": POUR_Z,
             "tip_radians": -math.pi / 2,
+            "spout_offset_in_palm": DEFAULT_SPOUT_OFFSET_IN_PALM,
             "cell": cell,
             "x0": x0,
             "y0": y0,
@@ -72,6 +75,7 @@ def test_only_cells_reachable_in_both_pour_poses_count():
         {
             "pour_z": POUR_Z,
             "tip_radians": -math.pi / 2,
+            "spout_offset_in_palm": DEFAULT_SPOUT_OFFSET_IN_PALM,
             "cell": 0.05,
             "x0": 0.0,
             "y0": 0.0,
@@ -152,7 +156,20 @@ def test_committed_map_matches_the_geometry_the_demo_commands():
     reach = PourReachMap.load()
     assert reach.pour_z == pytest.approx(POUR_Z)
     assert reach.tip_radians == pytest.approx(-math.pi / 2)
+    assert reach.spout_offset_in_palm == pytest.approx(DEFAULT_SPOUT_OFFSET_IN_PALM)
     assert reach.reachable.any()
+
+
+def test_tipped_spout_tcp_moves_the_sampled_palm_above_the_water_exit():
+    rotation = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]])
+
+    palm = palm_position_for_spout(
+        np.array([0.4, -0.2, POUR_Z]),
+        rotation,
+        DEFAULT_SPOUT_OFFSET_IN_PALM,
+    )
+
+    assert palm == pytest.approx([0.4, -0.2, POUR_Z + 0.20])
 
 
 def test_a_map_sampled_for_a_different_pour_is_refused():
@@ -161,6 +178,7 @@ def test_a_map_sampled_for_a_different_pour_is_refused():
     stale = {
         "pour_z": POUR_Z + 0.2,
         "tip_radians": -math.pi / 2,
+        "spout_offset_in_palm": DEFAULT_SPOUT_OFFSET_IN_PALM,
         "cell": 0.05,
         "x0": 0.0,
         "y0": 0.0,
@@ -171,6 +189,26 @@ def test_a_map_sampled_for_a_different_pour_is_refused():
         PourReachMap(stale)
     with pytest.raises(ValueError, match="stale"):
         PourReachMap({**stale, "pour_z": POUR_Z, "tip_radians": 0.0})
+    with pytest.raises(ValueError, match="stale"):
+        PourReachMap(
+            {**stale, "pour_z": POUR_Z},
+            expected_spout_offset_in_palm=(0.0, 0.18, 0.0),
+        )
+
+
+def test_a_map_without_tcp_metadata_is_refused():
+    with pytest.raises(ValueError, match="no spout_offset_in_palm"):
+        PourReachMap(
+            {
+                "pour_z": POUR_Z,
+                "tip_radians": -math.pi / 2,
+                "cell": 0.05,
+                "x0": 0.0,
+                "y0": 0.0,
+                "ik_upright": [[1]],
+                "ik_tipped": [[1]],
+            }
+        )
 
 
 def test_a_malformed_grid_is_refused():
@@ -179,6 +217,7 @@ def test_a_malformed_grid_is_refused():
             {
                 "pour_z": POUR_Z,
                 "tip_radians": -math.pi / 2,
+                "spout_offset_in_palm": DEFAULT_SPOUT_OFFSET_IN_PALM,
                 "cell": 0.05,
                 "x0": 0.0,
                 "y0": 0.0,

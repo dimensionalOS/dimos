@@ -38,7 +38,6 @@ from typing import Any, Protocol
 import uuid
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
-import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -56,9 +55,11 @@ from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.g1.manip_config import G1_NOMINAL_PELVIS_Z
 from dimos.robot.unitree.g1.manip_last_mile import (
     ApproachControllerConfig,
@@ -67,8 +68,12 @@ from dimos.robot.unitree.g1.manip_last_mile import (
 )
 from dimos.robot.unitree.g1.manip_stance import (
     DEFAULT_MAP_PATH,
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
+    RIGHT_PALM_FRAME,
     TIP_RADIANS,
+    WATERING_SPOUT_FRAME,
     PourReachMap,
+    palm_pose_for_spout,
     pot_in_base_frame,
     select_stance,
     tool_yaw_for,
@@ -188,7 +193,7 @@ class WateringTaskConfig(ModuleConfig):
     # Water-exit point relative to right_hand_palm_link, expressed in the
     # palm frame. At the upright pose +x points through the hand, +y points
     # toward the robot's left, and +z points up.
-    spout_offset_in_palm: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    spout_offset_in_palm: tuple[float, float, float] = DEFAULT_SPOUT_OFFSET_IN_PALM
     reach_map_path: Path = DEFAULT_MAP_PATH
     servo_hz: float = Field(default=10.0, gt=0.0)
     servo_timeout: float = Field(default=90.0, gt=0.0)
@@ -213,21 +218,34 @@ class WateringTaskConfig(ModuleConfig):
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
 
 
-def palm_pose_for_spout(
-    spout_position: Vector3,
-    orientation: Quaternion,
+class G1WateringSpoutTfConfig(StaticTfPublisherConfig):
+    """Configuration for the fixed right-palm to water-exit transform."""
+
+    spout_offset_in_palm: tuple[float, float, float] = DEFAULT_SPOUT_OFFSET_IN_PALM
+
+
+def watering_spout_transform(
     spout_offset_in_palm: tuple[float, float, float],
-) -> Pose:
-    """Return the palm pose that places the configured spout at a world point."""
-    world_offset = orientation.to_rotation_matrix() @ np.asarray(spout_offset_in_palm)
-    return Pose(
-        Vector3(
-            float(spout_position.x - world_offset[0]),
-            float(spout_position.y - world_offset[1]),
-            float(spout_position.z - world_offset[2]),
-        ),
-        orientation,
+    *,
+    ts: float | None = None,
+) -> Transform:
+    """Fixed right-palm transform for the physical water-exit point."""
+    return Transform(
+        translation=Vector3(*spout_offset_in_palm),
+        rotation=Quaternion(),
+        frame_id=RIGHT_PALM_FRAME,
+        child_frame_id=WATERING_SPOUT_FRAME,
+        ts=ts,
     )
+
+
+class G1WateringSpoutTf(StaticTfPublisher):
+    """Continuously publish the physical watering-can TCP on the TF stream."""
+
+    config: G1WateringSpoutTfConfig
+
+    def transforms(self) -> list[Transform]:
+        return [watering_spout_transform(self.config.spout_offset_in_palm)]
 
 
 class WateringInputs:
@@ -1012,7 +1030,10 @@ class WateringTaskModule(Module):
                 0,
             )
             return None
-        reach_map = PourReachMap.load(self.config.reach_map_path)
+        reach_map = PourReachMap.load(
+            self.config.reach_map_path,
+            expected_spout_offset_in_palm=self.config.spout_offset_in_palm,
+        )
         path, goal = build_approach_preview(
             snapshot,
             reach_map,
@@ -1054,7 +1075,10 @@ class WateringTaskModule(Module):
             inputs=self._inputs,
             approach_commands=self._approach_commands,
             manipulation=self._manipulation,
-            reach_map=PourReachMap.load(self.config.reach_map_path),
+            reach_map=PourReachMap.load(
+                self.config.reach_map_path,
+                expected_spout_offset_in_palm=self.config.spout_offset_in_palm,
+            ),
             cancelled=self._cancel_event,
             transition=self._transition,
             wait=self._cancel_event.wait,

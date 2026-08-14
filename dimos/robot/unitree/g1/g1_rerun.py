@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from dimos.visualization.rerun.urdf_robot import (
+    UrdfRobotAttachedFrameRerunFactory,
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
 )
@@ -54,6 +55,23 @@ def g1_urdf_static_robot(root_path: str = G1_RERUN_ROOT) -> UrdfRobotStaticRerun
 def g1_urdf_joint_state(root_path: str = G1_RERUN_ROOT) -> UrdfRobotJointStateRerunFactory:
     """Create a Rerun JointState converter for the G1 URDF."""
     return UrdfRobotJointStateRerunFactory(urdf_path=G1_RERUN_URDF, root_path=root_path)
+
+
+def g1_attached_frame(
+    *,
+    parent_link: str,
+    frame_name: str,
+    translation: tuple[float, float, float],
+    root_path: str = G1_RERUN_ROOT,
+) -> UrdfRobotAttachedFrameRerunFactory:
+    """Create a visible frame that follows a link in the animated G1 URDF."""
+    return UrdfRobotAttachedFrameRerunFactory(
+        urdf_path=G1_RERUN_URDF,
+        root_path=root_path,
+        parent_link=parent_link,
+        frame_name=frame_name,
+        translation=translation,
+    )
 
 
 def g1_static_robot(rr: Any) -> list[Any]:

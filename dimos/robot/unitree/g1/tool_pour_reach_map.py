@@ -19,7 +19,8 @@ standing here, can the right hand hold the pour poses over a pot at this
 base-frame XY? It is a grid, sampled offline, so the runtime only ever does
 a lookup (see ``manip_stance``).
 
-Two sources agree on a cell before it counts as reachable:
+When a capability map is supplied, two sources agree on a cell before it
+counts as reachable:
 
 * the arm capability map (``dimos.manipulation.reachability``) prefilters
   the standoff band. It quotients pelvis yaw, so it answers "reachable from
@@ -33,7 +34,14 @@ Two sources agree on a cell before it counts as reachable:
 Both pour poses are checked: the upright hold over the pot and the tipped
 pour. A cell is green only if both solve.
 
-Build the capability map first (~2 min), then this map (~3 min)::
+The capability map is only a performance prefilter. Omitting it probes every
+cell with the runtime IK model, which is slower but exact and avoids allocating
+one large capability grid per sampling worker::
+
+    .venv/bin/python -m dimos.robot.unitree.g1.tool_pour_reach_map \
+        --plot /tmp/reach.png
+
+To use the optional prefilter, build it first and pass it to this tool::
 
     .venv/bin/python -m dimos.manipulation.reachability.construct \\
         --robot g1-right --samples 5000000 --workers 10 \\
@@ -63,8 +71,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.manip_config import make_g1_model_config
 from dimos.robot.unitree.g1.manip_stance import (
     DEFAULT_MAP_PATH,
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
     POUR_Z,
     TIP_RADIANS,
+    palm_position_for_spout,
     palm_to_capability_tcp,
 )
 
@@ -100,15 +110,23 @@ def _quaternion(rotation: np.ndarray) -> Quaternion:
 
 
 def capability_scores(
-    cap: CapabilityMap, offsets: np.ndarray, pour_z: float, tip: float
+    cap: CapabilityMap,
+    offsets: np.ndarray,
+    pour_z: float,
+    tip: float,
+    spout_offset_in_palm: tuple[float, float, float],
 ) -> np.ndarray:
     """Heading-free capability score for the tipped pour at each pot offset."""
     positions = np.empty((len(offsets), 3))
     rotations = np.empty((len(offsets), 3, 3))
     for i, (qx, qy) in enumerate(offsets):
         rotation = _rotation(float(np.arctan2(qy, qx)), tip)
-        positions[i], rotations[i] = palm_to_capability_tcp(np.array([qx, qy, pour_z]), rotation)
-        rotations[i] = rotation
+        palm = palm_position_for_spout(
+            np.array([qx, qy, pour_z]),
+            rotation,
+            spout_offset_in_palm,
+        )
+        positions[i], rotations[i] = palm_to_capability_tcp(palm, rotation)
     return np.asarray(cap.scores(positions, rotations))
 
 
@@ -164,21 +182,31 @@ class _Solver:
 
 
 def build(
-    capability_map: Path,
+    capability_map: Path | None = None,
     pour_z: float = POUR_Z,
     tip: float = TIP_RADIANS,
+    spout_offset_in_palm: tuple[float, float, float] = DEFAULT_SPOUT_OFFSET_IN_PALM,
     cell: float = 0.025,
     x_range: tuple[float, float] = (0.05, 0.85),
     y_range: tuple[float, float] = (-0.65, 0.45),
     min_capability: int = 1,
 ) -> dict[str, object]:
     """Grid the base-frame pot offsets and score each one."""
-    cap = CapabilityMap.load(capability_map)
+    cap = CapabilityMap.load(capability_map) if capability_map is not None else None
     xs = np.round(np.arange(x_range[0], x_range[1] + 1e-9, cell), 6)
     ys = np.round(np.arange(y_range[0], y_range[1] + 1e-9, cell), 6)
     offsets = np.array([(x, y) for y in ys for x in xs])
 
-    scores = capability_scores(cap, offsets, pour_z, tip).reshape(len(ys), len(xs))
+    if cap is None:
+        scores = np.full((len(ys), len(xs)), min_capability, dtype=np.uint8)
+    else:
+        scores = capability_scores(
+            cap,
+            offsets,
+            pour_z,
+            tip,
+            spout_offset_in_palm,
+        ).reshape(len(ys), len(xs))
     solver = _Solver()
     over = np.zeros(scores.shape, dtype=np.uint8)
     tipped = np.zeros(scores.shape, dtype=np.uint8)
@@ -191,9 +219,16 @@ def build(
             if scores[iy, ix] < min_capability:
                 continue
             tool_yaw = float(np.arctan2(y, x))
-            palm = np.array([x, y, pour_z])
+            tipped_rotation = _rotation(tool_yaw, tip)
+            # Match runtime: pre-position the palm at its final tipped-pour
+            # position, then roll in place so the spout sweeps onto the pot.
+            palm = palm_position_for_spout(
+                np.array([x, y, pour_z]),
+                tipped_rotation,
+                spout_offset_in_palm,
+            )
             over[iy, ix] = solver.solves(palm, _rotation(tool_yaw, 0.0))
-            tipped[iy, ix] = solver.solves(palm, _rotation(tool_yaw, tip))
+            tipped[iy, ix] = solver.solves(palm, tipped_rotation)
     elapsed = time.time() - started
 
     green = int(np.count_nonzero(over & tipped))
@@ -204,9 +239,12 @@ def build(
     return {
         "generated_by": "dimos/robot/unitree/g1/tool_pour_reach_map.py",
         "frame": "base: pelvis ground projection, +x along pelvis heading",
-        "capability_map": {"robot": cap.robot, "model_id": cap.model_id},
+        "capability_map": (
+            {"robot": cap.robot, "model_id": cap.model_id} if cap is not None else None
+        ),
         "pour_z": pour_z,
         "tip_radians": round(float(tip), 6),
+        "spout_offset_in_palm": list(spout_offset_in_palm),
         "cell": cell,
         "x0": float(xs[0]),
         "y0": float(ys[0]),
@@ -263,14 +301,32 @@ def plot(data: dict[str, object], path: Path) -> None:
 
 def cli_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--capability-map", type=Path, required=True)
+    parser.add_argument(
+        "--capability-map",
+        type=Path,
+        default=None,
+        help="Optional heading-free prefilter; omit to run exact IK over every grid cell",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_MAP_PATH)
     parser.add_argument("--pour-z", type=float, default=POUR_Z)
     parser.add_argument("--cell", type=float, default=0.025)
+    parser.add_argument(
+        "--spout-offset",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=DEFAULT_SPOUT_OFFSET_IN_PALM,
+        help="Palm-frame offset from right_hand_palm_link to the water exit (metres)",
+    )
     parser.add_argument("--plot", type=Path, default=None)
     args = parser.parse_args()
 
-    data = build(args.capability_map, pour_z=args.pour_z, cell=args.cell)
+    data = build(
+        args.capability_map,
+        pour_z=args.pour_z,
+        spout_offset_in_palm=tuple(float(value) for value in args.spout_offset),
+        cell=args.cell,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(data, indent=2) + "\n")
     print(args.out)

@@ -74,6 +74,7 @@ from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetec
 from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+    _G1_ROOT,
     _backend,
     _G1GrootCoordinator,
     _rerun_config,
@@ -85,6 +86,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     g1_manipulation,
 )
 from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.g1_rerun import g1_attached_frame
 from dimos.robot.unitree.g1.head_camera import (
     CAMERA_STREAM_CONFIG,
     HEAD_CAMERA_MOUNT_FRAME,
@@ -93,7 +95,12 @@ from dimos.robot.unitree.g1.head_camera import (
 )
 from dimos.robot.unitree.g1.head_camera_tf import G1HeadCameraTf
 from dimos.robot.unitree.g1.lio_base_pose import G1LioBasePose
-from dimos.robot.unitree.g1.watering_task import WateringTaskModule
+from dimos.robot.unitree.g1.manip_stance import (
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
+    RIGHT_PALM_FRAME,
+    WATERING_SPOUT_FRAME,
+)
+from dimos.robot.unitree.g1.watering_task import G1WateringSpoutTf, WateringTaskModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -147,6 +154,7 @@ _PLANT_MARKER_IDS = [0, 1, 2]
 _MARKER_LENGTH_M = 0.15
 _WORLD_FRAME = "world"
 _BASE_FRAME = "pelvis"
+_SPOUT_OFFSET_IN_PALM = DEFAULT_SPOUT_OFFSET_IN_PALM
 
 
 def _plant_perception() -> Any:
@@ -222,6 +230,15 @@ _demo_rerun_config: dict[str, Any] = {
         "world/object_pose": _object_pose_to_rerun,
         "world/goal_request": _goal_pose_to_rerun,
     },
+    "static": {
+        **_rerun_config["static"],
+        "g1_watering_spout": g1_attached_frame(
+            root_path=_G1_ROOT,
+            parent_link=RIGHT_PALM_FRAME,
+            frame_name=WATERING_SPOUT_FRAME,
+            translation=_SPOUT_OFFSET_IN_PALM,
+        ),
+    },
     "memory_limit": "5%",
 }
 
@@ -279,10 +296,13 @@ unitree_g1_water_demo = (
             target_id="plant_pot_1",
             # right_hand_palm_link frame: +y is the robot's left when upright.
             # Tune this tuple to the measured palm -> water-exit displacement.
-            spout_offset_in_palm=(0.0, 0.20, 0.0),
+            spout_offset_in_palm=_SPOUT_OFFSET_IN_PALM,
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,
+        ),
+        G1WateringSpoutTf.blueprint(
+            spout_offset_in_palm=_SPOUT_OFFSET_IN_PALM,
         ),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )

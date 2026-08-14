@@ -27,7 +27,14 @@ from dimos.manipulation.mobile.target_observation import TargetObservation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.manip_stance import POUR_Z, PourReachMap, pot_in_base_frame
+from dimos.robot.unitree.g1.manip_stance import (
+    POUR_Z,
+    RIGHT_PALM_FRAME,
+    WATERING_SPOUT_FRAME,
+    PourReachMap,
+    palm_pose_for_spout,
+    pot_in_base_frame,
+)
 from dimos.robot.unitree.g1.watering_task import (
     ApproachCommandSink,
     WateringInputs,
@@ -36,7 +43,7 @@ from dimos.robot.unitree.g1.watering_task import (
     WateringState,
     WateringTaskConfig,
     build_approach_preview,
-    palm_pose_for_spout,
+    watering_spout_transform,
 )
 from dimos.spec.utils import spec_annotation_compliance
 
@@ -63,6 +70,16 @@ def test_spout_tcp_offset_moves_the_palm_and_keeps_the_spout_fixed() -> None:
     # Rolling the can left rotates its +y spout below the palm, so the palm
     # rises 20 cm while the water-exit point stays at the requested pour Z.
     assert tuple(tipped.position) == pytest.approx((1.0, 2.0, 1.1))
+
+
+def test_spout_tcp_has_an_explicit_palm_fixed_tf() -> None:
+    transform = watering_spout_transform((0.0, 0.20, 0.0), ts=123.0)
+
+    assert transform.frame_id == RIGHT_PALM_FRAME
+    assert transform.child_frame_id == WATERING_SPOUT_FRAME
+    assert tuple(transform.translation) == pytest.approx((0.0, 0.20, 0.0))
+    assert tuple(transform.rotation) == pytest.approx((0.0, 0.0, 0.0, 1.0))
+    assert transform.ts == 123.0
 
 
 @pytest.fixture

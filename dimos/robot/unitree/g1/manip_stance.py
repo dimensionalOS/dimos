@@ -35,6 +35,9 @@ from typing import Any
 import numpy as np
 from scipy import ndimage
 
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.data import LfsPath
 
 DEFAULT_MAP_PATH = Path(__file__).resolve().parent / "artifacts" / "right_arm_pour_reach.json"
@@ -45,6 +48,11 @@ POUR_Z = 0.90
 # Tipping about the tool's roll axis toward the robot's left; the pitch-axis
 # tip stops solving past 60 deg, this one solves at 90.
 TIP_RADIANS = -np.pi / 2
+# Water-exit point relative to ``right_hand_palm_link``. At the upright
+# watering pose, +y points toward the robot's left.
+DEFAULT_SPOUT_OFFSET_IN_PALM = (0.0, 0.20, 0.0)
+RIGHT_PALM_FRAME = "right_hand_palm_link"
+WATERING_SPOUT_FRAME = "right_watering_spout"
 
 _G1_URDF = LfsPath("g1_urdf/g1.urdf")
 # Grasp centre of the right hand in the wrist frame, from the reachability
@@ -83,6 +91,31 @@ def palm_to_capability_tcp(
     return position + rotation @ palm_to_tcp_offset(), rotation
 
 
+def palm_position_for_spout(
+    spout_position: np.ndarray,
+    palm_rotation: np.ndarray,
+    spout_offset_in_palm: tuple[float, float, float],
+) -> np.ndarray:
+    """Palm position that places a palm-fixed spout at ``spout_position``."""
+    return np.asarray(spout_position, dtype=float) - palm_rotation @ np.asarray(
+        spout_offset_in_palm, dtype=float
+    )
+
+
+def palm_pose_for_spout(
+    spout_position: Vector3,
+    orientation: Quaternion,
+    spout_offset_in_palm: tuple[float, float, float],
+) -> Pose:
+    """Palm pose that places a palm-fixed spout at a world-frame point."""
+    palm_position = palm_position_for_spout(
+        np.asarray(spout_position.as_tuple, dtype=float),
+        orientation.to_rotation_matrix(),
+        spout_offset_in_palm,
+    )
+    return Pose(Vector3(*palm_position), orientation)
+
+
 def wrap_angle(angle: float) -> float:
     """Angle folded into [-pi, pi)."""
     return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
@@ -116,9 +149,24 @@ class Stance:
 class PourReachMap:
     """The gridded answer to "can the right arm pour into a pot there?"."""
 
-    def __init__(self, data: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        data: dict[str, Any],
+        expected_spout_offset_in_palm: tuple[float, float, float] = (DEFAULT_SPOUT_OFFSET_IN_PALM),
+    ) -> None:
         self.pour_z = float(data["pour_z"])
         self.tip_radians = float(data["tip_radians"])
+        sampled_offset = data.get("spout_offset_in_palm")
+        if sampled_offset is None:
+            raise ValueError(
+                "reach map is stale: it has no spout_offset_in_palm metadata. "
+                "Regenerate it with dimos.robot.unitree.g1.tool_pour_reach_map."
+            )
+        self.spout_offset_in_palm = tuple(float(value) for value in sampled_offset)
+        if len(self.spout_offset_in_palm) != 3:
+            raise ValueError(
+                "reach map is malformed: spout_offset_in_palm must contain three values"
+            )
         self.cell = float(data["cell"])
         self.x0 = float(data["x0"])
         self.y0 = float(data["y0"])
@@ -129,10 +177,21 @@ class PourReachMap:
         # A map sampled for a different pour would send the robot to a stance
         # that cannot hold the pose the demo actually commands, and it would
         # only show up as an unexplained planning failure after the walk.
-        if not np.isclose(self.pour_z, POUR_Z) or not np.isclose(self.tip_radians, TIP_RADIANS):
+        if (
+            not np.isclose(self.pour_z, POUR_Z)
+            or not np.isclose(self.tip_radians, TIP_RADIANS)
+            or not np.allclose(
+                self.spout_offset_in_palm,
+                expected_spout_offset_in_palm,
+                atol=1e-9,
+                rtol=0.0,
+            )
+        ):
             raise ValueError(
                 f"reach map is stale: sampled for pour z={self.pour_z} tip={self.tip_radians} rad, "
-                f"but the demo pours at z={POUR_Z} tip={TIP_RADIANS} rad. "
+                f"spout_offset={self.spout_offset_in_palm}, but the demo pours at "
+                f"z={POUR_Z} tip={TIP_RADIANS} rad, "
+                f"spout_offset={expected_spout_offset_in_palm}. "
                 "Regenerate it with dimos.robot.unitree.g1.tool_pour_reach_map."
             )
         # Both pour poses have to solve from a stance, so the region the demo
@@ -141,9 +200,16 @@ class PourReachMap:
         self._distance = _interior_distance(self.reachable)
 
     @classmethod
-    def load(cls, path: Path | None = None) -> PourReachMap:
+    def load(
+        cls,
+        path: Path | None = None,
+        expected_spout_offset_in_palm: tuple[float, float, float] = (DEFAULT_SPOUT_OFFSET_IN_PALM),
+    ) -> PourReachMap:
         target = path or DEFAULT_MAP_PATH
-        return cls(json.loads(target.read_text()))
+        return cls(
+            json.loads(target.read_text()),
+            expected_spout_offset_in_palm=expected_spout_offset_in_palm,
+        )
 
     def _indices(self, offset: tuple[float, float]) -> tuple[int, int]:
         ix = round((offset[0] - self.x0) / self.cell)

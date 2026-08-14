@@ -30,6 +30,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_water_demo import unitree_g1_water_demo
+from dimos.robot.unitree.g1.manip_stance import RIGHT_PALM_FRAME, WATERING_SPOUT_FRAME
 
 CAMERA = "realsensecamera"
 BRIDGE = "rerunbridgemodule"
@@ -67,6 +68,7 @@ def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
         "posetargetobservationmodule",
         "holonomicpathfollower",
         "wateringtaskmodule",
+        "g1wateringspouttf",
     }
 
 
@@ -159,6 +161,15 @@ def test_rerun_caps_survive_config_parsing() -> None:
     assert bridge["max_hz"]["world/color_compressed"] == 5.0
     assert callable(bridge["visual_override"]["world/g1/joints"])
     assert callable(next(iter(bridge["static"].values())))
+
+
+def test_rerun_shows_the_configured_watering_spout_on_the_palm() -> None:
+    marker = _kwargs(BRIDGE)["static"]["g1_watering_spout"]
+
+    assert marker.parent_link == RIGHT_PALM_FRAME
+    assert marker.frame_name == WATERING_SPOUT_FRAME
+    assert marker.translation == (0.0, 0.20, 0.0)
+    assert _kwargs("g1wateringspouttf")["spout_offset_in_palm"] == (0.0, 0.20, 0.0)
 
 
 def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:

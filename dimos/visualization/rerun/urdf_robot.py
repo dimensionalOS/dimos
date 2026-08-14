@@ -168,6 +168,62 @@ class UrdfRobotStaticRerunFactory:
 
 
 @dataclass
+class UrdfRobotAttachedFrameRerunFactory:
+    """Draw a named frame rigidly attached to a link in a Rerun URDF tree."""
+
+    urdf_path: str | Path
+    root_path: str
+    parent_link: str
+    frame_name: str
+    translation: tuple[float, float, float]
+    axis_length: float = 0.10
+
+    def __call__(self, rr: Any) -> list[tuple[str, Any]]:
+        URDF = _yourdfpy_urdf()
+        robot = URDF.load(str(_resolve_urdf_path(self.urdf_path)), load_meshes=False)
+        link_paths = _build_link_paths(
+            self.root_path,
+            str(robot.base_link),
+            list(robot.robot.joints),
+        )
+        try:
+            parent_path = link_paths[self.parent_link]
+        except KeyError as e:
+            raise ValueError(
+                f"URDF has no link named {self.parent_link!r} for attached frame "
+                f"{self.frame_name!r}"
+            ) from e
+
+        frame_path = f"{parent_path}/{_rerun_path_part(self.frame_name)}"
+        axis_length = float(self.axis_length)
+        return [
+            (frame_path, rr.Transform3D(translation=self.translation)),
+            (
+                f"{frame_path}/axes",
+                rr.Arrows3D(
+                    origins=[[0.0, 0.0, 0.0]] * 3,
+                    vectors=[
+                        [axis_length, 0.0, 0.0],
+                        [0.0, axis_length, 0.0],
+                        [0.0, 0.0, axis_length],
+                    ],
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 128, 255]],
+                    radii=[0.004] * 3,
+                ),
+            ),
+            (
+                f"{frame_path}/origin",
+                rr.Points3D(
+                    [[0.0, 0.0, 0.0]],
+                    colors=[[255, 255, 0]],
+                    radii=[0.018],
+                    labels=[self.frame_name],
+                ),
+            ),
+        ]
+
+
+@dataclass
 class UrdfRobotJointStateRerunFactory:
     """Convert JointState-like messages into animated URDF link transforms."""
 
