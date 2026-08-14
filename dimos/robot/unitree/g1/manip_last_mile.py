@@ -60,6 +60,7 @@ class ApproachPhase(str, Enum):
 class ApproachControllerConfig:
     holonomic: bool = False
     max_linear: float = MAX_LINEAR
+    max_lateral: float = 0.12
     max_angular: float = MAX_ANGULAR
     max_drive_angular: float = 0.18
     min_linear: float = MIN_LINEAR
@@ -162,13 +163,16 @@ def approach_step(
         cos_yaw, sin_yaw = math.cos(current[2]), math.sin(current[2])
         body_x = cos_yaw * dx + sin_yaw * dy
         body_y = -sin_yaw * dx + cos_yaw * dy
-        vx = config.linear_gain * body_x
-        vy = config.linear_gain * body_y
-        speed = math.hypot(vx, vy)
-        if speed > config.max_linear:
-            scale = config.max_linear / speed
-            vx *= scale
-            vy *= scale
+        vx = _usable_speed(
+            config.linear_gain * body_x,
+            config.min_linear,
+            config.max_linear,
+        )
+        vy = _usable_speed(
+            config.linear_gain * body_y,
+            config.min_linear,
+            config.max_lateral,
+        )
         wz = (
             0.0
             if abs(stance_yaw_error) <= config.yaw_tolerance

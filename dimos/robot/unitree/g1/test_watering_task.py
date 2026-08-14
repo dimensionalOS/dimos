@@ -109,9 +109,11 @@ def _sequence(
     cancelled: threading.Event,
     transitions: list[WateringState],
     wait: MagicMock | None = None,
+    config: WateringTaskConfig | None = None,
 ) -> WateringSequence:
     return WateringSequence(
-        config=WateringTaskConfig(
+        config=config
+        or WateringTaskConfig(
             settle_seconds=0.0,
             hold_seconds=0.0,
             target_max_age=2.0,
@@ -206,6 +208,38 @@ def test_approach_only_reaches_the_stance_without_touching_manipulation(
     manipulation.go_init.assert_not_called()
     base.send.assert_not_called()
     assert base.stop.call_count == 2
+
+
+def test_holonomic_approach_stops_on_verified_reach_region(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+        config=WateringTaskConfig(
+            approach_holonomic=True,
+            settle_seconds=0.0,
+            target_max_age=2.0,
+            base_pose_max_age=2.0,
+        ),
+    )
+
+    result = sequence.run_approach(TARGET_ID)
+
+    assert result.success
+    assert transitions == [
+        WateringState.WAITING_INPUT,
+        WateringState.SETTLING,
+        WateringState.COMPLETED,
+    ]
+    base.send.assert_not_called()
 
 
 def test_pour_only_executes_the_arm_without_commanding_base_motion(

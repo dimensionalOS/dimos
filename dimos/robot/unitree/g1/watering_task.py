@@ -203,7 +203,9 @@ class WateringTaskConfig(ModuleConfig):
     pour_motion_enabled: bool = False
     approach_holonomic: bool = False
     approach_max_linear: float = Field(default=0.25, gt=0.0)
+    approach_max_lateral: float = Field(default=0.12, gt=0.0)
     approach_max_angular: float = Field(default=0.4, gt=0.0)
+    approach_max_bearing: float = Field(default=math.radians(45.0), gt=0.0)
     motion_enabled: bool = True
     auto_start: bool = False
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
@@ -351,6 +353,7 @@ class WateringSequence:
         self._controller_config = ApproachControllerConfig(
             holonomic=config.approach_holonomic,
             max_linear=config.approach_max_linear,
+            max_lateral=config.approach_max_lateral,
             max_angular=config.approach_max_angular,
             max_drive_angular=min(config.approach_max_angular, 0.18),
             position_tolerance=config.approach_position_tolerance,
@@ -538,6 +541,17 @@ class WateringSequence:
                     f"Base pose jumped {base_jump:.2f} m between control ticks; stopping"
                 )
             previous_base = current_base
+            if self._config.approach_holonomic and self._holonomic_stance_reached(snapshot):
+                offset = self._seen_offset(snapshot)
+                self._base.stop()
+                self._transition(
+                    WateringState.SETTLING,
+                    "Base reached verified pour region; "
+                    f"pot offset=({offset[0]:.2f}, {offset[1]:.2f}) m",
+                    0,
+                )
+                self._wait_or_cancel(self._config.settle_seconds)
+                return
             step = approach_step(
                 current_base,
                 (
@@ -571,6 +585,16 @@ class WateringSequence:
             self._wait_or_cancel(period)
         raise _WateringFailureError(
             f"Last-mile servo timed out after {self._config.servo_timeout:.1f}s"
+        )
+
+    def _holonomic_stance_reached(self, snapshot: WateringInputSnapshot) -> bool:
+        offset = self._seen_offset(snapshot)
+        return (
+            self._reach.contains(
+                offset,
+                margin_cells=self._config.reach_margin_cells,
+            )
+            and abs(math.atan2(offset[1], offset[0])) <= self._config.approach_max_bearing
         )
 
     def _latch_and_verify(self, target_id: str) -> tuple[TargetObservation, float, float]:
