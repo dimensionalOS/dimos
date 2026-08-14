@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from collections.abc import Iterator
 
 import open3d as o3d
 import pytest
 
-from dimos.core.module import ModuleBase
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -54,10 +53,11 @@ def _make_det_object(
 
 
 @pytest.fixture
-def module() -> PickAndPlaceModule:
-    """Create a PickAndPlaceModule with heavy base init (RPC, config) patched out."""
-    with patch.object(ModuleBase, "__init__", lambda self, config_args: None):
-        return PickAndPlaceModule()
+def module() -> Iterator[PickAndPlaceModule]:
+    """Create an unstarted PickAndPlaceModule for pure-logic tests."""
+    instance = PickAndPlaceModule()
+    yield instance
+    instance.stop()
 
 
 class TestFindObjectInDetections:

@@ -230,6 +230,7 @@ all_modules = {
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "local-planner": "dimos.navigation.cmu_nav.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
+    "manipulation-skills": "dimos.manipulation.manipulation_skills.ManipulationSkills",
     "map": "dimos.robot.unitree.type.map.Map",
     "map-compress-module": "dimos.teleop.hosted.map_compress.MapCompressModule",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",

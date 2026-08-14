@@ -98,7 +98,10 @@ dimos/control/
 ## Configuration
 
 ```python
-from dimos.control import ControlCoordinator, HardwareComponent, TaskConfig
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 my_robot = ControlCoordinator.blueprint(
     tick_rate=100.0,
@@ -119,13 +122,7 @@ my_robot = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="trajectory",
-            type="trajectory",
-            joint_names=[...],  # union of both arms
-            priority=10,
-            params={"start_position_tolerance": 0.05},
-        ),
+        joint_trajectory_task([...]),  # union of both arms
     ],
 )
 ```
