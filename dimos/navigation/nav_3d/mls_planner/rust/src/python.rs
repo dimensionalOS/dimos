@@ -209,7 +209,7 @@ impl MLSPlanner {
         let voxel_size = self.config.voxel_size;
         let graph = self.planner.graph();
         let values: Vec<f32> = py.allow_threads(|| {
-            let segments = edges_to_segments(&graph.cells, &graph.cell_state, &graph.node_edges);
+            let segments = edges_to_segments(&graph.node_edges);
             let mut out: Vec<f32> = Vec::with_capacity(segments.len() * 7);
             for (a, b, cost) in segments {
                 let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);

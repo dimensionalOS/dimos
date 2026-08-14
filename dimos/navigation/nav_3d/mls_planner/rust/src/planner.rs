@@ -678,18 +678,18 @@ fn assemble_cells(
         let edge_idx =
             edge_between(plg, a, b).expect("consecutive nodes in path must share an edge");
         let edge = &plg.node_edges[edge_idx as usize];
-        let (start_side, end_side) = if a == edge.a {
-            (edge.boundary_u, edge.boundary_v)
+
+        // The stored corridor runs a to b. Dead cells are skipped: the update
+        // safety walk drops broken corridors, so gaps here are rare races.
+        let resolve = |coord: &VoxelKey| plg.cells.id(*coord);
+        if a == edge.a {
+            for c in edge.chain.iter().filter_map(resolve) {
+                push_cell(&mut cells, c);
+            }
         } else {
-            (edge.boundary_v, edge.boundary_u)
-        };
-
-        let mut from_a = walk_live_preds(plg, start_side);
-        from_a.reverse();
-        let to_b = walk_live_preds(plg, end_side);
-
-        for c in from_a.into_iter().chain(to_b) {
-            push_cell(&mut cells, c);
+            for c in edge.chain.iter().rev().filter_map(resolve) {
+                push_cell(&mut cells, c);
+            }
         }
     }
 

@@ -448,7 +448,7 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
 /// the per-edge cost.
 fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stamp: Time) -> Path {
-    let segments = edges_to_segments(&plg.cells, &plg.cell_state, &plg.node_edges);
+    let segments = edges_to_segments(&plg.node_edges);
     let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
     for (a, b, cost) in segments {
         let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
