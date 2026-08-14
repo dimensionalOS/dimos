@@ -486,7 +486,9 @@ def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(
     result = sequence.run_pour(TARGET_ID)
 
     assert result.success
-    expected_world_z = -0.27 - 0.74 + 0.90
+    # The palm pre-positions at the final tipped pose, 20 cm above the spout,
+    # while the water-exit point itself remains at the ground-relative pour Z.
+    expected_world_z = -0.27 - 0.74 + 0.90 + 0.20
     planned_pose = manipulation.plan_to_pose.call_args_list[0].args[0]
     assert planned_pose.position.z == pytest.approx(expected_world_z)
     assert manipulation.move_to_pose.call_args_list[0].kwargs["z"] == pytest.approx(

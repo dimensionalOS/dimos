@@ -232,15 +232,16 @@ class PourReachMap:
         return self.margin(offset) >= margin_cells
 
     def best_offset(
-        self, margin_cells: int = 2, max_bearing: float = np.deg2rad(35.0)
+        self,
+        margin_cells: int = 2,
+        max_bearing: float | None = None,
     ) -> tuple[float, float]:
         """The offset to aim the robot at.
 
         Deep inside the region, because the aim point has to absorb however
-        far the robot overshoots when it stops. The region's deepest cells
-        sit ~47 deg off the robot's nose (a right arm reaches right), which
-        is a stance that pours well but reads as if the robot is ignoring
-        the pot, so the search is capped to a cone that still faces it.
+        far the robot overshoots when it stops. A bearing limit is optional:
+        reachability is the default authority because a cosmetic facing cone
+        must not reject every stance verified for the configured tool TCP.
         """
         candidates = np.argwhere(self._distance >= margin_cells)
         if not len(candidates):
@@ -249,16 +250,17 @@ class PourReachMap:
         for iy, ix in candidates:
             offset = (self.x0 + ix * self.cell, self.y0 + iy * self.cell)
             bearing = abs(np.arctan2(offset[1], offset[0]))
-            if bearing > max_bearing:
+            if max_bearing is not None and bearing > max_bearing:
                 continue
             key = (-int(self._distance[iy, ix]), bearing, float(np.hypot(*offset)))
             if best_key is None or key < best_key:
                 best, best_key = offset, key
-        if best is None:
+        if best is None and max_bearing is not None:
             raise ValueError(
                 f"reach map has no cell {margin_cells} cells inside the region within "
                 f"{np.rad2deg(max_bearing):.0f} deg of straight ahead"
             )
+        assert best is not None
         return best
 
 
