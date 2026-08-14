@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos bake` — compose rust native modules into one host binary."""
+
+"""The failure `dimos bake` raises."""
 
 from __future__ import annotations
 

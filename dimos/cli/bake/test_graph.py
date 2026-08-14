@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from dimos.cli.bake import BakeError
 from dimos.cli.bake.discovery import ModuleInfo
+from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph, parse_remap, render
 
 PC2 = "sensor_msgs.PointCloud2"

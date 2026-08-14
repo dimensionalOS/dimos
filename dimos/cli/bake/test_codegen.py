@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from dimos.cli.bake import BakeError
 from dimos.cli.bake.build import artifact_path, build_command
 from dimos.cli.bake.codegen import generate_crate, render_cargo_toml, render_main_rs
+from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph
 from dimos.cli.bake.test_graph import MAPPER, PLANNER, module
 
