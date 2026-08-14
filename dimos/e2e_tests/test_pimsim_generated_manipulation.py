@@ -24,6 +24,7 @@ import pytest
 from dimos.agents.skill_result import SkillResult
 from dimos.e2e_tests.episode import EpisodeRun
 from dimos.simulation.episodes import EvaluationCase, load_episode_provider
+from pimsim import EpisodeRequest, TaskRequest, WorldRequest
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.mujoco]
 
@@ -56,90 +57,96 @@ class _PickAndPlaceActions(Protocol):
     def is_collision_free(self, joints: list[float]) -> bool: ...
 
 
+def _tabletop_case(
+    case_id: str,
+    family_id: str,
+    world_seed: int,
+    task_seed: int,
+    roles: dict[str, str],
+) -> EvaluationCase:
+    return EvaluationCase(
+        episode_request=EpisodeRequest(
+            case_id=case_id,
+            robot="xarm7",
+            world=WorldRequest(family_id="native-tabletop", seed=world_seed),
+            task=TaskRequest(family_id=family_id, seed=task_seed, roles=roles),
+        ),
+        blueprint_name="xarm-perception-sim",
+        required_modules=("PickAndPlaceModule",),
+        required_roles=tuple(roles),
+    )
+
+
 TABLETOP_CASES = {
-    "lift-object": EvaluationCase(
-        case_id="lift-object/alphabet-soup/scene-290/variation-3",
-        family_id="lift-object",
-        scene_seed=290,
-        variation_seed=3,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={"object": "alphabet-soup"},
-        required_modules=("PickAndPlaceModule",),
+    "lift-object": _tabletop_case(
+        "lift-object/alphabet-soup/scene-290/variation-3",
+        "lift-object",
+        290,
+        3,
+        {"object": "alphabet-soup"},
     ),
-    "lift-object-second-reset": EvaluationCase(
-        case_id="lift-object/alphabet-soup/scene-290/variation-65",
-        family_id="lift-object",
-        scene_seed=290,
-        variation_seed=65,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={"object": "alphabet-soup"},
-        required_modules=("PickAndPlaceModule",),
+    "lift-object-second-reset": _tabletop_case(
+        "lift-object/alphabet-soup/scene-290/variation-65",
+        "lift-object",
+        290,
+        65,
+        {"object": "alphabet-soup"},
     ),
-    "object-in-receptacle": EvaluationCase(
-        case_id="object-in-receptacle/alphabet-soup/wooden-tray/scene-296/variation-3",
-        family_id="object-in-receptacle",
-        scene_seed=296,
-        variation_seed=3,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={"object": "alphabet-soup", "target": "wooden-tray"},
-        required_modules=("PickAndPlaceModule",),
+    "object-in-receptacle": _tabletop_case(
+        "object-in-receptacle/alphabet-soup/wooden-tray/scene-296/variation-3",
+        "object-in-receptacle",
+        296,
+        3,
+        {"object": "alphabet-soup", "target": "wooden-tray"},
     ),
-    "object-on-support": EvaluationCase(
-        case_id="object-on-support/tomato-sauce/plate/scene-296/variation-3",
-        family_id="object-on-support",
-        scene_seed=296,
-        variation_seed=3,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={"object": "tomato-sauce", "target": "plate"},
-        required_modules=("PickAndPlaceModule",),
+    "object-on-support": _tabletop_case(
+        "object-on-support/tomato-sauce/plate/scene-296/variation-3",
+        "object-on-support",
+        296,
+        3,
+        {"object": "tomato-sauce", "target": "plate"},
     ),
-    "collect-objects-in-receptacle": EvaluationCase(
-        case_id=("collect-objects-in-receptacle/soup-and-cheese/wooden-tray/scene-296/variation-3"),
-        family_id="collect-objects-in-receptacle",
-        scene_seed=296,
-        variation_seed=3,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={
+    "collect-objects-in-receptacle": _tabletop_case(
+        "collect-objects-in-receptacle/soup-and-cheese/wooden-tray/scene-296/variation-3",
+        "collect-objects-in-receptacle",
+        296,
+        3,
+        {
             "first_object": "alphabet-soup",
             "second_object": "cream-cheese",
             "target": "wooden-tray",
         },
-        required_modules=("PickAndPlaceModule",),
     ),
-    "rearrange-objects": EvaluationCase(
-        case_id="rearrange-objects/soup-in-tray/sauce-on-plate/scene-296/variation-3",
-        family_id="rearrange-objects",
-        scene_seed=296,
-        variation_seed=3,
-        robot_model="xarm7",
-        blueprint_name="xarm-perception-sim",
-        role_constraints={
+    "rearrange-objects": _tabletop_case(
+        "rearrange-objects/soup-in-tray/sauce-on-plate/scene-296/variation-3",
+        "rearrange-objects",
+        296,
+        3,
+        {
             "first_object": "alphabet-soup",
             "second_object": "tomato-sauce",
             "containment_target": "wooden-tray",
             "support_target": "plate",
         },
-        required_modules=("PickAndPlaceModule",),
     ),
 }
 
 ROBOCASA_OPEN_DRAWER_CASE = EvaluationCase(
-    case_id="layout-1-style-1-open-drawer-seed-3",
-    family_id="robocasa-open-drawer-canary",
-    scene_seed=3,
-    variation_seed=3,
-    robot_model="xarm7",
+    episode_request=EpisodeRequest(
+        case_id="layout-1-style-1-open-drawer-seed-3",
+        robot="xarm7",
+        world=WorldRequest(
+            family_id="robocasa-layout-1-style-1-open-drawer-seed-3",
+        ),
+        task=TaskRequest(
+            family_id="robocasa-open-drawer-canary",
+            seed=3,
+            roles={"drawer": "drawer", "drawer_object": "pizza_cutter"},
+        ),
+    ),
     blueprint_name="xarm-perception-sim",
-    role_constraints={
-        "drawer": "drawer",
-        "drawer_object": "pizza_cutter",
-    },
     required_modules=("PickAndPlaceModule",),
+    required_roles=("drawer", "drawer_object"),
 )
 
 PLACE_CASES = (
@@ -150,7 +157,10 @@ PLACE_CASES = (
 
 def test_supported_task_families_have_maintained_e2e_cases() -> None:
     provider = load_episode_provider("pimsim")
-    maintained_family_ids = {case.family_id for case in TABLETOP_CASES.values()}
+    maintained_family_ids = {
+        cast("EpisodeRequest", case.episode_request).task.family_id
+        for case in TABLETOP_CASES.values()
+    }
 
     assert maintained_family_ids == set(provider.supported_family_ids)
 

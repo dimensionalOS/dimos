@@ -47,34 +47,46 @@ def _unique_text(values: tuple[str, ...], label: str) -> tuple[str, ...]:
     return normalized
 
 
-@dataclass(frozen=True)
-class EvaluationCase:
-    """One explicit task and DimOS application under evaluation."""
+@runtime_checkable
+class EpisodeRequestContract(Protocol):
+    """Provider-owned selection referenced by one DimOS evaluation case."""
 
-    case_id: str
-    family_id: str
-    scene_seed: int
-    variation_seed: int
-    robot_model: str
+    @property
+    def case_id(self) -> str: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvaluationCase:
+    """One provider request and the ordinary DimOS application under evaluation."""
+
+    episode_request: EpisodeRequestContract
     blueprint_name: str
-    role_constraints: Mapping[str, str] = field(default_factory=dict)
     required_modules: tuple[str, ...] = ()
+    required_roles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("case_id", "family_id", "robot_model", "blueprint_name"):
-            object.__setattr__(self, name, _required_text(getattr(self, name), name))
-        if self.scene_seed < 0 or self.variation_seed < 0:
-            raise ValueError("evaluation case seeds must not be negative")
+        if not isinstance(self.episode_request, EpisodeRequestContract):
+            raise TypeError("evaluation case episode_request must provide case_id")
+        _required_text(self.episode_request.case_id, "episode request case_id")
         object.__setattr__(
-            self,
-            "role_constraints",
-            _text_mapping(self.role_constraints, "role constraint"),
+            self, "blueprint_name", _required_text(self.blueprint_name, "blueprint_name")
         )
         object.__setattr__(
             self,
             "required_modules",
             _unique_text(self.required_modules, "required module"),
         )
+        object.__setattr__(
+            self,
+            "required_roles",
+            _unique_text(self.required_roles, "required role"),
+        )
+
+    @property
+    def case_id(self) -> str:
+        """Return the identity owned by the provider request."""
+
+        return self.episode_request.case_id
 
 
 @dataclass(frozen=True)
@@ -207,6 +219,7 @@ __all__ = [
     "ENTRY_POINT_GROUP",
     "EpisodeEvaluationResult",
     "EpisodeProvider",
+    "EpisodeRequestContract",
     "EpisodeResetResult",
     "EpisodeUnavailableError",
     "EvaluationCase",

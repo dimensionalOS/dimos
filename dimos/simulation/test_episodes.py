@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -27,22 +28,23 @@ from dimos.simulation.episodes import (
 )
 
 
+@dataclass(frozen=True)
+class _Request:
+    case_id: str
+
+
 def _case() -> EvaluationCase:
     return EvaluationCase(
-        case_id="place/cup/tray/scene-7/variation-2",
-        family_id="object-in-receptacle",
-        scene_seed=7,
-        variation_seed=2,
-        robot_model="test-arm",
+        episode_request=_Request("place/cup/tray/scene-7/variation-2"),
         blueprint_name="test-arm-sim",
-        role_constraints={"object": "cup", "target": "tray"},
         required_modules=("PublicActions",),
+        required_roles=("object", "target"),
     )
 
 
 class _FakeProvider:
-    provider_name = "fake"
-    supported_family_ids = ("object-in-receptacle",)
+    provider_name: str = "fake"
+    supported_family_ids: tuple[str, ...] = ("object-in-receptacle",)
 
     def __init__(self) -> None:
         self.active = False
@@ -112,6 +114,18 @@ def test_generic_episode_flow_uses_only_dimos_contracts(tmp_path: Path) -> None:
     assert provider.active is False
 
 
+def test_evaluation_case_references_provider_selection_without_copying_it() -> None:
+    case = _case()
+
+    assert tuple(field.name for field in fields(EvaluationCase)) == (
+        "episode_request",
+        "blueprint_name",
+        "required_modules",
+        "required_roles",
+    )
+    assert case.case_id == case.episode_request.case_id
+
+
 def test_load_episode_provider_uses_installed_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -148,13 +162,9 @@ def test_episode_flow_rejects_provider_identity_changes(tmp_path: Path) -> None:
 
 
 def test_episode_contract_rejects_invalid_values() -> None:
-    with pytest.raises(ValueError, match="seeds must not be negative"):
+    with pytest.raises(ValueError, match="episode request case_id must not be empty"):
         EvaluationCase(
-            case_id="case",
-            family_id="family",
-            scene_seed=-1,
-            variation_seed=0,
-            robot_model="arm",
+            episode_request=_Request(""),
             blueprint_name="arm-sim",
         )
 

@@ -53,7 +53,7 @@ def prepare_episode(
 ) -> PreparedEpisode:
     episode = provider.prepare(case, output_dir)
     _check_identity(case, episode, provider_name=provider.provider_name)
-    missing_roles = set(case.role_constraints) - set(episode.role_names)
+    missing_roles = set(case.required_roles) - set(episode.role_names)
     if missing_roles:
         raise ValueError(f"prepared episode is missing roles: {sorted(missing_roles)}")
     return episode
