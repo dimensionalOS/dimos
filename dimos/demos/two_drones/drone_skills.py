@@ -29,7 +29,7 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -109,8 +109,18 @@ def _sweep_waypoints(
     return points
 
 
+class DroneSkillsConfig(ModuleConfig):
+    # Flyable interior of the arena. Goals are clamped inside so a sweep
+    # corner claimed at the perimeter wall doesn't wedge the planner into
+    # an endless "following_path" crawl against the wall.
+    bound_x: float = 10.2
+    bound_y: float = 6.2
+
+
 class DroneSkillContainer(Module):
     """Flight + sweep skills bound to the navigation stack."""
+
+    config: DroneSkillsConfig
 
     odom: In[PoseStamped]
     # Simulated target sensor (LOS referee publishes here): latest visibility
@@ -164,6 +174,7 @@ class DroneSkillContainer(Module):
         self._cancel_sweep()
         if self._latest_odom is None:
             return "No odometry yet — cannot fly."
+        x, y = self._clamp(x, y)
         sx, sy = self._latest_odom.position.x, self._latest_odom.position.y
         dist = math.hypot(x - sx, y - sy)
         hops = max(1, math.ceil(dist / _MAX_HOP))
@@ -192,6 +203,8 @@ class DroneSkillContainer(Module):
         start = None
         if self._latest_odom is not None:
             start = (self._latest_odom.position.x, self._latest_odom.position.y)
+        x_min, y_min = self._clamp(x_min, y_min)
+        x_max, y_max = self._clamp(x_max, y_max)
         waypoints = _sweep_waypoints(x_min, y_min, x_max, y_max, lane_spacing, start=start)
         if not waypoints:
             return "Empty sweep area."
@@ -203,6 +216,10 @@ class DroneSkillContainer(Module):
             f"Sweeping rectangle ({x_min:.1f},{y_min:.1f})..({x_max:.1f},{y_max:.1f}) "
             f"in {len(waypoints)} waypoints (lanes every {lane_spacing:.1f} m)."
         )
+
+    def _clamp(self, x: float, y: float) -> tuple[float, float]:
+        bx, by = self.config.bound_x, self.config.bound_y
+        return max(-bx, min(bx, x)), max(-by, min(by, y))
 
     def _start_path(self, waypoints: list[tuple[float, float]], label: str) -> None:
         """Follow waypoints in a background thread: hop, retry frontier
@@ -220,7 +237,13 @@ class DroneSkillContainer(Module):
                 )
             )
             t0 = time.time()
-            while not cancel.is_set() and time.time() - t0 < 40.0:
+            prog_t = t0
+            prog_pos = (
+                (self._latest_odom.position.x, self._latest_odom.position.y)
+                if self._latest_odom
+                else None
+            )
+            while not cancel.is_set() and time.time() - t0 < 30.0:
                 if self._navigation.is_goal_reached():
                     return "reached"
                 # The planner cancels unreachable goals (unknown space, inside
@@ -236,6 +259,20 @@ class DroneSkillContainer(Module):
                             return "failed"
                     except Exception:
                         pass
+                # No-progress watchdog: the planner can sit in following_path
+                # while grinding against a wall or a degenerate path. If the
+                # drone hasn't moved 0.4 m in 10 s, give up on this hop.
+                if self._latest_odom is not None:
+                    cur = (self._latest_odom.position.x, self._latest_odom.position.y)
+                    if prog_pos is None or math.hypot(cur[0] - prog_pos[0], cur[1] - prog_pos[1]) > 0.4:
+                        prog_pos = cur
+                        prog_t = time.time()
+                    elif time.time() - prog_t > 10.0:
+                        try:
+                            self._navigation.cancel_goal()
+                        except Exception:
+                            pass
+                        return "failed"
                 time.sleep(1.0)
             return "cancelled" if cancel.is_set() else "failed"
 

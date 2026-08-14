@@ -219,35 +219,215 @@ class Referee:
         """)
 
     def style_scene_for_video(self) -> None:
-        """Director-view cosmetics: tint each drone's avatar in its team color,
-        add a floating beacon sphere, and hide the player HUD/crosshair."""
+        """Director-view legibility: procedural quadcopter avatars (spinning
+        rotors, heading nose), per-drone flight trails, FOV wedges, an
+        on-screen HUD (drone status + radio log), and hidden player HUD."""
         colors = json.dumps(DRONE_COLORS)
+        fov = self.sensor.fov_deg
+        rng = self.sensor.range_m
         self._exec(f"""
         const colors = {colors};
-        for (const [name, av] of agents) {{
-            const c = new THREE.Color(colors[name] || '#888888');
-            av.group.traverse(o => {{
-                if (o.isMesh && o.material && o.material.color) {{
-                    o.material = o.material.clone();
-                    o.material.color = c.clone();
-                }}
-            }});
-            if (!av.group.getObjectByName('demo_beacon')) {{
-                const beacon = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.16, 12, 12),
-                    new THREE.MeshBasicMaterial({{color: c}}));
-                beacon.name = 'demo_beacon';
-                beacon.position.y = 0.55;
-                beacon.userData.__demoIgnoreLOS = true;
-                av.group.add(beacon);
+        window.__demoRotors = [];
+        window.__demoTrails = {{}};
+        window.__demoWedges = {{}};
+
+        function buildQuad(colorHex) {{
+            const c = new THREE.Color(colorHex);
+            const g = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({{color: c}});
+            const dark = new THREE.MeshStandardMaterial({{color: 0x2a2a30}});
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.34), mat);
+            g.add(body);
+            const armLen = 0.66;
+            for (const a of [Math.PI/4, 3*Math.PI/4, 5*Math.PI/4, 7*Math.PI/4]) {{
+                const arm = new THREE.Mesh(new THREE.BoxGeometry(armLen, 0.045, 0.06), dark);
+                arm.rotation.y = a;
+                g.add(arm);
+                const hx = Math.cos(a) * armLen / 2, hz = -Math.sin(a) * armLen / 2;
+                const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.07, 8), dark);
+                hub.position.set(hx, 0.05, hz);
+                g.add(hub);
+                const rotor = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.17, 0.17, 0.012, 16),
+                    new THREE.MeshStandardMaterial({{color: c, transparent: true, opacity: 0.45}}));
+                rotor.position.set(hx, 0.1, hz);
+                g.add(rotor);
+                window.__demoRotors.push(rotor);
             }}
+            const nose = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.18, 8), mat);
+            nose.rotation.x = Math.PI / 2;
+            nose.position.set(0, 0, 0.28);
+            g.add(nose);
+            return g;
         }}
+
+        for (const [name, av] of agents) {{
+            // Hide the Go2 stub; mount a quadcopter.
+            for (const child of [...av.group.children]) child.visible = false;
+            if (!av.group.getObjectByName('demo_quad')) {{
+                const quad = buildQuad(colors[name] || '#888888');
+                quad.name = 'demo_quad';
+                quad.traverse(o => {{ o.userData.__demoIgnoreLOS = true; }});
+                av.group.add(quad);
+            }}
+            // FOV wedge on the floor, rotates with the drone's heading:
+            // faint fill (nominal sensor range/FOV — occlusion still applies,
+            // the red sighting line shows actual LOS) + a crisp arc rim.
+            if (!av.group.getObjectByName('demo_wedge')) {{
+                const wedgeGroup = new THREE.Group();
+                wedgeGroup.name = 'demo_wedge';
+                const c = new THREE.Color(colors[name] || '#888888');
+                const wedge = new THREE.Mesh(
+                    new THREE.CircleGeometry({rng}, 28,
+                        Math.PI / 2 - {math.radians(fov) / 2:.4f}, {math.radians(fov):.4f}),
+                    new THREE.MeshBasicMaterial({{
+                        color: c, transparent: true, opacity: 0.035,
+                        depthWrite: false, side: THREE.DoubleSide,
+                    }}));
+                const rimPts = [];
+                const n = 40;
+                for (let i = 0; i <= n; i++) {{
+                    const a = Math.PI / 2 - {math.radians(fov) / 2:.4f} + ({math.radians(fov):.4f}) * i / n;
+                    rimPts.push(new THREE.Vector3(Math.cos(a) * {rng}, Math.sin(a) * {rng}, 0));
+                }}
+                const rim = new THREE.Line(
+                    new THREE.BufferGeometry().setFromPoints(rimPts),
+                    new THREE.LineBasicMaterial({{color: c, transparent: true, opacity: 0.4}}));
+                wedgeGroup.add(wedge);
+                wedgeGroup.add(rim);
+                wedgeGroup.rotation.x = Math.PI / 2;
+                wedgeGroup.position.y = -1.12;
+                wedgeGroup.traverse(o => {{ o.userData.__demoIgnoreLOS = true; }});
+                av.group.add(wedgeGroup);
+                window.__demoWedges[name] = wedge;
+            }}
+            // Ground trail.
+            const maxPts = 2400;
+            const geo = new THREE.BufferGeometry();
+            const attr = new THREE.BufferAttribute(new Float32Array(maxPts * 3), 3);
+            geo.setAttribute('position', attr);
+            geo.setDrawRange(0, 0);
+            const line = new THREE.Line(geo, new THREE.LineBasicMaterial({{
+                color: new THREE.Color(colors[name] || '#888888'),
+                transparent: true, opacity: 0.85,
+            }}));
+            line.frustumCulled = false;
+            line.userData.__demoIgnoreLOS = true;
+            scene.add(line);
+            window.__demoTrails[name] = {{line, attr, n: 0, max: maxPts, lx: 1e9, lz: 1e9}};
+        }}
+
+        // Rotor spin + trail sampling loop.
+        if (!window.__demoFxLoop) {{
+            window.__demoFxLoop = true;
+            let lastSample = 0;
+            const fx = (t) => {{
+                for (const r of (window.__demoRotors || [])) r.rotation.y += 0.85;
+                if (t - lastSample > 350) {{
+                    lastSample = t;
+                    for (const [name, av] of agents) {{
+                        // The stub GLB loads asynchronously and would pop back
+                        // over the quadcopter — keep everything else hidden.
+                        for (const child of av.group.children) {{
+                            if (child.name !== 'demo_quad' && child.name !== 'demo_wedge') {{
+                                child.visible = false;
+                            }}
+                        }}
+                        const tr = (window.__demoTrails || {{}})[name];
+                        if (!tr || tr.n >= tr.max) continue;
+                        const p = av.group.position;
+                        if (Math.hypot(p.x - tr.lx, p.z - tr.lz) > 0.12) {{
+                            tr.attr.setXYZ(tr.n, p.x, 0.06, p.z);
+                            tr.n++; tr.lx = p.x; tr.lz = p.z;
+                            tr.attr.needsUpdate = true;
+                            tr.line.geometry.setDrawRange(0, tr.n);
+                        }}
+                    }}
+                }}
+                requestAnimationFrame(fx);
+            }};
+            requestAnimationFrame(fx);
+        }}
+
+        // On-screen HUD: per-drone status + radio log.
+        if (!document.getElementById('demo-hud')) {{
+            const d = document.createElement('div');
+            d.id = 'demo-hud';
+            d.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999;' +
+                'font:12px/1.55 ui-monospace,monospace;color:#fff;' +
+                'background:rgba(10,10,14,0.62);padding:10px 14px;border-radius:10px;' +
+                'max-width:560px;pointer-events:none';
+            d.innerHTML = '<div id="demo-hud-status"></div>' +
+                '<div id="demo-hud-radio" style="margin-top:6px;border-top:1px solid ' +
+                'rgba(255,255,255,0.25);padding-top:6px"></div>';
+            document.body.appendChild(d);
+            window.__demoHudStatus = (lines) => {{
+                const el = document.getElementById('demo-hud-status');
+                if (!el) return;
+                el.innerHTML = '';
+                for (const [color, text] of lines) {{
+                    const row = document.createElement('div');
+                    const dot = document.createElement('span');
+                    dot.style.color = color;
+                    dot.textContent = '● ';
+                    const span = document.createElement('span');
+                    span.textContent = text;
+                    row.appendChild(dot); row.appendChild(span);
+                    el.appendChild(row);
+                }}
+            }};
+            window.__demoHudRadio = (sender, text, color) => {{
+                const el = document.getElementById('demo-hud-radio');
+                if (!el) return;
+                const row = document.createElement('div');
+                const s = document.createElement('span');
+                s.style.color = color || '#aaa';
+                s.textContent = '📡 ' + sender + ': ';
+                const b = document.createElement('span');
+                b.textContent = text;
+                row.appendChild(s); row.appendChild(b);
+                el.appendChild(row);
+                while (el.children.length > 5) el.removeChild(el.firstChild);
+            }};
+        }}
+
         for (const sel of ['#shortcuts', '#crosshair', '.shortcuts-floating', '#interaction-hint']) {{
             const el = document.querySelector(sel);
             if (el) el.style.display = 'none';
         }}
         return 'styled';
-        """, timeout=10.0)
+        """, timeout=15.0)
+
+    def start_radio_hud(self) -> None:
+        """Mirror non-beacon radio traffic into the on-screen HUD."""
+        sub = pLCMTransport("/radio")
+        sub.start()
+
+        def on_radio(raw: str) -> None:
+            try:
+                ev = json.loads(raw)
+                if ev.get("kind") == 2:
+                    return
+                tags = ev.get("tags", [])
+                sender = next((t[1] for t in tags if t and t[0] == "sender"), "?")
+                content = ev.get("content", "")
+                if not content:
+                    content = "; ".join(
+                        " ".join(str(v) for v in t) for t in tags if t and t[0] != "sender"
+                    )
+                color = DRONE_COLORS.get(str(sender), "#dddddd")
+                self._exec_on(
+                    "ghosts", self._client_for("ghosts"),
+                    f"if (window.__demoHudRadio) window.__demoHudRadio("
+                    f"{json.dumps(str(sender))}, {json.dumps(str(content)[:160])}, "
+                    f"{json.dumps(color)});\nreturn 'ok';",
+                    timeout=5.0,
+                )
+            except Exception:
+                logger.warning("radio hud update failed", exc_info=True)
+
+        sub.subscribe(on_radio)
+        self._belief_subs.append(sub)
 
     def mark_drones_for_los(self) -> None:
         """Tag drone avatars (and ghosts) so LOS raycasts ignore them."""
@@ -400,6 +580,50 @@ class Referee:
                 if (ray.intersectObjects(occluders, false).length > 0) visible = false;
             }}
             out.vis[name] = visible;
+
+            // --- visual feedback: sighting line + wedge highlight ---
+            window.__demoLos = window.__demoLos || {{}};
+            let lo = window.__demoLos[name];
+            if (!lo) {{
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+                const line = new THREE.Line(geo, new THREE.LineBasicMaterial({{
+                    color: 0xe11d48, transparent: true, opacity: 0.9 }}));
+                line.frustumCulled = false;
+                line.userData.__demoIgnoreLOS = true;
+                scene.add(line);
+                lo = window.__demoLos[name] = {{line}};
+            }}
+            if (visible) {{
+                const a = lo.line.geometry.getAttribute('position');
+                a.setXYZ(0, p.x, p.y, p.z);
+                a.setXYZ(1, t.position.x, t.position.y, t.position.z);
+                a.needsUpdate = true;
+                lo.line.visible = true;
+            }} else {{
+                lo.line.visible = false;
+            }}
+            const wedge = (window.__demoWedges || {{}})[name];
+            if (wedge) wedge.material.opacity = visible ? 0.14 : 0.035;
+        }}
+
+        // --- HUD status (director info: positions in mission/ROS coords) ---
+        if (window.__demoHudStatus) {{
+            const colors = {{'droneA': '#3b82f6', 'droneB': '#f59e0b'}};
+            const lines = [];
+            for (const name of {drones_js}) {{
+                const av = agents.get(name);
+                if (!av) continue;
+                const p = av.group.position;
+                const st = out.vis[name]
+                    ? 'TARGET IN SIGHT (' + t.position.z.toFixed(1) + ', ' + t.position.x.toFixed(1) + ')'
+                    : 'searching';
+                lines.push([colors[name] || '#ccc',
+                    name + '  (' + p.z.toFixed(1) + ', ' + p.x.toFixed(1) + ')  ' + st]);
+            }}
+            lines.push(['#e11d48',
+                'target (' + t.position.z.toFixed(1) + ', ' + t.position.x.toFixed(1) + ')']);
+            window.__demoHudStatus(lines);
         }}
         return out;
         """

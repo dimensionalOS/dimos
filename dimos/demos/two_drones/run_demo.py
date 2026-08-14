@@ -89,11 +89,11 @@ SCENARIOS: dict[str, dict] = {  # type: ignore[type-arg]
 MISSION = (
     "MISSION BRIEFING for {name}: You and your partner {partner} must find and "
     "then keep pursuing a moving RED TARGET somewhere in the arena "
-    "x in [-11, 11], y in [-7, 7]. You start at ({sx:.0f}, {sy:.0f}); your partner "
+    "x in [-10, 10], y in [-6, 6]. You start at ({sx:.0f}, {sy:.0f}); your partner "
     "starts at ({px:.0f}, {py:.0f}). There may be walls; your planner avoids them. "
-    "Plan: 1) claim_sector for YOUR half of the arena over the radio (split it "
-    "fairly, don't overlap your partner), 2) sweep_area your sector, 3) react "
-    "immediately to [SENSOR] and [RADIO] messages. Begin now."
+    "ACT NOW in a single response: call BOTH claim_sector (your half of the "
+    "arena, not overlapping your partner) AND sweep_area (that same sector) in "
+    "one turn. Then react immediately to every [SENSOR] and [RADIO] message."
 )
 
 
@@ -118,7 +118,9 @@ def start_sim(log_dir: Path) -> subprocess.Popen:  # type: ignore[type-arg]
     cmd = [
         deno, "run", "--allow-all", "--unstable-net", str(cli), "dev",
         "--scene", "empty", "--port", str(SIM_PORT), "--no-depth",
-        "--image-rate", "500", "--lidar-rate", "200",
+        # Camera images are unused by this demo (perception is the LOS
+        # referee); publishing them costs a render+readback+JPEG per tick.
+        "--image-rate", "3600000", "--lidar-rate", "300",
         "--robots", ",".join(DRONES),
     ]
     logf = open(log_dir / "sim.log", "w")
@@ -218,6 +220,7 @@ def main() -> None:
 
         print("[demo] opening viewer/recorder page...")
         pw, browser, ctx, page = open_viewer_page(record_path)
+        t_video0 = time.time()  # video timeline starts ~here (page created)
 
         scene = SceneClient(port=SIM_PORT)
         _wait_for(lambda: _try_connect(scene), 60, "scene control channel")
@@ -274,6 +277,7 @@ def main() -> None:
         referee.install_ghosts()
         referee.style_scene_for_video()
         referee.start_ghost_renderer()
+        referee.start_radio_hud()
 
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
@@ -286,11 +290,15 @@ def main() -> None:
         radio_sub = pLCMTransport("/radio")
         radio_sub.start()
 
+        first_radio_ts: list[float] = []
+
         def _log_radio(raw: str) -> None:
             try:
                 ev = json.loads(raw)
                 sender = next((t[1] for t in ev.get("tags", []) if t and t[0] == "sender"), "?")
                 if ev.get("kind") != 2:
+                    if not first_radio_ts:
+                        first_radio_ts.append(time.time())
                     line = f"[radio] {sender}: {ev.get('content', '')}"
                     print(line, flush=True)
                     radio_log.append(line)
@@ -337,6 +345,12 @@ def main() -> None:
                 print(f"[demo] t={time.time() - t0:6.0f}s target at ({tp[0]:.1f}, {tp[1]:.1f})", flush=True)
 
         print("[demo] done. radio messages exchanged:", len(radio_log))
+        # Suggest a head-trim so the published video starts just before the
+        # first radio transmission instead of the boot/briefing dead time.
+        if first_radio_ts:
+            trim = max(0.0, first_radio_ts[0] - t_video0 - 20.0)
+            (log_dir / "trim.json").write_text(json.dumps({"head_trim_s": round(trim, 1)}))
+            print(f"[demo] suggested head trim: {trim:.0f}s (saved to trim.json)")
 
     finally:
         print("[demo] shutting down...")
