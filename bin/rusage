@@ -97,6 +97,7 @@ started=$EPOCHREALTIME
 	--property=MemoryAccounting=1 \
 	--property=IOAccounting=1 \
 	--property=IPAccounting=yes \
+	--setenv=PATH="$PATH" \
 	--setenv=RUSAGE_DIR="$dir" \
 	--setenv=RUSAGE_UNIT="$unit.scope" \
 	--setenv=RUSAGE_MANAGER="$manager" \
