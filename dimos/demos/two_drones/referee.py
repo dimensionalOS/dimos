@@ -87,9 +87,10 @@ class Referee:
         self.drones = drones
         self.sensor = sensor or SensorConfig()
         # SceneClient.exec is called from several referee threads (sensor loop,
-        # belief subscriptions); serialize WS round-trips.
-        self._exec_lock = threading.Lock()
-        self._exec_failures = 0
+        # belief subscriptions). Each subsystem gets its own connection + lock.
+        self._locks: dict[str, threading.Lock] = {}
+        self._fail_counts: dict[str, int] = {}
+        self._clients: dict[str, SceneClient] = {"main": scene}
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._sense = {d: _DroneSense() for d in drones}
@@ -107,27 +108,40 @@ class Referee:
     def _exec(self, code: str, timeout: float = 5.0):  # type: ignore[no-untyped-def]
         """Serialized exec with automatic reconnect after repeated failures
         (the control WS can die silently; the page itself usually survives)."""
-        with self._exec_lock:
+        return self._exec_on("main", self.scene, code, timeout)
+
+    def _exec_on(self, tag: str, client: SceneClient, code: str, timeout: float = 5.0):  # type: ignore[no-untyped-def]
+        lock = self._locks.setdefault(tag, threading.Lock())
+        with lock:
             try:
-                result = self.scene.exec(code, timeout=timeout)
-                self._exec_failures = 0
+                result = client.exec(code, timeout=timeout)
+                self._fail_counts[tag] = 0
                 return result
             except Exception as e:
-                self._exec_failures += 1
-                if self._exec_failures >= 2:
+                self._fail_counts[tag] = self._fail_counts.get(tag, 0) + 1
+                if self._fail_counts[tag] >= 2:
                     logger.warning(
-                        f"referee exec failing ({type(e).__name__}: {e}) — reconnecting SceneClient"
+                        f"referee exec[{tag}] failing ({type(e).__name__}: {e}) — reconnecting"
                     )
                     try:
-                        self.scene.stop()
+                        client.stop()
                     except Exception:
                         pass
-                    fresh = SceneClient(host=self.scene.host, port=self.scene.port)
+                    fresh = SceneClient(host=client.host, port=client.port)
                     fresh.start()
-                    self.scene = fresh
-                    self._exec_failures = 0
-                    return self.scene.exec(code, timeout=timeout)
+                    self._clients[tag] = fresh
+                    self._fail_counts[tag] = 0
+                    return fresh.exec(code, timeout=timeout)
                 raise
+
+    def _client_for(self, tag: str) -> SceneClient:
+        """Dedicated connection per subsystem: a stall on one (sensor) must
+        not serialize behind the other (ghosts)."""
+        if tag not in self._clients:
+            c = SceneClient(host=self.scene.host, port=self.scene.port)
+            c.start()
+            self._clients[tag] = c
+        return self._clients[tag]
 
     # -- world building -------------------------------------------------------
 
@@ -320,7 +334,10 @@ class Referee:
                     const gt = scene.getObjectByName('ghost_target_{observer}');
                     if (gt) {{ gt.visible = true; gt.position.set({tx:.2f}, 0.6, {tz:.2f}); }}""")
                 if js:
-                    self._exec("\n".join(js) + "\nreturn 'ok';", timeout=5.0)
+                    self._exec_on(
+                        "ghosts", self._client_for("ghosts"),
+                        "\n".join(js) + "\nreturn 'ok';", timeout=5.0,
+                    )
         except Exception:
             logger.warning("ghost update failed", exc_info=True)
 
@@ -389,7 +406,7 @@ class Referee:
         while not self._stop.is_set():
             t0 = time.time()
             try:
-                result = self._exec(code, timeout=5.0)
+                result = self._exec_on("sensor", self._client_for("sensor"), code, timeout=5.0)
                 if result:
                     self._process_sense(result)
             except Exception:
