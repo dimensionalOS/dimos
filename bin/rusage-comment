@@ -16,8 +16,6 @@ import json
 from pathlib import Path
 import sys
 
-# --- the template. everything in this block is layout. ---------------------
-
 TEMPLATE = """\
 <!-- dimos-profile -->
 ### Deployment resource footprint
@@ -28,69 +26,55 @@ TEMPLATE = """\
 over the whole process tree &middot; recorded, not gated</sub>
 """
 
-BLOCK = """\
-**{benchmark}**<br>
-{cells}
-"""
+BLOCK = "**{benchmark}** &nbsp; {cells}"
 
-CELL = "`{label}` {value}{delta}"
+CELL = "{label} {value}{delta}"
 JOIN = " &nbsp; "
 
 # Short labels, in the order they are printed. Measures missing from a
-# benchmark are skipped, so `venv` prints as a single VENV cell.
+# benchmark are skipped, so `venv` prints as a single Size cell.
 LABELS = {
-    "wall-seconds": "WALL",
-    "cpu-core-seconds": "CPU",
-    "cpu-user-seconds": "USR",
-    "cpu-system-seconds": "SYS",
-    "peak-memory-mib": "MEM",
-    "peak-threads": "THR",
-    "disk-read-mib": "RD",
-    "disk-write-mib": "WR",
-    "net-rx-mib": "RX",
-    "net-tx-mib": "TX",
-    "install-size-mib": "VENV",
+    "wall-seconds": "Wall",
+    "cpu-core-seconds": "Cpu",
+    "cpu-user-seconds": "Usr",
+    "cpu-system-seconds": "Sys",
+    "peak-memory-mib": "Mem",
+    "peak-threads": "Thr",
+    "disk-read-mib": "Rd",
+    "disk-write-mib": "Wr",
+    "net-rx-mib": "Rx",
+    "net-tx-mib": "Tx",
+    "install-size-mib": "Size",
 }
 
-# Bands of |Δ%|, widest first: (threshold, better, worse). Resource use going
-# down is better. Colours are CSS names because GitHub renders the delta as
-# MathJax, which is the only way to get colour into a comment without images.
-BANDS = [
-    (25, "darkgreen", "darkred"),
-    (12, "green", "red"),
-    (5, "seagreen", "indianred"),
-]
-NEUTRAL = "gray"
+# Deltas at or above this are bolded. Colour would need MathJax, which drags
+# the serif math font in with it -- bold is the emphasis that stays in the
+# comment's own typeface.
+LOUD_PCT = 12
 
 
-def number(value: float) -> str:
-    """Round to something readable: 2759, 114.4, 5.84."""
-    if abs(value) >= 100:
-        return f"{value:.0f}"
-    return f"{value:.1f}" if abs(value) >= 10 else f"{value:.2f}"
-
-
-def colour(pct: float) -> str:
-    for threshold, better, worse in BANDS:
-        if abs(pct) >= threshold:
-            return better if pct < 0 else worse
-    return NEUTRAL
+def number(slug: str, value: float) -> str:
+    """Carry the unit and keep it readable: 201s, 5.8s, 2.7GiB, 312."""
+    if slug.endswith("-seconds"):
+        return f"{value:.0f}s" if abs(value) >= 100 else f"{value:.1f}s"
+    if slug.endswith("-mib"):
+        return f"{value / 1024:.1f}GiB" if abs(value) >= 1024 else f"{value:.0f}MiB"
+    return f"{value:.0f}"
 
 
 def delta(value: float, baseline: float | None) -> str:
     if baseline is None or baseline == 0:
         return ""
-    # Band on the number shown, so a cell never reads -5% in the neutral colour
-    # while its neighbour reads -5% in green.
     pct = round((value - baseline) / baseline * 100)
-    return rf" $\textcolor{{{colour(pct)}}}{{{pct:+d}\%}}$"
+    text = f"Δ{pct:+d}%"
+    return f" **{text}**" if abs(pct) >= LOUD_PCT else f" {text}"
 
 
 def block(benchmark: str, measures: dict, base: dict) -> str:
     cells = [
         CELL.format(
             label=label,
-            value=number(measures[slug]["value"]),
+            value=number(slug, measures[slug]["value"]),
             delta=delta(measures[slug]["value"], base.get(slug, {}).get("value")),
         )
         for slug, label in LABELS.items()
@@ -112,7 +96,7 @@ def main() -> None:
         base = json.loads(baseline_path.read_text())
 
     blocks = [block(name, m, base.get(name, {})) for name, m in current.items()]
-    print(TEMPLATE.format(ref=ref, blocks="\n".join(blocks)))
+    print(TEMPLATE.format(ref=ref, blocks="\n\n".join(blocks)))
 
 
 if __name__ == "__main__":
