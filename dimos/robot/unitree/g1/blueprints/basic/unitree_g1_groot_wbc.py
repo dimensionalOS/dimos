@@ -318,6 +318,7 @@ if global_config.simulation == "mujoco":
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+    from dimos.robot.unitree.g1.lio_base_pose import G1LioBasePose
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
@@ -356,7 +357,16 @@ else:
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
-        PointLio.blueprint(),
+        PointLio.blueprint(
+            frame_id="world",
+            host_ip=G1.lidar_host_ip,
+            lidar_ip=G1.lidar_ip,
+        ),
+        G1LioBasePose.blueprint(
+            world_frame="world",
+            sensor_frame="mid360_link",
+            base_frame="pelvis",
+        ),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
             emit_every=0,  # no local_map consumer here
@@ -379,7 +389,9 @@ else:
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
+    _remappings = [
+        (_G1GrootCoordinator, "twist_command", "cmd_vel"),
+    ]
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -403,9 +415,9 @@ def _g1_nav_path(path: NavPath) -> Any:
     return path.to_rerun(z_offset=0.3)
 
 
-# Mesh root: sim roots under the /odom transform; real hw under the LIO's
-# /odometry, whose world frame is the lidar boot pose (ground ~1.2 m below 0).
-_G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
+# Mesh root: sim roots under MuJoCo odom; real hardware uses the corrected,
+# live-waist LIO pelvis pose rather than raw sensor odometry.
+_G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/base_pose/g1"
 
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
 # Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd.
@@ -426,26 +438,6 @@ def _g1_pelvis_to_mid360() -> Any:
     return _g1_pelvis_mid360_cache[0]
 
 
-def _g1_real_odometry_root(odom: Any) -> Any:
-    """Robot-mesh root: pelvis pose from the LIO's mid360 odometry (rest offset)."""
-    import numpy as np
-    import rerun as rr
-
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
-    t_world_mid360 = np.eye(4)
-    # The MID-360 is mounted upside down (the URDF doesn't carry the flip):
-    # un-roll by Rx(pi) == diag(1, -1, -1).
-    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
-    t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
-    t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
-    q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
-    return rr.Transform3D(
-        translation=t_world_pelvis[:3, 3].tolist(),
-        rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
-    )
-
-
 def _g1_real_ground_z() -> float:
     """Ground height in the LIO boot frame: -(mount z + nominal pelvis z)."""
     return -(float(_g1_pelvis_to_mid360()[2, 3]) + _G1_NOMINAL_PELVIS_Z)
@@ -454,6 +446,11 @@ def _g1_real_ground_z() -> float:
 def _g1_real_costmap(grid: Any) -> Any:
     """Costmap rendered on the actual ground plane of the boot frame."""
     return g1_costmap(grid, z_offset=_g1_real_ground_z() + 0.02)
+
+
+def _pose_to_rerun(pose: Any) -> Any:
+    """Render a pose from a worker-picklable module-level callable."""
+    return pose.to_rerun()
 
 
 _static_rerun_entities: dict[str, Any] = {
@@ -481,7 +478,7 @@ _rerun_config: dict[str, Any] = {
         "world/g1/imu": 10.0,
         "world/g1/motor_states": 10.0,
         "world/g1/motor_command": 10.0,
-        "world/odometry": 15.0,
+        "world/base_pose": 15.0,
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
         "world/navigation_costmap": 2.0,
@@ -493,7 +490,7 @@ _rerun_config: dict[str, Any] = {
 }
 
 if global_config.simulation != "mujoco":
-    _rerun_config["visual_override"]["world/odometry"] = _g1_real_odometry_root
+    _rerun_config["visual_override"]["world/base_pose"] = _pose_to_rerun
     _rerun_config["visual_override"]["world/global_costmap"] = _g1_real_costmap
     _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
     # Raw scan is sensor-frame (LIO contract); the voxel map is the live view.
@@ -510,6 +507,7 @@ def g1_groot_task_config(
     priority: int = 50,
     stream_bind: dict[str, str] | None = None,
     yield_when_idle: bool = False,
+    timeout: float = 1.0,
 ) -> TaskConfig:
     """Build one coordinator-owned GR00T locomotion task."""
     groot_params: dict[str, Any] = {
@@ -520,6 +518,7 @@ def g1_groot_task_config(
         "default_ramp_seconds": _default_ramp_seconds,
         "decimation": _decimation,
         "yield_when_idle": yield_when_idle,
+        "timeout": timeout,
     }
     return TaskConfig(
         name=name,
@@ -532,7 +531,10 @@ def g1_groot_task_config(
     )
 
 
-def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
+def g1_groot_coordinator(
+    extra_tasks: Sequence[TaskConfig] = (),
+    locomotion_task: TaskConfig | None = None,
+) -> Any:
     """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
     return _G1GrootCoordinator.blueprint(
         instance_name="ControlCoordinator",
@@ -564,7 +566,7 @@ def g1_groot_coordinator(extra_tasks: Sequence[TaskConfig] = ()) -> Any:
             ),
         ],
         tasks=[
-            g1_groot_task_config(),
+            locomotion_task or g1_groot_task_config(),
             *([_arm_holder] if _arm_holder is not None else []),
             *extra_tasks,
         ],

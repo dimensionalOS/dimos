@@ -88,6 +88,9 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
     assert _stream("posetargetobservationmodule", "target_observation") == ("target_observation")
     assert _stream("wateringtaskmodule", "target_observation") == "target_observation"
     assert _stream("wateringtaskmodule", "base_pose") == "odom"
+    assert _stream("wateringtaskmodule", "operator_command") == "tele_cmd_vel"
+    assert _stream("wateringtaskmodule", "approach_path") == "path"
+    assert _stream("wateringtaskmodule", "approach_goal") == "goal_request"
 
 
 def test_watering_and_teleop_are_separate_coordinator_arbitration_tasks() -> None:
@@ -102,6 +105,7 @@ def test_watering_and_teleop_are_separate_coordinator_arbitration_tasks() -> Non
 
     assert watering.priority == 50
     assert watering.stream_bind == {}
+    assert watering.params["timeout"] == 0.25
     assert teleop.priority == 60
     assert teleop.stream_bind == {"twist_command": "tele_cmd_vel"}
     assert teleop.params["yield_when_idle"] is True

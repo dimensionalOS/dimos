@@ -36,7 +36,8 @@ try:
 except ImportError as exc:
     raise ImportError(
         "RoboPlanWorld requires the optional roboplan dependency. "
-        "Install the manipulation extra before selecting the roboplan backend."
+        "Install the manipulation extra before selecting the roboplan backend. "
+        f"Underlying import error: {exc}"
     ) from exc
 
 from dimos.manipulation.planning.groups.models import PlanningGroup

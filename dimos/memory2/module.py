@@ -38,7 +38,6 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import QualityWindow
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
-from dimos.models.embedding.base import EmbeddingModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -49,7 +48,14 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
+    from dimos.models.embedding.base import EmbeddingModel
     from dimos.msgs.geometry_msgs.Pose import Pose
+else:
+    # Embedding support is optional and imports PyTorch. Keep generic stream
+    # modules and recorders lightweight; SemanticSearch imports its concrete
+    # model lazily in start(). At runtime these fields hold user-supplied model
+    # classes/instances, so Any is the appropriate validation boundary here.
+    EmbeddingModel = Any
 
 logger = setup_logger()
 

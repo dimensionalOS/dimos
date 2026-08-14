@@ -56,7 +56,13 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.manip_last_mile import Twist2D, servo_step
+from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.robot.unitree.g1.manip_last_mile import (
+    ApproachControllerConfig,
+    ApproachPhase,
+    Twist2D,
+    approach_step,
+)
 from dimos.robot.unitree.g1.manip_stance import (
     DEFAULT_MAP_PATH,
     POUR_Z,
@@ -187,6 +193,12 @@ class WateringTaskConfig(ModuleConfig):
     verify_attempts: int = Field(default=3, ge=1)
     reach_margin_cells: int = Field(default=3, ge=1)
     stop_repetitions: int = Field(default=5, ge=1)
+    approach_max_distance: float = Field(default=2.0, gt=0.0)
+    approach_position_tolerance: float = Field(default=0.06, gt=0.0)
+    approach_yaw_tolerance: float = Field(default=math.radians(5.0), gt=0.0)
+    max_target_drift: float = Field(default=0.15, gt=0.0)
+    max_base_pose_jump: float = Field(default=0.25, gt=0.0)
+    motion_enabled: bool = True
     auto_start: bool = False
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
 
@@ -270,6 +282,36 @@ class _WateringFailureError(RuntimeError):
 
 StatusCallback = Callable[[WateringState, str, int], None]
 Waiter = Callable[[float], bool]
+ApproachPreviewCallback = Callable[[NavPath, PoseStamped], None]
+
+
+def build_approach_preview(
+    snapshot: WateringInputSnapshot,
+    reach_map: PourReachMap,
+    margin_cells: int,
+) -> tuple[NavPath, PoseStamped]:
+    """Build the explicit straight path and final stance used by the controller."""
+    pot = (float(snapshot.target.pose.position.x), float(snapshot.target.pose.position.y))
+    base = snapshot.base_pose
+    base_yaw = float(base.orientation.to_euler().z)
+    stance = select_stance(
+        pot,
+        # Preserve the robot's current heading as the final pour heading.
+        # The controller may turn toward the straight walking segment first,
+        # but returns to this yaw after reaching the stance position.
+        approach_yaw=base_yaw,
+        reach_map=reach_map,
+        margin_cells=margin_cells,
+    )
+    goal = PoseStamped(
+        ts=base.ts,
+        frame_id="world",
+        position=[stance.x, stance.y, float(base.position.z)],
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, stance.yaw)),
+    )
+    start = copy_pose_stamped(base)
+    start.frame_id = "world"
+    return NavPath(ts=base.ts, frame_id="world", poses=[start, goal]), goal
 
 
 class WateringSequence:
@@ -285,6 +327,7 @@ class WateringSequence:
         cancelled: threading.Event,
         transition: StatusCallback,
         wait: Waiter,
+        approach_preview: ApproachPreviewCallback | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         wall_time: Callable[[], float] = time.time,
     ) -> None:
@@ -296,8 +339,14 @@ class WateringSequence:
         self._cancelled = cancelled
         self._transition = transition
         self._wait = wait
+        self._approach_preview = approach_preview
         self._monotonic = monotonic
         self._wall_time = wall_time
+        self._controller_config = ApproachControllerConfig(
+            position_tolerance=config.approach_position_tolerance,
+            yaw_tolerance=config.approach_yaw_tolerance,
+            max_approach_distance=config.approach_max_distance,
+        )
 
     def run(self, target_id: str) -> WateringRunResult:
         try:
@@ -351,41 +400,70 @@ class WateringSequence:
             self._base.stop()
 
     def _approach(self, target_id: str, initial: WateringInputSnapshot) -> None:
-        pot = self._pot_xy(initial)
-        base_x, base_y, _ = self._base_pose(initial)
-        stance = select_stance(
-            pot,
-            approach_yaw=math.atan2(pot[1] - base_y, pot[0] - base_x),
-            reach_map=self._reach,
-            margin_cells=self._config.reach_margin_cells,
+        path, goal = build_approach_preview(
+            initial,
+            self._reach,
+            self._config.reach_margin_cells,
         )
-        self._transition(
-            WateringState.APPROACHING,
-            f"Servoing target to base offset ({stance.offset[0]:.2f}, {stance.offset[1]:.2f})",
-            0,
-        )
+        if self._approach_preview is not None:
+            self._approach_preview(path, goal)
         deadline = self._monotonic() + self._config.servo_timeout
         period = 1.0 / self._config.servo_hz
+        initial_pot = self._pot_xy(initial)
+        previous_base = self._base_pose(initial)
+        previous_phase: ApproachPhase | None = None
         while self._monotonic() < deadline:
             self._check_cancelled()
             snapshot = self._require_snapshot(target_id)
-            seen = self._seen_offset(snapshot)
-            command = servo_step(
-                seen,
-                stance.offset,
-                self._reach,
-                margin_cells=self._config.reach_margin_cells,
+            current_pot = self._pot_xy(snapshot)
+            target_drift = math.hypot(
+                current_pot[0] - initial_pot[0],
+                current_pot[1] - initial_pot[1],
             )
-            if command.is_stop:
+            if target_drift > self._config.max_target_drift:
+                raise _WateringFailureError(
+                    f"Target moved {target_drift:.2f} m during approach; stopping"
+                )
+            current_base = self._base_pose(snapshot)
+            base_jump = math.hypot(
+                current_base[0] - previous_base[0],
+                current_base[1] - previous_base[1],
+            )
+            if base_jump > self._config.max_base_pose_jump:
+                raise _WateringFailureError(
+                    f"Base pose jumped {base_jump:.2f} m between control ticks; stopping"
+                )
+            previous_base = current_base
+            step = approach_step(
+                current_base,
+                (
+                    float(goal.position.x),
+                    float(goal.position.y),
+                    float(goal.orientation.to_euler().z),
+                ),
+                self._controller_config,
+            )
+            if step.blocked:
+                raise _WateringFailureError(f"Approach blocked: {step.message}")
+            if step.phase is not previous_phase:
+                self._transition(
+                    WateringState.APPROACHING,
+                    f"{step.phase.value}: distance={step.distance_error:.2f} m, "
+                    f"heading={math.degrees(step.path_heading_error):.1f} deg, "
+                    f"final_yaw={math.degrees(step.stance_yaw_error):.1f} deg",
+                    0,
+                )
+                previous_phase = step.phase
+            if step.arrived:
                 self._base.stop()
                 self._transition(
                     WateringState.SETTLING,
-                    f"Base stopped with target at ({seen[0]:.2f}, {seen[1]:.2f})",
+                    f"Base reached stance at ({current_base[0]:.2f}, {current_base[1]:.2f})",
                     0,
                 )
                 self._wait_or_cancel(self._config.settle_seconds)
                 return
-            self._base.send(command)
+            self._base.send(step.command)
             self._wait_or_cancel(period)
         raise _WateringFailureError(
             f"Last-mile servo timed out after {self._config.servo_timeout:.1f}s"
@@ -426,7 +504,11 @@ class WateringSequence:
                 raise _WateringFailureError(
                     f"Pour poses did not plan after {attempt} attempts ({failed}): {error}"
                 )
-            self._nudge(seen, attempt)
+            self._transition(
+                WateringState.VERIFYING_REACH,
+                f"Retrying pose planning without moving the verified stance ({attempt + 1})",
+                attempt,
+            )
 
         raise AssertionError("verify_attempts is constrained to at least one")
 
@@ -449,22 +531,6 @@ class WateringSequence:
             )
         self._manipulation.clear_planned_path()
         return solved
-
-    def _nudge(self, seen: tuple[float, float], attempt: int) -> None:
-        command = Twist2D(vx=-0.1 if seen[0] < 0.3 else 0.1)
-        self._transition(
-            WateringState.NUDGING,
-            f"Verification failed; nudging base before attempt {attempt + 1}",
-            attempt,
-        )
-        period = 1.0 / self._config.servo_hz
-        for _ in range(round(self._config.servo_hz)):
-            self._check_cancelled()
-            self._base.send(command)
-            self._wait_or_cancel(period)
-        self._base.stop()
-        self._transition(WateringState.SETTLING, "Settling after verification nudge", attempt)
-        self._wait_or_cancel(self._config.settle_seconds)
 
     def _pour(self, target: TargetObservation, yaw: float) -> None:
         pot = (float(target.pose.position.x), float(target.pose.position.y))
@@ -608,7 +674,10 @@ class WateringTaskModule(Module):
 
     target_observation: In[TargetObservation]
     base_pose: In[PoseStamped]
+    operator_command: In[Twist]
     base_command: Out[Twist]
+    approach_path: Out[NavPath]
+    approach_goal: Out[PoseStamped]
     watering_status: Out[WateringStatus]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -634,7 +703,8 @@ class WateringTaskModule(Module):
         super().start()
         target_unsubscribe = self.target_observation.subscribe(self._inputs.update_target)
         base_pose_unsubscribe = self.base_pose.subscribe(self._inputs.update_base_pose)
-        for unsubscribe in (target_unsubscribe, base_pose_unsubscribe):
+        operator_unsubscribe = self.operator_command.subscribe(self._on_operator_command)
+        for unsubscribe in (target_unsubscribe, base_pose_unsubscribe, operator_unsubscribe):
             self.register_disposable(
                 Disposable(unsubscribe) if callable(unsubscribe) else unsubscribe
             )
@@ -657,6 +727,13 @@ class WateringTaskModule(Module):
     def start_watering(self, target_id: str | None = None) -> bool:
         """Start one background watering run for the configured target."""
         selected_target = target_id or self.config.target_id
+        if not self.config.motion_enabled:
+            self._transition(
+                WateringState.IDLE,
+                "Autonomous motion is disabled; inspect preview_watering() first",
+                0,
+            )
+            return False
         with self._status_lock:
             if self._task_thread is not None and self._task_thread.is_alive():
                 return False
@@ -698,6 +775,33 @@ class WateringTaskModule(Module):
         with self._status_lock:
             return self._status
 
+    @rpc
+    def preview_watering(self, target_id: str | None = None) -> NavPath | None:
+        """Publish and return the straight approach without commanding motion."""
+        selected_target = target_id or self.config.target_id
+        snapshot = self._inputs.snapshot(selected_target)
+        if snapshot is None:
+            self._transition(
+                WateringState.IDLE,
+                f"Cannot preview: target '{selected_target}' or base pose is unavailable",
+                0,
+            )
+            return None
+        reach_map = PourReachMap.load(self.config.reach_map_path)
+        path, goal = build_approach_preview(
+            snapshot,
+            reach_map,
+            self.config.reach_margin_cells,
+        )
+        self._publish_approach_preview(path, goal)
+        self._transition(
+            WateringState.IDLE,
+            f"Previewed stance ({goal.position.x:.2f}, {goal.position.y:.2f}, "
+            f"yaw={math.degrees(goal.orientation.to_euler().z):.1f} deg)",
+            0,
+        )
+        return path
+
     def _run(self, target_id: str) -> None:
         try:
             reach_map = PourReachMap.load(self.config.reach_map_path)
@@ -710,6 +814,7 @@ class WateringTaskModule(Module):
                 cancelled=self._cancel_event,
                 transition=self._transition,
                 wait=self._cancel_event.wait,
+                approach_preview=self._publish_approach_preview,
             )
             sequence.run(target_id)
         except Exception as exc:
@@ -726,6 +831,19 @@ class WateringTaskModule(Module):
                 self._manipulation.cancel()
             except Exception:
                 logger.warning("Manipulation cancellation failed", exc_info=True)
+
+    def _on_operator_command(self, command: Twist) -> None:
+        magnitude = sum(
+            abs(float(value)) for value in (command.linear.x, command.linear.y, command.angular.z)
+        )
+        thread = self._task_thread
+        if magnitude > 1e-4 and thread is not None and thread.is_alive():
+            logger.warning("Operator command received; cancelling autonomous watering")
+            self._request_cancel()
+
+    def _publish_approach_preview(self, path: NavPath, goal: PoseStamped) -> None:
+        self.approach_path.publish(path)
+        self.approach_goal.publish(goal)
 
     def _transition(self, state: WateringState, message: str, attempt: int) -> None:
         with self._status_lock:

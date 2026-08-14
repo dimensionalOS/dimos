@@ -194,6 +194,12 @@ class ManipulationModule(Module):
     Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
     """
 
+    # Planning backends load substantial native runtimes (RoboPlan/Pinocchio,
+    # Drake, OpenMP) and visualization can own a server. Keep them isolated
+    # from camera and inference modules whose native libraries may otherwise
+    # be loaded first in the same worker process.
+    dedicated_worker = True
+
     config: ManipulationModuleConfig
     _control_coordinator: ControlCoordinator
 

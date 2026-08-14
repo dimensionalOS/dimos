@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 from dimos.core.global_config import global_config
@@ -21,7 +23,9 @@ from dimos.core.global_config import global_config
 if global_config.simulation:
     pytest.skip("water demo is hardware-only", allow_module_level=True)
 
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1GrootWBCTaskParams
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.module_coordinator import _verify_no_name_conflicts
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
@@ -58,6 +62,10 @@ def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
         "rerunbridgemodule",
         "rerunwebsocketserver",
         "websocketvismodule",
+        "pointlio",
+        "g1liobasepose",
+        "posetargetobservationmodule",
+        "wateringtaskmodule",
     }
 
 
@@ -67,6 +75,8 @@ def test_plant_pose_reaches_the_object_pose_contract() -> None:
     assert _stream("markerlatchmodule", "object_pose") == "object_pose"
     assert _stream("markerdetectionstreammodule", "color_image") == "color_image"
     assert _stream("markerlatchmodule", "detections") == "detections"
+    assert _stream("posetargetobservationmodule", "object_pose") == "object_pose"
+    assert _stream("wateringtaskmodule", "target_observation") == "target_observation"
 
 
 def test_marker_pipeline_matches_the_printed_tags() -> None:
@@ -76,13 +86,15 @@ def test_marker_pipeline_matches_the_printed_tags() -> None:
     assert latch["marker_ids"] == [0, 1, 2]
 
 
-def test_poses_are_base_relative() -> None:
-    # No odometry runs, so there is no world frame to latch into; every stage
-    # must agree on the pelvis or the pot lands somewhere arbitrary.
-    assert _kwargs("markerdetectionstreammodule")["world_frame"] == "pelvis"
-    assert _kwargs("markertfmodule")["world_frame"] == "pelvis"
-    assert _kwargs("markerlatchmodule")["frame_id"] == "pelvis"
+def test_perception_is_world_relative_through_the_live_pelvis_tf() -> None:
+    assert _kwargs("pointlio")["frame_id"] == "world"
+    assert _kwargs("markerdetectionstreammodule")["world_frame"] == "world"
+    assert _kwargs("markertfmodule")["world_frame"] == "world"
+    assert _kwargs("markerlatchmodule")["frame_id"] == "world"
     assert _kwargs("g1headcameratf")["base_frame"] == "pelvis"
+    assert _kwargs("g1liobasepose")["world_frame"] == "world"
+    assert _kwargs("g1liobasepose")["base_frame"] == "pelvis"
+    assert _stream("manipulationmodule", "odom") == "base_pose"
 
 
 def test_camera_tf_chain_connects_to_the_urdf_mount() -> None:
@@ -110,6 +122,8 @@ def test_policy_comes_up_unarmed_and_dry_run() -> None:
     assert groot.params["auto_arm"] is False
     assert groot.params["auto_dry_run"] is True
     assert groot.params["default_ramp_seconds"] == 10.0
+    assert groot.params["timeout"] == 0.25
+    assert G1GrootWBCTaskParams.model_validate(groot.params).timeout == 0.25
 
 
 def test_camera_publishes_compressed_color() -> None:
@@ -146,11 +160,19 @@ def test_rerun_caps_survive_config_parsing() -> None:
     assert callable(next(iter(bridge["static"].values())))
 
 
-def test_viewer_teleop_reaches_the_policy_directly() -> None:
-    # Viewer -> cmd_vel -> coordinator, with nothing muxing in between.
+def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
     assert _stream("rerunwebsocketserver", "tele_cmd_vel") == "cmd_vel"
     assert _stream("websocketvismodule", "tele_cmd_vel") == "cmd_vel"
+    assert _stream("wateringtaskmodule", "operator_command") == "cmd_vel"
     assert _stream("ControlCoordinator", "twist_command") == "cmd_vel"
+
+    (coordinator,) = [
+        atom
+        for atom in unitree_g1_water_demo.active_blueprints
+        if atom.name == "ControlCoordinator"
+    ]
+    tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
+    assert "teleop_groot_wbc" not in tasks
 
     # Hardware pins /g1/cmd_vel; sim uses bare /cmd_vel.
     (transport,) = [t for (_n, ty), t in unitree_g1_water_demo.transport_map.items() if ty is Twist]
@@ -159,15 +181,32 @@ def test_viewer_teleop_reaches_the_policy_directly() -> None:
 
 def test_no_nav_stack() -> None:
     # The coordinator is the only arbitration authority, so base motion must
-    # not route through a second mux; and the demo carries no lidar/nav.
+    # not route through a second mux. Point-LIO is observer-only, not nav.
     names = {atom.name for atom in unitree_g1_water_demo.active_blueprints}
     assert not names & {
         "movementmanager",
         "costmapper",
         "replanningastarplanner",
-        "pointlio",
         "raytracingvoxelmap",
     }
+
+
+def test_pointlio_is_visible_and_autonomous_motion_is_disabled() -> None:
+    assert callable(_kwargs(BRIDGE)["visual_override"]["world/lidar"])
+    assert _kwargs("wateringtaskmodule")["motion_enabled"] is False
+    assert _stream("wateringtaskmodule", "base_command") == "base_command"
+
+
+def test_demo_passes_runtime_stream_conflict_validation() -> None:
+    # This is the exact preflight check used by ``dimos run`` before workers
+    # start. Metadata-only blueprint tests do not catch cross-type name reuse.
+    _verify_no_name_conflicts(unitree_g1_water_demo)
+
+
+def test_worker_configuration_is_picklable() -> None:
+    # Worker deployment sends module kwargs through multiprocessing.Pipe.
+    # Lambdas in viewer overrides pass metadata tests but fail here at runtime.
+    pickle.dumps(_kwargs(BRIDGE))
 
 
 def test_viser_is_reachable_from_the_operator_laptop() -> None:
@@ -177,3 +216,5 @@ def test_viser_is_reachable_from_the_operator_laptop() -> None:
     ]
     assert manip.kwargs["visualization"].backend == "viser"
     assert manip.kwargs["visualization"].host == "0.0.0.0"
+    assert manip.kwargs["visualization"].port == 8095
+    assert manip.module.dedicated_worker is True

@@ -251,5 +251,6 @@ def test_reach_verification_exhausts_bounded_retries(
     assert manipulation.latch_base_pose.call_count == 3
     assert manipulation.plan_to_pose.call_count == 6
     assert manipulation.reset.call_count == 4
-    assert base.send.call_count == 20
+    # A failed arm-plan check must not trigger an unverified blind base nudge.
+    base.send.assert_not_called()
     manipulation.move_to_pose.assert_not_called()

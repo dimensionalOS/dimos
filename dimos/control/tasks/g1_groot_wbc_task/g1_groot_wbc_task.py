@@ -806,6 +806,7 @@ class G1GrootWBCTaskParams(BaseConfig):
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
     decimation: int | None = None
+    timeout: float = 1.0
     yield_when_idle: bool = False
 
 
@@ -835,6 +836,7 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
+        timeout=params.timeout,
         yield_when_idle=params.yield_when_idle,
     )
     if params.decimation is not None:

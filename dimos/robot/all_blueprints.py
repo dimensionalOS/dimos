@@ -203,6 +203,7 @@ all_modules = {
     "g1-head-camera-tf": "dimos.robot.unitree.g1.head_camera_tf.G1HeadCameraTf",
     "g1-high-level-dds-sdk": "dimos.robot.unitree.g1.effectors.high_level.dds_sdk.G1HighLevelDdsSdk",
     "g1-high-level-web-rtc": "dimos.robot.unitree.g1.effectors.high_level.webrtc.G1HighLevelWebRtc",
+    "g1-lio-base-pose": "dimos.robot.unitree.g1.lio_base_pose.G1LioBasePose",
     "g1-sim-connection": "dimos.robot.unitree.g1.mujoco_sim.G1SimConnection",
     "g1-whole-body-connection": "dimos.robot.unitree.g1.wholebody_connection.G1WholeBodyConnection",
     "go2-audio-bridge-module": "dimos.teleop.hosted.go2_audio_bridge.Go2AudioBridgeModule",

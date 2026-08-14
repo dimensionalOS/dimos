@@ -39,6 +39,8 @@ class G1Config:
     model_path: Path
     height_clearance: float
     width_clearance: float
+    lidar_host_ip: str
+    lidar_ip: str
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
 
 
@@ -47,6 +49,10 @@ G1 = G1Config(
     model_path=Path(__file__).parent / "g1.urdf",
     height_clearance=1.2,
     width_clearance=0.6,
+    # Measured on the onboard G1 network. These remain normal PointLio/FastLio
+    # config fields, so another installation can override them from the CLI.
+    lidar_host_ip="192.168.123.164",
+    lidar_ip="192.168.123.120",
     internal_odom_offsets={
         # Mid-360 lidar: 1.2 m above ground.
         "mid360_link": Pose(0.0, 0.0, 1.2, *Quaternion.from_euler(Vector3(0, 0, 0))),

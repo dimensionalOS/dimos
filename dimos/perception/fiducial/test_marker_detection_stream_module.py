@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 
 import numpy as np
@@ -34,6 +36,24 @@ from dimos.perception.fiducial.test_helpers import (
     camera_info,
     synthetic_marker_image,
 )
+
+
+def test_marker_module_import_does_not_load_torch() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import dimos.perception.fiducial.marker_detection_stream_module; "
+                "raise SystemExit('torch' in sys.modules)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _marker(image: Image, marker_id: int) -> Detection3DMarker:

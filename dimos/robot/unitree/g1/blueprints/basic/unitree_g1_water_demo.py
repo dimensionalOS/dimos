@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 office watering demo: hardware GR00T WBC + manipulation + camera.
+"""Unitree G1 watering smoke test: GR00T + Point-LIO + camera perception.
 
 Hardware only. The GR00T WBC coordinator (policy at priority 50, arm
 trajectories at 30 over the servo hold at 10), the manipulation module with
@@ -20,24 +20,25 @@ Viser off, and the head RealSense publishing JPEG color for the Rerun
 stream. Comes up unarmed + dry-run with the base blueprint's 10 s
 activation ramp.
 
-The head camera also feeds AprilTag detection: tags 0/1/2 mark pot plants,
-and the first one seen consistently is latched and republished on
-``/object_pose`` — the same message sim publishes from ``SimBodyPose``, so
-nothing downstream can tell perception from ground truth. Poses are
-pelvis-relative because no odometry runs; the robot latches the pot from
-where it is standing, which is what the walk-up-then-pour sequence needs.
+The Mid360 feeds Point-LIO directly (no mapper, costmap, planner, or nav
+controller). A G1 adapter combines its physical-sensor pose with live waist
+joints and publishes ``world -> pelvis``. The head camera then feeds AprilTag
+detection in that same world frame; tags 0/1/2 mark pot plants.
+
+The canonical watering task is present for status and path preview, but its
+motion output is disabled in this hardware graph. First verify the cloud,
+pelvis/camera/tag frames and teleop. Autonomous approach is a later opt-in.
 
 Marker detection stays silent until this robot's camera intrinsics are
 captured — see ``tool_dump_camera_info``.
 
-Driving is the viewer's own teleop, wired straight through: the viewer's
-``tele_cmd_vel`` is remapped onto ``cmd_vel``, which is the coordinator's
-``twist_command``. No MovementManager, no mux — the ControlCoordinator is the
-only arbitration authority, and no panel runs on the robot.
+Driving is the viewer's own teleop through the single GR00T policy. The
+ControlCoordinator remains the only authority; no second policy or movement
+mux competes for the hardware loop.
 
-No nav stack at all: no lidar, no voxel map, no costmap, no planner. Nothing
-publishes odometry, so the Rerun robot mesh (rooted under ``world/odometry``)
-sits at the origin — the camera and joint streams are what this demo shows.
+There is still no navigation stack: Point-LIO supplies observer-only odometry
+and a live sensor-frame point cloud. The robot mesh is rooted under the
+corrected ``world/base_pose`` and the cloud under the raw moving lidar pose.
 
 The onboard computer (measured 2026-08-12): NVIDIA Orin NX Developer Kit,
 8 cores, 15 GiB RAM + 7 GiB swap, kernel 5.10.104-tegra. The worker count
@@ -56,6 +57,11 @@ from typing import Any, cast
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.mobile.pose_target_observation_module import (
+    PoseTargetObservationModule,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
@@ -65,11 +71,13 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _rerun_config,
     g1_groot_coordinator,
+    g1_groot_task_config,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_manip import (
     _ARM_TRAJECTORY_TASK,
     g1_manipulation,
 )
+from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.head_camera import (
     CAMERA_STREAM_CONFIG,
     HEAD_CAMERA_MOUNT_FRAME,
@@ -77,6 +85,8 @@ from dimos.robot.unitree.g1.head_camera import (
     head_camera_info,
 )
 from dimos.robot.unitree.g1.head_camera_tf import G1HeadCameraTf
+from dimos.robot.unitree.g1.lio_base_pose import G1LioBasePose
+from dimos.robot.unitree.g1.watering_task import WateringTaskModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -86,13 +96,19 @@ if global_config.simulation:
         "unitree-g1-water-demo is hardware-only; use unitree-g1-groot-wbc-manip for sim"
     )
 
-# Both viewer surfaces drive the policy directly. The coordinator arbitrates;
-# there is no mux in between.
+# Both viewer surfaces drive the one hardware policy directly. Watering also
+# observes the command stream, though motion is disabled in this graph.
 _demo_remappings = [
     (_G1GrootCoordinator, "twist_command", "cmd_vel"),
     (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
     (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
+    (ManipulationModule, "odom", "base_pose"),
+    (WateringTaskModule, "operator_command", "cmd_vel"),
+    (WateringTaskModule, "approach_path", "path"),
+    (WateringTaskModule, "approach_goal", "goal_request"),
 ]
+
+_HARDWARE_GROOT_TASK = g1_groot_task_config(timeout=0.25)
 
 _CAMERA_ENTITY = "world/color_compressed"
 
@@ -101,8 +117,7 @@ _CAMERA_ENTITY = "world/color_compressed"
 # 100% from `dimos apriltag --ids 0,1,2 --size-mm 150`.
 _PLANT_MARKER_IDS = [0, 1, 2]
 _MARKER_LENGTH_M = 0.15
-# Poses are pelvis-relative: no odometry runs, so there is no world frame to
-# put them in. The robot latches the pot from where it is standing.
+_WORLD_FRAME = "world"
 _BASE_FRAME = "pelvis"
 
 
@@ -114,11 +129,11 @@ def _plant_perception() -> Any:
             marker_length_m=_MARKER_LENGTH_M,
             # Detection resolves poses in this frame, so it is what the
             # latched pose ends up expressed in.
-            world_frame=_BASE_FRAME,
+            world_frame=_WORLD_FRAME,
             camera_info=head_camera_info(),
         ),
-        MarkerTfModule.blueprint(world_frame=_BASE_FRAME),
-        MarkerLatchModule.blueprint(marker_ids=_PLANT_MARKER_IDS, frame_id=_BASE_FRAME),
+        MarkerTfModule.blueprint(world_frame=_WORLD_FRAME),
+        MarkerLatchModule.blueprint(marker_ids=_PLANT_MARKER_IDS, frame_id=_WORLD_FRAME),
     )
 
 
@@ -142,6 +157,21 @@ def _water_demo_rerun_blueprint() -> Any:
     )
 
 
+def _pointcloud_to_rerun(cloud: Any) -> Any:
+    """Render a point cloud from a worker-picklable callable."""
+    return cloud.to_rerun()
+
+
+def _object_pose_to_rerun(pose: Any) -> Any:
+    """Render the detected object pose from a worker-picklable callable."""
+    return pose.to_rerun_arrow(length=0.35)
+
+
+def _goal_pose_to_rerun(pose: Any) -> Any:
+    """Render the approach goal from a worker-picklable callable."""
+    return pose.to_rerun_arrow(length=0.45)
+
+
 # Camera caps are non-negotiable on the Jetson: uncapped image streams have
 # eaten 20 GB of Rerun RAM before. coordinator_joint_state is the coordinator's
 # full 29-joint aggregate at the 100 Hz tick — it saturates the viewer's gRPC
@@ -149,10 +179,20 @@ def _water_demo_rerun_blueprint() -> Any:
 _demo_rerun_config: dict[str, Any] = {
     **_rerun_config,
     "blueprint": _water_demo_rerun_blueprint,
-    "max_hz": {**_rerun_config["max_hz"], _CAMERA_ENTITY: 5.0},
+    "max_hz": {
+        **_rerun_config["max_hz"],
+        _CAMERA_ENTITY: 5.0,
+        "world/lidar": 10.0,
+        "world/path": 0,
+    },
     "visual_override": {
         **_rerun_config["visual_override"],
         "world/coordinator_joint_state": None,
+        # PointLIO stamps the cloud as mid360_link and publishes the matching
+        # world -> mid360_link TF; Rerun attaches the cloud to that frame.
+        "world/lidar": _pointcloud_to_rerun,
+        "world/object_pose": _object_pose_to_rerun,
+        "world/goal_request": _goal_pose_to_rerun,
     },
     "memory_limit": "5%",
 }
@@ -160,7 +200,20 @@ _demo_rerun_config: dict[str, Any] = {
 unitree_g1_water_demo = (
     autoconnect(
         _backend,
-        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK,)),
+        g1_groot_coordinator(
+            extra_tasks=(_ARM_TRAJECTORY_TASK,),
+            locomotion_task=_HARDWARE_GROOT_TASK,
+        ),
+        PointLio.blueprint(
+            frame_id="world",
+            host_ip=G1.lidar_host_ip,
+            lidar_ip=G1.lidar_ip,
+        ),
+        G1LioBasePose.blueprint(
+            world_frame="world",
+            sensor_frame="mid360_link",
+            base_frame="pelvis",
+        ),
         # Raw color feeds marker detection on-robot; the JPEG copy is what
         # crosses the network, logged to Rerun as an EncodedImage so the robot
         # never decodes and raw color never costs ~18 MB/s of egress.
@@ -172,7 +225,13 @@ unitree_g1_water_demo = (
             **CAMERA_STREAM_CONFIG,
         ),
         _plant_perception(),
+        PoseTargetObservationModule.blueprint(
+            object_id="plant_pot_1",
+            label="plant pot",
+            source="perception",
+        ),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
+        WateringTaskModule.blueprint(target_id="plant_pot_1", motion_enabled=False),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))

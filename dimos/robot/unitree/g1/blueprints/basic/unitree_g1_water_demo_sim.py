@@ -73,6 +73,9 @@ _demo_remappings = [
     (_G1GrootCoordinator, "twist_command", "cmd_vel"),
     (WateringTaskModule, "base_command", "cmd_vel"),
     (WateringTaskModule, "base_pose", "odom"),
+    (WateringTaskModule, "operator_command", "tele_cmd_vel"),
+    (WateringTaskModule, "approach_path", "path"),
+    (WateringTaskModule, "approach_goal", "goal_request"),
 ]
 
 _TELEOP_GROOT_TASK = g1_groot_task_config(
@@ -81,6 +84,8 @@ _TELEOP_GROOT_TASK = g1_groot_task_config(
     stream_bind={"twist_command": "tele_cmd_vel"},
     yield_when_idle=True,
 )
+
+_WATERING_GROOT_TASK = g1_groot_task_config(timeout=0.25)
 
 _watering_backend = MujocoSimModule.blueprint(
     address=_MJCF_PATH,
@@ -98,7 +103,10 @@ _watering_backend = MujocoSimModule.blueprint(
 unitree_g1_water_demo_sim = (
     autoconnect(
         _watering_backend,
-        g1_groot_coordinator(extra_tasks=(_ARM_TRAJECTORY_TASK, _TELEOP_GROOT_TASK)),
+        g1_groot_coordinator(
+            extra_tasks=(_ARM_TRAJECTORY_TASK, _TELEOP_GROOT_TASK),
+            locomotion_task=_WATERING_GROOT_TASK,
+        ),
         SimBodyPose.blueprint(body_name="plant_pot_1"),
         PoseTargetObservationModule.blueprint(
             object_id="plant_pot_1",

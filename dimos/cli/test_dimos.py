@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from pathlib import Path
 import re
 import sys
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,7 +24,9 @@ from typer.testing import CliRunner
 
 import dimos.cli.dimos as dimos_cli
 from dimos.cli.dimos import (
+    _aarch64_static_tls_libraries,
     _normalize_simulation_argv,
+    _preload_aarch64_static_tls_libraries,
     _with_relay_bridge,
     main,
 )
@@ -56,6 +59,79 @@ class RunConfigB(ModuleConfig):
 
 class RunModuleB(Module):
     config: RunConfigB
+
+
+def test_preload_static_tls_libraries_early_on_aarch64_linux(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loads: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        dimos_cli.ctypes,
+        "CDLL",
+        lambda library, *, mode: loads.append((library, mode)),
+    )
+    monkeypatch.setattr(dimos_cli.sys, "platform", "linux")
+    monkeypatch.setattr(dimos_cli.os, "uname", lambda: SimpleNamespace(machine="aarch64"))
+    roboplan_gomp = Path("/venv/roboplan.libs/libgomp-vendored.so.1.0.0")
+    monkeypatch.setattr(
+        dimos_cli,
+        "_aarch64_static_tls_libraries",
+        lambda: (
+            (roboplan_gomp, roboplan_gomp.name),
+            (Path("/lib/aarch64-linux-gnu/libgomp.so.1"), "libgomp.so.1"),
+            (Path("/lib/aarch64-linux-gnu/libGLdispatch.so.0"), "libGLdispatch.so.0"),
+        ),
+    )
+    monkeypatch.setattr(dimos_cli.Path, "exists", lambda _path: True)
+    monkeypatch.delenv("LD_PRELOAD", raising=False)
+
+    assert _preload_aarch64_static_tls_libraries() is True
+    libraries = [
+        "/venv/roboplan.libs/libgomp-vendored.so.1.0.0",
+        "/lib/aarch64-linux-gnu/libgomp.so.1",
+        "/lib/aarch64-linux-gnu/libGLdispatch.so.0",
+    ]
+    assert loads == [(library, dimos_cli.ctypes.RTLD_GLOBAL) for library in libraries]
+    assert dimos_cli.os.environ["LD_PRELOAD"] == ":".join(libraries)
+
+
+def test_preload_static_tls_libraries_preserves_existing_child_preloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dimos_cli.ctypes, "CDLL", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dimos_cli.sys, "platform", "linux")
+    monkeypatch.setattr(dimos_cli.os, "uname", lambda: SimpleNamespace(machine="aarch64"))
+    monkeypatch.setattr(
+        dimos_cli,
+        "_aarch64_static_tls_libraries",
+        lambda: (
+            (Path("/lib/aarch64-linux-gnu/libgomp.so.1"), "libgomp.so.1"),
+            (Path("/lib/aarch64-linux-gnu/libGLdispatch.so.0"), "libGLdispatch.so.0"),
+        ),
+    )
+    monkeypatch.setattr(dimos_cli.Path, "exists", lambda _path: True)
+    monkeypatch.setenv("LD_PRELOAD", "/opt/vendor/libvendor.so")
+
+    assert _preload_aarch64_static_tls_libraries() is True
+    assert dimos_cli.os.environ["LD_PRELOAD"] == (
+        "/lib/aarch64-linux-gnu/libgomp.so.1:"
+        "/lib/aarch64-linux-gnu/libGLdispatch.so.0:"
+        "/opt/vendor/libvendor.so"
+    )
+
+
+def test_static_tls_libraries_include_roboplan_vendored_gomp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    roboplan_libraries = tmp_path / "roboplan.libs"
+    roboplan_libraries.mkdir()
+    vendored_gomp = roboplan_libraries / "libgomp-a49a47f9.so.1.0.0"
+    vendored_gomp.touch()
+    monkeypatch.setattr(dimos_cli.sys, "path", [str(tmp_path)])
+
+    libraries = _aarch64_static_tls_libraries()
+
+    assert libraries[0] == (vendored_gomp.resolve(), vendored_gomp.name)
 
 
 @pytest.mark.parametrize(

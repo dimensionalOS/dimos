@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from datetime import datetime, timezone
 import inspect
 import json
@@ -43,6 +44,56 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 # cv2 reads this at import for its parallel_for pool; replaces the eager
 # `import cv2; cv2.setNumThreads(2)` the worker entrypoint used to do.
 os.environ.setdefault("OPENCV_FOR_THREADS_NUM", "2")
+
+
+def _aarch64_static_tls_libraries() -> tuple[tuple[Path, str], ...]:
+    """Return native runtimes that need static TLS before worker startup."""
+    roboplan_libraries = {
+        library.resolve()
+        for search_path in sys.path
+        if search_path
+        for library in (Path(search_path) / "roboplan.libs").glob("libgomp-*.so*")
+    }
+    return (
+        *((library, library.name) for library in sorted(roboplan_libraries)),
+        (Path("/lib/aarch64-linux-gnu/libgomp.so.1"), "libgomp.so.1"),
+        (Path("/lib/aarch64-linux-gnu/libGLdispatch.so.0"), "libGLdispatch.so.0"),
+    )
+
+
+def _preload_aarch64_static_tls_libraries() -> bool:
+    """Reserve static TLS for native perception runtimes on aarch64 Linux.
+
+    Jetson processes import several native robotics libraries before Open3D,
+    OpenCV, and inference backends. Loading their OpenMP/GL dispatch runtimes
+    only later can exhaust the loader's static TLS reserve. RoboPlan's aarch64
+    wheel also has a renamed, vendored libgomp dependency which cannot be
+    satisfied by the system libgomp. Load every required runtime here and
+    propagate it through ``LD_PRELOAD`` for the separately executed forkserver
+    and worker processes.
+    """
+    if sys.platform != "linux" or os.uname().machine != "aarch64":
+        return False
+
+    inherited = os.environ.get("LD_PRELOAD", "")
+    inherited_libraries = inherited.replace(":", " ").split()
+    loaded: list[str] = []
+    for native_library, soname in _aarch64_static_tls_libraries():
+        library = str(native_library) if native_library.exists() else soname
+        try:
+            ctypes.CDLL(library, mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            continue
+        if library not in inherited_libraries and soname not in inherited_libraries:
+            loaded.append(library)
+
+    if loaded:
+        prefix = ":".join(loaded)
+        os.environ["LD_PRELOAD"] = f"{prefix}:{inherited}" if inherited else prefix
+    return bool(loaded)
+
+
+_preload_aarch64_static_tls_libraries()
 
 from dotenv import load_dotenv
 import requests
