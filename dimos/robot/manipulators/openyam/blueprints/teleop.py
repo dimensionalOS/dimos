@@ -23,12 +23,12 @@ from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     planner,
 )
+from dimos.robot.manipulators.common.coordinators import (
+    ArmTwistCoordinator,
+)
 from dimos.robot.manipulators.common.topics import (
     DEFAULT_TRAJECTORY_TASK_NAME,
     EEF_TWIST_TASK_NAME,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
