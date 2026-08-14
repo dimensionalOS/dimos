@@ -126,6 +126,8 @@ class ZenohConfig(BaseConfig):
     # None follows scouting.
     gossip: bool | None = Field(default_factory=_default_gossip)
     # Seconds to block in start() waiting for `connect` endpoints to link.
+    # Also bounds zenoh's own dial retries at open, which is what lets a
+    # client session survive starting moments before its router.
     connect_timeout: float = Field(default_factory=_default_connect_timeout)
 
     @property
@@ -164,6 +166,7 @@ def native_env(config: ZenohConfig) -> dict[str, str]:
         "DIMOS_ZENOH_MULTICAST": "true" if config.multicast else "false",
         "DIMOS_ZENOH_GOSSIP": "true" if config.gossip_enabled else "false",
         "DIMOS_ZENOH_INTERFACE": config.multicast_interface,
+        "DIMOS_ZENOH_CONNECT_TIMEOUT_MS": str(int(config.connect_timeout * 1000)),
     }
 
 
@@ -184,6 +187,7 @@ class ZenohSessionPool:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
                     zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
+                zconfig.insert_json5("connect/timeout_ms", str(int(config.connect_timeout * 1000)))
                 # Loopback multicast by default keeps sibling worker processes
                 # discovering each other.
                 zconfig.insert_json5("scouting/multicast/enabled", json.dumps(config.multicast))
@@ -192,7 +196,14 @@ class ZenohSessionPool:
                 )
                 zconfig.insert_json5("scouting/gossip/enabled", json.dumps(config.gossip_enabled))
                 self._sessions[key] = zenoh.open(zconfig)
-                logger.debug(f"Zenoh session opened in {config.mode} mode")
+                logger.info(
+                    "Zenoh session opened",
+                    mode=config.mode,
+                    connect=config.connect,
+                    listen=config.listen,
+                    multicast_interface=config.multicast_interface,
+                    gossip=config.gossip_enabled,
+                )
             return self._sessions[key]
 
     def close_all(self) -> None:
