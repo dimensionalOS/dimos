@@ -113,7 +113,6 @@ dependencies = [
     "cmeel-tinyxml2>=11,<12", # Pinocchio 4.1 requires the v11 ABI.
     "reactivex",
     "sortedcontainers==2.4.0",
-    "attrs>=25.4.0",
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
@@ -186,7 +185,7 @@ misc = [
 
     # Perception Dependencies
     "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos",
+    "edgetam-dimos>=1.0.1",
 
     # embedding models
     "open_clip_torch==3.2.0",
@@ -202,6 +201,12 @@ misc = [
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
     "portal",
+]
+
+spot = [
+    "bosdyn-client>=4.0.0",
+    "bosdyn-api>=4.0.0",
+    "bosdyn-core>=4.0.0",
 ]
 
 visualization = [
@@ -226,6 +231,7 @@ agents = [
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
+    "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
 
     # Audio
     "openai",
@@ -298,7 +304,7 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan==0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
 ]
 
 cpu = [
@@ -473,7 +479,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan==0.5.1",
+    "roboplan>=0.6.0,<0.7.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -505,7 +511,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, edgetam-dimos = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python
@@ -604,6 +610,8 @@ module = [
     "a750_control.*",
     "booster_rpc",
     "booster_rpc.*",
+    "bosdyn",
+    "bosdyn.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -622,6 +630,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "openevals.*",
     "pinocchio",
     "pink",
     "pink.*",

@@ -87,22 +87,26 @@ class ManipulationOperator:
     def __init__(self, module: ManipulationModule, world_monitor: WorldMonitor) -> None:
         self._module = module
         self._world_monitor = world_monitor
+        self._motion_speed = module.config.default_speed_scale
 
     def status(self) -> OperatorStatus:
         """Return compact dynamic state without topology or joint telemetry."""
         return OperatorStatus(
-            state=self._module.get_state(),
+            state=self._module.get_state().operation_status.name,
             error=self._module.get_error(),
             has_plan=self._module.has_planned_path(),
         )
 
     def get_motion_speed(self) -> float:
         """Return the runtime speed reduction used for future plans."""
-        return self._module.get_motion_speed()
+        return self._motion_speed
 
     def set_motion_speed(self, speed_scale: float) -> bool:
         """Set the runtime speed reduction used for future plans."""
-        return self._module.set_motion_speed(speed_scale)
+        if not math.isfinite(speed_scale) or not 0.0 < speed_scale <= 1.0:
+            return False
+        self._motion_speed = float(speed_scale)
+        return True
 
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         """Return the operator-authoritative init joint state for a robot."""
@@ -161,7 +165,8 @@ class ManipulationOperator:
             for group, offset in self._group_offsets(groups)
         }
         return self._module.generate_plan_to_joint_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets)
+            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets),
+            speed_scale=self._motion_speed,
         )
 
     def plan_to_pose(self, request: PoseTargetRequest) -> GeneratedPlan | None:
@@ -172,6 +177,7 @@ class ManipulationOperator:
         return self._module.generate_plan_to_pose_targets(
             cast("Mapping[PlanningGroupID | PlanningGroup, PoseStamped]", poses),
             request.auxiliary_group_ids,
+            speed_scale=self._motion_speed,
         )
 
     def plan_cartesian(self, request: CartesianTargetRequest) -> GeneratedPlan | None:
@@ -197,23 +203,20 @@ class ManipulationOperator:
             ),
             request.config,
             request.auxiliary_group_ids,
+            speed_scale=self._motion_speed,
         )
 
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
         return self._module.preview_plan(plan=plan, duration=duration)
 
     def execute(self, plan: GeneratedPlan) -> bool:
-        return self._module.execute_plan(plan=plan)
+        return self._module._execute_generated_plan(plan)
 
     def cancel(self) -> bool:
-        return self._module.cancel()
+        return self._module.cancel().status.name != "UNCERTAIN"
 
     def clear_plan(self) -> bool:
         return self._module.clear_planned_path()
-
-    def reset(self) -> bool:
-        result = self._module.reset()
-        return result.is_success()
 
     def _validate_joint_request(
         self, request: JointTargetRequest

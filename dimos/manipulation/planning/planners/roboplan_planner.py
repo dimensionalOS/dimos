@@ -179,6 +179,7 @@ class RoboPlanPlanner:
         config: RoboPlanCartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths with official RoboPlan planning."""
         started = time.time()
@@ -217,7 +218,11 @@ class RoboPlanPlanner:
                     group,
                     trajectory,
                 )
-                collision_free = not path or self._combined_path_collision_free(ctx, path)
+                collision_validation_failed = (
+                    check_collision
+                    and bool(path)
+                    and not (self._combined_path_collision_free(ctx, path))
+                )
         except (KeyError, RuntimeError, ValueError) as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -231,7 +236,7 @@ class RoboPlanPlanner:
                 planning_time=time.time() - started,
                 message="RoboPlan Cartesian planning failed: returned an empty trajectory",
             )
-        if not collision_free:
+        if collision_validation_failed:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 planning_time=time.time() - started,
@@ -444,10 +449,8 @@ class RoboPlanPlanner:
         options.config_task_weight = config.config_task_weight
         options.velocity_scale = config.velocity_scale
         options.acceleration_scale = config.acceleration_scale
-        options.limit_ratio_tolerance = config.limit_ratio_tolerance
         options.toppra_blend_deviation = config.toppra_blend_deviation
         options.position_limit_gain = config.position_limit_gain
-        options.max_attempts_per_step = config.max_attempts_per_step
         return options
 
     def _path_from_cartesian_trajectory(
