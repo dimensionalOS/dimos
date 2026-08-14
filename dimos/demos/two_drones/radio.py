@@ -141,7 +141,12 @@ class RadioModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._key = Ed25519PrivateKey.generate()
+        # Deterministic per-drone device key (simulates a keypair persisted on
+        # the drone across reboots, as Buzz agents keep their identity). A
+        # fresh random key per process would break the peers' pubkey pinning
+        # on every stack restart.
+        seed = hashlib.sha256(f"dimos-two-drones:{self.config.drone_name}".encode()).digest()
+        self._key = Ed25519PrivateKey.from_private_bytes(seed)
         self._pubkey_hex = self._key.public_key().public_bytes_raw().hex()
         self._stop_event = threading.Event()
         self.peers: dict[str, PeerBelief] = {}

@@ -39,7 +39,8 @@ import threading
 import time
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport import LCMTransport, pLCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.demos.two_drones.referee import Referee, SensorConfig, ros_to_three
 from dimos.simulation.dimsim.scene_client import SceneClient
 from dimos.utils.deno import ensure_deno
@@ -155,6 +156,9 @@ def start_stack(name: str, log_dir: Path, model: str) -> subprocess.Popen:  # ty
     env.update(
         DRONE_NAME=name,
         DRONE_MCP_PORT=str(MCP_PORTS[name]),
+        # Workers re-read GlobalConfig from the environment, so the MCP port
+        # must travel via env (the --mcp-port flag stays in the coordinator).
+        MCP_PORT=str(MCP_PORTS[name]),
         DRONE_MODEL=model,
         DIMOS_SKIP_SYSTEM_CONFIG="1",
         DIMOS_TRANSPORT="lcm",
@@ -219,14 +223,47 @@ def main() -> None:
         _wait_for(lambda: _try_connect(scene), 60, "scene control channel")
 
         print("[demo] building world...")
+        # Server-side physics only exists after the page ships its Rapier
+        # snapshot — teleports sent before that are silently dropped. Wait for
+        # odom to flow (physics live), then place the drones and VERIFY.
+        latest_odom: dict[str, PoseStamped] = {}
+        odom_subs = []
+        for name in DRONES:
+            sub = LCMTransport(f"/{name}/odom", PoseStamped)
+            sub.start()
+            sub.subscribe(lambda m, name=name: latest_odom.__setitem__(name, m))
+            odom_subs.append(sub)
+        _wait_for(lambda: len(latest_odom) == len(DRONES), 120, "server physics odom")
+
         for name in DRONES:
             scene.set_embodiment(
                 "drone", robot=name, max_speed=2.0, turn_rate=2.5, max_altitude=5.0
             )
-        time.sleep(1.0)
-        for name, (sx, sy) in SPAWNS.items():
-            tx, tz = ros_to_three(sx, sy)
-            scene.set_agent_position(tx, CRUISE_ALT, tz, robot=name)
+        time.sleep(1.5)
+
+        def _in_place(name: str) -> bool:
+            od = latest_odom.get(name)
+            if od is None:
+                return False
+            sx, sy = SPAWNS[name]
+            return (
+                abs(od.position.x - sx) < 1.0
+                and abs(od.position.y - sy) < 1.0
+                and abs(od.position.z - CRUISE_ALT) < 0.5
+            )
+
+        for attempt in range(6):
+            for name, (sx, sy) in SPAWNS.items():
+                if not _in_place(name):
+                    tx, tz = ros_to_three(sx, sy)
+                    scene.set_agent_position(tx, CRUISE_ALT, tz, robot=name)
+            time.sleep(1.5)
+            if all(_in_place(n) for n in DRONES):
+                break
+        else:
+            raise RuntimeError(f"drones not at spawn after retries: "
+                               f"{ {n: str(latest_odom.get(n)) for n in DRONES} }")
+        print("[demo] drones placed at spawns")
 
         referee = Referee(scene, DRONES, SensorConfig())
         referee.build_arena(ARENA_HALF_X, ARENA_HALF_Y)
@@ -293,7 +330,7 @@ def main() -> None:
         print(f"[demo] running scenario '{args.scenario}' for {args.duration:.0f}s...")
         t0 = time.time()
         while time.time() - t0 < args.duration:
-            time.sleep(5)
+            time.sleep(20)
             tp = referee.target_pos_ros
             if tp:
                 print(f"[demo] t={time.time() - t0:6.0f}s target at ({tp[0]:.1f}, {tp[1]:.1f})", flush=True)

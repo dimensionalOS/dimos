@@ -89,6 +89,7 @@ class Referee:
         # SceneClient.exec is called from several referee threads (sensor loop,
         # belief subscriptions); serialize WS round-trips.
         self._exec_lock = threading.Lock()
+        self._exec_failures = 0
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._sense = {d: _DroneSense() for d in drones}
@@ -102,6 +103,29 @@ class Referee:
             t.start()
         self._belief_subs: list[pLCMTransport] = []
         self.target_pos_ros: tuple[float, float] | None = None
+
+    def _exec(self, code: str, timeout: float = 5.0):  # type: ignore[no-untyped-def]
+        """Serialized exec with automatic reconnect after repeated failures
+        (the control WS can die silently; the page itself usually survives)."""
+        with self._exec_lock:
+            try:
+                result = self.scene.exec(code, timeout=timeout)
+                self._exec_failures = 0
+                return result
+            except Exception:
+                self._exec_failures += 1
+                if self._exec_failures >= 2:
+                    logger.warning("referee exec failing — reconnecting SceneClient")
+                    try:
+                        self.scene.stop()
+                    except Exception:
+                        pass
+                    fresh = SceneClient(host=self.scene.host, port=self.scene.port)
+                    fresh.start()
+                    self.scene = fresh
+                    self._exec_failures = 0
+                    return self.scene.exec(code, timeout=timeout)
+                raise
 
     # -- world building -------------------------------------------------------
 
@@ -263,8 +287,7 @@ class Referee:
                     const gt = scene.getObjectByName('ghost_target_{observer}');
                     if (gt) {{ gt.visible = true; gt.position.set({tx:.2f}, 0.6, {tz:.2f}); }}""")
                 if js:
-                    with self._exec_lock:
-                        self.scene.exec("\n".join(js) + "\nreturn 'ok';", timeout=5.0)
+                    self._exec("\n".join(js) + "\nreturn 'ok';", timeout=5.0)
         except Exception:
             logger.warning("ghost update failed", exc_info=True)
 
@@ -328,8 +351,7 @@ class Referee:
         while not self._stop.is_set():
             t0 = time.time()
             try:
-                with self._exec_lock:
-                    result = self.scene.exec(code, timeout=5.0)
+                result = self._exec(code, timeout=5.0)
                 if result:
                     self._process_sense(result)
             except Exception:

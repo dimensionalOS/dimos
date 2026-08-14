@@ -234,7 +234,18 @@ export async function startBridgeServer(options: BridgeServerOptions) {
     snapshot: Uint8Array,
     spawnPos?: { x: number; y: number; z: number },
   ): Promise<void> {
+    // Re-inits happen whenever the browser re-ships the world snapshot (e.g.
+    // after adding colliders). Preserve each robot's current position across
+    // the rebuild — collapsing everyone back onto the spawn point mid-run
+    // would teleport the robots every time a wall is added.
+    const preserved = new Map<string, { x: number; y: number; z: number }>();
     for (const robot of chState.robots.values()) {
+      if (robot.physics) {
+        try {
+          const t = robot.physics.getBody().translation();
+          preserved.set(robot.name, { x: t.x, y: t.y, z: t.z });
+        } catch { /* body already gone */ }
+      }
       if (robot.lidar) { robot.lidar.stop(); robot.lidar = null; }
       if (robot.physics) { robot.physics.stop(); robot.physics = null; }
     }
@@ -266,7 +277,10 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           // kinematic translations that its step applies.
           { topicPrefix: prefix, robotName: robot.name, stepWorld: idx === 0 },
         );
-        if (spawnPos) {
+        const kept = preserved.get(robot.name);
+        if (kept) {
+          robot.physics.setPosition(kept.x, kept.y, kept.z);
+        } else if (spawnPos) {
           // Offset extra robots so they don't spawn inside each other.
           robot.physics.setPosition(spawnPos.x + idx * 1.5, spawnPos.y, spawnPos.z);
         }

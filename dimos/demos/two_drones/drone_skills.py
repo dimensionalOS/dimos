@@ -19,6 +19,7 @@ The drone flies at a fixed cruise altitude; the ground navigation stack
 dimsim flight embodiment holds altitude (planner twists have linear.z = 0).
 """
 
+import math
 import threading
 import time
 from typing import Any
@@ -40,25 +41,42 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+# The planner only accepts goals in already-mapped space, and the lidar maps a
+# ~4 m radius: hops longer than that land in unknown cells and get rejected.
+_MAX_HOP = 2.5
+
+
 def _sweep_waypoints(
     x_min: float, y_min: float, x_max: float, y_max: float, lane_spacing: float
 ) -> list[tuple[float, float]]:
-    """Boustrophedon (lawnmower) sweep of the rectangle, lanes along x."""
+    """Boustrophedon (lawnmower) sweep of the rectangle, lanes along x,
+    subdivided into short hops so each next goal is inside mapped space."""
     if x_max < x_min:
         x_min, x_max = x_max, x_min
     if y_max < y_min:
         y_min, y_max = y_max, y_min
     lane_spacing = max(0.5, lane_spacing)
-    points: list[tuple[float, float]] = []
+    corners: list[tuple[float, float]] = []
     y = y_min
     left_to_right = True
     while y <= y_max + 1e-6:
         if left_to_right:
-            points += [(x_min, y), (x_max, y)]
+            corners += [(x_min, y), (x_max, y)]
         else:
-            points += [(x_max, y), (x_min, y)]
+            corners += [(x_max, y), (x_min, y)]
         left_to_right = not left_to_right
         y += lane_spacing
+
+    points: list[tuple[float, float]] = []
+    for i, (cx, cy) in enumerate(corners):
+        if i == 0:
+            points.append((cx, cy))
+            continue
+        px, py = corners[i - 1]
+        dist = math.hypot(cx - px, cy - py)
+        hops = max(1, math.ceil(dist / _MAX_HOP))
+        for h in range(1, hops + 1):
+            points.append((px + (cx - px) * h / hops, py + (cy - py) * h / hops))
     return points
 
 
@@ -146,10 +164,10 @@ class DroneSkillContainer(Module):
 
         def run() -> None:
             self._sweep_status = f"sweeping 0/{len(waypoints)}"
-            for i, (wx, wy) in enumerate(waypoints):
-                if cancel.is_set():
-                    self._sweep_status = "cancelled"
-                    return
+            skipped = 0
+
+            def _goto(wx: float, wy: float) -> str:
+                """Fly one hop. Returns reached | failed | cancelled."""
                 self._navigation.set_goal(
                     PoseStamped(
                         position=make_vector3(wx, wy, 0.0),
@@ -157,14 +175,43 @@ class DroneSkillContainer(Module):
                         frame_id="map",
                     )
                 )
-                # Wait for this waypoint (or timeout and move on).
                 t0 = time.time()
-                while not cancel.is_set() and time.time() - t0 < 45.0:
+                while not cancel.is_set() and time.time() - t0 < 40.0:
                     if self._navigation.is_goal_reached():
-                        break
-                    time.sleep(0.3)
-                self._sweep_status = f"sweeping {i + 1}/{len(waypoints)}"
-            self._sweep_status = "sweep complete"
+                        return "reached"
+                    # The planner cancels unreachable goals (unknown space,
+                    # inside an obstacle) and drops back to idle — detect that
+                    # quickly instead of stalling the whole sweep.
+                    if time.time() - t0 > 4.0:
+                        try:
+                            state = self._navigation.get_state()
+                            state_val = (
+                                state.value if isinstance(state, NavigationState) else str(state)
+                            )
+                            if "idle" in str(state_val).lower():
+                                return "failed"
+                        except Exception:
+                            pass
+                    time.sleep(1.0)
+                return "cancelled" if cancel.is_set() else "failed"
+
+            for i, (wx, wy) in enumerate(waypoints):
+                if cancel.is_set():
+                    self._sweep_status = "cancelled"
+                    return
+                result = _goto(wx, wy)
+                if result == "failed" and not cancel.is_set():
+                    # The map may still be catching up (hop at the frontier):
+                    # give the mapper a moment and retry once before skipping.
+                    time.sleep(2.5)
+                    result = _goto(wx, wy)
+                if result == "failed":
+                    skipped += 1
+                if cancel.is_set():
+                    self._sweep_status = "cancelled"
+                    return
+                self._sweep_status = f"sweeping {i + 1}/{len(waypoints)} ({skipped} unreachable skipped)"
+            self._sweep_status = f"sweep complete ({skipped} waypoints unreachable)"
 
         self._sweep_thread = threading.Thread(target=run, daemon=True)
         self._sweep_thread.start()
