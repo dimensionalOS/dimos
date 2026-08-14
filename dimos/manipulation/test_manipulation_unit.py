@@ -1115,6 +1115,65 @@ class TestExecute:
         assert module._state == ManipulationState.IDLE
 
 
+class TestMoveToPose:
+    def test_direct_motion_can_skip_the_world_origin_dependent_pre_lift(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        module = module_factory()
+        current = Pose(
+            position=Vector3(0.2, 0.1, -0.35),
+            orientation=Quaternion(),
+        )
+        mocker.patch.object(module, "_current_tip_pose", return_value=current)
+        pre_lift = mocker.patch.object(
+            module,
+            "_lift_if_low",
+            return_value=SkillResult.fail("PLANNING_FAILED", "unexpected lift"),
+        )
+        plan = mocker.patch.object(module, "plan_to_pose", return_value=True)
+        execute = mocker.patch.object(
+            module,
+            "_preview_execute_wait",
+            return_value=SkillResult.ok(),
+        )
+
+        result = module.move_to_pose(
+            0.3,
+            0.2,
+            -0.27,
+            robot_name="g1",
+            group_id="g1/right_arm",
+            pre_lift=False,
+        )
+
+        assert result.is_success()
+        pre_lift.assert_not_called()
+        planned_pose = plan.call_args.args[0]
+        assert planned_pose.position == Vector3(0.3, 0.2, -0.27)
+        execute.assert_called_once_with("g1")
+
+    def test_pre_lift_remains_enabled_by_default(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        module = module_factory()
+        mocker.patch.object(
+            module,
+            "_current_tip_pose",
+            return_value=Pose(position=Vector3(0.2, 0.1, -0.35), orientation=Quaternion()),
+        )
+        failure = SkillResult.fail("PLANNING_FAILED", "lift unavailable")
+        pre_lift = mocker.patch.object(module, "_lift_if_low", return_value=failure)
+        plan = mocker.patch.object(module, "plan_to_pose", return_value=True)
+
+        result = module.move_to_pose(0.3, 0.2, -0.27)
+
+        assert not result.is_success()
+        assert result.error_code == "PLANNING_FAILED"
+        assert result.message == "lift unavailable"
+        pre_lift.assert_called_once_with(None, group_id=None)
+        plan.assert_not_called()
+
+
 class TestRobotModelConfigMapping:
     """Test RobotModelConfig joint name mapping helpers."""
 

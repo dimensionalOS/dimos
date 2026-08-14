@@ -1945,6 +1945,7 @@ class ManipulationModule(Module):
         yaw: float | None = None,
         robot_name: str | None = None,
         group_id: str | None = None,
+        pre_lift: bool = True,
     ) -> SkillResult[ManipulationSkillError]:
         """Move the robot end-effector to a target pose.
 
@@ -1961,6 +1962,8 @@ class ManipulationModule(Module):
             robot_name: Robot to move (only needed for multi-arm setups).
             group_id: Planning group to move, e.g. "g1/right_arm". Required when
                 the robot has more than one pose-targetable group.
+            pre_lift: Insert the generic low-tool clearance lift before planning.
+                Disable only when the caller has verified a direct collision-free path.
         """
         logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
@@ -1987,10 +1990,12 @@ class ManipulationModule(Module):
 
         pose = Pose(Vector3(x, y, z), orientation)
 
-        # If EE is low, lift up first to clear obstacles
-        lift = self._lift_if_low(robot_name, group_id=group_id)
-        if not lift.is_success():
-            return lift
+        # This is an optional convenience heuristic because its absolute Z
+        # threshold only makes sense when the world origin is at ground level.
+        if pre_lift:
+            lift = self._lift_if_low(robot_name, group_id=group_id)
+            if not lift.is_success():
+                return lift
 
         if not self.plan_to_pose(pose, robot_name, group_id):
             return SkillResult.fail(

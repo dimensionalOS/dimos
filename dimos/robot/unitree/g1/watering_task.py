@@ -110,6 +110,7 @@ class WateringManipulationSpec(Spec, Protocol):
         yaw: float | None = None,
         robot_name: str | None = None,
         group_id: str | None = None,
+        pre_lift: bool = True,
     ) -> SkillResult[ManipulationSkillError]: ...
 
     def go_init(
@@ -697,6 +698,7 @@ class WateringSequence:
             yaw=yaw,
             robot_name=self._config.robot_name,
             group_id=self._config.group_id,
+            pre_lift=False,
         )
         if not over.is_success():
             self._manipulation.reset()
@@ -713,6 +715,7 @@ class WateringSequence:
             yaw=yaw,
             robot_name=self._config.robot_name,
             group_id=self._config.group_id,
+            pre_lift=False,
         )
         if not tipped.is_success():
             self._manipulation.reset()

@@ -170,6 +170,9 @@ def test_successful_sequence_preserves_the_verified_sim_order(
     manipulation.latch_base_pose.assert_called_once()
     assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
+    assert all(
+        call.kwargs["pre_lift"] is False for call in manipulation.move_to_pose.call_args_list
+    )
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
     base.send.assert_not_called()
     assert base.stop.call_count == 2
