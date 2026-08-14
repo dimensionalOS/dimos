@@ -45,7 +45,7 @@ def test_demo_graph_has_one_task_and_no_navigation_modules() -> None:
         "simbodypose",
         "posetargetobservationmodule",
         "manipulationmodule",
-        "rpppathfollower",
+        "holonomicpathfollower",
         "wateringtaskmodule",
         "websocketvismodule",
     }
@@ -97,14 +97,22 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
     assert _stream("wateringtaskmodule", "approach_path") == "path"
     assert _stream("wateringtaskmodule", "approach_goal") == "goal_request"
     assert _stream("wateringtaskmodule", "approach_command_path") == ("approach_command_path")
-    assert _stream("rpppathfollower", "path") == "approach_command_path"
-    assert _stream("rpppathfollower", "base_pose") == "odom"
+    assert _stream("holonomicpathfollower", "path") == "approach_command_path"
+    assert _stream("holonomicpathfollower", "base_pose") == "odom"
+
+    follower = _atom("holonomicpathfollower").kwargs
+    assert follower["speed"] == 0.18
+    assert follower["min_linear_speed"] == 0.10
+    assert follower["max_yaw_rate"] == 0.18
+    assert follower["min_angular_speed"] == 0.08
+    assert follower["position_gain"] == 0.7
+    assert follower["yaw_gain"] == 0.5
 
 
 def test_coordinator_arbitrates_teleop_and_autonomy_before_one_groot_task() -> None:
     assert _stream("ControlCoordinator", "operator_twist_command") == "tele_cmd_vel"
     assert _stream("ControlCoordinator", "autonomy_twist_command") == "autonomy_cmd_vel"
-    assert _stream("rpppathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
+    assert _stream("holonomicpathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
 
     coordinator = _atom("ControlCoordinator")
     tasks = {task.name: task for task in coordinator.kwargs["tasks"]}

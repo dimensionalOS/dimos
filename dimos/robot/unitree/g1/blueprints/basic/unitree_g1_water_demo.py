@@ -69,7 +69,7 @@ from dimos.manipulation.mobile.pose_target_observation_module import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.navigation.rpp_path_follower.module import RPPPathFollower
+from dimos.navigation.holonomic_path_follower.module import HolonomicPathFollower
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
@@ -112,10 +112,10 @@ _demo_remappings = [
     (RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel"),
     (WebsocketVisModule, "tele_cmd_vel", "tele_cmd_vel"),
     (ManipulationModule, "odom", "base_pose"),
-    (RPPPathFollower, "base_pose", "base_pose"),
-    (RPPPathFollower, "path", "approach_command_path"),
-    (RPPPathFollower, "stop_movement", "stop_approach"),
-    (RPPPathFollower, "nav_cmd_vel", "autonomy_cmd_vel"),
+    (HolonomicPathFollower, "base_pose", "base_pose"),
+    (HolonomicPathFollower, "path", "approach_command_path"),
+    (HolonomicPathFollower, "stop_movement", "stop_approach"),
+    (HolonomicPathFollower, "nav_cmd_vel", "autonomy_cmd_vel"),
     (WateringTaskModule, "operator_command", "tele_cmd_vel"),
     (WateringTaskModule, "approach_path", "path"),
     (WateringTaskModule, "approach_goal", "goal_request"),
@@ -260,26 +260,20 @@ unitree_g1_water_demo = (
             source="perception",
         ),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
-        RPPPathFollower.blueprint(
-            speed=0.25,
-            min_linear_speed=0.15,
-            slowdown_distance=0.4,
+        HolonomicPathFollower.blueprint(
+            speed=0.18,
+            min_linear_speed=0.10,
             control_frequency=10.0,
             goal_tolerance=0.06,
             orientation_tolerance=math.radians(5.0),
-            k_angular=1.5,
-            max_yaw_rate=0.25,
-            min_angular_speed=0.12,
-            rotation_threshold=math.radians(20.0),
-            lookahead_dist=0.3,
-            lookahead_min=0.2,
-            lookahead_max=0.4,
-            lookahead_speed_scale=1.0,
+            max_yaw_rate=0.18,
+            min_angular_speed=0.08,
+            lookahead=0.25,
+            approach_decel=0.5,
+            stop_hold_s=0.5,
             pose_timeout=0.5,
-            max_centripetal_accel=0.2,
-            max_linear_accel=0.3,
-            max_linear_decel=0.5,
-            synthesize_tangent_headings=True,
+            position_gain=0.7,
+            yaw_gain=0.5,
         ),
         WateringTaskModule.blueprint(
             target_id="plant_pot_1",

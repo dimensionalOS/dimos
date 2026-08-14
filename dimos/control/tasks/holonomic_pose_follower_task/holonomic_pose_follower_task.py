@@ -101,6 +101,12 @@ class HolonomicPoseFollowerTaskConfig:
     stop_hold_s: float = 1.0
     artifact_path: str = DEFAULT_ARTIFACT_PATH
     stale_pose_timeout: float = 0.3
+    max_linear_speed: float | None = None
+    max_yaw_rate: float | None = None
+    min_linear_speed: float = 0.0
+    min_angular_speed: float = 0.0
+    position_gain: float = 1.0
+    yaw_gain: float = 1.0
 
 
 class HolonomicPoseFollowerTask(BaseControlTask):
@@ -118,14 +124,19 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._joint_names = frozenset(config.joint_names)
 
         self._artifact_loaded = False
-        self._kp = (1.0, 1.0, 1.0)  # per-axis P (x, y, yaw)
+        self._kp = (
+            config.position_gain,
+            config.position_gain,
+            config.yaw_gain,
+        )  # per-axis P (x, y, yaw)
         self._ff_comp: FeedforwardGainCompensator | None = None
-        self._v_max_lin = config.speed
-        self._wz_max = 1.0
+        self._v_max_lin = config.max_linear_speed or config.speed
+        self._wz_max = config.max_yaw_rate or 1.0
         self._a_acc = 1.0
         self._a_dec = 1.0
         self._a_lat = 1.0
-        self._min_speed = 0.05
+        self._min_speed = config.min_linear_speed
+        self._min_angular_speed = config.min_angular_speed
 
         self._state: HolonomicPoseFollowerState = "idle"
         self._reference: ProgressPathReference | None = None
@@ -251,11 +262,22 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         ex_body = cos_yaw * ex_world + sin_yaw * ey_world
         ey_body = -sin_yaw * ex_world + cos_yaw * ey_world
         e_yaw = angle_diff(reference[2], yaw)
-        return (
-            _clamp(self._kp[0] * ex_body, _FB_CLAMP_LINEAR),
-            _clamp(self._kp[1] * ey_body, _FB_CLAMP_LINEAR),
-            _clamp(self._kp[2] * e_yaw, _FB_CLAMP_YAW),
-        )
+        vx = _clamp(self._kp[0] * ex_body, _FB_CLAMP_LINEAR)
+        vy = _clamp(self._kp[1] * ey_body, _FB_CLAMP_LINEAR)
+        linear_speed = math.hypot(vx, vy)
+        position_error = math.hypot(ex_world, ey_world)
+        if position_error >= self._config.goal_tolerance and 0.0 < linear_speed < self._min_speed:
+            scale = self._min_speed / linear_speed
+            vx *= scale
+            vy *= scale
+
+        wz = _clamp(self._kp[2] * e_yaw, _FB_CLAMP_YAW)
+        if (
+            abs(e_yaw) >= self._config.orientation_tolerance
+            and 0.0 < abs(wz) < self._min_angular_speed
+        ):
+            wz = math.copysign(self._min_angular_speed, wz)
+        return vx, vy, wz
 
     def _regulated_speed(self, s_ref: float, remaining: float, dt: float) -> float:
         """Cruise speed capped by the yaw-rate/curvature demands ahead, ramped
@@ -353,6 +375,10 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         if self._artifact_loaded:
             return
         path = self._config.artifact_path
+        if not path:
+            self._artifact_loaded = True
+            logger.info(f"HolonomicPoseFollowerTask '{self._name}': artifact calibration disabled")
+            return
         if not path or not _FsPath(path).exists():
             raise RuntimeError(
                 f"HolonomicPoseFollowerTask '{self._name}': artifact not found at {path!r}"
