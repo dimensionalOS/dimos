@@ -242,6 +242,60 @@ def test_holonomic_approach_stops_on_verified_reach_region(
     base.send.assert_not_called()
 
 
+def test_holonomic_approach_rechecks_region_after_settling(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    cancelled = threading.Event()
+    inputs = _inputs(reach_map)
+    wait_calls = 0
+
+    def drift_then_cancel(_seconds: float) -> bool:
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            inputs.update_base_pose(
+                PoseStamped(
+                    ts=NOW,
+                    frame_id="world",
+                    position=[0.0, 0.0, 0.74],
+                    orientation=[0.0, 0.0, 0.0, 1.0],
+                )
+            )
+            return False
+        cancelled.set()
+        return True
+
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        inputs,
+        base,
+        manipulation,
+        cancelled,
+        transitions,
+        wait=MagicMock(side_effect=drift_then_cancel),
+        config=WateringTaskConfig(
+            approach_holonomic=True,
+            settle_seconds=3.0,
+            target_max_age=2.0,
+            base_pose_max_age=2.0,
+        ),
+    )
+
+    result = sequence.run_approach(TARGET_ID)
+
+    assert not result.success
+    assert result.state is WateringState.CANCELLED
+    assert transitions[:3] == [
+        WateringState.WAITING_INPUT,
+        WateringState.SETTLING,
+        WateringState.APPROACHING,
+    ]
+    base.send.assert_called_once()
+
+
 def test_pour_only_executes_the_arm_without_commanding_base_motion(
     reach_map: PourReachMap,
     manipulation: MagicMock,
@@ -281,11 +335,13 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
     assert base.stop.call_count == 2
 
 
-def test_pour_only_rejects_an_unreachable_stance_before_arm_motion(
+def test_pour_only_uses_live_planning_as_the_final_reach_gate(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
 ) -> None:
+    manipulation.plan_to_pose.return_value = False
+    manipulation.get_error.return_value = "no IK"
     transitions: list[WateringState] = []
     sequence = _sequence(
         reach_map,
@@ -300,13 +356,35 @@ def test_pour_only_rejects_an_unreachable_stance_before_arm_motion(
 
     assert not result.success
     assert result.state is WateringState.FAILED
-    assert "outside the verified pour region" in result.message
-    manipulation.reset.assert_not_called()
-    manipulation.latch_base_pose.assert_not_called()
-    manipulation.plan_to_pose.assert_not_called()
+    assert "after 3 attempts" in result.message
+    assert manipulation.reset.call_count == 4
+    assert manipulation.latch_base_pose.call_count == 3
+    assert manipulation.plan_to_pose.call_count == 6
     manipulation.move_to_pose.assert_not_called()
     base.send.assert_not_called()
     assert base.stop.call_count == 2
+
+
+def test_pour_only_accepts_offline_map_miss_when_live_plans_succeed(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map, at_reachable_stance=False),
+        base,
+        manipulation,
+        threading.Event(),
+        [],
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert result.success
+    assert manipulation.plan_to_pose.call_count == 2
+    assert manipulation.move_to_pose.call_count == 2
+    base.send.assert_not_called()
 
 
 def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(

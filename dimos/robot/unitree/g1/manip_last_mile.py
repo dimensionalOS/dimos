@@ -133,33 +133,10 @@ def approach_step(
             f"Stance is {distance:.2f} m away; limit is {config.max_approach_distance:.2f} m",
         )
 
-    if distance <= config.position_tolerance:
-        if abs(stance_yaw_error) <= config.yaw_tolerance:
-            return ApproachStep(
-                ApproachPhase.ARRIVED,
-                Twist2D(),
-                distance,
-                0.0,
-                stance_yaw_error,
-                "Stance position and yaw reached",
-            )
-        command = Twist2D(
-            wz=_usable_speed(
-                config.angular_gain * stance_yaw_error,
-                config.min_angular,
-                config.max_angular,
-            )
-        )
-        return ApproachStep(
-            ApproachPhase.TURN_TO_STANCE,
-            command,
-            distance,
-            0.0,
-            stance_yaw_error,
-            "Turning to final pour yaw",
-        )
-
     if config.holonomic:
+        # The caller owns holonomic arrival because watering accepts a verified
+        # reach-map region, not an arbitrary radius around one nominal point.
+        # Returning ARRIVED here could stop just outside that region.
         cos_yaw, sin_yaw = math.cos(current[2]), math.sin(current[2])
         body_x = cos_yaw * dx + sin_yaw * dy
         body_y = -sin_yaw * dx + cos_yaw * dy
@@ -189,6 +166,32 @@ def approach_step(
             0.0,
             stance_yaw_error,
             "Holonomic servo toward final stance",
+        )
+
+    if distance <= config.position_tolerance:
+        if abs(stance_yaw_error) <= config.yaw_tolerance:
+            return ApproachStep(
+                ApproachPhase.ARRIVED,
+                Twist2D(),
+                distance,
+                0.0,
+                stance_yaw_error,
+                "Stance position and yaw reached",
+            )
+        command = Twist2D(
+            wz=_usable_speed(
+                config.angular_gain * stance_yaw_error,
+                config.min_angular,
+                config.max_angular,
+            )
+        )
+        return ApproachStep(
+            ApproachPhase.TURN_TO_STANCE,
+            command,
+            distance,
+            0.0,
+            stance_yaw_error,
+            "Turning to final pour yaw",
         )
 
     path_heading = math.atan2(dy, dx)

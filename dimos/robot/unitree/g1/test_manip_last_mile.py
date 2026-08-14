@@ -97,7 +97,6 @@ def test_holonomic_servo_commands_usable_gait_speed_for_small_error() -> None:
     config = ApproachControllerConfig(
         holonomic=True,
         min_linear=0.10,
-        position_tolerance=0.01,
     )
 
     step = approach_step((0.0, 0.0, 0.0), (0.04, -0.02, 0.0), config)

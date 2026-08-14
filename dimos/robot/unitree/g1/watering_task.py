@@ -477,7 +477,6 @@ class WateringSequence:
                     f"{self._config.input_wait_timeout:.1f}s"
                 )
             self._validate_snapshot(snapshot, target_id)
-            self._validate_reachable_stance(snapshot)
 
             self._transition(WateringState.RESETTING, "Resetting manipulation state", 0)
             reset = self._manipulation.reset()
@@ -553,7 +552,19 @@ class WateringSequence:
                     0,
                 )
                 self._wait_or_cancel(self._config.settle_seconds)
-                return
+                settled_snapshot = self._require_snapshot(target_id)
+                if self._holonomic_stance_reached(settled_snapshot):
+                    return
+                settled_offset = self._seen_offset(settled_snapshot)
+                previous_base = self._base_pose(settled_snapshot)
+                previous_phase = None
+                self._transition(
+                    WateringState.APPROACHING,
+                    "Settling left the verified pour region; resuming holonomic servo, "
+                    f"pot offset=({settled_offset[0]:.2f}, {settled_offset[1]:.2f}) m",
+                    0,
+                )
+                continue
             step = approach_step(
                 current_base,
                 (
@@ -602,7 +613,6 @@ class WateringSequence:
     def _latch_and_verify(self, target_id: str) -> tuple[TargetObservation, float, float]:
         for attempt in range(1, self._config.verify_attempts + 1):
             snapshot = self._require_snapshot(target_id)
-            self._validate_reachable_stance(snapshot)
             self._transition(
                 WateringState.LATCHING_BASE,
                 "Latching the stopped base pose into the planning world",
@@ -644,16 +654,6 @@ class WateringSequence:
             )
 
         raise AssertionError("verify_attempts is constrained to at least one")
-
-    def _validate_reachable_stance(self, snapshot: WateringInputSnapshot) -> None:
-        offset = self._seen_offset(snapshot)
-        margin = self._reach.margin(offset)
-        if margin < self._config.reach_margin_cells:
-            raise _WateringFailureError(
-                "Current stance is outside the verified pour region: "
-                f"pot offset=({offset[0]:.2f}, {offset[1]:.2f}) m, "
-                f"margin={margin} cells, required={self._config.reach_margin_cells}"
-            )
 
     def _pour_world_z(self, snapshot: WateringInputSnapshot) -> float:
         """Convert the ground-relative reach-map height into the live LIO world."""
