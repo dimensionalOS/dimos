@@ -70,6 +70,17 @@ jobs:
           print(resolve_db_path('$PROFILE_DB'))
           "
 
+      # Same benchmark, its own measures: a threshold is per measure, so
+      # coldstart-* is watchable independently of the full run instead of
+      # hiding under a limit sized for it.
+      - name: Profile cold start
+        run: |
+          bin/rusage --name "$PROFILE_BLUEPRINT-replay" --measure-prefix coldstart- \
+            --out coldstart.json -- \
+            timeout --kill-after=60s 300 \
+            uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
+            --run-for 0 run "$PROFILE_BLUEPRINT"
+
       - name: Measure install size
         run: |
           printf '{"venv": {"install-size-mib": {"value": %s}}}\n' \
@@ -89,9 +100,11 @@ jobs:
       - name: Merge metrics
         if: always()
         run: |
-          files=$(ls rusage.json size.json 2>/dev/null) || true
+          files=$(ls rusage.json coldstart.json size.json 2>/dev/null) || true
           [ -n "$files" ] || exit 0
-          jq -s add $files >metrics.json
+          # Recursive merge, not `add`: both profiles write the same benchmark
+          # key, and `add` would keep only the last one's measures.
+          jq -s 'reduce .[] as $x ({}; . * $x)' $files >metrics.json
           cat metrics.json
 
       - name: Job summary
