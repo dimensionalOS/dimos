@@ -55,13 +55,33 @@ def test_walk_heading_correction_can_decay_below_in_place_turn_rate() -> None:
     assert abs(step.command.wz) < MIN_ANGULAR
 
 
-def test_hardware_slowdown_reaches_creep_speed_near_goal() -> None:
-    config = ApproachControllerConfig(max_linear=0.15, linear_gain=0.3)
+def test_holonomic_servo_holds_yaw_and_translates_directly_to_stance() -> None:
+    config = ApproachControllerConfig(holonomic=True, max_linear=0.15)
 
-    step = approach_step((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), config)
+    step = approach_step(
+        (0.0, 0.0, math.pi / 2),
+        (1.0, 0.0, math.pi / 2),
+        config,
+    )
 
-    assert step.phase is ApproachPhase.WALK_FORWARD
-    assert step.command.vx == pytest.approx(0.06)
+    assert step.phase is ApproachPhase.SERVO_TO_STANCE
+    assert step.command.vx == pytest.approx(0.0, abs=1e-12)
+    assert step.command.vy == pytest.approx(-0.15)
+    assert step.command.wz == 0.0
+
+
+def test_holonomic_servo_limits_translation_vector_and_uses_shortest_yaw() -> None:
+    config = ApproachControllerConfig(holonomic=True, max_linear=0.15)
+
+    step = approach_step(
+        (0.0, 0.0, math.radians(170.0)),
+        (1.0, 1.0, math.radians(-170.0)),
+        config,
+    )
+
+    assert step.phase is ApproachPhase.SERVO_TO_STANCE
+    assert math.hypot(step.command.vx, step.command.vy) == pytest.approx(0.15)
+    assert step.command.wz > 0.0
 
 
 def test_turns_to_final_yaw_only_after_reaching_position() -> None:

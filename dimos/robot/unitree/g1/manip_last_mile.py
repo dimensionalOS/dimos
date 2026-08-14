@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Small, observable turn-walk-turn controller for G1 watering.
+"""Small, observable last-mile controllers for G1 watering.
 
-This is intentionally not a navigation stack. It follows the straight path to
-one explicit world-frame stance: first turn toward it, then walk forward with a
-small heading correction, then turn to the final pour yaw. It never strafes or
-reverses, and every tick reports its phase and errors for debugging.
+This is intentionally not a navigation stack. The default controller follows a
+straight path with turn-walk-turn motion. Hardware that supports omnidirectional
+walking can opt into a direct body-frame pose servo, which holds the final yaw
+while translating to the same explicit world-frame stance.
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ class Twist2D:
 
 
 class ApproachPhase(str, Enum):
+    SERVO_TO_STANCE = "servo_to_stance"
     TURN_TO_PATH = "turn_to_path"
     WALK_FORWARD = "walk_forward"
     TURN_TO_STANCE = "turn_to_stance"
@@ -57,6 +58,7 @@ class ApproachPhase(str, Enum):
 
 @dataclass(frozen=True)
 class ApproachControllerConfig:
+    holonomic: bool = False
     max_linear: float = MAX_LINEAR
     max_angular: float = MAX_ANGULAR
     max_drive_angular: float = 0.18
@@ -101,8 +103,9 @@ def approach_step(
 ) -> ApproachStep:
     """Compute one safe command toward a world-frame stance.
 
-    ``current`` and ``goal`` are ``(x, y, yaw)``. The lateral command is
-    always zero and the forward command is never negative.
+    ``current`` and ``goal`` are ``(x, y, yaw)``. In the default mode the
+    lateral command is zero and forward is never negative. Holonomic mode
+    commands bounded body-frame x/y translation directly toward the goal.
     """
     values = (*current, *goal)
     if not all(math.isfinite(value) for value in values):
@@ -153,6 +156,35 @@ def approach_step(
             0.0,
             stance_yaw_error,
             "Turning to final pour yaw",
+        )
+
+    if config.holonomic:
+        cos_yaw, sin_yaw = math.cos(current[2]), math.sin(current[2])
+        body_x = cos_yaw * dx + sin_yaw * dy
+        body_y = -sin_yaw * dx + cos_yaw * dy
+        vx = config.linear_gain * body_x
+        vy = config.linear_gain * body_y
+        speed = math.hypot(vx, vy)
+        if speed > config.max_linear:
+            scale = config.max_linear / speed
+            vx *= scale
+            vy *= scale
+        wz = (
+            0.0
+            if abs(stance_yaw_error) <= config.yaw_tolerance
+            else _usable_speed(
+                config.angular_gain * stance_yaw_error,
+                config.min_angular,
+                config.max_angular,
+            )
+        )
+        return ApproachStep(
+            ApproachPhase.SERVO_TO_STANCE,
+            Twist2D(vx=vx, vy=vy, wz=wz),
+            distance,
+            0.0,
+            stance_yaw_error,
+            "Holonomic servo toward final stance",
         )
 
     path_heading = math.atan2(dy, dx)

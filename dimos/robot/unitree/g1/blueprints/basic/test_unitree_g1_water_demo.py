@@ -205,9 +205,9 @@ def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() ->
     assert watering["motion_enabled"] is False
     assert watering["approach_motion_enabled"] is True
     assert watering["pour_motion_enabled"] is True
+    assert watering["approach_holonomic"] is True
     assert watering["approach_max_linear"] == 0.15
     assert watering["approach_max_angular"] == 0.25
-    assert watering["approach_linear_gain"] == 0.3
     assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
 
 

@@ -201,9 +201,9 @@ class WateringTaskConfig(ModuleConfig):
     max_base_pose_jump: float = Field(default=0.25, gt=0.0)
     approach_motion_enabled: bool = False
     pour_motion_enabled: bool = False
+    approach_holonomic: bool = False
     approach_max_linear: float = Field(default=0.25, gt=0.0)
     approach_max_angular: float = Field(default=0.4, gt=0.0)
-    approach_linear_gain: float = Field(default=0.8, gt=0.0)
     motion_enabled: bool = True
     auto_start: bool = False
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
@@ -349,10 +349,10 @@ class WateringSequence:
         self._monotonic = monotonic
         self._wall_time = wall_time
         self._controller_config = ApproachControllerConfig(
+            holonomic=config.approach_holonomic,
             max_linear=config.approach_max_linear,
             max_angular=config.approach_max_angular,
             max_drive_angular=min(config.approach_max_angular, 0.18),
-            linear_gain=config.approach_linear_gain,
             position_tolerance=config.approach_position_tolerance,
             yaw_tolerance=config.approach_yaw_tolerance,
             max_approach_distance=config.approach_max_distance,
