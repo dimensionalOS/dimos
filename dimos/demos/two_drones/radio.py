@@ -127,6 +127,9 @@ class RadioModule(Module):
 
     odom: In[PoseStamped]
     human_input: Out[str]  # inbox injection into this stack's McpClient
+    # This drone's current beliefs about its peers, as JSON — the ghost
+    # overlay renders from THIS (what the drone thinks, not the truth).
+    peer_belief: Out[str]
 
     _radio: PubSubTransport[str] | None = None
     _key: Ed25519PrivateKey
@@ -261,6 +264,8 @@ class RadioModule(Module):
                 belief.target_sighting = (float(t[1]), float(t[2]))
                 belief.sighting_at = time.time()
 
+        self._publish_beliefs()
+
         kind = event.get("kind", KIND_CHAT)
         if kind == KIND_BEACON:
             return  # silent: updates belief only, never reaches the LLM
@@ -281,6 +286,26 @@ class RadioModule(Module):
                 )
         suffix = f" ({'; '.join(extra)})" if extra else ""
         self.human_input.publish(f"[RADIO from {sender}] {content}{suffix}")
+
+    def _publish_beliefs(self) -> None:
+        """Emit this drone's peer beliefs (ghost overlay source)."""
+        try:
+            beliefs = {
+                name: {
+                    "position": p.position,
+                    "position_at": p.position_at,
+                    "sector": p.sector,
+                    "target_sighting": p.target_sighting,
+                    "sighting_at": p.sighting_at,
+                    "last_heard": p.last_heard,
+                }
+                for name, p in self.peers.items()
+            }
+            self.peer_belief.publish(
+                json.dumps({"observer": self.config.drone_name, "beliefs": beliefs})
+            )
+        except Exception:
+            logger.warning("peer_belief publish failed", exc_info=True)
 
     # -- beacon ---------------------------------------------------------------
 
