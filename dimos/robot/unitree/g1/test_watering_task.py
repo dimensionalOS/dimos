@@ -27,7 +27,7 @@ from dimos.manipulation.mobile.target_observation import TargetObservation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.manip_stance import PourReachMap
+from dimos.robot.unitree.g1.manip_stance import PourReachMap, pot_in_base_frame
 from dimos.robot.unitree.g1.watering_task import (
     ApproachCommandSink,
     WateringInputs,
@@ -158,8 +158,17 @@ def test_approach_preview_is_an_oriented_pose_path(reach_map: PourReachMap) -> N
     dx = goal.position.x - path.poses[0].position.x
     dy = goal.position.y - path.poses[0].position.y
     assert path.poses[0].orientation.euler[2] == pytest.approx(math.atan2(dy, dx))
-    assert path.poses[-1].orientation.euler[2] == pytest.approx(base_yaw)
+    offset = reach_map.best_offset(margin_cells=3)
+    expected_yaw = -math.atan2(offset[1], offset[0])
+    # Final yaw faces the pot with the right-arm map's preferred lateral
+    # bearing, not the robot's arbitrary pre-walk heading.
+    assert path.poses[-1].orientation.euler[2] == pytest.approx(expected_yaw)
     assert path.poses[-1].orientation.euler[2] == pytest.approx(goal.orientation.euler[2])
+    assert pot_in_base_frame(
+        (1.0, 0.0),
+        (float(goal.position.x), float(goal.position.y)),
+        float(goal.orientation.euler[2]),
+    ) == pytest.approx(offset)
 
 
 def test_successful_sequence_preserves_the_verified_sim_order(

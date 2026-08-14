@@ -71,6 +71,7 @@ from dimos.robot.unitree.g1.manip_stance import (
     pot_in_base_frame,
     select_stance,
     tool_yaw_for,
+    wrap_angle,
 )
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
@@ -297,13 +298,24 @@ def build_approach_preview(
     """Build the explicit straight path and final stance used by the controller."""
     pot = (float(snapshot.target.pose.position.x), float(snapshot.target.pose.position.y))
     base = snapshot.base_pose
-    base_yaw = float(base.orientation.to_euler().z)
+    to_pot_x = pot[0] - float(base.position.x)
+    to_pot_y = pot[1] - float(base.position.y)
+    # The final pose must be a manipulation stance, not a copy of whatever
+    # direction the robot happened to face before walking. Copying the initial
+    # yaw made RPP align to the path, approach the pot, and then rotate back to
+    # that unrelated heading. Orient the reach map's preferred right-arm offset
+    # along the current line of sight instead: the torso faces the plant with
+    # the exact lateral bearing that the right arm's capability map expects.
+    preferred_offset = reach_map.best_offset(margin_cells)
+    preferred_bearing = math.atan2(preferred_offset[1], preferred_offset[0])
+    approach_yaw = (
+        wrap_angle(math.atan2(to_pot_y, to_pot_x) - preferred_bearing)
+        if math.hypot(to_pot_x, to_pot_y) > 1e-9
+        else float(base.orientation.to_euler().z)
+    )
     stance = select_stance(
         pot,
-        # Preserve the robot's current heading as the final pour heading.
-        # The controller may turn toward the straight walking segment first,
-        # but returns to this yaw after reaching the stance position.
-        approach_yaw=base_yaw,
+        approach_yaw=approach_yaw,
         reach_map=reach_map,
         margin_cells=margin_cells,
     )
