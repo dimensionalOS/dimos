@@ -184,10 +184,10 @@ def main() -> int:
 
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
+    from dimos.perception.detection.detectors.omdet import OmDetDetector
 
     siglip = SigLIPModel()
-    owl = Owlv2Detector()
+    detector = OmDetDetector()
     segmenter = EdgeTAMImageSegmenter()
     index = embed_index(store, siglip, after, before)
 
@@ -200,7 +200,7 @@ def main() -> int:
             query,
             index=index,
             siglip=siglip,
-            owl=owl,
+            detector=detector,
             segmenter=segmenter,
             require_pose=not args.allow_no_pose,
             trace=trace,
@@ -234,7 +234,7 @@ def main() -> int:
             )
 
     siglip.stop()
-    owl.stop()
+    detector.stop()
     del segmenter
 
     if not hits:

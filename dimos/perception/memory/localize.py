@@ -15,8 +15,9 @@
 """Query-time object localization: text prompt to latest 3D pose and cloud.
 
 Search memory with embeddings (SigLIP,
-frame-level), open-vocabulary detection (OWLv2, calibrated per-box scores),
-segmentation (EdgeTAM), projection to 3D through aligned depth. Two
+frame-level), open-vocabulary detection (OmDet-Turbo, per-box scores),
+segmentation (EdgeTAM), projection to 3D through aligned depth, referent
+identity on the observation crops (SigLIP, pairwise margins). Two
 algorithm rules distinguish it from a best-crop search:
 
 * **Latest-pose semantics.** Among verified observations of the chosen
@@ -40,7 +41,7 @@ from dimos.memory2.tf import StreamTF
 from dimos.memory2.transform import throttle
 from dimos.perception.detection.project import sees
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.memory import gates
 from dimos.perception.memory.gates import OPTICAL_FRAME, TF_TOLERANCE, WORLD_FRAME
 from dimos.perception.memory.types import Localization, LocalizePolicy, Support
@@ -50,10 +51,10 @@ if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.memory2.stream import Stream
+    from dimos.models.embedding.base import Embedding
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-    from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+    from dimos.perception.detection.detectors.omdet import OmDetDetector
     from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()
@@ -74,6 +75,7 @@ class _ClusterObservation:
     cloud: Any
     camera_position: np.ndarray
     detection: Detection3DPC
+    crop: Any  # Image cut to the 2D box, for crop-level identity
 
 
 @dataclass
@@ -158,10 +160,10 @@ def _axes_observed(
 
 
 class _DetectionCache:
-    """One OWLv2 + EdgeTAM pass per unique frame, shared across clusters."""
+    """One OmDet + EdgeTAM pass per unique frame, shared across clusters."""
 
-    def __init__(self, owl: Any, segmenter: Any, query: str, floor: float) -> None:
-        self.owl = owl
+    def __init__(self, detector: Any, segmenter: Any, query: str, floor: float) -> None:
+        self.detector = detector
         self.segmenter = segmenter
         self.query = query
         self.floor = floor
@@ -172,7 +174,7 @@ class _DetectionCache:
         hit = self._cache.get(key)
         if hit is not None:
             return hit
-        detections: ImageDetections2D = self.owl.query_detections(
+        detections: ImageDetections2D = self.detector.query_detections(
             image, [self.query], threshold=self.floor
         )
         detections = ImageDetections2D(
@@ -195,8 +197,8 @@ def _lift(
     tf_tolerance: float,
     policy: LocalizePolicy,
     plane: Any | None = None,
-) -> list[tuple[Detection3DPC, np.ndarray]]:
-    """Depth-lift 2D detections; returns valid (detection3d, camera_position) pairs."""
+) -> list[tuple[Detection3DPC, np.ndarray, Any]]:
+    """Depth-lift 2D detections; returns valid (detection3d, camera_position, detection2d)."""
     depth = gates.depth_at(store, detections.ts)
     transform = tf.get(optical_frame, world_frame, detections.ts, tf_tolerance)
     if depth is None or transform is None:
@@ -206,9 +208,11 @@ def _lift(
         return []
     camera = np.array([pose.position.x, pose.position.y, pose.position.z])
 
-    lifted = ImageDetections3DPC.from_depth(detections, depth, camera_info, transform)
-    valid: list[tuple[Detection3DPC, np.ndarray]] = []
-    for det3d in lifted:
+    valid: list[tuple[Detection3DPC, np.ndarray, Any]] = []
+    for det2d in detections:
+        det3d = Detection3DPC.from_depth(det2d, depth, camera_info, transform)
+        if det3d is None:
+            continue
         points = np.asarray(det3d.pointcloud.pointcloud.points)
         if len(points) < policy.min_depth_points:
             continue
@@ -224,8 +228,16 @@ def _lift(
             high = float(np.quantile(heights, 0.95))
             if low > policy.surface_patch_min_drop_m and high < policy.surface_patch_max_rise_m:
                 continue
-        valid.append((det3d, camera))
+        valid.append((det3d, camera, det2d))
     return valid
+
+
+def _cluster_identity(cluster: _Cluster, siglip: SigLIPModel, query_embedding: Embedding) -> float:
+    """Best SigLIP crop-to-query cosine over the cluster's observations."""
+    embeddings = siglip.embed(*[o.crop for o in cluster.observations])
+    if not isinstance(embeddings, list):
+        embeddings = [embeddings]
+    return max(e @ query_embedding for e in embeddings)
 
 
 def embed_index(
@@ -314,7 +326,7 @@ def localize(
     *,
     index: Stream[Any, Any],
     siglip: SigLIPModel,
-    owl: Owlv2Detector,
+    detector: OmDetDetector,
     segmenter: EdgeTAMImageSegmenter,
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
@@ -356,8 +368,8 @@ def localize(
         store, tf, camera_info, frames, optical_frame, world_frame, tf_tolerance
     )
 
-    # Pass 2 - OWLv2 + EdgeTAM: detect, segment, lift, verify.
-    cache = _DetectionCache(owl, segmenter, query, policy.candidate_floor)
+    # Pass 2 - OmDet + EdgeTAM: detect, segment, lift, verify.
+    cache = _DetectionCache(detector, segmenter, query, policy.candidate_floor)
 
     clusters: list[_Cluster] = []
     ungrounded_best: tuple[float, float] | None = None  # (score, ts)
@@ -385,11 +397,12 @@ def localize(
             plane,
         )
         for det2d in detections:
-            if not any(d.track_id == det2d.track_id for d, _ in lifted):
+            if not any(d.track_id == det2d.track_id for d, _, _ in lifted):
                 best = (det2d.confidence, det2d.ts)
                 if ungrounded_best is None or best[0] > ungrounded_best[0]:
                     ungrounded_best = best
-        for det3d, camera in lifted:
+        for det3d, camera, det2d in lifted:
+            x1, y1, x2, y2 = det2d.bbox
             observation = _ClusterObservation(
                 ts=det3d.ts,
                 score=det3d.confidence,
@@ -397,6 +410,7 @@ def localize(
                 cloud=det3d.pointcloud,
                 camera_position=camera,
                 detection=det3d,
+                crop=det2d.image.crop(int(x1), int(y1), int(x2 - x1) + 1, int(y2 - y1) + 1),
             )
             if trace is not None:
                 (trace.verified if is_verify else trace.matched).append((det3d.ts, det3d))
@@ -483,15 +497,37 @@ def localize(
             )
         return None
 
-    winner = max(verified, key=lambda c: c.latest.ts)
+    # Detector scores verify supports but do not bind attributes ("red
+    # marker" ranks a black pen high): the referent is chosen by SigLIP crop
+    # identity, compared pairwise through the trained sigmoid temperature so
+    # margins are probability differences and the bias term cancels.
+    identity = {id(c): _cluster_identity(c, siglip, query_embedding) for c in verified}
+    scale = siglip.logit_scale
+
+    def dominance(a: float, b: float) -> float:
+        return math.tanh(scale * (a - b) / 2)
+
+    best_identity = max(identity.values())
+    candidates = [
+        c for c in verified if dominance(best_identity, identity[id(c)]) < policy.refusal_margin
+    ]
+    winner = max(candidates, key=lambda c: c.latest.ts)
     w_lo, w_hi = winner.interval
-    rival_scores = [
-        c.max_score
+    rival_identities = [
+        identity[id(c)]
         for c in verified
         if c is not winner
         and not (c.interval[1] < w_lo or c.interval[0] > w_hi)  # coexisting in time
     ]
-    margin = winner.max_score - max(rival_scores) if rival_scores else 1.0
+    margin = min(
+        (dominance(identity[id(winner)], r) for r in rival_identities),
+        default=1.0,
+    )
+    logger.info(
+        "identity: "
+        + ", ".join(f"cos={identity[id(c)]:.3f} score={c.max_score:.2f}" for c in verified)
+        + f" margin={margin:.2f}"
+    )
     reason = "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
 
     latest = winner.latest
