@@ -12,6 +12,10 @@ _Avoid_: Runtime, universal scorer
 An Evaluation that preserves LIBERO-PRO's tasks, observations, action semantics, initial states, native success, and reporting while declaring any policy-runtime deviations that affect direct score comparison.
 _Avoid_: Official LIBERO-PRO evaluation, protocol-identical score
 
+**CaP-X-Aligned LIBERO Policy Surface**:
+The non-privileged observations and robot capabilities available to code policies in CaP-X's reduced LIBERO environment, expressed through ordinary DimOS modules and messages. It includes calibrated RGB-D cameras, camera-to-robot transforms, robot state, perception, inverse kinematics, and executable arm and gripper motion, but excludes simulator object poses and native success state.
+_Avoid_: CaP-X privileged API, simulator oracle, identical CaP-X implementation
+
 **Unified Real-Time Policy**:
 A Policy Artifact that uses the same ordinary DimOS interface in simulation and on a real robot while the environment continues advancing independently of policy computation latency.
 _Avoid_: Benchmark-stepped policy, simulator-specific policy
