@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -46,12 +47,7 @@ _piper_dual = make_piper_hardware(
 coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual, _piper_dual],
     tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[*_xarm6_dual.joints, *_piper_dual.joints],
-            priority=10,
-        ),
+        joint_trajectory_task([*_xarm6_dual.joints, *_piper_dual.joints]),
     ],
 )
 

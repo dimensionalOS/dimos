@@ -40,6 +40,7 @@ import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -354,7 +355,13 @@ class TestTwistRouting:
 
     def test_twist_not_subscribed_without_base_or_velocity_capable_task(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 
@@ -516,7 +523,13 @@ class TestTwistCardContract:
 class TestSubscriptionLifecycle:
     def test_streams_without_consumers_are_not_subscribed(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 
