@@ -163,6 +163,7 @@ class ExecutionResult:
 
     @property
     def succeeded(self) -> bool:
+        """Whether dispatch was accepted or blocking execution completed."""
         return self.status in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.COMPLETED,

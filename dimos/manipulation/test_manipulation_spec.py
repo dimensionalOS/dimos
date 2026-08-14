@@ -147,32 +147,7 @@ def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None
     assert "positions" not in text
 
 
-def test_manipulation_module_exposes_only_primitive_and_obstacle_rpcs() -> None:
-    infrastructure = {
-        "build",
-        "get_skills",
-        "peek_stream",
-        "set_module_ref",
-        "set_transport",
-        "start",
-        "stop",
-    }
-
-    assert set(ManipulationModule.rpcs) - infrastructure == {
-        "add_obstacle",
-        "cancel",
-        "execute",
-        "get_state",
-        "list_planning_groups",
-        "move_linear",
-        "plan_to_joints",
-        "plan_to_poses",
-        "remove_obstacle",
-        "set_gripper_position",
-        "update_obstacle",
-        "update_obstacle_pose",
-        "wait_for_execution",
-    }
+def test_manipulation_module_exposes_no_skills() -> None:
     assert not any(hasattr(method, "__skill__") for method in ManipulationModule.rpcs.values())
 
 

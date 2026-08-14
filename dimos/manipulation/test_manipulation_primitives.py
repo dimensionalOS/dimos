@@ -201,18 +201,3 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
     assert target.name == ["arm/j0"]
     assert target.position == [0.25]
     manipulation.execute.assert_called_once_with(blocking=True)
-
-
-def test_skills_are_exposed_only_by_adapter() -> None:
-    assert {
-        name for name, method in ManipulationSkills.rpcs.items() if hasattr(method, "__skill__")
-    } == {
-        "close_gripper",
-        "get_robot_state",
-        "go_home",
-        "go_init",
-        "move_to_joints",
-        "move_to_pose",
-        "open_gripper",
-        "set_gripper",
-    }

@@ -454,7 +454,7 @@ class TestControlCoordinatorTrajectoryExecution:
 
         assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         assert coordinator.add_task(second, task_type="trajectory")
-        assert coordinator.list_tasks() == [JOINT_TRAJECTORY_TASK_NAME]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is second
 
     def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
         coordinator = make_coordinator()
