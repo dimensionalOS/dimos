@@ -11,11 +11,6 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      seconds:
-        # Match the recording, or the tail of the window measures a deployment
-        # idling on completed streams -- noise with no work in it.
-        description: Run window (go2_short spans 60s)
-        default: "70"
       blueprint:
         description: Blueprint to run under replay
         default: unitree-go2
@@ -39,7 +34,6 @@ jobs:
     env:
       # The CLI rejects a project key passed as --token; it wants BENCHER_API_KEY.
       BENCHER_API_KEY: ${{ secrets.BENCHER_API_TOKEN }}
-      PROFILE_SECONDS: ${{ inputs.seconds || '70' }}
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
       PROFILE_DB: ${{ inputs.db || 'go2_short' }}
     steps:
@@ -87,14 +81,16 @@ jobs:
           printf '{"venv": {"install-size-mib": {"value": %s}}}\n' \
             "$(du -sm .venv | cut -f1)" >size.json
 
+      # No --run-for: a replay run now ends when its recording does, so the
+      # measured work is the same set of messages every time instead of
+      # whatever fit in a fixed window. timeout is a backstop, so reaching it
+      # (124) means a hung teardown and should fail the job.
       - name: Profile a replay deployment
         run: |
-          # --run-for ends the run cleanly; the outer timeout is a backstop, so
-          # reaching it (124) is a hung teardown and should fail the job.
           bin/rusage --name "$PROFILE_BLUEPRINT-replay" --out rusage.json -- \
-            timeout --kill-after=60s "$((PROFILE_SECONDS + 120))" \
+            timeout --kill-after=60s 600 \
             uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
-            --run-for "$PROFILE_SECONDS" run "$PROFILE_BLUEPRINT"
+            run "$PROFILE_BLUEPRINT"
 
       # One BMF object, one benchmark per top-level key. Tolerant of a missing
       # file so a failed run still reports whatever it did measure.
