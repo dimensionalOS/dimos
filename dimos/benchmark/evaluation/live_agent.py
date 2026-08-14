@@ -23,6 +23,7 @@ from pathlib import Path
 import shutil
 import threading
 import time
+from typing import Literal
 
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeCondition, RuntimeIdentity
@@ -37,7 +38,7 @@ from dimos.benchmark.evaluation.progress import ProgressSink
 from dimos.benchmark.evaluation.protocol import LiveAgentOutcome
 from dimos.benchmark.evaluation.runtime import _artifact, _pi_paths
 
-LIVE_AGENT_PROFILE = "live-agent-v1"
+LIVE_AGENT_PROFILE: Literal["live-agent-v1"] = "live-agent-v1"
 
 
 class LiveAgentRuntimeFactory:
