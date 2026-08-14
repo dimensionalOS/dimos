@@ -45,6 +45,10 @@ LABELS = {
     "cpu-system-seconds": "SYS",
     "peak-memory-mib": "MEM",
     "peak-threads": "THR",
+    "disk-read-mib": "RD",
+    "disk-write-mib": "WR",
+    "net-rx-mib": "RX",
+    "net-tx-mib": "TX",
     "install-size-mib": "VENV",
 }
 

@@ -53,34 +53,52 @@ if [[ ! -e /sys/fs/cgroup/cgroup.controllers ]]; then
 	exit 1
 fi
 
-stats="$(mktemp -t rusage-stats.XXXXXX)"
-trap 'rm -f "$stats"' EXIT
+dir="$(mktemp -d -t rusage.XXXXXX)"
+stats="$dir/stats"
+trap 'rm -rf "$dir"' EXIT
 
 # A user scope needs no password and is the right thing on a dev box; CI
 # runners have no user manager, so fall back to a system scope that still runs
 # the payload as the calling user.
+unit="rusage-$$"
 if systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
 	scope=(systemd-run --user --scope --quiet)
+	manager=--user
 else
 	scope=(sudo -E systemd-run --scope --quiet --uid="$(id -u)" --gid="$(id -g)")
+	manager=--system
 fi
 
 # Read the counters from *inside* the scope, after the payload exits but while
 # this shell still holds the scope open -- a transient scope is released as soon
 # as its last process is gone, so there is nothing left to read afterwards.
+# Optional files are copied out raw and parsed outside: systemd expands ${...}
+# in the command line before bash sees it, so no shell arithmetic in here.
 inner='
 	"$@" && rc=0 || rc=$?
 	cg=/sys/fs/cgroup$(cut -d: -f3 </proc/self/cgroup)
-	cat "$cg/cpu.stat" >"$RUSAGE_STATS"
-	echo "memory_peak_bytes $(cat "$cg/memory.peak")" >>"$RUSAGE_STATS"
-	echo "pids_peak $(cat "$cg/pids.peak")" >>"$RUSAGE_STATS"
+	cat "$cg/cpu.stat" >"$RUSAGE_DIR/stats"
+	echo "memory_peak_bytes $(cat "$cg/memory.peak")" >>"$RUSAGE_DIR/stats"
+	echo "pids_peak $(cat "$cg/pids.peak")" >>"$RUSAGE_DIR/stats"
+	for f in io.stat io.pressure memory.pressure cpu.pressure; do
+		[ -r "$cg/$f" ] && cat "$cg/$f" >"$RUSAGE_DIR/$f"
+	done
+	# There is no cgroup file for network bytes. systemd keeps its own eBPF
+	# counters per unit, readable while this shell still holds the unit open.
+	systemctl "$RUSAGE_MANAGER" show -p IPIngressBytes -p IPEgressBytes \
+		"$RUSAGE_UNIT" >"$RUSAGE_DIR/ip" 2>/dev/null || true
 	exit $rc
 '
 
 started=$EPOCHREALTIME
 "${scope[@]}" \
+	--unit="$unit" \
 	--property=MemoryAccounting=1 \
-	--setenv=RUSAGE_STATS="$stats" \
+	--property=IOAccounting=1 \
+	--property=IPAccounting=yes \
+	--setenv=RUSAGE_DIR="$dir" \
+	--setenv=RUSAGE_UNIT="$unit.scope" \
+	--setenv=RUSAGE_MANAGER="$manager" \
 	-- bash -c "$inner" rusage-payload "$@" && rc=0 || rc=$?
 wall=$(awk -v a="$started" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.3f", b - a }')
 
@@ -105,15 +123,49 @@ read -r cpu_user cpu_system cpu_total peak_mib < <(
 		'BEGIN { printf "%.3f %.3f %.3f %.1f\n", u / 1e6, s / 1e6, t / 1e6, p / 1048576 }'
 )
 
+json=""
+add() {
+	[[ -n $json ]] && json+=$',\n'
+	json+="    \"$1\": { \"value\": $2 }"
+}
+
+# A measure the kernel did not report is left out rather than sent as zero,
+# which would read as "no disk traffic" instead of "not measured".
+add_mib() {
+	[[ -n $2 ]] || return 0
+	add "$1" "$(awk -v b="$2" 'BEGIN { printf "%.1f", b / 1048576 }')"
+}
+
+io_read=""
+io_write=""
+if [[ -s "$dir/io.stat" ]]; then
+	read -r io_read io_write < <(awk '
+		{ for (i = 2; i <= NF; i++) { split($i, kv, "="); io[kv[1]] += kv[2] } }
+		END { print io["rbytes"] + 0, io["wbytes"] + 0 }
+	' "$dir/io.stat")
+fi
+
+# "[no data]" when the manager cannot attach the eBPF counters, which is the
+# normal case for an unprivileged user unit.
+ip_field() {
+	awk -F= -v key="$1" '$1 == key && $2 ~ /^[0-9]+$/ { print $2 }' "$dir/ip" 2>/dev/null || true
+}
+
+add cpu-core-seconds "$cpu_total"
+add cpu-user-seconds "$cpu_user"
+add cpu-system-seconds "$cpu_system"
+add peak-memory-mib "$peak_mib"
+add peak-threads "$peak_threads"
+add wall-seconds "$wall"
+add_mib disk-read-mib "$io_read"
+add_mib disk-write-mib "$io_write"
+add_mib net-rx-mib "$(ip_field IPIngressBytes)"
+add_mib net-tx-mib "$(ip_field IPEgressBytes)"
+
 cat >"$out" <<JSON
 {
   "$name": {
-    "cpu-core-seconds": { "value": $cpu_total },
-    "cpu-user-seconds": { "value": $cpu_user },
-    "cpu-system-seconds": { "value": $cpu_system },
-    "peak-memory-mib": { "value": $peak_mib },
-    "peak-threads": { "value": $peak_threads },
-    "wall-seconds": { "value": $wall }
+$json
   }
 }
 JSON
