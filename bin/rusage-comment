@@ -1,62 +1,86 @@
-#!/usr/bin/env bash
-# Render the PR comment for a profile run. This one is ours -- edit the layout
-# here. (Bencher's own comment is generated inside its Rust CLI and cannot be
-# templated, which is why this exists.)
-#
-# Usage:
-#   bin/rusage-comment <current.json> [baseline.json] > comment.md
-#
-# Both files are Bencher Metric Format: {benchmark: {measure: {value: N}}}.
-# The baseline is the same file from the last green run on main; omit it and
-# the deltas are simply left blank.
-set -euo pipefail
+#!/usr/bin/env python3
+"""Render the PR comment for a profile run.
 
-current=${1:?usage: bin/rusage-comment <current.json> [baseline.json] [ref]}
-baseline=${2:-}
-# What the baseline actually came from -- main once it has runs, this branch
-# until then. Named in the table so the comparison is never mislabeled.
-ref=${3:-main}
+This layout is ours to edit -- Bencher's own comment is generated inside its
+Rust CLI and cannot be templated, which is why this exists.
 
-# jq wants a file for --slurpfile; an empty object stands in for "no baseline".
-if [[ -z $baseline || ! -s $baseline ]]; then
-	baseline=$(mktemp)
-	echo '{}' >"$baseline"
-	trap 'rm -f "$baseline"' EXIT
-fi
+Usage:
+    bin/rusage-comment <current.json> [baseline.json] [ref] > comment.md
 
-# --- the template. everything below here is layout. ------------------------
+Both files are Bencher Metric Format: {benchmark: {measure: {value: N}}}.
+The baseline is the same file from the last green run on the compared ref;
+omit it and the deltas render as "--".
+"""
 
-cat <<'HEADER'
+import json
+from pathlib import Path
+import sys
+
+# --- the template. everything in this block is layout. ---------------------
+
+TEMPLATE = """\
 <!-- dimos-profile -->
 ### Deployment resource footprint
 
 What this branch costs to boot and run, measured across the whole process
-tree.
-HEADER
+tree. Baseline is the last green run on `{ref}`.
 
-printf '\nBaseline is the last green run on `%s`.\n\n' "$ref"
-printf '| | measure | this branch | %s | Δ |\n' "$ref"
-printf '|---|---|---:|---:|---:|\n'
+| | measure | this branch | {ref} | Δ |
+|---|---|---:|---:|---:|
+{rows}
 
-jq -r --slurpfile base "$baseline" '
-  ($base[0] // {}) as $main
-  | to_entries[] as $bench
-  | $bench.value
-  | to_entries[]
-  | . as $meas
-  | ($main[$bench.key][$meas.key].value) as $old
-  | (if $old == null or $old == 0 then null
-     else ($meas.value.value - $old) / $old * 100 end) as $delta
-  | "| `\($bench.key)` | \($meas.key) | \($meas.value.value)"
-    + " | " + (if $old == null then "--" else ($old | tostring) end)
-    + " | " + (if $delta == null then "--"
-               elif $delta > 0 then "+\($delta | .*10 | round / 10)%"
-               else "\($delta | .*10 | round / 10)%" end)
-    + " |"
-' "$current"
+<sub>`bin/rusage` — cgroup CPU and peak-memory accounting for the whole
+process tree. Recorded, not gated.</sub>
+"""
 
-cat <<'FOOTER'
+ROW = "| `{benchmark}` | {measure} | {value} | {baseline} | {delta} |"
 
-<sub>`bin/rusage` — cgroup CPU and peak-memory accounting for the process tree.
-Recorded, not gated.</sub>
-FOOTER
+# Deltas smaller than this are noise on a shared runner, not a signal.
+NOISE_PCT = 3.0
+
+
+def number(value: float | None) -> str:
+    return "--" if value is None else f"{value:g}"
+
+
+def delta(value: float, baseline: float | None) -> str:
+    if baseline is None or baseline == 0:
+        return "--"
+    pct = (value - baseline) / baseline * 100
+    if abs(pct) < NOISE_PCT:
+        return f"{pct:+.1f}%"
+    return f"**{pct:+.1f}%**"
+
+
+def rows(current: dict, base: dict) -> list[str]:
+    return [
+        ROW.format(
+            benchmark=benchmark,
+            measure=measure,
+            value=number(metric["value"]),
+            baseline=number(was),
+            delta=delta(metric["value"], was),
+        )
+        for benchmark, measures in current.items()
+        for measure, metric in measures.items()
+        for was in [base.get(benchmark, {}).get(measure, {}).get("value")]
+    ]
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("usage: bin/rusage-comment <current.json> [baseline.json] [ref]")
+
+    current = json.loads(Path(sys.argv[1]).read_text())
+    baseline_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    ref = sys.argv[3] if len(sys.argv) > 3 else "main"
+
+    base = {}
+    if baseline_path and baseline_path.is_file():
+        base = json.loads(baseline_path.read_text())
+
+    print(TEMPLATE.format(ref=ref, rows="\n".join(rows(current, base))))
+
+
+if __name__ == "__main__":
+    main()
