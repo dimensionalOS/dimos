@@ -24,7 +24,7 @@ from typing import Any
 from pydantic import Field
 import zenoh
 
-from dimos.core.global_config import ZenohMode
+from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
@@ -56,8 +56,6 @@ def _default_connect_endpoints() -> list[str]:
     endpoint; scouting stays on for everything else. An IP carrying its own
     ``:port`` is used as given.
     """
-    from dimos.core.global_config import global_config
-
     if global_config.transport != "zenoh":
         return []
     ips = [global_config.robot_ip or "", *(global_config.robot_ips or "").split(",")]
@@ -72,38 +70,26 @@ def _default_connect_endpoints() -> list[str]:
 
 
 def _default_scouting() -> bool:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_scouting
 
 
 def _default_scouting_interface() -> str:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_interface.strip()
 
 
 def _default_multicast() -> bool:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_multicast
 
 
 def _default_gossip() -> bool | None:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_gossip
 
 
 def _default_mode() -> ZenohMode:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_mode
 
 
 def _default_connect_timeout() -> float:
-    from dimos.core.global_config import global_config
-
     return global_config.zenoh_connect_timeout
 
 
