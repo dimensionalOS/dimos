@@ -7,7 +7,7 @@ name: deployment-profile
 
 on:
   push:
-    branches: [main, feat/ivan/rusage-profile]
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -24,6 +24,11 @@ on:
 permissions:
   contents: read
   pull-requests: write # Bencher posts the results table as a PR comment
+
+# A superseded profile is wasted runner time, and its numbers are stale anyway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   profile:
@@ -65,6 +70,21 @@ jobs:
           print(resolve_db_path('$PROFILE_DB'))
           "
 
+      # What the stack costs before it does any work. Import and module-spawn
+      # bloat is invisible in the full run -- core-seconds spent importing torch
+      # look exactly like core-seconds spent on perception.
+      - name: Profile cold start
+        run: |
+          bin/rusage --name "$PROFILE_BLUEPRINT-coldstart" --out coldstart.json -- \
+            timeout --kill-after=60s 300 \
+            uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
+            --run-for 0 run "$PROFILE_BLUEPRINT"
+
+      - name: Measure install size
+        run: |
+          printf '{"venv": {"install-size-mib": {"value": %s}}}\n' \
+            "$(du -sm .venv | cut -f1)" >size.json
+
       - name: Profile a replay deployment
         run: |
           # --run-for ends the run cleanly; the outer timeout is a backstop, so
@@ -74,14 +94,24 @@ jobs:
             uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
             --run-for "$PROFILE_SECONDS" run "$PROFILE_BLUEPRINT"
 
+      # One BMF object, one benchmark per top-level key. Tolerant of a missing
+      # file so a failed run still reports whatever it did measure.
+      - name: Merge metrics
+        if: always()
+        run: |
+          files=$(ls rusage.json coldstart.json size.json 2>/dev/null) || true
+          [ -n "$files" ] || exit 0
+          jq -s add $files >metrics.json
+          cat metrics.json
+
       - name: Job summary
         if: always()
         run: |
-          [ -f rusage.json ] || exit 0
+          [ -f metrics.json ] || exit 0
           {
             echo '### Deployment resource footprint'
             echo '```json'
-            cat rusage.json
+            cat metrics.json
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 
@@ -89,7 +119,7 @@ jobs:
         if: always()
         with:
           name: rusage
-          path: rusage.json
+          path: metrics.json
 
       - name: Record in Bencher
         if: always() && env.BENCHER_API_KEY != ''
@@ -103,4 +133,4 @@ jobs:
             --testbed ubuntu-latest \
             --adapter json \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
-            --file rusage.json
+            --file metrics.json
