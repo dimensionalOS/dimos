@@ -16,9 +16,10 @@
 """Standalone joint-space jog teleop for OpenYAM — no coordinator stack.
 
 Single process, pygame window in the main thread, OpenYamAdapter driven
-directly at 100 Hz. Exists because the full keyboard-teleop blueprint
-currently hangs on macOS (pygame cannot run inside a worker process); use
-``keyboard-teleop-openyam-can`` on Linux instead.
+directly. A minimal fallback that bypasses the module stack entirely; the
+full blueprint (``keyboard-teleop-openyam-can``) also runs on macOS with
+``DIMOS_TRANSPORT=lcm`` and the loopback multicast route (zenoh worker RPC
+is broken on macOS) — prefer it for the richer viser experience.
 
 Controls (window must be focused):
     1..6:       select joint

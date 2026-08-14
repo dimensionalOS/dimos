@@ -67,6 +67,23 @@ sudo ./dimos/robot/manipulators/openyam/scripts/openyam_can_up.sh can0
 # then --channel can0
 ```
 
+### 2b-pre. macOS: use the LCM transport for blueprints
+
+zenoh (the macOS default transport) fails inter-worker RPC on macOS —
+every multi-module blueprint times out on ``set_transport`` after 120 s
+with idle workers. LCM works. Once per boot:
+
+```bash
+sudo route add -net 224.0.0.0/4 -interface lo0
+```
+
+then run every blueprint with ``DIMOS_TRANSPORT=lcm``:
+
+```bash
+DIMOS_TRANSPORT=lcm dimos run keyboard-teleop-openyam-can
+DIMOS_TRANSPORT=lcm dimos run openyam-pickplace coordinator-openyam-can
+```
+
 ### 2b. macOS (no SocketCAN)
 
 The arm ships with a candlelight-firmware CANable 2.0 (VID:PID

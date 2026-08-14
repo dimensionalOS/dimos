@@ -62,7 +62,9 @@ openyam_pickplace = autoconnect(
             )
         ],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        # viser: works with the default roboplan world backend (meshcat
+        # requires a VisualizationSpec world, e.g. drake)
+        visualization={"backend": "viser"},
         floor_z=-0.02,
     ),
 )
