@@ -299,9 +299,13 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           thisRobot.lidar!.updatePose(x, y, z, 0, qy, 0, qw);
 
           const msg = JSON.stringify({ type: "pose", robot: thisRobot.name, x, y, z, yaw });
-          const client = chState.activeControlClient;
-          if (client && client.readyState === WebSocket.OPEN) {
-            try { client.send(msg); } catch { /* ignore */ }
+          // Broadcast to every control client: which client connected first is
+          // a race (viewer page vs SceneClient), and any page that misses the
+          // pose stream renders frozen avatars.
+          for (const client of chState.controlClients) {
+            if (client.readyState === WebSocket.OPEN) {
+              try { client.send(msg); } catch { /* ignore */ }
+            }
           }
           if (PROFILE) {
             const dt = performance.now() - t0;
