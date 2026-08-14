@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass, field
 
 from dimos.core.transport import LCMTransport, pLCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.dimsim.scene_client import SceneClient
 from dimos.utils.logging_config import setup_logger
 
@@ -302,7 +303,7 @@ class Referee:
                 window.__demoWedges[name] = wedge;
             }}
             // Ground trail.
-            const maxPts = 2400;
+            const maxPts = 6000;
             const geo = new THREE.BufferGeometry();
             const attr = new THREE.BufferAttribute(new Float32Array(maxPts * 3), 3);
             geo.setAttribute('position', attr);
@@ -453,6 +454,22 @@ class Referee:
 
             sub.subscribe(on_marker)
             self._belief_subs.append(sub)
+
+            # Frontier-exploration goals bypass the skill container (the
+            # explorer publishes straight to goal_request) — mark those too.
+            gsub = LCMTransport(f"/{drone}/goal_request", PoseStamped)
+            gsub.start()
+
+            def on_goal(msg: PoseStamped, drone: str = drone) -> None:
+                try:
+                    if not (math.isfinite(msg.position.x) and math.isfinite(msg.position.y)):
+                        return
+                    on_marker(json.dumps({"x": msg.position.x, "y": msg.position.y, "kind": "hop"}))
+                except Exception:
+                    pass
+
+            gsub.subscribe(on_goal)
+            self._belief_subs.append(gsub)  # type: ignore[arg-type]
 
     def start_radio_hud(self) -> None:
         """Mirror non-beacon radio traffic into the on-screen HUD."""

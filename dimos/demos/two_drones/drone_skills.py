@@ -34,7 +34,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.utils.logging_config import setup_logger
@@ -132,6 +133,9 @@ class DroneSkillContainer(Module):
     # of the follower). The referee renders these as ground circles so goal
     # cadence is visible in the video.
     goal_marker: Out[str]
+    # Direct velocity override (MovementManager gives teleop priority over the
+    # planner) — used by intercept() for straight-line pursuit.
+    tele_cmd_vel: Out[Twist]
 
     _navigation: NavigationInterfaceSpec
 
@@ -315,6 +319,80 @@ class DroneSkillContainer(Module):
 
         self._sweep_thread = threading.Thread(target=run, daemon=True)
         self._sweep_thread.start()
+
+    @skill(uses=[CAP_MOVEMENT])
+    def intercept(self, x: float, y: float) -> str:
+        """INTERCEPT: fly STRAIGHT at map coordinates (x, y) at full speed —
+        use this to converge on a target sighting (yours or your partner's).
+        Falls back to obstacle-avoiding navigation if the straight line is
+        blocked. Non-blocking; re-issue with new coordinates as the target
+        moves; cancel with stop_moving."""
+        self._cancel_sweep()
+        if self._latest_odom is None:
+            return "No odometry yet — cannot intercept."
+        x, y = self._clamp(x, y)
+        self._mark(x, y, "destination")
+        self._sweep_cancel = threading.Event()
+        cancel = self._sweep_cancel
+
+        def run() -> None:
+            self._sweep_status = f"intercept ({x:.1f}, {y:.1f}): direct"
+            prog_pos = None
+            prog_t = time.time()
+            t0 = time.time()
+            try:
+                while not cancel.is_set() and time.time() - t0 < 120.0:
+                    od = self._latest_odom
+                    if od is None:
+                        time.sleep(0.2)
+                        continue
+                    px, py = od.position.x, od.position.y
+                    dx, dy = x - px, y - py
+                    dist = math.hypot(dx, dy)
+                    if dist < 1.5:
+                        self._sweep_status = f"intercept ({x:.1f}, {y:.1f}): arrived"
+                        return
+                    # Blocked? fall back to the obstacle-avoiding planner path.
+                    cur = (px, py)
+                    if prog_pos is None or math.hypot(cur[0] - prog_pos[0], cur[1] - prog_pos[1]) > 0.4:
+                        prog_pos = cur
+                        prog_t = time.time()
+                    elif time.time() - prog_t > 6.0:
+                        self._sweep_status = f"intercept ({x:.1f}, {y:.1f}): blocked, replanning"
+                        self.tele_cmd_vel.publish(Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)))
+                        hops = max(1, math.ceil(dist / _MAX_HOP))
+                        waypoints = [
+                            (px + dx * h / hops, py + dy * h / hops) for h in range(1, hops + 1)
+                        ]
+                        self._start_path(waypoints, f"intercept ({x:.1f}, {y:.1f})")
+                        return
+                    # World-frame delta -> body frame (yaw from odom quaternion).
+                    q = od.orientation
+                    yaw = math.atan2(
+                        2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                    )
+                    fwd = math.cos(yaw) * dx + math.sin(yaw) * dy
+                    lat = -math.sin(yaw) * dx + math.cos(yaw) * dy
+                    n = math.hypot(fwd, lat) or 1.0
+                    scale = min(1.0, dist / 2.0)  # ease in near the target
+                    self.tele_cmd_vel.publish(
+                        Twist(
+                            Vector3(fwd / n * scale, lat / n * scale, 0.0),
+                            Vector3(0.0, 0.0, 0.0),
+                        )
+                    )
+                    time.sleep(0.12)
+                if not cancel.is_set():
+                    self._sweep_status = f"intercept ({x:.1f}, {y:.1f}): timed out"
+            finally:
+                self.tele_cmd_vel.publish(Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)))
+
+        self._sweep_thread = threading.Thread(target=run, daemon=True)
+        self._sweep_thread.start()
+        return (
+            f"INTERCEPTING ({x:.1f}, {y:.1f}) — straight-line at full speed. "
+            f"Re-issue intercept with new coordinates as the target moves."
+        )
 
     @skill
     def get_status(self) -> str:

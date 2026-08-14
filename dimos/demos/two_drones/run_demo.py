@@ -52,48 +52,55 @@ DRONES = ["droneA", "droneB"]
 MCP_PORTS = {"droneA": 9990, "droneB": 9991}
 SIM_PORT = 8090
 
-ARENA_HALF_X = 11.0  # ROS x extent: [-11, 11]
-ARENA_HALF_Y = 7.0  # ROS y extent: [-7, 7]
+# Arena: 44 m x 70 m (ROS x in [-22, 22], y in [-35, 35]).
+ARENA_HALF_X = 22.0
+ARENA_HALF_Y = 35.0
 CRUISE_ALT = 1.2
+# Flyable interior handed to the drones (goals clamped inside).
+BOUND_X = ARENA_HALF_X - 0.8
+BOUND_Y = ARENA_HALF_Y - 0.8
 
-SPAWNS = {"droneA": (-9.0, -5.0), "droneB": (-9.0, 5.0)}
+SPAWNS = {"droneA": (-19.0, -30.0), "droneB": (-19.0, 30.0)}
 
 SCENARIOS: dict[str, dict] = {  # type: ignore[type-arg]
     "open": {
         "obstacles": [],
-        "target_path": [(8, -4), (8, 4), (2, 4), (2, -4)],
-        "target_speed": 0.5,
+        "target_path": [(16, -20), (16, 20), (4, 20), (4, -20)],
+        "target_speed": 1.4,
     },
     "obstacles": {
         "obstacles": [
-            ((0.0, -7.0), (0.0, -2.0)),
-            ((0.0, 2.0), (0.0, 7.0)),
-            ((5.0, -3.0), (5.0, 3.0)),
-            ((-5.0, -1.5), (-5.0, 3.5)),
+            ((0.0, -35.0), (0.0, -10.0)),
+            ((0.0, 10.0), (0.0, 35.0)),
+            ((10.0, -15.0), (10.0, 15.0)),
+            ((-10.0, -7.5), (-10.0, 17.5)),
         ],
-        "target_path": [(8.5, -5), (8.5, 5), (2.5, 5), (2.5, -5)],
-        "target_speed": 0.5,
+        "target_path": [(17, -25), (17, 25), (5, 25), (5, -25)],
+        "target_speed": 1.4,
     },
     "hide": {
         "obstacles": [
-            ((2.0, -5.5), (2.0, 0.5)),
-            ((6.5, -1.0), (6.5, 5.5)),
-            ((-3.0, 1.0), (-3.0, 6.0)),
-            ((-6.0, -6.0), (-6.0, -1.5)),
+            ((4.0, -27.5), (4.0, 2.5)),
+            ((13.0, -5.0), (13.0, 27.5)),
+            ((-6.0, 5.0), (-6.0, 30.0)),
+            ((-12.0, -30.0), (-12.0, -7.5)),
         ],
-        "target_path": [(9, -5), (4, -3.5), (4.5, 3), (9, 4.5), (4.5, 3), (4, -3.5)],
-        "target_speed": 0.65,
+        "target_path": [(18, -25), (8, -17.5), (9, 15), (18, 22.5), (9, 15), (8, -17.5)],
+        "target_speed": 1.6,
     },
 }
 
 MISSION = (
     "MISSION BRIEFING for {name}: You and your partner {partner} must find and "
     "then keep pursuing a moving RED TARGET somewhere in the arena "
-    "x in [-10, 10], y in [-6, 6]. You start at ({sx:.0f}, {sy:.0f}); your partner "
-    "starts at ({px:.0f}, {py:.0f}). There may be walls; your planner avoids them. "
-    "ACT NOW in a single response: call BOTH claim_sector (your half of the "
-    "arena, not overlapping your partner) AND sweep_area (that same sector) in "
-    "one turn. Then react immediately to every [SENSOR] and [RADIO] message."
+    "x in [-21, 21], y in [-34, 34] (big: 42 x 68 m). You start at "
+    "({sx:.0f}, {sy:.0f}); your partner starts at ({px:.0f}, {py:.0f}). There may "
+    "be walls; navigation avoids them. ACT NOW in a single response: "
+    "claim_sector (your half, don't overlap your partner) AND fly_to a point "
+    "well inside your half. When you arrive, begin_exploration to search it. "
+    "The instant either of you sights the target: report_sighting, then "
+    "end_exploration and intercept(x, y) — both drones converge straight on it. "
+    "React immediately to every [SENSOR] and [RADIO] message."
 )
 
 
@@ -129,13 +136,18 @@ def start_sim(log_dir: Path) -> subprocess.Popen:  # type: ignore[type-arg]
     return proc
 
 
-def open_viewer_page(record_path: Path | None):  # type: ignore[no-untyped-def]
-    """Open THE single browser page (renderer + optional video recorder)."""
+def open_viewer_page(record_path: Path | None, headed: bool = False):  # type: ignore[no-untyped-def]
+    """Open THE single browser page (renderer + optional video recorder).
+
+    ``headed=True`` shows the window live on screen. Do NOT additionally open
+    localhost:8090 in another browser: a second engine page re-ships its own
+    (wall-less) physics snapshot and wipes the referee-built world.
+    """
     from playwright.sync_api import sync_playwright
 
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
-        headless=True,
+        headless=not headed,
         args=[
             "--enable-webgl", "--enable-webgl2", "--ignore-gpu-blocklist",
             "--enable-gpu", "--use-gl=angle", "--use-angle=metal",
@@ -157,6 +169,8 @@ def start_stack(name: str, log_dir: Path, model: str) -> subprocess.Popen:  # ty
     env = os.environ.copy()
     env.update(
         DRONE_NAME=name,
+        DRONE_BOUND_X=str(BOUND_X),
+        DRONE_BOUND_Y=str(BOUND_Y),
         DRONE_MCP_PORT=str(MCP_PORTS[name]),
         # Workers re-read GlobalConfig from the environment, so the MCP port
         # must travel via env (the --mcp-port flag stays in the coordinator).
@@ -193,8 +207,10 @@ def stop_process_group(proc: subprocess.Popen) -> None:  # type: ignore[type-arg
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="open")
-    parser.add_argument("--duration", type=float, default=360.0, help="run seconds")
+    parser.add_argument("--duration", type=float, default=720.0, help="run seconds")
     parser.add_argument("--record", type=str, default="", help="record video to this .webm path")
+    parser.add_argument("--headed", action="store_true",
+                        help="show the sim window live on screen (can combine with --record)")
     parser.add_argument("--model", type=str, default=os.environ.get("DRONE_MODEL", "ollama:gemma4"))
     parser.add_argument("--log-dir", type=str, default="out/two_drones")
     parser.add_argument("--keep-sim", action="store_true", help="leave the sim running on exit")
@@ -219,7 +235,7 @@ def main() -> None:
         procs.append(sim)
 
         print("[demo] opening viewer/recorder page...")
-        pw, browser, ctx, page = open_viewer_page(record_path)
+        pw, browser, ctx, page = open_viewer_page(record_path, headed=args.headed)
         t_video0 = time.time()  # video timeline starts ~here (page created)
 
         scene = SceneClient(port=SIM_PORT)
@@ -240,7 +256,7 @@ def main() -> None:
 
         for name in DRONES:
             scene.set_embodiment(
-                "drone", robot=name, max_speed=2.0, turn_rate=2.5, max_altitude=5.0
+                "drone", robot=name, max_speed=4.0, turn_rate=3.0, max_altitude=5.0
             )
         time.sleep(1.5)
 
@@ -283,7 +299,7 @@ def main() -> None:
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
         scene.exec(
-            "window.__demoDirectorCam = {x: 0, y: 13.5, z: -15.5, tx: 0, ty: 0, tz: 0.5};"
+            "window.__demoDirectorCam = {x: 0, y: 62, z: -58, tx: 0, ty: 0, tz: 4};"
             "return 'director camera set';"
         )
 

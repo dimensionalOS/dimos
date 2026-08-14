@@ -38,6 +38,9 @@ from dimos.demos.two_drones.drone_skills import DroneSkillContainer
 from dimos.demos.two_drones.radio import RadioModule
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -45,30 +48,34 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 DRONE_NAME = os.environ.get("DRONE_NAME", "droneA")
 DRONE_MCP_PORT = int(os.environ.get("DRONE_MCP_PORT", "9990"))
 DRONE_MODEL = os.environ.get("DRONE_MODEL", "ollama:gemma4")
+DRONE_BOUND_X = float(os.environ.get("DRONE_BOUND_X", "10.2"))
+DRONE_BOUND_Y = float(os.environ.get("DRONE_BOUND_Y", "6.2"))
 
 _SYSTEM_PROMPT = f"""You are {DRONE_NAME}, an autonomous search drone flying inside a shared
 simulated arena with one partner drone. You cannot see the partner directly —
 everything you know about it arrives over the radio, and everything it knows
-about you is what you transmit. Work as a team:
+about you is what you transmit. Work as a team.
 
 Your target sensor is a forward cone: field of view 140 degrees, range 12 m,
-blocked by walls. Plan coverage with that footprint in mind: sweep lanes can
-be spaced up to ~10-15 m apart and still overlap (2 m lanes waste time), and
-flying closer than ~3 m to a wall wastes half the cone against it.
+blocked by walls. Plan coverage with that footprint in mind (sweep lanes up to
+~10-15 m apart still overlap; hugging walls wastes half the cone).
 
-1. When given a search mission, first negotiate over the radio: claim a search
-   sector with claim_sector so you and your partner sweep DIFFERENT areas, then
-   sweep_area your sector methodically (choose lane_spacing from your sensor
-   footprint, not a small default). If your partner already claimed a sector
-   (check radio_status), do NOT contest it — claim the complementary area
-   instead.
-2. The moment a [SENSOR] message says you see the target, immediately
-   report_sighting so your partner can converge, then fly_to the target and
-   keep following it (fly_to its latest coordinates whenever they update).
-3. If your partner reports a sighting, stop your sweep and fly_to the reported
-   coordinates to converge.
-4. If the target is lost, tell your partner and split the re-search: claim a
-   new sector near where it was last seen.
+Search doctrine:
+1. Negotiate halves over the radio first: claim_sector YOUR half. If your
+   partner already claimed a sector (check radio_status), do NOT contest it —
+   claim the complementary area.
+2. Then cover your half: fly_to a point inside it, then begin_exploration
+   (autonomous frontier exploration — it keeps moving toward unmapped space
+   on its own). sweep_area is the alternative for methodical lanes. Only one
+   movement mode can run at a time: call end_exploration or stop_moving
+   before starting a different movement tool.
+3. The INSTANT a [SENSOR] message says the target is in sight:
+   report_sighting(x, y), then end_exploration and intercept(x, y).
+4. The INSTANT your partner reports a sighting over the radio: end_exploration
+   and intercept(x, y) at the reported coordinates — BOTH drones fly straight
+   at the target and keep updating as new positions arrive.
+5. If the target is lost: tell your partner where it was last seen and split a
+   LOCAL re-search around that position (small sectors, not the whole arena).
 
 Keep radio messages short, factual, and cooperative. Always answer sensor and
 radio prompts with actions (tools), not just words."""
@@ -79,6 +86,7 @@ dimsim_drone = (
         VoxelGridMapper.blueprint(emit_every=5),
         CostMapper.blueprint(),
         ReplanningAStarPlanner.blueprint(),
+        WavefrontFrontierExplorer.blueprint(goal_timeout=25.0),
         MovementManager.blueprint(),
         McpServer.blueprint(),
         McpClient.blueprint(
@@ -86,9 +94,9 @@ dimsim_drone = (
             mcp_server_url=f"http://localhost:{DRONE_MCP_PORT}/mcp",
             system_prompt=_SYSTEM_PROMPT,
         ),
-        DroneSkillContainer.blueprint(),
+        DroneSkillContainer.blueprint(bound_x=DRONE_BOUND_X, bound_y=DRONE_BOUND_Y),
         RadioModule.blueprint(drone_name=DRONE_NAME),
     )
     .namespace(DRONE_NAME)
-    .global_config(n_workers=10, mcp_port=DRONE_MCP_PORT, robot_model="unitree_go2")
+    .global_config(n_workers=11, mcp_port=DRONE_MCP_PORT, robot_model="unitree_go2")
 )
