@@ -81,7 +81,7 @@ def _module_with_coordinator(
             )
         ],
     )
-    module._robots = {"arm": ("arm_id", config, MagicMock())}
+    module._robots = {"arm": ("arm_id", config)}
     module._initialize_execution()
     return module
 
@@ -102,11 +102,20 @@ def test_execute_plan_can_dispatch_cached_plan_repeatedly(
 ) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
-    module._last_plan = _plan()
+    plan = _plan()
+    module._last_plan = plan
 
     assert module.execute_plan()
     assert module.execute_plan()
     assert coordinator.execute_trajectory.call_count == 2
+    for call in coordinator.execute_trajectory.call_args_list:
+        dispatched = call.args[0]
+        assert [point.time_from_start for point in dispatched.points] == [
+            point.time_from_start for point in plan.trajectory.points
+        ]
+        assert [point.velocities for point in dispatched.points] == [
+            point.velocities for point in plan.trajectory.points
+        ]
 
 
 def test_direct_plan_does_not_replace_cached_plan(module_factory) -> None:

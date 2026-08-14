@@ -67,16 +67,22 @@ Start one or more robot blueprints. Built-in DimOS blueprints use bare names suc
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
-| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
-| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
+| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--help` | Display the run options and available blueprint configuration flags |
+
+Dynamic values accept both `--field=value` and `--field value`. A shorthand is
+available only when it identifies one active module. If two modules expose the
+same field, the CLI reports the ambiguity and lists stable qualified forms such
+as `--relocalizationmodule.map-file`. Global flags work on either side of
+`run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -93,6 +99,9 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
+
+# Blueprint configuration (both value forms are accepted)
+dimos run unitree-go2-relocalization --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop

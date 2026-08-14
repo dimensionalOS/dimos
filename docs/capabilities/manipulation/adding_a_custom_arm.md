@@ -474,11 +474,38 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 
 ## Step 4: Add URDF and Planning Integration (Optional)
 
-If you want motion planning (collision-free trajectories via Drake), you need a URDF and a planning blueprint. Add these to your robot's own `blueprints.py`.
+If you want motion planning, you need a URDF and a planning blueprint. Add these
+to your robot's own `blueprints.py`.
 
 ### 4a. Add your URDF
 
 Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
+
+If the planning blueprint selects the RoboPlan TOPP-RA trajectory
+parametrizer, DimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
+each selected planning group must provide finite, positive velocity limits.
+Authored extended acceleration limits take precedence; when absent, DimOS
+temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
+model composition:
+
+```xml
+<joint name="joint1" type="revolute">
+  <!-- parent, child, origin, and axis omitted -->
+  <limit
+    lower="-3.14"
+    upper="3.14"
+    effort="100"
+    velocity="2.0"
+    acceleration="4.0"
+  />
+</joint>
+```
+
+RoboPlan loads both limits from its scene model. If either is absent, zero,
+negative, or non-finite, plan materialization fails before preview or execution
+and identifies the affected joint. DimOS does not substitute
+`RobotModelConfig.max_velocity`, `velocity_limits`, or `max_acceleration` for
+this backend. Formal per-joint DimOS overrides will be added separately.
 
 ```python skip
 from dimos.utils.data import LfsPath
@@ -551,10 +578,31 @@ yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm")],
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
+    trajectory_parametrization={"backend": "simple_trapezoid"},
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`
 # topic, so no `.transports(...)` override is needed.
+```
+
+You may omit `trajectory_parametrization` when the world-based default is
+appropriate: `world_backend="roboplan"` selects `roboplan_toppra`, while
+`world_backend="drake"` selects `simple_trapezoid`.
+
+To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
+parametrizer after adding the URDF limits described above:
+
+```python skip
+yourarm_planner = manipulation_module(
+    robots=[_make_yourarm_config("arm")],
+    world_backend="roboplan",
+    trajectory_parametrization={
+        "backend": "roboplan_toppra",
+        "velocity_scale": 0.8,
+        "acceleration_scale": 0.8,
+    },
+    visualization={"backend": "viser"},
+)
 ```
 
 ### Key config fields
@@ -577,6 +625,48 @@ Planning-group `base_link`/`tip_link` values define kinematic chains and pose
 target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
+
+### 4d. Configure Cartesian, EEF-twist, and teleop control IK
+
+Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
+or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
+name the end-effector link, and map coordinator joints to model joints. The task
+validates the prepared model, frame, and joint mapping at startup. Teleop uses
+the named frame and does not accept a separate model path or numeric
+end-effector joint ID.
+
+Pass the same model configuration to the common helpers:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import (
+    cartesian_ik_task,
+    eef_twist_task,
+    teleop_ik_task,
+)
+
+cartesian_task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+twist_task = eef_twist_task(
+    hardware,
+    robot_model=robot_model,
+)
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
+```
+
+Each tick starts from measured joints and applies model position and velocity
+limits. Twist targets are derived from measured forward kinematics. Teleop
+targets apply controller deltas to a measured engagement baseline and discard
+that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
+or mappings fail at startup; invalid runtime output holds the measured position.
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
 
 ## Step 5: Register Blueprints
 
