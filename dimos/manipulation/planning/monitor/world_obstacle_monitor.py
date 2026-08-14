@@ -15,38 +15,42 @@
 """
 World Obstacle Monitor
 
-Monitors obstacle updates and applies them to a WorldSpec instance.
-This is the WorldSpec-based replacement for WorldGeometryMonitor.
+Monitors obstacle updates and applies them through its WorldMonitor parent.
+This is the WorldMonitor-based replacement for WorldGeometryMonitor.
 
 Example:
-    monitor = WorldObstacleMonitor(world, lock)
+    monitor = WorldObstacleMonitor(world_monitor)
     monitor.start()
     monitor.on_collision_object(collision_msg)  # Called by subscriber
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import CollisionObjectMessage, Obstacle
+from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
+    CollisionObjectMessage,
+    Obstacle,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    import threading
 
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
-    from dimos.perception.detection.type.detection3d.object import Object
+    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
 
 class WorldObstacleMonitor:
-    """Monitors world obstacles and updates WorldSpec.
+    """Monitors world obstacles and updates its parent WorldMonitor.
 
     This class handles updates from:
     - Explicit collision objects (CollisionObjectMessage)
@@ -60,26 +64,24 @@ class WorldObstacleMonitor:
     ## Comparison with WorldGeometryMonitor
 
     - WorldGeometryMonitor: Works with PlanningScene ABC
-    - WorldObstacleMonitor: Works with WorldSpec Protocol
+    - WorldObstacleMonitor: Uses the authoritative WorldMonitor mutation methods
     """
 
     def __init__(
         self,
-        world: WorldSpec,
-        lock: threading.RLock,
+        parent: WorldMonitor,
         detection_timeout: float = 2.0,
         use_mesh_obstacles: bool = False,
     ) -> None:
         """Create a world obstacle monitor.
 
         Args:
-            world: WorldSpec instance to update
-            lock: Shared lock for thread-safe access
+            parent: Owning WorldMonitor instance
             detection_timeout: Time before removing stale detections (seconds)
             use_mesh_obstacles: Use convex hull meshes from pointclouds instead of bounding boxes
         """
-        self._world = world
-        self._lock = lock
+        self._parent = parent
+        self._lock = parent._lock
         self._detection_timeout = detection_timeout
         self._use_mesh_obstacles = use_mesh_obstacles
 
@@ -114,6 +116,14 @@ class WorldObstacleMonitor:
         """Check if monitor is running."""
         return self._running
 
+    def clear_tracking(self) -> None:
+        """Forget IDs for cleared obstacles while retaining the object cache."""
+        with self._lock:
+            self._collision_objects.clear()
+            self._perception_objects.clear()
+            self._perception_timestamps.clear()
+            self._object_obstacles.clear()
+
     def on_collision_object(self, msg: CollisionObjectMessage) -> None:
         """Handle explicit collision object message.
 
@@ -145,7 +155,9 @@ class WorldObstacleMonitor:
             logger.warning(f"Failed to create obstacle from message: {msg.id}")
             return
 
-        obstacle_id = self._world.add_obstacle(obstacle)
+        obstacle_id = self._parent.add_obstacle(obstacle)
+        if not obstacle_id:
+            return
         self._collision_objects[msg.id] = obstacle_id
 
         logger.debug(f"Added collision object '{msg.id}' as '{obstacle_id}'")
@@ -164,7 +176,7 @@ class WorldObstacleMonitor:
             return
 
         obstacle_id = self._collision_objects[msg_id]
-        self._world.remove_obstacle(obstacle_id)
+        self._parent.remove_obstacle(obstacle_id)
         del self._collision_objects[msg_id]
 
         logger.debug(f"Removed collision object '{msg_id}'")
@@ -177,19 +189,43 @@ class WorldObstacleMonitor:
                 logger.error(f"Obstacle callback error: {e}")
 
     def _update_collision_object(self, msg: CollisionObjectMessage) -> None:
-        """Update a collision object pose."""
+        """Route a pose-only update or a complete obstacle replacement."""
+        has_replacement_fields = (
+            msg.primitive_type is not None or msg.dimensions is not None or msg.color is not None
+        )
+
         if msg.id not in self._collision_objects:
-            # Treat as add if doesn't exist
-            self._add_collision_object(msg)
+            if has_replacement_fields and self._msg_to_obstacle(msg) is not None:
+                self._add_collision_object(msg)
+            else:
+                logger.warning(
+                    "Cannot update unknown collision object '%s' without a complete "
+                    "obstacle description",
+                    msg.id,
+                )
             return
 
         obstacle_id = self._collision_objects[msg.id]
+        if has_replacement_fields:
+            replacement = self._msg_to_obstacle(msg)
+            if replacement is None:
+                logger.warning("Rejected incomplete collision object replacement for '%s'", msg.id)
+                return
+            replacement = replace(replacement, name=obstacle_id)
+            if not self._parent.update_obstacle(replacement):
+                return
+            logger.debug("Replaced collision object '%s'", msg.id)
+        elif msg.pose is not None:
+            if not self._parent.update_obstacle_pose(obstacle_id, msg.pose):
+                return
+            logger.debug("Updated collision object '%s' pose", msg.id)
+        else:
+            logger.warning("Collision object update for '%s' contains no changes", msg.id)
+            return
 
-        if msg.pose is not None:
-            self._world.update_obstacle_pose(obstacle_id, msg.pose)
-            logger.debug(f"Updated collision object '{msg.id}' pose")
-
-        # Notify callbacks
+        # Keep the legacy callback payload unchanged: updates report None.
+        # Before adding consumers, define separate full-replacement and pose-only
+        # callback semantics instead of inferring them from this payload.
         for callback in self._obstacle_callbacks:
             try:
                 callback("update", obstacle_id, None)
@@ -217,7 +253,7 @@ class WorldObstacleMonitor:
             obstacle_type=obstacle_type,
             pose=msg.pose,
             dimensions=msg.dimensions,
-            color=msg.color,
+            color=msg.color or DEFAULT_OBSTACLE_RGBA,
         )
 
     def on_detections(self, detections: list[Detection3D]) -> None:
@@ -247,12 +283,17 @@ class WorldObstacleMonitor:
                 if det_id in self._perception_objects:
                     # Update existing obstacle
                     obstacle_id = self._perception_objects[det_id]
-                    self._world.update_obstacle_pose(obstacle_id, pose)
+                    # TODO: Cache the last accepted obstacle and use complete
+                    # replacement when detection dimensions change. Advance
+                    # tracking state only after the world accepts the update.
+                    self._parent.update_obstacle_pose(obstacle_id, pose)
                     self._perception_timestamps[det_id] = current_time
                 else:
                     # Add new obstacle
                     obstacle = self._detection_to_obstacle(detection)
-                    obstacle_id = self._world.add_obstacle(obstacle)
+                    obstacle_id = self._parent.add_obstacle(obstacle)
+                    if not obstacle_id:
+                        continue
                     self._perception_objects[det_id] = obstacle_id
                     self._perception_timestamps[det_id] = current_time
 
@@ -303,7 +344,7 @@ class WorldObstacleMonitor:
 
         for det_id in stale_ids:
             obstacle_id = self._perception_objects[det_id]
-            removed = self._world.remove_obstacle(obstacle_id)
+            removed = self._parent.remove_obstacle(obstacle_id)
             if not removed:
                 logger.warning(f"Obstacle '{obstacle_id}' not found in world during cleanup")
             del self._perception_objects[det_id]
@@ -374,7 +415,7 @@ class WorldObstacleMonitor:
 
             # Clear perception objects
             for det_id, obstacle_id in list(self._perception_objects.items()):
-                self._world.remove_obstacle(obstacle_id)
+                self._parent.remove_obstacle(obstacle_id)
                 del self._perception_objects[det_id]
                 del self._perception_timestamps[det_id]
 
@@ -390,8 +431,8 @@ class WorldObstacleMonitor:
         """Add callback for obstacle changes.
 
         Args:
-            callback: Function called with (operation, obstacle_id, obstacle)
-                     where operation is "add", "update", or "remove"
+            callback: Function called with (operation, obstacle_id, obstacle).
+                Add passes the obstacle; update and remove currently pass None.
         """
         self._obstacle_callbacks.append(callback)
 
@@ -417,7 +458,7 @@ class WorldObstacleMonitor:
         if not self._running:
             return
 
-        from dimos.perception.detection.type.detection3d.object import Object
+        from dimos.perception.experimental.object import Object
 
         now = time.time()
         seen: set[str] = set()
@@ -448,7 +489,7 @@ class WorldObstacleMonitor:
         Returns:
             List of added obstacles with object_id, obstacle_id, name, center, size
         """
-        from dimos.perception.detection.type.detection3d.object import Object
+        from dimos.perception.experimental.object import Object
 
         # Step 1: snapshot eligible objects under lock (fast)
         eligible: list[tuple[str, Object]] = []
@@ -468,14 +509,18 @@ class WorldObstacleMonitor:
 
         # Step 3: apply to Drake world under lock (fast)
         with self._lock:
+            # TODO: Diff stable ObjectDB IDs and update existing obstacles
+            # instead of removing and re-adding the complete set.
             for obs_id in self._object_obstacles.values():
-                self._world.remove_obstacle(obs_id)
+                self._parent.remove_obstacle(obs_id)
             self._object_obstacles.clear()
 
             result: list[dict[str, Any]] = []
             for oid, obj, obstacle in prepared:
                 assert isinstance(obj, Object)
-                obs_id = self._world.add_obstacle(obstacle)
+                obs_id = self._parent.add_obstacle(obstacle)
+                if not obs_id:
+                    continue
                 self._object_obstacles[oid] = obs_id
                 result.append(
                     {
@@ -503,7 +548,7 @@ class WorldObstacleMonitor:
             obs_id = self._object_obstacles.pop(object_id, None)
             if obs_id is None:
                 return False
-            self._world.remove_obstacle(obs_id)
+            self._parent.remove_obstacle(obs_id)
             logger.info(f"Removed obstacle for object '{object_id}'")
             return True
 
@@ -516,7 +561,7 @@ class WorldObstacleMonitor:
         with self._lock:
             count = len(self._object_obstacles)
             for obs_id in self._object_obstacles.values():
-                self._world.remove_obstacle(obs_id)
+                self._parent.remove_obstacle(obs_id)
             self._object_obstacles.clear()
             return count
 
@@ -533,14 +578,14 @@ class WorldObstacleMonitor:
 
         Returns raw Object instances for typed access to .name, .center, .size etc.
         """
-        from dimos.perception.detection.type.detection3d.object import Object as _Object
+        from dimos.perception.experimental.object import Object as _Object
 
         with self._lock:
             return [obj for obj, _, _ in self._object_cache.values() if isinstance(obj, _Object)]
 
     def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
-        from dimos.perception.detection.type.detection3d.object import Object
+        from dimos.perception.experimental.object import Object
 
         with self._lock:
             result: list[dict[str, Any]] = []
@@ -561,7 +606,7 @@ class WorldObstacleMonitor:
 
     def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
-        from dimos.perception.detection.type.detection3d.object import Object
+        from dimos.perception.experimental.object import Object
 
         with self._lock:
             result: list[dict[str, Any]] = []
@@ -585,7 +630,7 @@ class WorldObstacleMonitor:
 
     def _object_to_obstacle(self, obj: object) -> Obstacle:
         """Convert Object to obstacle. Uses bounding box by default, convex hull if use_mesh_obstacles=True."""
-        from dimos.perception.detection.type.detection3d.object import Object
+        from dimos.perception.experimental.object import Object
 
         assert isinstance(obj, Object)
         name = f"object_{obj.object_id}"

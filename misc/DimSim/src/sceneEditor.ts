@@ -15,7 +15,6 @@ export interface SceneEditorGlobals {
   THREE: any;         // Three.js namespace
   RAPIER: any;        // Rapier namespace (may be null until ensureRapierLoaded)
   rapierWorld: any;   // Rapier.World (may be null)
-  worldBody: any;     // Fixed RigidBody for static colliders
   renderer: any;      // THREE.WebGLRenderer
   camera: any;        // THREE.PerspectiveCamera
   agent: any;         // Player agent (has getPosition, setPosition, group)
@@ -460,13 +459,6 @@ export class SceneEditor {
       this._npcAnimFrame = requestAnimationFrame(tick);
     };
     this._npcAnimFrame = requestAnimationFrame(tick);
-  }
-
-  dispose(): void {
-    if (this._npcAnimFrame != null) cancelAnimationFrame(this._npcAnimFrame);
-    for (const mixer of this._npcMixers.values()) mixer.stopAllAction();
-    this._npcMixers.clear();
-    this._dynamicBodies.clear();
   }
 }
 

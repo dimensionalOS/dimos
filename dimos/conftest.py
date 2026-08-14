@@ -12,41 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 from contextlib import suppress
+import faulthandler
 import hashlib
 import os
+import pathlib
 import platform
 import tempfile
 import threading
 import time
 import uuid
 
-# With pytest-xdist, pick a per-worker bucket and pin env vars *before*
-# any dimos module is imported, so parallel workers don't share LCM bus,
-# MCP port, or state directory. ``LCMConfig`` captures ``LCM_DEFAULT_URL``
-# at import time; ``GlobalConfig`` captures ``MCP_PORT``; ``run_registry``
-# captures ``XDG_STATE_HOME``. ``LCM_DEFAULT_URL`` in particular has to be
-# an env var (not just a fixture) because subprocess workers spawned by
-# ``ModuleCoordinator`` create their own ``LCMConfig`` / ``LCMRPC``
-# instances internally and can't receive a fixture value — they inherit
-# our env at fork time.
-#
-# Single-worker runs (no xdist) keep the defaults, so external processes
-# with hard-coded ports (e.g. the dimsim Deno bridge, which binds to LCM
-# 7667) can still talk to the test bus.
+# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
+DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
 _worker = os.environ.get("PYTEST_XDIST_WORKER")
+if not _worker:
+    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+
+# Pin every pytest session to its own LCM bus *before* any dimos module is
+# imported (``LCMConfig`` captures ``LCM_DEFAULT_URL`` at import time), so
+# messages from processes outside the session (a dev ``dimos`` daemon, a
+# leaked DimSim bridge, a concurrent pytest run) can't leak into
+# subscribe_all/pattern tests. It has to be an env var (not just a fixture)
+# because subprocesses spawned by tests (``ModuleCoordinator`` workers, the
+# DimSim Deno bridge) create their own LCM instances and inherit our env.
+#
+# Buckets are seeded with the session run id so concurrent sessions on one
+# machine can't collide. xdist workers mix in the worker name, and also get
+# a per-worker MCP port (``GlobalConfig`` captures ``MCP_PORT``) and state
+# dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
+# between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
+# single-worker session out of the isolation, deliberately joining it to an
+# external bus.
+
+
+def _lcm_bucket(seed: str) -> int:
+    return int.from_bytes(hashlib.blake2b(seed.encode(), digest_size=2).digest(), "big") % 5000
+
+
+_run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 if _worker:
-    _BUCKET = (
-        int.from_bytes(hashlib.blake2b(_worker.encode(), digest_size=2).digest(), "big") % 5000
-    )
+    _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
-
-# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
-DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
-if not _worker:
-    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+elif "LCM_DEFAULT_URL" not in os.environ:
+    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _lcm_bucket(_run_id)}?ttl=0"
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
@@ -92,6 +104,61 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def _has_turbojpeg() -> bool:
+    try:
+        from turbojpeg import TurboJPEG
+
+        TurboJPEG()
+        return True
+    except Exception:
+        return False
+
+
+# A segfault in a C extension leaves NO kernel log line: faulthandler installs a
+# SIGSEGV handler, and the kernel only prints "segfault at ..." for *unhandled*
+# signals. The Python traceback is therefore the only evidence, and it has two
+# gaps we close here.
+#
+# 1. pytest's builtin faulthandler plugin writes to stderr, which xdist shares
+#    between workers with no attribution. A per-process file (printed by CI on
+#    failure) says which worker crashed.
+# 2. That plugin is disarmed at unconfigure. Crashes during interpreter
+#    finalization print nothing — and our LCM handler threads are daemons that
+#    outlive the session. The atexit re-arm covers that window.
+#
+# The file is deliberately never closed: closing it would leave faulthandler
+# writing to a dead fd during finalization. Every process thus leaves a file
+# behind, usually empty; nobody reads them unless something crashed.
+_crash_log = None
+
+
+def _arm_crash_dumps() -> None:
+    global _crash_log
+    if _crash_log is None:
+        # RUNNER_TEMP is the per-job temp dir on CI runners; /tmp on the
+        # self-hosted machines is shared between jobs and never cleaned.
+        base = os.environ.get("DIMOS_CRASH_DIR") or os.path.join(
+            os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "pytest-crash"
+        )
+        worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+        crash_path = pathlib.Path(base) / f"crash-{worker}-{os.getpid()}.log"
+        try:
+            crash_path.parent.mkdir(parents=True, exist_ok=True)
+            _crash_log = crash_path.open("w")
+        except OSError as exc:  # never let diagnostics break a test run
+            print(f"crash diagnostics disabled ({base}): {exc}")
+            return
+        atexit.register(_arm_crash_dumps)
+    faulthandler.enable(file=_crash_log, all_threads=True)
+
+
+def pytest_sessionstart(session):
+    # Runs strictly after every pytest_configure, which is the only ordering
+    # guarantee strong enough to win the handler back from the builtin plugin
+    # (it arms stderr during configure).
+    _arm_crash_dumps()
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -101,10 +168,19 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
     )
+    config.addinivalue_line(
+        "markers",
+        "web_browser: cockpit browser e2e (playwright chromium); runs in the CI web job",
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
+    config.addinivalue_line(
+        "markers",
+        "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
+        "except in CI, where it runs anyway so a missing dep fails loudly",
+    )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
@@ -159,6 +235,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
+        "skipif_no_turbojpeg": (
+            not _has_turbojpeg() and not os.getenv("CI"),
+            "native libturbojpeg unavailable",
+        ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
         "skipif_aarch64": (

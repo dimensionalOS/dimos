@@ -33,13 +33,12 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic as ZenohTopic,
     ZenohQoS,
 )
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ZenohRPC
-from dimos.protocol.tf.tf import LCMTF, ZenohTF
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
     from dimos.protocol.rpc.spec import RPCSpec
-    from dimos.protocol.tf.tf import TFSpec
 
 
 def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
@@ -57,9 +56,9 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 # High-rate sensor streams: drop stale frames under congestion, never stall the
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
-# Agent/human conversation channels: low-rate, and a dropped message loses a
-# whole turn of conversation.
-_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle")
+# Low-rate channels where a drop loses something that never comes back: a whole
+# turn of agent/human conversation, or a one-shot robot action verb.
+_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
 
 
 def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
@@ -140,8 +139,3 @@ def apply_transport_arg(argv: list[str], *, g: GlobalConfig = global_config) -> 
 def rpc_backend(g: GlobalConfig = global_config) -> type[RPCSpec]:
     """Return the RPC class (`LCMRPC` or `ZenohRPC`) for the active backend."""
     return ZenohRPC if g.transport == "zenoh" else LCMRPC
-
-
-def tf_backend(g: GlobalConfig = global_config) -> type[TFSpec]:
-    """Return the TF class (`LCMTF` or `ZenohTF`) for the active backend."""
-    return ZenohTF if g.transport == "zenoh" else LCMTF

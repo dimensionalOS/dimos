@@ -13,7 +13,7 @@
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import { startBridgeServer } from "./bridge/server.ts";
 import { launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
-import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml, type EvalResult } from "../evals/runner.ts";
+import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml } from "../evals/runner.ts";
 
 const CLI_DIR = dirname(fromFileUrl(import.meta.url));
 const PROJECT_DIR = resolve(CLI_DIR, "..");
@@ -122,7 +122,6 @@ Dev:
   --env <name>                   Environment filter
   --image-rate <ms>              Image publish interval in ms (default: 500 = 2 Hz)
   --lidar-rate <ms>              LiDAR publish interval in ms (default: 200 = 5 Hz)
-  --odom-rate <ms>               Odom publish interval in ms (default: 20 = 50 Hz)
   --no-depth                     Disable depth image publishing
   --camera-fov <deg>             Camera FOV in degrees (default: 80)
 
@@ -144,7 +143,7 @@ const KNOWN_FLAGS = new Set([
   "help", "version",
   "scene", "port", "headless", "render", "channels", "eval", "env",
   "output", "parallel", "connect", "timeout", "workflow",
-  "camera-fov", "image-rate", "lidar-rate", "odom-rate", "no-depth",
+  "camera-fov", "image-rate", "lidar-rate", "no-depth",
 ]);
 
 function parseArgs(args: string[]) {
@@ -208,7 +207,6 @@ async function main() {
     const sensorRates: Record<string, number> = {};
     if (opts["image-rate"]) sensorRates.images = parseInt(opts["image-rate"] as string);
     if (opts["lidar-rate"]) sensorRates.lidar = parseInt(opts["lidar-rate"] as string);
-    if (opts["odom-rate"]) sensorRates.odom = parseInt(opts["odom-rate"] as string);
 
     // Sensor enable/disable (depth only — color and lidar are essential)
     const sensorEnable: Record<string, boolean> = {};

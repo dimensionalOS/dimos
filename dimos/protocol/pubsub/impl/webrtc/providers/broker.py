@@ -25,9 +25,9 @@ Channels (topic == DataChannel name):
     map_unreliable      robot → operator   map (unordered, lossy) — publishable
 
 Media rides the same session: a sendonly camera track (``set_video_frame``)
-and, opt-in (``audio_in``), the operator's mic (``set_audio_frame_callback``).
+and the operator's mic (``set_audio_frame_callback``).
 The aiortc/CF quirks (MAX_BUNDLE, the id=0 throwaway channel) are documented
-in ``dimos/teleop/quest_hosted/README.md``. Config via ``transports.broker.*``.
+in ``dimos/teleop/hosted/README.md``. Config via ``transports.broker.*``.
 """
 
 from __future__ import annotations
@@ -54,9 +54,12 @@ logger = setup_logger()
 # Default hosted-teleop broker endpoint.
 DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
 
+# Mirrors cloudflare.py — CF silently drops DataChannel messages above ~64 KB.
+MAX_MSG_SIZE = 32 * 1024
+
 if TYPE_CHECKING:
+    import aiohttp
     from aiortc import RTCDataChannel, RTCIceServer, RTCPeerConnection
-    import httpx
 
     from dimos.protocol.pubsub.impl.webrtc.providers.video_track import CameraVideoTrack
 
@@ -68,15 +71,32 @@ class BrokerConfig(ProviderConfig):
     api_key: str | None = None
     robot_id: str | None = None
     robot_name: str = "robot"
+    robot_type: str | None = None
     stun_url: str = "stun:stun.cloudflare.com:3478"
     heartbeat_hz: float = 1.0
     ordered: bool = False
     max_retransmits: int | None = 0
     video_codec: str = "h264"
-    audio_in: bool = False
 
     def _create(self) -> BrokerProvider:
         return BrokerProvider(self)
+
+    # robot_type is session metadata, not part of the connection — exclude it
+    # from equality/hash so pinning it on one transport spec (while the blueprint's
+    # other broker specs leave it unset) still resolves to ONE shared provider
+    # instead of forking a second PeerConnection.
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, BrokerConfig):
+            return NotImplemented
+        return self._identity() == other._identity()
+
+    def __hash__(self) -> int:
+        return hash(self._identity())
+
+    def _identity(self) -> tuple[tuple[str, Any], ...]:
+        # model_dump (declared fields only) not __dict__, so no pydantic internals
+        # can leak into the singleton key.
+        return tuple((k, v) for k, v in self.model_dump().items() if k != "robot_type")
 
 
 class BrokerProvider(AsyncProviderBase):
@@ -88,8 +108,8 @@ class BrokerProvider(AsyncProviderBase):
     (robot → operator): ``publish()`` on ``state_reliable_back`` /
     ``map_unreliable``; while no operator is connected the channel doesn't
     exist and messages drop, which is normal pubsub behaviour. Media rides the
-    same session: a sendonly camera track (``set_video_frame``) and, opt-in,
-    the operator's mic track (``audio_in`` → ``set_audio_frame_callback``).
+    same session: a sendonly camera track (``set_video_frame``) and the
+    operator's mic track (``set_audio_frame_callback``).
     """
 
     INBOUND_CHANNELS = ("cmd_unreliable", "state_reliable")
@@ -97,13 +117,13 @@ class BrokerProvider(AsyncProviderBase):
 
     def __init__(self, config: BrokerConfig | None = None) -> None:
         if not WEBRTC_AVAILABLE:
-            raise RuntimeError("aiortc and httpx required: pip install dimos[webrtc]")
+            raise RuntimeError("aiortc and aiohttp required: pip install dimos[webrtc]")
         super().__init__()
         config = config or BrokerConfig()
         if not config.api_key:
             raise RuntimeError(
                 "BrokerConfig.api_key required "
-                "(set -o transports.broker.api_key=dtk_live_... or "
+                "(set --transports.broker.api-key=dtk_live_... or "
                 "TRANSPORTS__BROKER__API_KEY=dtk_live_...; "
                 "create one in the teleop dashboard: New Key)"
             )
@@ -113,7 +133,7 @@ class BrokerProvider(AsyncProviderBase):
         self._robot_name = config.robot_name
         self._config = config
 
-        self._http: httpx.AsyncClient | None = None
+        self._http: aiohttp.ClientSession | None = None
         self._pc: RTCPeerConnection | None = None
         self.session_id: str | None = None
         self._hb_task: asyncio.Task[None] | None = None
@@ -123,7 +143,8 @@ class BrokerProvider(AsyncProviderBase):
         self._dcs: dict[str, RTCDataChannel] = {}
         self._dc_ids: dict[str, int | None] = {}
         self._callbacks: dict[str, list[Callable[[bytes, str], None]]] = defaultdict(list)
-        self._dropped_publish_warned = False
+        self._dropped_publish_warned: set[str] = set()
+        self._last_hb_error = ""
         # Built in _connect (on the loop thread, for cross-thread set_latest).
         self._video_track: CameraVideoTrack | None = None
         # Operator-audio sink; None drops frames until set_audio_frame_callback().
@@ -146,20 +167,21 @@ class BrokerProvider(AsyncProviderBase):
         assert self._http is not None
         stun_only = [RTCIceServer(urls=[self._config.stun_url])]
         try:
-            r = await self._http.get(
+            async with self._http.get(
                 f"{self._broker_url}/api/v1/sessions/turn-credentials",
                 headers=self._headers,
-            )
-            if r.status_code != 200:
-                logger.warning("TURN credential fetch failed (%d); STUN only", r.status_code)
-                return stun_only
+            ) as r:
+                if r.status != 200:
+                    logger.warning("TURN credential fetch failed (%d); STUN only", r.status)
+                    return stun_only
+                data = await r.json(content_type=None)
             servers = [
                 RTCIceServer(
                     urls=s["urls"],
                     username=s.get("username"),
                     credential=s.get("credential"),
                 )
-                for s in r.json().get("ice_servers", [])
+                for s in data.get("ice_servers", [])
                 if s.get("urls")
             ]
             return servers or stun_only
@@ -168,19 +190,18 @@ class BrokerProvider(AsyncProviderBase):
             return stun_only
 
     async def _connect(self) -> None:
+        import aiohttp
         from aiortc import (
             RTCBundlePolicy,
             RTCConfiguration,
             RTCPeerConnection,
             RTCSessionDescription,
         )
-        import httpx
 
         # Roll back partial state on failure so a retry doesn't leak.
         try:
-            self._http = httpx.AsyncClient(timeout=30.0)
-            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds —
-            # see dimos/teleop/quest_hosted/README.md before changing.
+            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
+            # MAX_BUNDLE + the id=0 throwaway channel are CF/aiortc workarounds.
             self._pc = RTCPeerConnection(
                 RTCConfiguration(
                     iceServers=await self._fetch_ice_servers(),
@@ -196,11 +217,10 @@ class BrokerProvider(AsyncProviderBase):
             if self._config.video_codec:
                 self._prefer_video_codec(self._config.video_codec)
             # Operator → robot audio: recvonly m=audio in the offer so CF can
-            # bridge the operator's mic track into this session. The frames are
-            # read off the track in the on("track") handler below. Opt-in.
-            if self._config.audio_in:
-                self._pc.addTransceiver("audio", direction="recvonly")
-                self._attach_audio_receiver()
+            # bridge the operator's mic track into this session. Frames are
+            # dropped unless a module registers an audio callback.
+            self._pc.addTransceiver("audio", direction="recvonly")
+            self._attach_audio_receiver()
             self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
             offer = await self._pc.createOffer()
@@ -216,20 +236,24 @@ class BrokerProvider(AsyncProviderBase):
 
                 await asyncio.wait_for(ev.wait(), 10.0)
 
-            r = await self._http.post(
+            async with self._http.post(
                 f"{self._broker_url}/api/v1/sessions",
                 headers=self._headers,
                 json={
                     # robot_id is optional — broker derives it from the API key.
                     **({"robot_id": self._robot_id} if self._robot_id else {}),
                     "robot_name": self._robot_name,
+                    # Pinned on a broker spec in the blueprint; omitted when unset
+                    **({"robot_type": self._config.robot_type} if self._config.robot_type else {}),
                     "sdp_offer": self._pc.localDescription.sdp,
                 },
-            )
-            if r.status_code not in (200, 201):
-                # 200-char cap — SDP carries short-lived ICE ufrag/pwd.
-                raise RuntimeError(f"Broker session create failed: {r.status_code} {r.text[:200]}")
-            data = r.json()
+            ) as r:
+                if r.status not in (200, 201):
+                    # 200-char cap — SDP carries short-lived ICE ufrag/pwd.
+                    raise RuntimeError(
+                        f"Broker session create failed: {r.status} {(await r.text())[:200]}"
+                    )
+                data = await r.json(content_type=None)
             self.session_id = data["session_id"]
             await self._pc.setRemoteDescription(
                 RTCSessionDescription(
@@ -274,7 +298,8 @@ class BrokerProvider(AsyncProviderBase):
     def set_audio_frame_callback(self, cb: Callable[[bytes, int, int], None] | None) -> None:
         """Register a sink for received operator audio: cb(pcm_bytes, sample_rate,
         channels). Thread-safe to set; frames are dropped until it's wired."""
-        self._audio_frame_cb = cb
+        with self._lock:
+            self._audio_frame_cb = cb
 
     def _attach_audio_receiver(self) -> None:
         """Fan the operator's inbound audio track to the sink callback."""
@@ -284,7 +309,9 @@ class BrokerProvider(AsyncProviderBase):
         def _on_track(track: Any) -> None:
             if track.kind != "audio":
                 return
-            logger.debug("operator audio track received")
+            logger.info("operator audio track received")
+            if self._audio_task is not None:
+                self._audio_task.cancel()
             self._audio_task = asyncio.get_running_loop().create_task(self._read_audio_track(track))
 
     async def _read_audio_track(self, track: Any) -> None:
@@ -293,8 +320,9 @@ class BrokerProvider(AsyncProviderBase):
         try:
             while True:
                 frame = await track.recv()  # av.AudioFrame
-                cb = self._audio_frame_cb
-                if cb is None:
+                with self._lock:
+                    callback = self._audio_frame_cb
+                if callback is None:
                     continue
                 try:
                     # aiortc's Opus decode yields packed s16: to_ndarray() is
@@ -302,46 +330,74 @@ class BrokerProvider(AsyncProviderBase):
                     # come from the layout, not the array shape.
                     pcm = frame.to_ndarray()
                     channels = len(frame.layout.channels) or 1
-                    cb(pcm.tobytes(), int(frame.sample_rate), channels)
+                except Exception:
+                    logger.warning("audio frame conversion error", exc_info=True)
+                    continue
+                try:
+                    callback(pcm.tobytes(), int(frame.sample_rate), channels)
                 except Exception:
                     # A raising sink is a bug in the wired module, not the wire.
                     logger.warning("audio sink callback error", exc_info=True)
-        except Exception:
-            logger.debug("operator audio track ended")
+        except Exception as e:
+            logger.info("operator audio track ended (%s)", type(e).__name__)
 
     async def _disconnect(self) -> None:
         if self._hb_task is not None:
             self._hb_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._hb_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("heartbeat task died with error", exc_info=True)
             self._hb_task = None
         if self._audio_task is not None:
             self._audio_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._audio_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("audio reader died with error", exc_info=True)
             self._audio_task = None
         if self._http and self.session_id:
-            import httpx
+            import aiohttp
 
             # Best-effort deregistration: swallow network errors only — a
             # non-network exception here is a bug we want to hear about.
-            with contextlib.suppress(httpx.HTTPError):
-                await self._http.delete(
+            # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) on
+            # the session's total timeout, so suppress that explicitly too.
+            try:
+                async with self._http.delete(
                     f"{self._broker_url}/api/v1/sessions/{self.session_id}",
                     headers=self._headers,
-                )
+                ) as r:
+                    await r.read()
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                logger.exception("Broker session DELETE failed")
         for name in list(self._dcs):
-            self._close_channel(name)
+            try:
+                self._close_channel(name)
+            except Exception:
+                logger.warning("closing channel %s failed", name, exc_info=True)
         # Forget the broker's channel ids: after a reconnect the heartbeat
         # must re-open channels even if the broker hands out the same SCTP
         # ids (stale entries would make it skip _open_channel with _dcs empty).
         self._dc_ids.clear()
         if self._pc:
-            await self._pc.close()
+            try:
+                await self._pc.close()
+            except Exception:
+                logger.warning("PeerConnection close failed", exc_info=True)
             self._pc = None
         self._video_track = None
         if self._http:
-            await self._http.aclose()
+            try:
+                await self._http.close()
+            except Exception:
+                logger.warning("http client close failed", exc_info=True)
             self._http = None
         self.session_id = None
 
@@ -373,13 +429,21 @@ class BrokerProvider(AsyncProviderBase):
                         status,
                     )
                     self._notify_operator_lost()
+                    self._hb_task = None  # we ARE this task; skip the self-cancel
+                    try:
+                        await self._disconnect()
+                    except Exception:
+                        logger.warning("cleanup after terminal heartbeat failed", exc_info=True)
+                    with self._lock:
+                        self._started = False
+                    asyncio.get_running_loop().stop()
                     return
             else:
                 terminal_streak = 0
             if status is not None and status != 200:
                 if not fail_warned:
                     fail_warned = True
-                    logger.warning("Heartbeat failing: %d", status)
+                    logger.warning("Heartbeat failing: %d %s", status, self._last_hb_error)
             else:
                 fail_warned = False
             await asyncio.sleep(interval)
@@ -388,15 +452,16 @@ class BrokerProvider(AsyncProviderBase):
         """Return the HTTP status code (or None if skipped)."""
         if self._http is None or self.session_id is None:
             return None
-        r = await self._http.post(
+        async with self._http.post(
             f"{self._broker_url}/api/v1/sessions/{self.session_id}/heartbeat",
             headers=self._headers,
             json={},
-        )
-        if r.status_code != 200:
-            logger.debug("Heartbeat non-200: %d %s", r.status_code, r.text[:200])
-            return r.status_code
-        ack = r.json()
+        ) as r:
+            if r.status != 200:
+                # Stashed for the deduplicated warning — per-tick logging would flood.
+                self._last_hb_error = (await r.text())[:200]
+                return r.status
+            ack = await r.json(content_type=None)
         # state_reliable_back first so the state_reliable ping handler can
         # find it in _dcs if a ping arrives during channel bring-up.
         self._reconcile_channels(
@@ -447,15 +512,17 @@ class BrokerProvider(AsyncProviderBase):
             await self._pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type="offer"))
             answer = await self._pc.createAnswer()
             await self._pc.setLocalDescription(answer)
-            r = await self._http.post(
+            async with self._http.post(
                 f"{self._broker_url}/api/v1/sessions/{self.session_id}/renegotiate-robot",
                 headers=self._headers,
                 json={"sdp_answer": self._pc.localDescription.sdp},
-            )
-            if r.status_code not in (200, 201):
-                logger.warning("renegotiate-robot failed: %d %s", r.status_code, r.text[:200])
-            else:
-                logger.info("Robot renegotiation complete (operator audio bridged)")
+            ) as r:
+                if r.status not in (200, 201):
+                    logger.warning(
+                        "renegotiate-robot failed: %d %s", r.status, (await r.text())[:200]
+                    )
+                else:
+                    logger.info("Robot renegotiation complete (operator audio bridged)")
         except Exception:
             logger.exception("Robot renegotiation failed — continuing without audio")
 
@@ -550,11 +617,18 @@ class BrokerProvider(AsyncProviderBase):
                 return
             ch = self._dcs.get(topic)
             if ch is None or ch.readyState != "open":
-                if not self._dropped_publish_warned:
-                    self._dropped_publish_warned = True
+                if topic not in self._dropped_publish_warned:
+                    self._dropped_publish_warned.add(topic)
                     logger.info("Dropping %s publish: no operator connected", topic)
                 return
-            self._dropped_publish_warned = False
+            self._dropped_publish_warned.discard(topic)
+            if len(data) > MAX_MSG_SIZE:
+                logger.warning(
+                    "%s publish is %d bytes (> %d) — CF will drop it",
+                    topic,
+                    len(data),
+                    MAX_MSG_SIZE,
+                )
 
             channel: RTCDataChannel = ch  # narrowed non-None above; capture for the closure
 

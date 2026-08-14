@@ -10,6 +10,10 @@ name: pr-labels
 # flight), every PR to main must declare backport intent via that label or
 # `backport:skip`.
 #
+# `first-time-contributor`: labels PRs whose author had not previously
+# committed to this repository when the PR was opened. The label is retained
+# as a snapshot even if the author's association changes later.
+#
 # Runs on the default branch via these events, so the GITHUB_TOKEN is
 # write-scoped even for PRs from forks — and the workflow file itself can't
 # be tampered with by a fork PR.
@@ -21,6 +25,12 @@ on:
   pull_request_target:
     types: [synchronize, converted_to_draft, ready_for_review, opened, reopened, labeled, unlabeled]
   merge_group:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to evaluate and backfill
+        required: true
+        type: number
 
 permissions: {}
 
@@ -120,6 +130,68 @@ jobs:
               }
               await setLabel(prNumber, ciOk && !pr.draft);
             }
+
+  first-time-contributor:
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       github.event.action == 'opened') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check contribution history and label
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        with:
+          script: |
+            const label = 'first-time-contributor';
+            const { owner, repo } = context.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+
+            if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+            const author = pr.user?.login;
+
+            if (!author) {
+              core.setFailed(`Pull request #${prNumber} has no author login`);
+              return;
+            }
+
+            const { data: commits } = await github.rest.repos.listCommits({
+              owner,
+              repo,
+              author,
+              sha: context.payload.repository.default_branch,
+              per_page: 1,
+            });
+            const isFirstTimeContributor = commits.length === 0;
+
+            core.info(
+              `pr=#${prNumber} author=${author} priorCommits=${commits.length} ` +
+              `firstTimeContributor=${isFirstTimeContributor}`,
+            );
+
+            if (!isFirstTimeContributor) {
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: prNumber,
+              labels: [label],
+            });
 
   backport-check:
     name: "Admins: Backport label added"

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import platform
 import re
 from typing import Literal, TypeAlias
@@ -55,6 +56,14 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     replay_db: str = "go2_short"
     new_memory: bool = False
+    # Discover zenoh peers across the network.
+    # Toggling off drops back to loopback-only discovery:
+    # Sibling worker processes still find each other,
+    # remote peers come solely from the connect endpoints derived from --robot-ip
+    zenoh_scouting: bool = False
+    # Seconds ZenohService.start() blocks for the configured connect endpoints to
+    # link before giving up and continuing. 0 disables the wait.
+    zenoh_connect_timeout: float = 1.0
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
@@ -91,6 +100,8 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
+    local_relay: bool = False
+    relay_url: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -124,6 +135,14 @@ class GlobalConfig(BaseSettings):
         if self.mujoco_camera_position is None:
             return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
         return tuple(_get_all_numbers(self.mujoco_camera_position))
+
+    @property
+    def processed_robot_ips(self) -> tuple[str, ...]:
+        ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
+        is_running_tests = "PYTEST_CURRENT_TEST" in os.environ
+        if not ips and not is_running_tests:
+            raise ValueError("No robot IPs specified. Must have at least one IP.")
+        return tuple(ips)
 
 
 global_config = GlobalConfig()

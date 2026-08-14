@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, cast
 
 from dimos.core.coordination.external_python_worker import ExternalPythonWorker
@@ -25,12 +25,6 @@ from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-
-def _merge_config_kwargs(kwargs: dict[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
-    merged = dict(kwargs)
-    merged.update(overrides)
-    return merged
 
 
 class WorkerManagerExternalPython(WorkerManager):
@@ -66,20 +60,17 @@ class WorkerManagerExternalPython(WorkerManager):
             except Exception:
                 logger.exception("Failed to clean up external Python worker startup")
             raise
-        proxy = cast("ModuleProxyProtocol", RPCClient.remote(module_class))
+        proxy = cast(
+            "ModuleProxyProtocol",
+            RPCClient.remote(module_class, remote_name=kwargs.get("instance_name")),
+        )
         self._workers[proxy] = worker
         self._module_constructor_kwargs[proxy] = dict(kwargs)
         return proxy
 
-    def deploy_parallel(
-        self, specs: Sequence[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
-    ) -> list[ModuleProxyProtocol]:
+    def deploy_parallel(self, specs: Sequence[ModuleSpec]) -> list[ModuleProxyProtocol]:
         return [
-            self.deploy(
-                module_class,
-                global_config,
-                _merge_config_kwargs(kwargs, blueprint_args.get(module_class.name, {})),
-            )
+            self.deploy(module_class, global_config, kwargs)
             for module_class, global_config, kwargs in specs
         ]
 

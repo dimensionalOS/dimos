@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -30,9 +30,12 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 RobotName: TypeAlias = str
@@ -41,8 +44,24 @@ RobotName: TypeAlias = str
 WorldRobotID: TypeAlias = str
 """Internal Drake world robot ID"""
 
+PlanningGroupID: TypeAlias = str
+"""Public planning group ID of the form {robot_name}/{group_name}."""
+
+LocalModelJointName: TypeAlias = str
+"""Joint name as it appears in URDF/SRDF before world binding."""
+
+GlobalJointName: TypeAlias = str
+"""Public joint name of the form {robot_name}/{local_joint_name}."""
+
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
+
+
+CartesianWaypoint: TypeAlias = "PoseStamped | Transform"
+"""One absolute TCP pose or relative rigid displacement from the planning start."""
+
+CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[Transform]"
+"""Ordered homogeneous Cartesian waypoints for one planning group."""
 
 
 @dataclass(frozen=True)
@@ -56,9 +75,32 @@ class PlanningSceneInfo:
     robots: Mapping[WorldRobotID, RobotModelConfig]
     """Robot model configurations keyed by world robot ID."""
 
+    planning_groups: tuple[PlanningGroup, ...] = ()
+    """Resolved immutable planning groups for the initialized scene."""
+
+
+@dataclass(frozen=True)
+class VisualizationSession:
+    """One-shot immutable visualization initialization payload."""
+
+    scene: PlanningSceneInfo
+    operator: object | None = None
+    """Optional concrete ManipulationOperator; typed as object to avoid low-level cycles."""
+
+
+@dataclass(frozen=True)
+class VisualizationStateFrame:
+    """Pushed current joint states for visualization backends."""
+
+    joint_states: Mapping[WorldRobotID, JointState]
+
 
 Jacobian: TypeAlias = "NDArray[np.float64]"
 """6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
+
+
+DEFAULT_OBSTACLE_RGBA: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+"""Default RGBA (0-1 range) applied to obstacles that carry no explicit color."""
 
 
 @dataclass
@@ -82,7 +124,7 @@ class Obstacle:
     obstacle_type: ObstacleType
     pose: PoseStamped
     dimensions: tuple[float, ...] = ()
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
 
 
@@ -142,6 +184,24 @@ class PlanningResult:
 
 
 @dataclass
+class GeneratedPlan:
+    """Canonical selected-planning-group plan exposed by ManipulationModule."""
+
+    group_ids: tuple[PlanningGroupID, ...]
+    trajectory: JointTrajectory
+    path: list[JointState] = field(default_factory=list)
+    status: PlanningStatus = PlanningStatus.NO_SOLUTION
+    planning_time: float = 0.0
+    path_length: float = 0.0
+    iterations: int = 0
+    message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if the generated plan was successful."""
+        return self.status == PlanningStatus.SUCCESS
+
+
+@dataclass
 class CollisionObjectMessage:
     """Message for adding/updating/removing obstacles.
 
@@ -153,7 +213,7 @@ class CollisionObjectMessage:
         primitive_type: "box", "sphere", or "cylinder" (for add/update)
         pose: Pose of the obstacle (for add/update)
         dimensions: Type-specific dimensions (for add/update)
-        color: RGBA color tuple
+        color: RGBA color tuple. ``None`` means the field was omitted.
     """
 
     id: str
@@ -161,4 +221,4 @@ class CollisionObjectMessage:
     primitive_type: str | None = None
     pose: PoseStamped | None = None
     dimensions: tuple[float, ...] | None = None
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] | None = None

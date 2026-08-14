@@ -52,6 +52,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -82,6 +83,31 @@ def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slic
 
 
 _RX180 = R.from_euler("x", 180, degrees=True)
+
+
+def _pose_matrix(
+    position: NDArray[np.float64], rotation: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[:3, :3] = rotation
+    matrix[:3, 3] = position
+    return matrix
+
+
+def _transform_from_matrix(
+    matrix: NDArray[np.float64], *, frame_id: str, child_frame_id: str, ts: float
+) -> Transform:
+    return Transform(
+        translation=Vector3(
+            float(matrix[0, 3]),
+            float(matrix[1, 3]),
+            float(matrix[2, 3]),
+        ),
+        rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
+        frame_id=frame_id,
+        child_frame_id=child_frame_id,
+        ts=ts,
+    )
 
 
 def _default_identity_transform() -> Transform:
@@ -306,6 +332,7 @@ class MujocoSimModule(
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -417,6 +444,7 @@ class MujocoSimModule(
                 fps=float(self.config.fps),
                 max_geom=max_geom,
                 geom_groups=groups,
+                base_body_name=self.config.base_frame_id,
             )
 
         primary_needed = (
@@ -921,35 +949,37 @@ class MujocoSimModule(
             return
         mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
         optical_rot = mj_rot * _RX180
-        q = optical_rot.as_quat()  # xyzw
-        pos = Vector3(
-            float(frame.cam_pos[0]),
-            float(frame.cam_pos[1]),
-            float(frame.cam_pos[2]),
-        )
-        rot = Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+        camera_transform = _pose_matrix(frame.cam_pos, mj_rot.as_matrix())
+        optical_transform = _pose_matrix(frame.cam_pos, optical_rot.as_matrix())
+        parent_frame = "world"
+        if frame.base_pos is not None and frame.base_mat is not None:
+            parent_frame = self.config.base_frame_id
+            base_transform = _pose_matrix(frame.base_pos, frame.base_mat)
+            inv_base_transform = np.linalg.inv(base_transform)
+            camera_transform = inv_base_transform @ camera_transform
+            optical_transform = inv_base_transform @ optical_transform
+
         self.tf.publish(
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._color_optical_frame,
-                ts=ts,
-            ),
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._depth_optical_frame,
-                ts=ts,
-            ),
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._camera_link,
-                ts=ts,
-            ),
+            TFMessage(
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._color_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._depth_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    camera_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._camera_link,
+                    ts=ts,
+                ),
+            )
         )
 
     def _generate_pointcloud(self) -> None:

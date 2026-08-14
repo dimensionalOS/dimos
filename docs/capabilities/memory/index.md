@@ -1,3 +1,8 @@
+---
+title: "Spatial Memory"
+sidebarTitle: "Overview"
+---
+
 <details>
 <summary>Python</summary>
 
@@ -138,7 +143,7 @@ We don't really have to deal with the whole global map actually, let's get top 1
 
 ```python title="Python" session=mem output=none
 from dimos.models.embedding.clip import CLIPModel
-from dimos.mapping.voxels import VoxelMapTransformer
+from dimos.mapping.voxels.module import VoxelMapTransformer
 drawing = Space()
 
 # this is defined here, but not executed

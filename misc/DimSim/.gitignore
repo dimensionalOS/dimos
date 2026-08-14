@@ -4,8 +4,6 @@ dist/
 .DS_Store
 **/.DS_Store
 .deno/
-scenes.json
-scenes/**/apt.json
 scripts/
 
 # local dev / playground scenes

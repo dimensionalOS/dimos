@@ -16,30 +16,40 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.a750.config import (
-    A750_FK_MODEL,
     a750_hardware,
     make_a750_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import eef_twist_task
+from dimos.robot.manipulators.common.blueprints import (
+    eef_twist_task,
+)
+from dimos.robot.manipulators.common.coordinators import (
+    ArmTwistCoordinator,
+)
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a750_hw = a750_hardware("arm", mock_without_address=True)
+_a750_model = make_a750_model_config()
 
 keyboard_teleop_a750 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
         hardware=[_a750_hw],
-        tasks=[eef_twist_task(_a750_hw, model_path=A750_FK_MODEL, ee_joint_id=6)],
+        tasks=[
+            eef_twist_task(
+                _a750_hw,
+                robot_model=_a750_model,
+            )
+        ],
     ),
     ManipulationModule.blueprint(
-        robots=[make_a750_model_config()],
+        robots=[_a750_model],
         visualization={"backend": "meshcat"},
     ),
 )

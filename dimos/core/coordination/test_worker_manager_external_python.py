@@ -34,34 +34,26 @@ def test_coordinator_registers_mixed_managers() -> None:
     assert coordinator._managers["python"].health_check()
 
 
-def test_coordinator_keeps_blueprint_override_kwargs_for_restart() -> None:
-    coordinator = ModuleCoordinator(global_config)
-    manager = Mock()
-    manager.deploy_parallel.return_value = [Mock()]
-    coordinator._managers = {"external-python": manager}
-
-    coordinator.deploy_parallel(
-        [(_ExternalDeclaration, global_config, {"declared": "value"})],
-        {_ExternalDeclaration.name: {"override": "value"}},
-    )
-
-    assert coordinator._deployed_kwargs[_ExternalDeclaration] == {
-        "declared": "value",
-        "override": "value",
-    }
-
-
 def test_external_manager_dispatches_and_undeploys(monkeypatch) -> None:
     worker = Mock()
     worker.pid = 123
     proxy = Mock()
     monkeypatch.setattr(external_manager, "ExternalPythonWorker", Mock(return_value=worker))
-    monkeypatch.setattr(external_manager.RPCClient, "remote", Mock(return_value=proxy))
+    remote = Mock(return_value=proxy)
+    monkeypatch.setattr(external_manager.RPCClient, "remote", remote)
 
     manager = external_manager.WorkerManagerExternalPython(global_config)
-    deployed = manager.deploy(_ExternalDeclaration, global_config, {})
+    deployed = manager.deploy(
+        _ExternalDeclaration,
+        global_config,
+        {"instance_name": "robot/externaldeclaration"},
+    )
 
     assert deployed is proxy
+    remote.assert_called_once_with(
+        _ExternalDeclaration,
+        remote_name="robot/externaldeclaration",
+    )
     worker.start.assert_called_once()
     assert manager.health_check()
     manager.undeploy(proxy)

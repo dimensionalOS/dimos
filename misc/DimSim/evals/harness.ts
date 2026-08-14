@@ -21,11 +21,11 @@
  */
 
 import {
-  type SceneState, type AssetEntry, type EvalSuccess as _EvalSuccess,
+  type SceneState, type AssetEntry,
   type ObjectDistanceOpts, type RadiusContainsOpts,
   findAsset, dist, objectDistance, radiusContains,
 } from "./rubrics.ts";
-import type { DimosBridge } from "../bridge.ts";
+import type { DimosBridge } from "../src/bridge.ts";
 
 export interface AgentPose { x: number; y: number; z: number; yaw: number; pitch: number; }
 export interface StartPose { x?: number; y?: number; z?: number; yaw?: number; }
@@ -157,7 +157,7 @@ export class EvalHarness {
 
   _patchWsOnMessage(ws: WebSocket): void {
     const origOnMessage = ws.onmessage;
-    const evalTypes = new Set(["runEval", "ping"]);
+    const evalTypes = new Set(["runEval"]);
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data === "string") {
         try {
@@ -184,9 +184,6 @@ export class EvalHarness {
     switch (cmd.type) {
       case "runEval":
         await this._loadAndRunWorkflowFile(cmd.workflowUrl);
-        break;
-      case "ping":
-        this._send({ type: "pong", ts: Date.now() });
         break;
     }
   }
@@ -219,10 +216,11 @@ export class EvalHarness {
    *     import { runEval } from '@dimsim/eval';
    *     await runEval({ scene, task, success, … });
    *
-   * That import resolves to public/_dimsim/eval-api.js which delegates to
-   * this method via `window.__dimsim.eval.runEval`.  Result is both
-   * returned to the caller AND sent over WS as `{type:'evalResult'}` for
-   * the Deno runner.
+   * That import resolves via the index.html importmap to the pinned
+   * `/assets/dimsim-eval.js` chunk (this module), whose exported `runEval`
+   * delegates to this method on the engine-registered singleton.  Result is
+   * both returned to the caller AND sent over WS as `{type:'evalResult'}`
+   * for the Deno runner.
    */
   async runEval(workflow: EvalWorkflow): Promise<EvalResultMsg> {
     if (!workflow || typeof workflow.success !== "function") {
@@ -372,9 +370,5 @@ export class EvalHarness {
     document.body.appendChild(el);
     this._overlay = el;
     setTimeout(() => { if (this._overlay === el) { el.remove(); this._overlay = null; } }, 5000);
-  }
-
-  dispose(): void {
-    if (this._overlay) { this._overlay.remove(); this._overlay = null; }
   }
 }

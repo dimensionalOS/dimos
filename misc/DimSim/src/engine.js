@@ -7,8 +7,6 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 
-let threeRendererRef = null;
-let threeSceneRef = null;
 let RAPIER = null;
 let _rapierInitPromise = null;
 let rapierWorld = null;
@@ -42,16 +40,12 @@ const GO2_CAMERA_FORWARD = 0.18;
 
 const canvas = document.getElementById("c");
 const statusEl = document.getElementById("status");
-const resetBtn = document.getElementById("reset");
-const assetsListEl = document.getElementById("assets-list"); // null in sim-only
 const overlayEl = document.getElementById("overlay");
 const simPanelCollapseBtn = document.getElementById("sim-panel-collapse");
 const simPanelOpenBtn = document.getElementById("sim-panel-open");
 const statusSimEl = document.getElementById("status-sim");
-const spawnAiBtn = document.getElementById("spawn-ai");
 const agentPanelEl = document.getElementById("agent-panel");
 const agentLastEl = document.getElementById("agent-last");
-const agentObservationEl = document.getElementById("agent-observation");
 const agentShotImgEl = document.getElementById("agent-shot-img");
 const agentReqMetaEl = document.getElementById("agent-req-meta");
 const agentReqPromptEl = document.getElementById("agent-req-prompt");
@@ -75,7 +69,6 @@ const simRgbdMinEl = document.getElementById("sim-rgbd-min");
 const simRgbdMaxEl = document.getElementById("sim-rgbd-max");
 const simRgbdMinValEl = document.getElementById("sim-rgbd-min-val");
 const simRgbdMaxValEl = document.getElementById("sim-rgbd-max-val");
-const simRgbdPcOverlayBtn = document.getElementById("sim-rgbd-pc-overlay");
 const simLidarColorRangeBtn = document.getElementById("sim-lidar-color-range");
 const simLidarOrderedDebugBtn = document.getElementById("sim-lidar-ordered-debug");
 const simLidarNoiseBtn = document.getElementById("sim-lidar-noise");
@@ -99,7 +92,6 @@ let rgbdRangeMinM = 0.2;
 let rgbdRangeMaxM = 12.0;
 let rgbdNoiseEnabled = false;
 let rgbdSpeckleEnabled = false;
-let rgbdPcOverlayOnLidar = false;
 let lidarColorByRange = false; // false = intensity grayscale (realistic default)
 let lidarOrderedDebugView = false; // false=unordered 3D cloud, true=ordered rings debug
 let lidarNoiseEnabled = false; // deterministic range noise + dropouts
@@ -166,7 +158,6 @@ tagsGroup.name = "tagsGroup";
 
 // Assets (Edit mode)
 let assets = []; // [{id,title,notes,states:[{id,name,glbName,dataBase64,interactions:[{id,label,to}]}],currentStateId,actions:[{id,label,from,to}],transform:{...}, _colliderHandle?}]
-let selectedAssetId = null;
 const assetsGroup = new THREE.Group();
 assetsGroup.name = "assetsGroup";
 const gltfLoader = new GLTFLoader();
@@ -264,7 +255,6 @@ function createBlobShadow(assetId, footprintX, footprintZ, localGroundY, opts) {
 // PRIMITIVES (Level Editor) – lightweight parametric shapes
 // =============================================================================
 let primitives = []; // [{id, type, name, dimensions:{...}, transform:{position,rotation,scale}, material:{color,roughness,metalness,textureDataUrl}, physics:bool, _colliderHandle?}]
-let selectedPrimitiveId = null;
 const _assetBumpVelocities = new Map(); // assetId -> THREE.Vector3
 const _playerPosPrevForBump = new THREE.Vector3();
 let _playerPosPrevForBumpValid = false;
@@ -323,12 +313,6 @@ const PRIMITIVE_DIM_CONFIG = {
   openEnded: { min: 0, max: 1, step: 1, integer: true },
 };
 
-function formatPrimitiveDimValue(key, value) {
-  if (PRIMITIVE_DIM_CONFIG[key]?.integer) return String(Math.round(value));
-  if (key.endsWith("Deg")) return `${Math.round(value)}°`;
-  if (key === "openEnded") return value >= 0.5 ? "Yes" : "No";
-  return Number(value).toFixed(2);
-}
 
 const PRIMITIVE_DIM_LABELS = {
   edgeRadius: "Roundness",
@@ -348,9 +332,6 @@ const PRIMITIVE_DIM_LABELS = {
   radiusBottom: "Bottom Radius",
 };
 
-function getPrimitiveDimLabel(key) {
-  return PRIMITIVE_DIM_LABELS[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
-}
 
 // =============================================================================
 // EDITOR LIGHTS – user-placed lights with full control
@@ -380,9 +361,6 @@ let agentTask = {
 };
 const _agentTasks = new Map(); // agentId -> { active, instruction, startedAt, finishedAt, finishedReason, lastSummary }
 
-function _getAgentTask(agentId) {
-  return _agentTasks.get(agentId) || agentTask;
-}
 
 function _setAgentTask(agentId, task) {
   _agentTasks.set(agentId, task);
@@ -412,85 +390,9 @@ const MAX_AGENT_COUNT = 4;
 
 // Helper to normalize asset schema (backward compat)
 // This function ensures all asset properties are properly loaded including states, interactions, and actions
-function normalizeAssetSchema(raw) {
-  // Ensure states exist
-  if (!raw.states || raw.states.length === 0) {
-    raw.states = [{
-      id: crypto.randomUUID(),
-      name: "default",
-      glbName: raw.glbName || "",
-      dataBase64: raw.dataBase64 || "",
-      interactions: [],
-    }];
-    raw.currentStateId = raw.states[0].id;
-  }
-
-  // Ensure each state has interactions array
-  for (const state of raw.states) {
-    if (!Array.isArray(state.interactions)) {
-      state.interactions = [];
-    }
-  }
-
-  // Build the normalized asset object
-  const normalized = {
-    id: raw.id ?? crypto.randomUUID(),
-    title: raw.title ?? "",
-    notes: raw.notes ?? "",
-    states: raw.states,
-    currentStateId: raw.currentStateId ?? raw.states[0]?.id,
-    actions: [], // Will be populated below
-    transform: raw.transform ?? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } },
-    pickable: raw.pickable ?? false, // Can be picked up and moved
-    castShadow: raw.castShadow ?? false,
-    receiveShadow: raw.receiveShadow ?? false,
-    blobShadow: raw.blobShadow ?? null, // { opacity, scale, stretch, rotationDeg, offsetX, offsetY, offsetZ }
-  };
-
-  // Copy actions if they exist in raw data
-  if (Array.isArray(raw.actions) && raw.actions.length > 0) {
-    normalized.actions = raw.actions.map(act => ({
-      id: act.id,
-      label: act.label || "toggle",
-      from: act.from,
-      to: act.to,
-    }));
-  } else {
-    // Backfill actions from state interactions if no actions array exists
-    for (const state of normalized.states) {
-      for (const interaction of state.interactions || []) {
-        if (interaction.to && interaction.to !== state.id) {
-          normalized.actions.push({
-            id: interaction.id || `act_${state.id}_${interaction.to}`,
-            label: interaction.label || "toggle",
-            from: state.id,
-            to: interaction.to,
-          });
-        }
-      }
-    }
-  }
-
-  // Also backfill interactions from actions if any state is missing them
-  if (normalized.actions.length > 0) {
-    const actionsByFrom = new Map();
-    for (const act of normalized.actions) {
-      if (!actionsByFrom.has(act.from)) actionsByFrom.set(act.from, []);
-      actionsByFrom.get(act.from).push({ id: act.id, label: act.label, to: act.to });
-    }
-    for (const state of normalized.states) {
-      if (!state.interactions || state.interactions.length === 0) {
-        state.interactions = actionsByFrom.get(state.id) || [];
-      }
-    }
-  }
-
-  return normalized;
-}
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  // SparkRenderer docs recommend antialias:false for splats (MSAA doesn't help splats and can hurt)
   antialias: false,
   powerPreference: "high-performance",
   // Required for reading pixels from the canvas (agent POV capture)
@@ -520,10 +422,6 @@ try {
 } catch {
   // ignore
 }
-
-// Make renderer/scene available to SparkRenderer initialization after dynamic import.
-threeRendererRef = renderer;
-threeSceneRef = scene;
 
 const camera = new THREE.PerspectiveCamera(
   65,
@@ -701,21 +599,6 @@ rgbdDepthTarget.depthTexture = new THREE.DepthTexture(_rgbdSize.x, _rgbdSize.y, 
 rgbdDepthTarget.depthTexture.minFilter = THREE.NearestFilter;
 rgbdDepthTarget.depthTexture.magFilter = THREE.NearestFilter;
 rgbdDepthTarget.depthTexture.generateMipmaps = false;
-const RGBD_PC_OVERLAY_RT_W = 192;
-const RGBD_PC_OVERLAY_RT_H = 108;
-const rgbdOverlayDepthTarget = new THREE.WebGLRenderTarget(RGBD_PC_OVERLAY_RT_W, RGBD_PC_OVERLAY_RT_H, {
-  minFilter: THREE.NearestFilter,
-  magFilter: THREE.NearestFilter,
-  format: THREE.RGBAFormat,
-  type: THREE.UnsignedByteType,
-  depthBuffer: true,
-  stencilBuffer: false,
-});
-rgbdOverlayDepthTarget.texture.generateMipmaps = false;
-rgbdOverlayDepthTarget.depthTexture = new THREE.DepthTexture(RGBD_PC_OVERLAY_RT_W, RGBD_PC_OVERLAY_RT_H, THREE.UnsignedIntType);
-rgbdOverlayDepthTarget.depthTexture.minFilter = THREE.NearestFilter;
-rgbdOverlayDepthTarget.depthTexture.magFilter = THREE.NearestFilter;
-rgbdOverlayDepthTarget.depthTexture.generateMipmaps = false;
 
 // RGB-D debug material (planar forward-axis depth from view-space z).
 // Kept only for debugging and no longer used as default RGB-D output.
@@ -771,16 +654,6 @@ const rgbdMetricTarget = new THREE.WebGLRenderTarget(_rgbdSize.x, _rgbdSize.y, {
 });
 if (rgbdMetricUsesR32F) rgbdMetricTarget.texture.internalFormat = "R32F";
 rgbdMetricTarget.texture.generateMipmaps = false;
-const rgbdOverlayMetricTarget = new THREE.WebGLRenderTarget(RGBD_PC_OVERLAY_RT_W, RGBD_PC_OVERLAY_RT_H, {
-  minFilter: THREE.NearestFilter,
-  magFilter: THREE.NearestFilter,
-  format: rgbdMetricUsesR32F ? THREE.RedFormat : THREE.RGBAFormat,
-  type: rgbdMetricTargetType,
-  depthBuffer: false,
-  stencilBuffer: false,
-});
-if (rgbdMetricUsesR32F) rgbdOverlayMetricTarget.texture.internalFormat = "R32F";
-rgbdOverlayMetricTarget.texture.generateMipmaps = false;
 
 const rgbdMetricScene = new THREE.Scene();
 const rgbdMetricMaterial = new THREE.ShaderMaterial({
@@ -914,17 +787,6 @@ const rgbdVizQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rgbdVizMateria
 rgbdVizScene.add(rgbdVizQuad);
 let _savedOverrideMaterial = null;
 
-function resizeRgbdTargets() {
-  const w = Math.max(1, Math.floor(window.innerWidth * renderer.getPixelRatio()));
-  const h = Math.max(1, Math.floor(window.innerHeight * renderer.getPixelRatio()));
-  rgbdDepthTarget.setSize(w, h);
-  rgbdMetricTarget.setSize(w, h);
-  if (rgbdDepthTarget.depthTexture) {
-    rgbdDepthTarget.depthTexture.image.width = w;
-    rgbdDepthTarget.depthTexture.image.height = h;
-    rgbdDepthTarget.depthTexture.needsUpdate = true;
-  }
-}
 
 let _rgbdNearFarAsserted = false;
 let _rgbdLastAutoRangeMs = 0;
@@ -1016,7 +878,6 @@ function renderRgbdMetricPassOffscreen(overrideCamera) {
   const savedLights = lightsGroup.visible;
   const savedTags = tagsGroup.visible;
   const savedLidarViz = lidarVizGroup.visible;
-  const savedRgbdPc = rgbdPcOverlayGroup.visible;
 
   scene.overrideMaterial = null;
   assetsGroup.visible = true;
@@ -1024,7 +885,6 @@ function renderRgbdMetricPassOffscreen(overrideCamera) {
   lightsGroup.visible = true;
   tagsGroup.visible = false;
   lidarVizGroup.visible = false;
-  rgbdPcOverlayGroup.visible = false;
 
   renderer.setRenderTarget(rgbdDepthTarget);
   renderer.setClearColor(0x000000, RGBD_CLEAR_ALPHA);
@@ -1042,7 +902,6 @@ function renderRgbdMetricPassOffscreen(overrideCamera) {
   lightsGroup.visible = savedLights;
   tagsGroup.visible = savedTags;
   lidarVizGroup.visible = savedLidarViz;
-  rgbdPcOverlayGroup.visible = savedRgbdPc;
 }
 
 function halfToFloat(h) {
@@ -1081,140 +940,6 @@ function readRgbdMetricDepthFrameMeters() {
   return depth;
 }
 
-function readRgbdOverlayMetricDepthFrameMeters() {
-  const w = rgbdOverlayMetricTarget.width;
-  const h = rgbdOverlayMetricTarget.height;
-  if (!w || !h) return null;
-  if (rgbdMetricUsesR32F) {
-    const depth = new Float32Array(w * h);
-    renderer.readRenderTargetPixels(rgbdOverlayMetricTarget, 0, 0, w, h, depth);
-    return depth;
-  }
-  if (rgbdOverlayMetricTarget.texture.type === THREE.FloatType) {
-    const raw = new Float32Array(w * h * 4);
-    renderer.readRenderTargetPixels(rgbdOverlayMetricTarget, 0, 0, w, h, raw);
-    const depth = new Float32Array(w * h);
-    for (let i = 0; i < w * h; i++) depth[i] = raw[i * 4 + 0];
-    return depth;
-  }
-  const raw = new Uint16Array(w * h * 4);
-  renderer.readRenderTargetPixels(rgbdOverlayMetricTarget, 0, 0, w, h, raw);
-  const depth = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) depth[i] = halfToFloat(raw[i * 4 + 0]);
-  return depth;
-}
-
-function updateRgbdPcOverlayCloud(force = false) {
-  if (!rgbdPcOverlayOnLidar || simSensorViewMode !== "lidar" || lidarOrderedDebugView) {
-    _rgbdPcGeom.setDrawRange(0, 0);
-    _rgbdPcGeom.attributes.position.needsUpdate = true;
-    _rgbdPcGeom.attributes.color.needsUpdate = true;
-    _rgbdPcOverlayLastCount = 0;
-    _rgbdPcOverlayLastPose = null;
-    _rgbdPcOverlayDirty = false;
-    rgbdPcOverlayGroup.visible = false;
-    return;
-  }
-  if (!force && !_rgbdPcOverlayDirty) return;
-  const now = performance.now();
-  const curPos = camera.getWorldPosition(new THREE.Vector3());
-  const curQuat = camera.getWorldQuaternion(new THREE.Quaternion());
-  if (_rgbdPcOverlayLastPose) {
-    const dp = curPos.distanceTo(_rgbdPcOverlayLastPose.pos);
-    const da = THREE.MathUtils.radToDeg(curQuat.angleTo(_rgbdPcOverlayLastPose.quat));
-    if (!force && dp < RGBD_PC_OVERLAY_MIN_TRANSLATION_M && da < RGBD_PC_OVERLAY_MIN_ROT_DEG) return;
-  }
-  _rgbdPcOverlayLastUpdateMs = now;
-  _rgbdPcOverlayLastPose = { pos: curPos.clone(), quat: curQuat.clone() };
-
-  const savedDepthTex = rgbdMetricMaterial.uniforms.uDepthTex.value;
-
-  // Low-res depth+metric pass for overlay to avoid expensive full-res readback stalls.
-  const savedOverride = scene.overrideMaterial;
-  const savedAssets = assetsGroup.visible;
-  const savedPrims = primitivesGroup.visible;
-  const savedLights = lightsGroup.visible;
-  const savedTags = tagsGroup.visible;
-  const savedLidarViz = lidarVizGroup.visible;
-  const savedRgbdPc = rgbdPcOverlayGroup.visible;
-  scene.overrideMaterial = null;
-  assetsGroup.visible = true;
-  primitivesGroup.visible = true;
-  lightsGroup.visible = true;
-  tagsGroup.visible = false;
-  lidarVizGroup.visible = false;
-  rgbdPcOverlayGroup.visible = false;
-
-  renderer.setRenderTarget(rgbdOverlayDepthTarget);
-  renderer.setClearColor(0x000000, RGBD_CLEAR_ALPHA);
-  renderer.clear(true, true, true);
-  renderer.render(scene, camera);
-  rgbdMetricMaterial.uniforms.uDepthTex.value = rgbdOverlayDepthTarget.depthTexture;
-  renderer.setRenderTarget(rgbdOverlayMetricTarget);
-  renderer.setClearColor(0x000000, RGBD_CLEAR_ALPHA);
-  renderer.clear(true, true, true);
-  renderer.render(rgbdMetricScene, rgbdPostCamera);
-  rgbdMetricMaterial.uniforms.uDepthTex.value = savedDepthTex;
-
-  scene.overrideMaterial = savedOverride;
-  assetsGroup.visible = savedAssets;
-  primitivesGroup.visible = savedPrims;
-  lightsGroup.visible = savedLights;
-  tagsGroup.visible = savedTags;
-  lidarVizGroup.visible = savedLidarViz;
-  rgbdPcOverlayGroup.visible = savedRgbdPc;
-
-  const depth = readRgbdOverlayMetricDepthFrameMeters();
-  if (!depth) {
-    rgbdPcOverlayGroup.visible = false;
-    return;
-  }
-  const w = rgbdOverlayMetricTarget.width;
-  const h = rgbdOverlayMetricTarget.height;
-  if (!w || !h) return;
-
-  const tanHalfY = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
-  const fy = 0.5 * h / Math.max(1e-6, tanHalfY);
-  const fx = fy * camera.aspect;
-  const cx = (w - 1) * 0.5;
-  const cy = (h - 1) * 0.5;
-  const targetCount = Math.min(RGBD_PC_OVERLAY_MAX_POINTS, Math.floor(w * h));
-  const stride = Math.max(1, Math.floor(Math.sqrt((w * h) / Math.max(1, targetCount))));
-  const pCam = new THREE.Vector3();
-  const pWorld = new THREE.Vector3();
-
-  let n = 0;
-  for (let py = 0; py < h; py += stride) {
-    const v = h - 1 - py; // flip Y because render-target readback is bottom-up
-    for (let px = 0; px < w; px += stride) {
-      if (n >= RGBD_PC_OVERLAY_MAX_POINTS) break;
-      const d = depth[py * w + px];
-      if (!Number.isFinite(d) || d <= RGBD_MIN_DEPTH_M || d >= RGBD_MAX_DEPTH_M) continue;
-      const x = ((px - cx) / fx) * d;
-      const y = -((v - cy) / fy) * d;
-      const z = -d; // camera forward is -Z in three.js camera coordinates
-      pCam.set(x, y, z);
-      pWorld.copy(pCam).applyMatrix4(camera.matrixWorld);
-
-      _rgbdPcPosArray[n * 3 + 0] = pWorld.x;
-      _rgbdPcPosArray[n * 3 + 1] = pWorld.y;
-      _rgbdPcPosArray[n * 3 + 2] = pWorld.z;
-
-      _rgbdPcColArray[n * 3 + 0] = 0.10;
-      _rgbdPcColArray[n * 3 + 1] = 1.00;
-      _rgbdPcColArray[n * 3 + 2] = 0.25;
-      n++;
-    }
-    if (n >= RGBD_PC_OVERLAY_MAX_POINTS) break;
-  }
-
-  _rgbdPcGeom.setDrawRange(0, n);
-  _rgbdPcGeom.attributes.position.needsUpdate = true;
-  _rgbdPcGeom.attributes.color.needsUpdate = true;
-  _rgbdPcOverlayLastCount = n;
-  _rgbdPcOverlayDirty = false;
-  rgbdPcOverlayGroup.visible = rgbdPcOverlayOnLidar && simSensorViewMode === "lidar" && !lidarOrderedDebugView && n > 0;
-}
 
 // -----------------------------------------------------------------------------
 // RoboVal standardized LiDAR schema + sensor model
@@ -1357,11 +1082,6 @@ function twlInverseMatrix(pos, quat) {
   return twl.clone().invert();
 }
 
-function lidarVerticalAngleForRing(ring) {
-  if (LIDAR_NUM_RINGS === 1) return 0;
-  const t = ring / (LIDAR_NUM_RINGS - 1);
-  return LIDAR_V_MIN_RAD + (LIDAR_V_MAX_RAD - LIDAR_V_MIN_RAD) * t;
-}
 
 function makeRoboValLidarFrame({
   frameId,
@@ -1572,9 +1292,6 @@ function frameToNpzBlob(frame, rangeImage = null) {
 let _lidarLatestRawFrame = null;
 let _lidarLatestDeskewedFrame = null;
 let _lidarLatestRangeImage = null;
-let _lidarLatestWorldPts = null;
-let _lidarLatestLocalPts = null; // deskewed lidar-local FLU (x=fwd, y=left, z=up)
-let _lidarLatestWorldIntensity = null;
 let _lidarAutoExport = false;
 let _lidarFrameSeq = 0;
 
@@ -1643,39 +1360,6 @@ console.assert(_lidarPoints.isPoints === true, "[LiDAR] Visualization must use T
 lidarVizGroup.add(_lidarPoints);
 scene.add(lidarVizGroup);
 let _lidarLastNonZeroDrawCount = 0;
-const rgbdPcOverlayGroup = new THREE.Group();
-rgbdPcOverlayGroup.name = "rgbdPcOverlayGroup";
-rgbdPcOverlayGroup.visible = false;
-const RGBD_PC_OVERLAY_MAX_POINTS = 12000;
-const RGBD_PC_OVERLAY_MIN_TRANSLATION_M = 0.15;
-const RGBD_PC_OVERLAY_MIN_ROT_DEG = 4.0;
-const _rgbdPcPosArray = new Float32Array(RGBD_PC_OVERLAY_MAX_POINTS * 3);
-const _rgbdPcColArray = new Float32Array(RGBD_PC_OVERLAY_MAX_POINTS * 3);
-const _rgbdPcGeom = new THREE.BufferGeometry();
-_rgbdPcGeom.setAttribute("position", new THREE.BufferAttribute(_rgbdPcPosArray, 3));
-_rgbdPcGeom.setAttribute("color", new THREE.BufferAttribute(_rgbdPcColArray, 3));
-_rgbdPcGeom.setDrawRange(0, 0);
-const _rgbdPcMat = new THREE.PointsMaterial({
-  color: 0x00ff4f,
-  vertexColors: true,
-  size: 3.0,
-  sizeAttenuation: false,
-  depthTest: false,
-  depthWrite: false,
-  blending: THREE.AdditiveBlending,
-  transparent: true,
-  opacity: 1.0,
-});
-const _rgbdPcPoints = new THREE.Points(_rgbdPcGeom, _rgbdPcMat);
-_rgbdPcPoints.frustumCulled = false; // overlay covers entire scene; never cull
-console.assert(_rgbdPcPoints.isPoints === true, "[RGB-D overlay] Visualization must use THREE.Points");
-_rgbdPcPoints.renderOrder = 2000;
-rgbdPcOverlayGroup.add(_rgbdPcPoints);
-scene.add(rgbdPcOverlayGroup);
-let _rgbdPcOverlayLastUpdateMs = 0;
-let _rgbdPcOverlayLastPose = null;
-let _rgbdPcOverlayLastCount = 0;
-let _rgbdPcOverlayDirty = false;
 
 let _lidarScanState = null; // incremental scan state (processed across frames)
 
@@ -1687,7 +1371,6 @@ function updateSimSensorButtons() {
   if (simRgbdAutoRangeBtn) simRgbdAutoRangeBtn.classList.toggle("active", rgbdAutoRange);
   if (simRgbdNoiseBtn) simRgbdNoiseBtn.classList.toggle("active", rgbdNoiseEnabled);
   if (simRgbdSpeckleBtn) simRgbdSpeckleBtn.classList.toggle("active", rgbdSpeckleEnabled);
-  if (simRgbdPcOverlayBtn) simRgbdPcOverlayBtn.classList.toggle("active", rgbdPcOverlayOnLidar);
   if (simRgbdMinEl) simRgbdMinEl.disabled = rgbdAutoRange;
   if (simRgbdMaxEl) simRgbdMaxEl.disabled = rgbdAutoRange;
   if (simViewLidarBtn) simViewLidarBtn.classList.toggle("active", simSensorViewMode === "lidar" && !lidarOrderedDebugView && !simCompareView);
@@ -2112,12 +1795,6 @@ function updateLidarPointCloud() {
   _lidarLatestRawFrame = rawFrame;
   _lidarLatestDeskewedFrame = deskewedFrame;
   _lidarLatestRangeImage = rangeImage;
-  // Save world-frame points for dimos bridge (Three.js Y-up coords).
-  // The bridge's cyclic permutation correctly converts these to ROS Z-up.
-  _lidarLatestWorldPts = st.worldPts.slice(0, st.n * 3);
-  _lidarLatestLocalPts = st.deskPts.slice(0, st.n * 3);
-  _lidarLatestWorldIntensity = st.intensity.slice(0, st.n);
-
   // Default visualization: accumulated world-space point cloud (depth-tested).
   if (!lidarOrderedDebugView) {
     if (shouldAppendAccumFrame(refPose, scanEndNs)) {
@@ -2188,8 +1865,6 @@ function applySimSensorViewMode() {
     lightsGroup.visible = true;
     tagsGroup.visible = false;
     lidarVizGroup.visible = false;
-    rgbdPcOverlayGroup.visible = false;
-    _rgbdPcGeom.setDrawRange(0, 0);
     _lidarAccumFrames.length = 0;
     _lidarLastAccumPose = null;
     resetLidarScanState();
@@ -2204,8 +1879,6 @@ function applySimSensorViewMode() {
     lightsGroup.visible = true;
     tagsGroup.visible = false;
     lidarVizGroup.visible = false;
-    rgbdPcOverlayGroup.visible = false;
-    _rgbdPcGeom.setDrawRange(0, 0);
     _lidarAccumFrames.length = 0;
     _lidarLastAccumPose = null;
     resetLidarScanState();
@@ -2220,7 +1893,6 @@ function applySimSensorViewMode() {
     lightsGroup.visible = false;
     tagsGroup.visible = false;
     lidarVizGroup.visible = true;
-    rgbdPcOverlayGroup.visible = rgbdPcOverlayOnLidar && _rgbdPcOverlayLastCount > 0;
     skyDome.visible = false;
     scene.background = RGBD_BG;
   }
@@ -2273,57 +1945,6 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-function loadTagsForWorld() {
-  // Clean up old primitive colliders BEFORE replacing the arrays
-  for (const p of primitives) {
-    removePrimitiveCollider(p);
-  }
-
-  try {
-    const rawState = localStorage.getItem("sparkWorldStateByWorld");
-    const byWorld = rawState ? JSON.parse(rawState) : {};
-    const state = byWorld[worldKey] || null;
-    if (state && typeof state === "object") {
-      tags = Array.isArray(state.tags) ? state.tags : [];
-      assets = Array.isArray(state.assets) ? state.assets.map(normalizeAsset).filter(Boolean) : [];
-      primitives = Array.isArray(state.primitives) ? state.primitives : [];
-      editorLights = Array.isArray(state.lights) ? state.lights : [];
-      groups = Array.isArray(state.groups) ? state.groups : [];
-      sceneSettings = normalizeSceneSettings(state.sceneSettings);
-    } else {
-      // Backwards compat: tags-only storage
-      const raw = localStorage.getItem("sparkWorldTagsByWorld");
-      const byWorldOld = raw ? JSON.parse(raw) : {};
-      tags = Array.isArray(byWorldOld[worldKey]) ? byWorldOld[worldKey] : [];
-      assets = [];
-      primitives = [];
-      editorLights = [];
-      groups = [];
-      sceneSettings = createDefaultSceneSettings();
-    }
-  } catch {
-    tags = [];
-    assets = [];
-    primitives = [];
-    editorLights = [];
-    groups = [];
-    sceneSettings = createDefaultSceneSettings();
-  }
-  selectedTagId = null;
-  draftTag = null;
-  selectedAssetId = null;
-  selectedPrimitiveId = null;
-  rebuildTagMarkers();
-  renderTagsList();
-  renderTagPanel();
-  rebuildAssets();
-  renderAssetsList();
-  rebuildAllPrimitives();
-  renderPrimitivesList();
-  rebuildAllEditorLights();
-  applySceneSkySettings();
-  applySceneRgbBackground();
-}
 
 function saveTagsForWorld() {
   try {
@@ -2420,24 +2041,6 @@ function clearWorldStorage() {
 }
 // Expose for debugging: window.clearWorldStorage = clearWorldStorage;
 
-function setWorldKey(key) {
-  worldKey = key || "default";
-  localStorage.setItem("sparkWorldLastWorldKey", worldKey);
-  loadTagsForWorld();
-}
-
-
-function getSelectedTag() {
-  return tags.find((t) => t.id === selectedTagId) ?? null;
-}
-
-function renderTagPanel() {
-  // No-op in sim-only mode (editor tag panel not present)
-}
-
-function renderTagsList() {
-  // No-op in sim-only mode (editor tags list not present)
-}
 
 const markerGeom = new THREE.SphereGeometry(0.08, 12, 12);
 const markerMat = new THREE.MeshBasicMaterial({ color: 0x7cc4ff });
@@ -2453,7 +2056,6 @@ const radiusMat = new THREE.MeshBasicMaterial({
 function agentUiPush(event) {
   const logs = [
     agentLogEl,
-    document.getElementById("edit-agent-log"),
   ].filter(Boolean);
   for (const log of logs) {
     const el = document.createElement("div");
@@ -2465,54 +2067,18 @@ function agentUiPush(event) {
   }
 }
 
-function agentUiSetLast(text) {
-  const value = text || "";
-  if (agentLastEl) agentLastEl.textContent = value;
-  const editLast = document.getElementById("edit-agent-last");
-  if (editLast) editLast.textContent = value;
-}
 
 function agentUiSetShot(base64) {
   if (!base64) return;
   const src = `data:image/jpeg;base64,${base64}`;
   if (agentShotImgEl) agentShotImgEl.src = src;
-  const editShot = document.getElementById("edit-agent-shot-img");
-  if (editShot) editShot.src = src;
 }
 
-function extractObservationText(parsed, raw) {
-  const p = parsed && typeof parsed === "object" ? parsed : {};
-  const observation =
-    (typeof p.observation === "string" && p.observation) ||
-    (typeof p.obs === "string" && p.obs) ||
-    (typeof p.perception === "string" && p.perception) ||
-    (typeof p.sceneObservation === "string" && p.sceneObservation) ||
-    (typeof p.visualObservation === "string" && p.visualObservation) ||
-    (typeof p.params?.observation === "string" && p.params.observation) ||
-    "";
-  if (observation.trim()) return observation.trim();
-
-  if (typeof raw === "string" && raw.trim()) {
-    const m = raw.match(/"observation"\s*:\s*"([^"]+)"/i);
-    if (m?.[1]) return m[1];
-  }
-  return "";
-}
-
-function agentUiSetObservation(text) {
-  const value = String(text || "").trim();
-  if (!agentObservationEl) return;
-  agentObservationEl.textContent = value || "No observation in latest response.";
-}
 
 function agentUiSetRequest({ endpoint, model, prompt, context, imageBytes, messages }) {
   const metaText = `endpoint: ${endpoint}\nmodel: ${model}\nimageBytes: ${imageBytes ?? "?"}\nworld: ${worldKey}`;
   if (agentReqMetaEl) agentReqMetaEl.textContent = metaText;
-  const editMeta = document.getElementById("edit-agent-req-meta");
-  if (editMeta) editMeta.textContent = metaText;
   if (agentReqPromptEl) agentReqPromptEl.textContent = prompt || "";
-  const editPrompt = document.getElementById("edit-agent-req-prompt");
-  if (editPrompt) editPrompt.textContent = prompt || "";
 
   // Format messages for display (only assistant and user messages, not system)
   let contextText = "";
@@ -2544,18 +2110,11 @@ function agentUiSetRequest({ endpoint, model, prompt, context, imageBytes, messa
     contextText = JSON.stringify(context ?? {}, null, 2);
   }
   if (agentReqContextEl) agentReqContextEl.textContent = contextText;
-  const editContext = document.getElementById("edit-agent-req-context");
-  if (editContext) editContext.textContent = contextText;
 }
 
 function agentUiSetResponse({ raw, parsed }) {
   if (agentRespRawEl) agentRespRawEl.textContent = raw || "";
-  const editRaw = document.getElementById("edit-agent-resp-raw");
-  if (editRaw) editRaw.textContent = raw || "";
   if (agentLastEl) agentLastEl.textContent = JSON.stringify(parsed ?? {}, null, 2);
-  agentUiSetObservation(extractObservationText(parsed, raw));
-  const editLast = document.getElementById("edit-agent-last");
-  if (editLast) editLast.textContent = JSON.stringify(parsed ?? {}, null, 2);
 }
 
 function clearAgentInspectorViews() {
@@ -2565,26 +2124,8 @@ function clearAgentInspectorViews() {
   if (agentReqContextEl) agentReqContextEl.textContent = "";
   if (agentRespRawEl) agentRespRawEl.textContent = "";
   if (agentLastEl) agentLastEl.textContent = "Waiting...";
-  if (agentObservationEl) agentObservationEl.textContent = "Waiting for first observation...";
-
-  const editShot = document.getElementById("edit-agent-shot-img");
-  const editReqMeta = document.getElementById("edit-agent-req-meta");
-  const editReqPrompt = document.getElementById("edit-agent-req-prompt");
-  const editReqContext = document.getElementById("edit-agent-req-context");
-  const editRespRaw = document.getElementById("edit-agent-resp-raw");
-  const editLast = document.getElementById("edit-agent-last");
-  if (editShot) editShot.removeAttribute("src");
-  if (editReqMeta) editReqMeta.textContent = "No request yet";
-  if (editReqPrompt) editReqPrompt.textContent = "";
-  if (editReqContext) editReqContext.textContent = "";
-  if (editRespRaw) editRespRaw.textContent = "";
-  if (editLast) editLast.textContent = "Waiting...";
 }
 
-function showEditSpawnedAgentsTab() {
-  const btn = document.getElementById("vibe-tab-agents");
-  btn?.click?.();
-}
 
 function getAgentById(id) {
   const key = String(id || "");
@@ -2648,7 +2189,6 @@ function ensureAgentControlStrip() {
       if (newest?.id) selectAgentInspector(newest.id);
       renderSelectedAgentControls();
     });
-    showEditSpawnedAgentsTab();
   });
   agentUiFollowBtn?.addEventListener("click", () => {
     const a = getAgentById(selectedAgentInspectorId);
@@ -2684,7 +2224,6 @@ function ensureAgentControlStrip() {
     void startAgentTask(text, { autoPool: false, targetAgentId: a.id });
     if (agentUiTaskInputEl) agentUiTaskInputEl.value = "";
     setStatus(`Running task on ${a.id}.`);
-    showEditSpawnedAgentsTab();
   };
   agentUiTaskRunBtn?.addEventListener("click", runSelectedTask);
   agentUiTaskInputEl?.addEventListener("keydown", (e) => {
@@ -2722,8 +2261,6 @@ function renderAgentInspector(agentId = selectedAgentInspectorId) {
     const base = s.request || { endpoint: "-", model: "-", prompt: "", context: {}, imageBytes: null, messages: [] };
     agentUiSetRequest(base);
     agentReqMetaEl.textContent = `${agentReqMetaEl.textContent}\nagent: ${id}`;
-    const editMeta = document.getElementById("edit-agent-req-meta");
-    if (editMeta) editMeta.textContent = `${editMeta.textContent}\nagent: ${id}`;
   }
   if (s.shot) agentUiSetShot(s.shot);
   if (s.response) agentUiSetResponse(s.response);
@@ -2733,7 +2270,6 @@ function selectAgentInspector(agentId) {
   const id = String(agentId || "");
   if (!id) return;
   selectedAgentInspectorId = id;
-  showEditSpawnedAgentsTab();
   // Force strip into correct panel on selection.
   ensureAgentControlStrip();
   renderAgentInspector(id);
@@ -2752,7 +2288,6 @@ function renderAgentTaskUi() {
   const hasAgent = aiAgents.length > 0;
 
   if (bar) bar.style.display = "";
-  if (spawnAiBtn) spawnAiBtn.style.display = hasAgent ? "none" : "";
 
   if (!agentTaskStatusEl || !agentTaskInputEl || !agentTaskStartBtn || !agentTaskEndBtn) return;
 
@@ -2960,19 +2495,6 @@ function updateMarkerMaterials() {
   }
 }
 
-function renderAssetModal() {
-  // No-op in sim-only mode (asset upload modal not present)
-}
-
-function base64FromArrayBuffer(buf) {
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
 
 function arrayBufferFromBase64(base64) {
   const bin = atob(base64);
@@ -2982,114 +2504,6 @@ function arrayBufferFromBase64(base64) {
   return bytes.buffer;
 }
 
-function normalizeAsset(a) {
-  if (!a || typeof a !== "object") return null;
-  // Ensure pickable property exists
-  if (typeof a.pickable !== "boolean") a.pickable = false;
-  if (typeof a.bumpable !== "boolean") a.bumpable = false;
-  if (!Number.isFinite(a.bumpResponse)) a.bumpResponse = 0.9;
-  if (!Number.isFinite(a.bumpDamping)) a.bumpDamping = 0.9;
-  // New schema: states is array
-  if (Array.isArray(a.states)) {
-    if (!a.currentStateId && a.states[0]?.id) a.currentStateId = a.states[0].id;
-    // Ensure interactions exist per state.
-    for (const s of a.states) {
-      if (!Array.isArray(s.interactions)) s.interactions = [];
-    }
-    // Backfill actions from interactions if missing.
-    if (!Array.isArray(a.actions) || a.actions.length === 0) {
-      a.actions = [];
-      for (const s of a.states) {
-        for (const it of s.interactions) {
-          a.actions.push({ id: it.id || `act_${s.id}_${it.to}`, label: it.label || "toggle", from: s.id, to: it.to });
-        }
-      }
-    } else {
-      // Backfill interactions from actions if missing.
-      const byFrom = new Map();
-      for (const act of a.actions) {
-        if (!byFrom.has(act.from)) byFrom.set(act.from, []);
-        byFrom.get(act.from).push({ id: act.id, label: act.label, to: act.to });
-      }
-      for (const s of a.states) {
-        if (!s.interactions || s.interactions.length === 0) s.interactions = byFrom.get(s.id) || [];
-      }
-    }
-    return a;
-  }
-  // Old schema: states is {A,B}
-  if (a.states && typeof a.states === "object") {
-    const out = {
-      id: a.id,
-      title: a.title || "",
-      notes: a.notes || "",
-      states: [],
-      currentStateId: a.currentState || "A",
-      actions: Array.isArray(a.actions) ? a.actions : [],
-      transform: a.transform || null,
-      bumpable: a.bumpable === true,
-      bumpResponse: Number.isFinite(a.bumpResponse) ? a.bumpResponse : 0.9,
-      bumpDamping: Number.isFinite(a.bumpDamping) ? a.bumpDamping : 0.9,
-    };
-    const A = a.states.A;
-    const B = a.states.B;
-    if (A) out.states.push({ id: "A", name: A.name || "stateA", glbName: A.glbName || "", dataBase64: A.dataBase64 || "", interactions: [] });
-    if (B) out.states.push({ id: "B", name: B.name || "stateB", glbName: B.glbName || "", dataBase64: B.dataBase64 || "", interactions: [] });
-    if (!out.currentStateId) out.currentStateId = out.states[0]?.id || "A";
-    out.actions = Array.isArray(out.actions) ? out.actions : [];
-    // Backfill interactions from actions.
-    const byFrom = new Map();
-    for (const act of out.actions) {
-      if (!byFrom.has(act.from)) byFrom.set(act.from, []);
-      byFrom.get(act.from).push({ id: act.id, label: act.label, to: act.to });
-    }
-    for (const s of out.states) s.interactions = byFrom.get(s.id) || [];
-    return out;
-  }
-  return a;
-}
-
-function getSelectedAsset() {
-  return assets.find((a) => a.id === selectedAssetId) || null;
-}
-
-function renderAssetsList() {
-  if (!assetsListEl) return;
-  assetsListEl.innerHTML = "";
-  for (const a of assets) {
-    const el = document.createElement("div");
-    el.className = "tag-item" + (a.id === selectedAssetId ? " active" : "");
-    const sId = a.currentStateId || a.currentState || "A";
-    const stateObj = Array.isArray(a.states) ? a.states.find((s) => s.id === sId) : a.states?.[sId];
-    const label = a.title || stateObj?.glbName || "(asset)";
-    const kind = stateObj?.scene || stateObj?.shapeScene ? "shape" : "glb";
-    el.innerHTML = `${escapeHtml(label)}<small>${kind}</small>`;
-    el.addEventListener("click", () => selectAsset(a.id));
-    assetsListEl.appendChild(el);
-  }
-}
-
-function selectAsset(id) {
-  selectedAssetId = id;
-  if (id) {
-    selectedPrimitiveId = null;
-  }
-  renderAssetsList();
-}
-
-function persistSelectedAssetTransform() {
-  const a = getSelectedAsset();
-  if (!a) return;
-  const obj = assetsGroup.getObjectByName(`asset:${a.id}`);
-  if (!obj) return;
-  a.transform = {
-    position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-    rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
-    scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
-  };
-  saveTagsForWorld();
-  if (!a.bumpable) rebuildAssetCollider(a.id);
-}
 
 function normalizeShapeStateScene(sceneLike) {
   const raw = sceneLike || { tags: [], primitives: [], lights: [], groups: [] };
@@ -3270,8 +2684,6 @@ async function setAssetState(assetId, nextState) {
   const existing = assetsGroup.getObjectByName(`asset:${a.id}`);
   if (existing?.parent) existing.parent.remove(existing);
   await instantiateAsset(a);
-  renderAssetsList();
-  selectAsset(a.id);
 }
 
 async function applyAssetAction(assetId, actionId) {
@@ -3286,266 +2698,6 @@ async function applyAssetAction(assetId, actionId) {
   return true;
 }
 
-function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
-  const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-  const yaw = agent.group?.rotation?.y ?? 0;
-  const pitch = typeof agent.pitch === "number" ? agent.pitch : 0;
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-
-  // Full 3D forward direction (with pitch) - used for raycasting
-  const forward3D = _tmpV1.set(Math.sin(yaw) * cp, sp, Math.cos(yaw) * cp).normalize();
-
-  // Horizontal-only forward direction (yaw only, no pitch) - used for "in front" check
-  // BUG FIX: Previously used forward3D which includes pitch, causing dot product to be
-  // artificially reduced when looking up/down (cos(pitch) scaling factor)
-  const forwardHoriz = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
-
-  const eye = _tmpV2.set(ax, ay + PLAYER_EYE_HEIGHT * 0.9, az);
-
-  const results = [];
-  for (const a of assets) {
-    const obj = assetsGroup.getObjectByName(`asset:${a.id}`);
-    if (!obj) continue;
-
-    // Use cached sphere center (O(1) — no vertex traversal)
-    const _agentSphere = new THREE.Sphere();
-    if (!getAssetWorldSphere(obj, _agentSphere)) continue;
-    const center = _agentSphere.center;
-
-    const dx = center.x - ax;
-    const dy = center.y - ay;
-    const dz = center.z - az;
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist > maxDist) continue;
-
-    // Horizontal direction to object (for "in front" check)
-    const toHoriz = _tmpV3.set(dx, 0, dz);
-    const horizLen = toHoriz.length() || 1;
-    toHoriz.multiplyScalar(1 / horizLen);
-
-    // BUG FIX: Use horizontal forward for horizontal "in front" check
-    // Threshold relaxed from 0.92 (~23°) to 0.7 (~45°) for better usability
-    const inFrontHoriz = forwardHoriz.dot(toHoriz) > 0.7;
-
-    let isLookedAt = false;
-
-    // Debug: log for specific asset checks
-    const debugThis = a.title?.toLowerCase().includes('bathtub') || a.title?.toLowerCase().includes('tub');
-
-    if (debugThis) {
-      console.log(`[RAYCAST DEBUG] Checking "${a.title}" (${a.id})`);
-      console.log(`  Eye position:`, eye.toArray().map(v => v.toFixed(2)));
-      console.log(`  Object center:`, [center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2)]);
-      console.log(`  Forward3D:`, forward3D.toArray().map(v => v.toFixed(2)));
-      console.log(`  ForwardHoriz:`, [forwardHoriz.x.toFixed(2), forwardHoriz.y.toFixed(2), forwardHoriz.z.toFixed(2)]);
-      console.log(`  ToHoriz:`, [toHoriz.x.toFixed(2), toHoriz.y.toFixed(2), toHoriz.z.toFixed(2)]);
-      const dotVal = forwardHoriz.dot(toHoriz);
-      console.log(`  Horiz dot product:`, dotVal.toFixed(3), `(need > 0.7 for inFront, > 0.3 for proximity)`);
-      console.log(`  inFrontHoriz (>0.7):`, inFrontHoriz);
-      console.log(`  roughlyInFront (>0.3):`, dotVal > 0.3);
-    }
-
-    // For interaction purposes, we use a very lenient "roughly in front" check
-    // The bounding box center can be off to the side for wide objects
-    const roughlyInFront = forwardHoriz.dot(toHoriz) > 0.3; // ~72° cone
-
-    if (inFrontHoriz || roughlyInFront) {
-      // Cheap bounding-sphere ray test instead of expensive recursive mesh raycast
-      const objNode = assetsGroup.getObjectByName(`asset:${a.id}`);
-      if (objNode) {
-        const _tmpSphere = new THREE.Sphere();
-        if (!getAssetWorldSphere(objNode, _tmpSphere)) { /* skip */ }
-        _tmpSphere.radius = Math.max(_tmpSphere.radius, 0.3);
-
-        // Test look direction against bounding sphere
-        const lookRay = new THREE.Ray(eye, forward3D);
-        if (lookRay.intersectsSphere(_tmpSphere)) {
-          isLookedAt = true;
-        }
-
-        // Also test toward center direction (catches pitch misalignment)
-        if (!isLookedAt) {
-          const toCenter = new THREE.Vector3(
-            center.x - eye.x, center.y - eye.y, center.z - eye.z
-          ).normalize();
-          const lookAlignment = forward3D.dot(toCenter);
-          if (lookAlignment > 0.5) {
-            const centerRay = new THREE.Ray(eye, toCenter);
-            if (centerRay.intersectsSphere(_tmpSphere)) {
-              isLookedAt = true;
-            }
-          }
-        }
-      }
-    }
-
-    // Method 3: If close enough and roughly in front, allow interaction even if raycast fails
-    // This handles cases where:
-    // - Mesh geometry doesn't raycast well
-    // - Wide objects have their center off to the side
-    if (!isLookedAt && dist < 1.5 && roughlyInFront) {
-      if (debugThis) {
-        console.log(`  Method 3 (proximity fallback): dist=${dist.toFixed(2)}, roughlyInFront=${roughlyInFront}`);
-      }
-      isLookedAt = true;
-    }
-
-    if (debugThis) {
-      console.log(`  Final isLookedAt:`, isLookedAt);
-    }
-
-    const stateKey = a.currentStateId || a.currentState || "A";
-    const stateObj = Array.isArray(a.states)
-      ? a.states.find((s) => s.id === stateKey)
-      : a.states?.[stateKey];
-    const stateName = stateObj?.name || stateKey;
-    const holdStatus = isAssetHeld(a.id);
-    results.push({
-      id: a.id,
-      title: a.title || "",
-      notes: a.notes || "",
-      dist,
-      isLookedAt,
-      currentState: stateKey,
-      currentStateName: stateName,
-      actions: (a.actions || []).filter((x) => x.from === stateKey).map((x) => ({ id: x.id, label: x.label, from: x.from, to: x.to })),
-      pickable: a.pickable || false,
-      isHeld: holdStatus.held,
-      heldBy: holdStatus.by || null,
-    });
-  }
-
-  results.sort((a, b) => a.dist - b.dist);
-  return results.slice(0, 20);
-}
-
-function getNearbyPrimitivesForAgent(agent, maxDist = 2.5) {
-  const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-  const yaw = agent.group?.rotation?.y ?? 0;
-  const pitch = typeof agent.pitch === "number" ? agent.pitch : 0;
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  const forward3D = _tmpV1.set(Math.sin(yaw) * cp, sp, Math.cos(yaw) * cp).normalize();
-  const forwardHoriz = _tmpV2.set(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
-  const eye = _tmpV3.set(ax, ay + PLAYER_EYE_HEIGHT * 0.9, az);
-
-  const out = [];
-  for (const p of primitives) {
-    const obj = primitivesGroup.getObjectByName(`prim:${p.id}`);
-    if (!obj) continue;
-    const center = obj.getWorldPosition(new THREE.Vector3());
-    const dx = center.x - ax;
-    const dy = center.y - ay;
-    const dz = center.z - az;
-    const dist = Math.hypot(dx, dy, dz);
-    if (dist > maxDist) continue;
-
-    const toObj = new THREE.Vector3(center.x - eye.x, center.y - eye.y, center.z - eye.z).normalize();
-    const toHoriz = new THREE.Vector3(dx, 0, dz);
-    const horizLen = toHoriz.length() || 1;
-    toHoriz.multiplyScalar(1 / horizLen);
-    const lookAlignment = forward3D.dot(toObj);
-    const horizAlignment = forwardHoriz.dot(toHoriz);
-    const isLookedAt = lookAlignment > 0.82 || (dist < 1.6 && horizAlignment > 0.35);
-
-    out.push({
-      id: p.id,
-      name: p.name || p.type || "primitive",
-      type: p.type || "primitive",
-      dist,
-      isLookedAt,
-    });
-  }
-  out.sort((a, b) => a.dist - b.dist);
-  return out.slice(0, 20);
-}
-
-
-async function agentInteractAsset({ agent, assetId, actionId }) {
-  console.log(`[INTERACT] Attempting interaction: assetId="${assetId}", actionId="${actionId}"`);
-
-  const candidates = getNearbyAssetsForAgent(agent, 1.5); // Interaction distance
-
-  // Debug: if no candidates, show what assets exist
-  if (candidates.length === 0) {
-    const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-    console.log(`[INTERACT] Agent position:`, [ax.toFixed(2), ay.toFixed(2), az.toFixed(2)]);
-    console.log(`[INTERACT] All assets in scene:`, assets.map(a => {
-      const obj = assetsGroup.getObjectByName(`asset:${a.id}`);
-      if (!obj) return { id: a.id, title: a.title, inScene: false };
-      const _ds = new THREE.Sphere();
-      getAssetWorldSphere(obj, _ds);
-      const center = _ds.center;
-      const dx = center.x - ax;
-      const dy = center.y - ay;
-      const dz = center.z - az;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      return { id: a.id, title: a.title, dist: dist.toFixed(2), center: [center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2)] };
-    }));
-  }
-
-  console.log(`[INTERACT] Nearby candidates:`, candidates.map(c => ({
-    id: c.id,
-    title: c.title,
-    dist: c.dist.toFixed(2),
-    isLookedAt: c.isLookedAt,
-    currentState: c.currentState,
-    actions: c.actions.map(a => `${a.id}:${a.label}`)
-  })));
-
-  const target = candidates.find((x) => x.id === assetId);
-  if (!target) {
-    console.warn(`[INTERACT] FAIL: Asset "${assetId}" not in nearby candidates`);
-    return { ok: false, reason: "not-nearby" };
-  }
-
-  console.log(`[INTERACT] Found target: dist=${target.dist.toFixed(2)}m, isLookedAt=${target.isLookedAt}, currentState=${target.currentState}`);
-
-  if (!target.isLookedAt && target.dist > 1.2) {
-    console.warn(`[INTERACT] FAIL: Asset "${assetId}" not looked at (isLookedAt=false)`);
-    return { ok: false, reason: "not-looking" };
-  }
-  if (!target.isLookedAt && target.dist <= 1.2) {
-    console.log(`[INTERACT] Allowing close-range interaction despite look mismatch (dist=${target.dist.toFixed(2)}m).`);
-  }
-
-  // Check if the actionId exists in the target's available actions
-  const availableAction = target.actions.find(a => a.id === actionId);
-  if (!availableAction) {
-    console.warn(`[INTERACT] actionId "${actionId}" not in available actions:`, target.actions);
-    // Try to find by label instead
-    const byLabel = target.actions.find(a => a.label?.toLowerCase() === actionId?.toLowerCase());
-    if (byLabel) {
-      console.log(`[INTERACT] Found action by label match: "${byLabel.id}"`);
-      actionId = byLabel.id;
-    }
-  }
-
-  const ok = await applyAssetAction(assetId, actionId);
-  console.log(`[INTERACT] applyAssetAction result: ${ok}`);
-
-  if (!ok) {
-    // Diagnose why it failed
-    const asset = assets.find(a => a.id === assetId);
-    if (asset) {
-      const curState = asset.currentStateId || asset.currentState || "A";
-      const allActions = asset.actions || [];
-      const matchingAction = allActions.find(a => a.id === actionId);
-      console.warn(`[INTERACT] applyAssetAction FAILED diagnosis:`, {
-        currentState: curState,
-        requestedActionId: actionId,
-        actionFound: !!matchingAction,
-        actionFromState: matchingAction?.from,
-        actionToState: matchingAction?.to,
-        fromMatchesCurrent: matchingAction?.from === curState,
-        allActionIds: allActions.map(a => `${a.id}(${a.from}->${a.to})`)
-      });
-    }
-  }
-
-  return { ok, reason: ok ? "ok" : "invalid-action" };
-}
 
 // ============================================================================
 // PLAYER INTERACTION SYSTEM
@@ -3784,91 +2936,10 @@ function playerDropAsset() {
 /**
  * Pick up an asset (for AI agent)
  */
-function agentPickUpAsset(agent, assetId) {
-  const agentId = agent.id || "default";
-  const asset = assets.find(a => a.id === assetId);
-
-  if (!asset) return { ok: false, reason: "not-found" };
-  if (!asset.pickable) return { ok: false, reason: "not-pickable" };
-
-  const holdStatus = isAssetHeld(assetId);
-  if (holdStatus.held) return { ok: false, reason: "already-held", by: holdStatus.by };
-
-  if (agentHeldAssets.has(agentId)) return { ok: false, reason: "hands-full" };
-
-  // Check distance
-  const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-  const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
-  if (obj) {
-    const _pickSphere = new THREE.Sphere();
-    getAssetWorldSphere(obj, _pickSphere);
-    const center = _pickSphere.center;
-    const dist = Math.sqrt(
-      Math.pow(center.x - ax, 2) +
-      Math.pow(center.y - ay, 2) +
-      Math.pow(center.z - az, 2)
-    );
-    if (dist > 1.5) return { ok: false, reason: "too-far", dist };
-  }
-
-  agentHeldAssets.set(agentId, assetId);
-
-  // Hide the asset from the scene
-  if (obj) obj.visible = false;
-
-  // Remove collider while held
-  removeAssetCollider(assetId);
-
-  console.log(`[PICKUP] Agent ${agentId} picked up: ${asset.title || assetId}`);
-  return { ok: true };
-}
 
 /**
  * Drop the held asset (for AI agent)
  */
-function agentDropAsset(agent) {
-  const agentId = agent.id || "default";
-  const assetId = agentHeldAssets.get(agentId);
-
-  if (!assetId) return { ok: false, reason: "not-holding" };
-
-  const asset = assets.find(a => a.id === assetId);
-  if (!asset) {
-    agentHeldAssets.delete(agentId);
-    return { ok: false, reason: "not-found" };
-  }
-
-  // Calculate drop position (in front of agent)
-  const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-  const yaw = agent.group?.rotation?.y ?? 0;
-  const dropDist = 0.6;
-
-  const dropPos = new THREE.Vector3(
-    ax + Math.sin(yaw) * dropDist,
-    ay + 0.1, // Slightly above ground
-    az + Math.cos(yaw) * dropDist
-  );
-
-  // Update asset transform
-  asset.transform.position = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
-
-  // Show and reposition the asset
-  const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
-  if (obj) {
-    obj.position.copy(dropPos);
-    obj.visible = true;
-  }
-
-  // Rebuild collider
-  rebuildAssetCollider(assetId);
-
-  console.log(`[DROP] Agent ${agentId} dropped: ${asset.title || assetId}`);
-
-  agentHeldAssets.delete(agentId);
-  saveTagsForWorld();
-
-  return { ok: true, assetId };
-}
 
 /**
  * Remove collider for an asset (when picked up)
@@ -3893,12 +2964,6 @@ function getPlayerHeldAsset() {
 /**
  * Get what an agent is currently holding
  */
-function getAgentHeldAsset(agent) {
-  const agentId = agent.id || "default";
-  const assetId = agentHeldAssets.get(agentId);
-  if (!assetId) return null;
-  return assets.find(a => a.id === assetId) || null;
-}
 
 /**
  * Get the interactable asset at the player's crosshair (center of screen).
@@ -4191,137 +3256,6 @@ async function handlePlayerInteraction() {
 // END PLAYER INTERACTION SYSTEM
 // ============================================================================
 
-function deleteSelectedAsset() {
-  const a = getSelectedAsset();
-  if (!a) return;
-  // remove collider
-  if (a._colliderHandle != null) {
-    try {
-      rapierWorld?.removeCollider?.(a._colliderHandle, true);
-    } catch {}
-  }
-  // remove visual
-  const obj = assetsGroup.getObjectByName(`asset:${a.id}`);
-  if (obj?.parent) obj.parent.remove(obj);
-  _assetBumpVelocities.delete(a.id);
-  assets = assets.filter((x) => x.id !== a.id);
-  selectedAssetId = null;
-  saveTagsForWorld();
-  renderAssetsList();
-  setStatus("Asset deleted.");
-}
-
-async function interactSelectedAssetDebug() {
-  const a = getSelectedAsset();
-  if (!a) return;
-  const state = a.currentStateId || a.currentState || "A";
-  const outgoing = (a.actions || []).filter((x) => x.from === state);
-  const act = outgoing[0] || null;
-  if (!act) {
-    setStatus("Selected asset has no valid action from its current state.");
-    return;
-  }
-  const ok = await applyAssetAction(a.id, act.id);
-  setStatus(ok ? `Asset interacted: ${act.label}` : "Asset interaction failed.");
-}
-
-function _newId(prefix) {
-  return `${prefix}${Date.now().toString(16)}${Math.random().toString(16).slice(2, 6)}`;
-}
-
-function _cloneAssetWithFreshIds(src) {
-  // Ensure latest schema and interactions exist
-  const a = normalizeAsset(structuredClone ? structuredClone(src) : JSON.parse(JSON.stringify(src)));
-
-  const newAssetId = _newId("asset_");
-  const stateIdMap = new Map();
-  const newStates = [];
-
-  for (const s of a.states || []) {
-    const newSid = _newId("s");
-    stateIdMap.set(s.id, newSid);
-    newStates.push({
-      id: newSid,
-      name: s.name || "",
-      glbName: s.glbName || "",
-      dataBase64: s.dataBase64 || "",
-      interactions: [],
-    });
-  }
-
-  // Copy interactions (and rewrite state ids)
-  for (const s of a.states || []) {
-    const fromNew = stateIdMap.get(s.id);
-    const dstState = newStates.find((x) => x.id === fromNew);
-    if (!dstState) continue;
-    const ints = Array.isArray(s.interactions) ? s.interactions : [];
-    dstState.interactions = ints
-      .map((it) => ({
-        id: _newId("it_"),
-        label: it.label || "toggle",
-        to: stateIdMap.get(it.to) || stateIdMap.get(s.id) || fromNew,
-      }))
-      .filter((it) => it.to && it.to !== fromNew);
-  }
-
-  const curOld = a.currentStateId || a.currentState || (a.states?.[0]?.id ?? null);
-  const curNew = stateIdMap.get(curOld) || newStates[0]?.id || null;
-
-  // Offset placement slightly forward so it doesn't overlap
-  let transform = a.transform ? structuredClone(a.transform) : null;
-  const obj = assetsGroup.getObjectByName(`asset:${src.id}`);
-  if (!transform) {
-    transform = { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } };
-  }
-  if (obj) {
-    transform.position = { x: obj.position.x, y: obj.position.y, z: obj.position.z };
-    transform.rotation = { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z };
-    transform.scale = { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z };
-  } else {
-    transform.position = transform.position || { x: 0, y: 0, z: 0 };
-    transform.rotation = transform.rotation || { x: 0, y: 0, z: 0 };
-    transform.scale = transform.scale || { x: 1, y: 1, z: 1 };
-  }
-  const fwd = new THREE.Vector3();
-  camera.getWorldDirection(fwd);
-  const offset = 0.7;
-  transform.position.x += fwd.x * offset;
-  transform.position.y += fwd.y * offset;
-  transform.position.z += fwd.z * offset;
-
-  const duplicated = {
-    id: newAssetId,
-    title: (src.title || "").trim() ? `${src.title} (copy)` : "Asset (copy)",
-    notes: src.notes || "",
-    states: newStates,
-    currentStateId: curNew,
-    transform,
-    actions: [],
-    _colliderHandle: null,
-  };
-
-  // Build actions from interactions for runtime/agent/debug use
-  duplicated.actions = [];
-  for (const s of duplicated.states) {
-    for (const it of s.interactions || []) {
-      duplicated.actions.push({ id: it.id, label: it.label, from: s.id, to: it.to });
-    }
-  }
-
-  return duplicated;
-}
-
-async function duplicateSelectedAsset() {
-  const a = getSelectedAsset();
-  if (!a) return;
-  const dup = _cloneAssetWithFreshIds(a);
-  assets.push(dup);
-  saveTagsForWorld();
-  await instantiateAsset(dup);
-  renderAssetsList();
-  selectAsset(dup.id);
-  setStatus("Asset duplicated.");
-}
 
 async function buildRapierTriMeshColliderFromObject(obj) {
   await ensureRapierLoaded();
@@ -4383,17 +3317,6 @@ async function rebuildAssetCollider(assetId) {
   }
 }
 
-function removeAssetColliderHandle(asset) {
-  if (!asset || asset._colliderHandle == null || !rapierWorld) return;
-  try {
-    if (typeof asset._colliderHandle === "object" && asset._colliderHandle.handle !== undefined) {
-      rapierWorld.removeCollider(asset._colliderHandle, true);
-    }
-  } catch (e) {
-    console.warn(`[COLLIDER] Failed to remove collider for ${asset.id}:`, e);
-  }
-  asset._colliderHandle = null;
-}
 
 async function rebuildAssets() {
   while (assetsGroup.children.length) assetsGroup.remove(assetsGroup.children[0]);
@@ -4404,7 +3327,6 @@ async function rebuildAssets() {
       console.warn("Failed to rebuild asset", a?.glb?.name, e);
     }
   }
-  selectAsset(selectedAssetId);
 }
 
 // =============================================================================
@@ -4856,81 +3778,7 @@ async function rebuildPrimitiveColliderAsync(prim) {
 }
 
 // Keep old name as alias for callers (e.g. dimension/transform change handlers)
-function rebuildPrimitiveCollider(primId) {
-  const prim = primitives.find((p) => p.id === primId);
-  if (prim) rebuildPrimitiveColliderSync(prim);
-}
 
-function addPrimitiveAtCrosshair(type) {
-  const spawnPos = getPlacementAtCrosshair({ raycastDistance: 250, surfaceOffset: 0.5 }).position;
-  addPrimitiveAtPosition(type, spawnPos);
-}
-
-function addPrimitiveAtPosition(type, spawnPos) {
-  const prim = {
-    id: randId(),
-    type,
-    name: type.charAt(0).toUpperCase() + type.slice(1),
-    notes: "",
-    tags: [],            // string tags for filtering / grouping
-    state: "static",     // static | dynamic | interactable | trigger | decoration
-    metadata: {},        // arbitrary key-value pairs
-    dimensions: { ...(PRIMITIVE_DEFAULTS[type] || PRIMITIVE_DEFAULTS.box) },
-    transform: {
-      position: spawnPos,
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
-    },
-    material: {
-      color: "#808080",
-      roughness: 0.7,
-      softness: 0.7,
-      hardness: 0.0,
-      fluffiness: 0.0,
-      metalness: 0.0,
-      specularIntensity: 1.0,
-      specularColor: "#ffffff",
-      envMapIntensity: 1.0,
-      opacity: 1.0,
-      transmission: 0.0,
-      ior: 1.45,
-      thickness: 0.0,
-      attenuationColor: "#ffffff",
-      attenuationDistance: 1.0,
-      iridescence: 0.0,
-      emissive: "#000000",
-      emissiveIntensity: 0.0,
-      clearcoat: 0.0,
-      clearcoatRoughness: 0.0,
-      alphaCutoff: 0.0,
-      textureSoftness: 0.25,
-      textureHardness: 0.5,
-      doubleSided: true,
-      flatShading: false,
-      wireframe: false,
-      uvTransform: { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0, rotationDeg: 0 },
-      textureDataUrl: null,
-    },
-    physics: true,
-    castShadow: true,
-    receiveShadow: true,
-  };
-
-  primitives.push(prim);
-  instantiatePrimitive(prim);
-  saveTagsForWorld();
-  renderPrimitivesList();
-  selectPrimitive(prim.id);
-  setStatus(`${prim.name} placed. Use transform tools to position.`);
-}
-
-function selectPrimitive(id) {
-  selectedPrimitiveId = id;
-  if (id) {
-    selectedAssetId = null;
-  }
-  renderPrimitivesList();
-}
 
 function getPlacementAtCrosshair({ raycastDistance = 500, fallbackDistance = 3, surfaceOffset = 0.02 } = {}) {
   const hit = rapierRaycastFromCamera(raycastDistance);
@@ -4969,191 +3817,6 @@ function getPlacementAtCrosshair({ raycastDistance = 500, fallbackDistance = 3, 
   };
 }
 
-function getPlacementFromAgentView(agent, { raycastDistance = 500, fallbackDistance = 2.5, surfaceOffset = 0.02 } = {}) {
-  const [ax, ay, az] = agent?.getPosition?.() || [0, 0, 0];
-  const yaw = agent?.group?.rotation?.y ?? 0;
-  const pitch = typeof agent?.pitch === "number" ? agent.pitch : 0;
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  const dx = Math.sin(yaw) * cp;
-  const dy = sp;
-  const dz = Math.cos(yaw) * cp;
-  const eyeY = ay + PLAYER_EYE_HEIGHT * 0.9;
-
-  if (rapierWorld && RAPIER) {
-    const ray = new RAPIER.Ray({ x: ax, y: eyeY, z: az }, { x: dx, y: dy, z: dz });
-    const hit = rapierWorld.queryPipeline.castRayAndGetNormal(
-      rapierWorld.bodies,
-      rapierWorld.colliders,
-      ray,
-      raycastDistance,
-      false,
-      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
-      agent?.collider?.handle
-    );
-    if (hit) {
-      const toi = hit.toi ?? hit.timeOfImpact ?? 0;
-      const px = ax + dx * toi;
-      const py = eyeY + dy * toi;
-      const pz = az + dz * toi;
-      const n = hit.normal
-        ? new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z).normalize()
-        : new THREE.Vector3(0, 1, 0);
-      return {
-        hit: true,
-        point: { x: px, y: py, z: pz },
-        normal: { x: n.x, y: n.y, z: n.z },
-        position: {
-          x: px + n.x * surfaceOffset,
-          y: py + n.y * surfaceOffset,
-          z: pz + n.z * surfaceOffset,
-        },
-      };
-    }
-  }
-
-  return {
-    hit: false,
-    point: {
-      x: ax + dx * fallbackDistance,
-      y: eyeY + dy * fallbackDistance,
-      z: az + dz * fallbackDistance,
-    },
-    normal: { x: 0, y: 1, z: 0 },
-    position: {
-      x: ax + dx * fallbackDistance,
-      y: eyeY + dy * fallbackDistance,
-      z: az + dz * fallbackDistance,
-    },
-  };
-}
-
-
-function getSelectedPrimitive() {
-  return primitives.find((p) => p.id === selectedPrimitiveId) || null;
-}
-
-function buildPrimitiveCutoutFromSource(targetId, sourceId) {
-  const targetPrim = primitives.find((p) => p.id === targetId);
-  const sourcePrim = primitives.find((p) => p.id === sourceId);
-  if (!targetPrim || !sourcePrim) return null;
-  const targetMesh = primitivesGroup.getObjectByName(`prim:${targetId}`);
-  const sourceMesh = primitivesGroup.getObjectByName(`prim:${sourceId}`);
-  if (!targetMesh || !sourceMesh) return null;
-  targetMesh.updateMatrixWorld(true);
-  sourceMesh.updateMatrixWorld(true);
-  const targetWorldInv = new THREE.Matrix4().copy(targetMesh.matrixWorld).invert();
-  const sourceInTarget = new THREE.Matrix4().multiplyMatrices(targetWorldInv, sourceMesh.matrixWorld);
-  const targetToSource = new THREE.Matrix4().copy(sourceInTarget).invert();
-  return {
-    id: randId(),
-    type: sourcePrim.type,
-    targetToSourceMatrix: targetToSource.elements.slice(),
-    dimensions: { ...(sourcePrim.dimensions || {}) },
-  };
-}
-
-
-function getOverlappingPrimitiveIds(targetId) {
-  const targetMesh = primitivesGroup.getObjectByName(`prim:${targetId}`);
-  if (!targetMesh) return [];
-  const targetBox = new THREE.Box3().setFromObject(targetMesh).expandByScalar(0.01);
-  const out = [];
-  for (const p of primitives) {
-    if (p.id === targetId) continue;
-    const mesh = primitivesGroup.getObjectByName(`prim:${p.id}`);
-    if (!mesh) continue;
-    const box = new THREE.Box3().setFromObject(mesh);
-    if (box.isEmpty()) continue;
-    if (targetBox.intersectsBox(box)) out.push(p.id);
-  }
-  return out;
-}
-
-function persistSelectedPrimitiveTransform() {
-  const prim = getSelectedPrimitive();
-  if (!prim) return;
-  const obj = primitivesGroup.getObjectByName(`prim:${prim.id}`);
-  if (!obj) return;
-  prim.transform = {
-    position: { x: obj.position.x, y: obj.position.y, z: obj.position.z },
-    rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
-    scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z },
-  };
-  saveTagsForWorld();
-  rebuildPrimitiveColliderSync(prim);
-}
-
-function deletePrimitive(id) {
-  const idx = primitives.findIndex((p) => p.id === id);
-  if (idx === -1) return;
-  const prim = primitives[idx];
-
-  // Remove collider safely
-  removePrimitiveCollider(prim);
-
-  // Remove visual
-  const obj = primitivesGroup.getObjectByName(`prim:${id}`);
-  if (obj) {
-    obj.geometry?.dispose();
-    disposePrimitiveMaterial(obj.material);
-    primitivesGroup.remove(obj);
-  }
-
-  primitives.splice(idx, 1);
-  if (selectedPrimitiveId === id) {
-    selectedPrimitiveId = null;
-  }
-  saveTagsForWorld();
-  renderPrimitivesList();
-  setStatus("Primitive deleted.");
-}
-
-function duplicatePrimitive(id) {
-  const src = primitives.find((p) => p.id === id);
-  if (!src) return;
-  // Strip runtime objects (collider handle has circular refs) before deep clone
-  const { _colliderHandle, ...serializable } = src;
-  const clone = JSON.parse(JSON.stringify(serializable));
-  clone.id = randId();
-  clone.name = src.name + " copy";
-  clone._colliderHandle = null;
-  // Offset slightly
-  if (clone.transform?.position) {
-    clone.transform.position.x += 1;
-  }
-  primitives.push(clone);
-  instantiatePrimitive(clone);
-  saveTagsForWorld();
-  renderPrimitivesList();
-  selectPrimitive(clone.id);
-  setStatus("Primitive duplicated.");
-}
-
-function updatePrimitiveMaterial(primId) {
-  const prim = primitives.find((p) => p.id === primId);
-  if (!prim) return;
-  const mesh = primitivesGroup.getObjectByName(`prim:${prim.id}`);
-  if (!mesh) return;
-  disposePrimitiveMaterial(mesh.material);
-  mesh.material = createPrimitiveMaterial(prim.material);
-  applyPrimitiveCutoutShader(mesh, prim);
-}
-
-function updatePrimitiveDimensions(primId) {
-  const prim = primitives.find((p) => p.id === primId);
-  if (!prim) return;
-  const mesh = primitivesGroup.getObjectByName(`prim:${prim.id}`);
-  if (!mesh) return;
-  mesh.geometry?.dispose();
-  mesh.geometry = createPrimitiveGeometry(prim.type, prim.dimensions);
-  rebuildPrimitiveCollider(prim.id);
-}
-
-function renderPrimitivesList() {
-  // No-op in sim-only mode (editor primitives list not present)
-}
 
 function rebuildAllPrimitives() {
   // Remove all existing colliders first
@@ -5272,7 +3935,6 @@ function removeEditorLightObjects(id) {
 }
 
 
-
 function rebuildAllEditorLights() {
   // Remove all light objects
   while (lightsGroup.children.length) {
@@ -5374,7 +4036,6 @@ function renderSceneInMode(mode) {
   const savedLights = lightsGroup.visible;
   const savedTags = tagsGroup.visible;
   const savedLidar = lidarVizGroup.visible;
-  const savedOverlay = rgbdPcOverlayGroup.visible;
 
   if (mode === "rgb") {
     scene.overrideMaterial = null;
@@ -5383,7 +4044,6 @@ function renderSceneInMode(mode) {
     lightsGroup.visible = true;
     tagsGroup.visible = false;
     lidarVizGroup.visible = false;
-    rgbdPcOverlayGroup.visible = false;
     scene.background = DEFAULT_SCENE_BG;
     renderer.render(scene, camera);
   } else if (mode === "lidar") {
@@ -5393,7 +4053,6 @@ function renderSceneInMode(mode) {
     lightsGroup.visible = false;
     tagsGroup.visible = false;
     lidarVizGroup.visible = true;
-    rgbdPcOverlayGroup.visible = rgbdPcOverlayOnLidar && _rgbdPcOverlayLastCount > 0;
     scene.background = RGBD_BG;
     renderer.render(scene, camera);
   }
@@ -5405,7 +4064,6 @@ function renderSceneInMode(mode) {
   lightsGroup.visible = savedLights;
   tagsGroup.visible = savedTags;
   lidarVizGroup.visible = savedLidar;
-  rgbdPcOverlayGroup.visible = savedOverlay;
 }
 
 function renderCompareViews() {
@@ -5574,10 +4232,6 @@ function stopAiAgent(agent, reason = "manual-stop") {
   renderAgentTaskUi();
 }
 
-function despawnEphemeralAgents(reason = "task-end") {
-  const doomed = aiAgents.filter((a) => a?._ephemeral === true);
-  for (const a of doomed) removeAiAgent(a, reason);
-}
 
 function createAiAgent({ ephemeral = false, avatarUrl, radius, halfHeight } = {}) {
   const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -5691,126 +4345,6 @@ async function spawnOrMoveAiAtAim({ createNew = false, silent = false, ephemeral
   }
 }
 
-function pickAgentFromRay(raycaster) {
-  const agentRoots = aiAgents.map((a) => a?.group).filter(Boolean);
-  if (agentRoots.length === 0) return null;
-
-  // First try exact mesh hits.
-  const agentHits = raycaster.intersectObjects(agentRoots, true);
-  if (agentHits.length > 0) {
-    let obj = agentHits[0].object;
-    while (obj && !(typeof obj.name === "string" && obj.name.startsWith("AiAvatar:"))) obj = obj.parent;
-    const agentId = obj?.name?.slice("AiAvatar:".length) || "";
-    const agent = aiAgents.find((a) => a.id === agentId) || null;
-    if (agent) return agent;
-  }
-
-  // Fallback: broad proximity test against agent centers.
-  let best = null;
-  let bestT = Infinity;
-  const origin = raycaster.ray.origin;
-  const dir = raycaster.ray.direction;
-  const tmp = new THREE.Vector3();
-  const to = new THREE.Vector3();
-  const pickRadius = 0.45; // generous click radius for tiny capsules
-
-  for (const a of aiAgents) {
-    if (!a?.group || a.group.visible === false) continue;
-    const [x, y, z] = a.getPosition?.() || [0, 0, 0];
-    // Aim around torso center for better clickability.
-    tmp.set(x, y + (a.halfHeight || 0.25), z);
-    const d2 = raycaster.ray.distanceSqToPoint(tmp);
-    if (d2 > pickRadius * pickRadius) continue;
-
-    // Prefer nearest along-ray candidate in front of camera.
-    to.copy(tmp).sub(origin);
-    const t = to.dot(dir);
-    if (t <= 0) continue;
-    if (t < bestT) {
-      bestT = t;
-      best = a;
-    }
-  }
-  return best;
-}
-
-function pickAgentFromScreenPoint(clientX, clientY, canvasRect) {
-  if (!Number.isFinite(clientX) || !Number.isFinite(clientY) || !canvasRect || aiAgents.length === 0) return null;
-  const thresholdPx = 46;
-  let best = null;
-  let bestD2 = thresholdPx * thresholdPx;
-  const v = new THREE.Vector3();
-  for (const a of aiAgents) {
-    if (!a?.group || a.group.visible === false) continue;
-    const [x, y, z] = a.getPosition?.() || [0, 0, 0];
-    v.set(x, y + (a.halfHeight || 0.25), z).project(camera);
-    if (v.z < -1 || v.z > 1) continue; // behind camera / clipped
-    const sx = canvasRect.left + (v.x * 0.5 + 0.5) * canvasRect.width;
-    const sy = canvasRect.top + (-v.y * 0.5 + 0.5) * canvasRect.height;
-    const dx = sx - clientX;
-    const dy = sy - clientY;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      best = a;
-    }
-  }
-  return best;
-}
-
-function ensureAgentBadgeLayer() {
-  if (agentBadgeLayerEl) return;
-  installAgentBadgeEventDelegation();
-  const el = document.createElement("div");
-  el.id = "agent-badge-layer";
-  el.className = "agent-badge-layer";
-  document.body.appendChild(el);
-  agentBadgeLayerEl = el;
-}
-
-function getOrCreateAgentBadge(agentId) {
-  const id = String(agentId || "");
-  if (!id) return null;
-  ensureAgentBadgeLayer();
-  if (agentBadgeElsById.has(id)) return agentBadgeElsById.get(id);
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "agent-badge";
-  btn.textContent = id;
-  btn.dataset.agentId = id;
-  btn.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    selectAgentInspector(id);
-    setStatus(`Inspecting ${id}. Use right panel controls.`);
-  });
-  document.body.appendChild(btn);
-  agentBadgeElsById.set(id, btn);
-  return btn;
-}
-
-function installAgentBadgeEventDelegation() {
-  if (typeof document === "undefined") return;
-  if (document.body?.dataset?.agentBadgeDelegationInstalled === "1") return;
-  if (document.body) document.body.dataset.agentBadgeDelegationInstalled = "1";
-  // Capture-phase delegation to beat canvas/overlay handlers.
-  document.addEventListener(
-    "pointerdown",
-    (e) => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      const badge = target.closest(".agent-badge");
-      if (!badge) return;
-      const id = String(badge.dataset.agentId || "").trim();
-      if (!id) return;
-      e.preventDefault();
-      e.stopPropagation();
-      selectAgentInspector(id);
-      setStatus(`Inspecting ${id}. Use right panel controls.`);
-    },
-    true
-  );
-}
 
 function removeAgentBadge(agentId) {
   const id = String(agentId || "");
@@ -5831,7 +4365,6 @@ function pickTagMarkerFromCamera() {
   }
   return null;
 }
-
 
 
 // Lock pointer and interact on click for FPS navigation.
@@ -5858,10 +4391,6 @@ controls.addEventListener("lock", () => {
 });
 controls.addEventListener("unlock", () => {
   setStatus("Click to look around.");
-});
-
-resetBtn?.addEventListener("click", () => {
-  controls.object.position.set(0, 1.7, 4);
 });
 
 
@@ -5944,28 +4473,6 @@ simRgbdMaxEl?.addEventListener("input", () => {
   const maxV = Number(simRgbdMaxEl.value);
   setRgbdRange(minV, maxV);
 });
-simRgbdPcOverlayBtn?.addEventListener("click", () => {
-  rgbdPcOverlayOnLidar = !rgbdPcOverlayOnLidar;
-  _rgbdPcOverlayLastUpdateMs = 0;
-  _rgbdPcOverlayLastPose = null;
-  _rgbdPcOverlayDirty = rgbdPcOverlayOnLidar;
-  if (!rgbdPcOverlayOnLidar) {
-    _rgbdPcGeom.setDrawRange(0, 0);
-    _rgbdPcOverlayLastCount = 0;
-    _rgbdPcOverlayDirty = false;
-  }
-  if (rgbdPcOverlayOnLidar) {
-    // Overlay button should directly enter combined LiDAR+RGBD-PC debug mode.
-    simCompareView = false;
-    lidarOrderedDebugView = false;
-    if (simSensorViewMode !== "lidar") simSensorViewMode = "lidar";
-    applySimSensorViewMode();
-  }
-  // Actual visibility is finalized by updateRgbdPcOverlayCloud once points are generated.
-  rgbdPcOverlayGroup.visible = false;
-  updateSimSensorButtons();
-  setStatus(rgbdPcOverlayOnLidar ? `RGB-D->PointCloud overlay ON (${_rgbdPcOverlayLastCount} pts)` : "RGB-D->PointCloud overlay OFF");
-});
 simViewLidarBtn?.addEventListener("click", () => {
   // Main LiDAR button always maps to accumulated unordered 3D point cloud.
   simCompareView = false;
@@ -5976,7 +4483,6 @@ simViewLidarBtn?.addEventListener("click", () => {
     resetLidarScanState();
   }
   setSimSensorViewMode("lidar");
-  if (rgbdPcOverlayOnLidar) _rgbdPcOverlayDirty = true;
 });
 simViewCompareBtn?.addEventListener("click", () => {
   simCompareView = !simCompareView;
@@ -5986,7 +4492,6 @@ simViewCompareBtn?.addEventListener("click", () => {
     applySimPanelCollapsedState();
     simSensorViewMode = "lidar";
     lidarOrderedDebugView = false;
-    if (rgbdPcOverlayOnLidar) _rgbdPcOverlayDirty = true;
     setStatus("Compare view: RGB | RGB-D | LiDAR");
   } else {
     simPanelCollapsed = false;
@@ -6032,41 +4537,9 @@ simLidarMultiReturnBtn?.addEventListener("click", () => {
   if (simSensorViewMode === "lidar") updateLidarPointCloud();
   setStatus(`LiDAR return mode: ${lidarMultiReturnMode}`);
 });
-spawnAiBtn?.addEventListener("click", async () => {
-  try {
-    await spawnOrMoveAiAtAim({ createNew: false, ephemeral: false });
-  } catch (err) {
-    console.error("[Spawn] Error spawning agent:", err);
-    setStatus("Spawn failed: " + (err?.message || String(err)));
-  }
-});
 
 // --- Blob shadow live-adjustment helpers ---
 // Updates the blob shadow mesh in-place without rebuilding the entire asset.
-function updateBlobShadowLive(assetId) {
-  const a = assets.find((x) => x.id === assetId);
-  if (!a?.castShadow) return;
-  const root = assetsGroup.getObjectByName(`asset:${assetId}`);
-  if (!root) return;
-  const blob = root.getObjectByName(`blobShadow:${assetId}`);
-  if (!blob) return;
-  const bs = a.blobShadow || {};
-  // Opacity
-  if (blob.material) blob.material.opacity = bs.opacity ?? 0.5;
-  // Scale + stretch
-  const baseDiam = blob.userData._baseDiameter || 1;
-  const userScale = bs.scale ?? 1.0;
-  const stretch = bs.stretch ?? 1.0;
-  const d = baseDiam * userScale;
-  blob.scale.set(d * stretch, 1, d / stretch);
-  // Rotation (Y axis, degrees → radians)
-  blob.rotation.y = ((bs.rotationDeg ?? 0) * Math.PI) / 180;
-  // Offset
-  blob.position.x = bs.offsetX ?? 0;
-  const baseY = blob.userData._baseLocalY ?? blob.position.y;
-  blob.position.y = baseY + (bs.offsetY ?? 0);
-  blob.position.z = bs.offsetZ ?? 0;
-}
 
 
 // Initialize agent UI visibility/content.
@@ -6110,20 +4583,13 @@ async function importLevelFromJSON(json, options = {}) {
   await rebuildAssets();
   rebuildAllPrimitives();
   rebuildAllEditorLights();
-  renderTagsList();
-  renderAssetsList();
-  renderPrimitivesList();
-  renderTagPanel();
   applySceneSkySettings();
   applySceneRgbBackground();
   syncShadowMapEnabled();
 }
 
-// Exposed for the sim-authoring UI dropdown and sceneApi.loadJson.
-window.importLevelFromJSON = importLevelFromJSON;
 
-
-// Sim-mode "Load Level JSON" input (only exists in sim.html)
+// Sim-mode "Load Level JSON" input
 const simLevelImportEl = document.getElementById("sim-level-import");
 simLevelImportEl?.addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
@@ -6149,8 +4615,6 @@ canvas?.addEventListener("mousedown", () => {
   selectedTagId = id;
   draftTag = null;
   updateMarkerMaterials();
-  renderTagsList();
-  renderTagPanel();
 });
 
 
@@ -6158,12 +4622,6 @@ canvas?.addEventListener("mousedown", () => {
 // PRIMITIVE & LIGHT EVENT HANDLERS
 // =============================================================================
 
-
-// Expose tag data for "simulation mode" consumers.
-globalThis.sparkWorld = globalThis.sparkWorld || {};
-globalThis.sparkWorld.getWorldKey = () => worldKey;
-globalThis.sparkWorld.getTags = () => tags.slice();
-globalThis.sparkWorld.getAiAgents = () => aiAgents.map((a) => ({ id: a.id, position: a.getPosition?.() }));
 
 function teleportPlayerTo(x, y, z) {
   if (!playerBody) return;
@@ -6329,7 +4787,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.code === "KeyR" && controls?.isLocked && !isTyping && !isInteractionPopupVisible()) {
     if (cycleInteractableTarget(1)) {
-      updatePlayerInteractionHint();
+      updateInteractionHint();
       e.preventDefault();
     }
   }
@@ -6731,10 +5189,6 @@ function updateRapier(dt) {
     controls.object.position.set(p.x, p.y + PLAYER_EYE_HEIGHT, p.z);
   }
 
-  // Expose player position for other modules (AI, etc).
-  if (typeof window !== "undefined") {
-    window.__playerPosition = [p.x, p.y, p.z];
-  }
 }
 
 function tick() {
@@ -6784,42 +5238,17 @@ function tick() {
     updateInteractionHint();
   }
 
-  // LiDAR / sensor overlays — run when explicitly enabled OR in dimos mode
-  // In dimos mode, always skip browser raycasting — server handles lidar via Rapier snapshots.
-  const _skipBrowserLidar = dimosMode;
-  if (!_skipBrowserLidar && (simSensorViewMode === "lidar" || simCompareView || dimosMode)) {
+  // LiDAR viz — browser-side raycasting only outside dimos mode (in dimos
+  // mode the server handles lidar via Rapier snapshots).
+  if (!dimosMode && (simSensorViewMode === "lidar" || simCompareView)) {
     lidarVizGroup.visible = true;
     updateLidarPointCloud();
     if (_lidarGeom.drawRange.count <= 0 && _lidarLastNonZeroDrawCount > 0) {
       _lidarGeom.setDrawRange(0, _lidarLastNonZeroDrawCount);
     }
-    // In dimos mode, hide LiDAR viz from the main scene render — it's only
-    // needed for data capture + the sidebar LiDAR panel renders it separately.
-    if (dimosMode && simSensorViewMode !== "lidar" && !simCompareView) {
-      lidarVizGroup.visible = false;
-    }
-  } else if (!_skipBrowserLidar && rgbdPcOverlayOnLidar && (simSensorViewMode === "lidar" || simCompareView)) {
-    updateRgbdPcOverlayCloud(false);
   }
 
-  if (!_skipBrowserLidar) pushLidarPoseSample();
-
-  // Dimos sensor capture — GPU readback needs rAF, odom runs independently via setInterval
-  if (dimosMode && window.__dimosBridge) {
-    const bridge = window.__dimosBridge;
-    if (bridge._connected) {
-      // Lidar: skip browser→WS publish when server-side lidar is active
-      if (bridge._dirty.lidar && !bridge._serverLidar) {
-        bridge._dirty.lidar = false;
-        bridge._publishLidar();
-      }
-      // Camera stream disabled for now.
-      // if (bridge._dirty.images) {
-      //   bridge._dirty.images = false;
-      //   bridge._publishImages();
-      // }
-    }
-  }
+  if (!dimosMode) pushLidarPoseSample();
 
   renderActiveView();
   requestAnimationFrame(tick);
@@ -7008,16 +5437,6 @@ window.__robovalRgbd = {
       max_depth_m: RGBD_MAX_DEPTH_M,
     };
   },
-  getOverlayStats() {
-    return {
-      enabled: rgbdPcOverlayOnLidar,
-      visible: rgbdPcOverlayGroup.visible,
-      points: _rgbdPcOverlayLastCount,
-      rt_w: RGBD_PC_OVERLAY_RT_W,
-      rt_h: RGBD_PC_OVERLAY_RT_H,
-      dirty: _rgbdPcOverlayDirty,
-    };
-  },
 };
 
 // Debug: List all colliders in the physics world
@@ -7109,12 +5528,11 @@ if (dimosMode) {
 
       // 2. Initialize the scene-api module shared with the runtime exec sandbox.
       //    Scenes can either receive the api as a build() arg or — for runtime
-      //    exec via SceneEditor — pick it up off `window.__dimsim`.
       const sceneApi = await import("./sceneApi.ts");
       sceneApi._init({
         scene, THREE, RAPIER, rapierWorld,
         renderer, camera, agent: null,
-        assets, assetsGroup, gltfLoader,
+        gltfLoader,
         // Bridge isn't connected yet; pre-bridge collider sends are dropped
         // and the initial-state Rapier snapshot (shipped later) covers them.
         sendPhysics: (msg) => window.__dimosBridge?.sendCommand?.(msg),
@@ -7126,7 +5544,6 @@ if (dimosMode) {
           applySceneRgbBackground();
         },
       });
-      window.__dimsim = sceneApi;
 
       // 3. Dynamic-import the scene module + run its build()
       const sceneMod = await import(/* @vite-ignore */ `/scenes/${sceneName}/index.js`);
@@ -7298,7 +5715,6 @@ if (dimosMode) {
         const savedLights = lightsGroup.visible;
         const savedTags = tagsGroup.visible;
         const savedLidarViz = lidarVizGroup.visible;
-        const savedRgbdPc = rgbdPcOverlayGroup.visible;
 
         scene.overrideMaterial = null;
         assetsGroup.visible = true;
@@ -7306,7 +5722,6 @@ if (dimosMode) {
         lightsGroup.visible = true;
         tagsGroup.visible = false;
         lidarVizGroup.visible = false;
-        rgbdPcOverlayGroup.visible = false;
         const savedAgentVisible = agent.group?.visible;
         if (agent.group) agent.group.visible = false;
 
@@ -7326,7 +5741,6 @@ if (dimosMode) {
         lightsGroup.visible = savedLights;
         tagsGroup.visible = savedTags;
         lidarVizGroup.visible = savedLidarViz;
-        rgbdPcOverlayGroup.visible = savedRgbdPc;
         if (agent.group) agent.group.visible = savedAgentVisible;
         rgbdMetricMaterial.uniforms.uDepthTex.value = prevDepthTex;
         rgbdMetricMaterial.uniforms.uNear.value = prevNear;
@@ -7348,96 +5762,6 @@ if (dimosMode) {
         return { data: flipped, width: dw, height: dh };
       }
 
-      // 4. Sidebar sensor panel setup (depth + LiDAR canvases)
-      const _dimosSidebarW = 320, _dimosSidebarH = 145;
-      const _dimosDepthCanvas = document.getElementById("agent-depth-canvas");
-      const _dimosLidarCanvas = document.getElementById("agent-lidar-canvas");
-      if (_dimosDepthCanvas) { _dimosDepthCanvas.width = _dimosSidebarW; _dimosDepthCanvas.height = _dimosSidebarH; }
-      if (_dimosLidarCanvas) { _dimosLidarCanvas.width = _dimosSidebarW; _dimosLidarCanvas.height = _dimosSidebarH; }
-      const _dimosDepthCtx = _dimosDepthCanvas?.getContext("2d");
-      const _dimosLidarCtx = _dimosLidarCanvas?.getContext("2d");
-
-      // Small offscreen render targets for sidebar panels
-      const _dimosSidebarDepthTarget = new THREE.WebGLRenderTarget(_dimosSidebarW, _dimosSidebarH, {
-        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false,
-      });
-      const _dimosSidebarLidarTarget = new THREE.WebGLRenderTarget(_dimosSidebarW, _dimosSidebarH, {
-        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat, depthBuffer: true, stencilBuffer: false,
-      });
-      const _dimosSidebarReadBuf = new Uint8Array(_dimosSidebarW * _dimosSidebarH * 4);
-
-      // Helper: render a target, readback, flip Y, draw to 2D canvas
-      function _dimosBlitToCanvas(rt, ctx, w, h) {
-        renderer.readRenderTargetPixels(rt, 0, 0, w, h, _dimosSidebarReadBuf);
-        const flipped = new Uint8ClampedArray(w * h * 4);
-        const rowB = w * 4;
-        for (let y = 0; y < h; y++) {
-          flipped.set(_dimosSidebarReadBuf.subarray((h-1-y)*rowB, (h-y)*rowB), y*rowB);
-        }
-        ctx.putImageData(new ImageData(flipped, w, h), 0, 0);
-      }
-
-      /** Update the sidebar sensor panels (called after capture) */
-      function _dimosUpdateSidebarPanels(rgbBase64) {
-        if (window.__dimosHeadless) return;
-
-        // RGB — set img src
-        if (rgbBase64 && agentShotImgEl) {
-          agentShotImgEl.src = `data:image/jpeg;base64,${rgbBase64}`;
-        }
-
-        // Depth — render colormap to small target, blit to canvas
-        if (_dimosDepthCtx) {
-          const prev = renderer.getRenderTarget();
-          rgbdVizMaterial.uniforms.uGrayMode.value = rgbdVizMode === "gray" ? 1.0 : 0.0;
-          renderer.setRenderTarget(_dimosSidebarDepthTarget);
-          renderer.setClearColor(0x000000, 1);
-          renderer.clear(true, true, true);
-          renderer.render(rgbdVizScene, rgbdPostCamera);
-          _dimosBlitToCanvas(_dimosSidebarDepthTarget, _dimosDepthCtx, _dimosSidebarW, _dimosSidebarH);
-          renderer.setRenderTarget(prev);
-        }
-
-        // LiDAR — render lidar scene from agent POV to small target, blit to canvas
-        if (_dimosLidarCtx) {
-          const prev = renderer.getRenderTarget();
-          // Save/restore scene visibility for lidar-only render
-          const savedAssets = assetsGroup.visible;
-          const savedPrims = primitivesGroup.visible;
-          const savedLights = lightsGroup.visible;
-          const savedTags = tagsGroup.visible;
-          const savedLidar = lidarVizGroup.visible;
-          const savedOverlay = rgbdPcOverlayGroup.visible;
-          const savedBg = scene.background;
-
-          assetsGroup.visible = false;
-          primitivesGroup.visible = false;
-          lightsGroup.visible = false;
-          tagsGroup.visible = false;
-          lidarVizGroup.visible = true;
-          rgbdPcOverlayGroup.visible = false;
-          scene.background = RGBD_BG;
-
-          renderer.setRenderTarget(_dimosSidebarLidarTarget);
-          renderer.setClearColor(0x000000, 1);
-          renderer.clear(true, true, true);
-          renderer.render(scene, _dimosCapCam);
-
-          // Restore
-          assetsGroup.visible = savedAssets;
-          primitivesGroup.visible = savedPrims;
-          lightsGroup.visible = savedLights;
-          tagsGroup.visible = savedTags;
-          lidarVizGroup.visible = savedLidar;
-          rgbdPcOverlayGroup.visible = savedOverlay;
-          scene.background = savedBg;
-
-          _dimosBlitToCanvas(_dimosSidebarLidarTarget, _dimosLidarCtx, _dimosSidebarW, _dimosSidebarH);
-          renderer.setRenderTarget(prev);
-        }
-      }
 
       // 5. Connect dimos bridge
       let _lastRgbBase64 = null;
@@ -7462,48 +5786,13 @@ if (dimosMode) {
             return { data: jpegBytes, width: frame.width, height: frame.height };
           },
           captureDepth: () => _dimosCaptureDepth(),
-          captureLidar: () => {
-            // Return world-frame points (Three.js Y-up).
-            // Bridge converts Y-up → ROS Z-up and labels frame_id="world".
-            const lLen = _lidarLatestWorldPts ? _lidarLatestWorldPts.length : -1;
-            if (lLen > 0) {
-              return {
-                points: _lidarLatestWorldPts,
-                intensity: _lidarLatestWorldIntensity,
-                numPoints: lLen / 3,
-              };
-            }
-            const frames = window.__robovalLidar?.getLatestFrames?.();
-            const src = frames?.raw;
-            if (!src) return null;
-            return { points: src.points, intensity: src.intensity, numPoints: src.points?.length / 3 || 0 };
-          },
-          getOdomPose: () => {
-            const pos = agent.getPosition?.();
-            if (!pos) return null; // skip this frame instead of fallback to origin
-            const [ax, ay, az] = pos;
-            const qw = Math.cos(_dimosYaw / 2);
-            const qy = Math.sin(_dimosYaw / 2);
-            return { x: ax, y: ay, z: az, qx: 0, qy, qz: 0, qw };
-          },
         },
       });
 
-      // Hook: after _publishSensors — RGB capture disabled for now (GPU stall)
-      // _dimosCaptureRgb() does a full render + readRenderTargetPixels which
-      // stalls the GPU pipeline. Skip it for lidar-only nav testing.
-      // const origPublishSensors = bridge._publishSensors.bind(bridge);
-      // bridge._publishSensors = function() {
-      //   origPublishSensors();
-      //   _lastRgbBase64 = _dimosCaptureRgb();
-      //   _dimosUpdateSidebarPanels(_lastRgbBase64);
-      // };
 
       bridge.connect();
-      bridge.sceneReady = true;
       window.__dimosBridge = bridge;
       sceneApi._flushPendingEmbodiment?.();
-      window.__dimosCapCam = _dimosCapCam;
       window.__dimosAgent = agent;
 
       // Send Rapier world snapshot to bridge server for server-side physics + lidar.
@@ -7535,7 +5824,6 @@ if (dimosMode) {
             pdv.setFloat32(12, sy, true);
             pdv.setFloat32(16, sz, true);
             bridge.wsSensors.send(prelude.buffer);
-            bridge._serverLidar = true;
 
             let sent = 0;
             let chunkN = 0;
@@ -7608,7 +5896,6 @@ if (dimosMode) {
           return { x: cx, y: pos[1], z: cz, yaw: _dimosYaw, pitch: 0 };
         },
       });
-      window.__evalHarness = evalHarness;
       // Register the singleton so workflow files importing `runEval` from
       // `@dimsim/eval` (importmap → dist/assets/dimsim-eval.js → this same
       // module) get a working runEval.
@@ -7619,9 +5906,8 @@ if (dimosMode) {
       const sceneEditor = new SceneEditor({
         bridge,
         channel,
-        globals: { scene, THREE, RAPIER, rapierWorld, worldBody, renderer, camera, agent, assets, assetsGroup, gltfLoader },
+        globals: { scene, THREE, RAPIER, rapierWorld, renderer, camera, agent, assets, assetsGroup, gltfLoader },
       });
-      window.__sceneEditor = sceneEditor;
 
       // Agent POV only in headless (sensor capture needs it). Headed = free orbit.
       if (window.__dimosHeadless) {
@@ -7631,55 +5917,6 @@ if (dimosMode) {
       // 7a. dimos mode UI cleanup handled in CSS via body.dimos-mode class
       // (panel hiding) and .shortcuts-floating in index.html (WASD strip).
 
-      // 7b. Debug panel (integration diagnostics) — hidden for now
-      if (false && !window.__dimosHeadless) {
-        const dbg = document.createElement("div");
-        dbg.id = "dimos-debug";
-        dbg.style.cssText = "position:fixed;bottom:8px;left:8px;z-index:99999;background:rgba(0,0,0,0.88);color:#0f0;font:11px/1.4 monospace;padding:10px 14px;border-radius:8px;max-width:460px;max-height:400px;overflow-y:auto;pointer-events:auto;user-select:text;";
-        document.body.appendChild(dbg);
-
-        const _dbgState = {
-          bridgeConn: false,
-          sensorFps: 0,
-          agentPos: { x: 0, y: 0, z: 0 },
-          agentYaw: 0,
-          cmdVel: { angY: 0, linZ: 0 },
-          _sensorCount: 0,
-          _sensorLastTs: Date.now(),
-        };
-
-        // Hook lidar publish for FPS counter
-        const _origPubLidar2 = bridge._publishLidar;
-        bridge._publishLidar = function() {
-          _dbgState._sensorCount++;
-          _origPubLidar2.call(bridge);
-        };
-
-        // Update loop
-        setInterval(() => {
-          const now = Date.now();
-          const dt = (now - _dbgState._sensorLastTs) / 1000;
-          if (dt >= 1) {
-            _dbgState.sensorFps = Math.round(_dbgState._sensorCount / dt);
-            _dbgState._sensorCount = 0;
-            _dbgState._sensorLastTs = now;
-          }
-
-          const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
-          _dbgState.agentPos = { x: ax.toFixed(2), y: ay.toFixed(2), z: az.toFixed(2) };
-          _dbgState.agentYaw = (agent.group?.rotation?.y ?? 0).toFixed(3);
-          _dbgState.bridgeConn = bridge.ws?.readyState === WebSocket.OPEN;
-          const vel = bridge.getCmdVel();
-          _dbgState.cmdVel = { angY: vel.angY.toFixed(3), linZ: vel.linZ.toFixed(3) };
-
-          dbg.innerHTML = `
-            <div style="color:#fff;font-weight:bold;margin-bottom:4px;">dimos integration</div>
-            <div>Bridge: ${_dbgState.bridgeConn ? '<span style="color:#0f0">connected</span>' : '<span style="color:#f00">disconnected</span>'} | Sensors: ${_dbgState.sensorFps} fps</div>
-            <div>Agent: (${_dbgState.agentPos.x}, ${_dbgState.agentPos.y}, ${_dbgState.agentPos.z}) yaw=${_dbgState.agentYaw}</div>
-            <div>cmd_vel: angY=${_dbgState.cmdVel.angY} linZ=${_dbgState.cmdVel.linZ}</div>
-          `;
-        }, 500);
-      }
 
       console.log("[dimos] Bridge connected. Sensor publishing active.");
     } catch (err) {

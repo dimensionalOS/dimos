@@ -86,6 +86,8 @@ impl MLSPlanner {
             world_frame: String::new(),
             voxel_size,
             robot_height,
+            // Unused here. Only the binary's replan loop projects the start.
+            start_z_offset_m: 0.0,
             max_overhead_m,
             surface_closing_radius,
             node_spacing_m,

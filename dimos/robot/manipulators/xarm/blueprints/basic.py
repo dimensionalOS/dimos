@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -26,21 +26,26 @@ from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     make_xarm6_model_config,
     make_xarm7_model_config,
+    make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
 )
 
-xarm6_planner_only = ManipulationModule.blueprint(
-    robots=[make_xarm6_model_config(name="arm")],
-    planning_timeout=10.0,
-)
+_mock_left_xarm6_hw = make_xarm_hardware("left_arm", 6)
+_mock_right_xarm6_hw = make_xarm_hardware("right_arm", 6)
 
-dual_xarm6_planner = ManipulationModule.blueprint(
-    robots=[
-        make_xarm6_model_config(name="left_arm", y_offset=0.5),
-        make_xarm6_model_config(name="right_arm", y_offset=-0.5),
-    ],
-    planning_timeout=10.0,
+dual_xarm6_planner_coordinator = autoconnect(
+    planner(
+        robots=[
+            make_xarm6_model_config(name="left_arm", y_offset=0.5),
+            make_xarm6_model_config(name="right_arm", y_offset=-0.5),
+        ],
+        visualization={"backend": "viser"},
+    ),
+    coordinator(
+        hardware=[_mock_left_xarm6_hw, _mock_right_xarm6_hw],
+        tasks=[trajectory_task(_mock_left_xarm6_hw, _mock_right_xarm6_hw)],
+    ),
 )
 
 _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
@@ -79,11 +84,6 @@ _xarm6_right = xarm6_hardware("right_arm")
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[
-        TaskConfig(
-            name="traj_left", type="trajectory", joint_names=_xarm7_left.joints, priority=10
-        ),
-        TaskConfig(
-            name="traj_right", type="trajectory", joint_names=_xarm6_right.joints, priority=10
-        ),
+        joint_trajectory_task([*_xarm7_left.joints, *_xarm6_right.joints]),
     ],
 )

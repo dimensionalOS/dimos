@@ -23,6 +23,7 @@ deltas, and publishes PoseStamped commands.
 
 import asyncio
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import threading
 import time
@@ -34,6 +35,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -44,7 +46,6 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.path_utils import get_project_root
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
@@ -105,13 +106,13 @@ class QuestTeleopModule(Module):
             Hand.RIGHT: None,
         }
         self._lock = threading.RLock()
+        self._translation_scale = 1.0
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
-        # Embedded web server — created lazily in _start_server() so subclasses
-        # with a different transport (e.g. hosted/broker) never build it.
+        # Embedded web server, initialized during the module start lifecycle.
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
 
@@ -169,6 +170,8 @@ class QuestTeleopModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
+        self._setup_routes()
         self._start_server()
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
@@ -248,12 +251,11 @@ class QuestTeleopModule(Module):
             return
 
         if self._web_server is None:
-            self._web_server = RobotWebInterface(port=self.config.server_port)
-            self._setup_routes()
+            return
 
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,
-            kwargs={"ssl": True, "ssl_certs_dir": get_project_root() / "assets" / "teleop_certs"},
+            kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
             daemon=True,
             name="QuestTeleopWebServer",
         )
@@ -365,11 +367,18 @@ class QuestTeleopModule(Module):
 
         delta = current_pose - initial_pose
         return PoseStamped(
-            position=delta.position,
+            position=delta.position * self._translation_scale,
             orientation=delta.orientation,
             ts=current_pose.ts,
             frame_id=current_pose.frame_id,
         )
+
+    def _set_translation_scale(self, translation_scale: float) -> None:
+        """Set the positive multiplier applied to controller position deltas."""
+        if not math.isfinite(translation_scale) or translation_scale <= 0.0:
+            raise ValueError("translation_scale must be finite and positive")
+        with self._lock:
+            self._translation_scale = translation_scale
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.

@@ -49,6 +49,6 @@ dimsim eval --headless --scene apartment  # full headless run (CI)
 ## Build manually
 
 ```bash
-npm install      # browser deps (three, rapier, spark, vite)
+npm install      # browser deps (three, rapier, vite)
 npm run build    # → dist/
 ```

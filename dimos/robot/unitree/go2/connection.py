@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from enum import Enum
 from importlib import resources
 import sys
@@ -23,7 +24,6 @@ from pydantic import Field
 from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -42,6 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
@@ -74,6 +75,9 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
+    # Turn off where another module owns the base_link edge. The odom port
+    # keeps publishing either way.
+    publish_tf: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -106,6 +110,13 @@ _FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
 def _camera_info_static() -> CameraInfo:
     with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
         return CameraInfo.from_yaml(str(yaml_path))
+
+
+def _prefixed(prefix: str | None, name: str) -> str:
+    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    if not prefix or not name:
+        return name
+    return f"{prefix}/{name}"
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
@@ -265,6 +276,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
@@ -274,6 +286,8 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
+        import rerun.blueprint as rrb
+
         """Return Rerun view blueprints for GO2 camera visualization."""
         return [
             rrb.Spatial2DView(
@@ -294,6 +308,13 @@ class GO2Connection(Module, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
+        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+            # Copy so the class-level default is not mutated.
+            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static.frame_id = _prefixed(
+                self.config.frame_id_prefix, self.camera_info_static.frame_id
+            )
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -302,6 +323,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
+            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
             self._latest_video_frame = image
 
@@ -351,33 +373,36 @@ class GO2Connection(Module, Camera, Pointcloud):
         super().stop()
 
     @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+        # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
+        # robots still hang off one shared tree root.
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
+            frame_id=_prefixed(prefix, "base_link"),
+            child_frame_id=_prefixed(prefix, "camera_link"),
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
+            frame_id=_prefixed(prefix, "camera_link"),
+            child_frame_id=_prefixed(prefix, "camera_optical"),
             ts=odom.ts,
         )
 
         return [
-            Transform.from_pose("base_link", odom),
+            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
             camera_link,
             camera_optical,
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         msg.frame_id = self.config.odom_frame_id
-        transforms = self._odom_to_tf(msg)
-        self.tf.publish(*transforms)
+        if self.config.publish_tf:
+            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
 

@@ -21,13 +21,11 @@ import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
 
-import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-import rerun as rr
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
@@ -36,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     import os
 
+    from reactivex.abc import SchedulerBase
     from reactivex.observable import Observable
 
 
@@ -48,29 +47,6 @@ class ImageFormat(Enum):
     GRAY16 = "GRAY16"
     DEPTH = "DEPTH"
     DEPTH16 = "DEPTH16"
-
-
-def _format_to_rerun(data: np.ndarray, fmt: ImageFormat) -> Any:
-    """Convert image data to Rerun archetype based on format."""
-    match fmt:
-        case ImageFormat.RGB:
-            return rr.Image(data, color_model="RGB")
-        case ImageFormat.RGBA:
-            return rr.Image(data, color_model="RGBA")
-        case ImageFormat.BGR:
-            return rr.Image(data, color_model="BGR")
-        case ImageFormat.BGRA:
-            return rr.Image(data, color_model="BGRA")
-        case ImageFormat.GRAY:
-            return rr.Image(data, color_model="L")
-        case ImageFormat.GRAY16:
-            return rr.Image(data, color_model="L")
-        case ImageFormat.DEPTH:
-            return rr.DepthImage(data)
-        case ImageFormat.DEPTH16:
-            return rr.DepthImage(data)
-        case _:
-            raise ValueError(f"Unsupported format for Rerun: {fmt}")
 
 
 class AgentImageMessage(TypedDict):
@@ -180,6 +156,8 @@ class Image(Timestamped):
         filepath: str | os.PathLike[str],
         format: ImageFormat = ImageFormat.RGB,
     ) -> Image:
+        import cv2
+
         arr = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
         if arr is None:
             raise ValueError(f"Could not load image from {filepath}")
@@ -211,6 +189,8 @@ class Image(Timestamped):
 
     def to_opencv(self) -> np.ndarray:
         """Convert to OpenCV BGR format."""
+        import cv2
+
         arr = self.data
         if self.format == ImageFormat.BGR:
             return arr
@@ -234,6 +214,8 @@ class Image(Timestamped):
         return self.data
 
     def to_rgb(self) -> Image:
+        import cv2
+
         if self.format == ImageFormat.RGB:
             return self.copy()
         arr = self.data
@@ -267,6 +249,8 @@ class Image(Timestamped):
         return self.copy()
 
     def to_bgr(self) -> Image:
+        import cv2
+
         if self.format == ImageFormat.BGR:
             return self.copy()
         arr = self.data
@@ -304,6 +288,8 @@ class Image(Timestamped):
         return self.copy()
 
     def to_grayscale(self) -> Image:
+        import cv2
+
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()
         if self.format == ImageFormat.BGR:
@@ -331,10 +317,22 @@ class Image(Timestamped):
         raise ValueError(f"Unsupported format: {self.format}")
 
     def to_rerun(self) -> Any:
-        """Convert to rerun Image format."""
-        return _format_to_rerun(self.data, self.format)
+        """Convert to a Rerun archetype: JPEG-encoded for color images, raw for depth."""
+        import rerun as rr
 
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
+        match self.format:
+            case ImageFormat.DEPTH | ImageFormat.DEPTH16:
+                return rr.DepthImage(self.data)
+            case ImageFormat.GRAY16:
+                return rr.Image(self.data, color_model="L")
+            case _:
+                return rr.EncodedImage(contents=self.to_jpeg_bytes(), media_type="image/jpeg")
+
+    def resize(self, width: int, height: int, interpolation: int | None = None) -> Image:
+        import cv2
+
+        if interpolation is None:
+            interpolation = cv2.INTER_LINEAR
         return Image(
             data=cv2.resize(self.data, (width, height), interpolation=interpolation),
             format=self.format,
@@ -343,7 +341,7 @@ class Image(Timestamped):
         )
 
     def resize_to_fit(
-        self, max_width: int, max_height: int, interpolation: int = cv2.INTER_LINEAR
+        self, max_width: int, max_height: int, interpolation: int | None = None
     ) -> tuple[Image, float]:
         """Resize image to fit within max dimensions while preserving aspect ratio.
 
@@ -406,6 +404,8 @@ class Image(Timestamped):
         Downsamples to ~160px wide before computing Laplacian variance
         for fast evaluation (~10-20x cheaper than full-res Sobel).
         """
+        import cv2
+
         gray = self.to_grayscale().data
         # Downsample to ~160px wide for cheap evaluation
         h, w = gray.shape[:2]
@@ -418,6 +418,8 @@ class Image(Timestamped):
         return float(np.clip((np.log10(lap_var + 1) - 1.0) / 3.0, 0.0, 1.0))
 
     def save(self, filepath: str) -> bool:
+        import cv2
+
         arr = self.to_opencv()
         return cv2.imwrite(filepath, arr)
 
@@ -438,6 +440,8 @@ class Image(Timestamped):
         Returns:
             Base64-encoded JPEG representation of the image.
         """
+        import cv2
+
         bgr_image = self.to_bgr().to_opencv()
         height, width = bgr_image.shape[:2]
 
@@ -643,11 +647,13 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
     )
 
 
-def sharpness_barrier(target_frequency: float) -> Callable[[Observable[Image]], Observable[Image]]:
+def sharpness_barrier(
+    target_frequency: float, scheduler: SchedulerBase | None = None
+) -> Callable[[Observable[Image]], Observable[Image]]:
     """Select the sharpest Image within each time window."""
     if target_frequency <= 0:
         raise ValueError("target_frequency must be positive")
-    return quality_barrier(lambda image: image.sharpness, target_frequency)
+    return quality_barrier(lambda image: image.sharpness, target_frequency, scheduler)
 
 
 def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:

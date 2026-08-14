@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.simulation.mujoco.constants import MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 
@@ -43,6 +42,8 @@ def depth_image_to_point_cloud(
     Returns:
         numpy array of 3D points in world coordinates, shape (N, 3)
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     height, width = depth_image.shape
 
     # Calculate camera intrinsics similar to StackOverflow approach

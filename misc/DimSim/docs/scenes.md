@@ -127,7 +127,7 @@ Other fields:
 | `gravity` | m/s². `0` for flight, `-9.81` for ground. |
 | `lidarMountHeight`, `maxStepHeight`, `groundSnapDist`, `maxSlopeAngle`, `friction` | Optional fine-tuning. |
 
-Call it once at scene-build time (anywhere in `build()`), or again later to swap mid-scene. `scenes/warehouse/index.js` declares a drone on its first line. To add a new motion model (legged, tank, boat), add one function to `MOTION_MODELS` in `cli/bridge/physics.ts`.
+Call it once at scene-build time (anywhere in `build()`), or again later to swap mid-scene. To add a new motion model (legged, tank, boat), add one function to `MOTION_MODELS` in `cli/bridge/physics.ts`.
 
 ## Return value
 

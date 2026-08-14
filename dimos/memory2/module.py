@@ -24,12 +24,14 @@ import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
 from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
@@ -46,7 +48,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
-    from dimos.core.stream import In, Out
+    from dimos.core.stream import Out
     from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
@@ -272,6 +274,10 @@ class RecorderConfig(MemoryModuleConfig):
     # read the active remappings from inside the module (AFAIK), so this config
     # arg does the per-stream rename directly.
     stream_remapping: dict[str, str] = Field(default_factory=dict)
+    # ex: {"depth_image_1": "lz4+lcm"} for lossless depth recording
+    stream_codecs: dict[str, str] = Field(default_factory=dict)
+    # Port names that inherently have no pose to anchor (command streams, etc.).
+    poseless_streams: list[str] = Field(default_factory=list)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
@@ -317,6 +323,8 @@ class Recorder(MemoryModule):
 
     config: RecorderConfig
 
+    tf: In[TFMessage]
+
     _pose_setters: dict[str, Any] = {}
 
     @rpc
@@ -351,20 +359,29 @@ class Recorder(MemoryModule):
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
+        if getattr(self.tf, "_transport", None) is not None:
+            self._tf = self.tfbuffer
+
         self._prepare_streams()
 
-        if not self.inputs and not self.config.record_tf:
+        if not self._data_ports() and not self.config.record_tf:
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
 
-        for name, port in self.inputs.items():
+        for name, port in self._data_ports().items():
             stream_name = self.config.stream_remapping.get(name, name)
-            stream: Stream[Any] = self.store.stream(stream_name, port.type)
+            codec = self.config.stream_codecs.get(stream_name)
+            overrides = {"codec": codec} if codec is not None else {}
+            stream: Stream[Any] = self.store.stream(stream_name, port.type, **overrides)
             self._port_to_stream(name, port, stream)
             logger.info("Recording %s -> %s (%s)", name, stream_name, port.type.__name__)
 
         if self.config.record_tf:
             self._record_tf()
+
+    def _data_ports(self) -> dict[str, In[Any]]:
+        """The In ports to record generically — everything but the tf port."""
+        return {name: port for name, port in self.inputs.items() if port is not self.tf}
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
         """Append each message from *input_topic* to *stream*, attaching world pose via tf.
@@ -379,19 +396,22 @@ class Recorder(MemoryModule):
         and registers the subscription for cleanup on stop().
         """
 
-        async def on_msg(msg: Any) -> None:
+        async def on_msg(stamped: tuple[float, Any]) -> None:
+            recv_ts, msg = stamped
             ts = self._resolve_ts(name, msg)
             pose = await self._resolve_pose(name, msg, ts)
-            if not pose:
+            if not pose and name not in self.config.poseless_streams:
                 logger.warning(
                     "[%s] No pose for time %s (msg ts: %s), storing without pose",
                     name,
                     ts,
                     getattr(msg, "ts", None),
                 )
-            stream.append(msg, ts=ts, pose=pose)
+            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
-        self.process_observable(input_topic.pure_observable(), on_msg)
+        # Stamp arrival time before the coalescing dispatch queue.
+        stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
+        self.process_observable(stamped, on_msg)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -399,7 +419,7 @@ class Recorder(MemoryModule):
         of duplicating, while leaving any other streams in the db untouched."""
         if self.config.on_existing is not OnExisting.APPEND:
             return
-        targets = {self.config.stream_remapping.get(name, name) for name in self.inputs}
+        targets = {self.config.stream_remapping.get(name, name) for name in self._data_ports()}
         if self.config.record_tf:
             targets.add("tf")
         for stream in targets.intersection(self.store.list_streams()):
@@ -416,8 +436,10 @@ class Recorder(MemoryModule):
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))
+        if self._tf is None:
+            return None
         frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
-        transform = self.tf.get(
+        transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
         return transform.to_pose() if transform is not None else None
@@ -432,15 +454,13 @@ class Recorder(MemoryModule):
         return setters
 
     def _record_tf(self) -> None:
-        """Record the live tf stream under "tf" (no-op without a pubsub tf)."""
-        topic = getattr(self.tf.config, "topic", None)
-        pubsub = getattr(self.tf, "pubsub", None)
-        if not topic or pubsub is None:
-            logger.warning("Recorder: no pubsub tf available — not recording tf")
+        """Record the live tf stream under "tf" (no-op without a wired tf port)."""
+        if getattr(self.tf, "_transport", None) is None:
+            logger.warning("Recorder: tf port has no transport — not recording tf")
             return
         tf_stream = self.store.stream("tf", TFMessage)
 
-        def on_tf(msg: TFMessage, _topic: Any) -> None:
+        def on_tf(msg: TFMessage) -> None:
             try:
                 for transform in msg.transforms:
                     tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
@@ -448,4 +468,4 @@ class Recorder(MemoryModule):
                 # A late LCM callback raced teardown and hit the closed store.
                 pass
 
-        self.register_disposable(Disposable(pubsub.subscribe(topic, on_tf)))
+        self.register_disposable(Disposable(self.tf.subscribe(on_tf)))

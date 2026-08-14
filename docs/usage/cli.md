@@ -2,7 +2,7 @@
 title: "CLI Reference"
 ---
 
-The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, stop, inspect, and interact.
+The `dimos` CLI manages the full lifecycle of a dimOS robot stack — start, stop, inspect, and interact.
 
 ## Global Options
 
@@ -48,13 +48,13 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 
 Values cascade (later overrides earlier):
 
-1. `GlobalConfig` default → `simulation = False`
-2. `.env` file → `DIMOS_SIMULATION=true`
-3. Environment variable → `export DIMOS_SIMULATION=true`
-4. Blueprint definition → `.global_config(simulation=True)`
+1. `GlobalConfig` default → `simulation = ""`
+2. `.env` file → `SIMULATION=mujoco`
+3. Environment variable → `export SIMULATION=mujoco`
+4. Blueprint definition → `.global_config(simulation="mujoco")`
 5. CLI flag → `dimos --simulation run ...`
 
-Environment variables and `.env` values must be prefixed with `DIMOS_`.
+Environment variables and `.env` values use the field name in uppercase, for example `ROBOT_IPS`.
 
 ---
 
@@ -62,21 +62,27 @@ Environment variables and `.env` values must be prefixed with `DIMOS_`.
 
 ### `dimos run`
 
-Start one or more robot blueprints. Built-in DimOS blueprints use bare names such as
+Start one or more robot blueprints. Built-in dimOS blueprints use bare names such as
 `unitree-go2`; external blueprints installed from Python packages use namespaced names
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
-| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
-| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
+| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--help` | Display the run options and available blueprint configuration flags |
+
+Dynamic values accept both `--field=value` and `--field value`. A shorthand is
+available only when it identifies one active module. If two modules expose the
+same field, the CLI reports the ambiguity and lists stable qualified forms such
+as `--relocalizationmodule.map-file`. Global flags work on either side of
+`run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -93,6 +99,9 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
+
+# Blueprint configuration (both value forms are accepted)
+dimos run unitree-go2-relocalization --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
@@ -123,7 +132,7 @@ When `--daemon` is used, the process:
 
 #### Adding a New Blueprint
 
-For an in-repository DimOS blueprint, define a module-level `Blueprint` variable and
+For an in-repository dimOS blueprint, define a module-level `Blueprint` variable and
 regenerate the built-in registry:
 
 ```bash
@@ -135,9 +144,72 @@ packages do not edit that file; they expose blueprints through Python package en
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
 
+### `dimos shell`
+
+Open an IPython session attached to the coordinator on the configured transport bus:
+
+```bash skip
+dimos shell
+```
+
+The command requires an interactive terminal. For scripts and automation, use
+`Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
+While attaching, the shell displays a waiting indicator and retries coordinator
+discovery within the default five-second connection budget.
+
+The shell starts with five names:
+
+| Name | Purpose |
+|------|---------|
+| `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
+| `guide()` | Reprint the shell's quick-start guide |
+| `modules()` | Print module instances, classes, and RPC counts |
+| `rpcs()` | Print every RPC's signature and docstring summary |
+| `describe(value)` | Pretty-print a module or RPC's signature and documentation |
+
+For example:
+
+```python skip
+modules()
+guide()
+rpcs("StressTestModule")
+describe("StressTestModule.ping")
+app.StressTestModule.ping()
+```
+
+For example, `describe("StressTestModule.echo")` prints:
+
+```text
+RPC: StressTestModule.echo
+Signature: echo(message: str) -> str
+
+Documentation:
+Echo a message back to the caller.
+```
+
+Use `app.describe(...)` when you want the structured `ModuleInfo` or `RpcInfo`
+record instead of formatted output.
+
+Discovery is live, so modules loaded after attachment appear on the next
+`modules()` or `rpcs()` call. Use `app.list_modules()` and `app.list_rpcs()` when
+you want structured records. Exact instance names select one deployment when
+multiple instances share a class.
+
+RPC calls execute immediately against the running system. The shell does not filter
+methods or ask for confirmation, so an RPC may move hardware or change lifecycle
+state. Start with a non-hardware, simulation, or replay stack.
+
+Exiting IPython closes only the shell's client connection. The coordinator and its
+modules keep running. If the coordinator stops or restarts, calls fail visibly; start
+a new `dimos shell` session to reconnect.
+
+The shell normally displays the CLI run ID and blueprint. Coordinators launched
+directly from Python have no run-registry metadata and are shown as
+`unregistered coordinator`.
+
 ### `dimos status`
 
-Show the running DimOS instance.
+Show the running dimOS instance.
 
 ```bash
 dimos status
@@ -147,7 +219,7 @@ Reads the run registry, verifies the PID is alive, and displays: run ID, PID, bl
 
 ### `dimos stop`
 
-Stop the running DimOS instance.
+Stop the running dimOS instance.
 
 ```bash
 dimos stop [--force]
@@ -175,7 +247,7 @@ Reads saved CLI args from the run registry, stops the current instance, then re-
 
 ### `dimos log`
 
-View logs from a DimOS run.
+View logs from a dimOS run.
 
 ```bash
 dimos log [OPTIONS]
@@ -233,6 +305,23 @@ Print resolved GlobalConfig values and their sources.
 dimos show-config
 ```
 
+### `dimos cache clean`
+
+Remove caches generated by dimOS, including prepared URDFs, cooked scene
+meshes, the ament index, and the auto-downloaded Deno runtime. All of these live
+under the platform-specific dimOS cache directory.
+
+```bash
+dimos cache clean
+```
+
+The command does not remove logs, recordings, datasets, configuration, or
+third-party model caches. It refuses to run while a dimOS blueprint is active.
+
+Before deleting anything, the command displays the cache root and every
+top-level entry currently present. It then asks for confirmation with a default
+of `No`. Pass `--yes` to skip the prompt in automation.
+
 ### `dimos spy`
 
 Universal transport spy: a live table of every topic on every pubsub transport (LCM, Zenoh, or both), with per-topic message rate, bandwidth, size, and liveness.
@@ -242,8 +331,6 @@ dimos spy                     # everything, all transports
 dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
-
----
 
 ## Agent & MCP Commands
 
@@ -323,8 +410,6 @@ List deployed modules and their skills.
 dimos mcp modules
 ```
 
----
-
 ## Standalone Tools
 
 These are installed as separate entry points and can be run directly without the `dimos` prefix.
@@ -377,12 +462,10 @@ rerun-bridge
 
 Also available as `dimos rerun-bridge`.
 
----
-
 ## File Locations
 
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
 | `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
-| `.env` | Local config overrides (`DIMOS_ROBOT_IP=192.168.123.161`) |
+| `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |
