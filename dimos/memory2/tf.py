@@ -28,6 +28,14 @@ if TYPE_CHECKING:
     from dimos.protocol.tf.tf import TFLookup
 
 
+def tf_stream(store: Any, stream: str = "tf") -> Stream[TFMessage] | None:
+    """The recording's tf stream, or None if it has none."""
+    # check if it's there first so we don't create one
+    if stream not in store.list_streams():
+        return None
+    return cast("Stream[TFMessage]", store.stream(stream, TFMessage))
+
+
 class StreamTF(MultiTBuffer):
     def __init__(
         self,
@@ -47,9 +55,8 @@ class StreamTF(MultiTBuffer):
 
     @classmethod
     def from_store(cls, store: Any, stream: str = "tf") -> StreamTF | None:
-        if stream not in store.list_streams():
-            return None
-        return cls(store.stream(stream, TFMessage))
+        recorded = tf_stream(store, stream)
+        return None if recorded is None else cls(recorded)
 
     def publish(self, *args: Transform) -> None:
         raise NotImplementedError("StreamTF is a read-only replay service.")

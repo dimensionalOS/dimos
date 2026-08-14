@@ -117,7 +117,7 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=drake`.
 
 Trajectory parametrization is a separate startup choice. Joint-space planners
-normally return an untimed geometric path; DimOS accepts the plan only after
+normally return an untimed geometric path; dimOS accepts the plan only after
 the selected backend converts that path to a validated timed trajectory:
 
 ```bash
@@ -185,13 +185,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
-path_config = RoboPlanCartesianPathConfig(
-    speed_mode="bounded",
-    max_linear_speed=0.1,
-    max_angular_speed=0.5,
-    max_position_error=0.005,
-    max_orientation_error=0.01,
-)
+path_config = RoboPlanCartesianPathConfig()
 
 module.plan_cartesian_targets(
     {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
@@ -199,10 +193,35 @@ module.plan_cartesian_targets(
 )
 ```
 
-The remaining settings mirror RoboPlan's standard Cartesian planner options,
-including bounded and time-optimal speed modes, sample time, solver weights,
-linear/angular acceleration limits, joint velocity/acceleration scaling,
-TOPP-RA corner blending, joint-limit handling, and per-step attempts.
+The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
+the robot's joint velocity and acceleration limits. To enforce Cartesian speed
+and acceleration maxima instead, opt into bounded mode:
+
+```python skip
+bounded_config = RoboPlanCartesianPathConfig(
+    speed_mode="bounded",
+    max_linear_speed=0.1,
+    max_angular_speed=0.5,
+    max_linear_acceleration=0.5,
+    max_angular_acceleration=2.5,
+    max_position_error=0.005,
+    max_orientation_error=0.01,
+)
+```
+
+RoboPlan first resolves the Cartesian reference as a geometric joint path, then
+uses TOPP-RA to produce the timed trajectory. Both speed modes follow this
+pipeline. Time-optimal mode returns the joint-limit-constrained trajectory;
+bounded mode slows it further when needed to respect the configured Cartesian
+speed and acceleration maxima. `toppra_blend_deviation` controls TOPP-RA corner
+rounding in both modes and influences how aggressively the resolved path is
+decimated before timing.
+
+The remaining settings mirror RoboPlan's Cartesian planner options, including
+sample time, solver weights, linear/angular acceleration limits, joint
+velocity/acceleration scaling, TOPP-RA corner blending, and joint-limit
+handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
+`max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
 release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
@@ -267,7 +286,7 @@ Safety behavior for unsupported RoboPlan features:
 - Planning-critical unsupported inputs fail loudly before planning. Examples
   include unsupported obstacle geometry, unavailable robot loading APIs, or
   unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from
-  the DimOS robot config, including configured collision-exclusion pairs.
+  the dimOS robot config, including configured collision-exclusion pairs.
 - Unverified non-critical query methods raise explicit `NotImplementedError`.
   In particular, signed minimum-distance semantics are not implemented for
   RoboPlan until a safe equivalent is verified.
