@@ -138,15 +138,22 @@ class Actor:
         return self._send_request_to_worker(GetAttrRequest(module_id=self._module_id, name=name))
 
 
-# Global forkserver context. Using `forkserver` instead of `fork` because it
-# avoids CUDA context corruption issues.
+# Global worker process context. `forkserver` (not `fork`) avoids CUDA
+# context corruption on Linux. On macOS forkserver children inherit a
+# forked ObjC/CoreFoundation runtime that breaks IOKit-backed device
+# sessions — a libusb (gs_usb CAN) reader thread opens fine but its RX
+# silently dies within seconds (verified on hardware: identical traffic
+# in a spawned/plain process runs clean). `spawn` is fully fork-free.
+# Override with DIMOS_WORKER_START_METHOD if needed.
 _forkserver_ctx: Any = None
 
 
 def get_forkserver_context() -> Any:
     global _forkserver_ctx
     if _forkserver_ctx is None:
-        _forkserver_ctx = multiprocessing.get_context("forkserver")
+        default = "spawn" if sys.platform == "darwin" else "forkserver"
+        method = os.environ.get("DIMOS_WORKER_START_METHOD", default)
+        _forkserver_ctx = multiprocessing.get_context(method)
     return _forkserver_ctx
 
 

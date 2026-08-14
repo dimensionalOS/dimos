@@ -21,6 +21,7 @@ how to override them; run the probe script before first enable.
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -80,6 +81,9 @@ _DEFAULT_VEL_MAX = [3.0, 10.0, 3.0, 10.0, 3.0, 10.0]
 _GRAVITY_URDF = LfsPath("yam_description/urdf/yam_gripper_gravity.urdf")
 
 _STATE_MAX_AGE_S = 0.1
+# Keepalive fires when nothing was transmitted for this long; well inside
+# the freshness window so idle reads never go stale.
+_KEEPALIVE_AFTER_S = 0.04
 
 
 class OpenYamAdapter:
@@ -168,6 +172,14 @@ class OpenYamAdapter:
         # Last successful position command — anchor for VELOCITY mode
         self._last_cmd_q: list[float] | None = None
         self._last_gripper_cmd: float | None = None
+        # Keepalive: Damiao motors only report state in reply to command
+        # frames, so an idle host (e.g. a coordinator with no active task,
+        # which writes nothing) starves its own state reads forever. When
+        # nothing has been transmitted for _KEEPALIVE_AFTER_S, re-send the
+        # hold command (enabled) or an idempotent disable pulse (disabled).
+        self._last_tx = 0.0
+        self._keepalive_stop = threading.Event()
+        self._keepalive_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -219,6 +231,12 @@ class OpenYamAdapter:
                 self._bus = None
                 return False
 
+        self._keepalive_stop.clear()
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive_loop, name="openyam-keepalive", daemon=True
+        )
+        self._keepalive_thread.start()
+
         if self._gravity_comp:
             try:
                 import pinocchio
@@ -235,7 +253,33 @@ class OpenYamAdapter:
 
         return True
 
+    def _keepalive_loop(self) -> None:
+        while not self._keepalive_stop.is_set():
+            time.sleep(_KEEPALIVE_AFTER_S / 2)
+            bus = self._bus
+            if bus is None:
+                continue
+            if time.monotonic() - self._last_tx < _KEEPALIVE_AFTER_S:
+                continue
+            try:
+                if self._enabled and self._last_cmd_q is not None:
+                    self.write_joint_positions(self._last_cmd_q)
+                elif self._enabled:
+                    # Enabled but never commanded: hold at measured or, if
+                    # state is unknown, elicit it with an idempotent enable.
+                    self.write_stop() or self.write_enable(True)
+                else:
+                    # Idempotent while disabled; every motor replies state.
+                    bus.disable_all()
+                    self._last_tx = time.monotonic()
+            except Exception:
+                pass  # transient bus hiccup; next cycle retries
+
     def disconnect(self) -> None:
+        self._keepalive_stop.set()
+        if self._keepalive_thread is not None:
+            self._keepalive_thread.join(timeout=1.0)
+            self._keepalive_thread = None
         if self._bus is None:
             return
         try:
@@ -380,6 +424,7 @@ class OpenYamAdapter:
         ):
             self._bus.send_mit_one(motor.send_id, (q, 0.0, kp * velocity, kd, tau))
         self._last_cmd_q = list(positions)
+        self._last_tx = time.monotonic()
         return True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
@@ -400,6 +445,7 @@ class OpenYamAdapter:
             self._motors, anchor, velocities, self._kd, tau_ff, strict=False
         ):
             self._bus.send_mit_one(motor.send_id, (q_anchor, dq, 0.0, kd, tau))
+        self._last_tx = time.monotonic()
         return True
 
     def write_stop(self) -> bool:
@@ -416,6 +462,7 @@ class OpenYamAdapter:
         ):
             self._bus.send_mit_one(motor.send_id, (q, 0.0, kp, kd, tau))
         self._last_cmd_q = q_now
+        self._last_tx = time.monotonic()
         return True
 
     def write_enable(self, enable: bool) -> bool:
@@ -430,6 +477,7 @@ class OpenYamAdapter:
         except Exception:
             return False
         self._enabled = enable
+        self._last_tx = time.monotonic()
         return True
 
     def write_clear_errors(self) -> bool:
@@ -443,6 +491,7 @@ class OpenYamAdapter:
         except Exception:
             return False
         self._enabled = True
+        self._last_tx = time.monotonic()
         return True
 
     # -------------------------------------------------------------- cartesian
@@ -471,6 +520,7 @@ class OpenYamAdapter:
             (position, 0.0, _GRIPPER_KP, _GRIPPER_KD, 0.0),
         )
         self._last_gripper_cmd = position
+        self._last_tx = time.monotonic()
         return True
 
     def read_force_torque(self) -> list[float] | None:
