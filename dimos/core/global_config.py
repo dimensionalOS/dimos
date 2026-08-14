@@ -55,6 +55,13 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # Playback rate multiplier for --replay (1.0 = realtime; large values drain
+    # as fast as the pipeline allows since late frames are never delayed).
+    replay_speed: float = 1.0
+    # Seconds into the recording to start replay at (None = the beginning).
+    replay_seek: float | None = None
+    # Seconds of recording to play before the streams complete (None = all).
+    replay_duration: float | None = None
     new_memory: bool = False
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:
