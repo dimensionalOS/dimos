@@ -28,6 +28,13 @@ under flood). Windowed per-stream counts read from the database beforehand act
 as validity floors so a silently dead stream fails the run instead of producing
 a fast-but-meaningless sample.
 
+With DIMOS_BENCH_CPU_METRICS=<path> set, the test also records the user/system
+CPU seconds the job's whole cgroup spent across the same build+drain region and
+writes them to that path in github-action-benchmark's customSmallerIsBetter
+format: the cputime CI job tracks those series on gh-pages as the
+load-decoupled complement to the walltime sample (CodSpeed has no CPU-time
+mode).
+
 self_hosted (LFS data, ~10 worker processes): the self-hosted CI job runs it
 as a plain test — the `benchmark` fixture just calls the function once — which
 keeps the path in coverage; .github/workflows/codspeed.yml runs the same test
@@ -41,7 +48,9 @@ smoke against the small bundled recording:
         -m self_hosted --no-cov -v
 """
 
+import json
 import os
+from pathlib import Path
 import threading
 import time
 
@@ -69,6 +78,8 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2))
 # Validity gates, not the timing edge: odom is small and near-lossless; lidar
 # frames are compact enough to survive the flood with the 64MB rmem tuning.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.5}
+# When set, write cgroup user/system CPU seconds for build+drain to this path.
+CPU_METRICS_PATH = os.environ.get("DIMOS_BENCH_CPU_METRICS")
 
 
 def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]:
@@ -98,6 +109,23 @@ def _expected_counts(db_path: str, duration: float = DURATION) -> dict[str, int]
         }
     finally:
         store.stop()
+
+
+def _cgroup_cpu_seconds() -> tuple[float, float]:
+    """(user, system) CPU seconds accumulated by this process's cgroup.
+
+    Counts every process in the job's container, live or exited — per-process
+    rusage can't: the forkserver workers doing most of the work are never
+    reaped by the test process, so RUSAGE_CHILDREN misses them.
+    """
+    lines = Path("/proc/self/cgroup").read_text().splitlines()
+    v2 = next((line for line in lines if line.startswith("0::")), None)
+    if v2 is None:
+        raise RuntimeError(f"cgroup v2 required for CPU accounting, got: {lines}")
+    rel = v2.removeprefix("0::").strip().lstrip("/")
+    stat = Path("/sys/fs/cgroup", rel, "cpu.stat").read_text()
+    fields = dict(line.split() for line in stat.splitlines())
+    return int(fields["user_usec"]) / 1e6, int(fields["system_usec"]) / 1e6
 
 
 @pytest.mark.self_hosted
@@ -148,9 +176,12 @@ def test_go2_replay_drain_walltime(benchmark: BenchmarkFixture) -> None:
             transport.subscribe(lambda _msg, _name=name: record(_name))
 
         state: dict[str, ModuleCoordinator] = {}
+        cpu_marks: dict[str, tuple[float, float]] = {}
 
         def build_and_drain() -> None:
             nonlocal last_arrival
+            if CPU_METRICS_PATH:
+                cpu_marks["start"] = _cgroup_cpu_seconds()
             state["coordinator"] = ModuleCoordinator.build(blueprint)
             with lock:
                 last_arrival = time.monotonic()
@@ -160,6 +191,8 @@ def test_go2_replay_drain_walltime(benchmark: BenchmarkFixture) -> None:
                     quiet = time.monotonic() - last_arrival
                     done = all(counts[name] >= floors[name] for name in counts)
                 if done and quiet >= QUIET_S:
+                    if CPU_METRICS_PATH:
+                        cpu_marks["end"] = _cgroup_cpu_seconds()
                     return
                 time.sleep(0.2)
             pytest.fail(f"window did not drain: counts={counts}, expected~{expected}")
@@ -178,5 +211,23 @@ def test_go2_replay_drain_walltime(benchmark: BenchmarkFixture) -> None:
                     pytest.fail("coordinator.stop() hung")
 
         benchmark.pedantic(build_and_drain, teardown=teardown, rounds=1, warmup_rounds=0)
+
+        if CPU_METRICS_PATH:
+            user = cpu_marks["end"][0] - cpu_marks["start"][0]
+            system = cpu_marks["end"][1] - cpu_marks["start"][1]
+            series = {"total": user + system, "user": user, "system": system}
+            Path(CPU_METRICS_PATH).write_text(
+                json.dumps(
+                    [
+                        {
+                            "name": f"go2 replay drain (cpu {name})",
+                            "unit": "s",
+                            "value": round(v, 3),
+                        }
+                        for name, v in series.items()
+                    ],
+                    indent=2,
+                )
+            )
     finally:
         global_config.update(**saved)

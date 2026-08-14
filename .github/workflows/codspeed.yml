@@ -103,6 +103,78 @@ jobs:
           mode: walltime
           run: uv run pytest --codspeed -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
 
+  cputime:
+    # The same e2e drain as `benchmarks`, measured as user+system CPU seconds
+    # of the whole container cgroup — decoupled from runner load, unlike the
+    # walltime sample. CodSpeed has no CPU-time mode, so the series is tracked
+    # by github-action-benchmark under dev/bench/ on the existing gh-pages
+    # branch (alerts and job summaries work without Pages being enabled).
+    # Same-repo PRs and pushes only: fork PRs must not run on the self-hosted
+    # runner (mirrors the self-hosted-tests gate in ci.yml).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: compute-ros-pin
+    timeout-minutes: 30
+    runs-on:
+      - self-hosted
+      - Linux
+      - base
+    container:
+      image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+      options: --memory=6g --memory-swap=6g
+      volumes:
+        - /var/cache/dimos-nix:/nix
+        - /var/cache/dimos-root-cache:/root/.cache
+    permissions:
+      contents: write  # push the benchmark series to gh-pages (main pushes only)
+      pull-requests: write  # regression alert comments
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Fetch the replay dataset from LFS if not cached
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if git lfs pointer --check --file data/.lfs/go2_hongkong_office.db.tar.gz; then
+            git lfs pull --include="data/.lfs/go2_hongkong_office.db.tar.gz" --exclude=""
+          else
+            echo "archive already smudged"
+          fi
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y libturbojpeg
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          # /root/.cache is a persisted volume
+          enable-cache: false
+      # uv-managed rather than the container's python for sqlite (>=3.45).
+      - name: Setup Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+      - name: Pre-extract the replay database
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_hongkong_office.db'))"
+      # A plain pytest run (no CodSpeed): the test itself snapshots the
+      # cgroup's cpu.stat around build+drain and writes the series JSON.
+      - name: Run the drain under cgroup CPU accounting
+        run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
+        env:
+          DIMOS_BENCH_CPU_METRICS: cpu-benchmark.json
+      - name: Track results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: go2 replay cputime
+          tool: customSmallerIsBetter
+          output-file-path: cpu-benchmark.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Append to the tracked series on main; PRs only compare against it.
+          auto-push: ${{ github.event_name == 'push' }}
+          save-data-file: ${{ github.event_name == 'push' }}
+          alert-threshold: 120%
+          comment-on-alert: true
+          summary-always: true
+          max-items-in-chart: 200
+
   simulation:
     # Single-process instruction-count benchmark (Valgrind) of the replay
     # compute pipeline; runs on hosted runners — no self-hosted, no workers.
