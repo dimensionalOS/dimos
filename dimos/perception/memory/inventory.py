@@ -60,6 +60,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
     from dimos.protocol.tf.tf import TFLookup
 
@@ -674,6 +676,7 @@ def _name_and_suppress(
     tracks: list[_Track],
     tracks_2d: list[_Track2D],
     store: Any,
+    owl: Owlv2Detector,
     vocabulary: NamingVocabulary,
     policy: InventoryPolicy,
 ) -> None:
@@ -687,8 +690,6 @@ def _name_and_suppress(
     candidate name. Suppression is an existence decision and keeps its own
     request, which runs whether or not there is a vocabulary.
     """
-    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-
     frame_members: dict[float, list[tuple[_Track, SupportObservation]]] = {}
     for track in tracks:
         for member in _naming_picks(track):
@@ -702,7 +703,6 @@ def _name_and_suppress(
         return
 
     queries, starts, canonical = _flatten(vocabulary)
-    owl = Owlv2Detector()
     all_ts = sorted(set(frame_members) | set(frame_members_2d))
     logger.info(
         f"naming: OWLv2 over {len(all_ts)} keyframes, "
@@ -746,7 +746,6 @@ def _name_and_suppress(
                 inside = _mask_overlap_fraction_bbox(member.bbox, det.bbox)
                 if inside >= SUPPRESS_OVERLAP and member in track.members:
                     track.members.remove(member)
-    owl.stop()
 
 
 def _mask_overlap_fraction_bbox(
@@ -764,6 +763,8 @@ def _mask_overlap_fraction_bbox(
 def inventory(
     store: Any,
     *,
+    segmenter: EdgeTAMImageSegmenter,
+    owl: Owlv2Detector,
     naming_vocabulary: NamingVocabulary,
     after: float | None = None,
     before: float | None = None,
@@ -790,6 +791,10 @@ def inventory(
 
     ``log_progress`` enables per-keyframe discovery lines
     (``discovery: i/n  ts_offset=…  prop=…  scope=…  …s``). Off by default.
+
+    Both models belong to the caller: nothing here is loaded or stopped, so
+    one process can call this repeatedly on warm weights, over as many
+    windows as it wants.
     """
     policy = policy or InventoryPolicy()
     tf = StreamTF.from_store(store)
@@ -827,9 +832,6 @@ def inventory(
     if plane is not None:
         logger.info(f"support plane: {plane.inlier_count} inliers")
 
-    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-
-    segmenter = EdgeTAMImageSegmenter()
     frames_grounded: list[tuple[float, list[SupportObservation]]] = []
     frames_ungrounded: list[tuple[float, list[Detection2DSeg]]] = []
     image_area = float(camera_info.width * camera_info.height)
@@ -886,7 +888,6 @@ def inventory(
                 f"{perf_counter() - t_frame:.1f}s"
             )
 
-    del segmenter
     _free_accelerator()
 
     total = sum(len(g) for _, g in frames_grounded)
@@ -897,7 +898,7 @@ def inventory(
     tracks_2d = _track_ungrounded(frames_ungrounded) if include_ungrounded else []
     logger.info(f"association: {len(tracks)} grounded instances")
 
-    _name_and_suppress(tracks, tracks_2d, store, naming_vocabulary, policy)
+    _name_and_suppress(tracks, tracks_2d, store, owl, naming_vocabulary, policy)
     tracks = [t for t in tracks if len(t.members) >= policy.min_member_observations]
 
     tracks.sort(key=lambda t: min(m.ts for m in t.members))

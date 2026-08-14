@@ -255,14 +255,25 @@ def main() -> int:
     else:
         naming_vocabulary = DEFAULT_VOCABULARY
 
+    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
+
+    segmenter = EdgeTAMImageSegmenter()
+    owl = Owlv2Detector()
+
     instances = inventory(
         store,
+        segmenter=segmenter,
+        owl=owl,
         naming_vocabulary=naming_vocabulary,
         after=after,
         before=before,
         include_ungrounded=args.include_ungrounded,
         log_progress=args.log_progress,
     )
+
+    owl.stop()
+    del segmenter
 
     print(f"instances: {len(instances)}")
     for i, instance in enumerate(instances):
