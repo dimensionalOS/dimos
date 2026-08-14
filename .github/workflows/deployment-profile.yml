@@ -1,9 +1,10 @@
 name: deployment-profile
 
-# Records what a full dimos deployment costs -- CPU time and peak memory across
-# the whole process tree -- and pushes the numbers to Bencher for a trend line.
-# Record-only on purpose: no thresholds, so this never fails a build. Watch the
-# noise band on real runs first, then decide whether any of it deserves a gate.
+# Records what a full dimos deployment costs -- CPU time, memory, threads, disk
+# and network across the whole process tree -- and pushes the numbers to Bencher.
+# A measure more than 10% above its own history fails the job. Disk is pushed
+# but deliberately not gated: page-cache state moved it 1597% between two runs
+# of identical code, so it is a level worth reading, not a delta worth failing.
 
 on:
   push:
@@ -177,4 +178,5 @@ jobs:
             --adapter json \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
             --ci-only-on-alert \
+            --error-on-alert \
             --file bencher.json
