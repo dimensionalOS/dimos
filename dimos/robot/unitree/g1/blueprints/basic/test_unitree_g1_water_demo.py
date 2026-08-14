@@ -209,6 +209,7 @@ def test_no_nav_stack() -> None:
 def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() -> None:
     assert callable(_kwargs(BRIDGE)["visual_override"]["world/lidar"])
     watering = _kwargs("wateringtaskmodule")
+    assert watering["spout_offset_in_palm"] == (0.0, 0.20, 0.0)
     assert watering["motion_enabled"] is False
     assert watering["approach_motion_enabled"] is True
     assert watering["pour_motion_enabled"] is True

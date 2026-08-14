@@ -84,6 +84,7 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
     }
     assert task.kwargs == {
         "target_id": "plant_pot_1",
+        "spout_offset_in_palm": (0.0, 0.20, 0.0),
         "motion_enabled": False,
         "approach_motion_enabled": True,
         "pour_motion_enabled": True,

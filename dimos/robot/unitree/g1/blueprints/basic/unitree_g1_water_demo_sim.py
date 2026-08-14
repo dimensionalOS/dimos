@@ -137,6 +137,8 @@ unitree_g1_water_demo_sim = (
         ),
         WateringTaskModule.blueprint(
             target_id="plant_pot_1",
+            # Match the physical can: spout is 20 cm left of the right palm.
+            spout_offset_in_palm=(0.0, 0.20, 0.0),
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,

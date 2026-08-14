@@ -277,6 +277,9 @@ unitree_g1_water_demo = (
         ),
         WateringTaskModule.blueprint(
             target_id="plant_pot_1",
+            # right_hand_palm_link frame: +y is the robot's left when upright.
+            # Tune this tuple to the measured palm -> water-exit displacement.
+            spout_offset_in_palm=(0.0, 0.20, 0.0),
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,

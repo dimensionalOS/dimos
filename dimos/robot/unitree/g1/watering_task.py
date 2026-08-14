@@ -38,6 +38,7 @@ from typing import Any, Protocol
 import uuid
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -184,6 +185,10 @@ class WateringTaskConfig(ModuleConfig):
     target_id: str = "plant_pot_1"
     robot_name: str = "g1"
     group_id: str = "g1/right_arm"
+    # Water-exit point relative to right_hand_palm_link, expressed in the
+    # palm frame. At the upright pose +x points through the hand, +y points
+    # toward the robot's left, and +z points up.
+    spout_offset_in_palm: tuple[float, float, float] = (0.0, 0.0, 0.0)
     reach_map_path: Path = DEFAULT_MAP_PATH
     servo_hz: float = Field(default=10.0, gt=0.0)
     servo_timeout: float = Field(default=90.0, gt=0.0)
@@ -206,6 +211,23 @@ class WateringTaskConfig(ModuleConfig):
     motion_enabled: bool = True
     auto_start: bool = False
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
+
+
+def palm_pose_for_spout(
+    spout_position: Vector3,
+    orientation: Quaternion,
+    spout_offset_in_palm: tuple[float, float, float],
+) -> Pose:
+    """Return the palm pose that places the configured spout at a world point."""
+    world_offset = orientation.to_rotation_matrix() @ np.asarray(spout_offset_in_palm)
+    return Pose(
+        Vector3(
+            float(spout_position.x - world_offset[0]),
+            float(spout_position.y - world_offset[1]),
+            float(spout_position.z - world_offset[2]),
+        ),
+        orientation,
+    )
 
 
 class WateringInputs:
@@ -670,15 +692,22 @@ class WateringSequence:
         return ground_z + self._reach.pour_z
 
     def _verify_poses(self, pot: tuple[float, float], yaw: float, pour_z: float) -> dict[str, bool]:
+        spout = Vector3(pot[0], pot[1], pour_z)
+        upright_orientation = Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+        tipped_orientation = Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw))
+        tipped_pose = palm_pose_for_spout(
+            spout,
+            tipped_orientation,
+            self._config.spout_offset_in_palm,
+        )
+        # Keep the palm stationary during the pour. The upright spout starts
+        # beside the pot and sweeps onto it as the can rolls, which is both the
+        # physical pouring motion and much easier to plan than translating the
+        # palm 20 cm while simultaneously rotating it 90 degrees.
+        upright_pose = Pose(tipped_pose.position, upright_orientation)
         poses = {
-            "upright": Pose(
-                Vector3(pot[0], pot[1], pour_z),
-                Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
-            ),
-            "tipped": Pose(
-                Vector3(pot[0], pot[1], pour_z),
-                Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw)),
-            ),
+            "upright": upright_pose,
+            "tipped": tipped_pose,
         }
         solved: dict[str, bool] = {}
         for name, pose in poses.items():
@@ -691,6 +720,16 @@ class WateringSequence:
 
     def _pour(self, target: TargetObservation, yaw: float, pour_z: float) -> None:
         pot = (float(target.pose.position.x), float(target.pose.position.y))
+        spout = Vector3(pot[0], pot[1], pour_z)
+        tipped_pose = palm_pose_for_spout(
+            spout,
+            Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw)),
+            self._config.spout_offset_in_palm,
+        )
+        upright = Pose(
+            tipped_pose.position,
+            Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        )
         self._check_cancelled()
         self._transition(
             WateringState.MOVING_OVER_TARGET,
@@ -698,9 +737,9 @@ class WateringSequence:
             0,
         )
         over = self._manipulation.move_to_pose(
-            x=pot[0],
-            y=pot[1],
-            z=pour_z,
+            x=float(upright.position.x),
+            y=float(upright.position.y),
+            z=float(upright.position.z),
             roll=0.0,
             pitch=0.0,
             yaw=yaw,
@@ -715,9 +754,9 @@ class WateringSequence:
         self._check_cancelled()
         self._transition(WateringState.TIPPING, "Tipping the watering tool", 0)
         tipped = self._manipulation.move_to_pose(
-            x=pot[0],
-            y=pot[1],
-            z=pour_z,
+            x=float(tipped_pose.position.x),
+            y=float(tipped_pose.position.y),
+            z=float(tipped_pose.position.z),
             roll=float(TIP_RADIANS),
             pitch=0.0,
             yaw=yaw,

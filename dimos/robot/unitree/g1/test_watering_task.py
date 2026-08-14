@@ -27,7 +27,7 @@ from dimos.manipulation.mobile.target_observation import TargetObservation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.manip_stance import PourReachMap, pot_in_base_frame
+from dimos.robot.unitree.g1.manip_stance import POUR_Z, PourReachMap, pot_in_base_frame
 from dimos.robot.unitree.g1.watering_task import (
     ApproachCommandSink,
     WateringInputs,
@@ -36,11 +36,33 @@ from dimos.robot.unitree.g1.watering_task import (
     WateringState,
     WateringTaskConfig,
     build_approach_preview,
+    palm_pose_for_spout,
 )
 from dimos.spec.utils import spec_annotation_compliance
 
 NOW = 100.0
 TARGET_ID = "plant_pot_1"
+
+
+def test_spout_tcp_offset_moves_the_palm_and_keeps_the_spout_fixed() -> None:
+    spout = Vector3(1.0, 2.0, 0.9)
+    offset = (0.0, 0.20, 0.0)
+
+    upright = palm_pose_for_spout(
+        spout,
+        Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+        offset,
+    )
+    tipped = palm_pose_for_spout(
+        spout,
+        Quaternion.from_euler(Vector3(-math.pi / 2.0, 0.0, 0.0)),
+        offset,
+    )
+
+    assert tuple(upright.position) == pytest.approx((1.0, 1.8, 0.9))
+    # Rolling the can left rotates its +y spout below the palm, so the palm
+    # rises 20 cm while the water-exit point stays at the requested pour Z.
+    assert tuple(tipped.position) == pytest.approx((1.0, 2.0, 1.1))
 
 
 @pytest.fixture
@@ -340,6 +362,42 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
     base.start.assert_not_called()
     assert base.stop.call_count == 2
+
+
+def test_pour_uses_spout_tcp_and_keeps_the_palm_fixed_while_tipping(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        [],
+        config=WateringTaskConfig(
+            spout_offset_in_palm=(0.0, 0.20, 0.0),
+            settle_seconds=0.0,
+            hold_seconds=0.0,
+            target_max_age=2.0,
+            base_pose_max_age=2.0,
+        ),
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert result.success
+    upright_plan = manipulation.plan_to_pose.call_args_list[0].args[0]
+    tipped_plan = manipulation.plan_to_pose.call_args_list[1].args[0]
+    assert tuple(upright_plan.position) == pytest.approx(tuple(tipped_plan.position))
+    assert upright_plan.position.z == pytest.approx(POUR_Z + 0.20)
+
+    upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
+    tipped_move = manipulation.move_to_pose.call_args_list[1].kwargs
+    assert (upright_move["x"], upright_move["y"], upright_move["z"]) == pytest.approx(
+        (tipped_move["x"], tipped_move["y"], tipped_move["z"])
+    )
 
 
 def test_pour_only_uses_live_planning_as_the_final_reach_gate(
