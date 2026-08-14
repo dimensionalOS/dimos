@@ -977,7 +977,7 @@ def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, moc
     dynamic_coordinator.loop()
 
     start_rpc.assert_called_once_with()
-    event.return_value.wait.assert_called_once_with()
+    event.return_value.wait.assert_called_once_with(None)
     stop.assert_called_once_with()
 
 

@@ -97,6 +97,25 @@ class Replay(Configurable):
                 continue
         return min(candidates) if candidates else None
 
+    def last_ts(self) -> float | None:
+        """Latest ts across non-empty streams in the underlying store."""
+        candidates: list[float] = []
+        for name in self.store.list_streams():
+            try:
+                candidates.append(float(self.store.stream(name).last().ts))
+            except LookupError:
+                continue
+        return max(candidates) if candidates else None
+
+    def duration(self) -> float | None:
+        """Wall-clock seconds one pass of this replay takes, None when empty."""
+        if self.config.duration is not None:
+            return self.config.duration / self.config.speed
+        first, last = self.first_ts(), self.last_ts()
+        if first is None or last is None:
+            return None
+        return max(0.0, last - first - (self.config.seek or 0.0)) / self.config.speed
+
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""
         with self._anchor_lock:

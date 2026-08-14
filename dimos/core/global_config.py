@@ -55,6 +55,10 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
+    # Shut the run down cleanly after this many seconds. A replay ends but the
+    # blueprint keeps running -- it just sees a robot that stopped talking --
+    # so bounded runs (profiling, CI) need to say when they are done.
+    run_for: float | None = None
     new_memory: bool = False
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:

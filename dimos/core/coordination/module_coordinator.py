@@ -635,15 +635,16 @@ class ModuleCoordinator(Resource):
 
         return new_proxy
 
-    def loop(self) -> None:
-        """Serve coordinator RPC and block until the process is interrupted.
+    def loop(self, timeout: float | None = None) -> None:
+        """Serve coordinator RPC and block until interrupted, or until *timeout*.
 
         Owning service startup here gives CLI and direct Python ``build().loop()``
-        launches the same attachment behavior.
+        launches the same attachment behavior. Timing out stops the modules the
+        same way an interrupt does.
         """
         self.start_rpc_service()
         try:
-            threading.Event().wait()
+            threading.Event().wait(timeout)
         except KeyboardInterrupt:
             return
         finally:

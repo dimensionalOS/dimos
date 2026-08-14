@@ -1,0 +1,172 @@
+name: deployment-profile
+
+# Records what a full dimos deployment costs -- CPU time, memory, threads, disk
+# and network across the whole process tree -- and pushes the numbers to Bencher.
+# A measure more than 10% above its own history fails the job. Disk is pushed
+# but deliberately not gated: page-cache state moved it 1597% between two runs
+# of identical code, so it is a level worth reading, not a delta worth failing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      blueprint:
+        description: Blueprint to run under replay
+        default: unitree-go2
+      db:
+        description: Recording to replay
+        default: go2_short
+
+permissions:
+  contents: read
+  pull-requests: write # Bencher posts the results table as a PR comment
+
+# A superseded profile is wasted runner time, and its numbers are stale anyway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      # The CLI rejects a project key passed as --token; it wants BENCHER_API_KEY.
+      BENCHER_API_KEY: ${{ secrets.BENCHER_API_TOKEN }}
+      PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
+      PROFILE_DB: ${{ inputs.db || 'go2_short' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      # Pinned: a moving interpreter would move the numbers this job exists to
+      # compare. Same version the cockpit e2e runs a real deployment on.
+      - name: Setup Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev libturbojpeg
+      # What a go2 install pulls, not what a test env pulls: default-groups is
+      # ['tests'], so a plain `uv sync` would add pytest we never run.
+      - name: Install dimos
+        run: uv sync --frozen --no-default-groups --extra unitree
+
+      # Out of the measured window on purpose: an LFS pull inside it would show
+      # up as system time and wall, and the recording is not what we profile.
+      - name: Fetch the replay recording
+        run: |
+          uv run python -c "
+          from dimos.memory2.replay import resolve_db_path
+          print(resolve_db_path('$PROFILE_DB'))
+          "
+
+      - name: Measure install size
+        run: |
+          printf '{"venv": {"install-size-mib": {"value": %s}}}\n' \
+            "$(du -sm .venv | cut -f1)" >size.json
+
+      # No --run-for: a replay run now ends when its recording does, so the
+      # measured work is the same set of messages every time instead of
+      # whatever fit in a fixed window. timeout is a backstop, so reaching it
+      # (124) means a hung teardown and should fail the job.
+      - name: Profile a replay deployment
+        run: |
+          bin/rusage --name "$PROFILE_BLUEPRINT-replay" --out rusage.json -- \
+            timeout --kill-after=60s 600 \
+            uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
+            run "$PROFILE_BLUEPRINT"
+
+      # One BMF object, one benchmark per top-level key. Tolerant of a missing
+      # file so a failed run still reports whatever it did measure.
+      - name: Merge metrics
+        if: always()
+        run: |
+          files=$(ls rusage.json size.json 2>/dev/null) || true
+          [ -n "$files" ] || exit 0
+          jq -s 'reduce .[] as $x ({}; . * $x)' $files >metrics.json
+          cat metrics.json
+          # The user/sys split is diagnostic -- worth having in the artifact
+          # when a number moves, not worth two more columns on every comment.
+          jq 'map_values(del(."cpu-user-seconds", ."cpu-system-seconds"))' \
+            metrics.json >bencher.json
+
+      - name: Job summary
+        if: always()
+        run: |
+          [ -f metrics.json ] || exit 0
+          {
+            echo '### Deployment resource footprint'
+            echo '```json'
+            cat metrics.json
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rusage
+          path: metrics.json
+
+      # The same artifact this job uploads, from the last green run on main --
+      # no Bencher API needed to diff against it.
+      - name: Fetch main baseline
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest() {
+            gh run list --workflow deployment-profile.yml --branch "$1" \
+              --status success --limit 1 --json databaseId -q '.[0].databaseId'
+          }
+          ref=main
+          id=$(latest "$ref")
+          # Until main has profiled once, compare against this branch's own
+          # previous green run so the deltas mean something.
+          if [ -z "$id" ]; then
+            ref="${{ github.head_ref || github.ref_name }}"
+            id=$(latest "$ref")
+          fi
+          echo "BASELINE_REF=$ref" >>"$GITHUB_ENV"
+          [ -n "$id" ] || { echo "no baseline run yet"; exit 0; }
+          gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
+
+      - name: Comment on the PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          [ -f metrics.json ] || exit 0
+          bin/rusage-comment metrics.json baseline/metrics.json \
+            "${BASELINE_REF:-main}" >comment.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" \
+            --jq '.[]|select(.body|contains("<!-- dimos-profile -->"))|.id' | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md
+          else
+            gh pr comment "$PR" --body-file comment.md
+          fi
+
+      - name: Record in Bencher
+        if: always() && env.BENCHER_API_KEY != ''
+        uses: bencherdev/bencher@main
+      - name: Push metrics
+        if: always() && env.BENCHER_API_KEY != ''
+        run: |
+          bencher run \
+            --project dimos \
+            --branch "${{ github.head_ref || github.ref_name }}" \
+            --testbed gh-ubuntu-latest \
+            --adapter json \
+            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            --ci-only-on-alert \
+            --error-on-alert \
+            --file bencher.json

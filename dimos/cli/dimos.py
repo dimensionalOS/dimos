@@ -195,6 +195,34 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
+def _run_seconds() -> float | None:
+    """How long to run, or None to run until interrupted.
+
+    A replay has an end, but the blueprint does not notice one -- from its side
+    a finished recording is just a robot that went quiet. Defaulting the window
+    to the recording's own length keeps a ``--replay`` run bounded by its data
+    rather than by a number someone guessed.
+    """
+    if global_config.run_for is not None or not global_config.replay:
+        return global_config.run_for
+
+    from dimos.memory2.replay import resolve_db_path
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    store = SqliteStore(path=str(resolve_db_path(global_config.replay_db)), must_exist=True)
+    store.start()
+    try:
+        seconds = store.replay().duration()
+    finally:
+        store.stop()
+
+    if seconds is None:
+        logger.warning(f"Replay db {global_config.replay_db!r} is empty; running until stopped")
+    else:
+        logger.info(f"Replay run: {seconds:.1f}s of {global_config.replay_db!r}, then exit")
+    return seconds
+
+
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @cache_usage_locked
 def run(
@@ -326,6 +354,10 @@ def run(
 
     coordinator = ModuleCoordinator.build(blueprint, parsed_config)
 
+    # After build() so the parsed config is resolved, and because build()
+    # returns once the modules are up -- which is when the clock should start.
+    run_seconds = _run_seconds()
+
     if daemon:
         # Health check before daemonizing — catch early crashes
         if not coordinator.health_check():
@@ -359,7 +391,7 @@ def run(
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+        coordinator.loop(run_seconds)
     else:
         entry = RunEntry(
             run_id=run_id,
@@ -378,7 +410,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            coordinator.loop()
+            coordinator.loop(run_seconds)
         finally:
             entry.remove()
 

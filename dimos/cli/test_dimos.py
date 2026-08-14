@@ -192,7 +192,7 @@ def stubbed_run(
         def suppress_console(self) -> None:
             return None
 
-        def loop(self) -> None:
+        def loop(self, timeout: float | None = None) -> None:
             return None
 
     class FakeEntry:

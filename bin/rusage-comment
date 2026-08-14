@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Render the PR comment for a profile run.
+
+This layout is ours to edit -- Bencher's own comment is generated inside its
+Rust CLI and cannot be templated, which is why this exists.
+
+Usage:
+    bin/rusage-comment <current.json> [baseline.json] [ref] > comment.md
+
+Both files are Bencher Metric Format: {benchmark: {measure: {value: N}}}.
+The baseline is the same file from the last green run on the compared ref;
+omit it and the deltas are left off.
+"""
+
+import json
+from pathlib import Path
+import sys
+
+PROJECT = "dimos"
+PERF = f"https://bencher.dev/perf/{PROJECT}"
+
+TEMPLATE = f"""\
+<!-- dimos-profile -->
+### [Deployment resource footprint]({PERF}) <sub>vs `{{ref}}`</sub>
+
+{{blocks}}
+"""
+
+# The name links to that benchmark's plots -- every number here is one point on
+# a trend line, and the trend is the part worth clicking through to.
+BLOCK = f"**[{{benchmark}}]({PERF}/benchmarks/{{benchmark}})** &nbsp; {{cells}}"
+
+CELL = "{label} {value}{delta}"
+JOIN = " &nbsp; "
+INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;"
+
+# One list per printed line: time on the first, what it cost on the second.
+# A line whose measures are all absent is skipped.
+ROWS = [
+    ["wall-seconds", "cpu-core-seconds", "cpu-user-seconds", "cpu-system-seconds"],
+    [
+        "peak-memory-mib",
+        "peak-threads",
+        "disk-read-mib",
+        "disk-write-mib",
+        "net-rx-mib",
+        "net-tx-mib",
+        "install-size-mib",
+    ],
+]
+
+# Short labels, in the order they are printed. Measures missing from a
+# benchmark are skipped, so `venv` prints as a single Size cell.
+LABELS = {
+    "wall-seconds": "Wall",
+    "cpu-core-seconds": "Cpu",
+    "cpu-user-seconds": "Usr",
+    "cpu-system-seconds": "Sys",
+    "peak-memory-mib": "Mem",
+    "peak-threads": "Thr",
+    "disk-read-mib": "Rd",
+    "disk-write-mib": "Wr",
+    "net-rx-mib": "Rx",
+    "net-tx-mib": "Tx",
+    "install-size-mib": "Size",
+}
+
+# Deltas at or above this are bolded. Colour would need MathJax, which drags
+# the serif math font in with it -- bold is the emphasis that stays in the
+# comment's own typeface.
+LOUD_PCT = 12
+
+
+def number(slug: str, value: float) -> str:
+    """Carry the unit and keep it readable: 201s, 5.8s, 2.7GiB, 312."""
+    if slug.endswith("-seconds"):
+        return f"{value:.0f}s" if abs(value) >= 100 else f"{value:.1f}s"
+    if slug.endswith("-mib"):
+        if abs(value) >= 1024:
+            return f"{value / 1024:.1f}GiB"
+        # Sub-MiB matters for network and disk on a quiet run, where rounding to
+        # whole MiB would print 0 for traffic that did happen.
+        return f"{value:.0f}MiB" if abs(value) >= 1 else f"{value * 1024:.0f}KiB"
+    return f"{value:.0f}"
+
+
+def delta(value: float, baseline: float | None) -> str:
+    if baseline is None or baseline == 0:
+        return ""
+    pct = round((value - baseline) / baseline * 100)
+    text = f"Δ{pct:+d}%"
+    return f" **{text}**" if abs(pct) >= LOUD_PCT else f" {text}"
+
+
+def block(benchmark: str, measures: dict, base: dict) -> str:
+    lines = []
+    for row in ROWS:
+        cells = [
+            CELL.format(
+                label=LABELS[slug],
+                value=number(slug, measures[slug]["value"]),
+                delta=delta(measures[slug]["value"], base.get(slug, {}).get("value")),
+            )
+            for slug in row
+            if slug in measures
+        ]
+        if cells:
+            lines.append(JOIN.join(cells))
+
+    if not lines:
+        return BLOCK.format(benchmark=benchmark, cells="")
+    head = BLOCK.format(benchmark=benchmark, cells=lines[0])
+    return "<br>\n".join([head, *(INDENT + line for line in lines[1:])])
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        sys.exit("usage: bin/rusage-comment <current.json> [baseline.json] [ref]")
+
+    current = json.loads(Path(sys.argv[1]).read_text())
+    baseline_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+    ref = sys.argv[3] if len(sys.argv) > 3 else "main"
+
+    base = {}
+    if baseline_path and baseline_path.is_file():
+        base = json.loads(baseline_path.read_text())
+
+    blocks = [block(name, m, base.get(name, {})) for name, m in current.items()]
+    print(TEMPLATE.format(ref=ref, blocks="\n\n".join(blocks)))
+
+
+if __name__ == "__main__":
+    main()
