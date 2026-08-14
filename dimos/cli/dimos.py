@@ -359,7 +359,7 @@ def run(
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+        coordinator.loop(global_config.run_for)
     else:
         entry = RunEntry(
             run_id=run_id,
@@ -378,7 +378,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            coordinator.loop()
+            coordinator.loop(global_config.run_for)
         finally:
             entry.remove()
 

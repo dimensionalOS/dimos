@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Measure CPU time and peak memory of a command *and every process it spawns*.
+#
+# The command runs inside a transient systemd scope with CPU/memory accounting
+# on, and the counters are read from the scope's own cgroup. That is why this
+# exists instead of `/usr/bin/time -v`: cgroup counters cover grandchildren and
+# native subprocesses that were never reaped by the shell, and `memory.peak` is
+# the tree's simultaneous high-water mark rather than the largest single process.
+#
+# Usage:
+#   bin/rusage --name <benchmark> --out results.json -- <cmd> [args...]
+#
+# Writes Bencher Metric Format (BMF) JSON to --out, a human summary to stderr,
+# and exits with the command's own exit code.
+#
+# Caveat: processes that deliberately escape the scope are not counted --
+# docker containers land in docker.slice, and anything started via its own
+# `systemd-run`/`systemctl start` gets its own unit.
+set -euo pipefail
+
+name=""
+out=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--name)
+		name="$2"
+		shift 2
+		;;
+	--out)
+		out="$2"
+		shift 2
+		;;
+	--)
+		shift
+		break
+		;;
+	*)
+		echo "rusage: unexpected argument: $1" >&2
+		exit 2
+		;;
+	esac
+done
+
+if [[ -z $name || -z $out || $# -eq 0 ]]; then
+	echo "usage: bin/rusage --name <benchmark> --out <results.json> -- <cmd> [args...]" >&2
+	exit 2
+fi
+
+if [[ ! -e /sys/fs/cgroup/cgroup.controllers ]]; then
+	echo "rusage: needs cgroup v2 (no /sys/fs/cgroup/cgroup.controllers)" >&2
+	exit 1
+fi
+
+stats="$(mktemp -t rusage-stats.XXXXXX)"
+trap 'rm -f "$stats"' EXIT
+
+# A user scope needs no password and is the right thing on a dev box; CI
+# runners have no user manager, so fall back to a system scope that still runs
+# the payload as the calling user.
+if systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
+	scope=(systemd-run --user --scope --quiet)
+else
+	scope=(sudo -E systemd-run --scope --quiet --uid="$(id -u)" --gid="$(id -g)")
+fi
+
+# Read the counters from *inside* the scope, after the payload exits but while
+# this shell still holds the scope open -- a transient scope is released as soon
+# as its last process is gone, so there is nothing left to read afterwards.
+inner='
+	"$@" && rc=0 || rc=$?
+	cg=/sys/fs/cgroup$(cut -d: -f3 </proc/self/cgroup)
+	cat "$cg/cpu.stat" >"$RUSAGE_STATS"
+	echo "memory_peak_bytes $(cat "$cg/memory.peak")" >>"$RUSAGE_STATS"
+	exit $rc
+'
+
+started=$EPOCHREALTIME
+"${scope[@]}" \
+	--property=MemoryAccounting=1 \
+	--setenv=RUSAGE_STATS="$stats" \
+	-- bash -c "$inner" rusage-payload "$@" && rc=0 || rc=$?
+wall=$(awk -v a="$started" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.3f", b - a }')
+
+field() {
+	awk -v key="$1" '$1 == key && NF >= 2 { print $2; found = 1 } END { exit !found }' "$stats" ||
+		{
+			echo "rusage: '$1' missing from cgroup accounting -- is the controller delegated?" >&2
+			exit 1
+		}
+}
+
+user_usec=$(field user_usec)
+system_usec=$(field system_usec)
+usage_usec=$(field usage_usec)
+peak_bytes=$(field memory_peak_bytes)
+
+read -r cpu_user cpu_system cpu_total < <(
+	awk -v u="$user_usec" -v s="$system_usec" -v t="$usage_usec" \
+		'BEGIN { printf "%.3f %.3f %.3f\n", u / 1e6, s / 1e6, t / 1e6 }'
+)
+
+cat >"$out" <<JSON
+{
+  "$name": {
+    "cpu-core-seconds": { "value": $cpu_total },
+    "cpu-user-seconds": { "value": $cpu_user },
+    "cpu-system-seconds": { "value": $cpu_system },
+    "peak-memory-bytes": { "value": $peak_bytes },
+    "wall-seconds": { "value": $wall }
+  }
+}
+JSON
+
+printf 'rusage %s: %ss wall, %ss cpu (%ss user + %ss sys), %s peak rss, exit %d\n' \
+	"$name" "$wall" "$cpu_total" "$cpu_user" "$cpu_system" \
+	"$(numfmt --to=iec-i --suffix=B "$peak_bytes")" "$rc" >&2
+
+exit "$rc"
