@@ -76,7 +76,11 @@ def number(slug: str, value: float) -> str:
     if slug.endswith("-seconds"):
         return f"{value:.0f}s" if abs(value) >= 100 else f"{value:.1f}s"
     if slug.endswith("-mib"):
-        return f"{value / 1024:.1f}GiB" if abs(value) >= 1024 else f"{value:.0f}MiB"
+        if abs(value) >= 1024:
+            return f"{value / 1024:.1f}GiB"
+        # Sub-MiB matters for network and disk on a quiet run, where rounding to
+        # whole MiB would print 0 for traffic that did happen.
+        return f"{value:.0f}MiB" if abs(value) >= 1 else f"{value * 1024:.0f}KiB"
     return f"{value:.0f}"
 
 

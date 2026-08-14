@@ -57,16 +57,17 @@ dir="$(mktemp -d -t rusage.XXXXXX)"
 stats="$dir/stats"
 trap 'rm -rf "$dir"' EXIT
 
-# A user scope needs no password and is the right thing on a dev box; CI
-# runners have no user manager, so fall back to a system scope that still runs
-# the payload as the calling user.
+# Prefer a system scope: only the system manager can enable the io controller
+# or attach the eBPF counters behind IPAccounting, so a user scope silently
+# loses disk and network. It needs passwordless sudo, so probe with `sudo -n`
+# and fall back to a user scope rather than blocking on a prompt.
 unit="rusage-$$"
-if systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
-	scope=(systemd-run --user --scope --quiet)
-	manager=--user
-else
+if sudo -n true 2>/dev/null; then
 	scope=(sudo -E systemd-run --scope --quiet --uid="$(id -u)" --gid="$(id -g)")
 	manager=--system
+else
+	scope=(systemd-run --user --scope --quiet)
+	manager=--user
 fi
 
 # Read the counters from *inside* the scope, after the payload exits but while
@@ -133,7 +134,7 @@ add() {
 # which would read as "no disk traffic" instead of "not measured".
 add_mib() {
 	[[ -n $2 ]] || return 0
-	add "$1" "$(awk -v b="$2" 'BEGIN { printf "%.1f", b / 1048576 }')"
+	add "$1" "$(awk -v b="$2" 'BEGIN { printf "%.3f", b / 1048576 }')"
 }
 
 io_read=""
