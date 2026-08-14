@@ -190,10 +190,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
         groups = _wait_for_groups(client, 2)
-        group_ids = {
-            group.id.rsplit("/", 1)[-1]: group.id
-            for group in groups
-        }
+        group_ids = {group.id.rsplit("/", 1)[-1]: group.id for group in groups}
         left_id = group_ids["left_manipulator"]
         right_id = group_ids["right_manipulator"]
 
