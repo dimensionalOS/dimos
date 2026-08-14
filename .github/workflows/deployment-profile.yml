@@ -8,6 +8,7 @@ name: deployment-profile
 on:
   push:
     branches: [main, feat/ivan/rusage-profile]
+  pull_request:
   workflow_dispatch:
     inputs:
       seconds:
@@ -22,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write # Bencher posts the results table as a PR comment
 
 jobs:
   profile:
@@ -49,8 +51,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libturbojpeg
+      # What a go2 install pulls, not what a test env pulls: default-groups is
+      # ['tests'], so a plain `uv sync` would add pytest we never run.
       - name: Install dimos
-        run: uv sync --group tests --frozen
+        run: uv sync --frozen --no-default-groups --extra unitree
 
       # Out of the measured window on purpose: an LFS pull inside it would show
       # up as system time and wall, and the recording is not what we profile.
@@ -95,7 +99,8 @@ jobs:
         run: |
           bencher run \
             --project dimos \
-            --branch "$GITHUB_REF_NAME" \
+            --branch "${{ github.head_ref || github.ref_name }}" \
             --testbed ubuntu-latest \
             --adapter json \
+            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
             --file rusage.json
