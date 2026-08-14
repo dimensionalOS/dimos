@@ -112,10 +112,12 @@ class Referee:
                 result = self.scene.exec(code, timeout=timeout)
                 self._exec_failures = 0
                 return result
-            except Exception:
+            except Exception as e:
                 self._exec_failures += 1
                 if self._exec_failures >= 2:
-                    logger.warning("referee exec failing — reconnecting SceneClient")
+                    logger.warning(
+                        f"referee exec failing ({type(e).__name__}: {e}) — reconnecting SceneClient"
+                    )
                     try:
                         self.scene.stop()
                     except Exception:
