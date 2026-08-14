@@ -34,7 +34,41 @@ from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.rpc_client import RpcCall, RPCClient
+from dimos.core.rpc_client import RPCClient
+
+
+class _RetryingSkillCall:
+    """Skill dispatch with short timeouts + retries.
+
+    LCM RPC rides on UDP multicast with no retransmission: under heavy host
+    load a single lost request or response packet turns into a full
+    default-timeout (120 s) dead tool call, which reads as "the drone ignored
+    the command". Three 20 s attempts make skill dispatch robust to packet
+    loss while staying under the MCP client's 120 s HTTP timeout.
+    """
+
+    ATTEMPTS = 3
+    TIMEOUT_S = 20.0
+
+    def __init__(self, rpc_spec: Any, func_name: str, remote_name: str) -> None:
+        self._rpc = rpc_spec
+        self._name = func_name
+        self._remote_name = remote_name
+        self.__name__ = func_name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        last_exc: Exception | None = None
+        for attempt in range(self.ATTEMPTS):
+            try:
+                result, _unsub = self._rpc.call_sync(
+                    f"{self._remote_name}/{self._name}",
+                    (args, kwargs),
+                    rpc_timeout=self.TIMEOUT_S,
+                )
+                return result
+            except TimeoutError as e:
+                last_exc = e
+        raise last_exc  # type: ignore[misc]
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
 
@@ -386,8 +420,8 @@ class McpServer(Module):
         ]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.effective_rpc_name(), []
+            skill_info.func_name: _RetryingSkillCall(
+                self.rpc, skill_info.func_name, skill_info.effective_rpc_name()
             )
             for skill_info in app.state.skills
         }
