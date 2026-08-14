@@ -85,9 +85,11 @@ class _FakeSession:
         self.info = _FakeInfo([_FakeLink(dst) for dst in links])
 
 
-def _await(session: _FakeSession, connect: list[str], connect_timeout: float) -> float:
+def _await(
+    session: _FakeSession, connect: list[str], connect_timeout: float, mode: str = "peer"
+) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
-    service = ZenohService(connect=connect, connect_timeout=connect_timeout)
+    service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
     started = time.monotonic()
     service._await_connect(session)
     return time.monotonic() - started
@@ -106,6 +108,18 @@ def test_await_waits_for_every_endpoint(zenoh_defaults):
         connect_timeout=0.3,
     )
     assert elapsed >= 0.3
+
+
+def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
+    """A client session holds a single link, so one linked alternative is done."""
+    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    elapsed = _await(
+        session,
+        connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
+        connect_timeout=5.0,
+        mode="client",
+    )
+    assert elapsed < 1.0
 
 
 def test_await_gives_up_after_timeout(zenoh_defaults):

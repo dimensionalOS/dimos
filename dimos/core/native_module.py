@@ -60,6 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.protocol.service.zenohservice import ZenohConfig, native_env, warn_client_single_link
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -228,10 +229,9 @@ class NativeModule(Module):
         env["DIMOS_TRANSPORT"] = global_config.transport
 
         if global_config.transport == "zenoh":
-            # Deferred so lcm-only runs never import the zenoh package.
-            from dimos.protocol.service.zenohservice import ZenohConfig, native_env
-
-            env.update(native_env(ZenohConfig()))
+            config = ZenohConfig()
+            warn_client_single_link(config)
+            env.update(native_env(config))
 
         # set Rust logging to match Python level
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
