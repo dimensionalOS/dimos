@@ -1,6 +1,27 @@
 # Teleop Stack
 
-Teleoperation modules for DimOS. Supports Meta Quest 3 VR controllers and phone motion sensors.
+Teleoperation tools and modules for DimOS. Supports a headless terminal, Meta Quest 3 VR
+controllers, and phone motion sensors.
+
+## Terminal cmd_vel teleop
+
+From a second terminal on a machine participating in the running stack's pub/sub network:
+
+```bash
+dimos teleop
+```
+
+This is suitable for an SSH session on a headless robot. It publishes typed `Twist` messages
+to `cmd_vel` and does not open a robot connection. Press Enter to engage, use W/S to move,
+A/D to turn, Q/E to strafe, Space to stop and disengage, and Escape to stop and exit. Movement
+expires 200 ms after the last movement key event, so holding a key relies on terminal key
+repeat and a lost terminal does not leave a persistent command publisher.
+
+Speeds and the logical topic are configurable:
+
+```bash
+dimos teleop --linear-speed 0.10 --angular-speed 0.25 --topic cmd_vel
+```
 
 ## Architecture
 
@@ -63,6 +84,7 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 
 ```
 teleop/
+├── terminal.py                   # SSH-friendly Twist publisher with a dead-man timeout
 ├── quest/
 │   ├── quest_teleop_module.py   # Base Quest teleop module (local WebSocket)
 │   ├── quest_extensions.py      # ArmTeleop, TwistTeleop

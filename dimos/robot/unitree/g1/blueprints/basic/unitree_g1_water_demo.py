@@ -46,6 +46,8 @@ and camera caps below are sized against it.
 
 Usage (on the G1; ``--rerun-open none`` because it has no display):
     dimos --rerun-open none --rerun-host 0.0.0.0 run unitree-g1-water-demo
+Terminal teleop (in a second SSH terminal on the G1):
+    dimos teleop
 Laptop viewer:
     dimos-viewer --connect rerun+http://<robot>:9877/proxy --ws-url ws://<robot>:3030/ws
 """

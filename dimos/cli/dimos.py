@@ -801,6 +801,50 @@ def send(
     topic_send(topic, message_expr)
 
 
+@main.command("teleop")
+def terminal_teleop(
+    topic: str = typer.Option(
+        "cmd_vel",
+        "--topic",
+        help="Logical Twist topic in the running stack.",
+    ),
+    linear_speed: float = typer.Option(
+        0.15,
+        "--linear-speed",
+        min=0.01,
+        max=1.0,
+        help="Forward/backward and strafe speed in m/s.",
+    ),
+    angular_speed: float = typer.Option(
+        0.3,
+        "--angular-speed",
+        min=0.01,
+        max=2.0,
+        help="Yaw speed in rad/s.",
+    ),
+    deadman_timeout: float = typer.Option(
+        0.2,
+        "--deadman-timeout",
+        min=0.05,
+        max=1.0,
+        help="Stop this long after the last movement key event.",
+    ),
+) -> None:
+    """Control a running robot from an SSH terminal by publishing cmd_vel."""
+    from dimos.teleop.terminal import run_terminal_teleop
+
+    try:
+        run_terminal_teleop(
+            topic=topic,
+            linear_speed=linear_speed,
+            angular_speed=angular_speed,
+            deadman_timeout=deadman_timeout,
+        )
+    except RuntimeError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+
+
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)
