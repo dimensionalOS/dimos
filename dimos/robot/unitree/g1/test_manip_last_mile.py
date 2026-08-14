@@ -21,6 +21,7 @@ import pytest
 from dimos.robot.unitree.g1.manip_last_mile import (
     MAX_ANGULAR,
     MAX_LINEAR,
+    MIN_ANGULAR,
     ApproachControllerConfig,
     ApproachPhase,
     Twist2D,
@@ -44,6 +45,14 @@ def test_walk_is_forward_only_with_no_strafe() -> None:
     assert 0.0 < step.command.vx <= MAX_LINEAR
     assert step.command.vy == 0.0
     assert abs(step.command.wz) <= MAX_ANGULAR
+
+
+def test_walk_heading_correction_can_decay_below_in_place_turn_rate() -> None:
+    step = approach_step((0.0, 0.0, 0.01), (1.0, 0.0, 0.0))
+
+    assert step.phase is ApproachPhase.WALK_FORWARD
+    assert step.command.wz == pytest.approx(-0.012)
+    assert abs(step.command.wz) < MIN_ANGULAR
 
 
 def test_turns_to_final_yaw_only_after_reaching_position() -> None:

@@ -184,7 +184,11 @@ def approach_step(
         ),
         wz=_usable_speed(
             config.angular_gain * path_heading_error,
-            config.min_angular,
+            # A minimum angular speed is useful for deliberate in-place turns,
+            # but destabilizes forward walking: any tiny odometry error would
+            # otherwise command a persistent curve. Let drive corrections
+            # approach zero continuously as the robot aligns to the path.
+            0.0,
             config.max_drive_angular,
         ),
     )
