@@ -23,7 +23,13 @@ import pytest_mock
 
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.teleop.quest.quest_extensions import (
+    ArmTeleopModule,
+    Go2TeleopModule,
+    HandTeleopModule,
+    MobileVideoArmTeleopModule,
+)
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule, _ws_send_text
 from dimos.teleop.quest.quest_types import (
     Buttons,
@@ -416,5 +422,77 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
         assert not publish.call_args.args[0].right_primary
+    finally:
+        module.stop()
+
+
+def _controller(
+    *,
+    is_left: bool,
+    stick_x: float = 0.0,
+    stick_y: float = 0.0,
+    thumbstick_press: bool = False,
+) -> QuestControllerState:
+    return QuestControllerState(
+        is_left=is_left,
+        thumbstick_press=thumbstick_press,
+        thumbstick=ThumbstickState(x=stick_x, y=stick_y),
+    )
+
+
+def test_mobile_arm_teleop_publishes_yaw_drive_and_one_neutral_stop(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    try:
+        publish = mocker.patch.object(module.cmd_vel, "publish")
+        left = _controller(is_left=True, stick_y=-1.0)
+        right = _controller(is_left=False, stick_x=0.5)
+
+        module._publish_cmd_vel(left, right)
+        moving = publish.call_args.args[0]
+        assert isinstance(moving, Twist)
+        assert moving.linear.x == pytest.approx(module.config.linear_scale)
+        assert moving.linear.y == 0.0
+        assert moving.angular.z == pytest.approx(-0.5 * module.config.yaw_scale)
+
+        idle_left = _controller(is_left=True)
+        idle_right = _controller(is_left=False)
+        module._publish_cmd_vel(idle_left, idle_right)
+        module._publish_cmd_vel(idle_left, idle_right)
+
+        assert publish.call_count == 2
+        assert publish.call_args.args[0] == Twist.zero()
+    finally:
+        module.stop()
+
+
+def test_mobile_arm_teleop_strafe_mode_and_deadzone(mocker) -> None:
+    module = MobileVideoArmTeleopModule(right_stick_mode="strafe")
+    try:
+        publish = mocker.patch.object(module.cmd_vel, "publish")
+        left = _controller(is_left=True, stick_x=0.5, stick_y=0.1)
+        right = _controller(is_left=False, stick_x=-0.5)
+
+        module._publish_cmd_vel(left, right)
+
+        moving = publish.call_args.args[0]
+        assert moving.linear.x == 0.0
+        assert moving.linear.y == pytest.approx(0.5 * module.config.strafe_scale)
+        assert moving.angular.z == pytest.approx(-0.5 * module.config.yaw_scale)
+    finally:
+        module.stop()
+
+
+def test_mobile_arm_teleop_stick_press_publishes_one_stop_per_press(mocker) -> None:
+    module = MobileVideoArmTeleopModule()
+    try:
+        publish = mocker.patch.object(module.cmd_vel, "publish")
+        left = _controller(is_left=True, stick_y=-1.0)
+        pressed = _controller(is_left=False, thumbstick_press=True)
+
+        module._publish_cmd_vel(left, pressed)
+        module._publish_cmd_vel(left, pressed)
+
+        assert publish.call_count == 1
+        assert publish.call_args.args[0] == Twist.zero()
     finally:
         module.stop()

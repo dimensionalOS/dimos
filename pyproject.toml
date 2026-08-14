@@ -180,9 +180,6 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
-    # Core requirements
-    "python-multipart>=0.0.27",
-
     # Developer Specific
     "ipykernel",
 
@@ -244,6 +241,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",

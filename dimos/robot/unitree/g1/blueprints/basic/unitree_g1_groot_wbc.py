@@ -45,11 +45,12 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1_GROOT_KD,
     G1_GROOT_KP,
@@ -58,11 +59,14 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     g1_legs_waist,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -79,6 +83,7 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -131,7 +136,7 @@ _G1_NAV_ROTATION_DIAMETER = 0.8
 _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
-class _G1GrootCoordinator(ControlCoordinator):
+class _G1GrootCoordinator(TeleopControlCoordinator):
     g1_joints: Out[JointState]
 
 
@@ -385,6 +390,26 @@ def _g1_nav_path(path: NavPath) -> Any:
 _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
 
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
+G1_TELEOP_TASK_NAME = "teleop_g1"
+_G1_ARM_JOINT_NAME_MAPPING = {
+    joint_name: f"{joint_name.partition('/')[2]}_joint" for joint_name in g1_arms
+}
+_G1_TELEOP_MODEL = RobotModelConfig(
+    name="g1_arms",
+    model_path=_G1_URDF_PATH,
+    joint_names=list(_G1_ARM_JOINT_NAME_MAPPING.values()),
+    base_link="pelvis",
+    joint_name_mapping=_G1_ARM_JOINT_NAME_MAPPING,
+)
+_G1_TELEOP_PINK = PinkKinematicsConfig(
+    dt=0.01,
+    position_cost=8.0,
+    orientation_cost=2.0,
+    posture_cost=0.01,
+    joint_limit_posture_margin=0.3,
+    lm_damping=0.01,
+    gain=0.25,
+)
 # Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd.
 _G1_NOMINAL_PELVIS_Z = 0.74
 _g1_pelvis_mid360_cache: list[Any] = []
@@ -511,7 +536,27 @@ _coordinator = _G1GrootCoordinator.blueprint(
                 "decimation": _decimation,
             },
         ),
-        *([_arm_holder] if _arm_holder is not None else []),
+        _arm_holder,
+        # Shared bimanual Quest task with G1-only model and objective tuning.
+        TaskConfig(
+            name=G1_TELEOP_TASK_NAME,
+            type="teleop_ik",
+            joint_names=g1_arms,
+            priority=20,
+            params={
+                "robot_model": _G1_TELEOP_MODEL,
+                "bindings": [
+                    {"hand": "left", "target_frame": "left_rubber_hand"},
+                    {"hand": "right", "target_frame": "right_rubber_hand"},
+                ],
+                "solver_type": G1PinkPoseTargetSolver,
+                "pink": _G1_TELEOP_PINK,
+                "timeout": 0.5,
+                "max_command_tracking_error_deg": 10.0,
+                "max_joint_velocity_rad_s": math.radians(120.0),
+                "joint_command_filter_cutoff_hz": 5.0,
+            },
+        ),
     ],
 ).transports(
     {
