@@ -77,7 +77,7 @@ def test_openarm_quest_hardware_uses_explicit_can_ports() -> None:
     hardware = _openarm_quest_hardware("can8", "can9")
 
     assert hardware.adapter_type == "openarm_damiao"
-    assert hardware.adapter_kwargs["runtime_config"].bus_addresses == {
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {
         "left": "can8",
         "right": "can9",
     }

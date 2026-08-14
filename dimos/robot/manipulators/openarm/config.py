@@ -78,9 +78,9 @@ def openarm_hardware(
     if explicit_can_ports:
         if left_can_port is None or right_can_port is None:
             raise ValueError("OpenArm hardware requires both left and right CAN ports")
-        bus_addresses = {"left": left_can_port, "right": right_can_port}
+        bus_devices = {"left": left_can_port, "right": right_can_port}
     else:
-        bus_addresses = {}
+        bus_devices = {}
 
     adapter_type = (
         "mock_whole_body"
@@ -90,7 +90,7 @@ def openarm_hardware(
     adapter_kwargs: dict[str, object] = {}
     if adapter_type == "openarm_damiao":
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses=bus_addresses,
+            bus_devices=bus_devices,
             gravity_comp=True,
         )
     return _openarm_hardware_component(adapter_type, adapter_kwargs)
