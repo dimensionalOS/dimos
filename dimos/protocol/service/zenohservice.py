@@ -146,6 +146,15 @@ class ZenohConfig(BaseConfig):
         )
 
 
+def warn_client_single_link(config: ZenohConfig) -> None:
+    """Warn when a client config lists several endpoints. Zenoh keeps one link."""
+    if config.mode == "client" and len(config.connect) > 1:
+        logger.warning(
+            f"Zenoh client mode holds a single link: {sorted(config.connect)} are "
+            "dialed as alternatives, traffic flows only through the first that connects"
+        )
+
+
 def native_env(config: ZenohConfig) -> dict[str, str]:
     """DIMOS_ZENOH_* env vars that mirror this config into a native module."""
     return {
@@ -168,6 +177,7 @@ class ZenohSessionPool:
         key = config.session_key
         with self._lock:
             if key not in self._sessions:
+                warn_client_single_link(config)
                 zconfig = zenoh.Config()
                 zconfig.insert_json5("mode", json.dumps(config.mode))
                 if config.connect:
@@ -226,7 +236,7 @@ class ZenohService(Service):
         super().start()
 
     def _await_connect(self, session: zenoh.Session) -> None:
-        """Block until every configured connect endpoint has an established link.
+        """Block until the configured connect endpoints have established links.
 
         Opening a zenoh session returns before its endpoints are dialled, so
         without this a blueprint starts publishing into a session that has
@@ -240,13 +250,16 @@ class ZenohService(Service):
         pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
         if not pending or self.config.connect_timeout <= 0:
             return
+        # A client session holds exactly one link. Zenoh dials the endpoints
+        # as alternatives and keeps the first that connects.
+        needed = 1 if self.config.mode == "client" else len(pending)
         deadline = time.monotonic() + self.config.connect_timeout
-        while pending:
+        while True:
             linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
             for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
                 logger.debug(f"Zenoh linked {endpoint}")
                 del pending[endpoint]
-            if not pending:
+            if len(self.config.connect) - len(pending) >= needed:
                 return
             if time.monotonic() >= deadline:
                 logger.warning(
