@@ -132,9 +132,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          id=$(gh run list --workflow deployment-profile.yml --branch main \
-            --status success --limit 1 --json databaseId -q '.[0].databaseId')
-          [ -n "$id" ] || { echo "no baseline on main yet"; exit 0; }
+          latest() {
+            gh run list --workflow deployment-profile.yml --branch "$1" \
+              --status success --limit 1 --json databaseId -q '.[0].databaseId'
+          }
+          ref=main
+          id=$(latest "$ref")
+          # Until main has profiled once, compare against this branch's own
+          # previous green run so the deltas mean something.
+          if [ -z "$id" ]; then
+            ref="${{ github.head_ref || github.ref_name }}"
+            id=$(latest "$ref")
+          fi
+          echo "BASELINE_REF=$ref" >>"$GITHUB_ENV"
+          [ -n "$id" ] || { echo "no baseline run yet"; exit 0; }
           gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
 
       - name: Comment on the PR
@@ -145,7 +156,8 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           [ -f metrics.json ] || exit 0
-          bin/rusage-comment metrics.json baseline/metrics.json >comment.md
+          bin/rusage-comment metrics.json baseline/metrics.json \
+            "${BASELINE_REF:-main}" >comment.md
           id=$(gh api "repos/$REPO/issues/$PR/comments" \
             --jq '.[]|select(.body|contains("<!-- dimos-profile -->"))|.id' | head -1)
           if [ -n "$id" ]; then

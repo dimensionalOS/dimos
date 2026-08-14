@@ -11,8 +11,11 @@
 # the deltas are simply left blank.
 set -euo pipefail
 
-current=${1:?usage: bin/rusage-comment <current.json> [baseline.json]}
+current=${1:?usage: bin/rusage-comment <current.json> [baseline.json] [ref]}
 baseline=${2:-}
+# What the baseline actually came from -- main once it has runs, this branch
+# until then. Named in the table so the comparison is never mislabeled.
+ref=${3:-main}
 
 # jq wants a file for --slurpfile; an empty object stands in for "no baseline".
 if [[ -z $baseline || ! -s $baseline ]]; then
@@ -28,11 +31,12 @@ cat <<'HEADER'
 ### Deployment resource footprint
 
 What this branch costs to boot and run, measured across the whole process
-tree. Baseline is the last green run on `main`.
-
-| | measure | this branch | main | Δ |
-|---|---|---:|---:|---:|
+tree.
 HEADER
+
+printf '\nBaseline is the last green run on `%s`.\n\n' "$ref"
+printf '| | measure | this branch | %s | Δ |\n' "$ref"
+printf '|---|---|---:|---:|---:|\n'
 
 jq -r --slurpfile base "$baseline" '
   ($base[0] // {}) as $main
