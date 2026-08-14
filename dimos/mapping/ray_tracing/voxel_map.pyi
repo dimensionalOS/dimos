@@ -32,6 +32,7 @@ class VoxelRayMapper:
         graze_cos: float = 0.7,
         support_min: int = 4,
         region_percentile: float = 95.0,
+        worker_threads: int = 4,
     ) -> None: ...
     @property
     def voxel_size(self) -> float: ...

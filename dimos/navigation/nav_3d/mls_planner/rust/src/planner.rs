@@ -921,6 +921,7 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         };
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
@@ -948,6 +949,7 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         }
     }
 

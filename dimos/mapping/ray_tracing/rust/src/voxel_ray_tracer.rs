@@ -95,6 +95,19 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Worker threads for parallel map work. Small on purpose: past a few
+    /// threads the per-frame workloads gain no wall time and burn cores the
+    /// rest of the robot needs.
+    #[validate(range(min = 1))]
+    pub worker_threads: u32,
+}
+
+/// Cap the process-wide worker pool. A no-op when some other module in this
+/// process already sized it, which keeps the first configured value.
+pub fn init_worker_pool(threads: u32) {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads as usize)
+        .build_global();
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {

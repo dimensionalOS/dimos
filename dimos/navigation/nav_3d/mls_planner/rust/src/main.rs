@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dimos_mls_planner::edges::{edges_to_segments, PlannerGraph};
-use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
+use dimos_mls_planner::mls_planner::{init_worker_pool, Config, Planner, RegionBounds};
 use dimos_mls_planner::voxel::surface_point_xyz;
 use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
@@ -94,6 +94,7 @@ struct MlsPlanner {
 
 impl MlsPlanner {
     async fn spawn_worker(&mut self) {
+        init_worker_pool(self.config.worker_threads);
         let worker = Worker {
             pending: Arc::clone(&self.pending),
             latest_start: Arc::clone(&self.latest_start),

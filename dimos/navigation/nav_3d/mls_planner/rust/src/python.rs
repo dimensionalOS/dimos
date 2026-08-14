@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use crate::edges::edges_to_segments;
-use crate::mls_planner::{Config, Planner, RegionBounds};
+use crate::mls_planner::{init_worker_pool, Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
@@ -69,6 +69,7 @@ impl MLSPlanner {
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
+        worker_threads = 4,
     ))]
     fn new(
         voxel_size: f32,
@@ -81,6 +82,7 @@ impl MLSPlanner {
         wall_buffer_weight: f32,
         step_threshold_m: f32,
         step_penalty_weight: f32,
+        worker_threads: u32,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -100,10 +102,12 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
+            worker_threads,
         };
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        init_worker_pool(config.worker_threads);
         Ok(Self {
             config,
             planner: Planner::default(),

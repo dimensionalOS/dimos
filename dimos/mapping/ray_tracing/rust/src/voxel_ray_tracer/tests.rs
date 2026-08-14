@@ -30,6 +30,7 @@ fn basic_config() -> Config {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     }
 }
 
@@ -261,6 +262,7 @@ fn ground_clipping_single_ray() {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -415,6 +417,7 @@ fn stair_clipping_ray_fan() {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     };
 
     // Staircase
@@ -491,6 +494,7 @@ fn landing_floor_ray_fan() {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -555,6 +559,7 @@ fn landing_grazed_from_below() {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -688,6 +693,7 @@ fn grazing_ray_spares_planar_floor() {
         global_emit_every: 1,
         fine_emit_every: 0,
         region_percentile: 95.0,
+        worker_threads: 4,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map

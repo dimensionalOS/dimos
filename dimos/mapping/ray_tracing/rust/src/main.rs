@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use dimos_module::{error_throttled, run_with_transport, warn_throttled, Input, Module, Output};
 use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
-use dimos_voxel_ray_tracing::voxel_ray_tracer::Config;
+use dimos_voxel_ray_tracing::voxel_ray_tracer::{init_worker_pool, Config};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -56,6 +56,7 @@ struct RayTracingVoxelMap {
 
 impl RayTracingVoxelMap {
     async fn init_mapper(&mut self) {
+        init_worker_pool(self.config.worker_threads);
         self.mapper = Some(Mapper::new(self.config.clone()));
     }
 
@@ -367,6 +368,7 @@ mod tests {
             global_emit_every: 1,
             fine_emit_every: 0,
             region_percentile: 95.0,
+            worker_threads: 4,
         };
         let mut map = VoxelMap::default();
         let pts: Vec<(f32, f32, f32)> = keys

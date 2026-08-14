@@ -19,7 +19,7 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::{iter_global_normals, Config, LocalBounds};
+use crate::voxel_ray_tracer::{init_worker_pool, iter_global_normals, Config, LocalBounds};
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -87,6 +87,7 @@ impl VoxelRayMapper {
         graze_cos = 0.7,
         support_min = 4,
         region_percentile = 95.0,
+        worker_threads = 4,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -101,6 +102,7 @@ impl VoxelRayMapper {
         graze_cos: f32,
         support_min: i32,
         region_percentile: f32,
+        worker_threads: u32,
     ) -> PyResult<Self> {
         let config = Config {
             voxel_size,
@@ -117,10 +119,12 @@ impl VoxelRayMapper {
             global_emit_every: 1,
             fine_emit_every: 0,
             region_percentile,
+            worker_threads,
         };
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        init_worker_pool(config.worker_threads);
         Ok(Self {
             mapper: Mapper::new(config),
         })

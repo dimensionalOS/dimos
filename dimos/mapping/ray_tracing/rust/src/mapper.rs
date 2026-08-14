@@ -227,6 +227,7 @@ mod tests {
             global_emit_every: 1,
             fine_emit_every: 0,
             region_percentile: 95.0,
+            worker_threads: 4,
         }
     }
 

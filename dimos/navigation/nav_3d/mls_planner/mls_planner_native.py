@@ -48,6 +48,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
+    # Worker threads for parallel planner work. Small on purpose: past a few
+    # threads the per-frame workloads gain no wall time and burn cores the
+    # rest of the robot needs.
+    worker_threads: int = 4
 
 
 class MLSPlannerNative(NativeModule):

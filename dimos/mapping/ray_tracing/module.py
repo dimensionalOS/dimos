@@ -61,6 +61,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     fine_emit_every: int = 0
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
+    # Worker threads for parallel map work. Small on purpose: past a few
+    # threads the per-frame workloads gain no wall time and burn cores the
+    # rest of the robot needs.
+    worker_threads: int = 4
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

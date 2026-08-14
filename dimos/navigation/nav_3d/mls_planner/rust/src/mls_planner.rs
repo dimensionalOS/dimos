@@ -76,6 +76,19 @@ pub struct Config {
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
+    /// Worker threads for parallel planner work. Small on purpose: past a few
+    /// threads the per-frame workloads gain no wall time and burn cores the
+    /// rest of the robot needs.
+    #[validate(range(min = 1))]
+    pub worker_threads: u32,
+}
+
+/// Cap the process-wide worker pool. A no-op when some other module in this
+/// process already sized it, which keeps the first configured value.
+pub fn init_worker_pool(threads: u32) {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads as usize)
+        .build_global();
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -646,6 +659,7 @@ mod region_tests {
             step_penalty_weight: 0.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         }
     }
 
