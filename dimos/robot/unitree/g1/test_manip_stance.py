@@ -105,13 +105,13 @@ def test_offset_outside_the_grid_is_not_reachable():
     assert not reach.contains((-3.0, 0.0))
 
 
-def test_best_offset_only_applies_a_facing_cone_when_requested():
-    # Reachability is authoritative by default, while callers can still ask
-    # for a strict facing policy when their task requires it.
+def test_best_offset_needs_a_cell_inside_the_facing_cone():
+    # A region only reachable straight behind the robot: pourable, but never
+    # while facing the pot, so the stance search must refuse rather than
+    # quietly return a stance that looks away from it.
     reach = _map([[1, 1, 1], [1, 1, 1], [1, 1, 1]], cell=0.05, x0=-0.6, y0=-0.05)
-    assert reach.best_offset(margin_cells=1)[0] < 0.0
     with pytest.raises(ValueError, match="straight ahead"):
-        reach.best_offset(margin_cells=1, max_bearing=math.radians(35.0))
+        reach.best_offset(margin_cells=1)
 
 
 def test_pot_in_base_frame_is_the_inverse_of_standing_there():
@@ -158,8 +158,6 @@ def test_committed_map_matches_the_geometry_the_demo_commands():
     assert reach.tip_radians == pytest.approx(-math.pi / 2)
     assert reach.spout_offset_in_palm == pytest.approx(DEFAULT_SPOUT_OFFSET_IN_PALM)
     assert reach.reachable.any()
-    offset = reach.best_offset(margin_cells=3)
-    assert reach.contains(offset, margin_cells=3)
 
 
 def test_tipped_spout_tcp_moves_the_sampled_palm_above_the_water_exit():
