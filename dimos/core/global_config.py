@@ -100,6 +100,12 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
+    # Attach to an externally-started dimsim bridge instead of spawning one.
+    # Used when several dimos processes share one sim (multi-robot worlds).
+    dimsim_external: bool = False
+    # Comma-separated robot names for multi-robot worlds (passed to the dimsim
+    # CLI as --robots). Empty = single robot on legacy unprefixed topics.
+    dimsim_robots: str = ""
     local_relay: bool = False
     relay_url: str | None = None
 

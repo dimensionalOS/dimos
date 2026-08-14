@@ -327,10 +327,16 @@ class McpClient(Module):
             except Empty:
                 continue
 
-            with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+            try:
+                with self._lock:
+                    if not self._state_graph:
+                        raise ValueError("No state graph initialized")
+                    self._process_message(self._state_graph, message)
+            except Exception:
+                # A single failed turn (tool timeout, transient LLM/network
+                # error) must not kill the agent loop — later messages would
+                # be silently ignored by a dead thread.
+                logger.error("Agent turn failed; continuing with next message", exc_info=True)
 
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage

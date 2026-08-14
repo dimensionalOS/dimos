@@ -72,6 +72,13 @@ class SkillInfo:
     args_schema: str
     uses: tuple[str, ...] = ()
     lifecycle: str = "instant"
+    # Name the module's RPCs are actually served under (instance_name when set,
+    # e.g. "droneA/droneskillcontainer" for namespaced blueprints; falls back
+    # to class_name). Callers must dispatch skills against THIS name.
+    rpc_name: str = ""
+
+    def effective_rpc_name(self) -> str:
+        return self.rpc_name or self.class_name
 
 
 class PeekNotFound:
@@ -481,6 +488,9 @@ class ModuleBase(Configurable, CompositeResource):
                         args_schema=schema,
                         uses=uses,
                         lifecycle=lifecycle,
+                        # RPCs are served under instance_name when set (namespaced
+                        # blueprints); skill dispatch must target the same name.
+                        rpc_name=self.config.instance_name or self.__class__.__name__,
                     )
                 )
         return skills

@@ -49,14 +49,26 @@ class DimSimConnection:
         frame_id="camera_optical",
     )
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(self, global_config: GlobalConfig, namespace: str = "") -> None:
+        """``namespace`` mirrors the blueprint namespace prefix (e.g. "droneA"):
+        sim topics become /droneA/odom, /droneA/tf and TF frames droneA/base_link,
+        matching both the namespaced module streams and the multi-robot dimsim
+        bridge (--robots droneA,...)."""
+        self._external = global_config.dimsim_external
+        self._namespace = namespace
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
-        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
+        prefix = f"/{namespace}" if namespace else ""
+        self._odom_transport: PubSubTransport[PoseStamped] = make_transport(
+            f"{prefix}/odom", PoseStamped
+        )
+        self._tf_transport: PubSubTransport[TFMessage] = make_transport(
+            f"{prefix}/tf", TFMessage
+        )
         self._unsubscribe_odom: Callable[[], None] | None = None
 
     def start(self) -> None:
-        self._dimsim_process.start()
+        if not self._external:
+            self._dimsim_process.start()
         self._odom_transport.start()
         self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
 
@@ -64,7 +76,8 @@ class DimSimConnection:
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
         self._odom_transport.stop()
-        self._dimsim_process.stop()
+        if not self._external:
+            self._dimsim_process.stop()
 
     @functools.cache
     def lidar_stream(self) -> Observable[PointCloud2]:
@@ -117,40 +130,46 @@ class DimSimConnection:
         return {}
 
     def _handle_odom(self, msg: PoseStamped) -> None:
-        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
+        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg, self._namespace)))
 
 
-def _odom_to_tf(odom: PoseStamped) -> list[Transform]:
+def _prefixed(prefix: str, name: str) -> str:
+    return f"{prefix}/{name}" if prefix else name
+
+
+def _odom_to_tf(odom: PoseStamped, prefix: str = "") -> list[Transform]:
     """Build transform chain from odometry pose.
 
-    Transform tree: world -> base_link -> {camera_link -> camera_optical, lidar_link}
+    Transform tree: world -> base_link -> {camera_link -> camera_optical, lidar_link}.
+    The odom parent frame stays unprefixed so namespaced robots hang off one
+    shared tree root.
     """
     camera_link = Transform(
         translation=Vector3(0.3, 0.0, 0.0),  # camera 30cm forward
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
+        frame_id=_prefixed(prefix, "base_link"),
+        child_frame_id=_prefixed(prefix, "camera_link"),
         ts=odom.ts,
     )
 
     camera_optical = Transform(
         translation=Vector3(0.0, 0.0, 0.0),
         rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-        frame_id="camera_link",
-        child_frame_id="camera_optical",
+        frame_id=_prefixed(prefix, "camera_link"),
+        child_frame_id=_prefixed(prefix, "camera_optical"),
         ts=odom.ts,
     )
 
     lidar_link = Transform(
         translation=Vector3(0.0, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="lidar_link",
+        frame_id=_prefixed(prefix, "base_link"),
+        child_frame_id=_prefixed(prefix, "lidar_link"),
         ts=odom.ts,
     )
 
     return [
-        Transform.from_pose("base_link", odom),
+        Transform.from_pose(_prefixed(prefix, "base_link"), odom),
         camera_link,
         camera_optical,
         lidar_link,

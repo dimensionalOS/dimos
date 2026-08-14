@@ -139,6 +139,7 @@ def make_connection(
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
     velocity_api: bool = False,
+    namespace: str = "",
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
@@ -152,7 +153,7 @@ def make_connection(
     elif connection_type == "dimsim":
         from dimos.robot.unitree.dimsim_connection import DimSimConnection
 
-        return DimSimConnection(cfg)
+        return DimSimConnection(cfg, namespace=namespace)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
         return UnitreeWebRTCConnection(
@@ -303,6 +304,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.config.g,
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
+            namespace=self.config.frame_id_prefix or "",
         )
 
         if hasattr(self.connection, "camera_info_static"):

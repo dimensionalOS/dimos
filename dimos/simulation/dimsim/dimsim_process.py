@@ -68,6 +68,9 @@ class DimSimProcess:
             str(_LIDAR_RATE),
         ]
 
+        if self.global_config.dimsim_robots:
+            cmd += ["--robots", self.global_config.dimsim_robots]
+
         if not headless:
             logger.info(
                 f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."

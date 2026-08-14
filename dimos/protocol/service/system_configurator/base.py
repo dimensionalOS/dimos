@@ -85,6 +85,13 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
         logger.info("Pytest run detected: skipping system configuration.")
         return
 
+    # Explicit opt-out for environments where the checks are known to be
+    # stricter than necessary (e.g. macOS hosts where LCM multicast already
+    # works over the default interface) or where sudo is unavailable.
+    if os.environ.get("DIMOS_SKIP_SYSTEM_CONFIG"):
+        logger.info("DIMOS_SKIP_SYSTEM_CONFIG set: skipping system configuration.")
+        return
+
     # run checks
     failing = [check for check in checks if not check.check()]
     if not failing:
