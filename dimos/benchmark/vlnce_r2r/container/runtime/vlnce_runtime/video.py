@@ -17,7 +17,9 @@ import json
 import os
 import tempfile
 
+import cv2
 from habitat.utils.visualizations.utils import images_to_video, observations_to_image
+import numpy as np
 
 FPS = 10
 
@@ -49,7 +51,7 @@ class NativeEpisodeVideo:
                 directory = os.path.dirname(self.output_path)
                 with tempfile.TemporaryDirectory(dir=directory) as temporary:
                     images_to_video(
-                        self.frames,
+                        _pad_frames_to_common_size(self.frames),
                         temporary,
                         "native-render",
                         fps=FPS,
@@ -79,13 +81,14 @@ class NativeEpisodeVideo:
             observations = dict(self.environment.observations)
             rgb_height, rgb_width = observations["rgb"].shape[:2]
             if observations["depth"].shape[:2] != (rgb_height, rgb_width):
-                import cv2
-
                 depth = cv2.resize(observations["depth"], (rgb_width, rgb_height))
                 observations["depth"] = depth[..., None]
+            visualization_info = dict(self.environment.visualization_info())
+            if visualization_info.get("top_down_map") is None:
+                visualization_info.pop("top_down_map", None)
             frame = observations_to_image(
                 observations,
-                self.environment.visualization_info(),
+                visualization_info,
             )
             self.frames.extend([frame] * repeats)
         except Exception as error:
@@ -95,6 +98,19 @@ class NativeEpisodeVideo:
         if self.diagnostic is None:
             detail = str(error).replace(self.output_path, "<render-output>")
             self.diagnostic = f"{type(error).__name__}: {detail}"[:512]
+
+
+def _pad_frames_to_common_size(frames):
+    height = max(frame.shape[0] for frame in frames)
+    width = max(frame.shape[1] for frame in frames)
+    return [
+        np.pad(
+            frame,
+            ((0, height - frame.shape[0]), (0, width - frame.shape[1]), (0, 0)),
+            mode="constant",
+        )
+        for frame in frames
+    ]
 
 
 def _write_json_atomic(path, payload):
