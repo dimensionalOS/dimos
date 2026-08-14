@@ -88,10 +88,7 @@ def execute_generation(
         segmenter = EdgeTamObjectSegmenter(EdgeTAMImageSegmenter())
         question_author = ConstrainedQuestionAuthor(OpenAIVlModel(model_name=QUESTION_MODEL))
         agentic_author = (
-            AgenticQuestionAuthor(
-                OpenAIVlModel(model_name=QUESTION_MODEL),
-                answerability_model=OpenAIVlModel(model_name=QUESTION_MODEL),
-            )
+            AgenticQuestionAuthor(OpenAIVlModel(model_name=QUESTION_MODEL))
             if question_mode == "agentic"
             else None
         )
@@ -159,6 +156,11 @@ def execute_generation(
                     "question_model": QUESTION_MODEL,
                     "oracle_model": ORACLE_MODEL if question_mode == "agentic" else None,
                     "grounding": grounding.model_dump(mode="json"),
+                    "question_author_rejections": (
+                        agentic_author.rejections
+                        if question_mode == "agentic" and agentic_author is not None
+                        else question_author.rejections
+                    ),
                 },
             )
             _emit(progress, f"Generated frame {frame_index}")
@@ -181,7 +183,18 @@ def _answer_intents(
             f"{label}: grounding question {number}/{len(intents)}: "
             f"{intent.kind} ({intent.object_query})",
         )
-        result = answerer.answer(intent)
+        try:
+            result = answerer.answer(intent)
+        except Exception as exc:
+            from dimos.benchmark.vqa.generation.families import rejected_result
+
+            result = rejected_result(
+                answerer.context,
+                intent,
+                (),
+                (),
+                f"question_error:{type(exc).__name__}:{exc}",
+            )
         results.append(result)
         _emit(progress, f"{label}: question {number}/{len(intents)} {result.status}")
     return results
@@ -198,7 +211,15 @@ def _answer_agentic(
     results: list[AcceptedOracleResult | RejectedOracleResult] = []
     for number, proposal in enumerate(proposals, start=1):
         _emit(progress, f"Agentic question {number}/{len(proposals)}: {proposal.question}")
-        result = oracle.answer(proposal, VqaPrimitiveToolRegistry(primitives))
+        try:
+            result = oracle.answer(proposal, VqaPrimitiveToolRegistry(primitives))
+        except Exception as exc:
+            result = RejectedOracleResult(
+                proposal,
+                f"question_error:{type(exc).__name__}:{exc}",
+                (),
+                (),
+            )
         results.append(result)
         status = (
             "accepted" if isinstance(result, AcceptedOracleResult) else f"rejected: {result.reason}"
@@ -208,9 +229,16 @@ def _answer_agentic(
 
 
 def _require_edgetam_cuda() -> None:
-    from dimos.models.base import default_local_model_device
+    import torch
 
-    if default_local_model_device() != "cuda":
+    compatible = False
+    if torch.cuda.is_available():
+        try:
+            major, minor = torch.cuda.get_device_capability()
+            compatible = f"sm_{major}{minor}" in torch.cuda.get_arch_list()
+        except RuntimeError:
+            pass
+    if not compatible:
         raise ValueError(
             "VQA generation requires an installed PyTorch CUDA build that supports this GPU for EdgeTAM"
         )

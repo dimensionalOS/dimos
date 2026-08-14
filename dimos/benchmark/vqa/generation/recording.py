@@ -25,7 +25,7 @@ def load_go2_frame(recording: str, frame_index: int, tolerance_s: float = 0.25) 
     """Load one image with its nearest point cloud and captured calibration."""
     if frame_index < 0 or tolerance_s <= 0:
         raise ValueError("frame_index must be non-negative and tolerance_s must be positive")
-    store = SqliteStore(path=recording, must_exist=True, read_only=True)
+    store = SqliteStore(path=recording, must_exist=True)
     store.start()
     try:
         streams = set(store.list_streams())

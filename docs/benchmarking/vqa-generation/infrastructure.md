@@ -46,17 +46,17 @@ dimos/benchmark/vqa/
       results.py               typed private primitive results
       projection.py            calibrated point-cloud-to-image projection
       grounding.py             mask-to-point-cloud object grounding
-      geometry.py              plane fitting and masked-point helpers
+      geometry.py              masked point-cloud selection
       selection.py             nearest-object selection
     deterministic_answerer.py  constrained family dispatch
     families.py                end-to-end deterministic family recipes and answer policy
     agentic_tools.py           opaque-ID and LangChain adapter for primitives
-    agentic_answerer.py        bounded tool-calling and evidence validation
+    agentic_answerer.py        bounded tool-calling and structural evidence validation
     question_authors.py        constrained and agentic image-only authors
     model_adapters.py          MoonDream and EdgeTAM primitive adapters
     runner.py                  model lifecycle, frame iteration, and publication
     dataset.py                 resume state, frame records, and evaluation export
-  evaluation.py                shared point-cloud-vqa Evaluation plugin
+  evaluation.py                generated-dataset adapter for the standard eval runner
 
 dimos/cli/vqa.py              dependency-light generation CLI adapter
 ```
@@ -78,7 +78,7 @@ The generator accepts either explicit CLI flags or a reproducible JSON specifica
 `dimos vqa generate --spec <generation.json>`. It writes the resolved generation request and
 aggregate counts to `audit/run.json`. The generator constructs one
 `FramePerceptionPrimitives` instance per frame. It owns MoonDream and
-EdgeTAM calls, intermediate-result caches, grounded masks, and the accepted ground-plane fit.
+EdgeTAM calls, visual object evidence, intermediate-result caches, and grounded masks.
 Projected visible point-cloud samples establish whether a mask has enough foreground support to
 become a grounded object. `GenerationDataset` writes complete frame directories, so multi-frame
 generation can skip frames whose `frame.json` completion marker was atomically written last after an
@@ -86,17 +86,18 @@ interrupted run. Partial directories without that marker are safely rewritten.
 
 ### Shared Perception Primitives
 
-Constrained and agentic generation share the same private geometry runtime. Constrained families select a
+Constrained and agentic generation share the same object-perception runtime. Constrained families select a
 fixed recipe; the agentic oracle may inspect intermediate results and choose its own next operation. Handles
 are immutable and scoped to one frozen frame.
 
 ```text
 detect_objects(query)
--> segment_detection(detection_id)
+-> frame-scoped visual evidence for presence, count, and image side
+-> segment_object(detection_id)
 -> ground_mask(mask_id)
--> frame-scoped canonical object_id / pose / supported point set
--> fit_ground_plane()
--> fitted planes and reusable geometric measurements
+-> frame-scoped canonical object_id and supported point set
+-> get_object_position(object_id)
+-> camera range, image side, and support count
 ```
 
 Agentic answers may explicitly reject a question when the available primitive results cannot establish it;
@@ -108,12 +109,6 @@ The image author sees only RGB and proposes a question plus one of these contrac
 
 - Boolean: the final public choices are `yes` and `no`.
 - Fixed choice: the author supplies at least two public choices.
-- Deferred height choice: the author freezes the question, then private geometry deterministically
-  creates the public height choices and matching answer after a valid measurement.
-
-The deferred height contract prevents the image author from guessing a numeric range. The private
-`height-window-v1` policy derives four local, exhaustive choices around a measured height. The raw
-measurement, uncertainty, plane fit, and support remain private.
 
 ## Private Validation
 
@@ -121,11 +116,10 @@ Every accepted agentic answer must have valid cited evidence. The deterministic 
 
 - Cited IDs were emitted by private tools for the current frame.
 - The answer is allowed by the resolved public contract.
-- A deferred height answer exactly matches the cited measurement bucket.
 
-A private semantic validator then determines whether the cited structured evidence supports the
-question and answer. Invalid calls, inadequate geometry, bad citations, and unsupported answers
-are retained as private rejected records rather than exported as evaluation cases.
+Invalid calls, inadequate geometry, bad citations, and unsupported answers are retained as private
+rejected records rather than exported as evaluation cases. The tool-calling oracle currently has no
+second model judge; semantic validation can be reintroduced if observed failures justify it.
 
 ## Dataset Assembly
 
@@ -149,27 +143,29 @@ auditable.
 
 ## Evaluation Runtime
 
-`point-cloud-vqa` is registered in the shared evaluation framework and is invoked through:
+The VQA module exports `load_suite(dataset)`, which converts generated rows into standard
+`EvalCase` objects. Run it through the shared evaluation CLI:
 
-```bash skip
-dimos eval run <specification.json> --output <directory>
+```bash
+dimos evals run dimos.benchmark.vqa.evaluation \
+  --dataset <generated-dataset> \
+  --model gpt-4o-mini
 ```
 
-For each case, the evaluator loads the referenced public image, sends the question and choices to
-the configured vision model, normalizes an `ANSWER: <choice>` response, and compares it with the
-private label. It writes `vqa-results.json` with the expected answer, normalized model answer, raw
-model response, and pass/fail result. The shared evaluation runtime also writes its immutable
-`run.json` record.
+For each case, the adapter loads the referenced public image, sends the image, question, and choices
+through `EvalRig.ask()`, normalizes an `ANSWER: <choice>` response, and compares it with the private
+label. `EvalRunner` writes the standard `results.jsonl` and `summary.json` artifacts under
+`~/.local/state/dimos/evals/run-*`.
 
 ## Operational Dependencies
 
 Generation requires local CUDA support for EdgeTAM and credentials for the image author and, in
-agentic mode, the private oracle and semantic validator. Evaluation requires only the selected
+agentic mode, the private oracle. Evaluation requires only the selected
 vision-model credentials and the exported public images/cases plus private labels; it has no
 perception-model, CUDA, recording, or point-cloud dependency.
 
 ## Future Work
 
 Evaluation visualization is intentionally separate from generation. The planned report should be
-derived from evaluator inputs and `vqa-results.json` only, so it can show public images, questions,
+derived from evaluator inputs and `results.jsonl` only, so it can show public images, questions,
 choices, predictions, labels, and pass/fail results without exposing private generation evidence.

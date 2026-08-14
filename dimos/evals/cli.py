@@ -17,28 +17,39 @@ command bodies (test_cli_startup budget)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import typer
+
+if TYPE_CHECKING:
+    from dimos.evals.types import Suite
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 
 @app.command("run")
 def run(
-    suite: str = typer.Argument(
-        help="Dotted suite module exporting SUITE, e.g. dimos.evals.suites.go2_smoke"
-    ),
+    suite: str = typer.Argument(help="Dotted module exporting SUITE or load_suite(dataset)"),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     model: str = typer.Option("", help="Override chat model"),
     blind: bool = typer.Option(False, help="Withhold observations (guessing ablation)"),
     attach: bool = typer.Option(False, help="Drive an already-running dimos (interactive cases)"),
     limit: int = typer.Option(0, help="Run at most N cases"),
     live_db: str = typer.Option("recording.db", help="Live Recorder db (interactive cases)"),
+    dataset: Path | None = typer.Option(
+        None,
+        help="Dataset directory for a suite module exporting load_suite(dataset)",
+        exists=True,
+        file_okay=False,
+        readable=True,
+    ),
 ) -> None:
     from dimos.evals.runner import EvalRunner, summarize
 
-    cases = importlib.import_module(suite).SUITE
+    cases = _load_suite(suite, dataset)
     overrides: dict[str, object] = {"blind": blind, "attach": attach, "live_db": live_db}
     if model:
         overrides["model"] = model
@@ -66,3 +77,17 @@ def list_() -> None:
 
     for name in list_suites():
         typer.echo(name)
+
+
+def _load_suite(suite: str, dataset: Path | None) -> Suite:
+    """Load a static SUITE or construct one from a dataset directory."""
+    module = importlib.import_module(suite)
+    if dataset is not None:
+        loader = getattr(module, "load_suite", None)
+        if loader is None:
+            raise typer.BadParameter(f"{suite} does not support --dataset")
+        return cast("Callable[[Path], Suite]", loader)(dataset)
+    cases = getattr(module, "SUITE", None)
+    if cases is None:
+        raise typer.BadParameter(f"{suite} requires --dataset")
+    return cast("Suite", cases)

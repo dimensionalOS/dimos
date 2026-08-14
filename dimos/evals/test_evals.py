@@ -312,6 +312,45 @@ def test_suites_importable() -> None:
         assert module.SUITE, module.__name__
 
 
+def test_cli_loads_dataset_backed_suite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from dimos.evals.cli import _load_suite
+
+    expected = [
+        PassiveEval(id="dynamic", inputs="?", expected="yes", parse=yes_no, dataset="unused")
+    ]
+    loader_calls: list[Path] = []
+
+    def load_suite(dataset: Path) -> list[PassiveEval[str]]:
+        loader_calls.append(dataset)
+        return expected
+
+    monkeypatch.setattr(
+        "dimos.evals.cli.importlib.import_module",
+        lambda _: SimpleNamespace(load_suite=load_suite),
+    )
+
+    assert _load_suite("dynamic.suite", tmp_path) is expected
+    assert loader_calls == [tmp_path]
+
+
+def test_cli_requires_dataset_for_dynamic_suite(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import typer
+
+    from dimos.evals.cli import _load_suite
+
+    monkeypatch.setattr(
+        "dimos.evals.cli.importlib.import_module",
+        lambda _: SimpleNamespace(load_suite=lambda _: []),
+    )
+
+    with pytest.raises(typer.BadParameter, match="requires --dataset"):
+        _load_suite("dynamic.suite", None)
+
+
 def test_instruct_delivers_over_real_transport() -> None:
     """EvalRunner.instruct publishes on /human_input and tears down immediately;
     the message must still reach an already-subscribed listener (PR #3411 review:

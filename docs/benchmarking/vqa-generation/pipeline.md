@@ -57,25 +57,20 @@ Generation writes the resolved request, model IDs, and aggregate counts to priva
 
 ### Constrained
 
-The image author inspects the scene and returns up to 15 structured intents. It selects only
+The image author inspects the scene and returns structured intents in one JSON array. Invalid JSON
+is retried once. It selects only
 families likely to be useful for the visible arrangement, rather than expanding every object into
 every family. Private grounding still rejects unsupported or ambiguous candidates.
 
 | Family | Sample question | Choices |
 |---|---|---|
 | Presence | `Is there a chair in the image?` | `yes`, `no` |
-| Horizontal direction | `Where is the nearest chair?` | `left`, `center`, `right` |
+| Horizontal direction | `Where is the chair in the image?` | `left`, `center`, `right` |
 | Distance threshold | `Is the nearest chair within 3 meters?` | `yes`, `no` |
 | Visible count | `How many chairs are visible?` | `0`, `1-2`, `3-4`, `5-7`, `8+` |
 | Camera range | `How far is the nearest chair from the camera?` | `under 1 m`, `1 to under 2 m`, `2 to under 4 m`, `4 m or more` |
 | Nearest by side | `Which chair is closer, the left or right one?` | `left`, `right` |
 | Pairwise left/right | `Is the chair to the left or right of the table?` | `left`, `right` |
-| Height comparison | `Which is taller: the chair or the table?` | `chair`, `table` |
-| Direct support | `Is the box on the table?` | `yes`, `no` |
-| Opening width | `How wide is the doorway?` | `under 0.2 m`, `0.2 to under 0.5 m`, `0.5 to under 0.8 m`, `0.8 m or more` |
-| Closest object | `Which object is closest to the chair: table or lamp?` | `table`, `lamp` |
-| Door state | `Is the door open or closed?` | `open`, `closed` |
-| Forward path | `Is the path directly ahead clear or blocked?` | `clear`, `blocked` |
 
 ### Agentic
 
@@ -83,37 +78,21 @@ The image-only author returns a frozen question with one contract:
 
 - Boolean: `{"kind":"boolean"}`; public choices are `yes`, `no`.
 - Choice: `{"kind":"choice","choices":[...]}`; at least two choices.
-- Height: `{"kind":"deferred_height_choice","strategy":"height-window-v1"}`; the question is
-  frozen before private geometry, while four public choices are generated from a successful private
-  height measurement.
-
-Numeric contracts are rejected. `height-window-v1` selects a local four-choice window from private
-measurement against the fixed internal breakpoints `0.1`, `0.2`, `0.6`, `1.0`, and `2.0` meters. For
-example, a private height of `0.42 m` produces:
-
-```text
-under 0.2 m | 0.2-0.6 m | 0.6-1.0 m | over 1.0 m
-```
 
 The agentic oracle is not bound to a constrained family. It can inspect individual detection, mask,
-object, and plane handles, choose its own tool sequence, and either return a cited answer or privately
+and object handles, choose its own tool sequence, and either return a cited answer or privately
 reject the proposal with the missing evidence.
 
-## 3. Pre-Answer Grounding Checks
+## 3. Pre-Answer Evidence Checks
 
-All referenced objects need a detected mask with enough visible 3D point support. Questions are
-authored from RGB only so the public question is visually answerable; private LiDAR evidence may
-establish the gold answer but does not make a hidden or ambiguous question acceptable.
+Presence, visible count, and image direction use valid MoonDream detections directly. Range families
+need a detected mask with enough visible 3D point support. Questions are authored from RGB only;
+private LiDAR evidence establishes range labels.
 
-- Height: one grounded object and an accepted ground plane.
-- Door state: a door plane and nearby surrounding plane with a clear relative angle.
-- Closest object: one grounded target and one grounded instance per candidate.
-- Count and range: accepted grounded instances only. `0` is an exhaustive distractor; empty detector,
-  segmenter, or grounding output is unverified absence and rejects rather than producing a zero label.
-- Left/right and height comparison: one grounded instance per named object with clear separation.
-- Object on support: contact or clear separation relative to the support plane.
-- Opening width: one ground-connected aperture and stable surrounding-wall geometry.
-- Forward path: visible ground support across the forward corridor and supported obstacle evidence.
+- Presence and count: accepted visual detections. `0` is an exhaustive distractor; empty detector
+  output is unverified absence and rejects rather than producing a zero label.
+- Range: accepted grounded instances only. Failed box segmentation attempts point-prompt fallback.
+- Left/right comparison: one grounded instance per named object with clear separation.
 
 Missing, sparse, or ambiguous evidence rejects the question.
 
@@ -136,16 +115,16 @@ ground(A)
 
 ```text
 presence(A)
--> ground(A)
--> no grounded A: reject
--> one or more grounded A instances: yes
+-> detect_objects(A)
+-> no valid visual detection: reject
+-> one or more visual detections: yes
 ```
 
 ```text
 horizontal_direction(A)
--> ground(A)
--> select_nearest_object(grounded A instances) -> nearest A
--> nearest A horizontal_direction: left/center/right
+-> detect_objects(A)
+-> require exactly one valid visual detection
+-> bounding-box center: left/center/right
 ```
 
 ```text
@@ -160,14 +139,15 @@ compare_nearest_by_side(A)
 -> ground(A)
 -> select_nearest_object(grounded A instances, left) -> nearest left A
 -> select_nearest_object(grounded A instances, right) -> nearest right A
--> either side missing or tied: reject
+-> either side missing or ranges within 0.1 m: reject
 -> compare the two range_m values: left/right
 ```
 
 ```text
 visible_count(A)
--> ground(A)
--> bucket accepted instance count: 0 / 1-2 / 3-4 / 5-7 / 8+
+-> detect_objects(A)
+-> deduplicate near-identical boxes
+-> bucket accepted visual instance count: 0 / 1-2 / 3-4 / 5-7 / 8+
 -> empty perception output: reject, never infer 0
 ```
 
@@ -185,62 +165,6 @@ compare_left_right(A, B)
 -> separation under 0.1 m: reject -> otherwise choose left/right
 ```
 
-```text
-compare_height(A, B)
--> ground(A), ground(B)
--> require exactly one accepted A and B
--> fit_ground_plane()
--> measure_height(A, plane) and measure_height(B, plane)
--> reject overlapping uncertainty intervals -> choose taller A/B
-```
-
-```text
-object_on_support(A, B)
--> ground(A), ground(B)
--> require exactly one accepted A and B
--> fit_ground_plane() -> ground plane
--> fit_object_surface_plane(B) -> support plane
--> reject non-horizontal support plane
--> measure_object_plane_relation(A, B, support plane, ground normal)
--> clear separation: no -> unsupported or ambiguous geometry: reject -> otherwise yes
-```
-
-```text
-opening_width(A)
--> detect_objects(A) -> segment_detections(A)
--> require exactly one accepted aperture mask
--> fit_ground_plane() -> ground plane
--> measure_opening_width_from_mask(mask, ground plane)
--> reject non-ground-connected, nonvertical, edge-clipped, or unstable aperture geometry
--> bucket: under 0.2 / 0.2-0.5 / 0.5-0.8 / 0.8 m or more
-```
-
-```text
-closest_object(A, B, C, ...)
--> ground(A), ground(B), ground(C), ...
--> require exactly one target and one instance for every candidate type
--> select_closest_object(target, candidates) from private support-point centroids
--> reject ties within 0.15 m -> otherwise choose the closest candidate
-```
-
-```text
-door_state(A)
--> ground(A) -> require exactly one door
--> fit_object_surface_plane(door) -> door plane
--> fit_object_surrounding_plane(door) -> surrounding plane
--> measure_relative_plane_angle(door plane, surrounding plane)
--> nearly aligned: closed; clearly rotated: open; intermediate/failed geometry: reject
-```
-
-```text
-forward_path()
--> fit_ground_plane()
--> classify_forward_corridor(visible camera points, ground plane)
--> inspect the fixed camera-frame corridor within 2 m and 0.5 m on either side
--> require ground support across each forward distance band
--> coherent elevated cluster: blocked; no supported obstacle: clear; scattered points: reject
-```
-
 ### Agentic
 
 The private oracle calls only read-only perception and geometry primitives shared with constrained
@@ -248,36 +172,24 @@ recipes. It interprets their measurements and selects an answer itself:
 
 | Primitive tool | Input | Output |
 |---|---|---|
-| `detect_objects` | semantic query | Individual opaque detection IDs and confidence. |
-| `segment_detection` | detection ID | Individual opaque mask IDs. |
+| `detect_objects` | semantic query | Individual opaque detection IDs, confidence, and citable visual box evidence. |
+| `segment_object` | detection ID | Individual opaque mask IDs or an explicit empty-segmentation rejection. |
 | `ground_mask` | mask ID | One frame-scoped canonical object ID and citable support evidence. Near-identical masks with matching range reuse the same object ID. |
-| `fit_ground_plane` | none | Plane ID, plane estimate, residual, inlier support, quality flags. |
-| `get_object_pose` | object ID | Camera-frame grounding evidence: range, side, support count. |
-| `fit_object_surface_plane` | object ID | Plane ID from one object's visible support. |
-| `fit_mask_surrounding_plane` | mask ID | Plane ID from visible support around a mask. |
-| `measure_object_pair_distance` | two object IDs | Private 3D support-centroid distance. |
-| `measure_relative_plane_angle` | two plane IDs | Private unsigned angle between accepted planes. |
-| `measure_object_plane_relation` | object ID, support ID, support plane, ground plane | Clearance, contact, and projected-separation metrics. |
-| `measure_aperture_geometry` | mask ID, ground plane | Private ground-connected aperture span and uncertainty. |
-| `measure_forward_corridor` | ground plane | Private floor-support and elevated-obstacle metrics. |
-| `measure_height` | object ID, plane ID | Measurement ID, private height, uncertainty, provenance, quality flags. |
+| `get_object_position` | object ID | Camera-frame grounding evidence: range, side, support count. |
 
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The
-oracle returns a candidate answer and cited evidence IDs. Deferred height choices are the sole
-exception to frozen public choices: the question remains frozen, but the public options and answer
-are deterministically derived from the private measurement.
+oracle returns a candidate answer and cited evidence IDs.
 
 ## 5. Post-Answer Validation
 
 The candidate is rejected unless:
 
-1. Its answer exactly matches the fixed public choices, or the public choices deterministically
-   generated from a cited private height measurement.
+1. Its normalized answer matches one of the fixed public choices.
 2. It cites one or more known evidence IDs.
-3. A cited height bucket matches the deterministic measurement bucket.
-4. The private semantic validator confirms the cited tool output supports the question and answer.
 
-Tool failures, quality-gate failures, invalid citations, invalid answer format, and unsupported claims are retained as rejected generation records.
+Tool failures, quality-gate failures, invalid citations, and invalid answer formats are retained as
+rejected generation records. The tool-calling oracle currently interprets whether its cited evidence
+supports a freeform question without a second model judge.
 
 ## 6. Write Dataset Artifacts
 
@@ -301,14 +213,14 @@ Each line in `cases.jsonl` is one public evaluation case. Formatted for readabil
 
 ```json
 {
-  "id": "go2-40-chair-height",
+  "id": "go2-40-chair-range",
   "image": "assets/frame-000040.jpg",
-  "question": "How tall is the chair?",
+  "question": "How far is the nearest chair from the camera?",
   "choices": [
-    "under 0.2 m",
-    "0.2-0.6 m",
-    "0.6-1.0 m",
-    "over 1.0 m"
+    "under 1 m",
+    "1 to under 2 m",
+    "2 to under 4 m",
+    "4 m or more"
   ]
 }
 ```
@@ -323,8 +235,8 @@ one record is:
 
 ```json
 {
-  "id": "go2-40-chair-height",
-  "answer": "0.2-0.6 m"
+  "id": "go2-40-chair-range",
+  "answer": "1 to under 2 m"
 }
 ```
 
@@ -334,4 +246,13 @@ one record is:
 The files store each record as one JSON object per physical line; the examples above are expanded
 only for documentation readability.
 
-The shared `point-cloud-vqa` evaluator reads public `cases.jsonl`, public images, and private `labels.jsonl`. It does not read generation evidence or point-cloud data.
+Run the generated dataset through the standard evaluation framework:
+
+```bash
+dimos evals run dimos.benchmark.vqa.evaluation \
+  --dataset <generated-dataset> \
+  --model gpt-4o-mini
+```
+
+The VQA suite loader reads public `cases.jsonl`, public images, and private `labels.jsonl`. It does
+not read generation evidence or point-cloud data.

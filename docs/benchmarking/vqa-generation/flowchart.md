@@ -52,13 +52,13 @@ flowchart TD
     subgraph PRIMITIVES["generation/primitives/"]
         FRAME_PRIMITIVES["frame.py<br/>FramePerceptionPrimitives"]
         DETECT["detect_objects()"]
-        SEGMENT["segment_detections()<br/>or segment_detection()"]
+        SEGMENT["segment_detections()<br/>or segment_object()"]
         GROUND["ground_masks()<br/>or ground_mask()"]
         PROJECTION["projection.py<br/>project_visible_points()"]
         GROUNDING["grounding.py<br/>Mask support to GroundedObject"]
-        GEOMETRY["geometry.py<br/>plane, opening, corridor,<br/>and mask-point math"]
-        MEASURE["Frame primitive methods<br/>fit planes, measure heights,<br/>relations, ranges, and corridor"]
-        CACHE["Frame-scoped caches<br/>detections, masks, canonical objects,<br/>and accepted ground plane"]
+        GEOMETRY["geometry.py<br/>masked point-cloud selection"]
+        MEASURE["Frame primitive methods<br/>ground objects and return<br/>range, side, and support"]
+        CACHE["Frame-scoped caches<br/>detections, visual evidence,<br/>masks, and canonical objects"]
     end
 
     subgraph DETERMINISTIC["Constrained path"]
@@ -68,7 +68,7 @@ flowchart TD
         FAMILY["generation/families.py<br/>family(intent, context)"]
         CONTEXT["families.py<br/>FamilyContext"]
         GROUND_SEQUENCE["FamilyContext.ground(query)<br/>Detect -> segment -> ground<br/>or reuse cached grounding"]
-        FAMILY_POLICY["Family-owned sequence<br/>measure -> quality gate -> classify<br/>-> choose or bucket answer"]
+        FAMILY_POLICY["Family-owned sequence<br/>ground -> select -> compare<br/>-> choose or bucket answer"]
         COMMON["families.py<br/>Render question and construct<br/>shared rejection result"]
         GROUND_TRUTH["GroundTruthResult"]
     end
@@ -78,7 +78,7 @@ flowchart TD
         TOOL_REGISTRY["VqaPrimitiveToolRegistry<br/>Expose low-level primitives<br/>through opaque IDs"]
         ORACLE_FILE["generation/agentic_answerer.py"]
         ORACLE["AgenticAnswerer.answer(proposal, tools)<br/>Select iterative tool calls"]
-        VALIDATE_ORACLE["Validate answer contract,<br/>citations, and semantic support"]
+        VALIDATE_ORACLE["Validate answer contract<br/>and evidence citations"]
         ORACLE_RESULT["AcceptedOracleResult<br/>or RejectedOracleResult"]
     end
 
@@ -161,7 +161,7 @@ flowchart TD
 The primary code boundary is:
 
 - `runner.py` owns execution and model lifecycle.
-- `FramePerceptionPrimitives` owns reusable frame-scoped perception, measurements, and caches.
+- `FramePerceptionPrimitives` owns reusable frame-scoped object perception, grounding, and caches.
 - Constrained functions in `families.py` own complete deterministic answer recipes.
 - The agentic answerer selects low-level primitive calls through `VqaPrimitiveToolRegistry`.
 - `dataset.py` owns serialization and atomic publication; it does not generate answers.

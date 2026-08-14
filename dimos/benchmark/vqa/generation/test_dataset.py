@@ -10,7 +10,6 @@ from dimos.benchmark.vqa.contracts import (
     AcceptedOracleResult,
     CalibratedFrame,
     ChoiceAnswerContract,
-    DeferredHeightChoiceContract,
     GroundTruthResult,
     QuestionIntent,
     QuestionProposal,
@@ -60,13 +59,13 @@ def test_constrained_results_export_simple_multiple_choice_rows() -> None:
     assert labels == [{"id": "frame-chair-presence", "answer": "yes"}]
 
 
-def test_deferred_height_result_exports_resolved_public_choices() -> None:
-    choices = ("under 0.2 m", "0.2-0.6 m", "0.6-1.0 m", "over 1.0 m")
+def test_agentic_result_exports_public_choices() -> None:
+    choices = ("left", "right")
     result = AcceptedOracleResult(
-        QuestionProposal("chair-height", "How tall is the chair?", DeferredHeightChoiceContract()),
-        "0.2-0.6 m",
+        QuestionProposal("chair-side", "Which side is the chair?", ChoiceAnswerContract(choices)),
+        "left",
         ChoiceAnswerContract(choices),
-        ("height-1",),
+        ("grounding-1",),
         (),
         (),
     )
@@ -74,7 +73,7 @@ def test_deferred_height_result_exports_resolved_public_choices() -> None:
     cases, labels = _evaluation_rows("frame", [result])
 
     assert cases[0]["choices"] == choices
-    assert labels == [{"id": "frame-chair-height", "answer": "0.2-0.6 m"}]
+    assert labels == [{"id": "frame-chair-side", "answer": "left"}]
 
 
 def test_dataset_manifest_exports_public_cases_and_private_labels(tmp_path: Path) -> None:

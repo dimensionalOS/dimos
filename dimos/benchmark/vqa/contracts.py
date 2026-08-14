@@ -79,6 +79,17 @@ class GroundedObject:
 
 
 @dataclass(frozen=True)
+class VisualObject:
+    """One frame-scoped visible object hypothesis from an image detector."""
+
+    id: str
+    label: str
+    confidence: float
+    bbox: tuple[float, float, float, float]
+    horizontal_direction: str
+
+
+@dataclass(frozen=True)
 class VqaExample:
     """A closed-answer question generated from grounded objects."""
 
@@ -98,12 +109,6 @@ QuestionKind = Literal[
     "camera_range",
     "compare_nearest_by_side",
     "compare_left_right",
-    "compare_height",
-    "object_on_support",
-    "opening_width",
-    "door_state",
-    "closest_object",
-    "forward_path",
 ]
 
 
@@ -135,7 +140,7 @@ class GroundTruthResult:
     status: Literal["answered", "rejected"]
     answer: str | None
     reason: str | None
-    evidence: tuple[GroundedObject, ...]
+    evidence: tuple[GroundedObject | VisualObject, ...]
     trace: tuple[ToolTrace, ...]
 
 
@@ -154,15 +159,7 @@ class ChoiceAnswerContract:
     kind: Literal["choice"] = "choice"
 
 
-@dataclass(frozen=True)
-class DeferredHeightChoiceContract:
-    """A height question whose public choices follow a private measurement."""
-
-    strategy: Literal["height-window-v1"] = "height-window-v1"
-    kind: Literal["deferred_height_choice"] = "deferred_height_choice"
-
-
-AnswerContract = BooleanAnswerContract | ChoiceAnswerContract | DeferredHeightChoiceContract
+AnswerContract = BooleanAnswerContract | ChoiceAnswerContract
 ResolvedAnswerContract = BooleanAnswerContract | ChoiceAnswerContract
 
 
@@ -185,32 +182,10 @@ class OracleEvidence:
     version: str
     object_id: str
     label: str
-    range_m: float
+    range_m: float | None
     side: str
-    point_count: int
-    measurement: OracleMeasurement | None = None
-
-
-@dataclass(frozen=True)
-class OracleMeasurement:
-    """A private scalar measurement with its uncertainty and provenance."""
-
-    value: float
-    unit: str
-    tolerance: float
-    quality_flags: tuple[str, ...]
-    provenance_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class GroundPlaneEstimate:
-    """A robust ground-plane fit in frozen camera coordinates."""
-
-    normal: tuple[float, float, float]
-    offset_m: float
-    sample_count: int
-    inlier_count: int
-    residual_m: float
+    point_count: int | None
+    bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -221,13 +196,8 @@ class OracleToolResult:
     query: str
     evidence: tuple[OracleEvidence, ...]
     version: str = "v1"
-    measurement: OracleMeasurement | None = None
-    choice: str | None = None
-    choices: tuple[str, ...] = ()
-    plane: GroundPlaneEstimate | None = None
     quality_flags: tuple[str, ...] = ()
     rejection_reason: str | None = None
-    metrics: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)

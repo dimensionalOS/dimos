@@ -3,17 +3,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
 import json
 import re
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from dimos.benchmark.vqa.contracts import (
     AcceptedOracleResult,
     AnswerContract,
     BooleanAnswerContract,
     ChoiceAnswerContract,
-    DeferredHeightChoiceContract,
     OracleToolResult,
     OracleTrace,
     QuestionProposal,
@@ -21,77 +19,9 @@ from dimos.benchmark.vqa.contracts import (
     ResolvedAnswerContract,
 )
 from dimos.benchmark.vqa.generation.agentic_tools import VqaPrimitiveToolRegistry
-from dimos.benchmark.vqa.generation.answer_choices import height_choice_window
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
-
-
-@dataclass(frozen=True)
-class SemanticEvidenceValidation:
-    """Private verdict on whether cited tool evidence supports an oracle answer."""
-
-    accepted: bool
-    reason: str
-
-
-class SemanticEvidenceValidator(Protocol):
-    """Validate an answer only against the frozen question and cited local evidence."""
-
-    def validate(
-        self,
-        proposal: QuestionProposal,
-        answer: str,
-        cited_results: tuple[OracleToolResult, ...],
-    ) -> SemanticEvidenceValidation: ...
-
-
-class OpenAISemanticEvidenceValidator:
-    """Private no-tools model judge for semantic grounding of a proposed answer."""
-
-    def __init__(self, model: BaseChatModel) -> None:
-        self._model = model
-
-    def validate(
-        self,
-        proposal: QuestionProposal,
-        answer: str,
-        cited_results: tuple[OracleToolResult, ...],
-    ) -> SemanticEvidenceValidation:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        response = self._model.invoke(
-            [
-                SystemMessage(
-                    "You validate a private VQA oracle answer. Decide only whether the cited "
-                    "structured local-tool evidence supports the answer to the frozen question. "
-                    "Reject claims requiring measurements not present in the evidence; for example, "
-                    "height is not supported by range or side alone. A cited measurement bucket must "
-                    "exactly match the selected choice. Return strict JSON only: "
-                    '{"accepted": true|false, "reason": "concise reason"}. Do not call tools.'
-                ),
-                HumanMessage(
-                    json.dumps(
-                        {
-                            "question": proposal.question,
-                            "answer": answer,
-                            "answer_contract": asdict(proposal.answer_contract),
-                            "cited_evidence": [asdict(result) for result in cited_results],
-                        }
-                    )
-                ),
-            ]
-        )
-        try:
-            payload = _parse_strict_json_object(_response_text(response.content))
-            accepted, reason = payload.get("accepted"), payload.get("reason")
-            if not isinstance(accepted, bool) or not isinstance(reason, str) or not reason:
-                raise ValueError(
-                    "validator response requires boolean accepted and non-empty reason"
-                )
-        except (ValueError, json.JSONDecodeError, AttributeError) as exc:
-            return SemanticEvidenceValidation(False, f"invalid_validator_response:{exc}")
-        return SemanticEvidenceValidation(accepted, reason)
 
 
 class AgenticAnswerer:
@@ -101,13 +31,11 @@ class AgenticAnswerer:
         self,
         model: BaseChatModel,
         max_tool_calls: int = 25,
-        semantic_validator: SemanticEvidenceValidator | None = None,
     ) -> None:
         if max_tool_calls < 1:
             raise ValueError("max_tool_calls must be positive")
         self._model = model
         self._max_tool_calls = max_tool_calls
-        self._semantic_validator = semantic_validator
 
     def answer(
         self, proposal: QuestionProposal, registry: VqaPrimitiveToolRegistry
@@ -119,7 +47,7 @@ class AgenticAnswerer:
         messages: list[Any] = [
             SystemMessage(
                 "You are a private VQA oracle. Use only supplied local tools. Do not invent "
-                "evidence. Detection IDs can only be passed to segment_detection. Mask IDs can only "
+                "evidence. Detection IDs can only be passed to segment_object. Mask IDs can only "
                 "be passed to ground_mask. Only grounded object IDs can be passed to object and "
                 "geometry measurements. If grounding fails, reject rather than trying unrelated "
                 "tools. Finish with JSON only: either "
@@ -141,7 +69,6 @@ class AgenticAnswerer:
                     _response_text(response.content),
                     registry.results,
                     trace,
-                    self._semantic_validator,
                 )
             for call in tool_calls:
                 if calls >= self._max_tool_calls:
@@ -188,7 +115,6 @@ def create_openai_oracle(model: str, max_tool_calls: int = 25) -> AgenticAnswere
     return AgenticAnswerer(
         ChatOpenAI(model=model),
         max_tool_calls=max_tool_calls,
-        semantic_validator=OpenAISemanticEvidenceValidator(ChatOpenAI(model=model)),
     )
 
 
@@ -225,34 +151,10 @@ def _resolve_oracle_answer(
             raise ValueError("boolean answer must be yes or no")
         return normalized, contract
     if isinstance(contract, ChoiceAnswerContract):
-        if not isinstance(answer, str) or answer not in contract.choices:
+        normalized = _normalize_choice_answer(answer, contract.choices)
+        if normalized is None:
             raise ValueError("choice answer is not allowed")
-        cited = set(evidence_ids)
-        measured_choices = {
-            result.choice
-            for result in results
-            if result.choice is not None and any(item.id in cited for item in result.evidence)
-        }
-        if measured_choices and answer not in measured_choices:
-            raise ValueError("choice answer does not match cited measurement bucket")
-        return answer, contract
-    if isinstance(contract, DeferredHeightChoiceContract):
-        height_results = [
-            result
-            for result in results
-            if (
-                result.tool == "measure_height"
-                and result.measurement is not None
-                and any(item.id in evidence_ids for item in result.evidence)
-            )
-        ]
-        if len(height_results) != 1:
-            raise ValueError("deferred height answer requires exactly one cited height measurement")
-        measurement = height_results[0].measurement
-        if measurement is None:
-            raise ValueError("deferred height answer requires a height measurement")
-        choices, choice = height_choice_window(measurement.value)
-        return choice, ChoiceAnswerContract(choices)
+        return normalized, contract
     raise ValueError("unsupported answer contract")
 
 
@@ -268,12 +170,23 @@ def _normalize_boolean_answer(answer: Any) -> str | None:
     return None
 
 
+def _normalize_choice_answer(answer: Any, choices: tuple[str, ...]) -> str | None:
+    if not isinstance(answer, str):
+        return None
+    normalized_choices: dict[str, str] = {}
+    for choice in choices:
+        key = choice.strip().rstrip(".,;:").casefold()
+        if key in normalized_choices:
+            return None
+        normalized_choices[key] = choice
+    return normalized_choices.get(answer.strip().rstrip(".,;:").casefold())
+
+
 def _validated_result(
     proposal: QuestionProposal,
     response: str,
     results: tuple[OracleToolResult, ...],
     trace: list[OracleTrace],
-    semantic_validator: SemanticEvidenceValidator | None,
 ) -> AcceptedOracleResult | RejectedOracleResult:
     try:
         payload = _parse_json_object(response)
@@ -296,35 +209,8 @@ def _validated_result(
         evidence_ids = tuple(payload["evidence_ids"])
     except (ValueError, json.JSONDecodeError, AttributeError) as exc:
         return _rejected(proposal, f"invalid_final_answer:{exc}", results, trace)
-    cited_results = _cited_results(evidence_ids, results)
-    if semantic_validator is None:
-        return _rejected(proposal, "semantic_validator_not_configured", results, trace)
-    resolved_proposal = replace(proposal, answer_contract=answer_contract)
-    verdict = semantic_validator.validate(resolved_proposal, answer, cited_results)
-    trace.append(
-        OracleTrace(
-            "semantic_validation",
-            f"{'accepted' if verdict.accepted else 'rejected'}:{verdict.reason}",
-        )
-    )
-    if not verdict.accepted:
-        return _rejected(proposal, f"unsupported_evidence:{verdict.reason}", results, trace)
     return AcceptedOracleResult(
         proposal, answer, answer_contract, evidence_ids, results, tuple(trace)
-    )
-
-
-def _cited_results(
-    evidence_ids: tuple[str, ...], results: tuple[OracleToolResult, ...]
-) -> tuple[OracleToolResult, ...]:
-    cited = set(evidence_ids)
-    return tuple(
-        replace(
-            result,
-            evidence=tuple(evidence for evidence in result.evidence if evidence.id in cited),
-        )
-        for result in results
-        if any(evidence.id in cited for evidence in result.evidence)
     )
 
 
@@ -349,11 +235,6 @@ def _contract_prompt(contract: AnswerContract) -> str:
         return "boolean: yes or no"
     if isinstance(contract, ChoiceAnswerContract):
         return f"choice: {', '.join(contract.choices)}"
-    if isinstance(contract, DeferredHeightChoiceContract):
-        return (
-            "deferred height choice: call measure_height, cite exactly one accepted height evidence ID, "
-            "and return answer: null. The private pipeline derives the public choice from the measurement"
-        )
     raise ValueError("unsupported answer contract")
 
 
@@ -365,13 +246,6 @@ def _parse_json_object(response: str) -> dict[str, Any]:
     payload: Any = json.loads(stripped[start : end + 1])
     if not isinstance(payload, dict):
         raise ValueError("final response must be an object")
-    return payload
-
-
-def _parse_strict_json_object(response: str) -> dict[str, Any]:
-    payload: Any = json.loads(response)
-    if not isinstance(payload, dict):
-        raise ValueError("validator response must be an object")
     return payload
 
 

@@ -20,12 +20,6 @@ FAMILIES: dict[QuestionKind, Family] = {
     "camera_range": families.bucket_camera_range,
     "compare_nearest_by_side": families.compare_nearest_by_side,
     "compare_left_right": families.compare_left_right,
-    "compare_height": families.compare_heights,
-    "object_on_support": families.classify_object_on_support,
-    "opening_width": families.measure_opening_width,
-    "door_state": families.classify_door_state,
-    "closest_object": families.select_closest_object,
-    "forward_path": families.classify_forward_path,
 }
 
 
