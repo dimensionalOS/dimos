@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "case_id": "vlnce-r2r-mp3d-example-episode-515",
+  "source": {
+    "schema_version": "1.0",
+    "kind": "external_benchmark_episode",
+    "benchmark": "vlnce_r2r",
+    "upstream_revision": "729d141b2ee10628061ada74dd3a5b9f70faeba5",
+    "dataset_revision": "R2R_VLNCE_v1-3",
+    "split": "train",
+    "episode_id": "515",
+    "episode_sha256": "d5934ea7576ecbe96093aa6b7cc8c097081b651382898f7c7ce1410fbfd3740a",
+    "scene_id": "mp3d/17DRP5sb8fy/17DRP5sb8fy.glb",
+    "episode_asset_id": "r2r_vlnce_v1_3",
+    "episode_path": "R2R_VLNCE_v1-3/train/train.json.gz",
+    "scene_asset_id": "mp3d_example_v1_1",
+    "scene_path": "17DRP5sb8fy/17DRP5sb8fy.glb",
+    "navmesh_path": "17DRP5sb8fy/17DRP5sb8fy.navmesh",
+    "condition_label": "dimos_geometry_training_scene_development",
+    "preparation": {
+      "schema_version": "1.0",
+      "kind": "vlnce_public_assets",
+      "revision": "vlnce-public-preparation-v1",
+      "cache_namespace": "agent_eval/vlnce_r2r",
+      "assets": [
+        {
+          "schema_version": "1.0",
+          "asset_id": "r2r_vlnce_v1_3",
+          "url": "https://drive.usercontent.google.com/download?id=1T9SjqZWyR2PCLSXYkFckfDeIs6Un0Rjm&export=download&confirm=t",
+          "archive_sha256": "e2a81331524a6ca9a987d014a1affcb3b7174240cfae3647532bbaf68ef18404",
+          "archive_bytes": 2608469,
+          "cache_subdir": "episodes/r2r_vlnce_v1_3",
+          "required_files": [
+            {
+              "schema_version": "1.0",
+              "path": "R2R_VLNCE_v1-3/train/train.json.gz",
+              "sha256": "f411066b53f96d1241c045fd05a6a9e01b484c2ed9369f5b6f41806969056a34"
+            }
+          ]
+        },
+        {
+          "schema_version": "1.0",
+          "asset_id": "mp3d_example_v1_1",
+          "url": "https://dl.fbaipublicfiles.com/habitat/mp3d/mp3d_example_v1.1.zip",
+          "archive_sha256": "5a628b32c7c9f0bb84d46c76130c9f01fabf471a8dc28cb6d2089f87a9aacf2c",
+          "archive_bytes": 67765004,
+          "cache_subdir": "scenes/mp3d_example_v1_1",
+          "required_files": [
+            {
+              "schema_version": "1.0",
+              "path": "17DRP5sb8fy/17DRP5sb8fy.glb",
+              "sha256": "334456925e056c83a9a7a5c768b3d37cdd23425d8ca20743bfce015be3f56b04"
+            },
+            {
+              "schema_version": "1.0",
+              "path": "17DRP5sb8fy/17DRP5sb8fy.navmesh",
+              "sha256": "0f36abb98ee3545d7e1f5103882269206feaaea05dcb54014333290b1d2b00c8"
+            },
+            {
+              "schema_version": "1.0",
+              "path": "mp3d.scene_dataset_config.json",
+              "sha256": "b56050135d429839ca7066f335de51897d27e9741810bff8e13972fe539b0f5f"
+            }
+          ]
+        }
+      ],
+      "image": {
+        "schema_version": "1.0",
+        "image_name": "localhost/dimos-vlnce-r2r:dev",
+        "image_digest": "2dadac6cce1a975b3a8fb077bde322c1bccdb74e77c3194ce84475439dacf4a3",
+        "build_context": "dimos/benchmark/vlnce_r2r",
+        "build_recipe_sha256": "d0edc539d8579b1944029c84d20b2d63dc5eb11c43cce04150df43531c9b7f5d",
+        "base_image": "docker.io/mambaorg/micromamba",
+        "base_image_digest": "0d2870c1159dfb0c285e1c942c68385cd1110255cc9551838a29e48793e21af1"
+      }
+    }
+  },
+  "task": {
+    "schema_version": "1.0",
+    "kind": "benchmark_instruction",
+    "prompt": "Exit the bedroom, enter the bathroom, wait at the toilet. ",
+    "instruction_sha256": "90ca6464335d102214fe820c9dc18117584b3527c0f5d140fac314215a010d36",
+    "submission_guidance": "Call submit_route() exactly once after completing the full route instruction."
+  },
+  "interaction": {
+    "schema_version": "1.0",
+    "kind": "live_agent",
+    "timeout_seconds": 600.0
+  }
+}

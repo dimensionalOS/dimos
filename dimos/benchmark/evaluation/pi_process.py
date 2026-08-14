@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 import json
 import os
@@ -39,6 +41,8 @@ from dimos.benchmark.evaluation.progress import (
 PI_VERSION = "0.80.10"
 MAX_STDERR_BYTES = 64 * 1024
 EXPORT_TIMEOUT_SECONDS = 30.0
+_TRANSCRIPT_IMAGE_MARKER = 'id="dimos-transcript-images"'
+_TRANSCRIPT_IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png"})
 
 
 @dataclass(frozen=True)
@@ -57,14 +61,22 @@ class PiRunError(RuntimeError):
         *,
         stderr: str = "",
         transcript_path: Path | None = None,
+        tool_call_count: int = 0,
+        duration_seconds: float = 0.0,
     ) -> None:
         super().__init__(message)
         self.stderr = stderr
         self.transcript_path = transcript_path
+        self.tool_call_count = tool_call_count
+        self.duration_seconds = duration_seconds
 
 
 class PiExportError(RuntimeError):
     pass
+
+
+class PiRunCancelledError(PiRunError):
+    """The evaluator stopped an in-flight Pi session."""
 
 
 class PiCliRunner:
@@ -102,6 +114,7 @@ class PiCliRunner:
         mcp_url: str,
         api_key: str,
         run_dir: Path,
+        cancel: threading.Event | None = None,
     ) -> PiRunResult:
         session_dir = run_dir / "pi-session"
         agent_dir = run_dir / ".pi-agent"
@@ -190,16 +203,42 @@ class PiCliRunner:
         for reader in readers:
             reader.start()
         timed_out = False
+        cancelled = False
         try:
-            process.wait(timeout=self.timeout_s)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            if cancel is None:
+                try:
+                    process.wait(timeout=self.timeout_s)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            else:
+                deadline = time.monotonic() + self.timeout_s
+                while process.poll() is None:
+                    if cancel.wait(0.1):
+                        cancelled = True
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    try:
+                        process.wait(timeout=min(remaining, 0.1))
+                    except subprocess.TimeoutExpired:
+                        pass
+            if cancelled or timed_out:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        except BaseException:
             process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            raise
         finally:
             for reader, stream in zip(
                 readers,
@@ -213,30 +252,46 @@ class PiCliRunner:
 
         stderr = "".join(stderr_parts)
         transcript_path = _latest_transcript(session_dir)
+        duration = time.monotonic() - started
+        if cancelled:
+            raise PiRunCancelledError(
+                "Pi was cancelled by the evaluator",
+                stderr=stderr,
+                transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
+            )
         if timed_out:
             raise PiRunError(
                 f"Pi timed out after {self.timeout_s:g}s",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
-        duration = time.monotonic() - started
         if process.returncode != 0:
             raise PiRunError(
                 f"Pi exited with status {process.returncode}",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         if events.stop_error is not None:
             raise PiRunError(
                 events.stop_error,
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         if events.final_text is None:
             raise PiRunError(
                 "Pi produced no final assistant response",
                 stderr=stderr,
                 transcript_path=transcript_path,
+                tool_call_count=events.tool_count,
+                duration_seconds=duration,
             )
         return PiRunResult(
             final_text=events.final_text,
@@ -396,6 +451,94 @@ class PiCliRunner:
             )
         if not output_path.is_file():
             raise PiExportError("Pi transcript exporter produced no HTML file")
+        _embed_transcript_images(transcript_path, output_path)
+
+
+def _embed_transcript_images(transcript_path: Path, output_path: Path) -> None:
+    """Add JSONL tool-result images to Pi's otherwise text-only custom-tool HTML."""
+
+    html = output_path.read_text(encoding="utf-8")
+    if _TRANSCRIPT_IMAGE_MARKER in html:
+        return
+    images_by_call: dict[str, list[dict[str, str]]] = {}
+    for line in transcript_path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict) or entry.get("type") != "message":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict) or message.get("role") != "toolResult":
+            continue
+        tool_call_id = message.get("toolCallId")
+        content = message.get("content")
+        if not isinstance(tool_call_id, str) or not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "image":
+                continue
+            mime_type = block.get("mimeType")
+            data = block.get("data")
+            if mime_type not in _TRANSCRIPT_IMAGE_MIME_TYPES or not isinstance(data, str):
+                continue
+            try:
+                base64.b64decode(data, validate=True)
+            except (ValueError, binascii.Error):
+                continue
+            images_by_call.setdefault(tool_call_id, []).append(
+                {"mimeType": mime_type, "data": data}
+            )
+    if not images_by_call:
+        return
+
+    payload = json.dumps(images_by_call, separators=(",", ":")).replace("<", "\\u003c")
+    addition = f"""
+<style>
+  .dimos-tool-images {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }}
+  .dimos-tool-image-link {{ display: inline-block; }}
+  .dimos-tool-image {{
+    display: block; max-width: min(448px, 100%); height: auto;
+    border: 1px solid var(--border-color, #444); border-radius: 6px;
+  }}
+</style>
+<script {_TRANSCRIPT_IMAGE_MARKER} type="application/json">{payload}</script>
+<script>
+(() => {{
+  const source = document.getElementById("dimos-transcript-images");
+  const imagesByCall = JSON.parse(source.textContent);
+  const attachImages = () => {{
+    for (const [callId, images] of Object.entries(imagesByCall)) {{
+      const tool = document.getElementById(`tool-call-${{callId}}`);
+      if (!tool || tool.querySelector(":scope > .dimos-tool-images")) continue;
+      const container = document.createElement("div");
+      container.className = "dimos-tool-images";
+      images.forEach((image, index) => {{
+        const url = `data:${{image.mimeType}};base64,${{image.data}}`;
+        const link = document.createElement("a");
+        link.className = "dimos-tool-image-link";
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener";
+        const element = document.createElement("img");
+        element.className = "dimos-tool-image";
+        element.src = url;
+        element.loading = "lazy";
+        element.alt = `Tool result image ${{index + 1}}`;
+        link.appendChild(element);
+        container.appendChild(link);
+      }});
+      tool.appendChild(container);
+    }}
+  }};
+  new MutationObserver(attachImages).observe(document.body, {{ childList: true, subtree: true }});
+  attachImages();
+}})();
+</script>
+"""
+    body_end = html.rfind("</body>")
+    rendered = html + addition if body_end == -1 else html[:body_end] + addition + html[body_end:]
+    output_path.write_text(rendered, encoding="utf-8")
 
 
 def parse_pi_events(stream: str) -> tuple[str | None, int, str | None]:

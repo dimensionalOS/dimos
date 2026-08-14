@@ -26,7 +26,7 @@ import time
 from typing import Any, Literal
 
 from dimos.agents.code_policy_server import CodePolicyMcpServer
-from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeIdentity
+from dimos.benchmark.evaluation.models import ArtifactReference, RuntimeCondition, RuntimeIdentity
 from dimos.benchmark.evaluation.pi_process import PI_VERSION, PiCliRunner, PiRunError
 from dimos.benchmark.evaluation.progress import ProgressSink, StatusProgress, emit_progress
 from dimos.benchmark.evaluation.protocol import (
@@ -38,8 +38,6 @@ from dimos.benchmark.evaluation.protocol import (
 )
 
 CODE_POLICY_PROFILE: Literal["code-policy-v1"] = "code-policy-v1"
-MODEL = "gpt-5.6-luna"
-THINKING_LEVEL = "medium"
 TURN_TIMEOUT_SECONDS = 600.0
 DEFAULT_MAX_SUBMISSIONS = 5
 
@@ -65,10 +63,12 @@ class CodePolicyRuntimeFactory:
         *,
         api_key: str,
         workspace: Path,
+        condition: RuntimeCondition,
         progress: ProgressSink | None = None,
     ) -> None:
         self.api_key = api_key
         self.workspace = workspace
+        self.condition = condition
         self.progress = progress
         self._exploration_count = 0
         self._prompt_evidence: list[ArtifactReference] = []
@@ -79,8 +79,8 @@ class CodePolicyRuntimeFactory:
         return RuntimeIdentity(
             profile=CODE_POLICY_PROFILE,
             driver_version=PI_VERSION,
-            model=MODEL,
-            thinking_level=THINKING_LEVEL,
+            model=self.condition.model,
+            thinking_level=self.condition.thinking_level,
         )
 
     @property
@@ -129,8 +129,8 @@ class CodePolicyRuntimeFactory:
             runner = PiCliRunner(
                 cli=cli,
                 extension=extension,
-                model=MODEL,
-                thinking_level=THINKING_LEVEL,
+                model=self.condition.model,
+                thinking_level=self.condition.thinking_level,
                 timeout_s=TURN_TIMEOUT_SECONDS,
                 progress=self.progress,
             )

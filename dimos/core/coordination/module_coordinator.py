@@ -847,7 +847,7 @@ def _run_configurators(blueprint: Blueprint) -> None:
     configurators = [*lcm_checks, *zenoh_checks, *blueprint.configurator_checks]
 
     try:
-        configure_system(configurators)
+        configure_system(configurators, check_only=not global_config.configure_system)
     except SystemExit:
         labels = [type(c).__name__ for c in configurators]
         print(

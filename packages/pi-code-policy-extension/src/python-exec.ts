@@ -87,7 +87,11 @@ export async function installPythonExec(
         },
         { timeout: (timeoutSeconds + 10) * 1000 },
       );
-      return { content: [{ type: "text", text: textFromResult(result) }], details: {} };
+      const content = result.content.filter(
+        (item): item is Extract<typeof item, { type: "text" | "image" }> =>
+          item.type === "text" || item.type === "image",
+      );
+      return { content, details: {} };
     },
   });
 

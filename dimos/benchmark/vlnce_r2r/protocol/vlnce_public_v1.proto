@@ -1,0 +1,82 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package dimos.benchmark.vlnce_r2r.public.v1;
+
+service VlncePublicGateway {
+  rpc Start(StartRequest) returns (Observation);
+  rpc StepPlanar(PlanarControl) returns (Observation);
+  rpc SubmitRoute(SubmitRouteRequest) returns (Acknowledgement);
+  rpc Cancel(CancelRequest) returns (Acknowledgement);
+}
+
+message StartRequest {}
+
+message PlanarControl {
+  uint64 observation_sequence = 1;
+  double linear_x = 2;
+  double linear_y = 3;
+  double angular_z = 4;
+}
+
+message SubmitRouteRequest {
+  uint64 observation_sequence = 1;
+}
+
+message CancelRequest {}
+
+message Acknowledgement {
+  uint64 observation_sequence = 1;
+}
+
+message Calibration {
+  uint32 width = 1;
+  uint32 height = 2;
+  double fx = 3;
+  double fy = 4;
+  double cx = 5;
+  double cy = 6;
+}
+
+message Pose {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double qx = 4;
+  double qy = 5;
+  double qz = 6;
+  double qw = 7;
+}
+
+message OccupancyMap {
+  double resolution = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  Pose origin = 4;
+  bytes traversability = 5;
+}
+
+message Observation {
+  uint64 sequence = 1;
+  int64 monotonic_time_ns = 2;
+  Pose world_from_base = 3;
+  Pose base_from_camera = 4;
+  Calibration rgb_calibration = 5;
+  bytes rgb = 6;
+  Calibration depth_calibration = 7;
+  bytes depth = 8;
+  OccupancyMap static_map = 9;
+}

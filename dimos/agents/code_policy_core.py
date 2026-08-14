@@ -17,15 +17,18 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import inspect
 import os
 import queue
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from dimos.core.global_config import global_config
 
 if TYPE_CHECKING:
     from dimos.benchmark.evaluation.protocol import TrialRun
@@ -34,6 +37,7 @@ MAX_EXECUTION_TIMEOUT_S = 600.0
 DEFAULT_OUTPUT_LIMIT = 32_000
 _SUBMISSION_URL_ENV = "DIMOS_CODE_POLICY_SUBMISSION_URL"
 _SUBMISSION_TOKEN_ENV = "DIMOS_CODE_POLICY_SUBMISSION_TOKEN"
+_RECORDING_PATH_ENV = "DIMOS_CODE_POLICY_RECORDING_PATH"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _TRUNCATION_MARKER = "\n... [output truncated]"
 _CREDENTIAL_NAME_RE = re.compile(
@@ -42,13 +46,37 @@ _CREDENTIAL_NAME_RE = re.compile(
 )
 
 
-class CodePolicySessionConfig(BaseModel):
+class SubmissionEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["submission"] = "submission"
     submission_url: str = Field(min_length=1)
     submission_token: str = Field(min_length=1)
+
+
+class LiveDimosEnvironment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["live_dimos"] = "live_dimos"
+    recording_path: str = Field(min_length=1)
+
+
+class CodePolicySessionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    environment: SubmissionEnvironment | LiveDimosEnvironment
     output_limit: int = Field(default=DEFAULT_OUTPUT_LIMIT, ge=0)
     startup_timeout_s: float = Field(default=10.0, gt=0)
     interrupt_grace_s: float = Field(default=2.0, gt=0)
+
+
+@dataclass(frozen=True)
+class CodePolicyImage:
+    data: str
+    mime_type: Literal["image/png", "image/jpeg"]
+
+
+@dataclass(frozen=True)
+class CodePolicyOutput:
+    text: str
+    images: tuple[CodePolicyImage, ...] = ()
 
 
 class _BoundedOutput:
@@ -57,6 +85,7 @@ class _BoundedOutput:
         self.parts: list[str] = []
         self.length = 0
         self.truncated = False
+        self.images: list[CodePolicyImage] = []
 
     def __call__(self, message: dict[str, Any]) -> None:
         message_type = message.get("header", {}).get("msg_type")
@@ -65,7 +94,13 @@ class _BoundedOutput:
         if message_type == "stream":
             value = str(content.get("text", ""))
         elif message_type in {"execute_result", "display_data"}:
-            value = str(content.get("data", {}).get("text/plain", ""))
+            data = content.get("data", {})
+            value = str(data.get("text/plain", ""))
+            for mime_type in ("image/png", "image/jpeg"):
+                encoded = data.get(mime_type)
+                if isinstance(encoded, str):
+                    self.images.append(CodePolicyImage(data=encoded, mime_type=mime_type))
+                    break
         elif message_type == "error":
             traceback = content.get("traceback", [])
             value = "\n".join(str(line) for line in traceback)
@@ -99,10 +134,19 @@ def _load_kernel_manager() -> type[Any]:
     return KernelManager
 
 
-def _bootstrap_source() -> str:
-    return """
+def _bootstrap_source(environment: SubmissionEnvironment | LiveDimosEnvironment) -> str:
+    if isinstance(environment, SubmissionEnvironment):
+        return """
 from dimos.agents.code_policy_core import submit_policy
 from dimos.porcelain.dimos import Dimos
+"""
+    return f"""
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.porcelain.dimos import Dimos
+
+memory = SqliteStore(path={environment.recording_path!r}, must_exist=True, read_only=True)
+memory.start()
+app = Dimos.connect()
 """
 
 
@@ -111,8 +155,12 @@ def _kernel_environment(config: CodePolicySessionConfig) -> dict[str, str]:
     result = {
         name: value for name, value in os.environ.items() if not _CREDENTIAL_NAME_RE.search(name)
     }
-    result[_SUBMISSION_URL_ENV] = config.submission_url
-    result[_SUBMISSION_TOKEN_ENV] = config.submission_token
+    result["DIMOS_TRANSPORT"] = global_config.transport
+    if isinstance(config.environment, SubmissionEnvironment):
+        result[_SUBMISSION_URL_ENV] = config.environment.submission_url
+        result[_SUBMISSION_TOKEN_ENV] = config.environment.submission_token
+    else:
+        result[_RECORDING_PATH_ENV] = config.environment.recording_path
     return result
 
 
@@ -194,22 +242,26 @@ class CodePolicySession:
     def start(self) -> None:
         self._stopped = False
 
-    def python_exec(self, code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S) -> str:
+    def python_exec(
+        self, code: str, timeout_s: float = MAX_EXECUTION_TIMEOUT_S
+    ) -> CodePolicyOutput:
         if self._stopped:
-            return "CodePolicy session is stopped"
+            return CodePolicyOutput("CodePolicy session is stopped")
         if not code:
-            return "python_exec code must be non-empty"
+            return CodePolicyOutput("python_exec code must be non-empty")
         if not 0 < timeout_s <= MAX_EXECUTION_TIMEOUT_S:
-            return f"timeout_s must be in (0, {MAX_EXECUTION_TIMEOUT_S:g}]"
+            return CodePolicyOutput(f"timeout_s must be in (0, {MAX_EXECUTION_TIMEOUT_S:g}]")
         if not self._execution_lock.acquire(blocking=False):
-            return "CodePolicy session is busy"
+            return CodePolicyOutput("CodePolicy session is busy")
         started = time.monotonic()
         self.execution_count += 1
         try:
             try:
                 client = self._ensure_kernel()
             except Exception as exc:
-                return f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                return CodePolicyOutput(
+                    f"CodePolicy kernel failed to start: {type(exc).__name__}: {exc}"
+                )
             output = _BoundedOutput(self.config.output_limit)
             try:
                 reply = client.execute_interactive(
@@ -221,14 +273,16 @@ class CodePolicySession:
                 )
             except (TimeoutError, queue.Empty):
                 if self._interrupt_and_recover():
-                    return f"Execution timed out after {timeout_s:.1f}s and was interrupted"
-                return (
+                    return CodePolicyOutput(
+                        f"Execution timed out after {timeout_s:.1f}s and was interrupted"
+                    )
+                return CodePolicyOutput(
                     f"Execution timed out after {timeout_s:.1f}s; "
                     "the kernel was restarted and its namespace was reset"
                 )
             except Exception as exc:
                 self._shutdown_kernel()
-                return f"CodePolicy execution failed: {type(exc).__name__}: {exc}"
+                return CodePolicyOutput(f"CodePolicy execution failed: {type(exc).__name__}: {exc}")
             content = reply.get("content", {})
             body = output.text().rstrip()
             if not body and content.get("status") != "ok":
@@ -236,7 +290,10 @@ class CodePolicySession:
             if not body:
                 body = "(completed)"
             state = "completed" if content.get("status") == "ok" else "failed"
-            return f"In [{content.get('execution_count', '?')}] {state}\n\n{body}"
+            return CodePolicyOutput(
+                text=f"In [{content.get('execution_count', '?')}] {state}\n\n{body}",
+                images=tuple(output.images),
+            )
         finally:
             self.execution_duration_s += time.monotonic() - started
             self._execution_lock.release()
@@ -258,7 +315,7 @@ class CodePolicySession:
                 client.start_channels()
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,
@@ -297,7 +354,7 @@ class CodePolicySession:
                 manager.restart_kernel(now=True)
                 client.wait_for_ready(timeout=self.config.startup_timeout_s)
                 reply = client.execute_interactive(
-                    _bootstrap_source(),
+                    _bootstrap_source(self.config.environment),
                     allow_stdin=False,
                     output_hook=lambda _message: None,
                     silent=True,

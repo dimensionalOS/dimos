@@ -19,8 +19,19 @@ from pathlib import Path
 
 import cloudpickle
 import pytest
+from pytest_mock import MockerFixture
 
-from dimos.agents.code_policy_core import validate_policy_callable
+import dimos.agents.code_policy_core as code_policy_core
+from dimos.agents.code_policy_core import (
+    CodePolicyImage,
+    CodePolicySession,
+    CodePolicySessionConfig,
+    LiveDimosEnvironment,
+    SubmissionEnvironment,
+    _bootstrap_source,
+    _kernel_environment,
+    validate_policy_callable,
+)
 from dimos.agents.code_policy_server import CodePolicyMcpServer
 from dimos.benchmark.evaluation.protocol import TrialOutcome, TrialRun
 from dimos.memory2.store.sqlite import SqliteStore
@@ -83,5 +94,70 @@ def test_exploration_repl_submits_callable_and_receives_trial(tmp_path: Path) ->
             "(trial.run_id, trial.outcome.success)"
         )
 
-    assert "('debug-1', False)" in result
+    assert "('debug-1', False)" in result.text
     assert len(submitted) == 1
+
+
+def test_live_repl_bootstraps_public_runtime_without_credentials(
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("ORDINARY_SETTING", "retained")
+    environment = LiveDimosEnvironment(recording_path="/attempt/recording.db")
+    config = CodePolicySessionConfig(environment=environment)
+    mocker.patch.object(code_policy_core.global_config, "transport", "zenoh")
+
+    source = _bootstrap_source(environment)
+    kernel_environment = _kernel_environment(config)
+
+    assert "memory = SqliteStore" in source
+    assert "app = Dimos.connect()" in source
+    assert "submit_policy" not in source
+    assert "OPENAI_API_KEY" not in kernel_environment
+    assert kernel_environment["ORDINARY_SETTING"] == "retained"
+    assert kernel_environment["DIMOS_TRANSPORT"] == "zenoh"
+
+
+def test_bounded_output_retains_displayed_image() -> None:
+    output = code_policy_core._BoundedOutput(1_000)
+
+    output(
+        {
+            "header": {"msg_type": "display_data"},
+            "content": {
+                "data": {
+                    "text/plain": "<PIL.Image.Image>",
+                    "image/png": "cG5n",
+                }
+            },
+        }
+    )
+
+    assert output.text() == "<PIL.Image.Image>"
+    assert output.images == [CodePolicyImage(data="cG5n", mime_type="image/png")]
+
+
+def test_python_exec_returns_displayed_image() -> None:
+    session = CodePolicySession(
+        CodePolicySessionConfig(
+            environment=SubmissionEnvironment(
+                submission_url="http://127.0.0.1:1",
+                submission_token="unused",
+            )
+        )
+    )
+    session.start()
+    try:
+        result = session.python_exec(
+            "from IPython.display import display\n"
+            "from PIL import Image\n"
+            "display(Image.new('RGB', (2, 2), 'red'))"
+        )
+    finally:
+        session.stop()
+
+    assert result.text.endswith("<PIL.Image.Image image mode=RGB size=2x2>")
+    assert len(result.images) == 1
+    assert result.images[0].mime_type in {"image/png", "image/jpeg"}
+    assert result.images[0].data

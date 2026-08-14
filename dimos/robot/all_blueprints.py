@@ -298,6 +298,8 @@ all_modules = {
     "video-arm-teleop-module": "dimos.teleop.quest.quest_extensions.VideoArmTeleopModule",
     "virtual-mid360": "dimos.hardware.sensors.lidar.virtual_mid360.module.VirtualMid360",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
+    "vlnce-connection": "dimos.benchmark.vlnce_r2r.connection.VlnceConnection",
+    "vlnce-observation-recorder": "dimos.benchmark.vlnce_r2r.blueprint.VlnceObservationRecorder",
     "voxel-grid-mapper": "dimos.mapping.voxels.module.VoxelGridMapper",
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
