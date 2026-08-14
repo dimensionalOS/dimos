@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Dataset-backed VQA cases for the standard evaluation runner."""
 
 from __future__ import annotations
@@ -120,14 +134,19 @@ def _choices(case: dict[str, Any]) -> tuple[str, ...]:
         or not all(isinstance(item, str) for item in value)
     ):
         raise ValueError("VQA case requires at least two string choices")
-    return tuple(value)
+    choices = tuple(item.strip() for item in value)
+    normalized = [item.rstrip(".,;:").casefold() for item in choices]
+    if any(not item for item in choices) or len(set(normalized)) != len(normalized):
+        raise ValueError("VQA case choices must be non-empty and unique")
+    return choices
 
 
 def _parse_choice(response: str, choices: tuple[str, ...]) -> str | None:
-    match = re.search(r"^ANSWER:\s*(.+?)\s*$", response, re.MULTILINE)
-    if match is None:
+    stripped = response.rstrip()
+    matches = list(re.finditer(r"^ANSWER:\s*(.+?)\s*$", stripped, re.MULTILINE))
+    if len(matches) != 1 or matches[0].end() != len(stripped):
         return None
-    answer = match.group(1).strip().casefold()
+    answer = matches[0].group(1).strip().rstrip(".,;:").casefold()
     aliases = {"true": "yes", "false": "no"} if set(choices) == {"yes", "no"} else {}
     answer = aliases.get(answer, answer)
     return next((choice for choice in choices if choice.casefold() == answer), None)

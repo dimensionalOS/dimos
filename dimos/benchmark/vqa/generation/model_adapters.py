@@ -32,7 +32,7 @@ class MoondreamObjectDetector:
         self._model = model
 
     def detect(self, image: Image, query: str) -> ImageDetections2D:
-        return self._model.query_detections(image, query)
+        return self._model.query_detections(image, query, max_objects=100)
 
     def locate(self, image: Image, query: str) -> ImageDetections2D[Detection2DPoint]:
         points = self._model.query_points(image, f"center of the {query}")

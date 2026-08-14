@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Agentic adapters for object detection, segmentation, and grounding primitives."""
 
 from __future__ import annotations
@@ -26,7 +40,6 @@ class VqaPrimitiveToolRegistry:
         self._results: list[OracleToolResult] = []
         self._detections: dict[str, tuple[str, int]] = {}
         self._masks: dict[str, tuple[str, Detection2DSeg]] = {}
-        self._objects: dict[str, GroundedObject] = {}
         self._next_id = 0
 
     @property
@@ -49,11 +62,6 @@ class VqaPrimitiveToolRegistry:
                 self.ground_mask,
                 name="ground_mask",
                 description="Associate one opaque mask ID with calibrated point-cloud support.",
-            ),
-            StructuredTool.from_function(
-                self.get_object_position,
-                name="get_object_position",
-                description="Return camera range and horizontal side for one grounded object ID.",
             ),
         ]
 
@@ -101,22 +109,9 @@ class VqaPrimitiveToolRegistry:
         object = self._primitives.ground_mask(mask)
         if object is None:
             return self._record_rejection("ground_mask", query, "insufficient_foreground_support")
-        self._objects[object.id] = object
         result = OracleToolResult("ground_mask", query, (_grounding_evidence(object),))
         self._results.append(result)
         return json.dumps(_tool_payload(result, object_id=object.id))
-
-    def get_object_position(self, object_id: str) -> str:
-        """Return camera-relative position evidence for one grounded object."""
-        object = self._objects.get(object_id)
-        if object is None:
-            return self._record_rejection("get_object_position", object_id, "unknown_object_id")
-        positioned = self._primitives.get_object_position(object)
-        result = OracleToolResult(
-            "get_object_position", positioned.label, (_grounding_evidence(positioned),)
-        )
-        self._results.append(result)
-        return json.dumps(_tool_payload(result, object_id=positioned.id))
 
     def _record_rejection(self, tool: str, query: str, reason: str) -> str:
         result = OracleToolResult(tool, query, (), rejection_reason=reason)

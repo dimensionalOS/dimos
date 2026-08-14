@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 
 from __future__ import annotations
 
@@ -19,6 +33,7 @@ from dimos.benchmark.vqa.contracts import (
     PrimitiveGroundingConfig,
     QuestionProposal,
     RejectedOracleResult,
+    VisualObject,
 )
 from dimos.benchmark.vqa.generation.agentic_answerer import (
     AgenticAnswerer,
@@ -56,7 +71,7 @@ class _Grounding:
         return []
 
     def visual_objects(self, query: str) -> list[Any]:
-        return []
+        return [VisualObject("visual-chair", query, 1.0, (0.0, 0.0, 1.0, 1.0), "left")]
 
     def segment_detections(self, query: str) -> list[Any]:
         return []
@@ -75,9 +90,6 @@ class _Grounding:
                 },
             )()
         ]
-
-    def get_object_position(self, object: GroundedObject) -> GroundedObject:
-        return object
 
 
 def _measurement_frame(points: np.ndarray | None = None) -> CalibratedFrame:
@@ -148,15 +160,13 @@ class _BoundModel:
                 content="",
                 tool_calls=[
                     {
-                        "name": "get_object_position",
-                        "args": {"object_id": "synthetic-chair-0"},
-                        "id": "call-2",
+                        "name": "detect_objects",
+                        "args": {"query": "chair"},
+                        "id": "call-1",
                     }
                 ],
             )
-        return AIMessage(
-            content='{"answer":"yes","evidence_ids":["grounding:v1:synthetic-chair-0"]}'
-        )
+        return AIMessage(content='{"answer":"yes","evidence_ids":["visual:v1:visual-chair"]}')
 
 
 class _ScriptedModel:
@@ -176,9 +186,7 @@ def test_freeform_question_author_parses_public_contract() -> None:
     proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(image)
 
     assert proposals == [
-        QuestionProposal(
-            "chair-presence", "Is there a chair?", BooleanAnswerContract(), ("chair",), ()
-        )
+        QuestionProposal("chair-presence", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     ]
 
 
@@ -220,13 +228,13 @@ def test_freeform_question_author_rejects_numeric_contracts() -> None:
         raise AssertionError("numeric answer contract was accepted")
 
 
-def test_freeform_question_author_normalizes_optional_query_hints() -> None:
+def test_freeform_question_author_normalizes_string_query() -> None:
     class _ModelWithStringHints:
         def query(self, image: Image, prompt: str) -> str:
             return (
                 '[{"question":"How tall is the chair?","answer_contract":'
                 '{"kind":"choice","choices":["under 0.5 m","0.5-1.0 m"]},'
-                '"object_queries":"chair","tool_hints":null}]'
+                '"object_queries":"chair"}]'
             )
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
@@ -236,10 +244,9 @@ def test_freeform_question_author_normalizes_optional_query_hints() -> None:
     ]
 
     assert proposal.object_queries == ("chair",)
-    assert proposal.tool_hints == ()
 
 
-def test_freeform_question_author_ignores_malformed_optional_query_hints() -> None:
+def test_freeform_question_author_ignores_malformed_optional_queries() -> None:
     class _ModelWithMalformedHints:
         def query(self, image: Image, prompt: str) -> str:
             return (
@@ -300,7 +307,7 @@ def test_freeform_question_author_allows_many_questions_and_repairs_duplicate_id
     assert proposals[-1].id == "question-20"
 
 
-def test_local_tool_returns_geometry_and_evidence_ids() -> None:
+def test_local_tool_returns_grounding_and_evidence_ids() -> None:
     registry = VqaPrimitiveToolRegistry(_frame_primitives(_measurement_frame()))
 
     detection = json.loads(registry.detect_objects("chair"))
@@ -396,14 +403,13 @@ def test_grounding_does_not_merge_ambiguous_overlapping_masks() -> None:
     assert first.id != second.id
 
 
-def test_local_registry_exposes_geometry_tools() -> None:
+def test_local_registry_exposes_core_perception_tools() -> None:
     registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
 
     assert {tool.name for tool in registry.tools()} == {
         "detect_objects",
         "segment_object",
         "ground_mask",
-        "get_object_position",
     }
 
 
@@ -492,17 +498,14 @@ def test_oracle_normalizes_choice_answers() -> None:
 def test_private_oracle_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
-    registry._objects["synthetic-chair-0"] = GroundedObject(
-        "synthetic-chair-0", "chair", 4, 1.0, "left"
-    )
     result = AgenticAnswerer(cast("Any", _BoundModel())).answer(proposal, registry)
 
     assert result.answer == "yes"
-    assert result.evidence_ids == ("grounding:v1:synthetic-chair-0",)
+    assert result.evidence_ids == ("visual:v1:visual-chair",)
     assert result.trace[-1].operation == "tool"
 
 
-def test_private_oracle_rejects_unsupported_measurement_claim() -> None:
+def test_private_oracle_rejects_unknown_evidence() -> None:
     class _ChoiceModel(_BoundModel):
         def invoke(self, messages: Any) -> AIMessage:
             self._calls += 1
@@ -612,18 +615,3 @@ def test_private_oracle_rejects_malformed_explicit_rejection() -> None:
 
     assert isinstance(result, RejectedOracleResult)
     assert result.reason.startswith("invalid_final_answer:")
-
-
-def test_agentic_oracle_never_uses_legacy_answer_program() -> None:
-    class _GroundingWithoutLegacyAnswer(_Grounding):
-        def answer(self, frame: Any, intent: Any) -> None:
-            raise AssertionError("agentic oracle must not call legacy answer")
-
-    proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
-    registry = VqaPrimitiveToolRegistry(cast("Any", _GroundingWithoutLegacyAnswer()))
-    registry._objects["synthetic-chair-0"] = GroundedObject(
-        "synthetic-chair-0", "chair", 4, 1.0, "left"
-    )
-    result = AgenticAnswerer(cast("Any", _BoundModel())).answer(proposal, registry)
-
-    assert result.answer == "yes"

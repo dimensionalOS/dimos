@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Persist VQA generation evidence and a simple multiple-choice evaluation export."""
 
 from __future__ import annotations
@@ -48,9 +62,9 @@ class GenerationDataset:
         """Write one frame and its private audit record."""
         write_frame_record(self.root, frame, recording, frame_index, intents, results, metadata)
 
-    def finalize(self, generation: GenerationConfig) -> dict[str, int]:
+    def finalize(self, generation: GenerationConfig, frame_indices: range) -> dict[str, int]:
         """Publish aggregate manifests and the resolved generation record."""
-        summary = write_dataset_manifest(self.root)
+        summary = write_dataset_manifest(self.root, list(frame_indices))
         _write_generation_run(self.root, generation, summary)
         return summary
 
@@ -77,7 +91,7 @@ def write_frame_record(
     image_path = assets / image_name
     image_temp = assets / f".{image_name}.tmp.jpg"
     try:
-        if not cv2.imwrite(str(image_temp), frame.image.data):
+        if not cv2.imwrite(str(image_temp), frame.image.to_opencv()):
             raise RuntimeError(f"failed to write {image_path}")
         os.replace(image_temp, image_path)
     finally:
@@ -106,11 +120,18 @@ def write_frame_record(
     )
 
 
-def write_dataset_manifest(output: Path) -> dict[str, int]:
+def write_dataset_manifest(output: Path, frame_indices: list[int] | None = None) -> dict[str, int]:
     """Build aggregate public cases and private labels from completed frame records."""
-    frames = sorted(
-        path for path in (output / "audit").glob("frame-*") if (path / "frame.json").is_file()
+    frames = (
+        [frame_audit_path(output, index) for index in frame_indices]
+        if frame_indices is not None
+        else sorted(
+            path for path in (output / "audit").glob("frame-*") if (path / "frame.json").is_file()
+        )
     )
+    missing = [path for path in frames if not (path / "frame.json").is_file()]
+    if missing:
+        raise ValueError(f"missing completed VQA frames: {[path.name for path in missing]}")
     case_rows: list[dict[str, Any]] = []
     label_rows: list[dict[str, Any]] = []
     accepted = 0
@@ -281,4 +302,9 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.write_text("".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows))
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        temporary.write_text("".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows))
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)

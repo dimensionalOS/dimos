@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 
 from __future__ import annotations
 
@@ -149,3 +163,26 @@ def test_vqa_suite_rejects_images_outside_dataset(tmp_path: Path) -> None:
 def test_vqa_evaluation_normalizes_boolean_choices() -> None:
     assert _parse_choice("ANSWER: TRUE", ("yes", "no")) == "yes"
     assert _parse_choice("ANSWER: No", ("yes", "no")) == "no"
+
+
+def test_vqa_evaluation_requires_one_final_answer_line() -> None:
+    assert _parse_choice("ANSWER: left\nActually right", ("left", "right")) is None
+    assert _parse_choice("ANSWER: left\nANSWER: right", ("left", "right")) is None
+
+
+def test_vqa_suite_rejects_ambiguous_choices(tmp_path: Path) -> None:
+    dataset = _dataset(tmp_path)
+    (dataset / "cases.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "case-1",
+                "image": "assets/image.jpg",
+                "question": "Which side?",
+                "choices": ["left", "LEFT"],
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(ValueError, match="non-empty and unique"):
+        load_suite(dataset)

@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Frame-scoped private perception primitives shared by VQA generation modes."""
 
 from __future__ import annotations
@@ -76,14 +90,19 @@ class FramePerceptionPrimitives:
         if query in self._segmented_queries:
             return self._masks.get(query, [])
         detections = self.detect_objects(query)
-        segmented: list[Detection2D] = []
         if len(detections):
-            segmented.extend(self._segmenter.segment(detections))
-        masks = self._accepted_masks(segmented)
-        if not masks and self._localizer is not None and self._point_segmenter is not None:
-            points = self._localizer.locate(self.frame.image, query)
-            self._points[query] = [item for item in points if isinstance(item, Detection2DPoint)]
-            masks = self._accepted_masks(self._point_segmenter.segment_points(points))
+            masks = [
+                mask
+                for index in range(len(detections))
+                for mask in self.segment_detection(query, index)
+            ]
+        else:
+            points = self._localized_points(query)
+            masks = (
+                self._accepted_masks(self._point_segmenter.segment_points(points))
+                if self._point_segmenter is not None
+                else []
+            )
         self._masks[query] = masks
         self._segmented_queries.add(query)
         return masks
@@ -97,9 +116,22 @@ class FramePerceptionPrimitives:
         masks = self._accepted_masks(self._segmenter.segment(selected))
         if masks or self._localizer is None or self._point_segmenter is None:
             return masks
-        points = self._localizer.locate(self.frame.image, query)
-        self._points[query] = [item for item in points if isinstance(item, Detection2DPoint)]
-        return self._accepted_masks(self._point_segmenter.segment_points(points))
+        detection = detections[index]
+        if not isinstance(detection, Detection2DBBox):
+            return []
+        x1, y1, x2, y2 = detection.bbox
+        matching = [
+            point
+            for point in self._localized_points(query)
+            if x1 <= point.x <= x2 and y1 <= point.y <= y2
+        ]
+        if not matching:
+            return []
+        center_x, center_y = detection.center_bbox
+        point = min(matching, key=lambda item: (item.x - center_x) ** 2 + (item.y - center_y) ** 2)
+        return self._accepted_masks(
+            self._point_segmenter.segment_points(ImageDetections2D(self.frame.image, [point]))
+        )
 
     def visual_objects(self, query: str) -> list[VisualObject]:
         """Return cached frame-scoped object evidence directly from valid detector boxes."""
@@ -166,12 +198,6 @@ class FramePerceptionPrimitives:
     def can_localize_points(self) -> bool:
         return self._localizer is not None and self._point_segmenter is not None
 
-    def get_object_position(self, object: GroundedObject) -> GroundedObject:
-        """Return the existing camera-relative range and side of one grounded object."""
-        if object.id not in self._objects:
-            raise ValueError(f"unknown grounded object: {object.id}")
-        return object
-
     def classify_horizontal_relation(
         self, first: GroundedObject, second: GroundedObject
     ) -> HorizontalRelationResult:
@@ -212,7 +238,8 @@ class FramePerceptionPrimitives:
     def _canonicalize_visual(self, candidate: VisualObject) -> VisualObject:
         for existing in self._visual_objects.values():
             if (
-                _bbox_iou(candidate.bbox, existing.bbox)
+                candidate.label.casefold() == existing.label.casefold()
+                and _bbox_iou(candidate.bbox, existing.bbox)
                 >= self._config.duplicate_mask_iou_threshold
             ):
                 return existing
@@ -222,6 +249,16 @@ class FramePerceptionPrimitives:
         )
         self._visual_objects[object.id] = object
         return object
+
+    def _localized_points(self, query: str) -> ImageDetections2D[Detection2DPoint]:
+        cached = self._points.get(query)
+        if cached is None:
+            if self._localizer is None:
+                return ImageDetections2D(self.frame.image, [])
+            points = self._localizer.locate(self.frame.image, query)
+            cached = [item for item in points if isinstance(item, Detection2DPoint)]
+            self._points[query] = cached
+        return ImageDetections2D(self.frame.image, cached)
 
     def _accepted_masks(
         self, detections: ImageDetections2D | list[Detection2D]

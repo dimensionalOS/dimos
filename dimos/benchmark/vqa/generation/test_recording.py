@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 
 from pathlib import Path
 from typing import Any
@@ -7,6 +21,7 @@ import numpy as np
 
 from dimos.benchmark.vqa.generation.recording import (
     _align_one,
+    _rectify_go2_image,
     _resolve_pointcloud_to_camera,
 )
 from dimos.memory2.store.sqlite import SqliteStore
@@ -15,6 +30,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL
@@ -81,3 +97,20 @@ def test_world_pointcloud_uses_captured_robot_pose_and_static_mount_without_tf()
 
     expected = -(Transform.from_pose("base_link", camera_pose) + BASE_TO_OPTICAL)
     np.testing.assert_allclose(resolved.to_matrix(), expected.to_matrix())
+
+
+def test_rectification_supports_standard_and_fisheye_calibration() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    for model, distortion in (("plumb_bob", [0.0] * 5), ("equidistant", [0.0] * 4)):
+        source = CameraInfo(
+            width=4,
+            height=4,
+            K=[2.0, 0.0, 2.0, 0.0, 2.0, 2.0, 0.0, 0.0, 1.0],
+            D=distortion,
+            distortion_model=model,
+        )
+
+        rectified, camera_info = _rectify_go2_image(image, source)
+
+        assert rectified.shape == image.shape
+        assert camera_info.width == image.width

@@ -175,7 +175,6 @@ recipes. It interprets their measurements and selects an answer itself:
 | `detect_objects` | semantic query | Individual opaque detection IDs, confidence, and citable visual box evidence. |
 | `segment_object` | detection ID | Individual opaque mask IDs or an explicit empty-segmentation rejection. |
 | `ground_mask` | mask ID | One frame-scoped canonical object ID and citable support evidence. Near-identical masks with matching range reuse the same object ID. |
-| `get_object_position` | object ID | Camera-frame grounding evidence: range, side, support count. |
 
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The
 oracle returns a candidate answer and cited evidence IDs.

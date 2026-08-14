@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Build self-contained VQA frames from Go2 Memory2 recordings."""
 
 from __future__ import annotations
@@ -65,7 +79,6 @@ def load_go2_frame(recording: str, frame_index: int, tolerance_s: float = 0.25) 
         camera_info=camera_info,
         pointcloud_to_camera=pointcloud_to_camera,
         image_is_rectified=True,
-        original_image=image_data,
     )
 
 
@@ -126,9 +139,16 @@ def _rectify_go2_image(image: Image, source: CameraInfo) -> tuple[Image, CameraI
     matrix = np.asarray(source.K, dtype=np.float64).reshape(3, 3)
     distortion = np.asarray(source.D, dtype=np.float64)
     size = (image.width, image.height)
-    map_x, map_y = cv2.fisheye.initUndistortRectifyMap(
-        matrix, distortion, np.eye(3), matrix, size, cv2.CV_32FC1
-    )
+    if source.distortion_model in ("equidistant", "fisheye"):
+        map_x, map_y = cv2.fisheye.initUndistortRectifyMap(
+            matrix, distortion, np.eye(3), matrix, size, cv2.CV_32FC1
+        )
+    elif source.distortion_model in ("", "plumb_bob", "rational_polynomial"):
+        map_x, map_y = cv2.initUndistortRectifyMap(
+            matrix, distortion, None, matrix, size, cv2.CV_32FC1
+        )
+    else:
+        raise ValueError(f"unsupported camera distortion model: {source.distortion_model}")
     data = cv2.remap(image.data, map_x, map_y, interpolation=cv2.INTER_LINEAR)
     camera_info = CameraInfo.from_intrinsics(
         matrix[0, 0],

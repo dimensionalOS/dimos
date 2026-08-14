@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 
 import json
 from pathlib import Path
@@ -114,6 +128,38 @@ def test_dataset_manifest_exports_public_cases_and_private_labels(tmp_path: Path
     assert json.loads((tmp_path / "labels.jsonl").read_text()) == {"id": "case-1", "answer": "yes"}
     assert not (tmp_path / "frames.jsonl").exists()
     assert not (tmp_path / "manifest.json").exists()
+
+
+def test_dataset_manifest_includes_only_requested_frames(tmp_path: Path) -> None:
+    for index in (1, 2):
+        frame = tmp_path / "audit" / f"frame-{index:06d}"
+        frame.mkdir(parents=True)
+        (frame / "frame.json").write_text(
+            json.dumps(
+                {
+                    "accepted_question_count": 1,
+                    "rejected_question_count": 0,
+                }
+            )
+        )
+        (frame / "cases.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": f"case-{index}",
+                        "image": f"assets/frame-{index:06d}.jpg",
+                        "question": "Q?",
+                        "choices": ["yes", "no"],
+                    }
+                ]
+            )
+        )
+        (frame / "labels.json").write_text(json.dumps([{"id": f"case-{index}", "answer": "yes"}]))
+
+    summary = write_dataset_manifest(tmp_path, [2])
+
+    assert summary["frame_count"] == 1
+    assert json.loads((tmp_path / "cases.jsonl").read_text())["id"] == "case-2"
 
 
 def test_evaluation_rows_reject_duplicate_case_ids() -> None:

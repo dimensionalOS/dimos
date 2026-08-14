@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 
 from __future__ import annotations
 
@@ -13,7 +27,7 @@ from dimos.benchmark.vqa.contracts import (
     QuestionIntent,
 )
 from dimos.benchmark.vqa.generation.deterministic_answerer import DeterministicAnswerer
-from dimos.benchmark.vqa.generation.families import GroundingResult
+from dimos.benchmark.vqa.generation.families import GroundingResult, render_question
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.primitives.results import HorizontalRelationResult
 from dimos.benchmark.vqa.generation.question_authors import ConstrainedQuestionAuthor
@@ -150,6 +164,51 @@ def test_question_agent_accepts_count_and_left_right_intents() -> None:
         QuestionIntent(kind="visible_count", object_query="chair"),
         QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
     ]
+
+
+def test_question_agent_deduplicates_identical_intents() -> None:
+    class _DuplicateQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            return """[
+                {"kind":"presence","object_query":"chair"},
+                {"kind":"presence","object_query":"chair"}
+            ]"""
+
+    frame, _ = _frame_and_detection()
+
+    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _DuplicateQuestionModel())).propose(
+        frame.image
+    )
+
+    assert intents == [QuestionIntent(kind="presence", object_query="chair")]
+
+
+def test_question_rendering_handles_plural_queries_and_singular_units() -> None:
+    assert render_question(QuestionIntent("visible_count", "bottles")) == (
+        "How many visible instances of bottles are there?"
+    )
+    assert render_question(QuestionIntent("within_distance", "paper towels", 1.0)) == (
+        "Is any detected instance of paper towels within 1 meter? Answer yes or no."
+    )
+
+
+def test_distance_thresholds_produce_distinct_case_ids() -> None:
+    frame, detection = _frame_and_detection()
+    agent = _agent(
+        frame,
+        _Detector(frame.image, detection),
+        _Segmenter(),
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
+    )
+
+    near = agent.answer(
+        QuestionIntent(kind="within_distance", object_query="chair", threshold_m=2.0)
+    )
+    far = agent.answer(
+        QuestionIntent(kind="within_distance", object_query="chair", threshold_m=3.0)
+    )
+
+    assert near.question.id != far.question.id
 
 
 def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:

@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Image-only constrained VQA question proposal."""
 
 from __future__ import annotations
@@ -41,8 +55,8 @@ visible in the image."""
 
 AGENTIC_QUESTION_PROMPT = """Author challenging, visually answerable single-frame VQA questions.
 Inspect only this image. Do not use or infer depth, point clouds, calibration, metadata, or answers.
-Return JSON only: an array of objects with question, answer_contract, optional object_queries,
-and optional tool_hints. answer_contract is {"kind":"boolean"} or
+Return JSON only: an array of objects with question, answer_contract, and optional object_queries.
+answer_contract is {"kind":"boolean"} or
 {"kind":"choice","choices":[...]}.
 Prioritize questions that a private point-cloud oracle can validate from grounded object range and
 horizontal position. Aim for a diverse set of questions about presence, count, left/right position,
@@ -56,7 +70,7 @@ and name both objects.
 Use concise, mutually exclusive fixed choices. Prioritize high-quality, relevant questions over
 exhaustively covering every visible object.
 Use object_queries for every referenced object. The private oracle chooses its own sequence of reusable
-perception and geometry primitives; no answer-level composite tools are available. For counts, enumerate,
+perception and grounding primitives; no answer-level composite tools are available. For counts, enumerate,
 segment, and ground every returned detection for the named query, cite every grounded instance, and reject
 if completeness is uncertain. Use visibility/presence questions
 only when no stronger geometric question is available.
@@ -117,8 +131,8 @@ class ConstrainedQuestionAuthor:
                 continue
             if kind != "compare_left_right":
                 comparison_query = None
-            intents.append(QuestionIntent(kind, query, threshold, (), comparison_query))
-        return intents
+            intents.append(QuestionIntent(kind, query, threshold, comparison_query))
+        return list(dict.fromkeys(intents))
 
 
 class AgenticQuestionAuthor:
@@ -157,7 +171,6 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
     if not isinstance(identifier, str) or not identifier:
         identifier = f"proposal-{index:02d}"
     queries = _string_tuple(item.get("object_queries", []), "object_queries")
-    hints = _string_tuple(item.get("tool_hints", []), "tool_hints")
     contract = item.get("answer_contract")
     if not isinstance(contract, dict):
         raise ValueError("question proposal requires answer_contract")
@@ -168,7 +181,8 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
         choices = _string_tuple(contract.get("choices"), "choices")
         if len(choices) < 2:
             raise ValueError("choice contract requires at least two choices")
-        if len(set(choices)) != len(choices):
+        normalized_choices = [choice.rstrip(".,;:").casefold() for choice in choices]
+        if len(set(normalized_choices)) != len(normalized_choices):
             raise ValueError("choice contract choices must be unique")
         answer_contract = ChoiceAnswerContract(choices)
     else:
@@ -182,7 +196,7 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
             raise ValueError("count questions require visible object queries")
         if answer_contract.choices != COUNT_CHOICES:
             raise ValueError("count questions require the fixed exhaustive count choices")
-    return QuestionProposal(identifier, question, answer_contract, queries, hints)
+    return QuestionProposal(identifier, question, answer_contract, queries)
 
 
 def _string_tuple(value: Any, name: str) -> tuple[str, ...]:
@@ -221,7 +235,6 @@ def _uniquify_proposal_ids(proposals: list[QuestionProposal]) -> list[QuestionPr
                 proposal.question,
                 proposal.answer_contract,
                 proposal.object_queries,
-                proposal.tool_hints,
             )
         )
     return unique

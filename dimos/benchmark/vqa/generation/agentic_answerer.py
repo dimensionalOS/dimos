@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Private bounded LangChain oracle for generic VQA question proposals."""
 
 from __future__ import annotations
@@ -16,7 +30,6 @@ from dimos.benchmark.vqa.contracts import (
     OracleTrace,
     QuestionProposal,
     RejectedOracleResult,
-    ResolvedAnswerContract,
 )
 from dimos.benchmark.vqa.generation.agentic_tools import VqaPrimitiveToolRegistry
 
@@ -48,9 +61,9 @@ class AgenticAnswerer:
             SystemMessage(
                 "You are a private VQA oracle. Use only supplied local tools. Do not invent "
                 "evidence. Detection IDs can only be passed to segment_object. Mask IDs can only "
-                "be passed to ground_mask. Only grounded object IDs can be passed to object and "
-                "geometry measurements. If grounding fails, reject rather than trying unrelated "
-                "tools. Finish with JSON only: either "
+                "be passed to ground_mask. Detection evidence supports visual presence, count, and "
+                "image side; grounded evidence also supplies range and point support. If grounding "
+                "fails, reject rather than trying unrelated tools. Finish with JSON only: either "
                 '{"answer": value, "evidence_ids": [..]} or '
                 '{"status": "rejected", "reason": "non-empty reason", "evidence_ids": [..]}. '
                 "Rejected results must not include an answer."
@@ -133,7 +146,7 @@ def _resolve_oracle_answer(
     answer: Any,
     evidence_ids: Any,
     results: tuple[OracleToolResult, ...],
-) -> tuple[str, ResolvedAnswerContract]:
+) -> tuple[str, AnswerContract]:
     """Return a validated answer and the public contract resolved from private evidence."""
     if (
         not isinstance(evidence_ids, list)

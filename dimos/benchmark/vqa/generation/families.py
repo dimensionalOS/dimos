@@ -1,4 +1,18 @@
 # Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Copyright 2026 Dimensional Inc.
 """Recipes and result construction for constrained single-frame VQA families."""
 
 from __future__ import annotations
@@ -80,21 +94,33 @@ class FamilyContext:
 def render_question(intent: QuestionIntent) -> str:
     """Render the public question for one constrained intent."""
     if intent.kind == "presence":
-        return f"Is there a {intent.object_query} in the image? Answer yes or no."
+        return f"Is {intent.object_query} visible in the image? Answer yes or no."
     if intent.kind == "horizontal_direction":
-        return f"Where is the {intent.object_query} in the image: left, center, or right?"
+        return (
+            f"Where is the detected instance of {intent.object_query} in the image: "
+            "left, center, or right?"
+        )
     if intent.kind == "visible_count":
-        return f"How many {intent.object_query}s are visible?"
+        return f"How many visible instances of {intent.object_query} are there?"
     if intent.kind == "camera_range":
-        return f"How far is the nearest {intent.object_query} from the camera?"
+        return f"How far is the nearest detected instance of {intent.object_query} from the camera?"
     if intent.kind == "compare_nearest_by_side":
-        return f"Which {intent.object_query} is closer: the left one or the right one?"
+        return (
+            f"Which detected instance of {intent.object_query} is closer: "
+            "the left one or the right one?"
+        )
     if intent.kind == "compare_left_right":
         return (
-            f"Is the {intent.object_query} to the left or right of the {intent.comparison_query}?"
+            f"Is the detected instance of {intent.object_query} to the left or right of the "
+            f"detected instance of {intent.comparison_query}?"
         )
     if intent.kind == "within_distance":
-        return f"Is the nearest {intent.object_query} within {intent.threshold_m or 3:g} meters? Answer yes or no."
+        threshold = intent.threshold_m or 3
+        unit = "meter" if threshold == 1 else "meters"
+        return (
+            f"Is any detected instance of {intent.object_query} within {threshold:g} {unit}? "
+            "Answer yes or no."
+        )
     raise ValueError(f"unsupported deterministic question kind: {intent.kind}")
 
 
@@ -164,7 +190,7 @@ def answer_basic_object_question(
     threshold_m = intent.threshold_m or 3.0
     if threshold_m <= 0:
         raise ValueError("distance threshold must be positive")
-    suffix = "range"
+    suffix = f"within-{threshold_m:g}m"
     answer = "yes" if nearest.range_m <= threshold_m else "no"
     answer_type, choices = "boolean", ("yes", "no")
     example = VqaExample(

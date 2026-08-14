@@ -38,7 +38,6 @@ class CalibratedFrame:
     camera_info: CameraInfo
     pointcloud_to_camera: Transform
     image_is_rectified: bool
-    original_image: Image | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +118,6 @@ class QuestionIntent:
     kind: QuestionKind
     object_query: str
     threshold_m: float | None = None
-    candidate_queries: tuple[str, ...] = ()
     comparison_query: str | None = None
 
 
@@ -160,7 +158,6 @@ class ChoiceAnswerContract:
 
 
 AnswerContract = BooleanAnswerContract | ChoiceAnswerContract
-ResolvedAnswerContract = BooleanAnswerContract | ChoiceAnswerContract
 
 
 @dataclass(frozen=True)
@@ -171,7 +168,6 @@ class QuestionProposal:
     question: str
     answer_contract: AnswerContract
     object_queries: tuple[str, ...] = ()
-    tool_hints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -214,7 +210,7 @@ class AcceptedOracleResult:
 
     proposal: QuestionProposal
     answer: str
-    answer_contract: ResolvedAnswerContract
+    answer_contract: AnswerContract
     evidence_ids: tuple[str, ...]
     tool_results: tuple[OracleToolResult, ...]
     trace: tuple[OracleTrace, ...]
