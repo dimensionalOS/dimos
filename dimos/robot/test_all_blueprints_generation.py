@@ -146,12 +146,9 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
     rel = str(file_path.relative_to(root))
     stem = file_path.stem
     return not (
-        stem.startswith("test_")
+        stem.startswith(("test_", "tool_", "fake_", "mock_"))
         or "_test_" in stem
         or stem.endswith("_test")
-        or stem.startswith("tool_")
-        or stem.startswith("fake_")
-        or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
         or rel.startswith("core/")

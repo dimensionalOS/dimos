@@ -26,30 +26,30 @@ from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
 
-nav_config: dict[str, Any] = dict(
-    planner="simple",
-    vehicle_height=G1.height_clearance,
-    max_speed=2.0,  # m/s, higher than real robot defaults
-    terrain_analysis={
+nav_config: dict[str, Any] = {
+    "planner": "simple",
+    "vehicle_height": G1.height_clearance,
+    "max_speed": 2.0,  # m/s, higher than real robot defaults
+    "terrain_analysis": {
         "ground_height_threshold": 0.05,
         "min_relative_z": -1.5,
     },
-    terrain_map_ext={
+    "terrain_map_ext": {
         "decay_time": 120,
     },
-    local_planner={
+    "local_planner": {
         "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
         "min_relative_z": -1.5,
         "freeze_ang": 180.0,
         "obstacle_height_threshold": 0.02,
         "publish_free_paths": True,  # turn off visual for better runtime performance
     },
-    path_follower={
+    "path_follower": {
         # these effect smoothness quite a bit
         "max_acceleration": 2.0,
         "max_yaw_rate": 60.0,
     },
-)
+}
 
 unitree_g1_nav_sim = (
     autoconnect(

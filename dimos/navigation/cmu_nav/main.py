@@ -170,7 +170,7 @@ def create_cmu_nav(
         )
     if use_tare:
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
-    record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
+    record_remappings: list[tuple[type[ModuleBase], str, type[ModuleBase | Spec] | str]] = []
     if record:
         # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
         from dimos.navigation.cmu_nav.modules.nav_record.nav_record import NavRecord
@@ -178,7 +178,7 @@ def create_cmu_nav(
         modules.append(NavRecord.blueprint(**(nav_record or {})))
         record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
-    remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
+    remappings: list[tuple[type[ModuleBase], str, type[ModuleBase | Spec] | str]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (TerrainMapExt, "odometry", "corrected_odometry"),

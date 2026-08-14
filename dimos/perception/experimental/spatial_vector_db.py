@@ -261,9 +261,7 @@ class SpatialVectorDB:
             include=["documents", "metadatas", "distances"],
         )
 
-        logger.info(
-            f"Text query: '{text}' returned {len(results['ids'] if 'ids' in results else [])} results"
-        )
+        logger.info(f"Text query: '{text}' returned {len(results.get('ids', []))} results")
         return self._process_query_results(results)
 
     def get_all_locations(self) -> list[tuple[float, float, float]]:
