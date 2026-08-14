@@ -129,7 +129,22 @@ def make_openyam_model_config(
         ],
         package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
-        collision_exclusion_pairs=[],
+        # Adjacent-link pairs whose meshes meet at their shared joint —
+        # verified colliding at the neutral pose with raw all-pairs
+        # checking, which otherwise marks every start configuration
+        # infeasible.
+        collision_exclusion_pairs=[
+            ("yam_base_link", "yam_link_1"),
+            ("yam_link_1", "yam_link_2"),
+            ("yam_link_2", "yam_link_3"),
+            ("yam_link_3", "yam_link_4"),
+            ("yam_link_4", "yam_link_5"),
+            ("yam_link_5", "yam_link_6"),
+            ("yam_link_6", "yam_hand"),
+            ("yam_hand", "yam_right_finger"),
+            ("yam_hand", "yam_left_finger"),
+            ("yam_right_finger", "yam_left_finger"),
+        ],
         joint_name_mapping=coordinator_joint_mapping(
             name,
             OPENYAM_DOF,
