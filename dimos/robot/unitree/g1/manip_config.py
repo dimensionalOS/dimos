@@ -36,7 +36,7 @@ _G1_PACKAGE_DIR = LfsPath("g1_urdf")
 # world-frame targets line up with the ground frame at spawn. This is only the
 # startup placement: once the robot walks, ManipulationModule.latch_base_pose()
 # replaces it with the measured pelvis pose.
-_G1_NOMINAL_PELVIS_Z = 0.74
+G1_NOMINAL_PELVIS_Z = 0.74
 
 _ARM_JOINT_STEMS = (
     "shoulder_pitch",
@@ -68,7 +68,7 @@ def make_g1_model_config(name: str = "g1") -> RobotModelConfig:
     return RobotModelConfig(
         name=name,
         model_path=_G1_URDF,
-        base_pose=base_pose(z=_G1_NOMINAL_PELVIS_Z),
+        base_pose=base_pose(z=G1_NOMINAL_PELVIS_Z),
         joint_names=urdf_joints,
         base_link="pelvis",
         planning_groups=[_arm_group("left"), _arm_group("right")],

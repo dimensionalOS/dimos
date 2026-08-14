@@ -161,9 +161,10 @@ def test_rerun_caps_survive_config_parsing() -> None:
 
 
 def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
-    assert _stream("rerunwebsocketserver", "tele_cmd_vel") == "cmd_vel"
-    assert _stream("websocketvismodule", "tele_cmd_vel") == "cmd_vel"
-    assert _stream("wateringtaskmodule", "operator_command") == "cmd_vel"
+    assert _stream("rerunwebsocketserver", "tele_cmd_vel") == "tele_cmd_vel"
+    assert _stream("websocketvismodule", "tele_cmd_vel") == "tele_cmd_vel"
+    assert _stream("wateringtaskmodule", "operator_command") == "tele_cmd_vel"
+    assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
     assert _stream("ControlCoordinator", "twist_command") == "cmd_vel"
 
     (coordinator,) = [
@@ -175,8 +176,15 @@ def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
     assert "teleop_groot_wbc" not in tasks
 
     # Hardware pins /g1/cmd_vel; sim uses bare /cmd_vel.
-    (transport,) = [t for (_n, ty), t in unitree_g1_water_demo.transport_map.items() if ty is Twist]
-    assert transport.topic.topic == "/g1/cmd_vel"
+    transports = {
+        name: transport.topic.topic
+        for (name, message_type), transport in unitree_g1_water_demo.transport_map.items()
+        if message_type is Twist
+    }
+    assert transports == {
+        "cmd_vel": "/g1/cmd_vel",
+        "tele_cmd_vel": "/g1/tele_cmd_vel",
+    }
 
 
 def test_no_nav_stack() -> None:
@@ -191,10 +199,15 @@ def test_no_nav_stack() -> None:
     }
 
 
-def test_pointlio_is_visible_and_autonomous_motion_is_disabled() -> None:
+def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() -> None:
     assert callable(_kwargs(BRIDGE)["visual_override"]["world/lidar"])
-    assert _kwargs("wateringtaskmodule")["motion_enabled"] is False
-    assert _stream("wateringtaskmodule", "base_command") == "base_command"
+    watering = _kwargs("wateringtaskmodule")
+    assert watering["motion_enabled"] is False
+    assert watering["approach_motion_enabled"] is True
+    assert watering["pour_motion_enabled"] is True
+    assert watering["approach_max_linear"] == 0.15
+    assert watering["approach_max_angular"] == 0.15
+    assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
 
 
 def test_demo_passes_runtime_stream_conflict_validation() -> None:

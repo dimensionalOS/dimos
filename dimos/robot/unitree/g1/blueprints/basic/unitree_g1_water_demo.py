@@ -25,16 +25,18 @@ controller). A G1 adapter combines its physical-sensor pose with live waist
 joints and publishes ``world -> pelvis``. The head camera then feeds AprilTag
 detection in that same world frame; tags 0/1/2 mark pot plants.
 
-The canonical watering task is present for status and path preview, but its
-motion output is disabled in this hardware graph. First verify the cloud,
-pelvis/camera/tag frames and teleop. Autonomous approach is a later opt-in.
+The combined watering sequence remains disabled on hardware. Separate
+``start_approach()`` and ``start_pour()`` gates keep base and arm motion as two
+explicit operator-approved steps. Pouring refuses to execute unless the live
+stopped-base pose is inside the offline-verified reach region.
 
 Marker detection stays silent until this robot's camera intrinsics are
 captured — see ``tool_dump_camera_info``.
 
-Driving is the viewer's own teleop through the single GR00T policy. The
-ControlCoordinator remains the only authority; no second policy or movement
-mux competes for the hardware loop.
+Operator and approach commands enter the watering task on separate topics.
+The task forwards operator commands while idle and treats any operator command
+as an immediate override while approaching. One GR00T policy remains the only
+locomotion task in the ControlCoordinator.
 
 There is still no navigation stack: Point-LIO supplies observer-only odometry
 and a live sensor-frame point cloud. The robot mesh is rooted under the
@@ -47,7 +49,7 @@ and camera caps below are sized against it.
 Usage (on the G1; ``--rerun-open none`` because it has no display):
     dimos --rerun-open none --rerun-host 0.0.0.0 run unitree-g1-water-demo
 Terminal teleop (in a second SSH terminal on the G1):
-    dimos teleop
+    dimos teleop --topic g1/tele_cmd_vel
 Laptop viewer:
     dimos-viewer --connect rerun+http://<robot>:9877/proxy --ws-url ws://<robot>:3030/ws
 """
@@ -58,6 +60,7 @@ from typing import Any, cast
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -65,6 +68,7 @@ from dimos.manipulation.mobile.pose_target_observation_module import (
     PoseTargetObservationModule,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
@@ -98,14 +102,15 @@ if global_config.simulation:
         "unitree-g1-water-demo is hardware-only; use unitree-g1-groot-wbc-manip for sim"
     )
 
-# Both viewer surfaces drive the one hardware policy directly. Watering also
-# observes the command stream, though motion is disabled in this graph.
+# Operator input and task output must stay on different topics: the task owns
+# the handoff and forwards one command stream to the single GR00T policy.
 _demo_remappings = [
     (_G1GrootCoordinator, "twist_command", "cmd_vel"),
-    (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
-    (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
+    (RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel"),
+    (WebsocketVisModule, "tele_cmd_vel", "tele_cmd_vel"),
     (ManipulationModule, "odom", "base_pose"),
-    (WateringTaskModule, "operator_command", "cmd_vel"),
+    (WateringTaskModule, "operator_command", "tele_cmd_vel"),
+    (WateringTaskModule, "base_command", "cmd_vel"),
     (WateringTaskModule, "approach_path", "path"),
     (WateringTaskModule, "approach_goal", "goal_request"),
 ]
@@ -233,10 +238,22 @@ unitree_g1_water_demo = (
             source="perception",
         ),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
-        WateringTaskModule.blueprint(target_id="plant_pot_1", motion_enabled=False),
+        WateringTaskModule.blueprint(
+            target_id="plant_pot_1",
+            motion_enabled=False,
+            approach_motion_enabled=True,
+            pour_motion_enabled=True,
+            approach_max_linear=0.15,
+            approach_max_angular=0.15,
+        ),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
     .remappings(cast("Any", _demo_remappings))
+    .transports(
+        {
+            ("tele_cmd_vel", Twist): LCMTransport("/g1/tele_cmd_vel", Twist),
+        }
+    )
     # Sized for the heavy modules only — the connection pump, the 100 Hz tick,
     # the camera capture loop, marker detection, planning and the Rerun bridge.
     # The rest share: every worker is a process that imports the whole stack,

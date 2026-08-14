@@ -67,6 +67,7 @@ def _inputs(
     *,
     target_observed_at: float = NOW,
     at_reachable_stance: bool = True,
+    base_z: float = 0.74,
 ) -> WateringInputs:
     pot_x, pot_y = 1.0, 0.0
     if at_reachable_stance:
@@ -93,7 +94,7 @@ def _inputs(
         PoseStamped(
             ts=NOW,
             frame_id="world",
-            position=[base_x, base_y, 0.74],
+            position=[base_x, base_y, base_z],
             orientation=[0.0, 0.0, 0.0, 1.0],
         )
     )
@@ -170,6 +171,133 @@ def test_successful_sequence_preserves_the_verified_sim_order(
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
     base.send.assert_not_called()
     assert base.stop.call_count == 2
+
+
+def test_approach_only_reaches_the_stance_without_touching_manipulation(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+    )
+
+    result = sequence.run_approach(TARGET_ID)
+
+    assert result.success
+    assert result.state is WateringState.COMPLETED
+    assert "arm was not moved" in result.message
+    assert transitions == [
+        WateringState.WAITING_INPUT,
+        WateringState.APPROACHING,
+        WateringState.SETTLING,
+        WateringState.COMPLETED,
+    ]
+    manipulation.reset.assert_not_called()
+    manipulation.latch_base_pose.assert_not_called()
+    manipulation.plan_to_pose.assert_not_called()
+    manipulation.move_to_pose.assert_not_called()
+    manipulation.go_init.assert_not_called()
+    base.send.assert_not_called()
+    assert base.stop.call_count == 2
+
+
+def test_pour_only_executes_the_arm_without_commanding_base_motion(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert result.success
+    assert result.state is WateringState.COMPLETED
+    assert "without moving the base" in result.message
+    assert transitions == [
+        WateringState.WAITING_INPUT,
+        WateringState.RESETTING,
+        WateringState.LATCHING_BASE,
+        WateringState.VERIFYING_REACH,
+        WateringState.MOVING_OVER_TARGET,
+        WateringState.TIPPING,
+        WateringState.HOLDING,
+        WateringState.RETURNING,
+        WateringState.COMPLETED,
+    ]
+    manipulation.latch_base_pose.assert_called_once()
+    assert manipulation.plan_to_pose.call_count == 2
+    assert manipulation.move_to_pose.call_count == 2
+    manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
+    base.send.assert_not_called()
+    assert base.stop.call_count == 2
+
+
+def test_pour_only_rejects_an_unreachable_stance_before_arm_motion(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map, at_reachable_stance=False),
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert not result.success
+    assert result.state is WateringState.FAILED
+    assert "outside the verified pour region" in result.message
+    manipulation.reset.assert_not_called()
+    manipulation.latch_base_pose.assert_not_called()
+    manipulation.plan_to_pose.assert_not_called()
+    manipulation.move_to_pose.assert_not_called()
+    base.send.assert_not_called()
+    assert base.stop.call_count == 2
+
+
+def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map, base_z=-0.27),
+        base,
+        manipulation,
+        threading.Event(),
+        [],
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert result.success
+    expected_world_z = -0.27 - 0.74 + 0.90
+    planned_pose = manipulation.plan_to_pose.call_args_list[0].args[0]
+    assert planned_pose.position.z == pytest.approx(expected_world_z)
+    assert manipulation.move_to_pose.call_args_list[0].kwargs["z"] == pytest.approx(
+        expected_world_z
+    )
 
 
 def test_cancellation_during_approach_stops_before_latching_or_pouring(
