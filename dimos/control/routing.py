@@ -29,7 +29,6 @@ class Routing(str, Enum):
     """How the coordinator matches an input message to a consuming task."""
 
     CLAIM_OVERLAP = "claim_overlap"  # deliver when msg names joints the task claims
-    BY_TASK_NAME = "by_task_name"  # deliver when msg.frame_id == task.name
     BROADCAST = "broadcast"  # deliver to every task consuming this stream
     DIRECT = "direct"  # like broadcast, but the port is meant to have one task on it
 

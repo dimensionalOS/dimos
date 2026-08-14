@@ -27,6 +27,7 @@ import numpy as np
 from pydantic import Field
 
 from dimos.models.qwen.video_query import query_single_frame
+from dimos.models.vl.qwen import DEFAULT_QWEN_VL_MODEL
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 
@@ -203,7 +204,7 @@ class PickAndPlace(AbstractRobotSkill):
     )
 
     model_name: str = Field(
-        "qwen2.5-vl-72b-instruct", description="Qwen model to use for visual queries"
+        DEFAULT_QWEN_VL_MODEL, description="Qwen model to use for visual queries"
     )
 
     def __init__(self, robot=None, **data) -> None:  # type: ignore[no-untyped-def]

@@ -37,6 +37,8 @@ class JointDescription:
     effort_limit: float | None = None
     parent_link: str = ""
     child_link: str = ""
+    origin_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    origin_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass
@@ -131,6 +133,10 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
         if child_link:
             child_links.add(child_link)
 
+        origin_elem = joint_elem.find("origin")
+        origin_xyz = _triple(origin_elem.get("xyz") if origin_elem is not None else None)
+        origin_rpy = _triple(origin_elem.get("rpy") if origin_elem is not None else None)
+
         lower = upper = velocity = effort = None
         limit_elem = joint_elem.find("limit")
         if limit_elem is not None:
@@ -149,6 +155,8 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
                 effort_limit=effort,
                 parent_link=parent_link,
                 child_link=child_link,
+                origin_xyz=origin_xyz,
+                origin_rpy=origin_rpy,
             )
         )
 
@@ -228,6 +236,16 @@ def _walk_mjcf_bodies(
             )
 
         _walk_mjcf_bodies(body, joints, links, parent_body=body_name)
+
+
+def _triple(value: str | None) -> tuple[float, float, float]:
+    """Parse a URDF space-separated 3-vector (xyz/rpy), defaulting to zeros."""
+    if not value:
+        return (0.0, 0.0, 0.0)
+    parts = [float(part) for part in value.split()]
+    if len(parts) != 3:
+        raise ValueError(f"Expected 3 values, got {value!r}")
+    return (parts[0], parts[1], parts[2])
 
 
 def _float_or_none(value: str | None) -> float | None:

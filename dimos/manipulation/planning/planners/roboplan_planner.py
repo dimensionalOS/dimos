@@ -444,10 +444,8 @@ class RoboPlanPlanner:
         options.config_task_weight = config.config_task_weight
         options.velocity_scale = config.velocity_scale
         options.acceleration_scale = config.acceleration_scale
-        options.limit_ratio_tolerance = config.limit_ratio_tolerance
         options.toppra_blend_deviation = config.toppra_blend_deviation
         options.position_limit_gain = config.position_limit_gain
-        options.max_attempts_per_step = config.max_attempts_per_step
         return options
 
     def _path_from_cartesian_trajectory(
