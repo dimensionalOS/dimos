@@ -244,7 +244,7 @@ unitree_g1_water_demo = (
             approach_motion_enabled=True,
             pour_motion_enabled=True,
             approach_max_linear=0.15,
-            approach_max_angular=0.15,
+            approach_max_angular=0.25,
         ),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
