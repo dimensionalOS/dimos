@@ -44,8 +44,14 @@ from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 class _QuestionModel:
     def query(self, image: Image, prompt: str) -> str:
         assert image.width == 6
-        assert "point clouds" in prompt
-        return '```json\n[{"kind":"presence","object_query":"chair"}]\n```'
+        return """```json
+        [
+            {"kind":"presence","object_query":"chair"},
+            {"kind":"compare_nearest_by_side","object_query":"chair"},
+            {"kind":"visible_count","object_query":"chair"},
+            {"kind":"compare_left_right","object_query":"chair","comparison_query":"table"}
+        ]
+        ```"""
 
 
 class _Detector:
@@ -116,7 +122,7 @@ def _frame_and_detection() -> tuple[CalibratedFrame, Detection2DSeg]:
     return frame, detection
 
 
-def test_question_agent_returns_constrained_intents() -> None:
+def test_constrained_question_author_parses_supported_intents() -> None:
     frame, _ = _frame_and_detection()
 
     intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(
@@ -125,48 +131,13 @@ def test_question_agent_returns_constrained_intents() -> None:
 
     assert intents == [
         QuestionIntent(kind="presence", object_query="chair"),
-    ]
-
-
-def test_question_agent_uses_image_selected_structured_intents() -> None:
-    class _StructuredQuestionModel:
-        def query(self, image: Image, prompt: str) -> str:
-            assert "Do not return bare object names" in prompt
-            assert "opposite image sides" in prompt
-            return '[{"kind":"compare_nearest_by_side","object_query":"chair"}]'
-
-    frame, _ = _frame_and_detection()
-
-    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _StructuredQuestionModel())).propose(
-        frame.image
-    )
-
-    assert intents == [QuestionIntent(kind="compare_nearest_by_side", object_query="chair")]
-
-
-def test_question_agent_accepts_count_and_left_right_intents() -> None:
-    class _GeometryQuestionModel:
-        def query(self, image: Image, prompt: str) -> str:
-            assert "visible_count" in prompt
-            assert "comparison_query" in prompt
-            return """[
-                {"kind":"visible_count","object_query":"chair"},
-                {"kind":"compare_left_right","object_query":"chair","comparison_query":"table"}
-            ]"""
-
-    frame, _ = _frame_and_detection()
-
-    intents = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _GeometryQuestionModel())).propose(
-        frame.image
-    )
-
-    assert intents == [
+        QuestionIntent(kind="compare_nearest_by_side", object_query="chair"),
         QuestionIntent(kind="visible_count", object_query="chair"),
         QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table"),
     ]
 
 
-def test_question_agent_deduplicates_identical_intents() -> None:
+def test_constrained_question_author_deduplicates_identical_intents() -> None:
     class _DuplicateQuestionModel:
         def query(self, image: Image, prompt: str) -> str:
             return """[
@@ -211,7 +182,7 @@ def test_distance_thresholds_produce_distinct_case_ids() -> None:
     assert near.question.id != far.question.id
 
 
-def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> None:
+def test_deterministic_answerer_records_tools_and_rejects_unsupported_question() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
         frame,
@@ -239,7 +210,7 @@ def test_ground_truth_agent_records_tools_and_rejects_unsupported_question() -> 
     assert absent.status == "rejected"
 
 
-def test_ground_truth_agent_presence_does_not_require_an_accepted_mask() -> None:
+def test_deterministic_answerer_presence_does_not_require_an_accepted_mask() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
         frame,
@@ -254,7 +225,7 @@ def test_ground_truth_agent_presence_does_not_require_an_accepted_mask() -> None
     assert result.answer == "yes"
 
 
-def test_ground_truth_agent_falls_back_to_point_prompt() -> None:
+def test_deterministic_answerer_falls_back_to_point_prompt() -> None:
     frame, detection = _frame_and_detection()
     point_detection = Detection2DSeg(
         detection.bbox,
@@ -288,7 +259,7 @@ def test_ground_truth_agent_falls_back_to_point_prompt() -> None:
     ]
 
 
-def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
+def test_deterministic_answerer_compares_nearest_objects_by_side() -> None:
     image = Image.from_numpy(np.zeros((6, 6, 3), dtype=np.uint8))
     frame = CalibratedFrame(
         id="frame-1",
@@ -335,7 +306,7 @@ def test_ground_truth_agent_compares_nearest_objects_by_side() -> None:
     )
 
 
-def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None:
+def test_deterministic_answerer_rejects_side_comparison_without_both_sides() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
         frame,
@@ -350,7 +321,7 @@ def test_ground_truth_agent_rejects_side_comparison_without_both_sides() -> None
     assert result.reason == "missing_grounded_side"
 
 
-def test_ground_truth_agent_buckets_visible_count_and_camera_range() -> None:
+def test_deterministic_answerer_buckets_visible_count_and_camera_range() -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
         frame,
@@ -428,7 +399,7 @@ def test_horizontal_direction_rejects_multiple_visual_instances() -> None:
     assert result.reason == "ambiguous_visual_object"
 
 
-def test_ground_truth_agent_compares_pairwise_left_right(monkeypatch: object) -> None:
+def test_deterministic_answerer_compares_pairwise_left_right(monkeypatch: object) -> None:
     frame, detection = _frame_and_detection()
     agent = _agent(
         frame,

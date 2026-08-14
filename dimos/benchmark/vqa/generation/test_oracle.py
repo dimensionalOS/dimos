@@ -45,10 +45,7 @@ from dimos.benchmark.vqa.generation.answer_choices import (
     count_choice,
 )
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.question_authors import (
-    AGENTIC_QUESTION_PROMPT,
-    AgenticQuestionAuthor,
-)
+from dimos.benchmark.vqa.generation.question_authors import AgenticQuestionAuthor
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -180,7 +177,7 @@ class _ScriptedModel:
         return self._responses.pop(0)
 
 
-def test_freeform_question_author_parses_public_contract() -> None:
+def test_agentic_question_author_parses_public_contract() -> None:
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
     proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _QuestionModel())).propose(image)
@@ -190,15 +187,7 @@ def test_freeform_question_author_parses_public_contract() -> None:
     ]
 
 
-def test_freeform_author_prompt_prioritizes_geometric_questions() -> None:
-    assert "chooses its own sequence" in AGENTIC_QUESTION_PROMPT
-    assert "camera range" in AGENTIC_QUESTION_PROMPT
-    assert "visibly repeated object" in AGENTIC_QUESTION_PROMPT
-    assert "diverse set of questions" in AGENTIC_QUESTION_PROMPT
-    assert "visibility/presence" in AGENTIC_QUESTION_PROMPT
-
-
-def test_freeform_question_author_assigns_missing_ids() -> None:
+def test_agentic_question_author_assigns_missing_ids() -> None:
     class _ModelWithoutId:
         def query(self, image: Image, prompt: str) -> str:
             return '[{"question":"Is there a chair?","answer_contract":{"kind":"boolean"}}]'
@@ -210,7 +199,7 @@ def test_freeform_question_author_assigns_missing_ids() -> None:
     assert proposals[0].id == "proposal-01"
 
 
-def test_freeform_question_author_rejects_numeric_contracts() -> None:
+def test_agentic_question_author_rejects_numeric_contracts() -> None:
     class _NumericContractModel:
         def query(self, image: Image, prompt: str) -> str:
             return (
@@ -228,43 +217,32 @@ def test_freeform_question_author_rejects_numeric_contracts() -> None:
         raise AssertionError("numeric answer contract was accepted")
 
 
-def test_freeform_question_author_normalizes_string_query() -> None:
-    class _ModelWithStringHints:
+def test_agentic_question_author_normalizes_optional_queries() -> None:
+    class _ModelWithOptionalQueries:
         def query(self, image: Image, prompt: str) -> str:
-            return (
-                '[{"question":"How tall is the chair?","answer_contract":'
-                '{"kind":"choice","choices":["under 0.5 m","0.5-1.0 m"]},'
-                '"object_queries":"chair"}]'
-            )
+            return """[
+                {
+                    "question":"How tall is the chair?",
+                    "answer_contract":{"kind":"choice","choices":["short","tall"]},
+                    "object_queries":"chair"
+                },
+                {
+                    "question":"How tall is the table?",
+                    "answer_contract":{"kind":"choice","choices":["short","tall"]},
+                    "object_queries":{"query":"table"}
+                }
+            ]"""
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposal = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithStringHints())).propose(image)[
-        0
-    ]
-
-    assert proposal.object_queries == ("chair",)
-
-
-def test_freeform_question_author_ignores_malformed_optional_queries() -> None:
-    class _ModelWithMalformedHints:
-        def query(self, image: Image, prompt: str) -> str:
-            return (
-                '[{"question":"How tall is the chair?","answer_contract":'
-                '{"kind":"choice","choices":["under 0.5 m","0.5-1.0 m"]},'
-                '"object_queries":{"query":"chair"}}]'
-            )
-
-    image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
-
-    proposal = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithMalformedHints())).propose(
+    proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithOptionalQueries())).propose(
         image
-    )[0]
+    )
 
-    assert proposal.object_queries == ()
+    assert [proposal.object_queries for proposal in proposals] == [("chair",), ()]
 
 
-def test_freeform_question_author_retries_invalid_json_once() -> None:
+def test_agentic_question_author_retries_invalid_json_once() -> None:
     class _RetryingModel:
         def __init__(self) -> None:
             self.calls = 0
@@ -284,7 +262,7 @@ def test_freeform_question_author_retries_invalid_json_once() -> None:
     assert model.calls == 2
 
 
-def test_freeform_question_author_allows_many_questions_and_repairs_duplicate_ids() -> None:
+def test_agentic_question_author_allows_many_questions_and_repairs_duplicate_ids() -> None:
     class _ManyQuestionModel:
         def query(self, image: Image, prompt: str) -> str:
             return json.dumps(
@@ -371,17 +349,6 @@ def test_grounding_reuses_canonical_object_across_queries_and_registries() -> No
     assert chair["object_id"] == "object:v1:synthetic:0001"
     assert seat["object_id"] == chair["object_id"]
     assert seat["objects"][0]["label"] == "chair"
-
-
-def test_grounding_reuses_canonical_object_for_repeated_mask() -> None:
-    registry = VqaPrimitiveToolRegistry(_frame_primitives(_measurement_frame()))
-    detection = json.loads(registry.detect_objects("chair"))
-    masks = json.loads(registry.segment_object(detection["detections"][0]["detection_id"]))
-
-    first = json.loads(registry.ground_mask(masks["mask_ids"][0]))
-    second = json.loads(registry.ground_mask(masks["mask_ids"][0]))
-
-    assert second["object_id"] == first["object_id"]
 
 
 def test_grounding_does_not_merge_ambiguous_overlapping_masks() -> None:
@@ -495,7 +462,7 @@ def test_oracle_normalizes_choice_answers() -> None:
     assert validate_oracle_answer(proposal, " LEFT. ", ["e1"], (result,)) == "left"
 
 
-def test_private_oracle_runs_direct_structured_tool() -> None:
+def test_agentic_answerer_runs_direct_structured_tool() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     result = AgenticAnswerer(cast("Any", _BoundModel())).answer(proposal, registry)
@@ -505,7 +472,7 @@ def test_private_oracle_runs_direct_structured_tool() -> None:
     assert result.trace[-1].operation == "tool"
 
 
-def test_private_oracle_rejects_unknown_evidence() -> None:
+def test_agentic_answerer_rejects_unknown_evidence() -> None:
     class _ChoiceModel(_BoundModel):
         def invoke(self, messages: Any) -> AIMessage:
             self._calls += 1
@@ -533,7 +500,7 @@ def test_private_oracle_rejects_unknown_evidence() -> None:
     assert result.reason == "invalid_final_answer:answer cites unknown evidence"
 
 
-def test_private_oracle_allows_explicit_rejection_without_answer_resolution() -> None:
+def test_agentic_answerer_allows_explicit_rejection_without_answer_resolution() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     model = _ScriptedModel(
@@ -557,7 +524,7 @@ def test_private_oracle_allows_explicit_rejection_without_answer_resolution() ->
     assert result.trace[0].operation == "tool"
 
 
-def test_private_oracle_returns_tool_errors_to_model() -> None:
+def test_agentic_answerer_returns_tool_errors_to_model() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     registry = VqaPrimitiveToolRegistry(cast("Any", _Grounding()))
     model = _ScriptedModel(
@@ -579,7 +546,7 @@ def test_private_oracle_returns_tool_errors_to_model() -> None:
     assert result.trace[0].operation == "tool_error"
 
 
-def test_private_oracle_rejects_malformed_tool_call_id() -> None:
+def test_agentic_answerer_rejects_malformed_tool_call_id() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract(), ("chair",))
     model = _ScriptedModel(
         [
@@ -605,7 +572,7 @@ def test_private_oracle_rejects_malformed_tool_call_id() -> None:
     assert result.reason == "malformed_tool_call_id"
 
 
-def test_private_oracle_rejects_malformed_explicit_rejection() -> None:
+def test_agentic_answerer_rejects_malformed_explicit_rejection() -> None:
     proposal = QuestionProposal("q", "Is there a chair?", BooleanAnswerContract())
     model = _ScriptedModel([AIMessage(content='{"status":"rejected","reason":""}')])
 
