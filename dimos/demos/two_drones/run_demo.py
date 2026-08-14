@@ -272,12 +272,13 @@ def main() -> None:
         referee.install_target(scenario["target_path"], speed=scenario["target_speed"])
         referee.mark_drones_for_los()
         referee.install_ghosts()
+        referee.style_scene_for_video()
         referee.start_ghost_renderer()
 
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
         scene.exec(
-            "window.__demoDirectorCam = {x: 0, y: 17, z: -19, tx: 0, ty: 0, tz: 1};"
+            "window.__demoDirectorCam = {x: 0, y: 13.5, z: -15.5, tx: 0, ty: 0, tz: 0.5};"
             "return 'director camera set';"
         )
 

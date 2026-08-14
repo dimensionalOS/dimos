@@ -1,0 +1,368 @@
+/Users/tule/trenches/dimos-repo/.claude/worktrees/two-drone-demo/.venv/lib/python3.12/site-packages/langgraph/checkpoint/base/__init__.py:17: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+08:42:18.153 [inf][dimos/cli/dimos.py            ] Starting DimOS
+08:42:18.156 [inf][dination/module_coordinator.py] Building the blueprint
+08:42:18.156 [inf][ce/system_configurator/base.py] DIMOS_SKIP_SYSTEM_CONFIG set: skipping system configuration.
+08:42:18.156 [inf][dination/module_coordinator.py] Starting the modules
+08:42:19.451 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=10
+08:42:20.716 [inf][/coordination/python_worker.py] Deployed module. module=MovementManager module_id=4 worker_id=4
+08:42:20.744 [inf][/coordination/python_worker.py] Deployed module. module=DroneSkillContainer module_id=7 worker_id=7
+08:42:20.795 [inf][/coordination/python_worker.py] Deployed module. module=RadioModule module_id=8 worker_id=8
+08:42:20.812 [inf][/coordination/python_worker.py] Deployed module. module=McpServer module_id=5 worker_id=5
+08:42:21.036 [inf][/coordination/python_worker.py] Deployed module. module=GO2Connection module_id=0 worker_id=0
+08:42:21.237 [inf][/coordination/python_worker.py] Deployed module. module=ReplanningAStarPlanner module_id=3 worker_id=3
+08:42:21.244 [inf][/coordination/python_worker.py] Deployed module. module=CostMapper module_id=2 worker_id=2
+08:42:21.514 [inf][/coordination/python_worker.py] Deployed module. module=VoxelGridMapper module_id=1 worker_id=1
+/Users/tule/trenches/dimos-repo/.claude/worktrees/two-drone-demo/.venv/lib/python3.12/site-packages/langgraph/checkpoint/base/__init__.py:17: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+08:42:22.229 [inf][/coordination/python_worker.py] Deployed module. module=McpClient module_id=6 worker_id=6
+08:42:22.286 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/pointcloud original_name=pointcloud topic=/droneB/pointcloud#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.290 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/color_image original_name=color_image topic=/droneB/color_image#sensor_msgs.Image transport=LCMTransport type=dimos.msgs.sensor_msgs.Image.Image
+08:42:22.293 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/camera_info original_name=camera_info topic=/droneB/camera_info#sensor_msgs.CameraInfo transport=LCMTransport type=dimos.msgs.sensor_msgs.CameraInfo.CameraInfo
+08:42:22.296 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/cmd_vel original_name=cmd_vel topic=/droneB/cmd_vel#geometry_msgs.Twist transport=LCMTransport type=dimos.msgs.geometry_msgs.Twist.Twist
+08:42:22.300 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/cmd_vel original_name=cmd_vel topic=/droneB/cmd_vel#geometry_msgs.Twist transport=LCMTransport type=dimos.msgs.geometry_msgs.Twist.Twist
+08:42:22.305 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/odom original_name=odom topic=/droneB/odom#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.308 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/odom original_name=odom topic=/droneB/odom#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.310 [inf][dination/module_coordinator.py] Transport module=droneB/droneskillcontainer name=droneB/odom original_name=odom topic=/droneB/odom#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.313 [inf][dination/module_coordinator.py] Transport module=droneB/radiomodule name=droneB/odom original_name=odom topic=/droneB/odom#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.315 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/lidar original_name=lidar topic=/droneB/lidar#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.316 [inf][dination/module_coordinator.py] Transport module=droneB/voxelgridmapper name=droneB/lidar original_name=lidar topic=/droneB/lidar#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.317 [inf][dination/module_coordinator.py] Transport module=droneB/go2connection name=droneB/tf original_name=tf topic=/droneB/tf#tf2_msgs.TFMessage transport=LCMTransport type=dimos.msgs.tf2_msgs.TFMessage.TFMessage
+08:42:22.319 [inf][dination/module_coordinator.py] Transport module=droneB/voxelgridmapper name=droneB/global_map original_name=global_map topic=/droneB/global_map#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.320 [inf][dination/module_coordinator.py] Transport module=droneB/costmapper name=droneB/global_map original_name=global_map topic=/droneB/global_map#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.322 [inf][dination/module_coordinator.py] Transport module=droneB/costmapper name=droneB/merged_map original_name=merged_map topic=/droneB/merged_map#sensor_msgs.PointCloud2 transport=LCMTransport type=dimos.msgs.sensor_msgs.PointCloud2.PointCloud2
+08:42:22.324 [inf][dination/module_coordinator.py] Transport module=droneB/costmapper name=droneB/global_costmap original_name=global_costmap topic=/droneB/global_costmap#nav_msgs.OccupancyGrid transport=LCMTransport type=dimos.msgs.nav_msgs.OccupancyGrid.OccupancyGrid
+08:42:22.325 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/global_costmap original_name=global_costmap topic=/droneB/global_costmap#nav_msgs.OccupancyGrid transport=LCMTransport type=dimos.msgs.nav_msgs.OccupancyGrid.OccupancyGrid
+08:42:22.326 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/odometry original_name=odometry topic=/droneB/odometry#nav_msgs.Odometry transport=LCMTransport type=dimos.msgs.nav_msgs.Odometry.Odometry
+08:42:22.327 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/goal_request original_name=goal_request topic=/droneB/goal_request#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.329 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/clicked_point original_name=clicked_point topic=/droneB/clicked_point#geometry_msgs.PointStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PointStamped.PointStamped
+08:42:22.330 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/clicked_point original_name=clicked_point topic=/droneB/clicked_point#geometry_msgs.PointStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PointStamped.PointStamped
+08:42:22.331 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/target original_name=target topic=/droneB/target#geometry_msgs.PoseStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PoseStamped.PoseStamped
+08:42:22.332 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/stop_movement original_name=stop_movement topic=/droneB/stop_movement#std_msgs.Bool transport=LCMTransport type=dimos_lcm.std_msgs.Bool.Bool
+08:42:22.333 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/stop_movement original_name=stop_movement topic=/droneB/stop_movement#std_msgs.Bool transport=LCMTransport type=dimos_lcm.std_msgs.Bool.Bool
+08:42:22.335 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/goal_reached original_name=goal_reached topic=/droneB/goal_reached#std_msgs.Bool transport=LCMTransport type=dimos_lcm.std_msgs.Bool.Bool
+08:42:22.336 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/navigation_state original_name=navigation_state topic=/droneB/navigation_state#std_msgs.String transport=LCMTransport type=dimos_lcm.std_msgs.String.String
+08:42:22.337 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/nav_cmd_vel original_name=nav_cmd_vel topic=/droneB/nav_cmd_vel#geometry_msgs.Twist transport=LCMTransport type=dimos.msgs.geometry_msgs.Twist.Twist
+08:42:22.338 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/nav_cmd_vel original_name=nav_cmd_vel topic=/droneB/nav_cmd_vel#geometry_msgs.Twist transport=LCMTransport type=dimos.msgs.geometry_msgs.Twist.Twist
+08:42:22.339 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/path original_name=path topic=/droneB/path#nav_msgs.Path transport=LCMTransport type=dimos.msgs.nav_msgs.Path.Path
+08:42:22.340 [inf][dination/module_coordinator.py] Transport module=droneB/replanningastarplanner name=droneB/navigation_costmap original_name=navigation_costmap topic=/droneB/navigation_costmap#nav_msgs.OccupancyGrid transport=LCMTransport type=dimos.msgs.nav_msgs.OccupancyGrid.OccupancyGrid
+08:42:22.341 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/tele_cmd_vel original_name=tele_cmd_vel topic=/droneB/tele_cmd_vel#geometry_msgs.Twist transport=LCMTransport type=dimos.msgs.geometry_msgs.Twist.Twist
+08:42:22.343 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/goal original_name=goal topic=/droneB/goal#geometry_msgs.PointStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PointStamped.PointStamped
+08:42:22.345 [inf][dination/module_coordinator.py] Transport module=droneB/movementmanager name=droneB/way_point original_name=way_point topic=/droneB/way_point#geometry_msgs.PointStamped transport=LCMTransport type=dimos.msgs.geometry_msgs.PointStamped.PointStamped
+08:42:22.346 [inf][dination/module_coordinator.py] Transport module=droneB/mcpclient name=droneB/agent original_name=agent topic=/droneB/agent transport=pLCMTransport type=langchain_core.messages.base.BaseMessage
+08:42:22.347 [inf][dination/module_coordinator.py] Transport module=droneB/mcpclient name=droneB/human_input original_name=human_input topic=/droneB/human_input transport=pLCMTransport type=builtins.str
+08:42:22.348 [inf][dination/module_coordinator.py] Transport module=droneB/radiomodule name=droneB/human_input original_name=human_input topic=/droneB/human_input transport=pLCMTransport type=builtins.str
+08:42:22.349 [inf][dination/module_coordinator.py] Transport module=droneB/mcpclient name=droneB/agent_idle original_name=agent_idle topic=/droneB/agent_idle transport=pLCMTransport type=builtins.bool
+08:42:22.351 [inf][dination/module_coordinator.py] Transport module=droneB/droneskillcontainer name=droneB/target_event original_name=target_event topic=/droneB/target_event transport=pLCMTransport type=builtins.str
+08:42:22.352 [inf][dination/module_coordinator.py] Transport module=droneB/radiomodule name=droneB/peer_belief original_name=peer_belief topic=/droneB/peer_belief transport=pLCMTransport type=builtins.str
+08:42:22.837 [inf][imos/demos/two_drones/radio.py] [radio:droneB] up, pubkey 3f85bce822d379cf…, format=hybrid
+08:42:23.770 [inf][dimos/mapping/voxels/grid.py  ] VoxelGrid using device: CPU:0 (packed-numpy)
+/Users/tule/trenches/dimos-repo/.claude/worktrees/two-drone-demo/.venv/lib/python3.12/site-packages/langgraph/checkpoint/base/__init__.py:17: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+08:42:30.785 [inf][dimos/agents/mcp/mcp_client.py] Discovered tools from MCP server. n_tools=14 tools=['get_battery_soc', 'observe', 'agent_send', 'list_modules', 'server_status', 'check_target_sensor', 'fly_to', 'get_status', 'stop_moving', 'sweep_area', 'claim_sector', 'radio_status', 'report_sighting', 'send_radio']
+[90m------------------------------------------------------------[0m
+[90m01:42:34.487[0m   [36mhuman       [0m [1m[36m"MISSION BRIEFING for droneB: You and your partner droneA must find and then keep pursuing a moving RED TARGET somewhere in the arena x in [-11, 11], y in [-7, 7]. You start at (-9, 5); your partner starts at (-9, -5). There may be walls; your planner avoids them. Plan: 1) claim_sector for YOUR half of the arena over the radio (split it fairly, don't overlap your partner), 2) sweep_area your sector, 3) react immediately to [SENSOR] and [RADIO] messages. Begin now."[0m
+08:42:34.488 [inf][dimos/agents/utils.py         ] Agent message content=MISSION BRIEFING for droneB: You and your partner droneA must find and then keep pursuing a moving RED TARGET somewhere in the arena x in [-11, 11], y in [-7, 7]. You start at (-9, 5); your partner starts at (-9, -5). There may be walls; your planner avoids them. Plan: 1) claim_sector for YOUR half of the arena over the radio (split it fairly, don't overlap your partner), 2) sweep_area your sector, 3) react immediately to [SENSOR] and [RADIO] messages. Begin now. msg_type=human
+[90m------------------------------------------------------------[0m
+[90m01:43:21.788[0m   [32mai          [0m [35mtool_calls:[0m
+                            - [34mclaim_sector[0m([36m{'message': 'Claiming the left half of the arena (X=-11 to X=0) for sweeping. Please focus on the right side.', 'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7}[0m)
+08:43:21.789 [inf][dimos/agents/utils.py         ] Agent message msg_type=ai tool_calls=[{'name': 'claim_sector', 'args': {'message': 'Claiming the left half of the arena (X=-11 to X=0) for sweeping. Please focus on the right side.', 'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7}}]
+08:43:21.801 [inf][dimos/agents/mcp/mcp_server.py] MCP tool call args={'message': 'Claiming the left half of the arena (X=-11 to X=0) for sweeping. Please focus on the right side.', 'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7} progress_token=fc137c5b-9ed9-4104-9c33-40025d7f9f90 tool=claim_sector
+08:43:21.811 [inf][dimos/agents/annotation.py    ] SKILL claim_sector result=UNKNOWN duration_ms=0.4
+08:43:21.814 [inf][dimos/agents/mcp/mcp_server.py] MCP tool done duration=0.012s response=Sector (-11,-7)..(0,7) claimed and broadcast. tool=claim_sector
+[90m------------------------------------------------------------[0m
+[90m01:43:21.817[0m   [33mtool        [0m [1m[33m'Sector (-11,-7)..(0,7) claimed and broadcast.'[0m
+08:43:21.818 [inf][dimos/agents/utils.py         ] Agent message content=Sector (-11,-7)..(0,7) claimed and broadcast. msg_type=tool
+[90m------------------------------------------------------------[0m
+[90m01:43:34.567[0m   [32mai          [0m [35mtool_calls:[0m
+                            - [34msweep_area[0m([36m{'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7}[0m)
+08:43:34.567 [inf][dimos/agents/utils.py         ] Agent message msg_type=ai tool_calls=[{'name': 'sweep_area', 'args': {'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7}}]
+08:43:34.703 [inf][dimos/agents/mcp/mcp_server.py] MCP tool call args={'x_max': 0, 'x_min': -11, 'y_max': 7, 'y_min': -7} progress_token=432c458b-1290-4318-88e4-6ebd6c252ccd tool=sweep_area
+08:43:34.711 [inf][dimos/agents/annotation.py    ] SKILL sweep_area result=UNKNOWN duration_ms=1.1
+08:43:34.713 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-11.000, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:43:34.714 [inf][dimos/agents/mcp/mcp_server.py] MCP tool done duration=0.011s response=Sweeping rectangle (-11.0,-7.0)..(0.0,7.0) in 36 waypoints (lanes every 2.5 m). tool=sweep_area
+08:43:34.715 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+[90m------------------------------------------------------------[0m
+[90m01:43:34.721[0m   [33mtool        [0m [1m[33m'Sweeping rectangle (-11.0,-7.0)..(0.0,7.0) in 36 waypoints (lanes every 2.5 m).'[0m
+08:43:34.721 [inf][dimos/agents/utils.py         ] Agent message content=Sweeping rectangle (-11.0,-7.0)..(0.0,7.0) in 36 waypoints (lanes every 2.5 m). msg_type=tool
+08:43:34.842 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:43:34.844 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:43:36.004 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:43:41.433 [inf][anning_a_star/local_planner.py] Obstacle detected ahead, stopping local planner.
+08:43:41.436 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:43:41.437 [inf][nning_a_star/global_planner.py] Replanning path due to obstacle found.
+08:43:41.437 [inf][nning_a_star/global_planner.py] Replanning. attempt=0
+08:43:41.437 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:43:41.451 [war][nning_a_star/global_planner.py] No path found to the goal. x=-11.0 y=5.5
+08:43:41.451 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=False
+08:43:45.158 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-11.000, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:43:45.158 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:43:45.170 [war][nning_a_star/global_planner.py] No path found to the goal. x=-11.0 y=5.5
+08:43:45.170 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=False
+[90m------------------------------------------------------------[0m
+[90m01:43:45.242[0m   [32mai          [0m [1m[32m'The sweep is running as planned. I am covering X=[-11, 0], Y=[-7, 7]. Waiting for sensor or radio updates.'[0m
+08:43:45.243 [inf][dimos/agents/utils.py         ] Agent message content=The sweep is running as planned. I am covering X=[-11, 0], Y=[-7, 7]. Waiting for sensor or radio updates. msg_type=ai
+[90m------------------------------------------------------------[0m
+[90m01:43:45.243[0m   [36mhuman       [0m [1m[36m'[RADIO from droneA] Claiming sector X=[-11, 0] to sweep while you cover X=[0, 11]. Total search area [-11, 11] x [-7, 7]. (their position (-9.0, -5.0); they claim sector [-11, -7] to [0, 7])'[0m
+08:43:45.244 [inf][dimos/agents/utils.py         ] Agent message content=[RADIO from droneA] Claiming sector X=[-11, 0] to sweep while you cover X=[0, 11]. Total search area [-11, 11] x [-7, 7]. (their position (-9.0, -5.0); they claim sector [-11, -7] to [0, 7]) msg_type=human
+08:43:50.410 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-8.800, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:43:50.413 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:43:50.414 [inf][nning_a_star/global_planner.py] Found safe goal. x=-8.82 y=5.48
+08:43:50.420 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:43:50.422 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:43:52.016 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:43:57.980 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.95 threshold=0.9
+08:43:57.981 [inf][nning_a_star/global_planner.py] Replanning. attempt=0
+08:43:57.982 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:43:57.982 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:43:57.982 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:43:57.984 [inf][nning_a_star/global_planner.py] Found safe goal. x=-8.82 y=5.48
+08:43:57.993 [war][nning_a_star/global_planner.py] No path found to the goal. x=-8.825 y=5.475
+08:43:57.993 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=False
+08:44:02.785 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-8.800, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:44:02.788 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:02.788 [inf][nning_a_star/global_planner.py] Found safe goal. x=-8.82 y=5.48
+08:44:02.795 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:02.796 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:03.861 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:06.422 [inf][anning_a_star/local_planner.py] Reached goal position, starting final rotation
+08:44:06.423 [inf][anning_a_star/local_planner.py] changed state state=final_rotation
+08:44:07.499 [inf][anning_a_star/local_planner.py] Final rotation complete, goal reached
+08:44:07.499 [inf][anning_a_star/local_planner.py] changed state state=arrived
+08:44:07.601 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:07.602 [inf][nning_a_star/global_planner.py] Arrived at goal.
+08:44:07.602 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=True but_will_try_again=False
+08:44:08.573 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-6.600, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:44:08.573 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:08.574 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:08.580 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:08.586 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:13.914 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:20.726 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.92 threshold=0.9
+08:44:20.729 [inf][nning_a_star/global_planner.py] Replanning. attempt=0
+08:44:20.729 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:20.729 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:20.729 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:20.730 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:20.735 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:20.736 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:20.845 [inf][anning_a_star/local_planner.py] changed state state=path_following
+[90m------------------------------------------------------------[0m
+[90m01:44:22.727[0m   [32mai          [0m [35mtool_calls:[0m
+                            - [34msend_radio[0m([36m{'message': 'Acknowledged, DroneA. I will continue sweeping my claimed sector X=[-11, 0]. Please monitor your assigned area.'}[0m)
+08:44:22.727 [inf][dimos/agents/utils.py         ] Agent message msg_type=ai tool_calls=[{'name': 'send_radio', 'args': {'message': 'Acknowledged, DroneA. I will continue sweeping my claimed sector X=[-11, 0]. Please monitor your assigned area.'}}]
+08:44:23.740 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.98 threshold=0.9
+08:44:23.740 [inf][nning_a_star/global_planner.py] Replanning. attempt=1
+08:44:23.740 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:23.741 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:23.741 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:23.741 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:23.747 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:23.749 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:24.073 [inf][anning_a_star/local_planner.py] Obstacle detected ahead, stopping local planner.
+08:44:24.073 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:24.073 [inf][nning_a_star/global_planner.py] Replanning path due to obstacle found.
+08:44:24.073 [inf][nning_a_star/global_planner.py] Replanning. attempt=2
+08:44:24.074 [inf][nning_a_star/replan_limiter.py] Traveled enough to reset attempts attempts=2 distance=2.0451358323953923
+08:44:24.074 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:24.074 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:24.081 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:24.082 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:24.605 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:24.930 [inf][anning_a_star/local_planner.py] Obstacle detected ahead, stopping local planner.
+08:44:24.931 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:24.931 [inf][nning_a_star/global_planner.py] Replanning path due to obstacle found.
+08:44:24.931 [inf][nning_a_star/global_planner.py] Replanning. attempt=1
+08:44:24.931 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:24.931 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:24.937 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:24.939 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:26.900 [inf][dimos/agents/mcp/mcp_server.py] MCP tool call args={'message': 'Acknowledged, DroneA. I will continue sweeping my claimed sector X=[-11, 0]. Please monitor your assigned area.'} progress_token=f9f11fc1-e161-4d54-820f-f0dfa8b546ed tool=send_radio
+08:44:27.292 [inf][dimos/agents/annotation.py    ] SKILL send_radio result=UNKNOWN duration_ms=0.2
+08:44:27.641 [inf][dimos/agents/mcp/mcp_server.py] MCP tool done duration=0.740s response=Radio message sent. tool=send_radio
+[90m------------------------------------------------------------[0m
+[90m01:44:28.349[0m   [33mtool        [0m [1m[33m'Radio message sent.'[0m
+08:44:28.350 [inf][dimos/agents/utils.py         ] Agent message content=Radio message sent. msg_type=tool
+08:44:36.808 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=1.07 threshold=0.9
+08:44:36.811 [inf][nning_a_star/global_planner.py] Replanning. attempt=2
+08:44:36.812 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:36.812 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:36.813 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:36.814 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:36.834 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:36.837 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:39.191 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=1.23 threshold=0.9
+08:44:39.192 [inf][nning_a_star/global_planner.py] Replanning. attempt=3
+08:44:39.192 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:39.192 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:39.193 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:39.193 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:39.200 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:39.201 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:40.689 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:48.845 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:44:48.847 [inf][nning_a_star/global_planner.py] Replanning. attempt=4
+08:44:48.849 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:48.849 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:48.850 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:48.851 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:48.883 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:48.890 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:44:49.535 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:44:57.685 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:44:57.686 [inf][nning_a_star/global_planner.py] Replanning. attempt=5
+08:44:57.687 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:44:57.688 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:44:57.689 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:44:57.689 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:44:57.710 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:44:57.714 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:01.034 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:01.366 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=1.01 threshold=0.9
+08:45:01.367 [inf][nning_a_star/global_planner.py] Replanning. attempt=6
+08:45:01.367 [inf][nning_a_star/replan_limiter.py] Traveled enough to reset attempts attempts=6 distance=2.9972878980363458
+08:45:01.367 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:01.367 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:01.367 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:01.368 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:01.374 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:01.375 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:05.127 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-6.600, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:45:05.127 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:05.127 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:05.127 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:05.128 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:05.131 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:05.132 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+[90m------------------------------------------------------------[0m
+[90m01:45:06.462[0m   [32mai          [0m [35mtool_calls:[0m
+                            - [34msend_radio[0m([36m{'message': "Understood, but I previously claimed X=[-11, 0]. Please focus on your intended area [0, 11] to cover the right side of the map while I continue my sweep in my assigned sector. Let's work together!"}[0m)
+08:45:06.463 [inf][dimos/agents/utils.py         ] Agent message msg_type=ai tool_calls=[{'name': 'send_radio', 'args': {'message': "Understood, but I previously claimed X=[-11, 0]. Please focus on your intended area [0, 11] to cover the right side of the map while I continue my sweep in my assigned sector. Let's work together!"}}]
+08:45:08.352 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:16.307 [inf][dimos/agents/mcp/mcp_server.py] MCP tool call args={'message': "Understood, but I previously claimed X=[-11, 0]. Please focus on your intended area [0, 11] to cover the right side of the map while I continue my sweep in my assigned sector. Let's work together!"} progress_token=c7d443cf-1f2c-48ff-97cd-74788a1cd5b0 tool=send_radio
+08:45:16.368 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:45:16.368 [inf][nning_a_star/global_planner.py] Replanning. attempt=0
+08:45:16.368 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:16.369 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:16.369 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:16.369 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:16.374 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:16.374 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:17.533 [inf][dimos/agents/annotation.py    ] SKILL send_radio result=UNKNOWN duration_ms=0.2
+08:45:17.547 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:18.701 [inf][dimos/agents/mcp/mcp_server.py] MCP tool done duration=2.394s response=Radio message sent. tool=send_radio
+[90m------------------------------------------------------------[0m
+[90m01:45:21.107[0m   [33mtool        [0m [1m[33m'Radio message sent.'[0m
+08:45:21.108 [inf][dimos/agents/utils.py         ] Agent message content=Radio message sent. msg_type=tool
+08:45:25.598 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:45:25.600 [inf][nning_a_star/global_planner.py] Replanning. attempt=1
+08:45:25.600 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:25.601 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:25.601 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:25.602 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:25.620 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:25.623 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:33.841 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:45:33.845 [inf][nning_a_star/global_planner.py] Replanning. attempt=2
+08:45:33.847 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:33.849 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:33.849 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:33.851 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:33.885 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:33.889 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:36.505 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:38.120 [inf][anning_a_star/local_planner.py] Reached goal position, starting final rotation
+08:45:38.121 [inf][anning_a_star/local_planner.py] changed state state=final_rotation
+08:45:40.144 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.93 threshold=0.9
+08:45:40.144 [inf][nning_a_star/global_planner.py] Replanning. attempt=3
+08:45:40.145 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:40.145 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:40.145 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:40.145 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:40.150 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:40.151 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:43.355 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:48.988 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=1.0 threshold=0.9
+08:45:48.988 [inf][nning_a_star/global_planner.py] Replanning. attempt=4
+08:45:48.989 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:48.990 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:48.990 [inf][nning_a_star/global_planner.py] Found safe goal. x=-6.62 y=5.48
+08:45:48.990 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:49.000 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:49.001 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:53.434 [inf][nning_a_star/global_planner.py] Got new goal goal=PoseStamped(pos=[-4.400, 5.500, 0.000], euler=[0.0, 0.0, 0.0])
+08:45:53.437 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:53.437 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:53.438 [inf][nning_a_star/global_planner.py] Found safe goal. x=-4.42 y=5.48
+08:45:53.438 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:53.448 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:53.449 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:45:53.977 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:45:57.668 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.9 threshold=0.9
+08:45:57.668 [inf][nning_a_star/global_planner.py] Replanning. attempt=0
+08:45:57.668 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:45:57.668 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:45:57.669 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:45:57.669 [inf][nning_a_star/global_planner.py] Found safe goal. x=-4.42 y=5.48
+08:45:57.677 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:45:57.679 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:46:00.873 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:46:03.660 [inf][nning_a_star/global_planner.py] Robot veered off track. Replanning. deviation=0.92 threshold=0.9
+08:46:03.660 [inf][nning_a_star/global_planner.py] Replanning. attempt=1
+08:46:03.660 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:46:03.660 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:46:03.661 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:46:03.661 [inf][nning_a_star/global_planner.py] Found safe goal. x=-4.42 y=5.48
+08:46:03.669 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:46:03.671 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:46:04.307 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:46:12.321 [inf][nning_a_star/global_planner.py] Robot is stuck. Replanning.
+08:46:12.321 [inf][nning_a_star/global_planner.py] Replanning. attempt=2
+08:46:12.322 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=True
+08:46:12.322 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:46:12.322 [inf][nning_a_star/global_planner.py] Found safe goal. x=-4.42 y=5.48
+08:46:12.322 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:46:12.333 [inf][nning_a_star/global_planner.py] Found path 1.1x robot width.
+08:46:12.334 [inf][anning_a_star/local_planner.py] changed state state=initial_rotation
+08:46:14.570 [inf][anning_a_star/local_planner.py] changed state state=path_following
+08:46:33.835 [inf][dimos/core/daemon.py          ] Received signal, shutting down signal=15
+08:46:33.848 [inf][dination/module_coordinator.py] Stopping module... module=droneB/radiomodule
+08:46:33.870 [inf][dination/module_coordinator.py] Module stopped. module=droneB/radiomodule
+08:46:33.871 [inf][dination/module_coordinator.py] Stopping module... module=droneB/droneskillcontainer
+08:46:33.917 [inf][dination/module_coordinator.py] Module stopped. module=droneB/droneskillcontainer
+08:46:33.917 [inf][dination/module_coordinator.py] Stopping module... module=droneB/mcpclient
+08:46:33.968 [inf][dination/module_coordinator.py] Module stopped. module=droneB/mcpclient
+08:46:33.968 [inf][dination/module_coordinator.py] Stopping module... module=droneB/mcpserver
+08:46:34.026 [inf][dination/module_coordinator.py] Module stopped. module=droneB/mcpserver
+08:46:34.026 [inf][dination/module_coordinator.py] Stopping module... module=droneB/movementmanager
+08:46:34.084 [inf][dination/module_coordinator.py] Module stopped. module=droneB/movementmanager
+08:46:34.084 [inf][dination/module_coordinator.py] Stopping module... module=droneB/replanningastarplanner
+08:46:34.100 [inf][dination/module_coordinator.py] Module stopped. module=droneB/replanningastarplanner
+08:46:34.100 [inf][dination/module_coordinator.py] Stopping module... module=droneB/costmapper
+08:46:34.116 [inf][dination/module_coordinator.py] Module stopped. module=droneB/costmapper
+08:46:34.116 [inf][dination/module_coordinator.py] Stopping module... module=droneB/voxelgridmapper
+08:46:34.156 [inf][dination/module_coordinator.py] Module stopped. module=droneB/voxelgridmapper
+08:46:34.156 [inf][dination/module_coordinator.py] Stopping module... module=droneB/go2connection
+08:46:34.195 [inf][dination/module_coordinator.py] Module stopped. module=droneB/go2connection
+08:46:34.196 [inf][ation/worker_manager_python.py] Shutting down all workers...
+08:46:34.206 [inf][/coordination/python_worker.py] Worker stopping module... module=RadioModule module_id=8 worker_id=8
+08:46:34.217 [inf][imos/demos/two_drones/radio.py] [radio:droneB] stats: sent 65 events / 26662 B, recv 63 events / 25753 B, avg TX 0.85 kbit/s
+08:46:34.284 [inf][/coordination/python_worker.py] Worker module stopped. module=RadioModule module_id=8 worker_id=8
+08:46:34.294 [inf][/coordination/python_worker.py] Worker stopping module... module=DroneSkillContainer module_id=7 worker_id=7
+08:46:35.551 [inf][nning_a_star/global_planner.py] Cancelling goal. arrived=False but_will_try_again=False
+08:46:35.552 [inf][anning_a_star/local_planner.py] changed state state=idle
+08:46:35.552 [inf][anning_a_star/local_planner.py] Local planner loop exited due to stop event.
+08:46:36.945 [inf][/coordination/python_worker.py] Worker stopping module... module=McpServer module_id=5 worker_id=5
+08:46:36.947 [inf][/coordination/python_worker.py] Worker stopping module... module=ReplanningAStarPlanner module_id=3 worker_id=3
+08:46:36.947 [inf][/coordination/python_worker.py] Worker module stopped. module=ReplanningAStarPlanner module_id=3 worker_id=3
+08:46:36.946 [inf][/coordination/python_worker.py] Worker stopping module... module=CostMapper module_id=2 worker_id=2
+08:46:36.946 [inf][/coordination/python_worker.py] Worker stopping module... module=MovementManager module_id=4 worker_id=4
+08:46:36.949 [inf][/coordination/python_worker.py] Worker module stopped. module=CostMapper module_id=2 worker_id=2
+08:46:36.946 [inf][/coordination/python_worker.py] Worker stopping module... module=VoxelGridMapper module_id=1 worker_id=1
+08:46:36.951 [inf][/coordination/python_worker.py] Worker module stopped. module=MovementManager module_id=4 worker_id=4
+08:46:36.952 [inf][/coordination/python_worker.py] Worker module stopped. module=VoxelGridMapper module_id=1 worker_id=1
+08:46:36.949 [inf][/coordination/python_worker.py] Worker module stopped. module=McpServer module_id=5 worker_id=5
+08:46:36.952 [inf][/coordination/python_worker.py] Worker stopping module... module=GO2Connection module_id=0 worker_id=0
+08:46:36.954 [inf][/coordination/python_worker.py] Worker module stopped. module=GO2Connection module_id=0 worker_id=0
+08:46:36.951 [inf][/coordination/python_worker.py] Worker stopping module... module=McpClient module_id=6 worker_id=6
+08:46:37.356 [inf][/coordination/python_worker.py] Worker module stopped. module=DroneSkillContainer module_id=7 worker_id=7

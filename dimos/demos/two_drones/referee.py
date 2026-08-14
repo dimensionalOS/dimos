@@ -151,7 +151,7 @@ class Referee:
         """Obstacle wall between ROS points (x1,y1)-(x2,y2)."""
         (tx1, tz1) = ros_to_three(x1, y1)
         (tx2, tz2) = ros_to_three(x2, y2)
-        self.scene.add_wall(tx1, tz1, tx2, tz2, height=height, thickness=0.4, color="#7c6f64")
+        self.scene.add_wall(tx1, tz1, tx2, tz2, height=height, thickness=0.4, color=0x7C6F64)
 
     def install_target(self, waypoints_ros: list[tuple[float, float]], speed: float = 0.6,
                        altitude: float = 0.6, loop: bool = True) -> None:
@@ -203,6 +203,37 @@ class Referee:
         }}
         return 'target installed';
         """)
+
+    def style_scene_for_video(self) -> None:
+        """Director-view cosmetics: tint each drone's avatar in its team color,
+        add a floating beacon sphere, and hide the player HUD/crosshair."""
+        colors = json.dumps(DRONE_COLORS)
+        self._exec(f"""
+        const colors = {colors};
+        for (const [name, av] of agents) {{
+            const c = new THREE.Color(colors[name] || '#888888');
+            av.group.traverse(o => {{
+                if (o.isMesh && o.material && o.material.color) {{
+                    o.material = o.material.clone();
+                    o.material.color = c.clone();
+                }}
+            }});
+            if (!av.group.getObjectByName('demo_beacon')) {{
+                const beacon = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.16, 12, 12),
+                    new THREE.MeshBasicMaterial({{color: c}}));
+                beacon.name = 'demo_beacon';
+                beacon.position.y = 0.55;
+                beacon.userData.__demoIgnoreLOS = true;
+                av.group.add(beacon);
+            }}
+        }}
+        for (const sel of ['#shortcuts', '#crosshair', '.shortcuts-floating', '#interaction-hint']) {{
+            const el = document.querySelector(sel);
+            if (el) el.style.display = 'none';
+        }}
+        return 'styled';
+        """, timeout=10.0)
 
     def mark_drones_for_los(self) -> None:
         """Tag drone avatars (and ghosts) so LOS raycasts ignore them."""
@@ -316,6 +347,20 @@ class Referee:
         const t = scene.getObjectByName('demo_target');
         if (!t) return null;
         const out = {{target: [t.position.x, t.position.y, t.position.z], vis: {{}}}};
+        // Raycast only against occluder MESHES. Testing scene.children
+        // recursively also tests the lidar viz Points cloud, whose cost grows
+        // with the map until every tick blows the exec timeout.
+        const occluders = [];
+        scene.traverse(o => {{
+            if (!o.isMesh || o.visible === false || o === t) return;
+            let p = o, skip = false;
+            while (p) {{
+                if (p.userData && p.userData.__demoIgnoreLOS) {{ skip = true; break; }}
+                if (p === t) {{ skip = true; break; }}
+                p = p.parent;
+            }}
+            if (!skip) occluders.push(o);
+        }});
         const ray = new THREE.Raycaster();
         for (const name of {drones_js}) {{
             const av = agents.get(name);
@@ -335,17 +380,7 @@ class Referee:
             if (visible) {{
                 ray.set(p, dir.clone().normalize());
                 ray.far = dist - 0.5;
-                const hits = ray.intersectObjects(scene.children, true).filter(h => {{
-                    if (!h.object.isMesh || h.object.visible === false) return false;
-                    let o = h.object;
-                    while (o) {{
-                        if (o.userData && o.userData.__demoIgnoreLOS) return false;
-                        if (o === t) return false;
-                        o = o.parent;
-                    }}
-                    return true;
-                }});
-                if (hits.length > 0) visible = false;
+                if (ray.intersectObjects(occluders, false).length > 0) visible = false;
             }}
             out.vis[name] = visible;
         }}
