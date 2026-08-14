@@ -39,7 +39,7 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.spec.validation import validate_obstacle
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -275,7 +275,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             prepared_path_obj = original_path
         else:
             # URDF/xacro — preprocess (xacro expansion, mesh conversion, package URI resolution)
-            prepared_path = prepare_urdf_for_drake(
+            prepared_path = prepare_urdf(
                 urdf_path=original_path,
                 package_paths=config.package_paths,
                 xacro_args=config.xacro_args,

@@ -60,14 +60,14 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     # can0/can1 follow USB enumeration order; remap through
     # DamiaoRuntimeConfig.bus_addresses if the rig comes up swapped.
     bus_defaults = {"left": "can1", "right": "can0"}
-    gravity_joint_names = (
+    kinematic_joint_names = (
         *(f"openarm_left_joint{index}" for index in range(1, 8)),
         *(f"openarm_right_joint{index}" for index in range(1, 8)),
     )
 
     @property
-    def gravity_model_path(self) -> Path:
-        """Return the lazy bimanual gravity-compensation URDF path."""
+    def kinematic_model_path(self) -> Path:
+        """Return the lazy bimanual arm URDF path."""
         return LfsPath("openarm_description") / "urdf/robot/openarm_v20_bimanual.urdf"
 
     def _build_robot(self) -> can_motor_control.Robot:

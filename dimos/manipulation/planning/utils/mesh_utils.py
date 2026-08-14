@@ -21,7 +21,7 @@ Provides utilities for preparing URDF files for use with Drake:
 - Package path resolution
 
 Example:
-    urdf_path = prepare_urdf_for_drake(
+    urdf_path = prepare_urdf(
         urdf_path="/path/to/robot.xacro",
         package_paths={"robot_description": "/path/to/robot_description"},
         xacro_args={"use_sim": "true"},
@@ -50,24 +50,24 @@ logger = setup_logger()
 _CACHE_DIR = CACHE_DIR / "urdf"
 
 
-def prepare_urdf_for_drake(
+def prepare_urdf(
     urdf_path: Path | str,
     package_paths: dict[str, Path] | None = None,
     xacro_args: dict[str, str] | None = None,
     convert_meshes: bool = False,
 ) -> str:
-    """Prepare a URDF/xacro file for use with Drake.
+    """Prepare a URDF/xacro file for model consumers.
 
     This function:
     1. Processes xacro files if needed
     2. Resolves package:// URIs in mesh paths
-    3. Optionally converts DAE/STL meshes to OBJ format
+    3. Optionally converts DAE/STL meshes to OBJ format for consumers that need it
 
     Args:
         urdf_path: Path to URDF or xacro file
         package_paths: Dict mapping package names to filesystem paths
         xacro_args: Arguments to pass to xacro processor
-        convert_meshes: Convert DAE/STL meshes to OBJ for Drake compatibility
+        convert_meshes: Convert DAE/STL meshes to OBJ when required by the consumer
 
     Returns:
         Path to the prepared URDF file (may be cached)

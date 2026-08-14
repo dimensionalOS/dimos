@@ -426,6 +426,73 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
+### Streaming pose-target control
+
+`CartesianIKTask` and `TeleopIKTask` are sibling leaves over the shared
+`PoseTargetIKTask` control core. Their configuration uses a `RobotModelConfig`,
+explicit controlled `joint_names`, and named target frames. The common core
+warm-starts one bounded Pink update from live coordinator joint state on each
+tick; it does not require a planning world or expose planning groups to the
+coordinator.
+
+Cartesian IK accepts one absolute robot-frame target. Quest IK accepts one or
+two controller-to-frame bindings and owns engagement, reference capture,
+relative target mapping, and optional per-hand gripper commands. The
+coordinator only routes the distinct left/right pose streams by task name and
+arbitrates the resulting joint command.
+
+### Robot-specific Pink task stacks
+
+For robot-specific control feel, subclass `PinkIK` and override its protected
+`_create_tasks()` hook. Call `super()` so the mandatory `frame/<frame_name>`
+tasks remain present, then tune inherited task fields or add native Pink tasks
+under stable names. The backend keeps the mapping order, reuses its task
+objects across streaming ticks, and continues to own solving, integration, and
+joint-limit safety.
+
+```python skip
+from typing import Any
+
+import numpy as np
+import pink
+
+from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
+
+
+class OpenArmPinkIK(PinkIK):
+    def _create_tasks(
+        self,
+        configuration: Any,
+        target_frames: tuple[str, ...],
+    ) -> dict[str, Any]:
+        tasks = super()._create_tasks(configuration, target_frames)
+
+        for frame_name in target_frames:
+            frame_task = tasks[f"frame/{frame_name}"]
+            frame_task.cost[:3] = np.array([8.0, 8.0, 6.0])
+
+        tasks["regularization/damping"] = pink.tasks.DampingTask(cost=1e-3)
+        return tasks
+```
+
+Construct a fresh backend for each stateful control-task instance and inject it
+through the existing `ik=` argument:
+
+```python skip
+teleop_task = TeleopIKTask(
+    "teleop_openarm",
+    openarm_quest_config,
+    ik=OpenArmPinkIK(openarm_quest_config.pink),
+)
+```
+
+If an auxiliary task needs per-step inputs or solver history, override
+`_before_solve(tasks, configuration, dt)` or
+`_after_solve(tasks, velocity, dt)`. These hooks receive a read-only mapping;
+mutate the contained task objects, not the mapping structure. Keep temporal
+state inside that backend instance and define its discontinuity behavior in
+the robot-specific subclass.
+
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately
 through `VisualizationSpec`, so non-visual planning paths do not require a

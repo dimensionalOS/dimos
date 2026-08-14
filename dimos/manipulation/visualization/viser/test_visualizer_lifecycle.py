@@ -520,7 +520,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
         return fixed_world_root if path.name == "arm.urdf" else non_fixed_world_root
 
     monkeypatch.setattr(
-        "dimos.manipulation.visualization.viser.scene.prepare_urdf_for_drake",
+        "dimos.manipulation.visualization.viser.scene.prepare_urdf",
         prepare,
     )
 

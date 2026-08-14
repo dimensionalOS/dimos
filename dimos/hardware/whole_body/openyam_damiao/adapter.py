@@ -34,11 +34,11 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
     }
     gripper_joints = {"gripper": "arm/gripper"}
     bus_defaults = {bus_name: "can0"}
-    gravity_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
+    kinematic_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
 
     @property
-    def gravity_model_path(self) -> Path:
-        """Return the lazy gravity-compensation URDF path."""
+    def kinematic_model_path(self) -> Path:
+        """Return the lazy arm URDF path."""
         return LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
 
     def _build_robot(self) -> can_motor_control.Robot:

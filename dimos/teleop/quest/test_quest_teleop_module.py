@@ -17,7 +17,7 @@ from collections.abc import Iterator
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.teleop.quest.quest_extensions import HandTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule, HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 
@@ -66,6 +66,18 @@ def test_translation_scale_must_be_positive_and_finite(
         module._set_translation_scale(translation_scale)
 
     assert module._translation_scale == 1.0
+
+
+def test_arm_teleop_publishes_absolute_controller_pose() -> None:
+    module = ArmTeleopModule()
+    try:
+        pose = PoseStamped(frame_id="left", position=[1.0, 2.0, 3.0])
+        module._current_poses[Hand.LEFT] = pose
+        module._initial_poses[Hand.LEFT] = PoseStamped(position=[0.5, 0.5, 0.5])
+
+        assert module._get_output_pose(Hand.LEFT) is pose
+    finally:
+        module.stop()
 
 
 def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:

@@ -2,83 +2,144 @@
 title: "OpenArm Integration"
 ---
 
-DimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
-arms + grippers, Damiao motors, one CAN bus per arm) as a single whole-body
-device through the generic Damiao adapter stack introduced for OpenYAM.
+DimOS supports the [OpenArm v2.0](https://openarm.dev) bimanual platform as one
+robot with two 7-DOF arms and two grippers. Physical operation uses one Linux
+SocketCAN interface per arm. Start with fake hardware, verify the arm-to-bus
+mapping, and keep an E-STOP within reach before enabling motors.
 
-Related:
-- Upstream hardware + C++ reference: [enactic/openarm_can](https://github.com/enactic/openarm_can)
-- How to integrate any new arm: [adding_a_custom_arm.md](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+## Install
 
-## Architecture
+From a DimOS source checkout, install the manipulation dependencies:
 
-```
-ControlCoordinator (100 Hz)
-  └── HardwareComponent "openarm" (WHOLE_BODY, 16 joints)
-        └── OpenArmDamiaoAdapter          # dimos/hardware/whole_body/openarm_damiao/
-              └── DamiaoWholeBodyAdapter  # generic Damiao lifecycle + gravity comp
-                    └── can-motor-control # Rust CAN transport + Damiao codec (PyPI)
+```bash skip
+uv sync --extra manipulation --inexact
 ```
 
-One adapter owns both arms: bus `left` (default `can1`) and bus `right`
-(default `can0`) are commanded together in one synchronized tick per control
-cycle. The command vector order is `left_arm/joint1..7`, `right_arm/joint1..7`,
-`left_arm/gripper`, `right_arm/gripper`; gripper joints are normalized
-(`0.0` closed, `1.0` open).
+Physical OpenArm support is Linux-only. Fake hardware and planning can run on
+other supported platforms.
 
-Per arm, shoulder to wrist (send ids `0x01..0x07`, feedback `send | 0x10`):
-2x DM8009, 2x DM4340, 3x DM4310, plus a DM4310 gripper at `0x08`.
+## Prepare the CAN interfaces
 
-Gravity compensation uses the bimanual URDF
-(`openarm_description/urdf/robot/openarm_v20_bimanual.urdf`, resolved lazily
-from LFS at connect time) and is preflighted against the declared joint order
-before the motors enable.
+Bring up both interfaces and verify their status:
 
-Planning also uses the bimanual URDF: one robot model with a
-`left_manipulator` and a `right_manipulator` planning group, since collision
-exclusions cannot span robots.
-
-## Bring-up
-
-```bash
+```bash skip
 dimos hardware can setup can0
 dimos hardware can setup can1
+dimos hardware can status can0
+dimos hardware can status can1
+```
+
+The default mapping is left arm on `can1` and right arm on `can0`. Linux names
+USB CAN adapters in enumeration order, so confirm the mapping whenever adapters
+are reconnected. A swapped mapping can command the wrong arm.
+
+## Run with fake hardware
+
+Run keyboard teleoperation in simulation mode:
+
+```bash skip
+dimos --simulation run keyboard-teleop-openarm
+```
+
+The Quest blueprint is fake-hardware-first and needs no simulation flag:
+
+```bash skip
+dimos run teleop-quest-openarm
+```
+
+Open `https://<host-ip>:8443/teleop` in the Quest browser. Accept the local
+certificate warning if prompted.
+
+## Run physical hardware
+
+The keyboard blueprint selects physical hardware when `--simulation` is absent
+and uses the default CAN mapping:
+
+```bash skip
 dimos run keyboard-teleop-openarm
 ```
 
-Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
-swapped, override the mapping through
-`DamiaoRuntimeConfig(bus_addresses={"left": ..., "right": ...})` rather than
-editing the adapter topology.
+Quest teleoperation selects physical hardware only when both bus mappings are
+provided after the blueprint name:
 
-## Blueprints
-
-| Blueprint | Contents |
-|---|---|
-| `coordinator-openarm` | coordinator + trajectory task over both arms |
-| `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
-| `keyboard-teleop-openarm` | keyboard + per-arm EEF twist + viser |
-| `keyboard-teleop-openarm-planner` | teleop + planner + preempting trajectory task |
-
-All blueprints run against the in-memory whole-body adapter under
-`--simulation`; the physical adapter is selected automatically otherwise.
-
-The keyboard jogs the left arm (`eef_twist_left_arm`); the right arm's twist
-task holds its anchor pose. Keyboard gripper bindings for the two grippers are
-a follow-up; the gripper joints accept normalized `/joint_command` targets in
-the meantime.
-
-## Files
-
-| Path | Role |
-|---|---|
-| `dimos/hardware/whole_body/openarm_damiao/adapter.py` | physical topology (motors, buses, gravity URDF) |
-| `dimos/robot/manipulators/openarm/config.py` | joints, gains, hardware + planning model configs |
-| `dimos/robot/manipulators/openarm/blueprints/` | coordinator/planner/teleop blueprints |
-
-## Validation
-
-```bash
-uv run pytest dimos/hardware/whole_body/openarm_damiao \
-    dimos/hardware/test_adapter_registries.py
+```bash skip
+dimos run teleop-quest-openarm \
+  --left-can-port can1 \
+  --right-can-port can0
 ```
+
+Providing only one port is rejected. These are blueprint options; the global
+`--can-port` option does not configure OpenArm. Other OpenArm blueprints do not
+currently expose per-arm remapping options, so use the Quest blueprint when the
+machine's interface names differ from the defaults.
+
+## Controls and runtime behavior
+
+Quest uses one bimanual IK task for both arms. Hold both controllers' primary
+buttons to engage it. Releasing either button stops arm and gripper output and
+clears both controller references. Each controller trigger operates the
+gripper on the same side.
+
+Stale controller input, task preemption, E-STOP, or coordinator shutdown also
+clears the teleoperation session. Planned trajectories have priority 20 and
+preempt the Quest task at priority 10. Planning commands the fourteen arm
+joints; the grippers remain under Quest control.
+
+Keyboard teleoperation currently jogs the left arm while the right arm holds
+its anchor pose. The keyboard blueprint does not bind gripper controls.
+
+## Available blueprints
+
+| Blueprint | Hardware selection | Purpose |
+| --- | --- | --- |
+| `coordinator-openarm` | Fake with `--simulation`; physical otherwise | Coordinator and trajectory control |
+| `openarm-planner-coordinator` | Fake with `--simulation`; physical otherwise | Bimanual planner and coordinator |
+| `keyboard-teleop-openarm` | Fake with `--simulation`; physical otherwise | Keyboard Cartesian jogging and Viser |
+| `keyboard-teleop-openarm-planner` | Fake with `--simulation`; physical otherwise | Keyboard teleoperation with planning |
+| `teleop-quest-openarm` | Fake by default; physical only with both CAN options | Quest bimanual teleoperation, planning, and Viser |
+
+## Troubleshooting
+
+### The wrong arm moves
+
+Stop the blueprint immediately. Confirm which USB adapter Linux assigned to
+each interface, then pass the corrected left and right ports to the Quest
+blueprint. Do not assume `can0` always identifies the same physical adapter.
+
+### One arm does not connect
+
+Check both interfaces with `dimos hardware can status`. The Quest blueprint
+requires both explicit ports for physical operation and rejects a partial
+mapping.
+
+### Quest does not connect
+
+Confirm that the headset can reach `https://<host-ip>:8443/teleop`, accept the
+certificate warning, and check that the host firewall permits the connection.
+
+### Quest runs but the arms do not move
+
+Confirm that both primary buttons remain held. If the model moves in Viser but
+hardware does not, inspect command-tracking and joint-limit warnings before
+raising any safety threshold.
+
+### Motion is slow, unstable, or stops near a limit
+
+Do not change the canonical startup pose to hide the symptom. Follow
+[Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+to verify the model, tune objective weights, and bound streaming commands.
+
+The shared Damiao hardware gate derives each angular joint limit from the
+robot URDF and clamps encoder feedback that is no more than `0.05 rad` outside
+it. A larger excursion indicates a calibration, model, or encoder fault. The
+adapter disables the motors, rejects further activation, and logs the affected
+joint and bounds. Inspect the arm, then restart the blueprint or reconnect the
+hardware before resuming motion.
+
+## Further reading
+
+- [Quest Teleoperation](https://github.com/dimensionalOS/dimos/blob/main/dimos/teleop/quest/README.md)
+- [Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+- [Adding a Custom Arm](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+- [Planning Groups](/docs/capabilities/manipulation/planning_groups.md)
+- [Upstream OpenArm CAN reference](https://github.com/enactic/openarm_can)

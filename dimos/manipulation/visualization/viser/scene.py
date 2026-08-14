@@ -36,7 +36,7 @@ from dimos.constants import CACHE_DIR
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf
 from dimos.manipulation.visualization.viser.animation import (
     GroupPreviewAnimation,
     PreviewFrame,
@@ -803,7 +803,7 @@ class ViserManipulationScene:
     def prepared_urdf_path(self, config: RobotModelConfig) -> Path:
         package_paths = {package: Path(path) for package, path in config.package_paths.items()}
         prepared_path = Path(
-            prepare_urdf_for_drake(
+            prepare_urdf(
                 Path(str(config.model_path)),
                 package_paths=package_paths,
                 xacro_args={str(key): str(value) for key, value in config.xacro_args.items()},

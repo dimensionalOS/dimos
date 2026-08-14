@@ -441,7 +441,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         HardwareComponent(
             hardware_id="arm",                        # Unique ID for this hardware
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),             # Creates ["arm_joint1", ..., "arm_joint6"]
+            joints=make_joints("arm", 6),             # Creates ["arm/joint1", ..., "arm/joint6"]
             adapter_type="yourarm",                   # Must match registry name
             address="192.168.1.100",                  # Passed to adapter __init__
             auto_enable=True,                         # Auto-enable servos on start
@@ -462,7 +462,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 | `hardware_id` | Unique name for this hardware component. Used to route commands. |
 | `adapter_type` | Name registered with `adapter_registry` (e.g., `"yourarm"`). |
 | `address` | Connection info passed to adapter's `__init__` as `address` kwarg. |
-| `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm_joint1", ..., "arm_joint6"]`. |
+| `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm/joint1", ..., "arm/joint6"]`. |
 | `auto_enable` | If `True`, servos are enabled automatically when the coordinator starts. |
 | `task.name` | Name used by the ManipulationModule to invoke trajectory execution via RPC. |
 | `task.type` | Task type: `"trajectory"`, `"servo"`, `"velocity"`, or `"cartesian_ik"`. |
@@ -506,11 +506,12 @@ this backend. Formal per-joint dimOS overrides will be added separately.
 ```python skip
 from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.manipulation.planning.spec.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.manipulators._modeling import coordinator_joint_mapping
 
 # LfsPath defers download until the path is actually accessed
 _YOURARM_URDF_PATH = LfsPath("yourarm_description/urdf/yourarm.urdf")
@@ -559,6 +560,7 @@ def _make_yourarm_config(
         xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
+        joint_name_mapping=coordinator_joint_mapping(name, 6),
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
     )
@@ -611,6 +613,7 @@ yourarm_planner = manipulation_module(
 | `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
+| `joint_name_mapping` | Maps coordinator names such as `arm/joint1` to local URDF names such as `joint1` |
 
 Coordinator-facing joint states and trajectories use global joint names derived
 mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
@@ -622,47 +625,65 @@ target frames. `base_link` is only the robot-scoped link placed by
 `base_pose`; do not use it as a substitute for planning-group chain metadata.
 See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
 
-### 4d. Configure Cartesian, EEF-twist, and teleop control IK
+### 4d. Add Cartesian and teleoperation IK
 
-Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
-or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
-name the end-effector link, and map coordinator joints to model joints. The task
-validates the prepared model, frame, and joint mapping at startup. Teleop uses
-the named frame and does not accept a separate model path or numeric
-end-effector joint ID.
+Cartesian, EEF-twist, and engagement-relative teleoperation tasks share the
+Pink backend. Install its dependencies with the manipulation extra:
 
-Pass the same model configuration to the common helpers:
+```bash skip
+uv sync --extra manipulation --inexact
+```
+
+Use one control task for each robot model that Pink should solve as one system:
+
+| Robot setup | Task layout |
+| --- | --- |
+| One arm | One task with one target frame |
+| Two independent robot models | One task per arm |
+| One bimanual robot model | One task with both arm joint sets and two target frames |
+
+The task uses coordinator-facing joint names and URDF frame names. Give it the
+same `RobotModelConfig` used by planning; hardware-native naming remains inside
+the adapter.
 
 ```python skip
-from dimos.robot.manipulators.common.blueprints import (
-    cartesian_ik_task,
-    eef_twist_task,
-    teleop_ik_task,
-)
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
-cartesian_task = cartesian_ik_task(
-    hardware,
-    robot_model=robot_model,
-)
-twist_task = eef_twist_task(
-    hardware,
-    robot_model=robot_model,
-)
+pink = PinkKinematicsConfig()
 teleop_task = teleop_ik_task(
     hardware,
     name="teleop_arm",
-    hand="right",
     robot_model=robot_model,
+    bindings=[{"hand": "right", "target_frame": "link6"}],
+    params={"pink": pink},
 )
 ```
 
-Each tick starts from measured joints and applies model position and velocity
-limits. Twist targets are derived from measured forward kinematics. Teleop
-targets apply controller deltas to a measured engagement baseline and discard
-that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
-or mappings fail at startup; invalid runtime output holds the measured position.
-Validate Cartesian, twist, and teleop behavior in simulation or replay before
-hardware use.
+For a bimanual model, pass both joint sets and bind each hand to its own frame:
+
+```python skip
+bimanual_task = teleop_ik_task(
+    dual_arm_hardware,
+    name="teleop_dual_arm",
+    robot_model=dual_arm_model,
+    joint_names=[*left_arm_joint_names, *right_arm_joint_names],
+    bindings=[
+        {"hand": "left", "target_frame": "left_tool_frame"},
+        {"hand": "right", "target_frame": "right_tool_frame"},
+    ],
+    params={"pink": PinkKinematicsConfig()},
+)
+```
+
+Do not pass planning groups into a control task. Planning groups select planning
+requests; control IK needs only the controlled joints and target frames. A
+single-hand task requires that hand's primary button. A bimanual task requires
+both buttons, and releasing either clears both controller references.
+
+Before connecting hardware, follow [Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+to tune task weights, robot-specific objectives, velocity limits, feedback
+tolerance, and command tracking.
 
 ## Step 5: Register Blueprints
 
@@ -672,7 +693,7 @@ The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** 
    ```bash
    pytest dimos/robot/test_all_blueprints_generation.py
    ```
-3. Now you can run your arm via CLI:
+2. Now you can run your arm via CLI:
    ```bash
    dimos run coordinator-yourarm
    dimos run yourarm-planner        # If you added a planning blueprint
