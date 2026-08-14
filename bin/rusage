@@ -170,6 +170,13 @@ $json
 }
 JSON
 
+# Which optional sources the kernel actually offered. Without this a missing
+# measure is indistinguishable from a measure that read zero.
+printf 'rusage %s: scope=%s io.stat=%s ip=%s\n' \
+	"$name" "${manager#--}" \
+	"$([[ -s "$dir/io.stat" ]] && echo yes || echo no)" \
+	"$([[ -n $(ip_field IPIngressBytes) ]] && echo yes || echo no)" >&2
+
 printf 'rusage %s: %ss wall, %ss cpu (%ss user + %ss sys), %s peak rss, exit %d\n' \
 	"$name" "$wall" "$cpu_total" "$cpu_user" "$cpu_system" \
 	"$(numfmt --to=iec-i --suffix=B "$peak_bytes")" "$rc" >&2
