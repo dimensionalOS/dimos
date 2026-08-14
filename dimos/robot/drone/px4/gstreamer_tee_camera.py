@@ -14,7 +14,7 @@
 
 """GStreamer tee camera with raw BGR and Annex-B H.264 outputs."""
 
-from enum import StrEnum
+from enum import Enum
 import logging
 from threading import Thread, current_thread
 from typing import Any, ClassVar
@@ -39,12 +39,12 @@ Gst.init(None)
 logger = setup_logger(level=logging.INFO)
 
 
-class GstInputFormat(StrEnum):
+class GstInputFormat(str, Enum):
     RAW = "raw"
     H264 = "h264"
 
 
-class GstEncoder(StrEnum):
+class GstEncoder(str, Enum):
     NVV4L2 = "nvv4l2h264enc"
     X264 = "x264enc"
 

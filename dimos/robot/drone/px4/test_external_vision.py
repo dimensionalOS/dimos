@@ -82,3 +82,19 @@ def test_external_vision_rejects_non_normalized_orientation() -> None:
 
     with pytest.raises(_InvalidExternalVisionSampleError, match="orientation quaternion"):
         _build_vision_position_estimate(message)
+
+
+def test_external_vision_rejects_non_finite_orientation() -> None:
+    message = _odometry()
+    message.pose.orientation.x = math.nan
+
+    with pytest.raises(_InvalidExternalVisionSampleError, match="must be finite"):
+        _build_vision_position_estimate(message)
+
+
+def test_external_vision_rejects_non_finite_position() -> None:
+    message = _odometry()
+    message.pose.position.x = math.inf
+
+    with pytest.raises(_InvalidExternalVisionSampleError, match="position must be finite"):
+        _build_vision_position_estimate(message)

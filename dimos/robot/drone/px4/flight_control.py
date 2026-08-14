@@ -427,9 +427,9 @@ class FlightController(Module):
         if system is None:
             return
         for task in self._telemetry_tasks:
-            _ = task.cancel()
+            task.cancel()
         if self._telemetry_tasks:
-            _ = await asyncio.gather(*self._telemetry_tasks, return_exceptions=True)
+            await asyncio.gather(*self._telemetry_tasks, return_exceptions=True)
         self._telemetry_tasks.clear()
         if self._offboard_active:
             try:
