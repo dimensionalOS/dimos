@@ -93,6 +93,8 @@ all_blueprints = {
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.planner:openarm_planner_coordinator",
     "openyam-can-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_can_planner_coordinator",
     "openyam-pickplace": "dimos.robot.manipulators.openyam.blueprints.perception:openyam_pickplace",
+    "openyam-pickplace-can-agent": "dimos.robot.manipulators.openyam.blueprints.agentic:openyam_pickplace_can_agent",
+    "openyam-pickplace-mock-agent": "dimos.robot.manipulators.openyam.blueprints.agentic:openyam_pickplace_mock_agent",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
