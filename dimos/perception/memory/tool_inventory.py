@@ -205,7 +205,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("out", nargs="?", default="inventory.rrd")
+    parser.add_argument(
+        "out", nargs="?", default=None, help="rerun recording to write; omitted writes none"
+    )
     parser.add_argument("--dataset", type=Path, help="memory2 recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
@@ -238,6 +240,10 @@ def main() -> int:
         help="per-keyframe discovery progress lines (off by default)",
     )
     args = parser.parse_args()
+
+    out = args.out
+    if args.labels and args.labels[-1].endswith(".rrd"):
+        out = args.labels.pop()
 
     dataset = args.dataset or get_data(
         "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
@@ -298,8 +304,9 @@ def main() -> int:
             f"members={len(instance.members)}{geometry}"
         )
 
-    render(args.out, store, instances, after, before if before is not None else hi)
-    print(f"saved {args.out}")
+    if out is not None:
+        render(out, store, instances, after, before if before is not None else hi)
+        print(f"saved {out}")
     return 0
 
 

@@ -150,8 +150,12 @@ def render(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("queries", nargs="+", help="one or more object queries")
-    parser.add_argument("out", help="rerun recording to write")
+    parser.add_argument(
+        "positionals",
+        nargs="+",
+        metavar="query",
+        help="one or more object queries, optionally followed by an out.rrd to write",
+    )
     parser.add_argument("--dataset", type=Path, help="memory2 recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
@@ -163,6 +167,11 @@ def main() -> int:
         help="return an RGB-only hit with a null position instead of refusing",
     )
     args = parser.parse_args()
+
+    queries = list(args.positionals)
+    out = queries.pop() if queries[-1].endswith(".rrd") else None
+    if not queries:
+        parser.error("no queries given")
 
     dataset = args.dataset or get_data(
         "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
@@ -184,7 +193,7 @@ def main() -> int:
 
     traces: list[tuple[str, LocalizeTrace]] = []
     hits = 0
-    for query in args.queries:
+    for query in queries:
         trace = LocalizeTrace()
         hit = localize(
             store,
@@ -231,8 +240,9 @@ def main() -> int:
     if not hits:
         return 1
 
-    render(args.out, store, traces, after, before)
-    print(f"saved {args.out}")
+    if out is not None:
+        render(out, store, traces, after, before)
+        print(f"saved {out}")
     return 0
 
 
