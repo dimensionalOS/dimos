@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import json
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
