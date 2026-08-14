@@ -111,7 +111,7 @@ class OpenYamAdapter:
         gripper_motor_type: str = DEFAULT_GRIPPER_MOTOR_TYPE.value,
         position_lower: list[float] | None = None,
         position_upper: list[float] | None = None,
-        auto_set_mit_mode: bool = False,
+        auto_set_mit_mode: bool = True,
         gravity_comp: bool = True,
         usb_vendor_id: int = CANABLE_VENDOR_ID,
         usb_product_id: int = CANABLE_PRODUCT_ID,
@@ -218,9 +218,12 @@ class OpenYamAdapter:
             self._bus = None
             return False
 
-        # Off by default: YAM motors ship in MIT mode, and the OpenArm-style
-        # CTRL_MODE register broadcast is suspected of faulting their
-        # firmware (first physical motion succeeded only with this skipped).
+        # On by default: the motors' persisted CTRL_MODE survives arm power
+        # cycles, and in non-MIT modes they reply state to MIT frames without
+        # ACTING on them — commands vanish silently while telemetry looks
+        # healthy (observed on hardware; earlier suspicion that this broadcast
+        # faults the firmware proved wrong — those failures were transport
+        # bugs since fixed). The write is idempotent.
         if self._auto_set_mit_mode:
             try:
                 for m in all_motors:
