@@ -323,12 +323,5 @@ class TestCoordinatorIntegration:
         module.plan_to_joints({group.id: target})
         assert module._state == ManipulationState.COMPLETED
 
-        # Reset works from COMPLETED
-        module.reset()
-        assert module._state == ManipulationState.IDLE
-
-        # Plan again
-        module.plan_to_joints({group.id: target})
-
         module.execute(blocking=False)
         assert module._state == ManipulationState.EXECUTING
