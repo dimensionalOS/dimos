@@ -56,7 +56,11 @@ def test_walk_heading_correction_can_decay_below_in_place_turn_rate() -> None:
 
 
 def test_holonomic_servo_holds_yaw_and_translates_directly_to_stance() -> None:
-    config = ApproachControllerConfig(holonomic=True, max_linear=0.15)
+    config = ApproachControllerConfig(
+        holonomic=True,
+        max_linear=0.18,
+        max_lateral=0.18,
+    )
 
     step = approach_step(
         (0.0, 0.0, math.pi / 2),
@@ -66,12 +70,16 @@ def test_holonomic_servo_holds_yaw_and_translates_directly_to_stance() -> None:
 
     assert step.phase is ApproachPhase.SERVO_TO_STANCE
     assert step.command.vx == pytest.approx(0.0, abs=1e-12)
-    assert step.command.vy == pytest.approx(-0.12)
+    assert step.command.vy == pytest.approx(-0.18)
     assert step.command.wz == 0.0
 
 
 def test_holonomic_servo_limits_translation_vector_and_uses_shortest_yaw() -> None:
-    config = ApproachControllerConfig(holonomic=True, max_linear=0.15)
+    config = ApproachControllerConfig(
+        holonomic=True,
+        max_linear=0.18,
+        max_lateral=0.18,
+    )
 
     step = approach_step(
         (0.0, 0.0, math.radians(170.0)),
@@ -80,19 +88,23 @@ def test_holonomic_servo_limits_translation_vector_and_uses_shortest_yaw() -> No
     )
 
     assert step.phase is ApproachPhase.SERVO_TO_STANCE
-    assert abs(step.command.vx) <= 0.15
-    assert abs(step.command.vy) <= 0.12
+    assert abs(step.command.vx) <= 0.18
+    assert abs(step.command.vy) <= 0.18
     assert step.command.wz > 0.0
 
 
 def test_holonomic_servo_commands_usable_gait_speed_for_small_error() -> None:
-    config = ApproachControllerConfig(holonomic=True, position_tolerance=0.01)
+    config = ApproachControllerConfig(
+        holonomic=True,
+        min_linear=0.10,
+        position_tolerance=0.01,
+    )
 
     step = approach_step((0.0, 0.0, 0.0), (0.04, -0.02, 0.0), config)
 
     assert step.phase is ApproachPhase.SERVO_TO_STANCE
-    assert step.command.vx == pytest.approx(0.06)
-    assert step.command.vy == pytest.approx(-0.06)
+    assert step.command.vx == pytest.approx(0.10)
+    assert step.command.vy == pytest.approx(-0.10)
 
 
 def test_turns_to_final_yaw_only_after_reaching_position() -> None:

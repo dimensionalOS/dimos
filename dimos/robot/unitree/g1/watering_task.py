@@ -202,6 +202,7 @@ class WateringTaskConfig(ModuleConfig):
     approach_motion_enabled: bool = False
     pour_motion_enabled: bool = False
     approach_holonomic: bool = False
+    approach_min_linear: float = Field(default=0.06, gt=0.0)
     approach_max_linear: float = Field(default=0.25, gt=0.0)
     approach_max_lateral: float = Field(default=0.12, gt=0.0)
     approach_max_angular: float = Field(default=0.4, gt=0.0)
@@ -352,6 +353,7 @@ class WateringSequence:
         self._wall_time = wall_time
         self._controller_config = ApproachControllerConfig(
             holonomic=config.approach_holonomic,
+            min_linear=config.approach_min_linear,
             max_linear=config.approach_max_linear,
             max_lateral=config.approach_max_lateral,
             max_angular=config.approach_max_angular,
