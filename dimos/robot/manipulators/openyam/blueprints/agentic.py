@@ -41,7 +41,12 @@ openyam_pickplace_can_agent = autoconnect(
     openyam_pickplace,
     coordinator_openyam_can,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    # Claude via LangChain provider resolution; needs ANTHROPIC_API_KEY and
+    # the langchain-anthropic package in the environment.
+    McpClient.blueprint(
+        system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT,
+        model="anthropic:claude-sonnet-4-5",
+    ),
 )
 
 openyam_pickplace_mock_agent = autoconnect(
