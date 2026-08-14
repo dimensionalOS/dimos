@@ -19,6 +19,7 @@ from __future__ import annotations
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.robot.manipulators.common.agent_prompts import (
     BASE_MANIPULATION_AGENT_SYSTEM_PROMPT,
     MANIPULATION_AGENT_SYSTEM_PROMPT,
@@ -29,18 +30,21 @@ from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
+    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 xarm_perception_agent = autoconnect(
     xarm_perception,
+    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,
+    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )

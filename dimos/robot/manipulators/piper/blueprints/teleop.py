@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dimos.control.components import make_gripper_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -26,6 +26,10 @@ from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,
     trajectory_task,
+)
+from dimos.robot.manipulators.common.coordinators import (
+    ArmPoseCoordinator,
+    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
@@ -48,7 +52,8 @@ _piper_model = make_piper_model_config()
 
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -76,7 +81,8 @@ _piper_mock_cartesian_hw = make_piper_hardware(
     gripper=False,
 )
 
-coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
+coordinator_cartesian_ik_mock = ArmPoseCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_piper_mock_cartesian_hw],
     tasks=[cartesian_ik_task(_piper_mock_cartesian_hw, robot_model=_piper_model)],
 )
@@ -85,7 +91,8 @@ _piper_teleop_hw = piper_hardware("arm", gripper_open_position=0.07, gripper_clo
 
 
 coordinator_teleop_piper = autoconnect(
-    ControlCoordinator.blueprint(
+    ArmPoseCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
             teleop_ik_task(
@@ -116,7 +123,8 @@ _piper_cartesian_hw = make_piper_hardware(
     gripper=True,
 )
 
-coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
+coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_piper_cartesian_hw],
     tasks=[cartesian_ik_task(_piper_cartesian_hw, robot_model=_piper_model)],
 )

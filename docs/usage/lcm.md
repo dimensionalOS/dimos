@@ -2,7 +2,7 @@
 title: "LCM Messages"
 ---
 
-DimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
+dimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 
 The LCM project provides pubsub clients and code generators for many languages. For us the power of LCM is its message definition format, multi-language classes that encode themselves to a compact binary format. This means LCM messages can be sent over any transport (WebSocket, SSH, shared memory, etc.) between differnt programming languages.
 

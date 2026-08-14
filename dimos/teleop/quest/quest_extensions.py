@@ -15,7 +15,7 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
+    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track)
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
@@ -26,7 +26,6 @@ import asyncio
 from typing import Any
 
 from fastapi import WebSocket
-from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -125,35 +124,19 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-class ArmTeleopConfig(QuestTeleopConfig):
-    """Configuration for ArmTeleopModule.
-
-    Attributes:
-        task_names: Mapping of Hand -> coordinator task name. Used to set
-            frame_id on output PoseStamped so the coordinator routes each
-            hand's commands to the correct TeleopIKTask.
-    """
-
-    task_names: dict[str, str] = Field(default_factory=dict)
-
-
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand press-and-hold engage and task name routing.
+    """Quest teleop with per-hand press-and-hold engage.
 
     Each controller's primary button (X for left, A for right)
-    engages that hand while held, disengages on release.
-
-    When task_names is configured, output PoseStamped messages have their
-    frame_id set to the task name, enabling the coordinator to route
-    each hand's commands to the correct TeleopIKTask.
+    engages that hand while held, disengages on release. Each hand's
+    output port is wired to its consuming task's coordinator port in
+    the blueprint; no addressing happens in the message.
 
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
         - buttons: Buttons (inherited)
     """
-
-    config: ArmTeleopConfig
 
     @rpc
     def start(self) -> None:
@@ -162,25 +145,6 @@ class ArmTeleopModule(QuestTeleopModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-
-        self._task_names: dict[Hand, str] = {
-            Hand[k.upper()]: v for k, v in self.config.task_names.items()
-        }
-
-    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        """Stamp frame_id with task name and publish."""
-        task_name = self._task_names.get(hand)
-        if task_name:
-            output_msg = PoseStamped(
-                position=output_msg.position,
-                orientation=output_msg.orientation,
-                ts=output_msg.ts,
-                frame_id=task_name,
-            )
-        super()._publish_msg(hand, output_msg)
 
     def _publish_button_state(
         self,
@@ -236,7 +200,7 @@ class HandTeleopModule(ArmTeleopModule):
         self.teleop_buttons.publish(buttons)
 
 
-class VideoArmTeleopConfig(ArmTeleopConfig):
+class VideoArmTeleopConfig(QuestTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
 
     video_jpeg_quality: int = 70
