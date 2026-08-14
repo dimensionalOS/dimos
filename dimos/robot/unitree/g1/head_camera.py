@@ -40,9 +40,6 @@ CAMERA_STREAM_CONFIG = {
     "height": 480,
     "fps": 15,
     "enable_depth": False,
-    # A leftover process from a previous run can still hold the USB device.
-    # Retry instead of aborting the deployment and taking DDS and control down.
-    "start_retry_seconds": 5.0,
 }
 
 

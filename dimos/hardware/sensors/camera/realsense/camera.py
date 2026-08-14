@@ -44,10 +44,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
-from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
-
-logger = setup_logger()
 
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
@@ -79,9 +76,6 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     # consumers, while remote viewers can take the ~20x smaller stream.
     compress_color: bool = False
     jpeg_quality: int = 75
-    # Seconds between reopen attempts when the device is unavailable at start.
-    # 0 keeps the old behaviour: raise, which aborts the whole deployment.
-    start_retry_seconds: float = 0.0
 
 
 class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
@@ -129,57 +123,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._retry_thread: threading.Thread | None = None
-        self._retry_stop = threading.Event()
 
     @rpc
     def start(self) -> None:
-        if self.config.start_retry_seconds <= 0:
-            self._open_pipeline()
-            return
-        try:
-            self._open_pipeline()
-        except Exception:
-            # A camera that lost a race for the USB device must not take the
-            # whole robot down with it: one module raising here aborts every
-            # other module's start.
-            logger.exception(
-                "RealSenseCamera failed to open; retrying every %.1fs in the background",
-                self.config.start_retry_seconds,
-            )
-            self._retry_thread = threading.Thread(target=self._retry_open, daemon=True)
-            self._retry_thread.start()
-
-    def _retry_open(self) -> None:
-        while not self._retry_stop.wait(self.config.start_retry_seconds):
-            try:
-                self._open_pipeline()
-            except Exception as error:
-                logger.warning(f"RealSenseCamera still unavailable: {error}")
-                continue
-            logger.info("RealSenseCamera opened on retry; streaming resumed")
-            return
-
-    def _release_pipeline(self) -> None:
-        """Drop a half-opened pipeline so the next attempt starts clean.
-
-        ``rs.pipeline()`` claims the device as soon as it is constructed, so a
-        failed ``start()`` that leaves the object alive makes every later
-        attempt fail against our own handle rather than the real holder.
-        """
-        if self._pipeline is None:
-            return
-        try:
-            self._pipeline.stop()
-        except Exception:
-            pass  # never started; constructing it is what has to be undone
-        self._pipeline = None
-        self._profile = None
-
-    def _open_pipeline(self) -> None:
         import pyrealsense2 as rs
 
-        self._release_pipeline()
         self._pipeline = rs.pipeline()
         config = rs.config()
 
@@ -485,7 +433,6 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     @rpc
     def stop(self) -> None:
         self._running = False
-        self._retry_stop.set()
 
         # Stop pipeline first to unblock wait_for_frames()
         if self._pipeline:
