@@ -16,6 +16,9 @@ on:
       blueprint:
         description: Blueprint to run under replay
         default: unitree-go2
+      db:
+        description: Recording to replay
+        default: go2_short
 
 permissions:
   contents: read
@@ -27,10 +30,9 @@ jobs:
       BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
       PROFILE_SECONDS: ${{ inputs.seconds || '180' }}
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
+      PROFILE_DB: ${{ inputs.db || 'go2_short' }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          lfs: true
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
@@ -42,14 +44,23 @@ jobs:
       - name: Install dimos
         run: uv sync --group tests --frozen
 
+      # Out of the measured window on purpose: an LFS pull inside it would show
+      # up as system time and wall, and the recording is not what we profile.
+      - name: Fetch the replay recording
+        run: |
+          uv run python -c "
+          from dimos.memory2.replay import resolve_db_path
+          print(resolve_db_path('$PROFILE_DB'))
+          "
+
       - name: Profile a replay deployment
         run: |
           # --run-for ends the run cleanly; the outer timeout is a backstop, so
           # reaching it (124) is a hung teardown and should fail the job.
           bin/rusage --name "$PROFILE_BLUEPRINT-replay" --out rusage.json -- \
             timeout --kill-after=60s "$((PROFILE_SECONDS + 120))" \
-            uv run dimos --replay --viewer none --run-for "$PROFILE_SECONDS" \
-            run "$PROFILE_BLUEPRINT"
+            uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
+            --run-for "$PROFILE_SECONDS" run "$PROFILE_BLUEPRINT"
 
       - name: Job summary
         if: always()
