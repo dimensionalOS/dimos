@@ -417,6 +417,48 @@ def test_pour_uses_spout_tcp_and_keeps_the_palm_fixed_while_tipping(
     )
 
 
+def test_pour_uses_the_tip_direction_verified_by_a_negative_y_spout_map(
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    offset = (0.0, -0.20, 0.0)
+    grid = [[1] * 7 for _ in range(7)]
+    reach_map = PourReachMap(
+        {
+            "pour_z": POUR_Z,
+            "tip_radians": math.pi / 2,
+            "spout_offset_in_palm": offset,
+            "cell": 0.05,
+            "x0": 0.10,
+            "y0": -0.40,
+            "ik_upright": grid,
+            "ik_tipped": grid,
+        },
+        expected_spout_offset_in_palm=offset,
+    )
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        [],
+        config=WateringTaskConfig(
+            spout_offset_in_palm=offset,
+            settle_seconds=0.0,
+            hold_seconds=0.0,
+            target_max_age=2.0,
+            base_pose_max_age=2.0,
+        ),
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert result.success
+    tipped_move = manipulation.move_to_pose.call_args_list[1]
+    assert tipped_move.kwargs["roll"] == pytest.approx(math.pi / 2)
+
+
 def test_pour_only_uses_live_planning_as_the_final_reach_gate(
     reach_map: PourReachMap,
     manipulation: MagicMock,

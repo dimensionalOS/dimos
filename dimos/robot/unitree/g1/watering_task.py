@@ -70,7 +70,6 @@ from dimos.robot.unitree.g1.manip_stance import (
     DEFAULT_MAP_PATH,
     DEFAULT_SPOUT_OFFSET_IN_PALM,
     RIGHT_PALM_FRAME,
-    TIP_RADIANS,
     WATERING_SPOUT_FRAME,
     PourReachMap,
     palm_pose_for_spout,
@@ -712,7 +711,7 @@ class WateringSequence:
     def _verify_poses(self, pot: tuple[float, float], yaw: float, pour_z: float) -> dict[str, bool]:
         spout = Vector3(pot[0], pot[1], pour_z)
         upright_orientation = Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
-        tipped_orientation = Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw))
+        tipped_orientation = Quaternion.from_euler(Vector3(self._reach.tip_radians, 0.0, yaw))
         tipped_pose = palm_pose_for_spout(
             spout,
             tipped_orientation,
@@ -741,7 +740,7 @@ class WateringSequence:
         spout = Vector3(pot[0], pot[1], pour_z)
         tipped_pose = palm_pose_for_spout(
             spout,
-            Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw)),
+            Quaternion.from_euler(Vector3(self._reach.tip_radians, 0.0, yaw)),
             self._config.spout_offset_in_palm,
         )
         upright = Pose(
@@ -775,7 +774,7 @@ class WateringSequence:
             x=float(tipped_pose.position.x),
             y=float(tipped_pose.position.y),
             z=float(tipped_pose.position.z),
-            roll=float(TIP_RADIANS),
+            roll=self._reach.tip_radians,
             pitch=0.0,
             yaw=yaw,
             robot_name=self._config.robot_name,

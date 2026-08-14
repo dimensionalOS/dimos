@@ -28,6 +28,7 @@ from dimos.robot.unitree.g1.manip_stance import (
     palm_to_capability_tcp,
     pot_in_base_frame,
     select_stance,
+    tip_radians_for_spout,
     tool_yaw_for,
     wrap_angle,
 )
@@ -170,6 +171,27 @@ def test_tipped_spout_tcp_moves_the_sampled_palm_above_the_water_exit():
     )
 
     assert palm == pytest.approx([0.4, -0.2, POUR_Z + 0.20])
+
+
+@pytest.mark.parametrize(
+    ("offset", "expected_roll"),
+    [
+        ((0.0, 0.20, 0.0), -math.pi / 2),
+        ((0.0, -0.20, 0.0), math.pi / 2),
+    ],
+)
+def test_tip_roll_lowers_the_configured_spout_side(offset, expected_roll):
+    roll = tip_radians_for_spout(offset)
+    rotation = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, math.cos(roll), -math.sin(roll)],
+            [0.0, math.sin(roll), math.cos(roll)],
+        ]
+    )
+
+    assert roll == pytest.approx(expected_roll)
+    assert (rotation @ np.asarray(offset))[2] == pytest.approx(-0.20)
 
 
 def test_a_map_sampled_for_a_different_pour_is_refused():

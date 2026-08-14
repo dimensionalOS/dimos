@@ -61,6 +61,20 @@ _GRASP_CENTER_IN_WRIST = np.array([0.12, 0.05, 0.0])
 _palm_to_tcp_cache: list[np.ndarray] = []
 
 
+def tip_radians_for_spout(
+    spout_offset_in_palm: tuple[float, float, float],
+) -> float:
+    """Roll the lateral spout side downward toward the pot.
+
+    Positive palm Y needs negative roll; negative palm Y needs positive
+    roll. A centred spout keeps the historical negative-roll default.
+    """
+    lateral = float(spout_offset_in_palm[1])
+    if np.isclose(lateral, 0.0):
+        return float(TIP_RADIANS)
+    return float(-np.copysign(np.pi / 2, lateral))
+
+
 def palm_to_tcp_offset() -> np.ndarray:
     """Grasp centre relative to the palm frame, which is what we plan to.
 
@@ -177,9 +191,10 @@ class PourReachMap:
         # A map sampled for a different pour would send the robot to a stance
         # that cannot hold the pose the demo actually commands, and it would
         # only show up as an unexplained planning failure after the walk.
+        expected_tip_radians = tip_radians_for_spout(expected_spout_offset_in_palm)
         if (
             not np.isclose(self.pour_z, POUR_Z)
-            or not np.isclose(self.tip_radians, TIP_RADIANS)
+            or not np.isclose(self.tip_radians, expected_tip_radians)
             or not np.allclose(
                 self.spout_offset_in_palm,
                 expected_spout_offset_in_palm,
@@ -190,7 +205,7 @@ class PourReachMap:
             raise ValueError(
                 f"reach map is stale: sampled for pour z={self.pour_z} tip={self.tip_radians} rad, "
                 f"spout_offset={self.spout_offset_in_palm}, but the demo pours at "
-                f"z={POUR_Z} tip={TIP_RADIANS} rad, "
+                f"z={POUR_Z} tip={expected_tip_radians} rad, "
                 f"spout_offset={expected_spout_offset_in_palm}. "
                 "Regenerate it with dimos.robot.unitree.g1.tool_pour_reach_map."
             )
