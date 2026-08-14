@@ -12,8 +12,10 @@ on:
   workflow_dispatch:
     inputs:
       seconds:
-        description: How long to run the deployment
-        default: "180"
+        # Match the recording, or the tail of the window measures a deployment
+        # idling on completed streams -- noise with no work in it.
+        description: Run window (go2_short spans 60s)
+        default: "70"
       blueprint:
         description: Blueprint to run under replay
         default: unitree-go2
@@ -37,7 +39,7 @@ jobs:
     env:
       # The CLI rejects a project key passed as --token; it wants BENCHER_API_KEY.
       BENCHER_API_KEY: ${{ secrets.BENCHER_API_TOKEN }}
-      PROFILE_SECONDS: ${{ inputs.seconds || '180' }}
+      PROFILE_SECONDS: ${{ inputs.seconds || '70' }}
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
       PROFILE_DB: ${{ inputs.db || 'go2_short' }}
     steps:
