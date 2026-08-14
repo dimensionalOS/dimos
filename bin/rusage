@@ -94,9 +94,9 @@ system_usec=$(field system_usec)
 usage_usec=$(field usage_usec)
 peak_bytes=$(field memory_peak_bytes)
 
-read -r cpu_user cpu_system cpu_total < <(
-	awk -v u="$user_usec" -v s="$system_usec" -v t="$usage_usec" \
-		'BEGIN { printf "%.3f %.3f %.3f\n", u / 1e6, s / 1e6, t / 1e6 }'
+read -r cpu_user cpu_system cpu_total peak_mib < <(
+	awk -v u="$user_usec" -v s="$system_usec" -v t="$usage_usec" -v p="$peak_bytes" \
+		'BEGIN { printf "%.3f %.3f %.3f %.1f\n", u / 1e6, s / 1e6, t / 1e6, p / 1048576 }'
 )
 
 cat >"$out" <<JSON
@@ -105,7 +105,7 @@ cat >"$out" <<JSON
     "cpu-core-seconds": { "value": $cpu_total },
     "cpu-user-seconds": { "value": $cpu_user },
     "cpu-system-seconds": { "value": $cpu_system },
-    "peak-memory-bytes": { "value": $peak_bytes },
+    "peak-memory-mib": { "value": $peak_mib },
     "wall-seconds": { "value": $wall }
   }
 }
