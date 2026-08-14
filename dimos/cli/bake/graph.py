@@ -14,16 +14,14 @@
 
 """Wire the selected modules together the way ``autoconnect`` would.
 
-Ports connect by name: same effective name means same topic. Where python's
-autoconnect silently leaves a same-name/different-type pair unconnected, a bake
-is a build artifact nobody re-reads, so the mismatch is an error instead.
+Unlike autoconnect, a same-name type mismatch is an error rather than silence.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from dimos.cli.bake.discovery import ModuleInfo, normalize_id
 from dimos.cli.bake.errors import BakeError
@@ -34,13 +32,7 @@ _TOPIC_PREFIX = "dimos/"
 
 
 def topic_for(name: str, msg_type: str) -> str:
-    """The zenoh key a typed dimos channel lands on.
-
-    ``transport_topic`` namespaces the channel under ``dimos/``; ``ZenohTopic``
-    then appends the message type, and that full key is what a python
-    NativeModule hands its native process. A baked host must agree, or a
-    standalone run would sit on keys nobody else uses.
-    """
+    """The zenoh key a typed dimos channel lands on."""
     return f"{_TOPIC_PREFIX}{name.lstrip('/')}/{msg_type}"
 
 
@@ -87,7 +79,7 @@ class Connection:
     def remapped(self) -> bool:
         return any(ref.port != self.name for ref in self.producers + self.consumers)
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "name": self.name,
             "topic": self.topic,
@@ -125,7 +117,7 @@ class Graph:
     def qos(self) -> dict[str, dict[str, str]]:
         return {c.topic: dict(c.qos) for c in self.connections if c.qos}
 
-    def to_json(self) -> dict[str, Any]:
+    def to_json(self) -> dict[str, object]:
         return {
             "host": self.host,
             "modules": list(self.modules),
@@ -235,7 +227,7 @@ def _record_type(
     if existing[0] != msg_type:
         raise BakeError(
             f"`{name}` is {existing[0]} on {existing[1]} but {msg_type} on {ref}. "
-            f"Two different messages cannot share a topic — rename one with "
+            f"Two different messages cannot share a topic: rename one with "
             f"--remap {ref}=<other_name>"
         )
 

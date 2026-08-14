@@ -14,12 +14,13 @@
 
 """Tests for `baked_host`: the port union and the nested stdin blob."""
 
+from collections.abc import Mapping
 import json
 from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
-from dimos.core.baked_host import baked_host
+from dimos.core.baked_host import BakedHost, baked_host
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -56,11 +57,11 @@ class Planner(NativeModule):
 MEMBERS = {"mapper": Mapper, "planner": Planner}
 
 
-def host_class(**kwargs):
+def host_class(**kwargs: Mapping[tuple[str, str], str]) -> type[BakedHost]:
     return baked_host("GoNav", executable="dist/go2-nav", members=MEMBERS, **kwargs)
 
 
-def ports(cls):
+def ports(cls: type[NativeModule]) -> dict[str, object]:
     return {
         name: hint for name, hint in get_type_hints(cls).items() if get_origin(hint) in (In, Out)
     }

@@ -427,15 +427,15 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             FieldKind::Input { .. } => want_input,
             FieldKind::Output { .. } => !want_input,
             // A `#[tf]` field is a port like any other as far as the registry
-            // goes -- bake has to put the topic in the host's map or the module
-            // refuses to start. It lists under `inputs`: the graph has no io
-            // kind, and a host consumes tf far more often than it publishes it.
+            // goes: bake has to put the topic in the host's map or the module
+            // refuses to start. It lists under `inputs` because the graph has
+            // no io kind and a host mostly consumes tf.
             FieldKind::Tf => want_input,
             _ => false,
         })
         .map(|f| PortDecl {
             name: f.name.to_string(),
-            // `Tf` carries no generic payload; the port is TFMessage by
+            // `Tf` carries no generic payload. The port is TFMessage by
             // construction.
             ty: match f.kind {
                 FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
@@ -796,9 +796,13 @@ mod tests {
 
     #[test]
     fn compares_only_the_last_msg_type_segment() {
-        // The manifest spells the package; the struct spells the imported name.
+        // The manifest spells the package. The struct spells the imported name.
+        let manifest = MANIFEST.replace(
+            "lidar = \"sensor_msgs.PointCloud2\"",
+            "lidar = \"other_msgs.PointCloud2\"",
+        );
         check_manifest_ports(
-            MANIFEST,
+            &manifest,
             "demo",
             &[port("lidar", "PointCloud2")],
             &[port("global_map", "PointCloud2")],

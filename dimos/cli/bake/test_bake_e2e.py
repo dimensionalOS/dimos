@@ -14,9 +14,7 @@
 
 """End-to-end: bake ray_tracing + mls_planner and run the binary for real.
 
-Compiles a host, feeds it the config bake emitted, and drives it over zenoh:
-the planner's output must appear on the bus, the suppressed hop between the two
-modules must not. Excluded from the default run (it builds rust); run it with
+Excluded from the default run because it builds rust. Run it with
 ``pytest -m self_hosted dimos/cli/bake/test_bake_e2e.py``.
 """
 
@@ -41,7 +39,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 pytestmark = pytest.mark.self_hosted
 
 SUPPRESSED = ("global_map", "local_map", "region_bounds")
-# The sensor sits a metre above a flat patch of floor.
+# The sensor sits a meter above a flat patch of floor.
 SENSOR_Z = 1.0
 
 
@@ -52,7 +50,7 @@ def free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def baked(tmp_path_factory) -> tuple[Path, dict]:
+def baked(tmp_path_factory) -> tuple[Path, dict[str, object]]:
     """The compiled host plus the stdin config bake emitted for it."""
     out = tmp_path_factory.mktemp("bake") / "go2-nav"
     config = out.parent / "go2-nav.json"
@@ -73,7 +71,7 @@ def baked(tmp_path_factory) -> tuple[Path, dict]:
     return out, json.loads(config.read_text())
 
 
-def spawn_host(binary: Path, config: dict, port: int) -> subprocess.Popen:
+def spawn_host(binary: Path, config: dict[str, object], port: int) -> subprocess.Popen[bytes]:
     env = {
         **os.environ,
         "DIMOS_TRANSPORT": "zenoh",
@@ -88,7 +86,7 @@ def spawn_host(binary: Path, config: dict, port: int) -> subprocess.Popen:
     return proc
 
 
-def await_listener(proc: subprocess.Popen, port: int, timeout: float = 20.0) -> None:
+def await_listener(proc: subprocess.Popen[bytes], port: int, timeout: float = 20.0) -> None:
     """Block until the host's zenoh endpoint accepts, so our dial cannot race it."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
