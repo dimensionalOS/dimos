@@ -278,6 +278,7 @@ def main() -> None:
         referee.style_scene_for_video()
         referee.start_ghost_renderer()
         referee.start_radio_hud()
+        referee.start_goal_markers()
 
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).

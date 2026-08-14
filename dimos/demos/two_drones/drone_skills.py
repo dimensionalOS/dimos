@@ -19,6 +19,7 @@ The drone flies at a fixed cruise altitude; the ground navigation stack
 dimsim flight embodiment holds altitude (planner twists have linear.z = 0).
 """
 
+import json
 import math
 import threading
 import time
@@ -30,7 +31,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -126,6 +127,11 @@ class DroneSkillContainer(Module):
     # Simulated target sensor (LOS referee publishes here): latest visibility
     # report, e.g. "VISIBLE 4.2 -1.5" or "LOST".
     target_event: In[str]
+    # Every navigation goal this drone commits to, as JSON {x, y, kind} with
+    # kind "destination" (an LLM-level fly_to decision) or "hop" (one waypoint
+    # of the follower). The referee renders these as ground circles so goal
+    # cadence is visible in the video.
+    goal_marker: Out[str]
 
     _navigation: NavigationInterfaceSpec
 
@@ -175,6 +181,7 @@ class DroneSkillContainer(Module):
         if self._latest_odom is None:
             return "No odometry yet — cannot fly."
         x, y = self._clamp(x, y)
+        self._mark(x, y, "destination")
         sx, sy = self._latest_odom.position.x, self._latest_odom.position.y
         dist = math.hypot(x - sx, y - sy)
         hops = max(1, math.ceil(dist / _MAX_HOP))
@@ -221,6 +228,14 @@ class DroneSkillContainer(Module):
         bx, by = self.config.bound_x, self.config.bound_y
         return max(-bx, min(bx, x)), max(-by, min(by, y))
 
+    def _mark(self, x: float, y: float, kind: str) -> None:
+        try:
+            self.goal_marker.publish(
+                json.dumps({"x": round(x, 2), "y": round(y, 2), "kind": kind})
+            )
+        except Exception:
+            pass
+
     def _start_path(self, waypoints: list[tuple[float, float]], label: str) -> None:
         """Follow waypoints in a background thread: hop, retry frontier
         failures once (the map keeps growing as we fly), skip dead hops."""
@@ -229,6 +244,7 @@ class DroneSkillContainer(Module):
 
         def _goto(wx: float, wy: float) -> str:
             """Fly one hop. Returns reached | failed | cancelled."""
+            self._mark(wx, wy, "hop")
             self._navigation.set_goal(
                 PoseStamped(
                     position=make_vector3(wx, wy, 0.0),

@@ -398,6 +398,62 @@ class Referee:
         return 'styled';
         """, timeout=15.0)
 
+    def start_goal_markers(self) -> None:
+        """Render a ground circle at every navigation goal a drone commits to:
+        small ring = one follower hop, large double ring = an LLM-level fly_to
+        destination. Markers persist and fade, so goal cadence reads as density."""
+        for drone in self.drones:
+            sub = pLCMTransport(f"/{drone}/goal_marker")
+            sub.start()
+            color = DRONE_COLORS.get(drone, "#dddddd")
+
+            def on_marker(raw: str, color: str = color) -> None:
+                try:
+                    m = json.loads(raw)
+                    tx, tz = ros_to_three(float(m["x"]), float(m["y"]))
+                    big = m.get("kind") == "destination"
+                    self._exec_on(
+                        "ghosts", self._client_for("ghosts"),
+                        f"""
+                        window.__demoGoalMarks = window.__demoGoalMarks || [];
+                        const marks = window.__demoGoalMarks;
+                        const c = new THREE.Color({json.dumps(color)});
+                        const g = new THREE.Group();
+                        const mk = (r, w, op) => new THREE.Mesh(
+                            new THREE.RingGeometry(r - w, r, 20),
+                            new THREE.MeshBasicMaterial({{color: c, transparent: true,
+                                opacity: op, depthWrite: false, side: THREE.DoubleSide}}));
+                        if ({str(big).lower()}) {{
+                            g.add(mk(0.55, 0.07, 0.95));
+                            g.add(mk(0.32, 0.05, 0.95));
+                        }} else {{
+                            g.add(mk(0.22, 0.05, 0.7));
+                        }}
+                        g.rotation.x = -Math.PI / 2;
+                        g.position.set({tx:.2f}, 0.045, {tz:.2f});
+                        g.traverse(o => {{ o.userData.__demoIgnoreLOS = true; }});
+                        scene.add(g);
+                        // Older marks fade so recency is visible; cap the total.
+                        for (const old of marks) {{
+                            old.traverse(o => {{
+                                if (o.material) o.material.opacity *= 0.965;
+                            }});
+                        }}
+                        marks.push(g);
+                        if (marks.length > 300) {{
+                            const dead = marks.shift();
+                            scene.remove(dead);
+                        }}
+                        return 'ok';
+                        """,
+                        timeout=5.0,
+                    )
+                except Exception:
+                    logger.warning("goal marker render failed", exc_info=True)
+
+            sub.subscribe(on_marker)
+            self._belief_subs.append(sub)
+
     def start_radio_hud(self) -> None:
         """Mirror non-beacon radio traffic into the on-screen HUD."""
         sub = pLCMTransport("/radio")
