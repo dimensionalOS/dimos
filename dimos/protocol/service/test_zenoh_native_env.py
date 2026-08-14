@@ -31,6 +31,7 @@ def test_native_env_mirrors_the_whole_config():
         scouting_interface="",
         multicast=True,
         gossip=False,
+        connect_timeout=2.0,
     )
     assert native_env(config) == {
         "DIMOS_ZENOH_CONNECT": "tcp/192.0.2.10:7447",
@@ -39,6 +40,7 @@ def test_native_env_mirrors_the_whole_config():
         "DIMOS_ZENOH_MULTICAST": "true",
         "DIMOS_ZENOH_GOSSIP": "false",
         "DIMOS_ZENOH_INTERFACE": LOOPBACK_INTERFACE,
+        "DIMOS_ZENOH_CONNECT_TIMEOUT_MS": "2000",
     }
 
 

@@ -298,7 +298,9 @@ def test_build_native_forces_build(tmp_path: Path) -> None:
     assert run_build(tmp_path, build_native=True).exists()
 
 
-def _spawn_env(monkeypatch, transport: str) -> dict[str, str]:
+def _spawn_env(
+    monkeypatch, transport: str, extra_env: dict[str, str] | None = None
+) -> dict[str, str]:
     """Env the native subprocess would be spawned with, without spawning it."""
     for key in list(os.environ):
         if key.startswith("DIMOS_ZENOH_"):
@@ -310,7 +312,7 @@ def _spawn_env(monkeypatch, transport: str) -> dict[str, str]:
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
     # A port-less module: constructing one with ports opens its transports.
-    module = StubBuildModule(executable=_ECHO)
+    module = StubBuildModule(executable=_ECHO, extra_env=extra_env or {})
     try:
         return module._spawn_env()
     finally:
@@ -327,6 +329,13 @@ def test_lcm_spawn_env_has_no_zenoh_vars(monkeypatch) -> None:
     env = _spawn_env(monkeypatch, "lcm")
     assert env["DIMOS_TRANSPORT"] == "lcm"
     assert not any(key.startswith("DIMOS_ZENOH_") for key in env)
+
+
+def test_extra_env_overrides_the_derived_zenoh_env(monkeypatch) -> None:
+    """A blueprint can give one native a different role, e.g. router or client."""
+    env = _spawn_env(monkeypatch, "zenoh", extra_env={"DIMOS_ZENOH_MODE": "client"})
+    assert env["DIMOS_ZENOH_MODE"] == "client"
+    assert env["DIMOS_ZENOH_CONNECT"] == "tcp/192.0.2.10:7447"
 
 
 def test_base_field_not_sent_without_opt_in() -> None:

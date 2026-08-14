@@ -32,6 +32,7 @@ const ENV_MODE: &str = "DIMOS_ZENOH_MODE";
 const ENV_MULTICAST: &str = "DIMOS_ZENOH_MULTICAST";
 const ENV_GOSSIP: &str = "DIMOS_ZENOH_GOSSIP";
 const ENV_INTERFACE: &str = "DIMOS_ZENOH_INTERFACE";
+const ENV_CONNECT_TIMEOUT_MS: &str = "DIMOS_ZENOH_CONNECT_TIMEOUT_MS";
 
 /// Publisher QoS for one channel. `None` fields keep zenoh's defaults.
 #[derive(Clone, Default)]
@@ -118,6 +119,7 @@ fn apply_settings(
             get(ENV_INTERFACE).as_deref().map(json_str),
         ),
         ("scouting/gossip/enabled", get(ENV_GOSSIP)),
+        ("connect/timeout_ms", get(ENV_CONNECT_TIMEOUT_MS)),
     ];
     for (key, value) in inserts {
         if let Some(value) = value {
@@ -131,6 +133,13 @@ impl ZenohTransport {
     pub async fn new() -> io::Result<Self> {
         let config = apply_settings(::zenoh::Config::default(), env_setting)?;
         let session = ::zenoh::open(config).await.map_err(to_io)?;
+        tracing::info!(
+            zid = %session.zid(),
+            mode = env_setting(ENV_MODE).as_deref().unwrap_or("peer"),
+            connect = env_setting(ENV_CONNECT).as_deref().unwrap_or("none"),
+            listen = env_setting(ENV_LISTEN).as_deref().unwrap_or("none"),
+            "zenoh session opened"
+        );
         Ok(Self {
             session,
             qos: OnceLock::new(),
@@ -227,6 +236,7 @@ mod tests {
                 ("DIMOS_ZENOH_MULTICAST", "true"),
                 ("DIMOS_ZENOH_GOSSIP", "false"),
                 ("DIMOS_ZENOH_INTERFACE", "lo"),
+                ("DIMOS_ZENOH_CONNECT_TIMEOUT_MS", "1000"),
             ]),
         )
         .expect("valid settings apply");
@@ -244,6 +254,7 @@ mod tests {
             config.get_json("scouting/multicast/interface").unwrap(),
             r#""lo""#
         );
+        assert_eq!(config.get_json("connect/timeout_ms").unwrap(), "1000");
     }
 
     #[test]

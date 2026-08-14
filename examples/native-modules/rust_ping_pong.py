@@ -17,6 +17,9 @@
 Run with:
     python examples/native-modules/rust_ping_pong.py --transport lcm
     python examples/native-modules/rust_ping_pong.py --transport zenoh
+    python examples/native-modules/rust_ping_pong.py --transport zenoh --topology
+
+With --topology pong is opened as router and ping is opened as client.
 """
 
 from __future__ import annotations
@@ -33,6 +36,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 _RUST_DIR = Path(__file__).parent / "rust"
 _EXAMPLES = _RUST_DIR / "target" / "release"
 _BUILD = "cargo build --release"
+
+# Where pong listens when it runs as the router.
+_ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
 
 
 class PingConfig(NativeModuleConfig):
@@ -66,14 +72,39 @@ class PongModule(NativeModule):
     confirm: Out[Twist]
 
 
-def blueprint():
-    return autoconnect(PingModule.blueprint(), PongModule.blueprint())
+def blueprint(topology: bool = False):
+    ping_env: dict[str, str] = {}
+    pong_env: dict[str, str] = {}
+    if topology:
+        pong_env = {
+            "DIMOS_ZENOH_MODE": "router",
+            "DIMOS_ZENOH_LISTEN": _ROUTER_ENDPOINT,
+            "DIMOS_ZENOH_CONNECT": "",
+        }
+        ping_env = {
+            "DIMOS_ZENOH_MODE": "client",
+            "DIMOS_ZENOH_CONNECT": _ROUTER_ENDPOINT,
+            # The client dials until the router native is up, however slowly it
+            # cold-starts. A client with no router fails hard at open.
+            "DIMOS_ZENOH_CONNECT_TIMEOUT_MS": "10000",
+        }
+    return autoconnect(
+        PingModule.blueprint(extra_env=ping_env),
+        PongModule.blueprint(extra_env=pong_env),
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
+    parser.add_argument(
+        "--topology",
+        action="store_true",
+        help="run pong as a zenoh router and ping as its client",
+    )
     args = parser.parse_args()
+    if args.topology and args.transport != "zenoh":
+        parser.error("--topology requires --transport zenoh")
 
-    bp = blueprint().global_config(viewer="none", transport=args.transport)
+    bp = blueprint(args.topology).global_config(viewer="none", transport=args.transport)
     ModuleCoordinator.build(bp).loop()
