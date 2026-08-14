@@ -18,7 +18,6 @@ from collections.abc import Iterable
 import math
 from typing import Any
 
-import cv2
 import numpy as np
 
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
@@ -39,6 +38,8 @@ def mosaic(
     Observation[Image] tagged ``{"mosaic": True}`` — the rerun renderer
     displays poseless image observations as flat 2D panels.
     """
+    import cv2
+
     images: list[Image] = []
     for f in frames:
         if isinstance(f, Image):

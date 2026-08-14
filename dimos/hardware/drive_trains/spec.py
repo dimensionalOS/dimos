@@ -78,8 +78,3 @@ class TwistBaseAdapter(Protocol):
     def read_enabled(self) -> bool:
         """Check if platform is enabled."""
         ...
-
-
-__all__ = [
-    "TwistBaseAdapter",
-]

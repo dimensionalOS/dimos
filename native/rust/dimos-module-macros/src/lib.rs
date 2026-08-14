@@ -1,9 +1,23 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, Path, Type};
 
-#[proc_macro_derive(Module, attributes(input, output, config, module))]
+#[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match expand(input) {
@@ -12,10 +26,172 @@ pub fn derive_module(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Defines a native-module config: every field is required and supplied by the Python wrapper
+/// over stdin, with no Rust-side defaults.
+///
+/// ```ignore
+/// #[native_config]
+/// pub struct Config {
+///     #[validate(range(min = 0.0))]
+///     pub voxel_size: f32,
+/// }
+/// ```
+///
+/// Injects `#[derive(Debug, Deserialize, Serialize, Validate)]` and
+/// `#[serde(deny_unknown_fields)]`, and emits `impl NativeConfig`.
+///
+/// Rejected at compile time:
+/// - `Option<T>` fields
+/// - `#[serde(default)]`, field or container
+/// - `#[serde(skip)]`, `#[serde(skip_deserializing)]`, `#[serde(flatten)]`
+///
+/// A type alias to `Option` is not caught here, but `run()` rejects a missing
+/// field at startup regardless of how the field is spelled.
+#[proc_macro_attribute]
+pub fn native_config(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let maybe_err = check_native_config(&input)
+        .err()
+        .map(|e| e.to_compile_error());
+
+    // Emit the expansion with any error so a failed check shows our useful message.
+    let injectable = matches!(
+        &input.data,
+        Data::Struct(s) if matches!(s.fields, Fields::Named(_) | Fields::Unit)
+    );
+    if !injectable {
+        return quote!(#input #maybe_err).into();
+    }
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, ::validator::Validate)]
+        #[serde(deny_unknown_fields)]
+        #input
+        impl #impl_generics ::dimos_module::NativeConfig for #name #ty_generics #where_clause {}
+        #maybe_err
+    }
+    .into()
+}
+
+fn check_native_config(input: &DeriveInput) -> syn::Result<()> {
+    let fields = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Named(named) => &named.named,
+            Fields::Unit => return check_container_serde(input),
+            Fields::Unnamed(_) => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "native_config requires a struct with named fields or a unit struct",
+                ))
+            }
+        },
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "native_config can only be applied to structs",
+            ))
+        }
+    };
+
+    check_container_serde(input)?;
+
+    for field in fields {
+        if is_option(&field.ty) {
+            return Err(syn::Error::new_spanned(
+                &field.ty,
+                "native_config forbids Option fields: an absent field would silently become None. \
+                 Make it required and let Python always send it.",
+            ));
+        }
+        check_field_serde(field)?;
+    }
+
+    Ok(())
+}
+
+/// Reject a container-level `#[serde(default)]`. The macro injects
+/// `deny_unknown_fields` itself.
+fn check_container_serde(input: &DeriveInput) -> syn::Result<()> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(default)]: Python owns defaults and sends \
+                     every field. Remove the default and make every field required.",
+                ));
+            }
+            // allow other serde args that take a `= value`
+            consume_optional_value(&meta);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// Reject field-level `#[serde(default | skip | skip_deserializing | flatten)]`.
+fn check_field_serde(field: &Field) -> syn::Result<()> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(default)]: Python owns defaults and sends \
+                     every field. Make it required.",
+                ));
+            }
+            if meta.path.is_ident("skip") || meta.path.is_ident("skip_deserializing") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(skip)]: a skipped field is filled by Rust \
+                     instead of Python.",
+                ));
+            }
+            if meta.path.is_ident("flatten") {
+                return Err(meta.error(
+                    "native_config forbids #[serde(flatten)]: it bypasses deny_unknown_fields.",
+                ));
+            }
+            consume_optional_value(&meta);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn consume_optional_value(meta: &syn::meta::ParseNestedMeta) {
+    if meta.input.peek(syn::Token![=]) {
+        let _ = meta.value().and_then(|v| v.parse::<syn::Expr>());
+    }
+}
+
+fn is_option(ty: &Type) -> bool {
+    matches!(ty, Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Option"))
+}
+
+const ONE_ATTR_ONLY: &str = "field has multiple module attributes; only one of #[input], \
+                             #[output], #[io], #[config], #[tf] is allowed";
+
 enum FieldKind {
-    Input { decode: Path, handler: Ident },
-    Output { encode: Path },
+    Input {
+        decode: Path,
+        handler: Ident,
+    },
+    Output {
+        encode: Path,
+    },
+    Io {
+        decode: Path,
+        encode: Path,
+        handler: Ident,
+    },
     Config,
+    Tf,
     State,
 }
 
@@ -110,24 +286,30 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             FieldKind::Output { encode } => {
                 quote!(#name: builder.output(#name_str, #encode))
             }
+            FieldKind::Io { decode, encode, .. } => {
+                quote!(#name: builder.io(#name_str, #decode, #encode))
+            }
             FieldKind::Config => quote!(#name: config),
+            FieldKind::Tf => quote!(#name: builder.tf()),
             FieldKind::State => quote!(#name: ::core::default::Default::default()),
         }
     });
 
-    let input_fields: Vec<&ClassifiedField> = classified
+    // Every port that receives messages gets an arm in the select! loop.
+    let handled_fields: Vec<(&Ident, &Ident)> = classified
         .iter()
-        .filter(|f| matches!(f.kind, FieldKind::Input { .. }))
+        .filter_map(|f| match &f.kind {
+            FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => {
+                Some((f.name, handler))
+            }
+            _ => None,
+        })
         .collect();
 
-    let handle_body = if input_fields.is_empty() {
+    let handle_body = if handled_fields.is_empty() {
         quote!(::std::future::pending::<()>().await)
     } else {
-        let handle_arms = input_fields.iter().map(|f| {
-            let FieldKind::Input { handler, .. } = &f.kind else {
-                unreachable!()
-            };
-            let name = f.name;
+        let handle_arms = handled_fields.iter().map(|(name, handler)| {
             quote!(
                 ::core::option::Option::Some(msg) = self.#name.recv() => {
                     self.#handler(msg).await
@@ -191,10 +373,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
         let path = attr.path();
         if path.is_ident("input") {
             if found.is_some() {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
-                ));
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
             let mut decode: Option<Path> = None;
             let mut handler: Option<Ident> = None;
@@ -216,10 +395,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
             found = Some(FieldKind::Input { decode, handler });
         } else if path.is_ident("output") {
             if found.is_some() {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
-                ));
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
             let mut encode: Option<Path> = None;
             attr.parse_nested_meta(|meta| {
@@ -236,16 +412,119 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
                 syn::Error::new_spanned(attr, "#[output] requires `encode = ...`")
             })?;
             found = Some(FieldKind::Output { encode });
+        } else if path.is_ident("io") {
+            if found.is_some() {
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
+            }
+            let mut decode: Option<Path> = None;
+            let mut encode: Option<Path> = None;
+            let mut handler: Option<Ident> = None;
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("decode") {
+                    decode = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("encode") {
+                    encode = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("handler") {
+                    handler = Some(meta.value()?.parse()?);
+                } else {
+                    return Err(meta.error(
+                        "unrecognized #[io] argument; expected `decode = ...`, `encode = ...` or `handler = ...`",
+                    ));
+                }
+                Ok(())
+            })?;
+            let decode = decode
+                .ok_or_else(|| syn::Error::new_spanned(attr, "#[io] requires `decode = ...`"))?;
+            let encode = encode
+                .ok_or_else(|| syn::Error::new_spanned(attr, "#[io] requires `encode = ...`"))?;
+            let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
+            found = Some(FieldKind::Io {
+                decode,
+                encode,
+                handler,
+            });
         } else if path.is_ident("config") {
             if found.is_some() {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    "field has multiple module attributes; only one of #[input], #[output], #[config] is allowed",
-                ));
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
             found = Some(FieldKind::Config);
+        } else if path.is_ident("tf") {
+            if found.is_some() {
+                return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
+            }
+            found = Some(FieldKind::Tf);
         }
     }
 
     Ok(found.unwrap_or(FieldKind::State))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_native_config;
+    use syn::parse_str;
+
+    fn check(src: &str) -> syn::Result<()> {
+        check_native_config(&parse_str(src).expect("test input should parse"))
+    }
+
+    #[test]
+    fn accepts_plain_required_fields() {
+        check(r#"struct Config { a: f32, b: String, c: u32 }"#)
+            .expect("a plain required-field struct should pass");
+    }
+
+    #[test]
+    fn accepts_unit_struct() {
+        check(r#"struct NoConfig;"#).expect("a field-less struct should pass");
+    }
+
+    #[test]
+    fn accepts_validate_attrs() {
+        check(r#"struct Config { #[validate(range(min = 0))] a: i64 }"#)
+            .expect("validate attrs should pass through");
+    }
+
+    #[test]
+    fn rejects_option_field() {
+        let err =
+            check(r#"struct Config { a: Option<f32> }"#).expect_err("Option fields are forbidden");
+        assert!(err.to_string().contains("Option"), "{err}");
+    }
+
+    #[test]
+    fn rejects_field_default() {
+        check(r#"struct Config { #[serde(default)] a: f32 }"#)
+            .expect_err("field #[serde(default)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_field_default_with_path() {
+        check(r#"struct Config { #[serde(default = "mk")] a: f32 }"#)
+            .expect_err("#[serde(default = ...)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_container_default() {
+        check(r#"#[serde(default)] struct Config { a: f32 }"#)
+            .expect_err("container #[serde(default)] is forbidden");
+    }
+
+    #[test]
+    fn rejects_flatten_and_skip() {
+        check(r#"struct Config { #[serde(flatten)] a: Inner }"#).expect_err("flatten is forbidden");
+        check(r#"struct Config { #[serde(skip)] a: f32 }"#).expect_err("skip is forbidden");
+        check(r#"struct Config { #[serde(skip_deserializing)] a: f32 }"#)
+            .expect_err("skip_deserializing is forbidden");
+    }
+
+    #[test]
+    fn rejects_tuple_struct() {
+        check(r#"struct Config(f32);"#).expect_err("tuple structs are not valid configs");
+    }
+
+    #[test]
+    fn rejects_enum() {
+        check(r#"enum Config { A, B }"#).expect_err("enums are not valid configs");
+    }
 }

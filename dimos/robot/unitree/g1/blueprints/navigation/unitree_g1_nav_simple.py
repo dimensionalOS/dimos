@@ -52,5 +52,3 @@ unitree_g1_nav_simple = autoconnect(
     MovementManager.blueprint(),
     unitree_g1_vis,
 ).global_config(n_workers=10, robot_model="unitree_g1")
-
-__all__ = ["unitree_g1_nav_simple"]

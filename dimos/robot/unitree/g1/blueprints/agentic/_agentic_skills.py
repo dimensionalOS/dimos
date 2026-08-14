@@ -30,5 +30,3 @@ _agentic_skills = autoconnect(
     SpeakSkill.blueprint(),
     UnitreeG1SkillContainer.blueprint(),
 )
-
-__all__ = ["_agentic_skills"]

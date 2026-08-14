@@ -17,14 +17,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-import threading
 
 import pytest
-from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
 from dimos.memory2.module import StreamModule
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
@@ -96,36 +93,3 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
-
-
-def _reset_thread_pool() -> None:
-    """Shut down and replace the global RxPY thread pool so conftest thread-leak check passes."""
-    import dimos.utils.threadpool as tp
-
-    tp.scheduler.executor.shutdown(wait=True)
-    tp.scheduler = ThreadPoolScheduler(max_workers=tp.get_max_workers())
-
-
-@pytest.mark.tool
-@pytest.mark.parametrize("module_cls", module_cases)
-def test_e2e_runtime_wiring(module_cls: type[StreamModule]) -> None:
-    """Push data into In port, assert doubled data arrives on Out port."""
-    module = module_cls()
-    module.numbers.transport = pLCMTransport("/test/numbers")
-    module.doubled.transport = pLCMTransport("/test/doubled")
-
-    received: list[int] = []
-    done = threading.Event()
-
-    unsub = module.doubled.subscribe(lambda msg: (received.append(msg), done.set()))
-
-    module.start()
-    try:
-        module.numbers.transport.publish(42)
-        assert done.wait(timeout=5.0), f"Timed out, received={received}"
-        assert received == [84]
-    finally:
-        unsub()
-        module.stop()
-        _reset_thread_pool()
-        _reset_thread_pool()

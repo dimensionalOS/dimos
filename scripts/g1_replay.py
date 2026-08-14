@@ -37,6 +37,8 @@ from dimos.utils.logging_config import setup_logger
 _DEFAULT_TRAJECTORY_NAME = "g1_wholebody_replay.json"
 
 NUM_DOF = 29
+# The g1 coordinator blueprints publish this robot's joints here.
+_JOINT_STATE_TOPIC = "/g1/joints"
 CANONICAL_JOINTS = make_humanoid_joints("g1")
 assert len(CANONICAL_JOINTS) == NUM_DOF
 
@@ -99,9 +101,9 @@ def main() -> None:
         f"will publish to /g1/joint_command using canonical joint names ({CANONICAL_JOINTS[0]} ...)"
     )
 
-    # Subscribe to coordinator's joint_state output to capture the current pose.
-    # Coordinator joint state names are {hardware_id}/{joint} so they align with
-    # CANONICAL_JOINTS, lookup is straightforward.
+    # Subscribe to the coordinator's per-robot joint output to capture the
+    # current pose. Coordinator joint state names are {hardware_id}/{joint} so
+    # they align with CANONICAL_JOINTS, lookup is straightforward.
     state_lock = threading.Lock()
     current_q: dict[str, float] = {}
     state_event = threading.Event()
@@ -113,13 +115,13 @@ def main() -> None:
                 current_q[n] = q
         state_event.set()
 
-    state_sub: LCMTransport[JointState] = LCMTransport("/coordinator/joint_state", JointState)
+    state_sub: LCMTransport[JointState] = LCMTransport(_JOINT_STATE_TOPIC, JointState)
     # subscribe() returns an unsub callable; signature claims None (see transport.py).
     state_unsub = state_sub.subscribe(on_state)  # type: ignore[func-returns-value]
     cmd_pub: LCMTransport[JointState] = LCMTransport("/g1/joint_command", JointState)
 
     try:
-        logger.info("waiting up to 10s for /coordinator/joint_state ...")
+        logger.info(f"waiting up to 10s for {_JOINT_STATE_TOPIC} ...")
         if not state_event.wait(timeout=10.0):
             logger.error("no joint_state received — is `dimos run unitree-g1-coordinator` running?")
             return

@@ -18,7 +18,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from dimos.core.tests.stress_test_module import StressTestModule
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.remote_module_source import RemoteModuleSource
 

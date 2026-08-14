@@ -28,5 +28,3 @@ unitree_go2_agentic_ollama = autoconnect(
 ).requirements(
     ollama_installed,
 )
-
-__all__ = ["unitree_go2_agentic_ollama"]

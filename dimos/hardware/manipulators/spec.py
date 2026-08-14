@@ -105,6 +105,14 @@ class ManipulatorAdapter(Protocol):
         """Check if connected."""
         ...
 
+    def activate(self) -> bool:
+        """Prepare hardware for commanded motion after connect()."""
+        ...
+
+    def deactivate(self) -> bool:
+        """Gracefully stop commanded motion before disconnect()."""
+        ...
+
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
         ...
@@ -225,13 +233,3 @@ class ManipulatorAdapter(Protocol):
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor [fx, fy, fz, tx, ty, tz]. None if no sensor."""
         ...
-
-
-__all__ = [
-    "ControlMode",
-    "DriverStatus",
-    "JointLimits",
-    "ManipulatorAdapter",
-    "ManipulatorInfo",
-    "default_base_transform",
-]

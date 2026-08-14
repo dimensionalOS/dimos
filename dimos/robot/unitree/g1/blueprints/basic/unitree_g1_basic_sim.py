@@ -27,5 +27,3 @@ unitree_g1_basic_sim = autoconnect(
     G1SimConnection.blueprint(),
     ReplanningAStarPlanner.blueprint(),
 )
-
-__all__ = ["unitree_g1_basic_sim"]

@@ -16,16 +16,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import functools
+import inspect
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import ModuleBase
+    from dimos.core.module import ModuleBase, SkillInfo
 
 logger = setup_logger()
 
@@ -52,10 +54,25 @@ class RpcCall:
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
 
-        if original_method:
-            self.__doc__ = original_method.__doc__
-            self.__name__ = original_method.__name__
-            self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
+        self.__name__ = name
+        self.__qualname__ = f"{self.__class__.__name__}.{name}"
+        if original_method is not None:
+            functools.update_wrapper(self, original_method)
+            signature = inspect.signature(original_method)
+            parameters = list(signature.parameters.values())
+            if parameters and parameters[0].name in {"self", "cls"}:
+                parameters = parameters[1:]
+            self.__signature__ = signature.replace(parameters=parameters)
+
+    @property
+    def rpc_name(self) -> str:
+        """The method name advertised by the remote module."""
+        return self._name
+
+    @property
+    def remote_name(self) -> str:
+        """The exact deployed module-instance name."""
+        return self._remote_name
 
     def set_rpc(self, rpc: RPCSpec) -> None:
         self._rpc = rpc
@@ -93,9 +110,12 @@ class RpcCall:
 class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
+    remote_name: str
+
     def build(self) -> None: ...
     def start(self) -> None: ...
     def stop(self) -> None: ...
+    def get_skills(self) -> list[SkillInfo]: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
 
 
@@ -104,24 +124,25 @@ class RPCClient:
         self,
         actor_instance: Actor | None,
         actor_class: type[ModuleBase],
+        remote_name: str | None = None,
         *,
-        rpc: LCMRPC | None = None,
+        rpc: RPCSpec | None = None,
     ) -> None:
         if rpc is None:
-            self.rpc = LCMRPC()
+            self.rpc = rpc_backend()()
             self._owns_rpc = True
             self.rpc.start()
         else:
             self.rpc = rpc
             self._owns_rpc = False
         self.actor_class = actor_class
-        self.remote_name = actor_class.__name__
+        self.remote_name = remote_name or actor_class.__name__
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self._unsub_fns: list = []  # type: ignore[type-arg]
 
     @classmethod
-    def remote(cls, actor_class: type[ModuleBase], *, rpc: LCMRPC | None = None) -> RPCClient:
+    def remote(cls, actor_class: type[ModuleBase], *, rpc: RPCSpec | None = None) -> RPCClient:
         """Build an RPCClient with no parent-side Actor (cross-process clients)."""
         return cls(None, actor_class, rpc=rpc)
 
@@ -139,10 +160,12 @@ class RPCClient:
             self.rpc = None  # type: ignore[assignment]
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Return the class and the arguments needed to reconstruct the object
+        # Return the class and the arguments needed to reconstruct the object.
+        # remote_name must be included or proxies pickled into workers would
+        # fall back to class-name RPC topics.
         return (
             self.__class__,
-            (self.actor_instance, self.actor_class),
+            (self.actor_instance, self.actor_class, self.remote_name),
         )
 
     # passthrough

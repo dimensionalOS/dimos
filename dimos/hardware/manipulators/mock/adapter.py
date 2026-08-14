@@ -24,10 +24,6 @@ Usage:
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -80,6 +76,15 @@ class MockAdapter:
     def is_connected(self) -> bool:
         """Check mock connection status."""
         return self._connected
+
+    def activate(self) -> bool:
+        """Simulate activation (enable servos)."""
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        """Simulate deactivation (stop motion, disable servos)."""
+        self.write_stop()
+        return self.write_enable(False)
 
     def get_info(self) -> ManipulatorInfo:
         """Return mock info."""
@@ -213,11 +218,3 @@ class MockAdapter:
     def set_efforts(self, efforts: list[float]) -> None:
         """Set efforts directly for testing."""
         self._efforts = list(efforts)
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("mock", MockAdapter)
-
-
-__all__ = ["MockAdapter"]

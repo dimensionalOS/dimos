@@ -14,7 +14,6 @@
 
 import cv2
 import numpy as np
-import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -24,8 +23,6 @@ from dimos.perception.fiducial.marker_pose import (
     marker_corners_to_bbox,
     marker_reprojection_error,
 )
-
-pytest.importorskip("cv2.aruco")
 
 
 def test_camera_optical_frame_id_resolution() -> None:

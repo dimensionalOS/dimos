@@ -12,65 +12,127 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Module - Motion planning with ControlCoordinator execution.
-
-Base module providing core manipulation infrastructure:
-- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
-- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
-
-Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integration
-(scan_objects, get_scene_info) and long-horizon skills (pick, place, pick_and_place).
-"""
+"""Group-native motion planning and execution RPC module."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from enum import Enum
+import math
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic import Field
 
-from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.core.stream import In, Out
+from dimos.manipulation.execution_manager import (
+    ExecutionTarget,
+    PlanExecutionManager,
+)
+from dimos.manipulation.manipulation_spec import (
+    CommandResult,
+    CommandStatus,
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSnapshot,
+    MoveResult,
+    OperationStatus,
+    PlanningGroupInfo,
+    PlanningGroupState,
+    PlanResult,
+    PlanStatus,
+)
+from dimos.manipulation.planning.factory import (
+    KinematicsName,
+    WorldBackend,
+    create_planning_specs,
+    create_world,
+)
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.utils import (
+    filter_joint_state_to_selected_joints,
+    joint_target_to_global_names,
+    planning_group_id_from_selector,
+)
+from dimos.manipulation.planning.kinematics.config import (
+    ManipulationKinematicsConfig,
+    PinkKinematicsConfig,
+)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.planners.config import (
+    CartesianPathConfig,
+    ManipulationPlannerConfig,
+)
+from dimos.manipulation.planning.planners.roboplan_config import (
+    RoboPlanCartesianPathConfig,
+    RoboPlanPlannerConfig,
+)
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
-from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
-from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
-    JointTrajectoryGenerator,
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.models import (
+    DEFAULT_OBSTACLE_RGBA,
+    CartesianTarget,
+    GeneratedPlan,
+    IKResult,
+    Obstacle,
+    PlanningGroupID,
+    PlanningResult,
+    RobotName,
+    WorldRobotID,
+)
+from dimos.manipulation.planning.spec.protocols import (
+    KinematicsSpec,
+    PlannerSpec,
+    TrajectoryParametrizerSpec,
+)
+from dimos.manipulation.planning.trajectory_generator.config import (
+    TrajectoryParametrizationConfig,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.operator import ManipulationOperator
+from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import RPCClient
 
 logger = setup_logger()
 
 # Composite type aliases for readability (using semantic IDs from planning.spec)
-RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
-"""(world_robot_id, config, trajectory_generator)"""
+RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig]
+"""(world_robot_id, config)"""
 
 RobotRegistry: TypeAlias = dict[RobotName, RobotEntry]
 """Maps robot_name -> RobotEntry"""
 
-PlannedPaths: TypeAlias = dict[RobotName, JointPath]
-"""Maps robot_name -> planned joint path"""
+RobotInfoValue: TypeAlias = (
+    str | bool | float | list[str] | list[float] | list[PlanningGroup] | None
+)
+RobotInfoPayload: TypeAlias = dict[str, RobotInfoValue]
 
-PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
-"""Maps robot_name -> planned trajectory"""
+ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
+
+_SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
+    "box": ObstacleType.BOX,
+    "sphere": ObstacleType.SPHERE,
+    "cylinder": ObstacleType.CYLINDER,
+    "mesh": ObstacleType.MESH,
+}
 
 
 class ManipulationState(Enum):
@@ -88,28 +150,39 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    enable_viz: bool = False
-    planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    world_backend: WorldBackend = "roboplan"
+    visualization: ManipulationVisualizationConfig = Field(
+        default_factory=NoManipulationVisualizationConfig
+    )
+    planner: ManipulationPlannerConfig = Field(default_factory=RoboPlanPlannerConfig)
+    trajectory_parametrization: TrajectoryParametrizationConfig | None = Field(
+        default=None,
+        description=(
+            "Path parametrizer selected at startup. Omit to use roboplan_toppra "
+            "with RoboPlanWorld or simple_trapezoid with DrakeWorld."
+        ),
+    )
+    kinematics: ManipulationKinematicsConfig = Field(default_factory=PinkKinematicsConfig)
+    # Deprecated: use kinematics.backend instead.
+    kinematics_name: KinematicsName | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
+    linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
+    execution_timeout: float = Field(default=60.0, gt=0.0)
 
 
 class ManipulationModule(Module):
-    """Base motion planning module with ControlCoordinator execution.
-
-    - @rpc: Low-level building blocks (plan, execute, gripper)
-    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
-
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
-    """
+    """Primitive manipulation RPCs; agent skills live in a separate adapter."""
 
     config: ManipulationModuleConfig
+    _control_coordinator: ControlCoordinator
 
     # Input: Joint state from coordinator (for world sync)
-    joint_state: In[JointState]
+    coordinator_joint_state: In[JointState]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -118,21 +191,23 @@ class ManipulationModule(Module):
         self._state = ManipulationState.IDLE
         self._lock = threading.Lock()
         self._error_message = ""
+        self._planning_epoch = 0
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
+        self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
 
-        # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
+        # Robot registry: maps robot_name -> (world_robot_id, config)
         self._robots: RobotRegistry = {}
 
-        # Stored path for plan/preview/execute workflow (per robot)
-        self._planned_paths: PlannedPaths = {}
-        self._planned_trajectories: PlannedTrajectories = {}
+        # Canonical generated plan for plan/preview/execute workflow.
+        # Robot-local paths and trajectories are derived from this plan on demand.
+        self._last_plan: GeneratedPlan | None = None
 
-        # Coordinator integration (lazy initialized)
-        self._coordinator_client: RPCClient | None = None
+        # Coordinator integration (initialized in start())
+        self._execution_manager: PlanExecutionManager
 
         # Init joints: captured from first joint state per robot, used by go_init
         self._init_joints: dict[RobotName, JointState] = {}
@@ -148,14 +223,14 @@ class ManipulationModule(Module):
         """Start the manipulation module."""
         super().start()
 
-        # Initialize planning stack
+        # Execution state must exist before planning starts observers such as visualization.
+        self._initialize_execution()
         self._initialize_planning()
 
         # Subscribe to joint state via port
-        if self.joint_state is not None:
-            self.joint_state.subscribe(self._on_joint_state)
-            logger.info("Subscribed to joint_state port")
-
+        if self.coordinator_joint_state is not None:
+            self.coordinator_joint_state.subscribe(self._on_joint_state)
+            logger.info("Subscribed to coordinator_joint_state port")
         logger.info("ManipulationModule started")
 
     def _initialize_planning(self) -> None:
@@ -164,18 +239,35 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        world = create_world(
+            backend=self.config.world_backend,
+            visualization=self.config.visualization,
+        )
+        planning_specs = create_planning_specs(
+            world=world,
+            world_backend=self.config.world_backend,
+            planner=self.config.planner,
+            kinematics_name=self.config.kinematics_name,
+            kinematics=self.config.kinematics,
+            trajectory_parametrization=self.config.trajectory_parametrization,
+        )
+        self._world_monitor = planning_specs.world_monitor
+        self._planner = planning_specs.planner
+        self._kinematics = planning_specs.kinematics
+        self._trajectory_parametrizer = planning_specs.trajectory_parametrizer
+        visualization = create_manipulation_visualization(
+            self.config.visualization,
+            world=world,
+            world_monitor=self._world_monitor,
+            manipulation_module=self,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
-            traj_gen = JointTrajectoryGenerator(
-                num_joints=len(robot_config.joint_names),
-                max_velocity=robot_config.max_velocity,
-                max_acceleration=robot_config.max_acceleration,
-            )
-            self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
+            self._robots[robot_config.name] = (robot_id, robot_config)
 
-        self._world_monitor.finalize()
+        operator = ManipulationOperator(self, self._world_monitor)
+        self._world_monitor.finalize(visualization, operator=operator)
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
@@ -194,20 +286,16 @@ class ManipulationModule(Module):
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
 
-        for _, (robot_id, _, _) in self._robots.items():
+        for _, (robot_id, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
-        if self.config.enable_viz:
+        if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
-        self._planner = create_planner(name=self.config.planner_name)
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
-
         # Start TF publishing thread if any robot has tf_extra_links
-        if any(c.tf_extra_links for _, c, _ in self._robots.values()):
-            _ = self.tf  # Eager init
+        if any(c.tf_extra_links for _, c in self._robots.values()):
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True
@@ -223,14 +311,14 @@ class ManipulationModule(Module):
 
     def _get_robot(
         self, robot_name: RobotName | None = None
-    ) -> tuple[RobotName, WorldRobotID, RobotModelConfig, JointTrajectoryGenerator] | None:
+    ) -> tuple[RobotName, WorldRobotID, RobotModelConfig] | None:
         """Get robot by name or default.
 
         Args:
             robot_name: Robot name or None for default (if single robot)
 
         Returns:
-            (robot_name, robot_id, config, traj_gen) or None if not found
+            (robot_name, robot_id, config) or None if not found
         """
         if not robot_name:  # None or empty string (LLMs often pass "")
             robot_name = self._get_default_robot_name()
@@ -242,8 +330,8 @@ class ManipulationModule(Module):
             logger.error(f"Unknown robot: {robot_name}")
             return None
 
-        robot_id, config, traj_gen = self._robots[robot_name]
-        return (robot_name, robot_id, config, traj_gen)
+        robot_id, config = self._robots[robot_name]
+        return (robot_name, robot_id, config)
 
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when joint state received from driver.
@@ -258,7 +346,7 @@ class ManipulationModule(Module):
             # Build name → index map once for the whole message
             name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
-            for robot_name, (robot_id, config, _) in self._robots.items():
+            for robot_name, (robot_id, config) in self._robots.items():
                 coord_names = config.get_coordinator_joint_names()
                 indices = [name_to_idx.get(cn) for cn in coord_names]
                 if any(idx is None for idx in indices):
@@ -284,7 +372,7 @@ class ManipulationModule(Module):
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
 
-                # Capture per-robot init joints on first receipt
+                # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
                     self._init_joints[robot_name] = sub_msg
                     logger.info(
@@ -308,7 +396,7 @@ class ManipulationModule(Module):
                 if self._world_monitor is None:
                     break
                 transforms: list[Transform] = []
-                for robot_id, config, _ in self._robots.values():
+                for robot_id, config in self._robots.values():
                     # Publish world → EE
                     ee_pose = self._world_monitor.get_ee_pose(robot_id)
                     if ee_pose is not None:
@@ -325,18 +413,49 @@ class ManipulationModule(Module):
                             transforms.append(link_tf)
 
                 if transforms:
-                    self.tf.publish(*transforms)
+                    self.tf.publish(TFMessage(*transforms))
             except Exception as e:
                 logger.debug(f"TF publish error: {e}")
 
             self._tf_stop_event.wait(period)
 
     @rpc
-    def get_state(self) -> str:
-        """Get current manipulation state name."""
-        return self._state.name
+    def get_state(self) -> ManipulationSnapshot:
+        """Return one snapshot containing every planning group."""
 
-    @rpc
+        groups: dict[PlanningGroupID, PlanningGroupState] = {}
+        if self._world_monitor is not None:
+            for group in self._world_monitor.planning_groups.list():
+                joints: JointState | None = None
+                pose: PoseStamped | None = None
+                try:
+                    joints = self._world_monitor.current_group_joint_state(group.id)
+                except (KeyError, ValueError):
+                    pass
+                if group.has_pose_target:
+                    try:
+                        pose = self._world_monitor.get_group_ee_pose(group.id)
+                    except (KeyError, ValueError):
+                        pass
+                groups[group.id] = PlanningGroupState(
+                    joints=joints,
+                    end_effector_pose=pose,
+                    gripper_position=self._get_group_gripper_position(group),
+                    joint_presets=self._group_joint_presets(group),
+                )
+        with self._lock:
+            operation_status = OperationStatus[self._state.name]
+            error = self._error_message or None
+            has_pending_plan = self._last_plan is not None
+        return ManipulationSnapshot(
+            timestamp=time.time(),
+            operation_status=operation_status,
+            error=error,
+            has_pending_plan=has_pending_plan,
+            execution_status=self._execution_manager.status,
+            groups=groups,
+        )
+
     def get_error(self) -> str:
         """Get last error message.
 
@@ -346,32 +465,23 @@ class ManipulationModule(Module):
         return self._error_message
 
     @rpc
-    def cancel(self) -> bool:
-        """Cancel current motion."""
-        if self._state != ManipulationState.EXECUTING:
-            return False
-        self._state = ManipulationState.IDLE
-        logger.info("Motion cancelled")
-        return True
+    def cancel(self) -> ExecutionResult:
+        """Cancel planning or the active trajectory."""
+        with self._lock:
+            is_planning = self._state == ManipulationState.PLANNING
+            if is_planning:
+                self._planning_epoch += 1
+            plan = self._last_plan
+            self._last_plan = None
 
-    @rpc
-    @skill
-    def reset(self) -> SkillResult[ManipulationSkillError]:
-        """Reset the robot module to IDLE state, clearing any fault.
+        result = self._execution_manager.cancel()
+        if plan is not None:
+            self._dismiss_preview(plan.group_ids)
+        if is_planning and result.status is ExecutionStatus.NO_EXECUTION:
+            result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
+        self._apply_execution_result(result)
+        return result
 
-        Use this after an error or fault to allow new commands.
-        Cannot reset while a motion is executing — cancel first.
-        """
-        if self._state == ManipulationState.EXECUTING:
-            return SkillResult.fail(
-                "INVALID_STATE",
-                "Cannot reset while executing — cancel the motion first",
-            )
-        self._state = ManipulationState.IDLE
-        self._error_message = ""
-        return SkillResult.ok("Reset to IDLE — ready for new commands")
-
-    @rpc
     def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
         """Get current joint positions.
 
@@ -384,7 +494,6 @@ class ManipulationModule(Module):
                 return list(state.position)
         return None
 
-    @rpc
     def get_ee_pose(self, robot_name: RobotName | None = None) -> Pose | None:
         """Get current end-effector pose.
 
@@ -392,10 +501,13 @@ class ManipulationModule(Module):
             robot_name: Robot to query (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            return self._world_monitor.get_ee_pose(robot[1], joint_state=None)
+            try:
+                return self._world_monitor.get_ee_pose(robot[1], joint_state=None)
+            except ValueError as exc:
+                logger.warning("End-effector pose unavailable: %s", exc)
+                return None
         return None
 
-    @rpc
     def is_collision_free(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
         """Check if joint configuration is collision-free.
 
@@ -404,66 +516,177 @@ class ManipulationModule(Module):
             robot_name: Robot to check (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            _, robot_id, config, _ = robot
+            _, robot_id, config = robot
             joint_state = JointState(name=config.joint_names, position=joints)
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
 
-    def _begin_planning(
-        self, robot_name: RobotName | None = None
-    ) -> tuple[RobotName, WorldRobotID] | None:
-        """Check state and begin planning. Returns (robot_name, robot_id) or None.
-
-        Args:
-            robot_name: Robot to plan for (required if multiple robots configured)
-        """
+    def _begin_group_planning(self, speed_scale: float | None = None) -> tuple[int, float] | None:
+        """Check state and begin planning for explicit planning-group APIs."""
         if self._world_monitor is None:
             logger.error("Planning not initialized")
             return None
-        if (robot := self._get_robot(robot_name)) is None:
+        resolved_speed = self.config.default_speed_scale if speed_scale is None else speed_scale
+        if not math.isfinite(resolved_speed) or not 0.0 < resolved_speed <= 1.0:
+            self._record_error("speed_scale must be finite, > 0, and <= 1")
             return None
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning(f"Cannot plan: state is {self._state.name}")
                 return None
+            self._planning_epoch += 1
+            self._last_plan = None
+            self._error_message = ""
             self._state = ManipulationState.PLANNING
-        return robot[0], robot[1]
+            return self._planning_epoch, float(resolved_speed)
 
-    def _fail(self, msg: str) -> bool:
-        """Set FAULT state with error message."""
-        logger.warning(msg)
-        self._state = ManipulationState.FAULT
-        self._error_message = msg
+    def _require_unique_pose_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID:
+        """Return the unique pose-targetable group or raise if it is ambiguous."""
+        if self._world_monitor is None:
+            raise ValueError("Planning not initialized")
+        group_id = self._world_monitor.planning_groups.primary_pose_group_id_for_robot(robot_name)
+        if group_id is None:
+            raise ValueError(
+                f"Robot '{robot_name}' has no pose-targetable planning group; "
+                "use an explicit planning group ID"
+            )
+        return group_id
+
+    def _resolve_group_plan_start(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        planning_epoch: int,
+    ) -> tuple[PlanningGroupSelection, JointState] | None:
+        """Resolve an ordered group selection and its authoritative start state."""
+        assert self._world_monitor is not None
+        try:
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            current = self._world_monitor.current_global_joint_state()
+            start = filter_joint_state_to_selected_joints(current, selection.joint_names)
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
+            return None
+        return selection, start
+
+    def _store_generated_plan(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        result: PlanningResult,
+        planning_epoch: int,
+        speed_scale: float,
+    ) -> GeneratedPlan | None:
+        """Validate, materialize, and atomically store a successful planning result."""
+        try:
+            if self._world_monitor is None or self._trajectory_parametrizer is None:
+                raise ValueError("Trajectory parametrizer is not initialized")
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            plan = self._trajectory_parametrizer.materialize_plan(
+                world=self._world_monitor.world,
+                selection=selection,
+                result=result,
+                speed_scale=speed_scale,
+            )
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
+            return None
+        with self._lock:
+            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+                logger.info("Discarding cancelled planning result")
+                return None
+            self._last_plan = plan
+            self._state = ManipulationState.COMPLETED
+            self._error_message = ""
+        return plan
+
+    def _plan_selected_path(
+        self,
+        group_ids: tuple[PlanningGroupID, ...],
+        start: JointState,
+        goal: JointState,
+        planning_epoch: int,
+        speed_scale: float,
+    ) -> GeneratedPlan | None:
+        """Plan over explicit planning groups and store the resulting plan."""
+        assert self._world_monitor and self._planner
+        result = self._planner.plan_selected_joint_path(
+            world=self._world_monitor.world,
+            selection=self._world_monitor.planning_groups.select(group_ids),
+            start=start,
+            goal=goal,
+            timeout=self.config.planning_timeout,
+        )
+        if not result.is_success():
+            detail = f": {result.message}" if result.message else ""
+            self._fail_planning_epoch(
+                planning_epoch, f"Planning failed: {result.status.name}{detail}"
+            )
+            return None
+
+        logger.info("Path: %d waypoints, groups=%s", len(result.path), group_ids)
+        return self._store_generated_plan(group_ids, result, planning_epoch, speed_scale)
+
+    def _record_error(self, message: str) -> bool:
+        """Record an error without changing the manipulation state."""
+        logger.warning(message)
+        self._error_message = message
         return False
 
-    def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
+    def _clear_pending_plan(self) -> None:
+        """Invalidate the one authoritative pending plan."""
+
+        with self._lock:
+            plan = self._last_plan
+            self._last_plan = None
+        if plan is not None:
+            self._dismiss_preview(plan.group_ids)
+
+    def _fail(self, msg: str) -> bool:
+        """Finish a planning request with an error while remaining retryable."""
+        self._record_error(msg)
+        with self._lock:
+            self._last_plan = None
+            self._state = ManipulationState.IDLE
+        return False
+
+    def _fail_planning_epoch(self, planning_epoch: int, msg: str) -> bool:
+        """Fault only the still-current planning operation."""
+        with self._lock:
+            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
+                logger.info("Discarding cancelled planning result")
+                return False
+            logger.warning(msg)
+            self._last_plan = None
+            self._state = ManipulationState.IDLE
+            self._error_message = msg
+            return False
+
+    def _dismiss_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
+        try:
+            robot_names = self._world_monitor.planning_groups.select(tuple(group_ids)).robot_names
+            robot_ids = tuple(
+                robot_id
+                for robot_name in robot_names
+                if (robot_id := self.robot_id_for_name(robot_name)) is not None
+            )
+        except (KeyError, ValueError):
+            robot_ids = ()
+        if robot_ids:
+            self._world_monitor.cancel_preview_animation(robot_ids=robot_ids)
+        else:
+            self._world_monitor.cancel_preview_animation()
 
-    @rpc
-    def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to pose. Use preview_path() then execute().
-
-        Args:
-            pose: Target end-effector pose
-            robot_name: Robot to plan for (required if multiple robots configured)
-        """
-        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
-            return False
-        robot_name, robot_id = r
-        assert self._world_monitor  # guaranteed by _begin_planning
-
-        current = self._world_monitor.get_current_joint_state(robot_id)
-        if current is None:
-            return self._fail("No joint state")
-
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    def _solve_ik_for_pose(
+        self,
+        robot_id: WorldRobotID,
+        pose: Pose,
+        seed: JointState,
+        check_collision: bool,
+    ) -> IKResult:
+        """Run the configured kinematics backend for a world-frame pose."""
+        assert self._world_monitor and self._kinematics
 
         target_pose = PoseStamped(
             frame_id="world",
@@ -471,117 +694,460 @@ class ManipulationModule(Module):
             orientation=pose.orientation,
         )
 
-        ik = self._kinematics.solve(
+        return self._kinematics.solve(
             world=self._world_monitor.world,
             robot_id=robot_id,
             target_pose=target_pose,
-            seed=current,
-            check_collision=True,
+            seed=seed,
+            check_collision=check_collision,
         )
-        if not ik.is_success() or ik.joint_state is None:
-            return self._fail(f"IK failed: {ik.status.name}")
 
-        logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
-
-    @rpc
-    def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to joint config. Use preview_path() then execute().
-
-        Args:
-            joints: Target joint state (names + positions)
-            robot_name: Robot to plan for (required if multiple robots configured)
-        """
-        if (r := self._begin_planning(robot_name)) is None:
-            return False
-        robot_name, robot_id = r
-        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints.position]}")
-        return self._plan_path_only(robot_name, robot_id, joints)
-
-    def _plan_path_only(
-        self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
-    ) -> bool:
-        """Plan path from current position to goal, store result."""
-        assert self._world_monitor and self._planner  # guaranteed by _begin_planning
-        self._dismiss_preview(robot_id)
-        start = self._world_monitor.get_current_joint_state(robot_id)
-        if start is None:
-            return self._fail("No joint state")
-
-        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
-        planner_dof = len(start.position)
-        if len(goal.position) > planner_dof:
-            goal = JointState(
-                name=list(goal.name[:planner_dof]) if goal.name else [],
-                position=list(goal.position[:planner_dof]),
+    def inverse_kinematics(
+        self,
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
+        auxiliary_group_ids: Sequence[PlanningGroupID] = (),
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult:
+        """Solve planning-group pose targets without planning a joint path."""
+        if self._kinematics is None or self._world_monitor is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
+        if not pose_targets:
+            return IKResult(
+                status=IKStatus.NO_SOLUTION, message="At least one pose target is required"
             )
 
-        result = self._planner.plan_joint_path(
+        try:
+            stamped_targets = dict(pose_targets)
+            auxiliary_ids = tuple(auxiliary_group_ids)
+            group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
+            target_groups = {
+                self._world_monitor.planning_groups.get(group_id): pose
+                for group_id, pose in stamped_targets.items()
+            }
+            auxiliary_groups = tuple(
+                self._world_monitor.planning_groups.get(group_id) for group_id in auxiliary_ids
+            )
+            seed_state = seed
+            if seed_state is None:
+                selection = self._world_monitor.planning_groups.select(group_ids)
+                current = self._world_monitor.current_global_joint_state()
+                if not current.name and not current.position:
+                    return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
+                seed_state = filter_joint_state_to_selected_joints(current, selection.joint_names)
+        except (KeyError, ValueError) as exc:
+            return IKResult(status=IKStatus.NO_SOLUTION, message=str(exc))
+        if seed_state is None:
+            return IKResult(status=IKStatus.NO_SOLUTION, message="No joint state")
+        return self._kinematics.solve_pose_targets(
             world=self._world_monitor.world,
-            robot_id=robot_id,
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
+            pose_targets=target_groups,
+            auxiliary_groups=auxiliary_groups,
+            seed=seed_state,
+            check_collision=check_collision,
         )
-        if not result.is_success():
-            return self._fail(f"Planning failed: {result.status.name}")
 
-        logger.info(f"Path: {len(result.path)} waypoints")
-        self._planned_paths[robot_name] = result.path
-
-        _, _, traj_gen = self._robots[robot_name]
-        # Convert JointState path to list of position lists for trajectory generator
-        traj = traj_gen.generate([list(state.position) for state in result.path])
-        self._planned_trajectories[robot_name] = traj
-        logger.info(f"Trajectory: {traj.duration:.3f}s")
-
-        self._state = ManipulationState.COMPLETED
-        return True
-
-    @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
-        """Preview the planned path in the visualizer.
-
-        Args:
-            duration: Total animation duration in seconds
-            robot_name: Robot to preview (required if multiple robots configured)
-        """
-        from dimos.manipulation.planning.utils.path_utils import interpolate_path
-
+    def inverse_kinematics_single(
+        self,
+        pose: Pose,
+        robot_name: RobotName | None = None,
+        seed: JointState | None = None,
+        check_collision: bool = True,
+    ) -> IKResult:
+        """Solve IK for one robot's unique pose-targetable planning group."""
         if self._world_monitor is None:
-            return False
-
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
         robot = self._get_robot(robot_name)
         if robot is None:
-            return False
-        robot_name, robot_id, _, _ = robot
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
+        selected_robot_name, _, _ = robot
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
+        except ValueError as exc:
+            return IKResult(status=IKStatus.NO_SOLUTION, message=str(exc))
+        target_pose = PoseStamped(
+            frame_id="world",
+            position=pose.position,
+            orientation=pose.orientation,
+        )
+        return self.inverse_kinematics(
+            {group_id: target_pose}, seed=seed, check_collision=check_collision
+        )
 
-        planned_path = self._planned_paths.get(robot_name)
-        if planned_path is None or len(planned_path) == 0:
-            logger.warning(f"No planned path to preview for {robot_name}")
-            return False
+    def solve_ik(
+        self,
+        pose: Pose,
+        robot_name: RobotName | None = None,
+        check_collision: bool = True,
+        seed: JointState | None = None,
+    ) -> IKResult:
+        """Solve IK for a pose without planning a joint path.
 
-        # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.1)
-        self._world_monitor.world.animate_path(robot_id, interpolated, duration)
-        return True
+        Args:
+            pose: Target end-effector pose
+            robot_name: Robot to solve for (required if multiple robots configured)
+            check_collision: Whether to reject IK candidates in collision
+            seed: Optional joint state to initialize local IK. Uses current state when omitted.
+        """
+        if self._kinematics is None or self._world_monitor is None:
+            self._record_error("Planning not initialized")
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            self._record_error("Robot not found or robot_name is required")
+            return IKResult(status=IKStatus.NO_SOLUTION, message="Robot not found")
+
+        with self._lock:
+            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
+                self._record_error(f"Cannot solve IK while state is {self._state.name}")
+                return IKResult(
+                    status=IKStatus.NO_SOLUTION,
+                    message=f"Cannot solve IK while state is {self._state.name}",
+                )
+            self._state = ManipulationState.PLANNING
+        result = self.inverse_kinematics_single(
+            pose,
+            robot_name=robot_name,
+            seed=seed,
+            check_collision=check_collision,
+        )
+        self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
+        if result.is_success():
+            logger.info(f"IK solved, error: {result.position_error:.4f}m")
+        else:
+            detail = f": {result.message}" if result.message else ""
+            self._record_error(f"IK failed: {result.status.name}{detail}")
+        return result
+
+    def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
+        """Plan motion to pose. Use preview_plan() then execute().
+
+        Args:
+            pose: Target end-effector pose
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
+        if self._kinematics is None or self._world_monitor is None:
+            self._record_error("Planning not initialized")
+            return False
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            self._record_error("Robot not found or robot_name is required")
+            return False
+        selected_robot_name, _, _ = robot
+        try:
+            group_id = self._require_unique_pose_group_id_for_robot(selected_robot_name)
+        except ValueError as exc:
+            logger.warning("Pose planning unavailable: %s", exc)
+            self._record_error(str(exc))
+            return False
+        return self.plan_to_pose_targets({group_id: pose})
+
+    def plan_to_pose_targets(
+        self,
+        pose_targets: Mapping[PlanningGroupID | PlanningGroup, Pose],
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+    ) -> bool:
+        """Plan to one or more group pose targets with optional auxiliary groups."""
+        return self.generate_plan_to_pose_targets(pose_targets, auxiliary_groups) is not None
 
     @rpc
+    def plan_to_joints(
+        self,
+        targets: Mapping[PlanningGroupID, JointState],
+        speed_scale: float | None = None,
+    ) -> PlanResult:
+        """Plan one synchronized joint target set without moving hardware."""
+
+        self._clear_pending_plan()
+        if not targets:
+            return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
+        plan = self.generate_plan_to_joint_targets(
+            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets),
+            speed_scale=speed_scale,
+        )
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    @rpc
+    def plan_to_poses(
+        self,
+        targets: Mapping[PlanningGroupID, PoseStamped],
+        speed_scale: float | None = None,
+    ) -> PlanResult:
+        """Plan one synchronized pose target set without moving hardware."""
+
+        self._clear_pending_plan()
+        if not targets:
+            return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
+        plan = self.generate_plan_to_pose_targets(
+            cast("Mapping[PlanningGroupID | PlanningGroup, Pose]", targets),
+            speed_scale=speed_scale,
+        )
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    def plan_to_joint_targets(
+        self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
+    ) -> bool:
+        """Plan to joint targets keyed by planning group."""
+        return self.generate_plan_to_joint_targets(joint_targets) is not None
+
+    def generate_plan_to_joint_targets(
+        self,
+        joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState],
+        speed_scale: float | None = None,
+    ) -> GeneratedPlan | None:
+        """Plan to joint targets and return the exact stored GeneratedPlan."""
+        if self._world_monitor is None or self._planner is None:
+            return None
+        if not joint_targets:
+            self._fail("At least one joint target is required")
+            return None
+
+        group_ids = tuple(
+            dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)
+        )
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
+            return None
+        planning_epoch, resolved_speed_scale = planning
+
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
+            return None
+        _selection, start = resolved
+
+        goal_names: list[str] = []
+        goal_positions: list[float] = []
+        for group, target in joint_targets.items():
+            group_id = planning_group_id_from_selector(group)
+            try:
+                target_group = self._world_monitor.planning_groups.get(group_id)
+                target_global = joint_target_to_global_names(target_group, target)
+            except (KeyError, ValueError) as exc:
+                logger.error(str(exc))
+                self._fail_planning_epoch(planning_epoch, f"Invalid joint target for '{group_id}'")
+                return None
+            goal_names.extend(target_global.name)
+            goal_positions.extend(target_global.position)
+
+        goal = JointState(name=goal_names, position=goal_positions)
+        return self._plan_selected_path(
+            group_ids, start, goal, planning_epoch, resolved_speed_scale
+        )
+
+    def generate_plan_to_pose_targets(
+        self,
+        pose_targets: Mapping[PlanningGroupID | PlanningGroup, Pose],
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        speed_scale: float | None = None,
+    ) -> GeneratedPlan | None:
+        """Plan to pose targets and return the exact stored GeneratedPlan."""
+        if self._world_monitor is None or self._kinematics is None:
+            return None
+        if not pose_targets:
+            self._fail("At least one pose target is required")
+            return None
+        stamped_targets = {
+            planning_group_id_from_selector(group): PoseStamped(
+                frame_id="world",
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            for group, pose in pose_targets.items()
+        }
+        auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
+        group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
+            return None
+        planning_epoch, resolved_speed_scale = planning
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
+            return None
+        _selection, start = resolved
+        ik = self.inverse_kinematics(
+            pose_targets=stamped_targets,
+            auxiliary_group_ids=auxiliary_ids,
+            seed=start,
+        )
+        if not ik.is_success() or ik.joint_state is None:
+            detail = f": {ik.message}" if ik.message else ""
+            self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
+            return None
+        logger.info(f"IK solved, error: {ik.position_error:.4f}m")
+        return self._plan_selected_path(
+            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+        )
+
+    def plan_cartesian_targets(
+        self,
+        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        check_collision: bool = True,
+    ) -> bool:
+        """Plan TCP motion through absolute or relative Cartesian waypoints."""
+        return (
+            self.generate_cartesian_plan(
+                targets,
+                config,
+                auxiliary_groups,
+                check_collision=check_collision,
+            )
+            is not None
+        )
+
+    def generate_cartesian_plan(
+        self,
+        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        config: CartesianPathConfig,
+        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        speed_scale: float | None = None,
+        check_collision: bool = True,
+    ) -> GeneratedPlan | None:
+        """Generate and store a timed Cartesian plan through PlannerSpec."""
+        if self._world_monitor is None or self._planner is None:
+            return None
+        if not targets:
+            self._fail("At least one Cartesian target is required")
+            return None
+        normalized_targets = {
+            planning_group_id_from_selector(group): target for group, target in targets.items()
+        }
+        if len(normalized_targets) != len(targets):
+            self._fail("Cartesian target groups must be unique")
+            return None
+        auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
+        group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
+            return None
+        planning_epoch, resolved_speed_scale = planning
+        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+        if resolved is None:
+            return None
+        selection, start = resolved
+        scaled_config = config.model_copy(
+            update={
+                "velocity_scale": config.velocity_scale * resolved_speed_scale,
+                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
+            }
+        )
+        result = self._planner.plan_cartesian_path(
+            world=self._world_monitor.world,
+            selection=selection,
+            start=start,
+            targets=normalized_targets,
+            config=scaled_config,
+            auxiliary_groups=auxiliary_ids,
+            check_collision=check_collision,
+        )
+        if not result.is_success():
+            detail = f": {result.message}" if result.message else ""
+            self._fail_planning_epoch(
+                planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+            )
+            return None
+        return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+
+    @rpc
+    def move_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        blocking: bool = True,
+        timeout: float | None = None,
+    ) -> MoveResult:
+        """Move one end effector by a world-frame translation."""
+
+        delta = (float(dx), float(dy), float(dz))
+        self._clear_pending_plan()
+        if not all(math.isfinite(value) for value in delta):
+            plan_result = PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+            return MoveResult(plan_result, None, delta, check_collision)
+        if delta == (0.0, 0.0, 0.0):
+            plan_result = PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
+            return MoveResult(plan_result, None, delta, check_collision)
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+            return MoveResult(plan_result, None, delta, check_collision)
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        config = RoboPlanCartesianPathConfig()
+        relative = Transform(
+            translation=Vector3(*delta),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+        plan = self.generate_cartesian_plan(
+            {group.id: (Transform.identity(), relative)},
+            config,
+            speed_scale=resolved_speed,
+            check_collision=check_collision,
+        )
+        if plan is None:
+            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+            return MoveResult(plan_result, None, delta, check_collision)
+        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+        execution = self.execute(blocking=blocking, timeout=timeout)
+        return MoveResult(plan_result, execution, delta, check_collision)
+
+    def preview_path(
+        self,
+        duration: float | None = None,
+        robot_name: RobotName | None = None,
+        target_fps: float = 30.0,
+    ) -> bool:
+        """Compatibility wrapper for preview_plan().
+
+        Args:
+            duration: Total animation duration in seconds. Defaults to one second.
+            robot_name: Compatibility affected-robot validation; does not filter the preview.
+            target_fps: Deprecated compatibility argument; shared-clock previews use plan waypoints.
+        """
+        return self.preview_plan(None, duration, robot_name, target_fps)
+
+    def preview_plan(
+        self,
+        plan: GeneratedPlan | None = None,
+        duration: float | None = None,
+        robot_name: RobotName | None = None,
+        target_fps: float = 30.0,
+    ) -> bool:
+        """Preview a complete generated plan in the visualizer."""
+        plan = plan or self._last_plan
+        if plan is None or not plan.path:
+            logger.warning("No generated plan to preview")
+            return False
+        try:
+            assert self._world_monitor is not None
+            affected = self._world_monitor.planning_groups.select(plan.group_ids).robot_names
+        except Exception as exc:
+            logger.error("Generated plan cannot be resolved: %s", exc)
+            return False
+        if robot_name is not None:
+            if robot_name not in affected:
+                logger.error("Generated plan does not affect robot '%s'", robot_name)
+                return False
+        if self._world_monitor is None:
+            return False
+        self._world_monitor.animate_trajectory(plan.trajectory, duration)
+        return True
+
     def has_planned_path(self) -> bool:
         """Check if there's a planned path ready.
 
         Returns:
             True if a path is planned and ready
         """
-        robot = self._get_robot()
-        if robot is None:
-            return False
-        robot_name, _, _, _ = robot
+        return self._last_plan is not None and bool(self._last_plan.path)
 
-        path = self._planned_paths.get(robot_name)
-        return path is not None and len(path) > 0
-
-    @rpc
     def get_visualization_url(self) -> str | None:
         """Get the visualization URL.
 
@@ -592,23 +1158,24 @@ class ManipulationModule(Module):
             return None
         return self._world_monitor.get_visualization_url()
 
-    @rpc
     def clear_planned_path(self) -> bool:
         """Clear the stored planned path.
 
         Returns:
             True if cleared
         """
-        robot = self._get_robot()
-        if robot is None:
-            return False
-        robot_name, _, _, _ = robot
-
-        self._planned_paths.pop(robot_name, None)
-        self._planned_trajectories.pop(robot_name, None)
+        with self._lock:
+            plan = self._last_plan
+            self._last_plan = None
+            if self._state == ManipulationState.PLANNING:
+                self._planning_epoch += 1
+                self._state = ManipulationState.IDLE
+        if plan is not None:
+            # Preserve the group selection until the public visualization
+            # transaction has invalidated and hidden its preview.
+            self._dismiss_preview(plan.group_ids)
         return True
 
-    @rpc
     def list_robots(self) -> list[str]:
         """List all configured robot names.
 
@@ -618,7 +1185,64 @@ class ManipulationModule(Module):
         return list(self._robots.keys())
 
     @rpc
-    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
+    def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]:
+        """Return public planning-group capabilities."""
+        if self._world_monitor is None:
+            return ()
+        return tuple(
+            PlanningGroupInfo(
+                id=group.id,
+                joint_names=group.joint_names,
+                base_frame=group.base_link,
+                tip_frame=group.tip_link,
+                has_gripper=self._group_robot_config(group).gripper_hardware_id is not None,
+            )
+            for group in self._world_monitor.planning_groups.list()
+        )
+
+    def _group_robot_config(self, group: PlanningGroup) -> RobotModelConfig:
+        return self._robots[group.robot_name][1]
+
+    def _group_joint_presets(self, group: PlanningGroup) -> dict[str, JointState]:
+        config = self._group_robot_config(group)
+        presets: dict[str, JointState] = {}
+
+        def selected(state: JointState, source_names: Sequence[str]) -> JointState:
+            positions = dict(zip(state.name, state.position, strict=True))
+            return JointState(
+                name=list(group.joint_names),
+                position=[positions[name] for name in source_names],
+            )
+
+        if config.home_joints is not None:
+            presets["home"] = selected(
+                JointState(name=config.joint_names, position=config.home_joints),
+                group.local_joint_names,
+            )
+        if init := self._init_joints.get(group.robot_name):
+            presets["init"] = selected(
+                init,
+                tuple(config.get_coordinator_joint_name(name) for name in group.local_joint_names),
+            )
+        return presets
+
+    def _get_group_gripper_position(self, group: PlanningGroup) -> float | None:
+        config = self._group_robot_config(group)
+        if config.gripper_hardware_id is None:
+            return None
+        value = self._control_coordinator.get_gripper_position(config.gripper_hardware_id)
+        return float(value) if value is not None else None
+
+    def get_current_joint_state(self, robot_name: RobotName) -> JointState | None:
+        """Return the named robot's current local joint state with names."""
+        if self._world_monitor is None:
+            return None
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None:
+            return None
+        return self._world_monitor.get_current_joint_state(robot_id)
+
+    def get_robot_info(self, robot_name: RobotName | None = None) -> RobotInfoPayload | None:
         """Get information about a robot.
 
         Args:
@@ -631,18 +1255,27 @@ class ManipulationModule(Module):
         if robot is None:
             return None
 
-        robot_name, robot_id, config, _ = robot
+        robot_name, robot_id, config = robot
+        planning_groups = (
+            list(self._world_monitor.planning_groups.groups_for_robot(robot_name))
+            if self._world_monitor is not None
+            else []
+        )
+        try:
+            end_effector_link = config.end_effector_link
+        except ValueError:
+            end_effector_link = None
 
         return {
             "name": config.name,
             "world_robot_id": robot_id,
             "joint_names": config.joint_names,
-            "end_effector_link": config.end_effector_link,
+            "planning_groups": planning_groups,
+            "end_effector_link": end_effector_link,
             "base_link": config.base_link,
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
             "has_joint_name_mapping": bool(config.joint_name_mapping),
-            "coordinator_task_name": config.coordinator_task_name,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
             "init_joints": list(init.position)
@@ -650,7 +1283,27 @@ class ManipulationModule(Module):
             else None,
         }
 
-    @rpc
+    def robot_items(self) -> list[tuple[RobotName, WorldRobotID, RobotModelConfig]]:
+        """Return configured robots for in-process visualization adapters."""
+        return [(name, robot_id, config) for name, (robot_id, config) in self._robots.items()]
+
+    def robot_id_for_name(self, robot_name: RobotName) -> WorldRobotID | None:
+        """Return the planning-world robot id for a configured robot name."""
+        entry = self._robots.get(robot_name)
+        return entry[0] if entry is not None else None
+
+    def robot_name_for_id(self, robot_id: WorldRobotID) -> RobotName | None:
+        """Return the configured robot name for a planning-world robot id."""
+        for robot_name, (candidate_id, _) in self._robots.items():
+            if candidate_id == robot_id:
+                return robot_name
+        return None
+
+    def get_robot_config(self, robot_name: RobotName) -> RobotModelConfig | None:
+        """Return the robot model config for an in-process visualization adapter."""
+        entry = self._robots.get(robot_name)
+        return entry[1] if entry is not None else None
+
     def get_init_joints(self, robot_name: RobotName | None = None) -> JointState | None:
         """Get the init joint state (captured at startup or set manually).
 
@@ -662,7 +1315,83 @@ class ManipulationModule(Module):
             return None
         return self._init_joints.get(robot[0])
 
-    @rpc
+    def evaluate_joint_target(
+        self, joints: JointState | None, robot_name: RobotName
+    ) -> TargetEvaluation:
+        """Evaluate a joint target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None or self._world_monitor is None:
+            return {
+                "success": False,
+                "status": "NO_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        if joints is None:
+            return {
+                "success": False,
+                "status": "NO_TARGET",
+                "message": "No joint target provided",
+                "collision_free": False,
+                "ee_pose": None,
+                "joint_state": None,
+            }
+        target = JointState(joints)
+        collision_free = self._world_monitor.is_state_valid(robot_id, target)
+        return {
+            "success": True,
+            "status": "FEASIBLE" if collision_free else "COLLISION",
+            "message": "Target is collision-free" if collision_free else "Target is in collision",
+            "collision_free": collision_free,
+            "ee_pose": self._world_monitor.get_ee_pose(robot_id, target),
+            "joint_state": target,
+        }
+
+    def evaluate_pose_target(self, pose: Pose, robot_name: RobotName) -> TargetEvaluation:
+        """Evaluate a Cartesian target for visualization without planning a path."""
+        robot_id = self.robot_id_for_name(robot_name)
+        if robot_id is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNKNOWN_ROBOT",
+                "message": f"Unknown robot: {robot_name}",
+                "collision_free": False,
+            }
+        if self._world_monitor is None or self._kinematics is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized or current state is unavailable",
+                "collision_free": False,
+            }
+        ik = self._solve_ik_for_pose(robot_id, pose, current, check_collision=True)
+        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
+        collision_free = bool(
+            joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
+        )
+        return {
+            "success": joint_state is not None and collision_free,
+            "joint_state": joint_state,
+            "status": ik.status.name,
+            "message": ik.message,
+            "position_error": ik.position_error,
+            "orientation_error": ik.orientation_error,
+            "collision_free": collision_free,
+        }
+
     def set_init_joints(self, joint_state: JointState, robot_name: RobotName | None = None) -> bool:
         """Set the init joint state.
 
@@ -680,7 +1409,6 @@ class ManipulationModule(Module):
         )
         return True
 
-    @rpc
     def set_init_joints_to_current(self, robot_name: RobotName | None = None) -> bool:
         """Set init joints to the current joint positions.
 
@@ -690,7 +1418,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return False
-        robot_name_resolved, robot_id, _, _ = robot
+        robot_name_resolved, robot_id, _ = robot
         if self._world_monitor is None:
             return False
         current = self._world_monitor.get_current_joint_state(robot_id)
@@ -704,97 +1432,78 @@ class ManipulationModule(Module):
         )
         return True
 
-    def _get_coordinator_client(self) -> RPCClient | None:
-        """Get or create coordinator RPC client (lazy init)."""
-        if not any(
-            c.coordinator_task_name or c.gripper_hardware_id for _, c, _ in self._robots.values()
-        ):
-            return None
-        if self._coordinator_client is None:
-            from dimos.control.coordinator import ControlCoordinator
-            from dimos.core.rpc_client import RPCClient
-
-            self._coordinator_client = RPCClient(None, ControlCoordinator)
-        return self._coordinator_client
-
-    def _translate_trajectory_to_coordinator(
-        self,
-        trajectory: JointTrajectory,
-        robot_config: RobotModelConfig,
-    ) -> JointTrajectory:
-        """Translate trajectory joint names from URDF to coordinator namespace.
-
-        Args:
-            trajectory: Trajectory with URDF joint names
-            robot_config: Robot config with joint name mapping
-
-        Returns:
-            Trajectory with coordinator joint names
-        """
-        if not robot_config.joint_name_mapping:
-            return trajectory  # No translation needed
-
-        # Translate joint names
-        coordinator_names = [
-            robot_config.get_coordinator_joint_name(j) for j in trajectory.joint_names
+    def _initialize_execution(self) -> None:
+        """Initialize coordinator access and planned execution policy."""
+        targets = [
+            ExecutionTarget.from_coordinator_mapping(
+                robot_name=config.name,
+                model_joint_names=config.joint_names,
+                coordinator_to_model=config.joint_name_mapping,
+            )
+            for config in self.config.robots
         ]
-
-        # Create new trajectory with translated names
-        # Note: duration is computed automatically from points in JointTrajectory.__init__
-        return JointTrajectory(
-            joint_names=coordinator_names,
-            points=trajectory.points,
-            timestamp=trajectory.timestamp,
+        self._execution_manager = PlanExecutionManager(
+            targets=targets,
+            coordinator=self._control_coordinator,
+            default_timeout=self.config.execution_timeout,
         )
 
     @rpc
-    def execute(self, robot_name: RobotName | None = None) -> bool:
-        """Execute planned trajectory via ControlCoordinator."""
-        if (robot := self._get_robot(robot_name)) is None:
-            return False
-        robot_name, _, config, _ = robot
+    def execute(self, blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
+        """Dispatch the one pending plan, optionally waiting for JTT completion."""
 
-        if (traj := self._planned_trajectories.get(robot_name)) is None:
-            logger.warning("No planned trajectory")
-            return False
-        if not config.coordinator_task_name:
-            logger.error(f"No coordinator_task_name for '{robot_name}'")
-            return False
-        if (client := self._get_coordinator_client()) is None:
-            logger.error("No coordinator client")
-            return False
-
-        translated = self._translate_trajectory_to_coordinator(traj, config)
-        logger.info(
-            f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
-        )
-
-        self._state = ManipulationState.EXECUTING
-        result = client.task_invoke(
-            config.coordinator_task_name, "execute", {"trajectory": translated}
-        )
-        if result:
-            logger.info("Trajectory accepted")
-            self._state = ManipulationState.COMPLETED
-            return True
-        else:
-            return self._fail("Coordinator rejected trajectory")
-
-    @rpc
-    def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
-        """Get trajectory execution status via coordinator task_invoke."""
-        if (robot := self._get_robot(robot_name)) is None:
-            return None
-        _, _, config, _ = robot
-        if not config.coordinator_task_name or (client := self._get_coordinator_client()) is None:
-            return None
+        with self._lock:
+            target_plan = self._last_plan
+            self._last_plan = None
+            if target_plan is None:
+                return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
+            self._state = ManipulationState.EXECUTING
         try:
-            state = client.task_invoke(config.coordinator_task_name, "get_state", {})
-            if state is not None:
-                return {"state": int(state), "task": config.coordinator_task_name}
-            return None
-        except Exception:
-            return None
+            result = self._execution_manager.execute(
+                target_plan,
+                blocking=blocking,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            logger.exception("Failed to dispatch generated plan")
+            result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+        self._apply_execution_result(result)
+        return result
+
+    @rpc
+    def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult:
+        """Wait for the active trajectory or return its cached terminal result."""
+        result = self._execution_manager.wait(timeout)
+        self._apply_execution_result(result)
+        return result
+
+    def _apply_execution_result(self, result: ExecutionResult) -> None:
+        """Mirror execution ownership into the broader manipulation snapshot."""
+        with self._lock:
+            if result.status in {ExecutionStatus.ACCEPTED, ExecutionStatus.EXECUTING}:
+                self._state = ManipulationState.EXECUTING
+                self._error_message = ""
+            elif result.status is ExecutionStatus.COMPLETED:
+                self._state = ManipulationState.COMPLETED
+                self._error_message = ""
+            elif result.status in {
+                ExecutionStatus.UNCERTAIN,
+                ExecutionStatus.FAULT,
+            }:
+                self._state = ManipulationState.FAULT
+                self._error_message = result.message
+            elif result.status is not ExecutionStatus.TIMED_OUT:
+                self._state = ManipulationState.IDLE
+                self._error_message = result.message
+
+    def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
+        """Private in-process bridge for the visualization operator."""
+
+        with self._lock:
+            self._last_plan = plan
+            self._state = ManipulationState.COMPLETED
+        result = self.execute(blocking=False)
+        return result.status is ExecutionStatus.ACCEPTED
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
@@ -814,14 +1523,7 @@ class ManipulationModule(Module):
         if not self._world_monitor:
             return ""
 
-        # Map shape string to ObstacleType
-        shape_map = {
-            "box": ObstacleType.BOX,
-            "sphere": ObstacleType.SPHERE,
-            "cylinder": ObstacleType.CYLINDER,
-            "mesh": ObstacleType.MESH,
-        }
-        obstacle_type = shape_map.get(shape)
+        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
         if obstacle_type is None:
             logger.warning(f"Unknown obstacle shape: {shape}")
             return ""
@@ -831,9 +1533,6 @@ class ManipulationModule(Module):
             logger.warning("mesh_path required for mesh obstacles")
             return ""
 
-        # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
         obstacle = Obstacle(
             name=name,
             obstacle_type=obstacle_type,
@@ -842,6 +1541,52 @@ class ManipulationModule(Module):
             mesh_path=mesh_path,
         )
         return self._world_monitor.add_obstacle(obstacle)
+
+    @rpc
+    def update_obstacle(
+        self,
+        name: str,
+        pose: Pose,
+        shape: ObstacleShape,
+        dimensions: list[float] | None = None,
+        mesh_path: str | None = None,
+        color: list[float] | None = None,
+    ) -> bool:
+        """Replace a complete obstacle identified by name."""
+        if self._world_monitor is None:
+            return False
+
+        obstacle_type = _SHAPE_TO_OBSTACLE_TYPE.get(shape)
+        if obstacle_type is None:
+            raise ValueError(f"Unknown obstacle shape: {shape}")
+        if obstacle_type == ObstacleType.MESH and not mesh_path:
+            raise ValueError("mesh_path required for mesh obstacles")
+        if color is None:
+            rgba = DEFAULT_OBSTACLE_RGBA
+        elif len(color) == 4:
+            rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
+        else:
+            raise ValueError("Obstacle color must contain four values")
+
+        obstacle = Obstacle(
+            name=name,
+            obstacle_type=obstacle_type,
+            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            dimensions=tuple(dimensions) if dimensions else (),
+            color=rgba,
+            mesh_path=mesh_path,
+        )
+        return self._world_monitor.update_obstacle(obstacle)
+
+    @rpc
+    def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
+        """Update only an obstacle pose while preserving all other properties."""
+        if self._world_monitor is None:
+            return False
+        return self._world_monitor.update_obstacle_pose(
+            name,
+            PoseStamped(position=pose.position, orientation=pose.orientation),
+        )
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:
@@ -855,7 +1600,7 @@ class ManipulationModule(Module):
         robot = self._get_robot(robot_name)
         if robot is None:
             return None
-        _, _, config, _ = robot
+        _, _, config = robot
         if not config.gripper_hardware_id:
             logger.warning(f"No gripper_hardware_id configured for '{config.name}'")
             return None
@@ -866,13 +1611,8 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return False
-        client = self._get_coordinator_client()
-        if client is None:
-            logger.error("No coordinator client for gripper control")
-            return False
-        return bool(client.set_gripper_position(hw_id, position))
+        return self._control_coordinator.set_gripper_position(hw_id, position)
 
-    @rpc
     def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
         """Get gripper position in meters.
 
@@ -882,108 +1622,75 @@ class ManipulationModule(Module):
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return None
-        client = self._get_coordinator_client()
-        if client is None:
-            return None
-        result = client.get_gripper_position(hw_id)
+        result = self._control_coordinator.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
-    @skill
-    def set_gripper(
-        self, position: float, robot_name: str | None = None
-    ) -> SkillResult[ManipulationSkillError]:
-        """Set gripper to a specific opening in meters.
+    @rpc
+    def set_gripper_position(
+        self,
+        position: float,
+        planning_group: PlanningGroupID | None = None,
+    ) -> CommandResult:
+        """Set the gripper associated with one planning group."""
 
-        Args:
-            position: Gripper opening in meters (0.0 = closed, 0.85 = fully open).
-            robot_name: Robot to control (only needed for multi-arm setups).
-        """
-        if self._set_gripper_position(position, robot_name):
-            return SkillResult.ok(f"Gripper set to {position:.3f}m")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position")
+        if not math.isfinite(position):
+            return CommandResult(CommandStatus.REJECTED, "position must be finite")
+        group = self._resolve_gripper_group(planning_group)
+        if isinstance(group, CommandResult):
+            return group
+        config = self._group_robot_config(group)
+        assert config.gripper_hardware_id is not None
+        if self._control_coordinator.set_gripper_position(
+            config.gripper_hardware_id, float(position)
+        ):
+            return CommandResult(CommandStatus.SUCCEEDED, f"Gripper set to {position:.3f}m")
+        return CommandResult(CommandStatus.FAILED, "Failed to set gripper position")
 
-    @skill
-    def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Open the robot gripper fully.
+    def _resolve_pose_group(
+        self,
+        planning_group: PlanningGroupID | None,
+    ) -> PlanningGroup | CommandResult:
+        return self._resolve_group_with_capability(planning_group, "pose")
 
-        Args:
-            robot_name: Robot to control (only needed for multi-arm setups).
-        """
-        if self._set_gripper_position(0.85, robot_name):
-            return SkillResult.ok("Gripper opened")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper")
+    def _resolve_gripper_group(
+        self,
+        planning_group: PlanningGroupID | None,
+    ) -> PlanningGroup | CommandResult:
+        return self._resolve_group_with_capability(planning_group, "gripper")
 
-    @skill
-    def close_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Close the robot gripper fully.
+    def _resolve_group_with_capability(
+        self,
+        planning_group: PlanningGroupID | None,
+        capability: Literal["pose", "gripper"],
+    ) -> PlanningGroup | CommandResult:
+        if self._world_monitor is None:
+            return CommandResult(CommandStatus.FAILED, "Planning is not initialized")
+        groups = self._world_monitor.planning_groups.list()
 
-        Args:
-            robot_name: Robot to control (only needed for multi-arm setups).
-        """
-        if self._set_gripper_position(0.0, robot_name):
-            return SkillResult.ok("Gripper closed")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper")
+        def is_capable(group: PlanningGroup) -> bool:
+            if capability == "pose":
+                return group.has_pose_target
+            return self._group_robot_config(group).gripper_hardware_id is not None
 
-    def _wait_for_trajectory_completion(
-        self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
-    ) -> bool:
-        """Wait for trajectory execution to complete.
-
-        Polls the coordinator task state via task_invoke. Falls back to waiting
-        for the trajectory duration if the coordinator is unavailable.
-
-        Args:
-            robot_name: Robot to monitor
-            timeout: Maximum wait time in seconds
-            poll_interval: Time between status checks
-
-        Returns:
-            True if trajectory completed successfully
-        """
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return True
-        rname, _, config, _ = robot
-        client = self._get_coordinator_client()
-
-        if client is None or not config.coordinator_task_name:
-            # No coordinator — wait for trajectory duration as fallback
-            traj = self._planned_trajectories.get(rname)
-            if traj is not None:
-                logger.info(f"No coordinator status — waiting {traj.duration:.1f}s for trajectory")
-                time.sleep(traj.duration + 0.5)
-            return True
-
-        # Poll task state via task_invoke
-        start = time.time()
-        while (time.time() - start) < timeout:
+        if planning_group is not None:
             try:
-                state = client.task_invoke(config.coordinator_task_name, "get_state", {})
-                # TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4
-                if state is not None:
-                    state_val = int(state)
-                    if state_val in (0, 2):  # IDLE or COMPLETED
-                        return True
-                    if state_val in (3, 4):  # ABORTED or FAULT
-                        logger.warning(f"Trajectory failed: state={state}")
-                        return False
-                    # state_val == 1 means EXECUTING, keep polling
-                else:
-                    # task_invoke returned None — task not found, assume done
-                    return True
-            except Exception:
-                # Fallback: wait for trajectory duration
-                traj = self._planned_trajectories.get(rname)
-                if traj is not None:
-                    remaining = traj.duration - (time.time() - start)
-                    if remaining > 0:
-                        logger.info(f"Status poll failed — waiting {remaining:.1f}s for trajectory")
-                        time.sleep(remaining + 0.5)
-                return True
-            time.sleep(poll_interval)
+                group = self._world_monitor.planning_groups.get(planning_group)
+            except KeyError:
+                return CommandResult(CommandStatus.REJECTED, f"Unknown group: {planning_group}")
+            if not is_capable(group):
+                return CommandResult(
+                    CommandStatus.REJECTED,
+                    f"Planning group '{group.id}' is not {capability}-capable",
+                )
+            return group
 
-        logger.warning(f"Trajectory execution timed out after {timeout}s")
-        return False
+        candidates = tuple(group for group in groups if is_capable(group))
+        if len(candidates) != 1:
+            return CommandResult(
+                CommandStatus.REJECTED,
+                f"Expected one {capability}-capable planning group, found {len(candidates)}",
+            )
+        return candidates[0]
 
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
@@ -1012,257 +1719,24 @@ class ManipulationModule(Module):
             robot_name: Robot to operate on
             preview_duration: Duration to animate the preview in Meshcat (seconds)
         """
-        logger.info("Previewing trajectory...")
-        self.preview_path(preview_duration, robot_name)
-
-        logger.info("Executing trajectory...")
-        if not self.execute(robot_name):
-            return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
-
-        if not self._wait_for_trajectory_completion(robot_name):
-            return SkillResult.fail("EXECUTION_TIMEOUT", "Trajectory execution timed out")
-
-        return SkillResult.ok()
-
-    @skill
-    def get_robot_state(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Get current robot state: joint positions, end-effector pose, and gripper.
-
-        Args:
-            robot_name: Robot to query (only needed for multi-arm setups).
-        """
-        lines: list[str] = []
-
-        joints = self.get_current_joints(robot_name)
-        if joints is not None:
-            lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
-        else:
-            lines.append("Joints: unavailable (no state received)")
-
-        ee_pose = self.get_ee_pose(robot_name)
-        if ee_pose is not None:
-            p = ee_pose.position
-            lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
-        else:
-            lines.append("EE pose: unavailable")
-
-        gripper_pos = self.get_gripper(robot_name)
-        if gripper_pos is not None:
-            lines.append(f"Gripper: {gripper_pos:.3f}m")
-        else:
-            lines.append("Gripper: not configured")
-
-        lines.append(f"State: {self.get_state()}")
-
-        return SkillResult.ok("\n".join(lines))
-
-    @skill
-    def move_to_pose(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        roll: float | None = None,
-        pitch: float | None = None,
-        yaw: float | None = None,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Move the robot end-effector to a target pose.
-
-        Plans a collision-free trajectory and executes it.
-        If roll/pitch/yaw are omitted, the current EE orientation is preserved.
-
-        Args:
-            x: Target X position in meters.
-            y: Target Y position in meters.
-            z: Target Z position in meters.
-            roll: Target roll in radians (omit to keep current orientation).
-            pitch: Target pitch in radians (omit to keep current orientation).
-            yaw: Target yaw in radians (omit to keep current orientation).
-            robot_name: Robot to move (only needed for multi-arm setups).
-        """
-        logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
-
-        # If no orientation specified, preserve the current EE orientation.
-        # If partially specified, fill unspecified angles from current orientation.
-        if roll is None and pitch is None and yaw is None:
-            current_pose = self.get_ee_pose(robot_name)
-            if current_pose is not None:
-                orientation = current_pose.orientation
-            else:
-                orientation = Quaternion(0, 0, 0, 1)  # identity fallback
-        else:
-            current_pose = self.get_ee_pose(robot_name)
-            if current_pose is not None:
-                current_euler = current_pose.orientation.to_euler()
-                orientation = Quaternion.from_euler(
-                    Vector3(
-                        roll if roll is not None else current_euler.x,
-                        pitch if pitch is not None else current_euler.y,
-                        yaw if yaw is not None else current_euler.z,
-                    )
-                )
-            else:
-                orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
-
-        pose = Pose(Vector3(x, y, z), orientation)
-
-        # If EE is low, lift up first to clear obstacles
-        lift = self._lift_if_low(robot_name)
-        if not lift.is_success():
-            return lift
-
-        if not self.plan_to_pose(pose, robot_name):
-            return SkillResult.fail(
-                "PLANNING_FAILED",
-                f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
-            )
-
-        exec_result = self._preview_execute_wait(robot_name)
-        if not exec_result.is_success():
-            return exec_result
-
-        return SkillResult.ok(f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})")
-
-    @skill
-    def move_to_joints(
-        self,
-        joints: str,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Move the robot to a target joint configuration.
-
-        Plans a collision-free trajectory and executes it.
-
-        Args:
-            joints: Comma-separated joint positions in radians, e.g. "0.1, -0.5, 1.2, 0.0, 0.3, -0.1".
-            robot_name: Robot to move (only needed for multi-arm setups).
-        """
-        try:
-            joint_values = [float(j.strip()) for j in joints.split(",")]
-        except ValueError:
-            return SkillResult.fail(
-                "INVALID_INPUT",
-                f"Invalid joints format '{joints}'. Expected comma-separated floats.",
-            )
-
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
-        goal = JointState(name=config.joint_names, position=joint_values)
-
-        logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
-        if not self.plan_to_joints(goal, rname):
-            return SkillResult.fail(
-                "PLANNING_FAILED",
-                "Joint configuration may be unreachable or in collision",
-            )
-
-        exec_result = self._preview_execute_wait(robot_name)
-        if not exec_result.is_success():
-            return exec_result
-
-        return SkillResult.ok("Reached target joint configuration")
-
-    @skill
-    def go_home(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Move the robot to its home/observe joint configuration.
-
-        Opens the gripper and moves to the predefined home position.
-
-        Args:
-            robot_name: Robot to move (only needed for multi-arm setups).
-        """
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config, _ = robot
-
-        if config.home_joints is None:
-            return SkillResult.fail(
-                "NOT_CONFIGURED",
-                "No home_joints configured for this robot",
-            )
-
-        logger.info("Opening gripper...")
-        self._set_gripper_position(0.85, rname)
-        time.sleep(0.5)
-
-        goal = JointState(name=config.joint_names, position=config.home_joints)
-        logger.info("Planning motion to home position...")
-        if not self.plan_to_joints(goal, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
-
-        exec_result = self._preview_execute_wait(robot_name)
-        if not exec_result.is_success():
-            return exec_result
-
-        return SkillResult.ok("Reached home position")
-
-    @skill
-    def go_init(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Move the robot to its init position (captured at startup or set manually).
-
-        The init position is the joint configuration the robot was in when the
-        module first received joint state. It can be changed with set_init_joints().
-
-        Args:
-            robot_name: Robot to move (only needed for multi-arm setups).
-        """
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, robot_id, _, _ = robot
-
-        init = self._init_joints.get(rname)
-        if init is None:
-            return SkillResult.fail(
-                "NOT_CONFIGURED",
-                "No init joints captured — robot may not have reported joint state yet",
-            )
-
-        # Lift if EE is low before moving to init
-        lift = self._lift_if_low(robot_name)
-        if not lift.is_success():
-            return lift
-
-        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
-        # This avoids direct paths through the workspace that could collide with objects.
-        if self._world_monitor is not None:
-            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
-            if init_ee is not None:
-                wp = Pose(
-                    Vector3(
-                        init_ee.position.x + 0.05,
-                        init_ee.position.y,
-                        init_ee.position.z + 0.10,
-                    ),
-                    init_ee.orientation,
-                )
-                if self.plan_to_pose(wp, robot_name):
-                    wp_result = self._preview_execute_wait(robot_name)
-                    if not wp_result.is_success():
-                        return wp_result
-                else:
-                    logger.warning("Safe waypoint unreachable, going directly to init")
-
-        logger.info(
-            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
-        )
-        if not self.plan_to_joints(init, robot_name):
-            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
-
-        exec_result = self._preview_execute_wait(robot_name)
-        if not exec_result.is_success():
-            return exec_result
-
-        return SkillResult.ok("Reached init position")
+        result = self.execute(blocking=True)
+        if not result.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", result.message or result.status.name)
+        return SkillResult.ok(str(result))
 
     @rpc
     def stop(self) -> None:
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
+
+        execution_manager = getattr(self, "_execution_manager", None)
+        if execution_manager is not None:
+            cancellation = execution_manager.cancel()
+            if cancellation.status is ExecutionStatus.UNCERTAIN:
+                logger.error(
+                    "Shutdown could not confirm coordinator trajectory safety: %s",
+                    cancellation.message,
+                )
 
         # Stop TF thread
         if self._tf_thread is not None:

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -32,10 +32,6 @@ from dimos.simulation.engines.mujoco_shm import (
     shm_key_from_path,
 )
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
-
 
 logger = setup_logger()
 
@@ -118,6 +114,13 @@ class ShmMujocoAdapter:
 
     def is_connected(self) -> bool:
         return self._connected and self._shm is not None
+
+    def activate(self) -> bool:
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        self.write_stop()
+        return self.write_enable(False)
 
     def get_info(self) -> ManipulatorInfo:
         return ManipulatorInfo(
@@ -235,11 +238,3 @@ class ShmMujocoAdapter:
 
     def read_force_torque(self) -> list[float] | None:
         return None
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("sim_mujoco", ShmMujocoAdapter)
-
-
-__all__ = ["ShmMujocoAdapter"]

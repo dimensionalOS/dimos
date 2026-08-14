@@ -34,6 +34,3 @@ teleop_phone_go2_fleet = autoconnect(
     SimplePhoneTeleop.blueprint(),
     unitree_go2_fleet,
 )
-
-
-__all__ = ["teleop_phone", "teleop_phone_go2", "teleop_phone_go2_fleet"]

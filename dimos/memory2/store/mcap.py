@@ -49,6 +49,18 @@ class StreamCodec(Protocol):
     def decode(self, data: bytes) -> Any: ...
 
 
+class _BytesCodec:
+    """Identity codec: hands back a codecless channel's stored bytes as ``Stream[bytes]``."""
+
+    payload_type = bytes
+
+    def decode(self, data: bytes) -> bytes:
+        return data
+
+
+_BYTES_CODEC = _BytesCodec()
+
+
 def _slug(topic: str) -> str:
     """Auto stream name from a topic: drop the ``rt/`` prefix and ``/`` -> ``_``.
 
@@ -149,16 +161,33 @@ class McapStore(Store):
             summary = make_reader(f).get_summary()
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
+        # Channels with no registered codec are still exposed, as Stream[bytes] via
+        # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
+        # source schema so summary() can flag them [raw bytes: <schema>].
+        self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
-                if ch.topic not in self._codecs:
-                    continue
+                count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
                 self._stream_topic[name] = ch.topic
-                self._available[name] = summary.statistics.channel_message_counts.get(cid, 0)
+                self._available[name] = count
+                if ch.topic not in self._codecs:
+                    sch = summary.schemas.get(ch.schema_id)
+                    self._raw[name] = sch.name if sch else None
 
     def list_streams(self) -> list[str]:
         return sorted(set(self._available) | set(self._streams))
+
+    def summary(self) -> str:
+        """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
+        lines = []
+        for name, stream in self.streams.items():
+            line = stream.summary()  # "Stream(\"name\"): ..."
+            if name in self._raw:
+                head = str(stream)  # "Stream(\"name\")"
+                line = f"{head} [raw bytes: {self._raw[name] or '?'}]{line[len(head) :]}"
+            lines.append(line)
+        return "\n".join(lines)
 
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any
@@ -166,7 +195,7 @@ class McapStore(Store):
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]
-        codec = self._codecs[topic]
+        codec = self._codecs.get(topic) or _BYTES_CODEC  # no codec -> Stream[bytes]
         ptype = codec.payload_type
         obs = McapObservationStore(
             name=name, path=self.config.path, topic=topic, codec=codec, count=self._available[name]

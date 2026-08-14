@@ -33,12 +33,15 @@ This module provides manipulator arm drivers: Protocol-only with injectable adap
 ```
 manipulators/
 ├── spec.py              # ManipulatorAdapter Protocol + shared types
-├── registry.py          # Adapter registry with auto-discovery
+├── registry.py          # Adapter registry (lazy _registry.py manifests)
 ├── mock/
+│   ├── _registry.py  # Declares "mock" → adapter import path
 │   └── adapter.py       # MockAdapter for testing
 ├── xarm/
+│   ├── _registry.py
 │   ├── adapter.py       # XArmAdapter (SDK wrapper)
 └── piper/
+    ├── _registry.py
     ├── adapter.py       # PiperAdapter (SDK wrapper)
 ```
 
@@ -93,7 +96,15 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
     # ... implement other Protocol methods
 ```
 
-2. **Create the driver** (`arm.py`):
+2. **Declare it in a manifest** (`_registry.py`, stdlib imports only):
+
+```python
+ADAPTER_FACTORIES = {
+    "myarm": "dimos.hardware.manipulators.myarm.adapter:MyArmAdapter",
+}
+```
+
+3. **Create the driver** (`arm.py`):
 
 ```python
 from dimos.core.core import rpc
@@ -124,6 +135,7 @@ All adapters must implement these core methods:
 | Category | Methods |
 |----------|---------|
 | Connection | `connect()`, `disconnect()`, `is_connected()` |
+| Lifecycle | `activate()`, `deactivate()` |
 | Info | `get_info()`, `get_dof()`, `get_limits()` |
 | State | `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
 | Motion | `write_joint_positions()`, `write_joint_velocities()`, `write_stop()` |

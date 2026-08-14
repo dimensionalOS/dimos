@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
 import uuid
 
 import pytest
 
 import dimos.hardware.manipulators.sim.adapter as adapter_mod
-from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter, register
+from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.simulation.engines.mujoco_shm import ManipShmWriter
 
@@ -82,10 +81,12 @@ class TestProtocolConformance:
         with pytest.raises(ValueError, match="address"):
             ShmMujocoAdapter(dof=ARM_DOF, address=None)
 
-    def test_register(self):
-        registry = MagicMock()
-        register(registry)
-        registry.register.assert_called_once_with("sim_mujoco", ShmMujocoAdapter)
+    def test_registered(self):
+        from dimos.hardware.manipulators.registry import adapter_registry
+
+        assert adapter_registry._factory_paths["sim_mujoco"] == (
+            "dimos.hardware.manipulators.sim.adapter:ShmMujocoAdapter"
+        )
 
 
 class TestReadState:

@@ -95,8 +95,10 @@ def test_module_file():
 
 def test_module_reloading(repl, greeting, response, test_module_file):
     repl.stdin.write("""
+from dimos.core.global_config import global_config
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination import _test_module
+global_config.update(transport="lcm")
 mc = ModuleCoordinator.build(_test_module.AliceModule.blueprint())
 """)
     repl.stdin.flush()

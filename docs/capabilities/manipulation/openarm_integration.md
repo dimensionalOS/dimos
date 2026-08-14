@@ -1,5 +1,6 @@
-# OpenArm Integration
-
+---
+title: "OpenArm Integration"
+---
 Guide for running the **OpenArm** — an open-source bimanual 7-DOF research arm built from Damiao DM-J quasi-direct-drive motors — under the dimos manipulation + control stack.
 
 **If you're standing in front of the hardware and just want to run it, skip to [Quick start](#quick-start).**
@@ -40,9 +41,8 @@ dimos/hardware/manipulators/openarm/
 ├── test_driver.py     # 13 unit tests (virtual CAN loopback, no hardware)
 └── test_adapter.py    # 11 unit tests (virtual CAN + mock state frames)
 
-dimos/robot/catalog/openarm.py     # openarm_arm() and openarm_single() config factories
 dimos/robot/manipulators/openarm/
-├── blueprints.py      # coordinator-*, planner-*, keyboard-teleop-* blueprints
+├── blueprints.py      # coordinator-*, planner-*, keyboard-teleop-* blueprints and model config
 └── scripts/           # bring-up + diagnostic scripts (run manually by humans)
     ├── openarm_can_up.sh         # bring SocketCAN interfaces up (needs sudo)
     ├── openarm_can_probe.py      # enumerate & read state from all 8 motors
@@ -150,7 +150,7 @@ This gives you an interactive Python prompt with these functions:
 | `plan([q1..q7], robot_name)` | Plan a collision-free trajectory to a joint configuration |
 | `plan_pose(x, y, z, robot_name=...)` | Plan to a Cartesian EE pose (preserves current orientation) |
 | `preview(robot_name)` | Animate the planned path in Meshcat without executing |
-| `execute(robot_name)` | Send the planned trajectory to the coordinator |
+| `execute()` | Send the complete planned trajectory to the coordinator |
 | `home(robot_name)` | Plan + execute to home joints |
 | `commands()` | Print all available functions |
 
@@ -164,7 +164,7 @@ This gives you an interactive Python prompt with these functions:
 [0.02, -0.01, -0.13, 0.15, 0.17, -0.07, 0.10]
 
 >>> # One-liner: plan → preview in Meshcat → execute on hardware
->>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and preview(robot_name="left_arm") and execute(robot_name="left_arm")
+>>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and preview(robot_name="left_arm") and execute()
 True
 
 >>> joints(robot_name="left_arm")
@@ -184,9 +184,9 @@ If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset 
 
 ```python skip
 >>> # Move both arms to mirrored poses
->>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and execute(robot_name="left_arm")
+>>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and execute()
 True
->>> plan([-0.5, 0, 0, 0, 0, 0, 0], robot_name="right_arm") and execute(robot_name="right_arm")
+>>> plan([-0.5, 0, 0, 0, 0, 0, 0], robot_name="right_arm") and execute()
 True
 ```
 
@@ -198,7 +198,7 @@ Each arm plans and executes independently — the coordinator runs both trajecto
 >>> ee(robot_name="left_arm")           # see where the EE currently is
 >>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm") and preview(robot_name="left_arm")
 True
->>> execute(robot_name="left_arm")
+>>> execute()
 True
 ```
 
@@ -219,7 +219,7 @@ If you don't know which Cartesian targets are reachable, check first with the wo
 
 ### Which CAN bus is which arm
 
-Linux assigns `can0`/`can1` in USB-enumeration order, which isn't guaranteed stable across reboots or cable swaps. If the arms come up "swapped" (commanding `left_arm` moves the physical right arm), flip these two constants at the top of [blueprints.py](/dimos/robot/manipulators/openarm/blueprints.py):
+Linux assigns `can0`/`can1` in USB-enumeration order, which isn't guaranteed stable across reboots or cable swaps. If the arms come up "swapped" (commanding `left_arm` moves the physical right arm), flip these two constants in [config.py](/dimos/robot/manipulators/openarm/config.py):
 
 ```python
 LEFT_CAN = "can0"
@@ -248,7 +248,7 @@ The URDFs use the xacro-generated limits (which include per-side offsets for mir
 
 ### Disabling auto MIT-mode write
 
-The adapter writes `CTRL_MODE=MIT` to every motor at `connect()`. It's idempotent (writing the same value is a no-op), so this is safe to leave on. To verify that a previous write persisted across a power cycle, flip `AUTO_SET_MIT_MODE = False` in [blueprints.py](/dimos/robot/manipulators/openarm/blueprints.py) and restart — the arms should still respond.
+The adapter writes `CTRL_MODE=MIT` to every motor at `connect()`. It's idempotent (writing the same value is a no-op), so this is safe to leave on. To verify that a previous write persisted across a power cycle, flip `AUTO_SET_MIT_MODE = False` in [config.py](/dimos/robot/manipulators/openarm/config.py) and restart — the arms should still respond.
 
 ---
 
@@ -336,10 +336,10 @@ Persistent across power cycles.
 
 - **`ip link ... fd on` → `Operation not supported`.** gs_usb firmware doesn't support CAN-FD. Use classical CAN @ 1 Mbit (our bringup script's default).
 - **Motors reply to probes but commands do nothing.** CTRL_MODE is not MIT. The adapter now writes MIT on connect, but if you disabled that and motors got reset, run `openarm_set_mit_mode.py`.
-- **`COLLISION_AT_START` during planning.** `link5` and `link7` collision meshes overlap by 3 mm at every configuration. Handled by `OPENARM_COLLISION_EXCLUSIONS` in the catalog. If you see it anyway, the exclusion pairs may not be getting applied — check that the collision filter log line appears during world build.
+- **`COLLISION_AT_START` during planning.** `link5` and `link7` collision meshes overlap by 3 mm at every configuration. Handled by `OPENARM_COLLISION_EXCLUSIONS` in the OpenArm config module. If you see it anyway, the exclusion pairs may not be getting applied — check that the collision filter log line appears during world build.
 - **`INVALID_START` during planning.** Hardware encoder noise pushed a joint 1 mrad past a URDF limit. Joint4 used to be exactly `lower=0.0` which tripped this — it's now `-0.01` to give breathing room. If you see it on a different joint, widen that limit by ~10 mrad.
 - **"Transmit buffer full" (ENOBUFS) at 100 Hz.** Kernel TX queue too small. The bringup script sets `txqueuelen 1000`; the driver also retries on ENOBUFS. If you still see the error, check `ip -details link show canX | grep qlen`.
-- **Arms swap sides.** USB enumeration order flipped. Swap `LEFT_CAN` / `RIGHT_CAN` in [blueprints.py](/dimos/robot/manipulators/openarm/blueprints.py).
+- **Arms swap sides.** USB enumeration order flipped. Swap `LEFT_CAN` / `RIGHT_CAN` in [config.py](/dimos/robot/manipulators/openarm/config.py).
 
 ---
 
@@ -350,7 +350,7 @@ Persistent across power cycles.
 - **Gravity compensation on by default.** Eliminates steady-state position error without needing high kp. Needs Pinocchio + the per-side URDFs.
 - **One adapter per CAN bus, keyed by `address`.** Matches the Piper adapter pattern. Bimanual = two adapters with different `address` values.
 - **Per-side URDFs for Drake planning.** Loading the full 14-DOF bimanual URDF twice (once per robot instance) creates phantom-arm collisions with the "other" arm frozen at zero. The per-side URDFs keep only one arm's links + the torso, avoiding the phantom collisions while matching the bimanual kinematics exactly.
-- **URDF stays in-tree (`data/openarm_description/`) for now.** Can migrate to LFS later — only the path constant in the catalog changes.
+- **URDF stays in-tree (`data/openarm_description/`) for now.** Can migrate to LFS later — only the path constants in the OpenArm blueprint module change.
 - **CAN bringup stays manual (`sudo`).** Auto-bringup from `connect()` would need sudo-in-a-library or a systemd unit; the explicit script is clearer and testable. For production, add a oneshot systemd unit that runs the script at boot.
 
 ---

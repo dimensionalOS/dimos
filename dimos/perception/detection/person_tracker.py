@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.types.timestamped import align_timestamped
@@ -36,6 +37,7 @@ class PersonTracker(Module):
     detections: In[Detection2DArray]
     color_image: In[Image]
     target: Out[PoseStamped]
+    tf: In[TFMessage]
 
     camera_info: CameraInfo
 
@@ -115,7 +117,7 @@ class PersonTracker(Module):
             frame_id="camera_link",
         )
 
-        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 5.0)
+        tf_world_to_camera = self.tfbuffer.get("world", "camera_link", detections2D.ts, 5.0)
         if not tf_world_to_camera:
             return
 

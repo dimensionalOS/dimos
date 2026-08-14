@@ -32,17 +32,6 @@ if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
 
 
-def open_store(path: str) -> Store:
-    """Open a store by file type (``.db`` -> SqliteStore, else Go2 mcap)."""
-    if str(path).endswith(".db"):
-        from dimos.memory2.store.sqlite import SqliteStore
-
-        return SqliteStore(path=path, must_exist=True)
-    from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set
-
-    return Go2McapStore(path=path)
-
-
 def _open_viewer(rrd: str) -> None:
     exe = shutil.which("rerun")
     if exe:
@@ -58,11 +47,14 @@ def render_store(
     out: str | None = None,
     seconds: float | None = None,
     no_gui: bool = False,
+    root: str | None = None,
 ) -> str:
     """Render ``store`` to a ``.rrd`` and (unless ``no_gui``) open the rerun viewer.
 
     Logs every observation (full res); ``seconds`` bounds the time window from
-    the start. Returns the ``.rrd`` path.
+    the start. ``root`` nests every stream under that entity path
+    (``<root>/<name>``) — except a stream whose name matches ``root``'s last
+    segment, which stays at ``<root>`` itself. Returns the ``.rrd`` path.
     """
     import rerun as rr
 
@@ -72,6 +64,14 @@ def render_store(
     if out is None:
         src = getattr(store.config, "path", None) or "store"
         out = str(Path(src).with_suffix(".rrd"))
+
+    base = root.strip("/") if root else ""
+
+    def entity(name: str) -> str:
+        # <root>/<name>, but a stream named like root's last segment stays at <root>.
+        if not base:
+            return name
+        return base if name == base.rsplit("/", 1)[-1] else f"{base}/{name}"
 
     # Discover renderable streams (payload has a working to_rerun) + shared anchor.
     renderable = []
@@ -102,22 +102,22 @@ def render_store(
     rr.save(out)
 
     for name, stream in renderable:
-        report = progress(stream.count(), label=name)
-        for obs in stream:
-            if seconds is not None and obs.ts - t0 > seconds:
-                print()  # terminate the windowed (sub-100%) progress line
-                break
-            if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+        with progress(stream.count(), label=name) as report:
+            for obs in stream:
+                if seconds is not None and obs.ts - t0 > seconds:
+                    break  # the context manager finalizes the windowed (sub-100%) bar
+                if obs.data is None:  # e.g. a truncated/corrupt frame that failed to decode
+                    report(obs)
+                    continue
+                rr.set_time("time", duration=obs.ts - t0)
+                data = obs.data.to_rerun()
+                path = entity(name)
+                if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
+                    for sub, arch in data:
+                        rr.log(f"{path}/{sub}", arch)
+                else:
+                    rr.log(path, data)
                 report(obs)
-                continue
-            rr.set_time("time", duration=obs.ts - t0)
-            data = obs.data.to_rerun()
-            if isinstance(data, list):  # RerunMulti: [(subpath, archetype), ...]
-                for sub, arch in data:
-                    rr.log(f"{name}/{sub}", arch)
-            else:
-                rr.log(name, data)
-            report(obs)
 
     rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")

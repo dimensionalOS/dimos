@@ -24,9 +24,11 @@ from unitree_webrtc_connect.constants import RTC_TOPIC
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
@@ -197,11 +199,7 @@ class UnitreeSkillContainer(Module):
     _navigation: NavigationInterfaceSpec
     _connection: GO2ConnectionSpec
 
-    @rpc
-    def start(self) -> None:
-        super().start()
-        # Initialize TF early so it can start receiving transforms.
-        _ = self.tf
+    tf: In[TFMessage]
 
     @rpc
     def stop(self) -> None:
@@ -229,7 +227,7 @@ class UnitreeSkillContainer(Module):
         """
         forward, left, degrees = float(forward), float(left), float(degrees)
 
-        tf = self.tf.get("world", "base_link")
+        tf = self.tfbuffer.get("world", "base_link")
         if tf is None:
             return "Failed to get the position of the robot."
 

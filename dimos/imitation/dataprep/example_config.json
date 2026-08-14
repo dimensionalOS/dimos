@@ -1,0 +1,37 @@
+{
+  "source": "data/recordings/session.db",
+  "episodes": {
+    "extractor": "episode_status",
+    "status_stream": "status"
+  },
+  "observation": {
+    "image": {
+      "stream": "color_image",
+      "field": "data"
+    },
+    "joint_state": {
+      "stream": "coordinator_joint_state",
+      "field": "position"
+    }
+  },
+  "action": {
+    "joint_target": {
+      "stream": "coordinator_joint_state",
+      "field": "position"
+    }
+  },
+  "sync": {
+    "anchor": "image",
+    "rate_hz": 14.0,
+    "tolerance_ms": 80.0,
+    "action_shift": 1
+  },
+  "output": {
+    "format": "lerobot",
+    "path": "data/datasets/session",
+    "metadata": {
+      "robot": "xarm7",
+      "default_task_label": "pick_and_place"
+    }
+  }
+}

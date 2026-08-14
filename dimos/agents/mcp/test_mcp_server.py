@@ -52,6 +52,7 @@ def test_mcp_module_request_flow() -> None:
     rpc_calls = _make_rpc_calls(skills, {"add": 5})
 
     response = asyncio.run(handle_request({"method": "tools/list", "id": 1}, skills, rpc_calls))
+    assert response is not None
     assert response["result"]["tools"][0]["name"] == "add"
     assert response["result"]["tools"][0]["description"] == "Add two numbers"
 
@@ -66,6 +67,7 @@ def test_mcp_module_request_flow() -> None:
             rpc_calls,
         )
     )
+    assert response is not None
     assert response["result"]["content"][0]["text"] == "5"
     rpc_calls["add"].assert_called_once_with(x=2, y=3)
 
@@ -131,6 +133,7 @@ def test_mcp_module_handles_errors() -> None:
 
     # All skills listed
     response = asyncio.run(handle_request({"method": "tools/list", "id": 1}, skills, rpc_calls))
+    assert response is not None
     tool_names = {tool["name"] for tool in response["result"]["tools"]}
     assert "ok_skill" in tool_names
     assert "fail_skill" in tool_names
@@ -143,6 +146,7 @@ def test_mcp_module_handles_errors() -> None:
             rpc_calls,
         )
     )
+    assert response is not None
     assert "Error running tool" in response["result"]["content"][0]["text"]
     assert "boom" in response["result"]["content"][0]["text"]
 
@@ -154,14 +158,17 @@ def test_mcp_module_handles_errors() -> None:
             rpc_calls,
         )
     )
+    assert response is not None
     assert "not found" in response["result"]["content"][0]["text"].lower()
 
 
 def test_mcp_module_initialize_and_unknown() -> None:
     response = asyncio.run(handle_request({"method": "initialize", "id": 1}, [], {}))
+    assert response is not None
     assert response["result"]["serverInfo"]["name"] == "dimensional"
 
     response = asyncio.run(handle_request({"method": "unknown/method", "id": 2}, [], {}))
+    assert response is not None
     assert response["error"]["code"] == -32601
 
 
@@ -241,6 +248,7 @@ def test_refusal_message_distinguishes_holder_lifecycle() -> None:
             )
             # The requester is refused, so its RPC never runs.
             rpc_calls["follow_person"].assert_not_called()
+            assert response is not None
             return response["result"]["content"][0]["text"]
         finally:
             app.state.skills_by_name = saved_skills
@@ -318,6 +326,7 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
             )
         )
         # It waited for the hold to clear, then actually ran the tool.
+        assert response is not None
         assert response["result"]["content"][0]["text"] == "secured"
         rpc_calls["secure_payload"].assert_called_once()
     finally:

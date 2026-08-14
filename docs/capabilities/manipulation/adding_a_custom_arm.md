@@ -1,10 +1,11 @@
-# How to Integrate a New Manipulator Arm
-
-This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
+---
+title: "How to Integrate a New Manipulator Arm"
+---
+This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
 
-DimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+dimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -51,6 +52,7 @@ dimos/hardware/manipulators/
 ├── piper/
 └── yourarm/             # ← New directory
     ├── __init__.py
+    ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
 
@@ -70,19 +72,15 @@ Below is a complete annotated adapter. Implement each method by wrapping your ve
 """YourArm adapter — implements ManipulatorAdapter protocol.
 
 SDK Units: <describe your SDK's native units here>
-DimOS Units: angles=radians, distance=meters, velocity=rad/s
+dimOS Units: angles=radians, distance=meters, velocity=rad/s
 """
 
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 # Import your vendor SDK
 from yourarm_sdk import YourArmSDK
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -141,6 +139,14 @@ class YourArmAdapter:
         """Check if connected."""
         return self._sdk is not None and self._sdk.is_alive()
 
+    def activate(self) -> bool:
+        """Prepare hardware for commanded motion after connect()."""
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        """Gracefully stop commanded motion before disconnect()."""
+        return self.write_stop()
+
 
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
@@ -171,7 +177,7 @@ class YourArmAdapter:
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode.
 
-        Map DimOS ControlMode enum values to your SDK's mode codes.
+        Map dimOS ControlMode enum values to your SDK's mode codes.
         Return False for modes your arm doesn't support.
         """
         if not self._sdk:
@@ -334,15 +340,15 @@ class YourArmAdapter:
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
         return None
+```
 
+Then declare the adapter in a `_registry.py` manifest next to it:
 
-# ── Registry hook (required for auto-discovery) ───────────────────
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("yourarm", YourArmAdapter)
-
-
-__all__ = ["YourArmAdapter"]
+```py
+# dimos/hardware/manipulators/yourarm/_registry.py
+ADAPTER_FACTORIES = {
+    "yourarm": "dimos.hardware.manipulators.yourarm.adapter:YourArmAdapter",
+}
 ```
 
 ### Key implementation notes
@@ -364,32 +370,15 @@ __all__ = ["YourArmAdapter"]
 
 ## Step 2: Create Package Files
 
-### \_\_init\_\_.py
+### How discovery works
 
-```python skip
-"""YourArm manipulator hardware adapter.
-
-Usage:
-    >>> from dimos.hardware.manipulators.yourarm import YourArmAdapter
-    >>> adapter = YourArmAdapter(address="192.168.1.100", dof=6)
-    >>> adapter.connect()
-    >>> positions = adapter.read_joint_positions()
-"""
-
-from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
-
-__all__ = ["YourArmAdapter"]
-```
-
-### How auto-discovery works
-
-The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` automatically discovers your adapter at import time:
+The `AdapterRegistry` in `dimos/hardware/manipulators/registry.py` discovers adapters from `_registry.py` manifests at import time:
 
 1. It iterates over all subpackages under `dimos/hardware/manipulators/`
-2. For each subpackage, it tries to import `<subpackage>.adapter`
-3. If that module has a `register()` function, it calls it
+2. For each subpackage, it loads `<subpackage>._registry` and records each `ADAPTER_FACTORIES` entry (name → `"module:attr"` import path)
+3. Your adapter module is imported only when `create("yourarm")` is first called
 
-This means **no manual registration is needed** — just having the `register()` function in your `adapter.py` is sufficient.
+The manifest must import nothing beyond stdlib — it is loaded even when your vendor SDK is missing, so the name always shows up in `available()` and a missing SDK fails loudly at `create()` instead of silently dropping the adapter. A CI test (`dimos/hardware/test_adapter_registries.py`) fails if an adapter directory has no manifest or a manifest path doesn't resolve.
 
 You can verify discovery works:
 
@@ -400,7 +389,7 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in DimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
 
 ### 3a. Create the robot directory
 
@@ -439,9 +428,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import JointState
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 
 # YourArm (6-DOF) — real hardware
@@ -460,17 +448,8 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_arm",                          # Task name (used by ManipulationModule RPC)
-            type="trajectory",                        # Trajectory execution task
-            joint_names=[f"arm_joint{i+1}" for i in range(6)],
-            priority=10,                              # Higher priority wins arbitration
-        ),
+        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
 )
 
 
@@ -491,16 +470,44 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 
 ## Step 4: Add URDF and Planning Integration (Optional)
 
-If you want motion planning (collision-free trajectories via Drake), you need a URDF and a planning blueprint. Add these to your robot's own `blueprints.py`.
+If you want motion planning, you need a URDF and a planning blueprint. Add these
+to your robot's own `blueprints.py`.
 
 ### 4a. Add your URDF
 
 Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
 
+If the planning blueprint selects the RoboPlan TOPP-RA trajectory
+parametrizer, dimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
+each selected planning group must provide finite, positive velocity limits.
+Authored extended acceleration limits take precedence; when absent, dimOS
+temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
+model composition:
+
+```xml
+<joint name="joint1" type="revolute">
+  <!-- parent, child, origin, and axis omitted -->
+  <limit
+    lower="-3.14"
+    upper="3.14"
+    effort="100"
+    velocity="2.0"
+    acceleration="4.0"
+  />
+</joint>
+```
+
+RoboPlan loads both limits from its scene model. If either is absent, zero,
+negative, or non-finite, plan materialization fails before preview or execution
+and identifies the affected joint. dimOS does not substitute
+`RobotModelConfig.max_velocity`, `velocity_limits`, or `max_acceleration` for
+this backend. Formal per-joint dimOS overrides will be added separately.
+
 ```python skip
 from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.models import PlanningGroupDefinition
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -524,36 +531,36 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 def _make_yourarm_config(
     name: str = "arm",
     y_offset: float = 0.0,
-    joint_prefix: str = "",
-    coordinator_task: str | None = None,
 ) -> RobotModelConfig:
     """Create YourArm robot config for planning.
 
     Args:
         name: Robot name in the Drake planning world.
         y_offset: Y-axis offset for multi-arm setups.
-        joint_prefix: Prefix for joint name mapping to coordinator namespace.
-        coordinator_task: Coordinator task name for trajectory execution via RPC.
     """
     # These must match the joint names in your URDF
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
 
     return RobotModelConfig(
         name=name,
         model_path=_YOURARM_URDF_PATH,
-        base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
-        end_effector_link="link6",      # Last link in your URDF's kinematic chain
-        base_link="base_link",          # Root link of your URDF
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(joint_names),
+                base_link="base_link",
+                tip_link="link6",
+            )
+        ],
+        base_pose=_make_base_pose(y=y_offset),  # world -> base_link placement
+        base_link="base_link",                 # Robot-scoped placement/weld/strip link
         package_paths={"yourarm_description": _YOURARM_PACKAGE_PATH},
         xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
         max_velocity=1.0,               # Max velocity scaling factor
         max_acceleration=2.0,           # Max acceleration scaling factor
-        joint_name_mapping=joint_mapping,
-        coordinator_task_name=coordinator_task,
     )
 ```
 
@@ -564,13 +571,33 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 ```python skip
 
 yourarm_planner = manipulation_module(
-    robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
+    robots=[_make_yourarm_config("arm")],
     planning_timeout=10.0,
-    enable_viz=True,
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
+    visualization={"backend": "meshcat"},
+    trajectory_parametrization={"backend": "simple_trapezoid"},
+)
+# The planner's `coordinator_joint_state` input auto-connects to the
+# ControlCoordinator's output on the default `/coordinator_joint_state`
+# topic, so no `.transports(...)` override is needed.
+```
+
+You may omit `trajectory_parametrization` when the world-based default is
+appropriate: `world_backend="roboplan"` selects `roboplan_toppra`, while
+`world_backend="drake"` selects `simple_trapezoid`.
+
+To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
+parametrizer after adding the URDF limits described above:
+
+```python skip
+yourarm_planner = manipulation_module(
+    robots=[_make_yourarm_config("arm")],
+    world_backend="roboplan",
+    trajectory_parametrization={
+        "backend": "roboplan_toppra",
+        "velocity_scale": 0.8,
+        "acceleration_scale": 0.8,
+    },
+    visualization={"backend": "viser"},
 )
 ```
 
@@ -579,13 +606,63 @@ yourarm_planner = manipulation_module(
 | Field | Description |
 |-------|-------------|
 | `model_path` | Path to `.urdf` or `.xacro` file |
-| `joint_names` | Ordered list of controlled joints (must match URDF) |
-| `end_effector_link` | Link to use as the end-effector for IK |
-| `base_link` | Root link of the robot model |
+| `joint_names` | Ordered controllable local model joint set (must match URDF); not itself a planning group |
+| `planning_groups` / `srdf_path` | Explicit planning groups or SRDF source; direct `RobotModelConfig(...)` helpers should pass explicit groups, while shared config helpers can discover groups from SRDF/fallback |
+| `base_pose` / `base_link` | Optional robot placement: `base_pose` places `base_link` in the world for weld/strip behavior |
 | `package_paths` | Maps `package://` URIs to filesystem paths (for xacro) |
-| `joint_name_mapping` | Maps coordinator names (e.g., `"arm_joint1"`) to URDF names (e.g., `"joint1"`) |
-| `coordinator_task_name` | Must match the `TaskConfig.name` in your coordinator blueprint |
 | `collision_exclusion_pairs` | List of `(link_a, link_b)` tuples for links that may legitimately touch (e.g., gripper fingers) |
+
+Coordinator-facing joint states and trajectories use global joint names derived
+mechanically as `{robot_name}/{local_joint_name}` (for example, `arm/joint1`).
+Keep hardware-native name translation inside the hardware adapter; manipulation
+planning config uses local model joint names.
+
+Planning-group `base_link`/`tip_link` values define kinematic chains and pose
+target frames. `base_link` is only the robot-scoped link placed by
+`base_pose`; do not use it as a substitute for planning-group chain metadata.
+See [Planning Groups](/docs/capabilities/manipulation/planning_groups.md).
+
+### 4d. Configure Cartesian, EEF-twist, and teleop control IK
+
+Cartesian, EEF-twist, and engagement-relative teleop tasks use the direct URDF
+or Xacro in `RobotModelConfig`. Set `package_paths` and `xacro_args` when needed,
+name the end-effector link, and map coordinator joints to model joints. The task
+validates the prepared model, frame, and joint mapping at startup. Teleop uses
+the named frame and does not accept a separate model path or numeric
+end-effector joint ID.
+
+Pass the same model configuration to the common helpers:
+
+```python skip
+from dimos.robot.manipulators.common.blueprints import (
+    cartesian_ik_task,
+    eef_twist_task,
+    teleop_ik_task,
+)
+
+cartesian_task = cartesian_ik_task(
+    hardware,
+    robot_model=robot_model,
+)
+twist_task = eef_twist_task(
+    hardware,
+    robot_model=robot_model,
+)
+teleop_task = teleop_ik_task(
+    hardware,
+    name="teleop_arm",
+    hand="right",
+    robot_model=robot_model,
+)
+```
+
+Each tick starts from measured joints and applies model position and velocity
+limits. Twist targets are derived from measured forward kinematics. Teleop
+targets apply controller deltas to a measured engagement baseline and discard
+that baseline across disengage, timeout, stop, clear, or E-STOP. Invalid models
+or mappings fail at startup; invalid runtime output holds the measured position.
+Validate Cartesian, twist, and teleop behavior in simulation or replay before
+hardware use.
 
 ## Step 5: Register Blueprints
 
@@ -632,6 +709,8 @@ def mock_adapter():
     adapter.read_joint_velocities.return_value = [0.0] * 6
     adapter.read_joint_efforts.return_value = [0.0] * 6
     adapter.write_joint_positions.return_value = True
+    adapter.activate.return_value = True
+    adapter.deactivate.return_value = True
     adapter.read_enabled.return_value = True
     adapter.is_connected.return_value = True
     return adapter
@@ -647,7 +726,7 @@ def test_write_positions(mock_adapter):
 ### Integration test with coordinator
 
 ```python skip
-from dimos.control.blueprints.basic import coordinator_mock
+from dimos.robot.manipulators.common.mock import coordinator_mock
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 # Build and start coordinator with mock hardware
@@ -674,12 +753,12 @@ positions = adapter.read_joint_positions()
 assert len(positions) == 6
 print(f"Joint positions (rad): {positions}")
 
-# Enable and move
-adapter.write_enable(True)
+# Activate and move
+adapter.activate()
 adapter.write_joint_positions([0.0] * 6)
 
 # Cleanup
-adapter.write_stop()
+adapter.deactivate()
 adapter.disconnect()
 ```
 
@@ -688,7 +767,8 @@ adapter.disconnect()
 Files to create:
 
 - [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
-- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol + `register()`)
+- [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
+- [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
 - [ ] `dimos/robot/yourarm/__init__.py`
 - [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
 

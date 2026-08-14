@@ -27,7 +27,7 @@ from dimos.protocol.pubsub.encoders import (
 )
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub
-from dimos.protocol.service.lcmservice import LCMService, autoconf
+from dimos.protocol.service.lcmservice import LCMService
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -105,10 +105,15 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
             return noop
 
+        # The lcm-level detach is deferred to the loop thread (see
+        # _defer_unsubscribe), but delivery must stop the moment unsubscribe()
+        # returns — gate dispatch on a liveness flag.
+        alive = True
+
         if topic.is_pattern:
 
             def handler(channel: str, msg: bytes) -> None:
-                if channel == "LCM_SELF_TEST":
+                if not alive or channel == "LCM_SELF_TEST":
                     return
                 callback(msg, Topic.from_channel_str(channel, topic.lcm_type))
 
@@ -119,15 +124,22 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
             lcm_subscription = self.l.subscribe(pattern_str, handler)
         else:
             topic_str = str(topic)
-            lcm_subscription = self.l.subscribe(topic_str, lambda _, msg: callback(msg, topic))
+
+            def plain_handler(_: str, msg: bytes) -> None:
+                if alive:
+                    callback(msg, topic)
+
+            lcm_subscription = self.l.subscribe(topic_str, plain_handler)
 
         # Set queue capacity to 10000 to handle high-volume bursts
         lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
-            if self.l is None:
+            nonlocal alive
+            if not alive:
                 return
-            self.l.unsubscribe(lcm_subscription)
+            alive = False
+            self._defer_unsubscribe(lcm_subscription)
 
         return unsubscribe
 
@@ -146,14 +158,3 @@ class PickleLCM(
     PickleEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...
-
-
-__all__ = [
-    "LCM",
-    "Glob",
-    "LCMEncoderMixin",
-    "LCMPubSubBase",
-    "PickleLCM",
-    "Topic",
-    "autoconf",
-]

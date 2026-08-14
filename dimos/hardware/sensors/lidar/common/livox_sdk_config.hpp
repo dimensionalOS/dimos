@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -26,6 +27,10 @@ inline constexpr double GRAVITY_MS2 = 9.80665;
 inline constexpr uint8_t DATA_TYPE_IMU = 0x00;
 inline constexpr uint8_t DATA_TYPE_CARTESIAN_HIGH = 0x01;
 inline constexpr uint8_t DATA_TYPE_CARTESIAN_LOW = 0x02;
+
+// Width of the sn and lidar_ip fields in LivoxLidarInfo. Not null-terminated,
+// so a buffer reading one needs room for a terminator.
+inline constexpr std::size_t kInfoFieldLen = 16;
 
 // SDK network port configuration for Livox Mid-360
 struct SdkPorts {
@@ -87,6 +92,17 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         return {-1, ""};
     }
 
+    // On macOS the synthetic lidar/host IPs are lo0 aliases, and a multicast send
+    // source-bound to an alias fails ("No route to host"), so the virtual_mid360
+    // replayer unicasts point/IMU to host_ip. An empty multicast_ip makes the SDK
+    // bind its data socket to host_ip (not the multicast group) so it receives
+    // those unicasts. Real hardware on Linux keeps the Livox default multicast.
+#if defined(__APPLE__) && defined(__MACH__)
+    const char* multicast_ip = "";
+#else
+    const char* multicast_ip = "224.1.1.5";
+#endif
+
     fprintf(fp,
         "{\n"
         "  \"MID360\": {\n"
@@ -100,7 +116,7 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         "    \"host_net_info\": [\n"
         "      {\n"
         "        \"host_ip\": \"%s\",\n"
-        "        \"multicast_ip\": \"224.1.1.5\",\n"
+        "        \"multicast_ip\": \"%s\",\n"
         "        \"cmd_data_port\": %d,\n"
         "        \"push_msg_port\": %d,\n"
         "        \"point_data_port\": %d,\n"
@@ -112,7 +128,7 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         "}\n",
         ports.cmd_data, ports.push_msg, ports.point_data,
         ports.imu_data, ports.log_data,
-        host_ip.c_str(),
+        host_ip.c_str(), multicast_ip,
         ports.host_cmd_data, ports.host_push_msg, ports.host_point_data,
         ports.host_imu_data, ports.host_log_data);
     fflush(fp);  // flush but don't fclose — that would close fd

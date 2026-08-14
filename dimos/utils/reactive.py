@@ -19,15 +19,67 @@ from typing import Any, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.abc import DisposableBase
+from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.rxpy_backpressure.backpressure import BackPressure
 from dimos.utils.threadpool import get_scheduler
 
 T = TypeVar("T")
+
+
+class _LatestBackpressureObserver(ObserverBase[Any]):
+    """Observer wrapper applying "latest wins" backpressure.
+
+    While a message is processed in a worker thread, only the most recent
+    incoming message is retained; intermediate ones are dropped. When processing
+    finishes, the retained message (if any) is delivered next.
+
+    Inlined from the abandoned `rxpy_backpressure` package
+
+    Copyright (c) rxpy_backpressure
+    License MIT, Mark Haynes, 2019
+    """
+
+    def __init__(self, wrapped: Any) -> None:
+        self._wrapped = wrapped
+        self._locked = False
+        self._message_cache: Any = None
+        self._error_cache: Any = None
+
+    def on_next(self, message: Any) -> None:
+        if self._locked:
+            self._message_cache = message
+        else:
+            self._locked = True
+            threading.Thread(target=self._process_next, args=(message,)).start()
+
+    def _process_next(self, message: Any) -> None:
+        self._wrapped.on_next(message)
+        if self._message_cache is not None:
+            threading.Thread(target=self._process_next, args=(self._message_cache,)).start()
+            self._message_cache = None
+        else:
+            self._locked = False
+
+    def on_error(self, error: Any) -> None:
+        if self._locked:
+            self._error_cache = error
+        else:
+            self._locked = True
+            threading.Thread(target=self._process_error, args=(error,)).start()
+
+    def _process_error(self, error: Any) -> None:
+        self._wrapped.on_error(error)
+        if self._error_cache:
+            threading.Thread(target=self._process_error, args=(self._error_cache,)).start()
+            self._error_cache = None
+        else:
+            self._locked = False
+
+    def on_completed(self) -> None:
+        self._wrapped.on_completed()
 
 
 # Observable ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
@@ -57,7 +109,7 @@ def backpressure(
             return base
 
         def _subscribe(observer, sch=None):  # type: ignore[no-untyped-def]
-            return base.subscribe(BackPressure.LATEST(observer), scheduler=sch)
+            return base.subscribe(_LatestBackpressureObserver(observer), scheduler=sch)
 
         return rx.create(_subscribe)
 
@@ -261,7 +313,9 @@ def spy(name: str):  # type: ignore[no-untyped-def]
 
 
 def quality_barrier(
-    quality_func: Callable[[T], float], target_frequency: float
+    quality_func: Callable[[T], float],
+    target_frequency: float,
+    scheduler: SchedulerBase | None = None,
 ) -> Callable[[Observable[T]], Observable[T]]:
     """
     RxPY pipe operator that selects the highest quality item within each time window.
@@ -269,6 +323,7 @@ def quality_barrier(
     Args:
         quality_func: Function to compute quality score for each item
         target_frequency: Output frequency in Hz (e.g., 1.0 for 1 item per second)
+        scheduler: Scheduler for the window timer (lets tests use virtual time)
 
     Returns:
         A pipe operator that can be used with .pipe()
@@ -278,7 +333,7 @@ def quality_barrier(
     def _quality_barrier(source: Observable[T]) -> Observable[T]:
         return source.pipe(
             # Create non-overlapping time-based windows
-            ops.window_with_time(window_duration, window_duration),
+            ops.window_with_time(window_duration, window_duration, scheduler),
             # For each window, find the highest quality item
             ops.flat_map(
                 lambda window: window.pipe(  # type: ignore[attr-defined]

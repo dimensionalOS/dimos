@@ -19,3 +19,11 @@
 docs/capabilities/memory/assets/** filter=lfs diff=lfs merge=lfs -text
 docs/capabilities/memory/assets/.gitattributes -filter -diff -merge text
 docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text
+# Mintlify deploy does not fetch Git LFS; keep site branding as normal blobs.
+docs/assets/dimensional-logo-master-transparent.png -filter -diff -merge
+docs/assets/favicon.png -filter -diff -merge
+# DimSim scene data and agent model
+misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
+misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text

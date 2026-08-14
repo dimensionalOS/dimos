@@ -24,11 +24,17 @@ class VoxelRayMapper:
         voxel_size: float,
         max_range: float,
         ray_subsample: int = 1,
-        shadow_depth: float = 0.2,
+        shadow_depth: float = 0.1,
         grace_depth: float = 0.2,
-        min_health: int = -2,
-        max_health: int = 1,
+        min_health: int = -1,
+        max_health: int = 5,
+        graze_cos: float = 0.7,
+        support_min: int = 4,
     ) -> None: ...
+    @property
+    def voxel_size(self) -> float: ...
+    @property
+    def shadow_depth(self) -> float: ...
     def add_frame(
         self,
         points: NDArray[np.float32],
@@ -39,6 +45,13 @@ class VoxelRayMapper:
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
+        ...
+
+    def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+        """Return healthy voxel centers and their surface normals, both (M, 3) float32.
+
+        Matching order. The normal is the zero vector where the voxel has no plane.
+        """
         ...
 
     def local_map(
@@ -62,4 +75,16 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-__all__ = ["VoxelRayMapper"]
+def local_bounds(
+    points: NDArray[np.float32],
+    origins: NDArray[np.float32],
+    percentile: float,
+    margin: float,
+) -> tuple[float, float, float, float, float]:
+    """Local region a batch of frames observed, as (cx, cy, radius, z_min, z_max).
+
+    Non-finite points are ignored.
+    """
+    ...
+
+__all__ = ["VoxelRayMapper", "local_bounds"]

@@ -55,5 +55,3 @@ unitree_go2_detection = (
         }
     )
 )
-
-__all__ = ["unitree_go2_detection"]

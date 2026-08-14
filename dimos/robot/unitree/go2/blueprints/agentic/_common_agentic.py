@@ -28,5 +28,3 @@ _common_agentic = autoconnect(
     WebInput.blueprint(),
     SpeakSkill.blueprint(),
 )
-
-__all__ = ["_common_agentic"]

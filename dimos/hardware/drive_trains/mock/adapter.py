@@ -25,11 +25,6 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.hardware.drive_trains.registry import TwistBaseAdapterRegistry
-
 
 class MockTwistBaseAdapter:
     """Fake twist base adapter for unit tests.
@@ -103,11 +98,3 @@ class MockTwistBaseAdapter:
     def set_velocities_directly(self, velocities: list[float]) -> None:
         """Set velocities directly for testing (bypasses DOF check)."""
         self._velocities = list(velocities)
-
-
-def register(registry: TwistBaseAdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("mock_twist_base", MockTwistBaseAdapter)
-
-
-__all__ = ["MockTwistBaseAdapter"]

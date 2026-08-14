@@ -1,4 +1,6 @@
-# Temporal Message Alignment
+---
+title: "Temporal Message Alignment"
+---
 
 Robots have multiple sensors emitting data at different rates and latencies. A camera might run at 30fps, while lidar scans at 10Hz, and each has different processing delays. For perception tasks like projecting 2D detections into 3D pointclouds, we need to match data from these streams by timestamp.
 
@@ -160,7 +162,7 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline.png)
 
 If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
 
@@ -185,7 +187,7 @@ Aligned pairs: 23 out of 58 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline2.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline2.png)
 
 ## Combine Frame Alignment with a Quality Filter
 
@@ -228,7 +230,7 @@ Aligned pairs: 1 out of 6 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-![output](assets/alignment_timeline3.png)
+![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/data_streams/assets/alignment_timeline3.png)
 
 We are very picky but data is high quality. Best frame, with closest lidar match in this window.
 

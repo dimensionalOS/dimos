@@ -19,7 +19,8 @@ from typing import Any
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -28,7 +29,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.tf.tf import LCMTF
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
 
@@ -50,18 +51,16 @@ class DimSimConnection:
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
-        self._odom_transport: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
+        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
+        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
-        self._tf = LCMTF()
 
     def start(self) -> None:
         self._dimsim_process.start()
         self._odom_transport.start()
         self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
-        self._tf.start()
 
     def stop(self) -> None:
-        self._tf.stop()
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
         self._odom_transport.stop()
@@ -79,6 +78,10 @@ class DimSimConnection:
     def video_stream(self) -> Observable[Image]:
         return Subject()
 
+    @functools.cache
+    def lowstate_stream(self) -> Observable[Any]:
+        return Subject()
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
@@ -91,17 +94,30 @@ class DimSimConnection:
     def balance_stand(self) -> bool:
         return True
 
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
+    def stop_movement(self) -> None:
+        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
         pass
 
-    def enable_rage_mode(self) -> bool:
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
+
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 
     def _handle_odom(self, msg: PoseStamped) -> None:
-        self._tf.publish(*_odom_to_tf(msg))
+        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
 
 
 def _odom_to_tf(odom: PoseStamped) -> list[Transform]:

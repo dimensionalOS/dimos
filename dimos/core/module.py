@@ -25,6 +25,7 @@ from typing import (
     ClassVar,
     Literal,
     Protocol,
+    TypeGuard,
     get_args,
     get_origin,
     get_type_hints,
@@ -39,11 +40,11 @@ from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
-from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.stream import IO, In, Out, RemoteOut, Transport
+from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.protocol.tf.tf import TF
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
@@ -103,12 +104,15 @@ Deployment = Literal["python", "docker"]
 
 
 class ModuleConfig(BaseConfig):
-    rpc_transport: type[RPCSpec] = LCMRPC
+    rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
-    tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
+    # Set by the coordinator when the same module class is deployed more than
+    # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
+    # from the class name to this name.
+    instance_name: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -132,7 +136,7 @@ class ModuleBase(Configurable, CompositeResource):
     dedicated_worker: ClassVar[bool] = False
 
     _rpc: RPCSpec | None = None
-    _tf: TFSpec | None = None
+    _tf: TF | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _bound_rpc_calls: dict[str, RpcCall] = {}
@@ -154,8 +158,10 @@ class ModuleBase(Configurable, CompositeResource):
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
-            self.rpc.serve_module_rpc(self)
+            # start() before serve_module_rpc(): Zenoh's subscribe needs an open
+            # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
+            self.rpc.serve_module_rpc(self, name=self.config.instance_name)
         except ValueError:
             ...
 
@@ -213,13 +219,13 @@ class ModuleBase(Configurable, CompositeResource):
             self._loop = None
             self._loop_thread = None
 
-        if hasattr(self, "_tf") and self._tf is not None:
-            self._tf.stop()
+        if self._tf is not None:
+            self._tf.dispose()
             self._tf = None
 
         # Stop transports and break the In/Out -> owner -> self reference
         # cycle so the instance can be freed by refcount instead of waiting for GC.
-        for attr in [*self.inputs.values(), *self.outputs.values()]:
+        for attr in [*self.inputs.values(), *self.outputs.values(), *self.ios.values()]:
             attr.stop()
             attr.owner = None
 
@@ -247,7 +253,7 @@ class ModuleBase(Configurable, CompositeResource):
         state.pop("_loop", None)
         state.pop("_loop_thread", None)
         state.pop("_rpc", None)
-        state.pop("_tf", None)
+        state.pop("_tf", None)  # conventional slot for a TF view over the tf port
         state.pop("_main_gen", None)
         state.pop("_tools", None)
         state.pop("_tools_lock", None)
@@ -261,27 +267,9 @@ class ModuleBase(Configurable, CompositeResource):
         self._loop = None
         self._loop_thread = None
         self._rpc = None
-        self._tf = None
         self._main_gen = None
         self._tools = {}
         self._tools_lock = threading.Lock()
-
-    @property
-    def tf(self):  # type: ignore[no-untyped-def]
-        if self._tf is None:
-            # self._tf = self.config.tf_transport()
-            self._tf = LCMTF()
-        return self._tf
-
-    @tf.setter
-    def tf(self, value) -> None:  # type: ignore[no-untyped-def]
-        import warnings
-
-        warnings.warn(
-            "tf is available on all modules. Call self.tf.start() to activate tf functionality. No need to assign it",
-            UserWarning,
-            stacklevel=2,
-        )
 
     @property
     def outputs(self) -> dict[str, Out]:  # type: ignore[type-arg]
@@ -299,6 +287,36 @@ class ModuleBase(Configurable, CompositeResource):
             if isinstance(s, In) and not name.startswith("_")
         }
 
+    @property
+    def ios(self) -> dict[str, IO[Any]]:
+        return {
+            name: s
+            for name, s in self.__dict__.items()
+            if isinstance(s, IO) and not name.startswith("_")
+        }
+
+    @property
+    def tfbuffer(self) -> TF:
+        """Lazy transform buffer over the module's declared ``tf`` port.
+
+        Built on first touch, disposed with the module. Requires a
+        ``tf: In[TFMessage]`` or ``tf: IO[TFMessage]`` port declaration.
+        """
+        if self._tf is None:
+            port = getattr(self, "tf", None)
+            if not isinstance(port, (In, IO, Out)):
+                raise TypeError(
+                    f"{type(self).__name__} has no tf port — declare "
+                    "`tf: In[TFMessage]` (or IO[TFMessage]) to use tfbuffer"
+                )
+            if getattr(port, "_transport", None) is None:
+                raise RuntimeError(
+                    f"{type(self).__name__}.tf port has no transport yet — "
+                    "deploy via a blueprint or call set_transport('tf', ...) first"
+                )
+            self._tf = TF(port)
+        return self._tf
+
     @classproperty
     def rpcs(self) -> dict[str, Callable[..., Any]]:
         return {
@@ -313,10 +331,11 @@ class ModuleBase(Configurable, CompositeResource):
     @rpc
     def _io_instance(self, color: bool = True) -> str:
         """Instance-level io() - shows actual running streams."""
+        # IO ports are both, so they show under inputs and outputs alike.
         return render_module_io(
             name=self.__class__.__name__,
-            inputs=self.inputs,
-            outputs=self.outputs,
+            inputs={**self.inputs, **self.ios},
+            outputs={**self.outputs, **self.ios},
             rpcs=self.rpcs,
             color=color,
         )
@@ -343,10 +362,14 @@ class ModuleBase(Configurable, CompositeResource):
             return f"{_yellow(name)}: {_green(type_name)}"
 
         inputs = {
-            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, In)
+            name: format_stream(name, hint)
+            for name, hint in hints.items()
+            if is_stream(hint, In) or is_stream(hint, IO)
         }
         outputs = {
-            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, Out)
+            name: format_stream(name, hint)
+            for name, hint in hints.items()
+            if is_stream(hint, Out) or is_stream(hint, IO)
         }
 
         return render_module_io(
@@ -389,10 +412,14 @@ class ModuleBase(Configurable, CompositeResource):
             return f"{name}: {type_name}"
 
         inputs = {
-            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, In)
+            name: format_stream(name, hint)
+            for name, hint in hints.items()
+            if is_stream(hint, In) or is_stream(hint, IO)
         }
         outputs = {
-            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, Out)
+            name: format_stream(name, hint)
+            for name, hint in hints.items()
+            if is_stream(hint, Out) or is_stream(hint, IO)
         }
 
         return extract_module_info(
@@ -413,8 +440,8 @@ class ModuleBase(Configurable, CompositeResource):
             # For instances, extract from actual streams
             return lambda: extract_module_info(
                 name=obj.__class__.__name__,
-                inputs=obj.inputs,
-                outputs=obj.outputs,
+                inputs={**obj.inputs, **obj.ios},
+                outputs={**obj.outputs, **obj.ios},
                 rpcs=obj.rpcs,
             )
 
@@ -437,7 +464,12 @@ class ModuleBase(Configurable, CompositeResource):
 
         skills: list[SkillInfo] = []
         for name in dir(self):
-            attr = getattr(self, name)
+            try:
+                attr = getattr(self, name)
+            except Exception:
+                # Properties may legitimately raise when unconfigured (e.g.
+                # tfbuffer without a tf port); they are not skills.
+                continue
             if callable(attr) and hasattr(attr, "__skill__"):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
                 uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
@@ -605,12 +637,12 @@ class ModuleBase(Configurable, CompositeResource):
 
     def _auto_bind_handlers(self) -> None:
         """
-        For each declared `x: In[T]`, if `async def handle_x` exists, subscribe it
-        via process_observable so it runs on self._loop.
+        For each declared `x: In[T]` or `x: IO[T]`, if `async def handle_x` exists,
+        subscribe it via process_observable so it runs on self._loop.
         """
         # Validate every handler before subscribing any of them.
         bindings: list[tuple[Any, Callable[[Any], Any]]] = []
-        for input_name, in_stream in self.inputs.items():
+        for input_name, in_stream in {**self.inputs, **self.ios}.items():
             handler = getattr(self, f"handle_{input_name}", None)
             if handler is None:
                 continue
@@ -745,7 +777,7 @@ class Module(ModuleBase):
 
         for name, ann in hints.items():
             origin = get_origin(ann)
-            if origin in (In, Out):
+            if origin in (In, Out, IO):
                 # Set class-level attribute if not already set.
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
@@ -768,6 +800,10 @@ class Module(ModuleBase):
                 inner, *_ = get_args(ann) or (Any,)
                 stream = In(inner, name, self)  # type: ignore[assignment]
                 setattr(self, name, stream)
+            elif origin is IO:
+                inner, *_ = get_args(ann) or (Any,)
+                stream = IO(inner, name, self)  # type: ignore[assignment]
+                setattr(self, name, stream)
         super().__init__(config_args=kwargs)
 
     def __str__(self) -> str:
@@ -779,7 +815,7 @@ class Module(ModuleBase):
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
 
-        if not isinstance(stream, Out) and not isinstance(stream, In):
+        if not isinstance(stream, (In, Out, IO)):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
         stream._transport = transport
@@ -792,7 +828,11 @@ class Module(ModuleBase):
 
         Used by `Dimos.peek_stream` to scan running modules.
         """
-        stream = self.outputs.get(stream_name) or self.inputs.get(stream_name)
+        stream = (
+            self.outputs.get(stream_name)
+            or self.inputs.get(stream_name)
+            or self.ios.get(stream_name)
+        )
         if stream is None:
             return PeekNotFound()
         try:
@@ -813,7 +853,7 @@ class Module(ModuleBase):
 ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]
 
 
-def is_module_type(value: Any) -> bool:
+def is_module_type(value: object) -> TypeGuard[type[Module]]:
     try:
         return inspect.isclass(value) and issubclass(value, Module)
     except Exception:

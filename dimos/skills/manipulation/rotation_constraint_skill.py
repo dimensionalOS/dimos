@@ -21,7 +21,6 @@ from dimos.types.manipulation import RotationConstraint
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-# Initialize logger
 logger = setup_logger()
 
 
