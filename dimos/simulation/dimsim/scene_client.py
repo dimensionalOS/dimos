@@ -182,7 +182,10 @@ class SceneClient:
         self._closed = False
 
     def start(self) -> None:
-        url = f"ws://{self.host}:{self.port}?ch=control"
+        # client=scene tells the bridge not to relay the high-rate pose stream
+        # to this connection (websocket-client chokes on the volume and on any
+        # compressed frame; we only need execResults here).
+        url = f"ws://{self.host}:{self.port}?ch=control&client=scene"
         if self.channel:
             url += f"&channel={self.channel}"
         self._ws = websocket.WebSocket()
@@ -209,6 +212,25 @@ class SceneClient:
                 continue
             except (websocket.WebSocketConnectionClosedException, OSError):
                 break
+            except websocket.WebSocketException:
+                # Protocol-level hiccup (e.g. a frame with RSV bits set, which
+                # websocket-client cannot decode). Reconnect transparently —
+                # in-flight execs time out once and callers retry.
+                try:
+                    self._ws.close()
+                except Exception:
+                    pass
+                try:
+                    url = f"ws://{self.host}:{self.port}?ch=control&client=scene"
+                    if self.channel:
+                        url += f"&channel={self.channel}"
+                    ws = websocket.WebSocket()
+                    ws.connect(url)  # type: ignore[no-untyped-call]
+                    ws.settimeout(1.0)
+                    self._ws = ws
+                    continue
+                except Exception:
+                    break
             if isinstance(raw, bytes):
                 continue
             try:

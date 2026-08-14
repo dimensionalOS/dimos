@@ -274,11 +274,11 @@ def main() -> None:
         referee.install_ghosts()
         referee.start_ghost_renderer()
 
-        # Director camera: high oblique view of the whole arena.
+        # Director camera: high oblique view of the whole arena (render-loop
+        # override; player/agent camera modes can't fight it).
         scene.exec(
-            "camera.position.set(0, 18, -20); camera.lookAt(0, 0, 0);"
-            "if (typeof controls !== 'undefined' && controls) controls.enabled = false;"
-            "return 'camera set';"
+            "window.__demoDirectorCam = {x: 0, y: 17, z: -19, tx: 0, ty: 0, tz: 1};"
+            "return 'director camera set';"
         )
 
         # Radio traffic console log
@@ -344,8 +344,8 @@ def main() -> None:
                 referee.stop()
             except Exception:
                 pass
-        for proc in procs[1:]:
-            stop_process_group(proc)
+        # Save the video FIRST — anything below that hangs must not cost us
+        # the recording.
         if ctx is not None:
             try:
                 ctx.close()
@@ -356,6 +356,8 @@ def main() -> None:
                         print(f"[demo] video saved: {record_path}")
             except Exception:
                 logger.warning("video save failed", exc_info=True)
+        for proc in procs[1:]:
+            stop_process_group(proc)
         if browser is not None:
             try:
                 browser.close()

@@ -299,11 +299,12 @@ export async function startBridgeServer(options: BridgeServerOptions) {
           thisRobot.lidar!.updatePose(x, y, z, 0, qy, 0, qw);
 
           const msg = JSON.stringify({ type: "pose", robot: thisRobot.name, x, y, z, yaw });
-          // Broadcast to every control client: which client connected first is
-          // a race (viewer page vs SceneClient), and any page that misses the
-          // pose stream renders frozen avatars.
+          // Broadcast to every rendering control client: which client connected
+          // first is a race (viewer page vs SceneClient), and any page that
+          // misses the pose stream renders frozen avatars. Scene-scripting
+          // clients opt out (__noPoses).
           for (const client of chState.controlClients) {
-            if (client.readyState === WebSocket.OPEN) {
+            if (client.readyState === WebSocket.OPEN && !(client as any).__noPoses) {
               try { client.send(msg); } catch { /* ignore */ }
             }
           }
@@ -335,6 +336,12 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       const channelParam = url.searchParams.get("channel");
       const chState = resolveChannel(channelParam);
       const isSensor = ch !== "control";
+      // Scene-scripting clients (SceneClient) identify themselves so the 50 Hz
+      // per-robot pose stream is not relayed to them — they only need
+      // execResults and the occasional control message.
+      if (url.searchParams.get("client") === "scene") {
+        (socket as any).__noPoses = true;
+      }
       const logPrefix = `[bridge:${chState.name || "default"}]`;
 
       if (isSensor) {

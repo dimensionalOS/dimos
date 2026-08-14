@@ -4114,6 +4114,14 @@ function renderCompareViews() {
 
 function renderActiveView() {
   syncShadowMapEnabled();
+  // Director camera override (demo recordings): scene scripts set
+  // window.__demoDirectorCam = {x,y,z, tx,ty,tz} to pin the view regardless
+  // of player/agent camera modes.
+  const dcam = window.__demoDirectorCam;
+  if (dcam) {
+    camera.position.set(dcam.x, dcam.y, dcam.z);
+    camera.lookAt(dcam.tx ?? 0, dcam.ty ?? 0, dcam.tz ?? 0);
+  }
   if (simCompareView) {
     renderCompareViews();
   } else if (simSensorViewMode === "rgbd") {

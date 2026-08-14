@@ -304,8 +304,9 @@ class Referee:
         self._stop.set()
         for t in self._threads:
             t.join(timeout=3.0)
-        for tr in [*self._target_events.values(), *self._human_inputs.values(), *self._belief_subs]:
-            tr.stop()
+        # Transports are deliberately NOT stopped here: LCM teardown can hang
+        # for minutes and stall the launcher's shutdown (video save!). All
+        # referee threads are daemons — they die with the process.
 
     def _sensor_loop(self) -> None:
         cfg = self.sensor
