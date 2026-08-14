@@ -64,9 +64,7 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -164,14 +162,6 @@ class ControlCoordinator(Module):
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
-    # Input: Streaming cartesian commands for CartesianIKTask
-    # Uses frame_id as task name for routing
-    coordinator_cartesian_command: In[PoseStamped]
-
-    # Input: Routed spatial EEF twist commands for EEFTwistTask.
-    # Uses frame_id as task name for routing.
-    coordinator_ee_twist_command: In[TwistStamped]
-
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
@@ -199,9 +189,9 @@ class ControlCoordinator(Module):
         self._trajectory_task: JointTrajectoryTask | None = None
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
-        # port -> (task, handler, routing). Guarded by _task_lock; entries are
-        # added/pruned with their task.
-        self._routes: dict[str, list[tuple[ControlTask, str, Routing]]] = {}
+        # port -> (task, bound handler, routing). Guarded by _task_lock; entries
+        # are added/pruned with their task.
+        self._routes: dict[str, list[tuple[ControlTask, Callable[[Any, float], Any], Routing]]] = {}
 
         # Card-declared command names per task, keyed by task name.
         # Guarded by _task_lock; added/pruned with their task.
@@ -238,9 +228,7 @@ class ControlCoordinator(Module):
                 if self.add_task(task, task_type=task_cfg.type, stream_bind=task_cfg.stream_bind):
                     tasks_added.append(task.name)
                 if task_cfg.auto_start:
-                    start = getattr(task, "start", None)
-                    if callable(start):
-                        start()
+                    self.task_invoke(task.name, "start")
 
         except Exception:
             # Roll back everything this call added, tasks first: an active task
@@ -576,6 +564,12 @@ class ControlCoordinator(Module):
 
         for binding in bindings.consumes:
             port = ports[binding.stream]
+            handler = getattr(task, binding.handler, None)
+            if not callable(handler):
+                raise TypeError(
+                    f"{where}: card binds stream {binding.stream!r} to handler "
+                    f"{binding.handler!r}, but the task has no callable {binding.handler!r}"
+                )
             if binding.routing is Routing.DIRECT:
                 sharing = [t.name for t, _h, r in self._routes.get(port, ()) if r is Routing.DIRECT]
                 if sharing:
@@ -586,7 +580,7 @@ class ControlCoordinator(Module):
                         task_name=task.name,
                         also_bound=sharing,
                     )
-            self._routes.setdefault(port, []).append((task, binding.handler, binding.routing))
+            self._routes.setdefault(port, []).append((task, handler, binding.routing))
 
     def _commands_for(self, task_type: str) -> frozenset[str]:
         """The command names the task type declares in its TASK_EXPOSES card."""
@@ -667,7 +661,7 @@ class ControlCoordinator(Module):
     def _dispatch(self, stream: str, msg: Any) -> None:
         """Deliver a stream message to its card-routed tasks per each entry's routing rule.
 
-        BROADCAST and DIRECT are ungated, so only the other two rules appear below.
+        BROADCAST and DIRECT are ungated, so only CLAIM_OVERLAP appears below.
         """
         t_now = time.perf_counter()
         with self._task_lock:
@@ -676,37 +670,21 @@ class ControlCoordinator(Module):
                 return
 
             claimable: set[str] | None = None
-            frame_id = getattr(msg, "frame_id", "")
-            by_name_bound = False
-            by_name_matched = False
 
-            for task, handler_name, routing in entries:
+            for task, handler, routing in entries:
                 if routing is Routing.CLAIM_OVERLAP:
                     if claimable is None:
                         claimable = set(getattr(msg, "name", ()) or ())
                     if not claimable or not (task.claim().joints & claimable):
                         continue
-                elif routing is Routing.BY_TASK_NAME:
-                    by_name_bound = True
-                    if not frame_id or task.name != frame_id:
-                        continue
-                    by_name_matched = True
                 try:
-                    getattr(task, handler_name)(msg, t_now)
+                    handler(msg, t_now)
                 except Exception:
                     logger.exception(
                         "Stream handler raised on task",
-                        handler=handler_name,
+                        handler=handler.__name__,
                         task_name=task.name,
                         stream=stream,
-                    )
-
-            if by_name_bound and not by_name_matched:
-                if not frame_id:
-                    logger.warning("Stream message with empty frame_id (task name)", stream=stream)
-                else:
-                    logger.warning(
-                        "Stream message for unknown task", stream=stream, task_name=frame_id
                     )
 
     def _map_twist_to_base_joints(self, msg: Twist) -> None:

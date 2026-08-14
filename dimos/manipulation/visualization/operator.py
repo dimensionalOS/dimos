@@ -96,6 +96,14 @@ class ManipulationOperator:
             has_plan=self._module.has_planned_path(),
         )
 
+    def get_motion_speed(self) -> float:
+        """Return the runtime speed reduction used for future plans."""
+        return self._module.get_motion_speed()
+
+    def set_motion_speed(self, speed_scale: float) -> bool:
+        """Set the runtime speed reduction used for future plans."""
+        return self._module.set_motion_speed(speed_scale)
+
     def get_init_joints(self, robot_name: RobotName) -> JointState | None:
         """Return the operator-authoritative init joint state for a robot."""
         init = self._module.get_init_joints(robot_name)

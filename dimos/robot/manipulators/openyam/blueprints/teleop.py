@@ -16,10 +16,14 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import eef_twist_task
+from dimos.robot.manipulators.common.blueprints import (
+    eef_twist_task,
+)
+from dimos.robot.manipulators.common.coordinators import (
+    ArmTwistCoordinator,
+)
 from dimos.robot.manipulators.openyam.config import (
     make_openyam_hardware,
     make_openyam_model_config,
@@ -31,7 +35,8 @@ _openyam_model = make_openyam_model_config(name="arm")
 
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ControlCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        instance_name="ControlCoordinator",
         hardware=[_openyam_keyboard_hw],
         tasks=[
             eef_twist_task(

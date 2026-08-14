@@ -116,6 +116,51 @@ request. For example, `planner.backend=roboplan` requires
 `world_backend=roboplan`, and `kinematics.backend=drake_optimization` requires
 `world_backend=drake`.
 
+Trajectory parametrization is a separate startup choice. Joint-space planners
+normally return an untimed geometric path; DimOS accepts the plan only after
+the selected backend converts that path to a validated timed trajectory:
+
+```bash
+# Stock xArm compatibility test: independent trapezoids on RoboPlanWorld
+dimos run xarm7-planner-coordinator \
+  --trajectory-parametrization.backend=simple_trapezoid
+
+# Omitting trajectory_parametrization selects TOPP-RA for RoboPlanWorld
+dimos run xarm7-planner-coordinator
+
+# Equivalent explicit TOPP-RA selection
+dimos run xarm7-planner-coordinator \
+  --world-backend=roboplan \
+  --trajectory-parametrization.backend=roboplan_toppra
+
+# DrakeWorld selects simple_trapezoid when no parametrizer is specified
+dimos run xarm7-planner-coordinator \
+  --world-backend=drake \
+  --planner.backend=rrt_connect
+```
+
+Exactly one backend is constructed for the stack lifetime. There is no
+cross-backend fallback. `roboplan_toppra` may parametrize paths from either
+RoboPlan's planner or the generic RRT planner, but it requires
+`world_backend=roboplan` because it reuses that world's model, groups, and URDF
+motion limits. A planner-native result that already has timestamps and
+velocities bypasses path parametrization and retains its existing timing after
+canonical validation. TOPP-RA follows the collision-checked geometric path
+without corner blending; collision checking remains the planner's concern.
+Explicit configuration overrides the world-based default.
+RoboPlan model composition preserves authored acceleration limits and inserts a
+temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+acceleration overrides will replace this fallback.
+
+The Viser panel's **Next plan speed** slider provides runtime speed tuning from
+`0.05` to `1.0`. Changing it leaves the accepted plan and any active execution
+unchanged; press **Plan** again to generate motion at the new scale. For
+joint-space planning the value reduces the selected parametrizer's configured
+velocity and acceleration scales. For Cartesian planning Viser puts the same
+scale into a native time-optimal planning request before its timestamps are
+generated. Cartesian output is sampled every 50 ms; the control coordinator
+interpolates it at execution rate.
+
 RoboPlan shortens native joint-space RRT paths by default. Configure or disable
 the backend's best-effort shortcutting pass with nested planner options:
 
@@ -140,13 +185,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
 )
 
-path_config = RoboPlanCartesianPathConfig(
-    speed_mode="bounded",
-    max_linear_speed=0.1,
-    max_angular_speed=0.5,
-    max_position_error=0.005,
-    max_orientation_error=0.01,
-)
+path_config = RoboPlanCartesianPathConfig()
 
 module.plan_cartesian_targets(
     {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
@@ -154,10 +193,35 @@ module.plan_cartesian_targets(
 )
 ```
 
-The remaining settings mirror RoboPlan's standard Cartesian planner options,
-including bounded and time-optimal speed modes, sample time, solver weights,
-linear/angular acceleration limits, joint velocity/acceleration scaling,
-TOPP-RA corner blending, joint-limit handling, and per-step attempts.
+The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
+the robot's joint velocity and acceleration limits. To enforce Cartesian speed
+and acceleration maxima instead, opt into bounded mode:
+
+```python skip
+bounded_config = RoboPlanCartesianPathConfig(
+    speed_mode="bounded",
+    max_linear_speed=0.1,
+    max_angular_speed=0.5,
+    max_linear_acceleration=0.5,
+    max_angular_acceleration=2.5,
+    max_position_error=0.005,
+    max_orientation_error=0.01,
+)
+```
+
+RoboPlan first resolves the Cartesian reference as a geometric joint path, then
+uses TOPP-RA to produce the timed trajectory. Both speed modes follow this
+pipeline. Time-optimal mode returns the joint-limit-constrained trajectory;
+bounded mode slows it further when needed to respect the configured Cartesian
+speed and acceleration maxima. `toppra_blend_deviation` controls TOPP-RA corner
+rounding in both modes and influences how aggressively the resolved path is
+decimated before timing.
+
+The remaining settings mirror RoboPlan's Cartesian planner options, including
+sample time, solver weights, linear/angular acceleration limits, joint
+velocity/acceleration scaling, TOPP-RA corner blending, and joint-limit
+handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
+`max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
 release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
@@ -307,9 +371,11 @@ not need extra setup because it observes the Drake world directly.
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
 Viser projects the globally named trajectory into robot-local preview ghosts and
 plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execute freshness is enforced by the manipulation
-module/operator immediately before dispatch, not by Viser-side telemetry
-snapshots.
+scales the stored delays. Execution projects that same accepted trajectory into
+each robot's local joint order while preserving timestamps and velocities; it
+does not regenerate or retime it. Execute freshness is enforced by the
+manipulation module/operator immediately before dispatch, not by Viser-side
+telemetry snapshots.
 
 ### Perception + Agent
 

@@ -354,17 +354,19 @@ def test_obstacle_monitor_routes_mutations_through_parent_world_monitor(
     remove_obstacle.assert_called_once_with("parent-id")
 
 
-def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
+def test_create_planning_specs_wraps_existing_world(mocker: MockerFixture) -> None:
     fake_world = FakeWorld()
     fake_kinematics = object()
     fake_planner = object()
+    fake_parametrizer = object()
 
-    monkeypatch.setattr(
+    mocker.patch.object(planning_factory, "create_kinematics", return_value=fake_kinematics)
+    mocker.patch.object(planning_factory, "create_planner", return_value=fake_planner)
+    mocker.patch.object(
         planning_factory,
-        "create_kinematics",
-        lambda *args, **kwargs: fake_kinematics,
+        "create_trajectory_parametrizer",
+        return_value=fake_parametrizer,
     )
-    monkeypatch.setattr(planning_factory, "create_planner", lambda **kwargs: fake_planner)
 
     planning_specs = planning_factory.create_planning_specs(world=fake_world)  # type: ignore[arg-type]
 
@@ -372,6 +374,7 @@ def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
     assert planning_specs.world_monitor.visualization is None
     assert planning_specs.kinematics is fake_kinematics
     assert planning_specs.planner is fake_planner
+    assert planning_specs.trajectory_parametrizer is fake_parametrizer
 
 
 def test_world_monitor_exposes_planning_groups_and_duplicate_names_do_not_mutate() -> None:
