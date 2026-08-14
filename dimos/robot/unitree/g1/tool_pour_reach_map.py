@@ -73,9 +73,9 @@ from dimos.robot.unitree.g1.manip_stance import (
     DEFAULT_MAP_PATH,
     DEFAULT_SPOUT_OFFSET_IN_PALM,
     POUR_Z,
+    TIP_RADIANS,
     palm_position_for_spout,
     palm_to_capability_tcp,
-    tip_radians_for_spout,
 )
 
 # The WBC's standing stance in sim, measured off /g1/joints once the policy
@@ -184,7 +184,7 @@ class _Solver:
 def build(
     capability_map: Path | None = None,
     pour_z: float = POUR_Z,
-    tip: float | None = None,
+    tip: float = TIP_RADIANS,
     spout_offset_in_palm: tuple[float, float, float] = DEFAULT_SPOUT_OFFSET_IN_PALM,
     cell: float = 0.025,
     x_range: tuple[float, float] = (0.05, 0.85),
@@ -192,7 +192,6 @@ def build(
     min_capability: int = 1,
 ) -> dict[str, object]:
     """Grid the base-frame pot offsets and score each one."""
-    effective_tip = tip_radians_for_spout(spout_offset_in_palm) if tip is None else tip
     cap = CapabilityMap.load(capability_map) if capability_map is not None else None
     xs = np.round(np.arange(x_range[0], x_range[1] + 1e-9, cell), 6)
     ys = np.round(np.arange(y_range[0], y_range[1] + 1e-9, cell), 6)
@@ -205,7 +204,7 @@ def build(
             cap,
             offsets,
             pour_z,
-            effective_tip,
+            tip,
             spout_offset_in_palm,
         ).reshape(len(ys), len(xs))
     solver = _Solver()
@@ -220,7 +219,7 @@ def build(
             if scores[iy, ix] < min_capability:
                 continue
             tool_yaw = float(np.arctan2(y, x))
-            tipped_rotation = _rotation(tool_yaw, effective_tip)
+            tipped_rotation = _rotation(tool_yaw, tip)
             # Match runtime: pre-position the palm at its final tipped-pour
             # position, then roll in place so the spout sweeps onto the pot.
             palm = palm_position_for_spout(
@@ -244,7 +243,7 @@ def build(
             {"robot": cap.robot, "model_id": cap.model_id} if cap is not None else None
         ),
         "pour_z": pour_z,
-        "tip_radians": round(float(effective_tip), 6),
+        "tip_radians": round(float(tip), 6),
         "spout_offset_in_palm": list(spout_offset_in_palm),
         "cell": cell,
         "x0": float(xs[0]),
