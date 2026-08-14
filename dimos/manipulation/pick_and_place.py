@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import pickle
 import threading
 import time
 from typing import Literal
@@ -27,7 +29,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT, CAP_PERCEPTION
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.manipulation.candidate_filter_spec import GraspCandidateFilterSpec
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, HeuristicGraspSpec
 from dimos.manipulation.pick_execution_spec import PickExecutionSpec
@@ -50,6 +52,28 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_feedback_delay: float = Field(default=0.5, ge=0.0)
 
 
+@dataclass
+class PickAndPlaceState:
+    """Observable grasp-selection state for optional workflow observers."""
+
+    candidates: GraspCandidateArray
+    selected_object_id: str | None
+    selected_grasp: PoseStamped | None
+    selected_pregrasp: PoseStamped | None
+
+    def lcm_encode(self) -> bytes:
+        """Encode using the repository's pickle transport convention."""
+        return pickle.dumps(self)
+
+    @classmethod
+    def lcm_decode(cls, data: bytes, **_kwargs: object) -> PickAndPlaceState:
+        """Decode a state published by :meth:`lcm_encode`."""
+        value = pickle.loads(data)
+        if not isinstance(value, cls):
+            raise TypeError("Expected PickAndPlaceState")
+        return value
+
+
 class PickAndPlaceModule(Module):
     """Scan objects, select grasp proposals, and execute picks through capabilities."""
 
@@ -60,6 +84,7 @@ class PickAndPlaceModule(Module):
     _grasp_filter: GraspCandidateFilterSpec
     _pick_execution: PickExecutionSpec
     objects: In[list[Object]]
+    pick_and_place_state: Out[PickAndPlaceState]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -136,9 +161,11 @@ class PickAndPlaceModule(Module):
         candidates = self._filter_candidates(candidates)
         self._grasp_candidates = candidates
         if rank >= len(candidates.candidates):
+            candidates.selected_index = -1
             self._selected_object_id = None
             self._selected_grasp = None
             self._selected_pregrasp = None
+            self._publish_state()
             return None
         candidates.selected_index = rank
         candidate = candidates.candidates[rank]
@@ -158,7 +185,19 @@ class PickAndPlaceModule(Module):
             position=self._selected_grasp.position + offset,
             orientation=self._selected_grasp.orientation,
         )
+        self._publish_state()
         return self._selected_grasp
+
+    def _publish_state(self) -> None:
+        """Publish the current selection for optional, display-only observers."""
+        self.pick_and_place_state.publish(
+            PickAndPlaceState(
+                candidates=self._grasp_candidates,
+                selected_object_id=self._selected_object_id,
+                selected_grasp=self._selected_grasp,
+                selected_pregrasp=self._selected_pregrasp,
+            )
+        )
 
     def _filter_candidates(self, candidates: GraspCandidateArray) -> GraspCandidateArray:
         ranked = sorted(candidates.candidates, key=lambda candidate: -candidate.score)

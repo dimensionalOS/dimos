@@ -260,6 +260,7 @@ all_modules = {
     "pgo": "dimos.navigation.cmu_nav.modules.pgo.pgo.PGO",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place.PickAndPlaceModule",
+    "pick-and-place-visualization-adapter": "dimos.manipulation.visualization.pick_and_place.PickAndPlaceVisualizationAdapter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",

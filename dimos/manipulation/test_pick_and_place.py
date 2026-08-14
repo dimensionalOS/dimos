@@ -48,6 +48,7 @@ def test_select_grasp_uses_object_id_and_retains_ranked_candidates() -> None:
             return_value=GraspCandidateArray(Header(1.0, "world"), [candidate])
         )
     )
+    module.pick_and_place_state = MagicMock()
 
     selected = module.select_grasp("cup-1")
 
@@ -57,6 +58,9 @@ def test_select_grasp_uses_object_id_and_retains_ranked_candidates() -> None:
     assert module.get_grasp_candidates().selected_index == 0
     assert module._selected_pregrasp is not None
     assert module._selected_pregrasp.position.z == 0.4
+    state = module.pick_and_place_state.publish.call_args.args[0]
+    assert state.selected_object_id == "cup-1"
+    assert state.candidates.selected_index == 0
 
 
 def test_place_at_uses_selected_grasp_orientation() -> None:

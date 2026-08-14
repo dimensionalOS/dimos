@@ -19,14 +19,19 @@ from __future__ import annotations
 import math
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place import PickAndPlaceModule
+from dimos.manipulation.visualization.pick_and_place import PickAndPlaceVisualizationAdapter
+from dimos.manipulation.visualization.pick_and_place_rerun import pick_and_place_rerun_config
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.xarm.blueprints.perception import XARM_PERCEPTION_CAMERA_TRANSFORM
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 from dimos.robot.manipulators.xarm.grasp_config import make_xarm_graspgenx_config
+from dimos.visualization.vis_module import vis_module
 
 _graspgenx_config = make_xarm_graspgenx_config()
 
@@ -42,11 +47,13 @@ xarm_graspgenx = autoconnect(
         ],
         planning_timeout=10.0,
         floor_z=-0.02,
+        visualization=ViserVisualizationConfig(port=8095),
     ),
     PickAndPlaceModule.blueprint(
         instance_name="pick_and_place",
         grasp="graspgenx",
     ),
+    PickAndPlaceVisualizationAdapter.blueprint(instance_name="pick_and_place_visualization"),
     RealSenseCamera.blueprint(
         base_frame_id="link7",
         base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
@@ -55,4 +62,5 @@ xarm_graspgenx = autoconnect(
     GraspGenXModule.blueprint(
         **_graspgenx_config.model_dump(exclude={"rpc_transport", "tf_transport", "g"})
     ),
+    vis_module(global_config.viewer, rerun_config=pick_and_place_rerun_config()),
 ).global_config(n_workers=5)
