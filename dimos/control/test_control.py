@@ -43,10 +43,12 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryCancellationStatus,
     TrajectoryExecutionStatus,
+    joint_trajectory_task,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
@@ -91,7 +93,7 @@ def trajectory_task():
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         priority=10,
     )
-    return JointTrajectoryTask(name="test_traj", config=config)
+    return JointTrajectoryTask(config=config)
 
 
 @pytest.fixture
@@ -420,38 +422,39 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_rejects_second_trajectory_task(self, make_coordinator):
+    def test_trajectory_config_requires_canonical_name(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            "first",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
-        )
-        second = JointTrajectoryTask(
-            "second",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
+        config = TaskConfig(
+            name="other_name",
+            type="trajectory",
+            joint_names=["arm/joint1"],
         )
 
-        assert coordinator.add_task(first, task_type="trajectory")
-        with pytest.raises(ValueError, match="exactly one JointTrajectoryTask"):
-            coordinator.add_task(second, task_type="trajectory")
+        with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
+            coordinator._create_task_from_config(config)
 
-        assert coordinator.list_tasks() == ["first"]
+    def test_joint_trajectory_task_factory(self):
+        config = joint_trajectory_task(
+            ("arm/joint1", "arm/joint2"),
+            priority=7,
+            start_position_tolerance=0.02,
+        )
+
+        assert config.name == JOINT_TRAJECTORY_TASK_NAME
+        assert config.type == "trajectory"
+        assert config.joint_names == ["arm/joint1", "arm/joint2"]
+        assert config.priority == 7
+        assert config.params == {"start_position_tolerance": 0.02}
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
-        first = JointTrajectoryTask(
-            "first",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint1"]),
-        )
-        second = JointTrajectoryTask(
-            "second",
-            JointTrajectoryTaskConfig(joint_names=["arm/joint2"]),
-        )
+        first = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
+        second = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint2"]))
         coordinator.add_task(first, task_type="trajectory")
 
-        assert coordinator.remove_task("first")
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         assert coordinator.add_task(second, task_type="trajectory")
-        assert coordinator.list_tasks() == ["second"]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is second
 
     def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
         coordinator = make_coordinator()
@@ -499,7 +502,7 @@ class TestJointTrajectoryTask:
             )
 
     def test_initial_state(self, trajectory_task):
-        assert trajectory_task.name == "test_traj"
+        assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.IDLE
 
@@ -517,6 +520,20 @@ class TestJointTrajectoryTask:
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
+
+    def test_status_snapshot_is_non_destructive(self, trajectory_task, simple_trajectory):
+        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
+
+        active = trajectory_task.get_status(10.25)
+        assert active.state is TrajectoryState.EXECUTING
+        assert active.progress == pytest.approx(0.25)
+
+        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
+        terminal = trajectory_task.get_status(11.5)
+        assert terminal.state is TrajectoryState.COMPLETED
+        assert terminal.progress == pytest.approx(1.0)
+        assert trajectory_task.get_status(11.6).state is TrajectoryState.COMPLETED
 
     def test_execute_partial_subset_and_claims_full_configuration(self, trajectory_task):
         trajectory = JointTrajectory(
@@ -682,12 +699,12 @@ class TestJointTrajectoryTask:
         )
         assert (
             trajectory_task.execute(second, trajectory_start_positions(second)).status
-            is TrajectoryExecutionStatus.ACCEPTED
+            is TrajectoryExecutionStatus.ALREADY_EXECUTING
         )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.0, dt=0.01))
         output = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.5, dt=0.01))
         assert output is not None
-        assert output.joint_names == ["arm/joint3"]
+        assert output.joint_names == ["arm/joint1"]
         assert trajectory_task.cancel().status is TrajectoryCancellationStatus.CANCELLED
         assert (
             trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=2.0, dt=0.01))
@@ -975,8 +992,8 @@ class TestIntegration:
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
-        traj_task = JointTrajectoryTask(name="traj_arm", config=config)
-        tasks = {"traj_arm": traj_task}
+        traj_task = JointTrajectoryTask(config=config)
+        tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
