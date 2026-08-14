@@ -61,6 +61,7 @@ OPENARM_RIGHT_ARM_JOINTS = [f"right_arm/joint{i}" for i in range(1, OPENARM_DOF 
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
 OPENARM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
+OPENARM_HOME_JOINTS = [0.0] * len(OPENARM_ARM_JOINTS)
 OPENARM_GRIPPER_COLLISION_EXCLUSIONS = [
     (f"openarm_{side}_ee_link1", f"openarm_{side}_ee_link2") for side in OPENARM_SIDES
 ]
@@ -155,5 +156,5 @@ def openarm_bimanual_model_config(name: str = OPENARM_HARDWARE_ID) -> RobotModel
                 openarm_arm_joints(side), openarm_urdf_joints(side), strict=True
             )
         },
-        home_joints=[0.0] * (2 * OPENARM_DOF),
+        home_joints=list(OPENARM_HOME_JOINTS),
     )

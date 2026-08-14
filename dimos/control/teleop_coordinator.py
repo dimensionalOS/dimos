@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TASK_FACTORIES = {
-    "teleop_ik": "dimos.control.tasks.teleop_task.teleop_task:create_task",
-}
+"""Control coordinator carrying Quest arm teleoperation inputs."""
 
-TASK_CONSUMES = {
-    "teleop_ik": {
-        "cartesian_command": ("on_cartesian_command", "direct"),
-        "teleop_buttons": ("on_teleop_buttons", "broadcast"),
-    },
-}
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.stream import In
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.teleop.quest.quest_types import Buttons
+
+
+class TeleopControlCoordinator(ControlCoordinator):
+    """Add the pose and control ports consumed by teleoperation task cards."""
+
+    left_cartesian_command: In[PoseStamped]
+    right_cartesian_command: In[PoseStamped]
+    teleop_buttons: In[Buttons]
