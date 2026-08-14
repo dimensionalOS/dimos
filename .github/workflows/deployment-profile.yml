@@ -125,6 +125,35 @@ jobs:
           name: rusage
           path: metrics.json
 
+      # The same artifact this job uploads, from the last green run on main --
+      # no Bencher API needed to diff against it.
+      - name: Fetch main baseline
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh run list --workflow deployment-profile.yml --branch main \
+            --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          [ -n "$id" ] || { echo "no baseline on main yet"; exit 0; }
+          gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
+
+      - name: Comment on the PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          [ -f metrics.json ] || exit 0
+          bin/rusage-comment metrics.json baseline/metrics.json >comment.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" \
+            --jq '.[]|select(.body|contains("<!-- dimos-profile -->"))|.id' | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md
+          else
+            gh pr comment "$PR" --body-file comment.md
+          fi
+
       - name: Record in Bencher
         if: always() && env.BENCHER_API_KEY != ''
         uses: bencherdev/bencher@main
@@ -137,4 +166,5 @@ jobs:
             --testbed ubuntu-latest \
             --adapter json \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            --ci-only-on-alert \
             --file bencher.json

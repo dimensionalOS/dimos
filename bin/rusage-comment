@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Render the PR comment for a profile run. This one is ours -- edit the layout
+# here. (Bencher's own comment is generated inside its Rust CLI and cannot be
+# templated, which is why this exists.)
+#
+# Usage:
+#   bin/rusage-comment <current.json> [baseline.json] > comment.md
+#
+# Both files are Bencher Metric Format: {benchmark: {measure: {value: N}}}.
+# The baseline is the same file from the last green run on main; omit it and
+# the deltas are simply left blank.
+set -euo pipefail
+
+current=${1:?usage: bin/rusage-comment <current.json> [baseline.json]}
+baseline=${2:-}
+
+# jq wants a file for --slurpfile; an empty object stands in for "no baseline".
+if [[ -z $baseline || ! -s $baseline ]]; then
+	baseline=$(mktemp)
+	echo '{}' >"$baseline"
+	trap 'rm -f "$baseline"' EXIT
+fi
+
+# --- the template. everything below here is layout. ------------------------
+
+cat <<'HEADER'
+<!-- dimos-profile -->
+### Deployment resource footprint
+
+What this branch costs to boot and run, measured across the whole process
+tree. Baseline is the last green run on `main`.
+
+| | measure | this branch | main | Δ |
+|---|---|---:|---:|---:|
+HEADER
+
+jq -r --slurpfile base "$baseline" '
+  ($base[0] // {}) as $main
+  | to_entries[] as $bench
+  | $bench.value
+  | to_entries[]
+  | . as $meas
+  | ($main[$bench.key][$meas.key].value) as $old
+  | (if $old == null or $old == 0 then null
+     else ($meas.value.value - $old) / $old * 100 end) as $delta
+  | "| `\($bench.key)` | \($meas.key) | \($meas.value.value)"
+    + " | " + (if $old == null then "--" else ($old | tostring) end)
+    + " | " + (if $delta == null then "--"
+               elif $delta > 0 then "+\($delta | .*10 | round / 10)%"
+               else "\($delta | .*10 | round / 10)%" end)
+    + " |"
+' "$current"
+
+cat <<'FOOTER'
+
+<sub>`bin/rusage` — cgroup CPU and peak-memory accounting for the process tree.
+Recorded, not gated.</sub>
+FOOTER
