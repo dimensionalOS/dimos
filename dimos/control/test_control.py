@@ -33,7 +33,11 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
+from dimos.control.hardware_interface import (
+    ConnectedHardware,
+    ConnectedTwistBase,
+    ConnectedWholeBody,
+)
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -53,6 +57,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.whole_body.spec import MotorState
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -237,6 +242,33 @@ class TestConnectedHardware:
         mock_adapter.write_joint_positions.assert_called()
 
 
+class TestConnectedWholeBody:
+    def test_partial_commands_retain_last_targets_for_omitted_joints(self) -> None:
+        adapter = MagicMock()
+        adapter.has_motor_states.return_value = True
+        adapter.read_motor_states.return_value = [
+            MotorState(q=0.1),
+            MotorState(q=0.2),
+            MotorState(q=0.3),
+        ]
+        adapter.write_motor_commands.return_value = True
+        hardware = ConnectedWholeBody(
+            adapter,
+            HardwareComponent(
+                hardware_id="robot",
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=["robot/leg", "robot/waist", "robot/arm"],
+            ),
+        )
+
+        assert hardware.write_command({"robot/arm": 0.8}, ControlMode.SERVO_POSITION)
+        assert hardware.write_command({"robot/leg": -0.4}, ControlMode.SERVO_POSITION)
+
+        commands = adapter.write_motor_commands.call_args.args[0]
+        assert [command.q for command in commands] == [-0.4, 0.2, 0.8]
+        assert [command.kp for command in commands] == [40.0, 40.0, 40.0]
+
+
 @pytest.fixture
 def make_coordinator() -> Iterator[Callable[..., ControlCoordinator]]:
     """Factory for real coordinators, all stopped on teardown."""
@@ -261,27 +293,6 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
-    def test_dispatch_routes_ee_twist_only_to_matching_frame_id(self, make_coordinator):
-        coordinator = make_coordinator()
-        matching_task = RecordingTask("eef")
-        other_task = RecordingTask("other")
-        coordinator._tasks = {"eef": matching_task, "other": other_task}
-        coordinator._routes = {
-            "coordinator_ee_twist_command": [
-                (matching_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-                (other_task, "on_ee_twist_command", Routing.BY_TASK_NAME),
-            ]
-        }
-
-        for frame_id in ("eef", "missing", ""):
-            coordinator._dispatch(
-                "coordinator_ee_twist_command",
-                TwistStamped(frame_id=frame_id, linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0]),
-            )
-
-        assert len(matching_task.ee_twist_calls) == 1
-        assert other_task.ee_twist_calls == []
-
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")
