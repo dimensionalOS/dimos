@@ -209,6 +209,7 @@ class SqliteObservationStoreConfig(ObservationStoreConfig):
     blob_store_conn_match: bool = Field(default=False, exclude=True)
     page_size: int = 256
     path: str | None = None
+    read_only: bool = False
 
     @model_validator(mode="after")
     def _conn_xor_path(self) -> SqliteObservationStoreConfig:
@@ -249,9 +250,18 @@ class SqliteObservationStore(ObservationStore[T]):
     def start(self) -> None:
         if self._conn is None:
             assert self._path is not None
-            disposable, self._conn = open_disposable_sqlite_connection(self._path)
+            disposable, self._conn = open_disposable_sqlite_connection(
+                self._path, read_only=self.config.read_only
+            )
             self.register_disposable(disposable)
-        self._ensure_tables()
+        if self.config.read_only:
+            found = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (self._name,)
+            ).fetchone()
+            if found is None:
+                raise KeyError(f"Stream table {self._name!r} does not exist")
+        else:
+            self._ensure_tables()
 
     def _ensure_tables(self) -> None:
         """Create the metadata table and R*Tree index if they don't exist."""
@@ -331,6 +341,8 @@ class SqliteObservationStore(ObservationStore[T]):
                 self._tag_indexes.add(key)
 
     def insert(self, obs: Observation[T]) -> int:
+        if self.config.read_only:
+            raise PermissionError("Cannot append to a read-only SQLite store")
         pose = obs.pose_tuple
         tags_json = json.dumps(obs.tags) if obs.tags else "{}"
         value = obs._data if isinstance(obs._data, (int, float)) else None
