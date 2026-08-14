@@ -14,9 +14,7 @@
 
 """The bake registry: rust crates that declare a native module in their manifest.
 
-A crate opts in with a `[package.metadata.dimos.module.<id>]` table. Reading it
-is pure TOML, so the whole graph can be drawn and checked before cargo runs.
-`#[module(name = "<id>")]` on the rust struct fails the build if the two drift.
+A crate opts in with a `[package.metadata.dimos.module.<id>]` table.
 """
 
 from __future__ import annotations
@@ -25,7 +23,6 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any
 
 import tomllib
 
@@ -73,7 +70,7 @@ class ModuleInfo:
 
 
 def normalize_id(name: str) -> str:
-    """Module ids are underscore-spelled; `--` and `_` are interchangeable on the CLI."""
+    """Module ids are underscore-spelled. `-` and `_` are interchangeable on the CLI."""
     return name.replace("-", "_")
 
 
@@ -85,7 +82,7 @@ def _iter_manifests(root: Path) -> Iterator[Path]:
                 yield Path(dirpath) / "Cargo.toml"
 
 
-def _str_table(entry: Mapping[str, Any], key: str, where: str) -> dict[str, str]:
+def _str_table(entry: Mapping[str, object], key: str, where: str) -> dict[str, str]:
     table = entry.get(key, {})
     if not isinstance(table, dict):
         raise BakeError(f'{where}: `{key}` must be a table of port = "pkg.MsgType"')

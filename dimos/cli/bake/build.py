@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Invoke a cargo-shaped builder on the generated crate and collect the binary.
-
-Deliberately a thin invoker: `cross` and `cargo-zigbuild` take the same
-arguments as cargo, and managing their toolchains is not bake's job.
-"""
+"""Invoke a cargo-shaped builder on the generated crate and collect the binary."""
 
 from __future__ import annotations
 
@@ -39,9 +35,8 @@ def build_command(builder: str, *, target: str | None = None, debug: bool = Fals
     if builder not in _INVOCATION:
         raise BakeError(f"unknown --builder {builder!r}; choose from {', '.join(BUILDERS)}")
     cmd = list(_INVOCATION[builder])
-    # Pin the output dir artifact_path reads. An inherited CARGO_TARGET_DIR
-    # would otherwise send the binary somewhere else. Relative so it also
-    # resolves inside a cross container.
+    # Pin the output dir artifact_path reads, against an inherited CARGO_TARGET_DIR.
+    # Relative so it also resolves inside a cross container.
     cmd.extend(["--target-dir", "target"])
     if not debug:
         cmd.append("--release")
@@ -51,13 +46,8 @@ def build_command(builder: str, *, target: str | None = None, debug: bool = Fals
 
 
 def target_dir_name(target: str) -> str:
-    """The directory cargo writes for `target`.
-
-    `cargo zigbuild` accepts a glibc version glued to the triple
-    (`aarch64-unknown-linux-gnu.2.31`, meaning "link against 2.31 so an older
-    robot can run it") but writes its artifact under the bare triple. Triples
-    carry no dots of their own, so the suffix is what follows the first one.
-    """
+    """The directory cargo writes for `target`. `cargo zigbuild` accepts a
+    glibc suffix glued to the triple but writes under the bare triple."""
     return target.split(".", 1)[0]
 
 

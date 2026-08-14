@@ -113,7 +113,7 @@ fn prepare_module<M: Module>(section: &Value) -> io::Result<Prepared> {
 pub struct HostSpec {
     pub name: &'static str,
     pub modules: &'static [ModuleEntry],
-    /// `{"<module>": {"<port>": "<topic>"}}` — the wiring the graph was drawn
+    /// `{"<module>": {"<port>": "<topic>"}}`: the wiring the graph was drawn
     /// from. Per-module `topics` on stdin override individual ports.
     pub default_topics: &'static str,
     /// Topics whose publishers stay inside this process. Replaced wholesale by
@@ -426,7 +426,7 @@ fn supervise(
     drop(done_tx);
 
     // Fail fast: the first module to stop takes the host down with it. A module
-    // that returns is as fatal as one that panics — nothing else can drive it.
+    // that returns is as fatal as one that panics: nothing else can drive it.
     let first = main_rt.block_on(async {
         tokio::select! {
             first = done_rx.recv() => first,
@@ -474,7 +474,7 @@ fn supervise(
             );
         }
     });
-    // Dropping a Runtime waits for its tasks; a wedged module would hang here.
+    // Dropping a Runtime waits for its tasks. A wedged module would hang here.
     for runtime in runtimes {
         runtime.shutdown_background();
     }

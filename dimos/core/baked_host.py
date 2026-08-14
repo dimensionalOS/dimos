@@ -15,10 +15,7 @@
 """Blueprint-side view of a `dimos bake` host binary.
 
 One host process runs several native modules, so python drives it as a single
-NativeModule whose ports are the union of its members'. Autoconnect,
-`.remappings()` and `.namespace()` keep working because the union is expressed
-as ordinary In/Out annotations; only the stdin blob is different, nesting one
-section per member.
+NativeModule whose ports are the union of its members'.
 
     GoNav = baked_host(
         "GoNav",
@@ -31,15 +28,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 from pydantic import Field, create_model
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 
-# A member port and what it does on the host: producing wins, because a topic
-# some member publishes is an output of the host as a whole.
+# Producing wins: a topic any member publishes is an output of the whole host.
 _PRODUCING = (Out, IO)
 
 
@@ -47,12 +43,12 @@ class BakedHostConfig(NativeModuleConfig):
     """Config for a baked host. Per-member configs are `<member>_config` fields."""
 
     stdin_config: bool = True
-    # Replaces the host's baked suppression list wholesale when set; `[]` makes
-    # every internal hop externally visible again.
+    # Replaces the host's baked suppression list wholesale when set. An empty
+    # list makes every internal hop externally visible again.
     suppress: list[str] | None = None
 
 
-def _member_ports(member: type[NativeModule]) -> dict[str, Any]:
+def _member_ports(member: type[NativeModule]) -> dict[str, object]:
     """The member's declared In/Out/IO annotations, resolved to real types."""
     hints = get_type_hints(member)
     return {name: hint for name, hint in hints.items() if get_origin(hint) in (In, Out, IO)}
@@ -61,9 +57,9 @@ def _member_ports(member: type[NativeModule]) -> dict[str, Any]:
 def _union_ports(
     members: Mapping[str, type[NativeModule]],
     remaps: Mapping[tuple[str, str], str],
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Host port annotations: one per effective name, Out if anything produces it."""
-    ports: dict[str, Any] = {}
+    ports: dict[str, object] = {}
     msg_types: dict[str, tuple[type, str]] = {}
     for instance, member in members.items():
         for port, hint in _member_ports(member).items():
@@ -103,14 +99,14 @@ class BakedHost(NativeModule):
     def _stdin_blob(self, topics: dict[str, str]) -> bytes | None:
         if not self.config.stdin_config:
             return None
-        sections: dict[str, Any] = {}
+        sections: dict[str, object] = {}
         for instance in self._members:
             member_config = getattr(self.config, f"{instance}_config")
             sections[instance] = {
                 "topics": self._member_topics(instance, topics),
                 "config": member_config.to_config_dict() or None,
             }
-        blob: dict[str, Any] = {"modules": sections}
+        blob: dict[str, object] = {"modules": sections}
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
@@ -124,19 +120,14 @@ def baked_host(
     executable: str,
     members: Mapping[str, type[NativeModule]],
     remaps: Mapping[tuple[str, str], str] | None = None,
-    **config_defaults: Any,
+    **config_defaults: object,
 ) -> type[BakedHost]:
-    """Build the NativeModule subclass that drives a baked host binary.
-
-    `members` maps the baked module id to the python wrapper it replaces;
-    `remaps` renames a member port, keyed by `(member, port)`, and must match
-    the `--remap` the binary was baked with.
-    """
+    """Build the NativeModule subclass that drives a baked host binary."""
     if not members:
         raise ValueError("a baked host needs at least one member module")
     remaps = dict(remaps or {})
 
-    fields: dict[str, Any] = {"executable": (str, executable)}
+    fields: dict[str, tuple[type, object]] = {"executable": (str, executable)}
     for instance, member in members.items():
         member_config = get_type_hints(member)["config"]
         fields[f"{instance}_config"] = (
@@ -144,9 +135,13 @@ def baked_host(
             Field(default_factory=member_config),
         )
     fields.update({key: (type(value), value) for key, value in config_defaults.items()})
-    config_cls = create_model(f"{name}Config", __base__=BakedHostConfig, **fields)
+    config_cls = create_model(
+        f"{name}Config",
+        __base__=BakedHostConfig,
+        **fields,  # type: ignore[call-overload]
+    )
 
-    namespace: dict[str, Any] = {
+    namespace: dict[str, object] = {
         "__annotations__": {"config": config_cls, **_union_ports(members, remaps)},
         "__doc__": f"Baked host `{name}`: {', '.join(members)}.",
         "__module__": __name__,

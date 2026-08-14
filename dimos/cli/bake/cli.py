@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos bake` — link native modules into one host binary."""
+"""dimos bake: link native modules into one host binary."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import importlib
 import json
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import get_type_hints
 
 import typer
 
@@ -31,7 +31,7 @@ from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
 
 
-def default_config(module: ModuleInfo) -> dict[str, Any]:
+def default_config(module: ModuleInfo) -> dict[str, object]:
     """The module's python wrapper config at its defaults, as the native struct sees it."""
     module_name, _, class_name = module.python_ref.partition(":")
     try:
@@ -44,7 +44,7 @@ def default_config(module: ModuleInfo) -> dict[str, Any]:
     return dict(config_type().to_config_dict())
 
 
-def emit_config(graph: Graph, modules: Sequence[ModuleInfo]) -> dict[str, Any]:
+def emit_config(graph: Graph, modules: Sequence[ModuleInfo]) -> dict[str, object]:
     """A complete stdin blob for the host, so it can be run without python."""
     topics = graph.topics()
     return {
@@ -137,10 +137,8 @@ def _bake(
 
     if emit_config_to is not None:
         emit_config_to.parent.mkdir(parents=True, exist_ok=True)
-        # One line, like NativeModule._stdin_blob writes: the host reads its
-        # config with a single read_line, so a pretty-printed blob is parsed as
-        # the bare `{` of its first line and the host exits before it subscribes
-        # to anything. `jq .` if you want to read it.
+        # The host reads its config with a single read_line, so the blob must
+        # stay on one line.
         emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
         typer.echo(f"Wrote {emit_config_to}")
 

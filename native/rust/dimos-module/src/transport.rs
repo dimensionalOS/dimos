@@ -45,7 +45,7 @@ pub trait Transport: Send + Sync + 'static {
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Object-safe view of [`Transport`]. `Transport` returns `impl Future`, so it
-/// can't be made into a trait object; a baked host needs exactly that, because
+/// can't be made into a trait object. A baked host needs exactly that, because
 /// its modules are monomorphized one by one but share a single session.
 pub(crate) trait DynTransport: Send + Sync + 'static {
     fn publish_dyn<'a>(&'a self, channel: &'a str, data: Vec<u8>) -> BoxFuture<'a, io::Result<()>>;

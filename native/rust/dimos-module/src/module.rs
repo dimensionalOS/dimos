@@ -181,7 +181,7 @@ pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     let config_value = json.get("config").ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            "missing 'config' field in stdin JSON — coordinator must always send a config object",
+            "missing 'config' field in stdin JSON: coordinator must always send a config object",
         )
     })?;
 
