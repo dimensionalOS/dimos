@@ -9,7 +9,7 @@ Usage:
 
 Both files are Bencher Metric Format: {benchmark: {measure: {value: N}}}.
 The baseline is the same file from the last green run on the compared ref;
-omit it and the deltas render as "--".
+omit it and the deltas are left off.
 """
 
 import json
@@ -22,49 +22,77 @@ TEMPLATE = """\
 <!-- dimos-profile -->
 ### Deployment resource footprint
 
-What this branch costs to boot and run, measured across the whole process
-tree. Baseline is the last green run on `{ref}`.
+{blocks}
 
-| | measure | this branch | {ref} | Δ |
-|---|---|---:|---:|---:|
-{rows}
-
-<sub>`bin/rusage` — cgroup CPU and peak-memory accounting for the whole
-process tree. Recorded, not gated.</sub>
+<sub>vs. last green run on `{ref}` &middot; `bin/rusage`, cgroup accounting
+over the whole process tree &middot; recorded, not gated</sub>
 """
 
-ROW = "| `{benchmark}` | {measure} | {value} | {baseline} | {delta} |"
+BLOCK = """\
+**{benchmark}**<br>
+{cells}
+"""
 
-# Deltas smaller than this are noise on a shared runner, not a signal.
-NOISE_PCT = 3.0
+CELL = "`{label}` {value}{delta}"
+JOIN = " &nbsp; "
+
+# Short labels, in the order they are printed. Measures missing from a
+# benchmark are skipped, so `venv` prints as a single VENV cell.
+LABELS = {
+    "wall-seconds": "WALL",
+    "cpu-core-seconds": "CPU",
+    "cpu-user-seconds": "USR",
+    "cpu-system-seconds": "SYS",
+    "peak-memory-mib": "MEM",
+    "peak-threads": "THR",
+    "install-size-mib": "VENV",
+}
+
+# Bands of |Δ%|, widest first: (threshold, better, worse). Resource use going
+# down is better. Colours are CSS names because GitHub renders the delta as
+# MathJax, which is the only way to get colour into a comment without images.
+BANDS = [
+    (25, "darkgreen", "darkred"),
+    (12, "green", "red"),
+    (5, "seagreen", "indianred"),
+]
+NEUTRAL = "gray"
 
 
-def number(value: float | None) -> str:
-    return "--" if value is None else f"{value:g}"
+def number(value: float) -> str:
+    """Round to something readable: 2759, 114.4, 5.84."""
+    if abs(value) >= 100:
+        return f"{value:.0f}"
+    return f"{value:.1f}" if abs(value) >= 10 else f"{value:.2f}"
+
+
+def colour(pct: float) -> str:
+    for threshold, better, worse in BANDS:
+        if abs(pct) >= threshold:
+            return better if pct < 0 else worse
+    return NEUTRAL
 
 
 def delta(value: float, baseline: float | None) -> str:
     if baseline is None or baseline == 0:
-        return "--"
-    pct = (value - baseline) / baseline * 100
-    if abs(pct) < NOISE_PCT:
-        return f"{pct:+.1f}%"
-    return f"**{pct:+.1f}%**"
+        return ""
+    # Band on the number shown, so a cell never reads -5% in the neutral colour
+    # while its neighbour reads -5% in green.
+    pct = round((value - baseline) / baseline * 100)
+    return rf" $\textcolor{{{colour(pct)}}}{{{pct:+d}\%}}$"
 
 
-def rows(current: dict, base: dict) -> list[str]:
-    return [
-        ROW.format(
-            benchmark=benchmark,
-            measure=measure,
-            value=number(metric["value"]),
-            baseline=number(was),
-            delta=delta(metric["value"], was),
+def block(benchmark: str, measures: dict, base: dict) -> str:
+    cells = [
+        CELL.format(
+            label=label,
+            value=number(measures[slug]["value"]),
+            delta=delta(measures[slug]["value"], base.get(slug, {}).get("value")),
         )
-        for benchmark, measures in current.items()
-        for measure, metric in measures.items()
-        for was in [base.get(benchmark, {}).get(measure, {}).get("value")]
+        for slug, label in LABELS.items()
+        if slug in measures
     ]
+    return BLOCK.format(benchmark=benchmark, cells=JOIN.join(cells))
 
 
 def main() -> None:
@@ -79,7 +107,8 @@ def main() -> None:
     if baseline_path and baseline_path.is_file():
         base = json.loads(baseline_path.read_text())
 
-    print(TEMPLATE.format(ref=ref, rows="\n".join(rows(current, base))))
+    blocks = [block(name, m, base.get(name, {})) for name, m in current.items()]
+    print(TEMPLATE.format(ref=ref, blocks="\n".join(blocks)))
 
 
 if __name__ == "__main__":
