@@ -174,7 +174,7 @@ jobs:
           bencher run \
             --project dimos \
             --branch "${{ github.head_ref || github.ref_name }}" \
-            --testbed ubuntu-latest \
+            --testbed gh-ubuntu-latest \
             --adapter json \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
             --ci-only-on-alert \
