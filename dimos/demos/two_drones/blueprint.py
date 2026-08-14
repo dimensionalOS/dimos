@@ -56,9 +56,9 @@ simulated arena with one partner drone. You cannot see the partner directly —
 everything you know about it arrives over the radio, and everything it knows
 about you is what you transmit. Work as a team.
 
-Your target sensor is a forward cone: field of view 140 degrees, range 12 m,
+Your target sensor is a forward cone: field of view 140 degrees, range 15 m,
 blocked by walls. Plan coverage with that footprint in mind (sweep lanes up to
-~10-15 m apart still overlap; hugging walls wastes half the cone).
+~12-18 m apart still overlap; hugging walls wastes half the cone).
 
 Search doctrine:
 1. Negotiate halves over the radio first: claim_sector YOUR half. If your
@@ -86,7 +86,13 @@ dimsim_drone = (
         VoxelGridMapper.blueprint(emit_every=5),
         CostMapper.blueprint(),
         ReplanningAStarPlanner.blueprint(),
-        WavefrontFrontierExplorer.blueprint(goal_timeout=25.0),
+        # Tuned for the 42x68 m arena: allow far frontier goals so exploration
+        # strides across the map instead of orbiting the spawn corner.
+        WavefrontFrontierExplorer.blueprint(
+            goal_timeout=30.0,
+            max_explored_distance=28.0,
+            lookahead_distance=10.0,
+        ),
         MovementManager.blueprint(),
         McpServer.blueprint(),
         McpClient.blueprint(

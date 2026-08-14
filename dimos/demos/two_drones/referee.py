@@ -60,7 +60,7 @@ def three_to_ros(x: float, z: float) -> tuple[float, float]:
 
 @dataclass
 class SensorConfig:
-    range_m: float = 12.0
+    range_m: float = 15.0
     fov_deg: float = 140.0
     tick_s: float = 0.5
     # consecutive ticks needed to switch visible/lost (hysteresis)
