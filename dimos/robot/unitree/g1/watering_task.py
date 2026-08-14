@@ -37,6 +37,7 @@ import time
 from typing import Any, Protocol
 import uuid
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -61,7 +62,6 @@ from dimos.robot.unitree.g1.manip_config import G1_NOMINAL_PELVIS_Z
 from dimos.robot.unitree.g1.manip_last_mile import (
     ApproachControllerConfig,
     ApproachPhase,
-    Twist2D,
     approach_step,
 )
 from dimos.robot.unitree.g1.manip_stance import (
@@ -118,10 +118,10 @@ class WateringManipulationSpec(Spec, Protocol):
     ) -> SkillResult[ManipulationSkillError]: ...
 
 
-class BaseCommandSink(Protocol):
-    """Boundary used by the state machine to command the mobile base."""
+class ApproachCommandSink(Protocol):
+    """Boundary used by the state machine to start and stop path following."""
 
-    def send(self, command: Twist2D) -> None: ...
+    def start(self, path: NavPath) -> None: ...
 
     def stop(self) -> None: ...
 
@@ -202,12 +202,6 @@ class WateringTaskConfig(ModuleConfig):
     max_base_pose_jump: float = Field(default=0.25, gt=0.0)
     approach_motion_enabled: bool = False
     pour_motion_enabled: bool = False
-    approach_holonomic: bool = False
-    approach_min_linear: float = Field(default=0.06, gt=0.0)
-    approach_max_linear: float = Field(default=0.25, gt=0.0)
-    approach_max_lateral: float = Field(default=0.12, gt=0.0)
-    approach_max_angular: float = Field(default=0.4, gt=0.0)
-    approach_max_bearing: float = Field(default=math.radians(45.0), gt=0.0)
     motion_enabled: bool = True
     auto_start: bool = False
     task_join_timeout: float = Field(default=DEFAULT_THREAD_JOIN_TIMEOUT, ge=0.0)
@@ -331,7 +325,7 @@ class WateringSequence:
         self,
         config: WateringTaskConfig,
         inputs: WateringInputs,
-        base: BaseCommandSink,
+        approach_commands: ApproachCommandSink,
         manipulation: WateringManipulationSpec,
         reach_map: PourReachMap,
         cancelled: threading.Event,
@@ -343,7 +337,7 @@ class WateringSequence:
     ) -> None:
         self._config = config
         self._inputs = inputs
-        self._base = base
+        self._approach_commands = approach_commands
         self._manipulation = manipulation
         self._reach = reach_map
         self._cancelled = cancelled
@@ -353,12 +347,6 @@ class WateringSequence:
         self._monotonic = monotonic
         self._wall_time = wall_time
         self._controller_config = ApproachControllerConfig(
-            holonomic=config.approach_holonomic,
-            min_linear=config.approach_min_linear,
-            max_linear=config.approach_max_linear,
-            max_lateral=config.approach_max_lateral,
-            max_angular=config.approach_max_angular,
-            max_drive_angular=min(config.approach_max_angular, 0.18),
             position_tolerance=config.approach_position_tolerance,
             yaw_tolerance=config.approach_yaw_tolerance,
             max_approach_distance=config.approach_max_distance,
@@ -413,7 +401,7 @@ class WateringSequence:
             self._transition(WateringState.FAILED, message, 0)
             return WateringRunResult(False, WateringState.FAILED, message)
         finally:
-            self._base.stop()
+            self._approach_commands.stop()
 
     def run_approach(self, target_id: str) -> WateringRunResult:
         """Drive to the previewed stance without invoking manipulation."""
@@ -454,12 +442,12 @@ class WateringSequence:
             self._transition(WateringState.FAILED, message, 0)
             return WateringRunResult(False, WateringState.FAILED, message)
         finally:
-            self._base.stop()
+            self._approach_commands.stop()
 
     def run_pour(self, target_id: str) -> WateringRunResult:
         """Pour from the current stance without commanding base motion."""
         try:
-            self._base.stop()
+            self._approach_commands.stop()
             self._transition(
                 WateringState.WAITING_INPUT,
                 f"Waiting for world-frame target '{target_id}' and stopped base pose",
@@ -506,7 +494,7 @@ class WateringSequence:
             self._transition(WateringState.FAILED, message, 0)
             return WateringRunResult(False, WateringState.FAILED, message)
         finally:
-            self._base.stop()
+            self._approach_commands.stop()
 
     def _approach(self, target_id: str, initial: WateringInputSnapshot) -> None:
         path, goal = build_approach_preview(
@@ -516,6 +504,21 @@ class WateringSequence:
         )
         if self._approach_preview is not None:
             self._approach_preview(path, goal)
+        initial_step = approach_step(
+            self._base_pose(initial),
+            (
+                float(goal.position.x),
+                float(goal.position.y),
+                float(goal.orientation.to_euler().z),
+            ),
+            self._controller_config,
+        )
+        if initial_step.blocked:
+            raise _WateringFailureError(f"Approach blocked: {initial_step.message}")
+
+        # The watering state machine owns the goal and safety supervision; the
+        # navigation module owns the control law and publishes autonomy Twist.
+        self._approach_commands.start(path)
         deadline = self._monotonic() + self._config.servo_timeout
         period = 1.0 / self._config.servo_hz
         initial_pot = self._pot_xy(initial)
@@ -543,29 +546,6 @@ class WateringSequence:
                     f"Base pose jumped {base_jump:.2f} m between control ticks; stopping"
                 )
             previous_base = current_base
-            if self._config.approach_holonomic and self._holonomic_stance_reached(snapshot):
-                offset = self._seen_offset(snapshot)
-                self._base.stop()
-                self._transition(
-                    WateringState.SETTLING,
-                    "Base reached verified pour region; "
-                    f"pot offset=({offset[0]:.2f}, {offset[1]:.2f}) m",
-                    0,
-                )
-                self._wait_or_cancel(self._config.settle_seconds)
-                settled_snapshot = self._require_snapshot(target_id)
-                if self._holonomic_stance_reached(settled_snapshot):
-                    return
-                settled_offset = self._seen_offset(settled_snapshot)
-                previous_base = self._base_pose(settled_snapshot)
-                previous_phase = None
-                self._transition(
-                    WateringState.APPROACHING,
-                    "Settling left the verified pour region; resuming holonomic servo, "
-                    f"pot offset=({settled_offset[0]:.2f}, {settled_offset[1]:.2f}) m",
-                    0,
-                )
-                continue
             step = approach_step(
                 current_base,
                 (
@@ -587,28 +567,37 @@ class WateringSequence:
                 )
                 previous_phase = step.phase
             if step.arrived:
-                self._base.stop()
+                self._approach_commands.stop()
                 self._transition(
                     WateringState.SETTLING,
                     f"Base reached stance at ({current_base[0]:.2f}, {current_base[1]:.2f})",
                     0,
                 )
                 self._wait_or_cancel(self._config.settle_seconds)
-                return
-            self._base.send(step.command)
+                settled_snapshot = self._require_snapshot(target_id)
+                settled_step = approach_step(
+                    self._base_pose(settled_snapshot),
+                    (
+                        float(goal.position.x),
+                        float(goal.position.y),
+                        float(goal.orientation.to_euler().z),
+                    ),
+                    self._controller_config,
+                )
+                if settled_step.arrived:
+                    return
+                previous_base = self._base_pose(settled_snapshot)
+                previous_phase = None
+                self._transition(
+                    WateringState.APPROACHING,
+                    "Settling moved the base outside stance tolerance; resuming path follower",
+                    0,
+                )
+                self._approach_commands.start(path)
+                continue
             self._wait_or_cancel(period)
         raise _WateringFailureError(
-            f"Last-mile servo timed out after {self._config.servo_timeout:.1f}s"
-        )
-
-    def _holonomic_stance_reached(self, snapshot: WateringInputSnapshot) -> bool:
-        offset = self._seen_offset(snapshot)
-        return (
-            self._reach.contains(
-                offset,
-                margin_cells=self._config.reach_margin_cells,
-            )
-            and abs(math.atan2(offset[1], offset[0])) <= self._config.approach_max_bearing
+            f"Path follower timed out after {self._config.servo_timeout:.1f}s"
         )
 
     def _latch_and_verify(self, target_id: str) -> tuple[TargetObservation, float, float]:
@@ -799,22 +788,23 @@ class WateringSequence:
             logger.warning("Manipulation cancellation after task failure failed", exc_info=True)
 
 
-class _PortBaseCommandSink:
-    def __init__(self, publish: Callable[[Twist], None], stop_repetitions: int) -> None:
-        self._publish = publish
+class _PortApproachCommandSink:
+    def __init__(
+        self,
+        publish_path: Callable[[NavPath], None],
+        publish_stop: Callable[[Bool], None],
+        stop_repetitions: int,
+    ) -> None:
+        self._publish_path = publish_path
+        self._publish_stop = publish_stop
         self._stop_repetitions = stop_repetitions
 
-    def send(self, command: Twist2D) -> None:
-        self._publish(
-            Twist(
-                linear=[command.vx, command.vy, 0.0],
-                angular=[0.0, 0.0, command.wz],
-            )
-        )
+    def start(self, path: NavPath) -> None:
+        self._publish_path(path)
 
     def stop(self) -> None:
         for _ in range(self._stop_repetitions):
-            self.send(Twist2D())
+            self._publish_stop(Bool(data=True))
 
 
 class WateringTaskModule(Module):
@@ -826,7 +816,8 @@ class WateringTaskModule(Module):
     target_observation: In[TargetObservation]
     base_pose: In[PoseStamped]
     operator_command: In[Twist]
-    base_command: Out[Twist]
+    approach_command_path: Out[NavPath]
+    stop_approach: Out[Bool]
     approach_path: Out[NavPath]
     approach_goal: Out[PoseStamped]
     watering_status: Out[WateringStatus]
@@ -848,7 +839,11 @@ class WateringTaskModule(Module):
             started_at=None,
             updated_at=now,
         )
-        self._base = _PortBaseCommandSink(self.base_command.publish, self.config.stop_repetitions)
+        self._approach_commands = _PortApproachCommandSink(
+            self.approach_command_path.publish,
+            self.stop_approach.publish,
+            self.config.stop_repetitions,
+        )
 
     @rpc
     def start(self) -> None:
@@ -872,7 +867,7 @@ class WateringTaskModule(Module):
             thread.join(timeout=self.config.task_join_timeout)
             if thread.is_alive():
                 logger.warning("Watering task thread did not stop before module shutdown")
-        self._base.stop()
+        self._approach_commands.stop()
         super().stop()
 
     @rpc
@@ -999,7 +994,7 @@ class WateringTaskModule(Module):
         return WateringSequence(
             config=self.config,
             inputs=self._inputs,
-            base=self._base,
+            approach_commands=self._approach_commands,
             manipulation=self._manipulation,
             reach_map=PourReachMap.load(self.config.reach_map_path),
             cancelled=self._cancel_event,
@@ -1047,7 +1042,7 @@ class WateringTaskModule(Module):
     def _request_cancel(self) -> None:
         self._cancel_event.set()
         self._inputs.wake()
-        self._base.stop()
+        self._approach_commands.stop()
         thread = self._task_thread
         if self._run_controls_arm and thread is not None and thread.is_alive():
             try:
@@ -1055,15 +1050,11 @@ class WateringTaskModule(Module):
             except Exception:
                 logger.warning("Manipulation cancellation failed", exc_info=True)
 
-    def _on_operator_command(self, command: Twist) -> None:
+    def _on_operator_command(self, _command: Twist) -> None:
         thread = self._task_thread
         if thread is not None and thread.is_alive():
             logger.warning("Operator command received; cancelling autonomous watering")
             self._request_cancel()
-        # This module is the explicit owner of switching between operator and
-        # task commands. Keeping the two upstream topics separate prevents its
-        # autonomous output from being mistaken for an operator override.
-        self.base_command.publish(command)
 
     def _publish_approach_preview(self, path: NavPath, goal: PoseStamped) -> None:
         self.approach_path.publish(path)

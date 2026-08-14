@@ -65,6 +65,7 @@ def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
         "pointlio",
         "g1liobasepose",
         "posetargetobservationmodule",
+        "basicpathfollower",
         "wateringtaskmodule",
     }
 
@@ -164,8 +165,9 @@ def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
     assert _stream("rerunwebsocketserver", "tele_cmd_vel") == "tele_cmd_vel"
     assert _stream("websocketvismodule", "tele_cmd_vel") == "tele_cmd_vel"
     assert _stream("wateringtaskmodule", "operator_command") == "tele_cmd_vel"
-    assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
-    assert _stream("ControlCoordinator", "twist_command") == "cmd_vel"
+    assert _stream("ControlCoordinator", "operator_twist_command") == "tele_cmd_vel"
+    assert _stream("ControlCoordinator", "autonomy_twist_command") == "autonomy_cmd_vel"
+    assert _stream("basicpathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
 
     (coordinator,) = [
         atom
@@ -174,16 +176,21 @@ def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
     ]
     tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
     assert "teleop_groot_wbc" not in tasks
+    assert list(tasks) == ["groot_wbc", "servo_arms", "traj_arms"]
+    sources = {source.name: source for source in coordinator.kwargs["twist_sources"]}
+    assert sources["operator"].priority == 100
+    assert sources["operator"].timeout == 0.35
+    assert sources["autonomy"].priority == 50
+    assert sources["autonomy"].timeout == 0.25
 
-    # Hardware pins /g1/cmd_vel; sim uses bare /cmd_vel.
     transports = {
         name: transport.topic.topic
         for (name, message_type), transport in unitree_g1_water_demo.transport_map.items()
         if message_type is Twist
     }
     assert transports == {
-        "cmd_vel": "/g1/cmd_vel",
         "tele_cmd_vel": "/g1/tele_cmd_vel",
+        "autonomy_cmd_vel": "/g1/autonomy_cmd_vel",
     }
 
 
@@ -205,12 +212,16 @@ def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() ->
     assert watering["motion_enabled"] is False
     assert watering["approach_motion_enabled"] is True
     assert watering["pour_motion_enabled"] is True
-    assert watering["approach_holonomic"] is True
-    assert watering["approach_min_linear"] == 0.10
-    assert watering["approach_max_linear"] == 0.18
-    assert watering["approach_max_lateral"] == 0.18
-    assert watering["approach_max_angular"] == 0.25
-    assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
+    follower = _kwargs("basicpathfollower")
+    assert follower["speed"] == 0.25
+    assert follower["min_linear_speed"] == 0.15
+    assert follower["slowdown_distance"] == 0.4
+    assert follower["max_angular"] == 0.25
+    assert follower["align_goal_yaw"] is True
+    assert follower["rotate_before_drive"] is True
+    assert _stream("wateringtaskmodule", "approach_command_path") == ("approach_command_path")
+    assert _stream("basicpathfollower", "path") == "approach_command_path"
+    assert _stream("wateringtaskmodule", "approach_path") == "path"
 
 
 def test_demo_passes_runtime_stream_conflict_validation() -> None:

@@ -93,6 +93,22 @@ class TaskConfig:
     stream_bind: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TwistSourceConfig:
+    """One named ``Twist`` input participating in coordinator arbitration.
+
+    A source remains eligible for ``timeout`` seconds after its latest
+    message. The highest-priority eligible source is routed to the normal
+    ``twist_command`` task input. An empty source list preserves the legacy
+    direct ``twist_command`` behavior.
+    """
+
+    name: str
+    port: str
+    priority: int
+    timeout: float = 0.3
+
+
 class ControlCoordinatorConfig(ModuleConfig):
     """Configuration for the ControlCoordinator."""
 
@@ -104,6 +120,7 @@ class ControlCoordinatorConfig(ModuleConfig):
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
+    twist_sources: list[TwistSourceConfig] = field(default_factory=lambda: [])
 
 
 class ControlCoordinator(Module):
@@ -165,6 +182,12 @@ class ControlCoordinator(Module):
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
+    # Optional named sources for coordinator-owned Twist arbitration. They
+    # stay separate on the graph; ``twist_command`` becomes internal when
+    # ``config.twist_sources`` is non-empty.
+    autonomy_twist_command: In[Twist]
+    operator_twist_command: In[Twist]
+
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
@@ -211,7 +234,46 @@ class ControlCoordinator(Module):
             "twist_command": self._map_twist_to_base_joints,
         }
 
+        # Named Twist source arbitration is event-driven. A higher-priority
+        # command is replayed when lower-priority messages arrive until its
+        # freshness timeout expires; downstream tasks retain their own command
+        # timeout as the final stop watchdog.
+        self._twist_source_lock = threading.Lock()
+        self._twist_sources: dict[str, TwistSourceConfig] = {}
+        self._twist_source_samples: dict[str, tuple[float, Twist]] = {}
+        self._selected_twist_source: str | None = None
+        self._configure_twist_sources()
+
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
+
+    def _configure_twist_sources(self) -> None:
+        names: set[str] = set()
+        ports: set[str] = set()
+        for source in self.config.twist_sources:
+            if not source.name:
+                raise ValueError("Twist source names must be non-empty")
+            if source.name in names:
+                raise ValueError(f"Duplicate Twist source name {source.name!r}")
+            if source.port in ports:
+                raise ValueError(f"Duplicate Twist source port {source.port!r}")
+            if source.timeout <= 0.0:
+                raise ValueError(
+                    f"Twist source {source.name!r} timeout must be positive, got {source.timeout}"
+                )
+            if not isinstance(getattr(self, source.port, None), In):
+                raise ValueError(
+                    f"Twist source {source.name!r} refers to missing input port {source.port!r}"
+                )
+            names.add(source.name)
+            ports.add(source.port)
+            self._twist_sources[source.name] = source
+            self._stream_pre_hooks[source.port] = self._twist_source_callback(source)
+
+    def _twist_source_callback(self, source: TwistSourceConfig) -> "Callable[[Twist], None]":
+        def _on_message(msg: Twist) -> None:
+            self._on_twist_source(source, msg)
+
+        return _on_message
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
@@ -604,12 +666,18 @@ class ControlCoordinator(Module):
                 return
             with self._task_lock:
                 active = {stream for stream, entries in self._routes.items() if entries}
+            if self._twist_sources:
+                # ``twist_command`` is the internal selected-command route in
+                # this mode. Only the configured source ports subscribe to
+                # transports, so producers can never bypass arbitration.
+                active.discard("twist_command")
+                active.update(source.port for source in self._twist_sources.values())
             with self._hardware_lock:
                 has_base = any(
                     hw.component.hardware_type == HardwareType.BASE
                     for hw in self._hardware.values()
                 )
-            if has_base:
+            if has_base and not self._twist_sources:
                 active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
                 try:
@@ -710,6 +778,67 @@ class ControlCoordinator(Module):
         if names:
             joint_state = JointState(name=names, velocity=velocities)
             self._dispatch("joint_command", joint_state)
+
+    def _on_twist_source(self, source: TwistSourceConfig, msg: Twist) -> None:
+        """Store one source sample and route the freshest highest priority command."""
+        now = time.monotonic()
+        with self._twist_source_lock:
+            self._twist_source_samples[source.name] = (now, msg)
+            selected = self._select_twist_source(now)
+            if selected is None:
+                return
+            selected_source, (_received_at, selected_msg) = selected
+            if selected_source.name != self._selected_twist_source:
+                logger.info(
+                    "Selected Twist command source",
+                    source=selected_source.name,
+                    priority=selected_source.priority,
+                )
+                self._selected_twist_source = selected_source.name
+
+        # Match the legacy twist_command callback: BASE adapters see the
+        # virtual-joint mapping and card-routed tasks (GR00T included) see the
+        # original Twist. Never hold the source lock while invoking tasks.
+        self._map_twist_to_base_joints(selected_msg)
+        self._dispatch("twist_command", selected_msg)
+
+    def _select_twist_source(
+        self, now: float
+    ) -> tuple[TwistSourceConfig, tuple[float, Twist]] | None:
+        eligible = [
+            (source, self._twist_source_samples[source.name])
+            for source in self._twist_sources.values()
+            if source.name in self._twist_source_samples
+            and now - self._twist_source_samples[source.name][0] <= source.timeout
+        ]
+        if not eligible:
+            return None
+        return max(eligible, key=lambda item: (item[0].priority, item[1][0]))
+
+    @rpc
+    def get_twist_source_status(self) -> dict[str, Any]:
+        """Report configured sources, freshness, and the currently eligible winner."""
+        now = time.monotonic()
+        with self._twist_source_lock:
+            selected = self._select_twist_source(now)
+            sources = {
+                name: {
+                    "port": source.port,
+                    "priority": source.priority,
+                    "timeout": source.timeout,
+                    "age": None
+                    if name not in self._twist_source_samples
+                    else now - self._twist_source_samples[name][0],
+                    "fresh": name in self._twist_source_samples
+                    and now - self._twist_source_samples[name][0] <= source.timeout,
+                }
+                for name, source in self._twist_sources.items()
+            }
+            return {
+                "enabled": bool(self._twist_sources),
+                "selected": None if selected is None else selected[0].name,
+                "sources": sources,
+            }
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
@@ -972,6 +1101,10 @@ class ControlCoordinator(Module):
             for unsub in self._stream_unsubs.values():
                 unsub()
             self._stream_unsubs.clear()
+
+        with self._twist_source_lock:
+            self._twist_source_samples.clear()
+            self._selected_twist_source = None
 
         if self._tick_loop:
             self._tick_loop.stop()

@@ -259,6 +259,30 @@ TaskConfig(name="teleop_xarm", type="teleop_ik",
            stream_bind={"cartesian_command": "left_cartesian"})
 ```
 
+## Named Twist Sources
+
+Velocity producers can remain separate until they enter the coordinator. Set
+`twist_sources` to make `twist_command` an internal route and select the
+freshest highest-priority source before task dispatch:
+
+```python
+from dimos.control.coordinator import TwistSourceConfig
+
+ControlCoordinator.blueprint(
+    twist_sources=[
+        TwistSourceConfig("operator", "operator_twist_command", priority=100, timeout=0.35),
+        TwistSourceConfig("autonomy", "autonomy_twist_command", priority=50, timeout=0.25),
+    ],
+)
+```
+
+When configured, only the named source ports subscribe to transports; an
+external publisher cannot bypass selection through `twist_command`. The
+selected `Twist` still reaches the normal card-bound task handler, so policies
+such as GR00T need no arbitration-specific logic. Use
+`get_twist_source_status()` to inspect source ages and the currently eligible
+winner.
+
 ## Joint State Views
 
 The coordinator publishes two views of the same per-tick read. Both are

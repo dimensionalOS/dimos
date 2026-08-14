@@ -33,10 +33,10 @@ stopped-base pose is inside the offline-verified reach region.
 Marker detection stays silent until this robot's camera intrinsics are
 captured — see ``tool_dump_camera_info``.
 
-Operator and approach commands enter the watering task on separate topics.
-The task forwards operator commands while idle and treats any operator command
-as an immediate override while approaching. One GR00T policy remains the only
-locomotion task in the ControlCoordinator.
+Operator and autonomy commands enter separate coordinator ports. The
+coordinator selects the freshest highest-priority source before feeding one
+GR00T policy; the watering task observes operator input only to cancel an
+active approach. A forward-only pure-pursuit module follows the approach path.
 
 There is still no navigation stack: Point-LIO supplies observer-only odometry
 and a live sensor-frame point cloud. The robot mesh is rooted under the
@@ -48,16 +48,16 @@ and camera caps below are sized against it.
 
 Usage (on the G1; ``--rerun-open none`` because it has no display):
     dimos --rerun-open none --rerun-host 0.0.0.0 run unitree-g1-water-demo
-Terminal teleop (in a second SSH terminal on the G1):
-    dimos teleop --topic g1/tele_cmd_vel
 Laptop viewer:
     dimos-viewer --connect rerun+http://<robot>:9877/proxy --ws-url ws://<robot>:3030/ws
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, cast
 
+from dimos.control.coordinator import TwistSourceConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
@@ -69,6 +69,7 @@ from dimos.manipulation.mobile.pose_target_observation_module import (
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_latch_module import MarkerLatchModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
@@ -102,20 +103,40 @@ if global_config.simulation:
         "unitree-g1-water-demo is hardware-only; use unitree-g1-groot-wbc-manip for sim"
     )
 
-# Operator input and task output must stay on different topics: the task owns
-# the handoff and forwards one command stream to the single GR00T policy.
+# Preview and command paths are deliberately separate: preview_watering() must
+# never arm the follower. Operator and autonomy Twist remain distinct until
+# the coordinator selects one for the single GR00T policy.
 _demo_remappings = [
-    (_G1GrootCoordinator, "twist_command", "cmd_vel"),
+    (_G1GrootCoordinator, "operator_twist_command", "tele_cmd_vel"),
+    (_G1GrootCoordinator, "autonomy_twist_command", "autonomy_cmd_vel"),
     (RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel"),
     (WebsocketVisModule, "tele_cmd_vel", "tele_cmd_vel"),
     (ManipulationModule, "odom", "base_pose"),
+    (BasicPathFollower, "base_pose", "base_pose"),
+    (BasicPathFollower, "path", "approach_command_path"),
+    (BasicPathFollower, "stop_movement", "stop_approach"),
+    (BasicPathFollower, "nav_cmd_vel", "autonomy_cmd_vel"),
     (WateringTaskModule, "operator_command", "tele_cmd_vel"),
-    (WateringTaskModule, "base_command", "cmd_vel"),
     (WateringTaskModule, "approach_path", "path"),
     (WateringTaskModule, "approach_goal", "goal_request"),
 ]
 
 _HARDWARE_GROOT_TASK = g1_groot_task_config(timeout=0.25)
+
+_TWIST_SOURCES = (
+    TwistSourceConfig(
+        name="operator",
+        port="operator_twist_command",
+        priority=100,
+        timeout=0.35,
+    ),
+    TwistSourceConfig(
+        name="autonomy",
+        port="autonomy_twist_command",
+        priority=50,
+        timeout=0.25,
+    ),
+)
 
 _CAMERA_ENTITY = "world/color_compressed"
 
@@ -210,6 +231,7 @@ unitree_g1_water_demo = (
         g1_groot_coordinator(
             extra_tasks=(_ARM_TRAJECTORY_TASK,),
             locomotion_task=_HARDWARE_GROOT_TASK,
+            twist_sources=_TWIST_SOURCES,
         ),
         PointLio.blueprint(
             frame_id="world",
@@ -238,16 +260,29 @@ unitree_g1_water_demo = (
             source="perception",
         ),
         g1_manipulation(visualization=ViserVisualizationConfig(host="0.0.0.0")),
+        BasicPathFollower.blueprint(
+            speed=0.25,
+            min_linear_speed=0.15,
+            slowdown_distance=0.4,
+            control_frequency=10.0,
+            goal_tolerance=0.06,
+            orientation_tolerance=math.radians(5.0),
+            align_goal_yaw=True,
+            rotate_before_drive=True,
+            drive_heading_tolerance=math.radians(20.0),
+            heading_gain=1.5,
+            max_angular=0.25,
+            min_angular=0.12,
+            lookahead_time_s=1.0,
+            min_lookahead_m=0.2,
+            max_lookahead_m=0.4,
+            pose_timeout=0.5,
+        ),
         WateringTaskModule.blueprint(
             target_id="plant_pot_1",
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,
-            approach_holonomic=True,
-            approach_min_linear=0.10,
-            approach_max_linear=0.18,
-            approach_max_lateral=0.18,
-            approach_max_angular=0.25,
         ),
         vis_module(viewer_backend=global_config.viewer, rerun_config=_demo_rerun_config),
     )
@@ -255,6 +290,7 @@ unitree_g1_water_demo = (
     .transports(
         {
             ("tele_cmd_vel", Twist): LCMTransport("/g1/tele_cmd_vel", Twist),
+            ("autonomy_cmd_vel", Twist): LCMTransport("/g1/autonomy_cmd_vel", Twist),
         }
     )
     # Sized for the heavy modules only — the connection pump, the 100 Hz tick,

@@ -23,7 +23,6 @@ from dimos.core.global_config import global_config
 if global_config.simulation != "mujoco":
     pytest.skip("sim watering graph requires MuJoCo configuration", allow_module_level=True)
 
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_water_demo_sim import (
     unitree_g1_water_demo_sim,
 )
@@ -46,6 +45,7 @@ def test_demo_graph_has_one_task_and_no_navigation_modules() -> None:
         "simbodypose",
         "posetargetobservationmodule",
         "manipulationmodule",
+        "basicpathfollower",
         "wateringtaskmodule",
         "websocketvismodule",
     }
@@ -82,7 +82,12 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
         "label": "plant pot",
         "source": "sim_ground_truth",
     }
-    assert task.kwargs["target_id"] == "plant_pot_1"
+    assert task.kwargs == {
+        "target_id": "plant_pot_1",
+        "motion_enabled": False,
+        "approach_motion_enabled": True,
+        "pour_motion_enabled": True,
+    }
     assert _stream("simbodypose", "object_pose") == "object_pose"
     assert _stream("posetargetobservationmodule", "object_pose") == "object_pose"
     assert _stream("posetargetobservationmodule", "target_observation") == ("target_observation")
@@ -91,29 +96,27 @@ def test_sim_ground_truth_is_adapted_to_the_typed_target_contract() -> None:
     assert _stream("wateringtaskmodule", "operator_command") == "tele_cmd_vel"
     assert _stream("wateringtaskmodule", "approach_path") == "path"
     assert _stream("wateringtaskmodule", "approach_goal") == "goal_request"
+    assert _stream("wateringtaskmodule", "approach_command_path") == ("approach_command_path")
+    assert _stream("basicpathfollower", "path") == "approach_command_path"
+    assert _stream("basicpathfollower", "base_pose") == "odom"
 
 
-def test_watering_and_teleop_are_separate_coordinator_arbitration_tasks() -> None:
-    assert _stream("wateringtaskmodule", "base_command") == "cmd_vel"
-    assert _stream("ControlCoordinator", "twist_command") == "cmd_vel"
-    assert _stream("ControlCoordinator", "tele_cmd_vel") == "tele_cmd_vel"
+def test_coordinator_arbitrates_teleop_and_autonomy_before_one_groot_task() -> None:
+    assert _stream("ControlCoordinator", "operator_twist_command") == "tele_cmd_vel"
+    assert _stream("ControlCoordinator", "autonomy_twist_command") == "autonomy_cmd_vel"
+    assert _stream("basicpathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
 
     coordinator = _atom("ControlCoordinator")
     tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
     watering = tasks["groot_wbc"]
-    teleop = tasks["teleop_groot_wbc"]
 
     assert watering.priority == 50
     assert watering.stream_bind == {}
     assert watering.params["timeout"] == 0.25
-    assert teleop.priority == 60
-    assert teleop.stream_bind == {"twist_command": "tele_cmd_vel"}
-    assert teleop.params["yield_when_idle"] is True
+    assert "teleop_groot_wbc" not in tasks
 
-    twist_transports = [
-        transport
-        for (_name, message_type), transport in unitree_g1_water_demo_sim.transport_map.items()
-        if message_type is Twist
-    ]
-    assert len(twist_transports) == 1
-    assert twist_transports[0].topic.topic == "/cmd_vel"
+    sources = {source.name: source for source in coordinator.kwargs["twist_sources"]}
+    assert sources["operator"].priority == 100
+    assert sources["operator"].timeout == 0.35
+    assert sources["autonomy"].priority == 50
+    assert sources["autonomy"].timeout == 0.25

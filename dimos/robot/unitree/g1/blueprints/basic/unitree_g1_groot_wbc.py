@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig, TwistSourceConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     ARM_DEFAULT_POSE,
     G1_GROOT_KD,
@@ -62,7 +62,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.mapping.costmapper import CostMapper
@@ -138,7 +138,6 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 class _G1GrootCoordinator(ControlCoordinator):
     g1_joints: Out[JointState]
-    tele_cmd_vel: In[Twist]
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
@@ -534,6 +533,7 @@ def g1_groot_task_config(
 def g1_groot_coordinator(
     extra_tasks: Sequence[TaskConfig] = (),
     locomotion_task: TaskConfig | None = None,
+    twist_sources: Sequence[TwistSourceConfig] = (),
 ) -> Any:
     """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
     return _G1GrootCoordinator.blueprint(
@@ -570,11 +570,16 @@ def g1_groot_coordinator(
             *([_arm_holder] if _arm_holder is not None else []),
             *extra_tasks,
         ],
+        twist_sources=list(twist_sources),
     ).transports(
         {
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
             ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
-            ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
+            **(
+                {("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist)}
+                if not twist_sources
+                else {}
+            ),
             # Real-hw only: the transport_lcm adapter speaks to
             # G1WholeBodyConnection over these topics. autoconnect already
             # matches by (name, type) so sim doesn't need them -- they're

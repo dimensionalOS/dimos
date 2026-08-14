@@ -37,7 +37,7 @@ from dimos.control.components import (
     make_twist_base_joints,
 )
 import dimos.control.coordinator as coord_mod
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig, TwistSourceConfig
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
 from dimos.core.stream import In
@@ -440,6 +440,55 @@ class TestTwistRouting:
         vx, vy, wz, t_now = task.velocity_commands[0]
         assert (vx, vy, wz) == (1.0, 2.0, 3.0)
         assert isinstance(t_now, float)
+
+
+class TestTwistSourceArbitration:
+    def test_high_priority_source_preempts_until_its_freshness_expires(
+        self, make_coordinator, mocker
+    ) -> None:
+        coordinator, taps = make_coordinator(
+            twist_sources=[
+                TwistSourceConfig("operator", "operator_twist_command", priority=100, timeout=0.3),
+                TwistSourceConfig("autonomy", "autonomy_twist_command", priority=50, timeout=0.3),
+            ]
+        )
+        task = G1ShapedVelocityTask("g1")
+        coordinator.add_task(task, task_type="g1_groot_wbc")
+        coordinator.start()
+        monotonic = mocker.patch.object(coord_mod.time, "monotonic")
+
+        autonomy_1 = Twist(linear=[0.2, 0.0, 0.0])
+        operator = Twist(angular=[0.0, 0.0, 0.2])
+        autonomy_2 = Twist(linear=[0.1, 0.0, 0.0])
+        autonomy_3 = Twist(linear=[0.15, 0.0, 0.0])
+
+        monotonic.return_value = 1.0
+        taps["autonomy_twist_command"].emit(autonomy_1)
+        monotonic.return_value = 1.1
+        taps["operator_twist_command"].emit(operator)
+        monotonic.return_value = 1.2
+        taps["autonomy_twist_command"].emit(autonomy_2)
+        monotonic.return_value = 1.5
+        taps["autonomy_twist_command"].emit(autonomy_3)
+
+        assert task.twist_msgs == [autonomy_1, operator, operator, autonomy_3]
+        assert coordinator.get_twist_source_status()["selected"] == "autonomy"
+
+    def test_configured_sources_are_the_only_subscribed_twist_inputs(
+        self, make_coordinator
+    ) -> None:
+        coordinator, taps = make_coordinator(
+            twist_sources=[
+                TwistSourceConfig("operator", "operator_twist_command", priority=100, timeout=0.3),
+                TwistSourceConfig("autonomy", "autonomy_twist_command", priority=50, timeout=0.3),
+            ]
+        )
+        coordinator.add_task(G1ShapedVelocityTask("g1"), task_type="g1_groot_wbc")
+        coordinator.start()
+
+        assert taps["operator_twist_command"].subscribed
+        assert taps["autonomy_twist_command"].subscribed
+        assert not taps["twist_command"].subscribed
 
 
 class TestTwistCardContract:

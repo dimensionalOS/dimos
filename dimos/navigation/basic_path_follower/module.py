@@ -44,8 +44,16 @@ logger = setup_logger()
 class BasicPathFollowerConfig(ModuleConfig):
     base_frame: str = "base_link"
     speed: float = 0.5
+    min_linear_speed: float = 0.0
+    slowdown_distance: float = 0.0
     control_frequency: float = 10.0
     goal_tolerance: float = 0.3
+    orientation_tolerance: float = math.radians(10.0)
+    align_goal_yaw: bool = False
+    rotate_before_drive: bool = False
+    drive_heading_tolerance: float = math.radians(20.0)
+    min_angular: float = 0.0
+    pose_timeout: float = 0.5
     # Lookahead grows with speed (time_s * speed), clamped to these bounds.
     lookahead_time_s: float = 1.5
     min_lookahead_m: float = 0.4
@@ -69,6 +77,7 @@ class BasicPathFollower(Module):
 
     path: In[Path]
     odometry: In[Odometry]
+    base_pose: In[PoseStamped]
     stop_movement: In[Bool]
     tf: In[TFMessage]
 
@@ -80,14 +89,20 @@ class BasicPathFollower(Module):
         self._lock = RLock()
         self._base_pose: OdomBasePose | None = None
         self._current_pose: PoseStamped | None = None
+        self._pose_received_at: float | None = None
         self._waypoints: NDArray[np.float32] | None = None
+        self._goal_yaw: float | None = None
+        self._pose_stale_stopped = False
         self._stop_event = Event()
         self._thread: Thread | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        if self.odometry.transport is not None:
+            self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        if self.base_pose.transport is not None:
+            self.register_disposable(Disposable(self.base_pose.subscribe(self._on_base_pose)))
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
@@ -110,6 +125,20 @@ class BasicPathFollower(Module):
             return
         with self._lock:
             self._current_pose = pose
+            self._pose_received_at = time.monotonic()
+            self._pose_stale_stopped = False
+
+    def _on_base_pose(self, pose: PoseStamped) -> None:
+        """Accept an already-resolved world-to-base pose, such as Point-LIO."""
+        with self._lock:
+            self._current_pose = PoseStamped(
+                ts=pose.ts,
+                frame_id=pose.frame_id,
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            self._pose_received_at = time.monotonic()
+            self._pose_stale_stopped = False
 
     def _on_path(self, path: Path) -> None:
         # The planner owns path safety: it sends the route as far as it is safe,
@@ -117,37 +146,69 @@ class BasicPathFollower(Module):
         if len(path.poses) == 0:
             with self._lock:
                 self._waypoints = None
+                self._goal_yaw = None
             self.nav_cmd_vel.publish(Twist())
             return
         waypoints = np.array([[p.position.x, p.position.y] for p in path.poses], dtype=np.float32)
         with self._lock:
             self._waypoints = waypoints
+            self._goal_yaw = float(path.poses[-1].orientation.to_euler().z)
 
     def _on_stop(self, msg: Bool) -> None:
         if msg.data:
             with self._lock:
                 self._waypoints = None
+                self._goal_yaw = None
             self.nav_cmd_vel.publish(Twist())
 
     def _follow(self) -> None:
         period = 1.0 / self.config.control_frequency
         while not self._stop_event.is_set():
             start_time = time.perf_counter()
+            now = time.monotonic()
             with self._lock:
                 pose = self._current_pose
                 waypoints = self._waypoints
-            if pose is not None and waypoints is not None:
-                self._step(pose, waypoints)
+                goal_yaw = self._goal_yaw
+                pose_received_at = self._pose_received_at
+                pose_stale_stopped = self._pose_stale_stopped
+            pose_is_fresh = (
+                pose_received_at is not None and now - pose_received_at <= self.config.pose_timeout
+            )
+            if pose is not None and waypoints is not None and pose_is_fresh:
+                self._step(pose, waypoints, goal_yaw)
+            elif waypoints is not None and not pose_is_fresh and not pose_stale_stopped:
+                self.nav_cmd_vel.publish(Twist())
+                with self._lock:
+                    self._pose_stale_stopped = True
+                logger.warning("Base pose is stale; stopping path follower")
             elapsed = time.perf_counter() - start_time
             self._stop_event.wait(max(0.0, period - elapsed))
 
-    def _step(self, pose: PoseStamped, waypoints: NDArray[np.float32]) -> None:
+    def _step(
+        self,
+        pose: PoseStamped,
+        waypoints: NDArray[np.float32],
+        goal_yaw: float | None,
+    ) -> None:
         position = np.array([pose.position.x, pose.position.y], dtype=np.float32)
-        if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
+        distance_to_goal = float(np.linalg.norm(waypoints[-1] - position))
+        if distance_to_goal < self.config.goal_tolerance:
+            if self.config.align_goal_yaw and goal_yaw is not None:
+                yaw_error = angle_diff(goal_yaw, pose.orientation.euler[2])
+                if abs(yaw_error) >= self.config.orientation_tolerance:
+                    self.nav_cmd_vel.publish(
+                        Twist(
+                            Vector3(),
+                            Vector3(0.0, 0.0, self._angular_command(yaw_error)),
+                        )
+                    )
+                    return
             self.nav_cmd_vel.publish(Twist())
             with self._lock:
                 if self._waypoints is waypoints:
                     self._waypoints = None
+                    self._goal_yaw = None
             self.goal_reached.publish(Bool(True))
             logger.info("Goal reached")
             return
@@ -158,12 +219,31 @@ class BasicPathFollower(Module):
             pose.orientation.euler[2],
         )
 
+        angular = self._angular_command(yaw_error)
+        if self.config.rotate_before_drive and abs(yaw_error) > self.config.drive_heading_tolerance:
+            self.nav_cmd_vel.publish(Twist(Vector3(), Vector3(0.0, 0.0, angular)))
+            return
+
+        target_speed = self.config.speed
+        if self.config.slowdown_distance > 0.0:
+            target_speed = self.config.speed * min(
+                1.0,
+                distance_to_goal / self.config.slowdown_distance,
+            )
+        linear = target_speed * max(0.0, math.cos(yaw_error))
+        if linear > 0.0:
+            linear = max(self.config.min_linear_speed, linear)
+            linear = min(self.config.speed, linear)
+        self.nav_cmd_vel.publish(Twist(Vector3(linear, 0, 0), Vector3(0, 0, angular)))
+
+    def _angular_command(self, yaw_error: float) -> float:
         angular = max(
             -self.config.max_angular,
             min(self.config.max_angular, self.config.heading_gain * yaw_error),
         )
-        linear = self.config.speed * max(0.0, math.cos(yaw_error))
-        self.nav_cmd_vel.publish(Twist(Vector3(linear, 0, 0), Vector3(0, 0, angular)))
+        if abs(yaw_error) > 0.0 and abs(angular) < self.config.min_angular:
+            angular = math.copysign(self.config.min_angular, yaw_error)
+        return angular
 
     def _lookahead_point(
         self, waypoints: NDArray[np.float32], position: NDArray[np.float32]

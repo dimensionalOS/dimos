@@ -26,7 +26,7 @@ from dimos.manipulation.mobile.target_observation import TargetObservation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.g1.manip_stance import PourReachMap
 from dimos.robot.unitree.g1.watering_task import (
-    BaseCommandSink,
+    ApproachCommandSink,
     WateringInputs,
     WateringManipulationSpec,
     WateringSequence,
@@ -59,7 +59,7 @@ def manipulation() -> MagicMock:
 
 @pytest.fixture
 def base() -> MagicMock:
-    return create_autospec(BaseCommandSink, instance=True)
+    return create_autospec(ApproachCommandSink, instance=True)
 
 
 def _inputs(
@@ -120,7 +120,7 @@ def _sequence(
             base_pose_max_age=2.0,
         ),
         inputs=inputs,
-        base=cast("BaseCommandSink", base),
+        approach_commands=cast("ApproachCommandSink", base),
         manipulation=cast("WateringManipulationSpec", manipulation),
         reach_map=reach_map,
         cancelled=cancelled,
@@ -174,7 +174,7 @@ def test_successful_sequence_preserves_the_verified_sim_order(
         call.kwargs["pre_lift"] is False for call in manipulation.move_to_pose.call_args_list
     )
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
-    base.send.assert_not_called()
+    base.start.assert_called_once()
     assert base.stop.call_count == 2
 
 
@@ -209,43 +209,11 @@ def test_approach_only_reaches_the_stance_without_touching_manipulation(
     manipulation.plan_to_pose.assert_not_called()
     manipulation.move_to_pose.assert_not_called()
     manipulation.go_init.assert_not_called()
-    base.send.assert_not_called()
+    base.start.assert_called_once()
     assert base.stop.call_count == 2
 
 
-def test_holonomic_approach_stops_on_verified_reach_region(
-    reach_map: PourReachMap,
-    manipulation: MagicMock,
-    base: MagicMock,
-) -> None:
-    transitions: list[WateringState] = []
-    sequence = _sequence(
-        reach_map,
-        _inputs(reach_map),
-        base,
-        manipulation,
-        threading.Event(),
-        transitions,
-        config=WateringTaskConfig(
-            approach_holonomic=True,
-            settle_seconds=0.0,
-            target_max_age=2.0,
-            base_pose_max_age=2.0,
-        ),
-    )
-
-    result = sequence.run_approach(TARGET_ID)
-
-    assert result.success
-    assert transitions == [
-        WateringState.WAITING_INPUT,
-        WateringState.SETTLING,
-        WateringState.COMPLETED,
-    ]
-    base.send.assert_not_called()
-
-
-def test_holonomic_approach_rechecks_region_after_settling(
+def test_path_follower_approach_rechecks_stance_after_settling(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
@@ -280,7 +248,6 @@ def test_holonomic_approach_rechecks_region_after_settling(
         transitions,
         wait=MagicMock(side_effect=drift_then_cancel),
         config=WateringTaskConfig(
-            approach_holonomic=True,
             settle_seconds=3.0,
             target_max_age=2.0,
             base_pose_max_age=2.0,
@@ -291,12 +258,13 @@ def test_holonomic_approach_rechecks_region_after_settling(
 
     assert not result.success
     assert result.state is WateringState.CANCELLED
-    assert transitions[:3] == [
+    assert transitions[:4] == [
         WateringState.WAITING_INPUT,
+        WateringState.APPROACHING,
         WateringState.SETTLING,
         WateringState.APPROACHING,
     ]
-    base.send.assert_called_once()
+    assert base.start.call_count == 2
 
 
 def test_pour_only_executes_the_arm_without_commanding_base_motion(
@@ -334,7 +302,7 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
     assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
-    base.send.assert_not_called()
+    base.start.assert_not_called()
     assert base.stop.call_count == 2
 
 
@@ -364,7 +332,7 @@ def test_pour_only_uses_live_planning_as_the_final_reach_gate(
     assert manipulation.latch_base_pose.call_count == 3
     assert manipulation.plan_to_pose.call_count == 6
     manipulation.move_to_pose.assert_not_called()
-    base.send.assert_not_called()
+    base.start.assert_not_called()
     assert base.stop.call_count == 2
 
 
@@ -387,7 +355,7 @@ def test_pour_only_accepts_offline_map_miss_when_live_plans_succeed(
     assert result.success
     assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
-    base.send.assert_not_called()
+    base.start.assert_not_called()
 
 
 def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(
@@ -438,7 +406,7 @@ def test_cancellation_during_approach_stops_before_latching_or_pouring(
     assert not result.success
     assert result.state is WateringState.CANCELLED
     assert transitions[-1] is WateringState.CANCELLED
-    base.send.assert_called_once()
+    base.start.assert_called_once()
     base.stop.assert_called_once()
     manipulation.latch_base_pose.assert_not_called()
     manipulation.move_to_pose.assert_not_called()
@@ -465,7 +433,7 @@ def test_stale_target_fails_before_the_robot_moves(
     assert result.state is WateringState.FAILED
     assert "stale" in result.message.lower()
     manipulation.reset.assert_not_called()
-    base.send.assert_not_called()
+    base.start.assert_not_called()
     base.stop.assert_called_once()
 
 
@@ -495,5 +463,5 @@ def test_reach_verification_exhausts_bounded_retries(
     assert manipulation.plan_to_pose.call_count == 6
     assert manipulation.reset.call_count == 4
     # A failed arm-plan check must not trigger an unverified blind base nudge.
-    base.send.assert_not_called()
+    base.start.assert_called_once()
     manipulation.move_to_pose.assert_not_called()

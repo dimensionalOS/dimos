@@ -20,29 +20,32 @@ The pose adapter turns the simulator-specific pose into the same typed target
 contract that perception will eventually provide on hardware. ``WateringTaskModule``
 then owns the complete approach/latch/verify/pour lifecycle.
 
-There is deliberately no mapper, costmap, global planner, MovementManager, or
-teleop producer in this graph. The task's last-mile velocity command is the
-only source connected to the coordinator, which makes sim parity deterministic
-and removes the old last-message-wins behavior.
+There is deliberately no mapper, costmap, global planner, or MovementManager
+in this graph. A path-follower module produces the autonomy Twist while the
+coordinator arbitrates it against Rerun teleop before the single GR00T task.
 
 Usage::
 
     dimos --simulation mujoco run unitree-g1-water-demo-sim
     dimos shell
-    app.WateringTaskModule.start_watering()
+    app.WateringTaskModule.start_approach()
     app.WateringTaskModule.get_status()
+    app.WateringTaskModule.start_pour()
     app.WateringTaskModule.cancel_watering()
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, cast
 
+from dimos.control.coordinator import TwistSourceConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.mobile.pose_target_observation_module import (
     PoseTargetObservationModule,
 )
+from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_NUM_MOTORS,
     _MJCF_PATH,
@@ -70,22 +73,24 @@ if global_config.simulation != "mujoco":
     )
 
 _demo_remappings = [
-    (_G1GrootCoordinator, "twist_command", "cmd_vel"),
-    (WateringTaskModule, "base_command", "cmd_vel"),
+    (_G1GrootCoordinator, "operator_twist_command", "tele_cmd_vel"),
+    (_G1GrootCoordinator, "autonomy_twist_command", "autonomy_cmd_vel"),
+    (BasicPathFollower, "base_pose", "odom"),
+    (BasicPathFollower, "path", "approach_command_path"),
+    (BasicPathFollower, "stop_movement", "stop_approach"),
+    (BasicPathFollower, "nav_cmd_vel", "autonomy_cmd_vel"),
     (WateringTaskModule, "base_pose", "odom"),
     (WateringTaskModule, "operator_command", "tele_cmd_vel"),
     (WateringTaskModule, "approach_path", "path"),
     (WateringTaskModule, "approach_goal", "goal_request"),
 ]
 
-_TELEOP_GROOT_TASK = g1_groot_task_config(
-    name="teleop_groot_wbc",
-    priority=60,
-    stream_bind={"twist_command": "tele_cmd_vel"},
-    yield_when_idle=True,
-)
-
 _WATERING_GROOT_TASK = g1_groot_task_config(timeout=0.25)
+
+_TWIST_SOURCES = (
+    TwistSourceConfig("operator", "operator_twist_command", priority=100, timeout=0.35),
+    TwistSourceConfig("autonomy", "autonomy_twist_command", priority=50, timeout=0.25),
+)
 
 _watering_backend = MujocoSimModule.blueprint(
     address=_MJCF_PATH,
@@ -104,8 +109,9 @@ unitree_g1_water_demo_sim = (
     autoconnect(
         _watering_backend,
         g1_groot_coordinator(
-            extra_tasks=(_ARM_TRAJECTORY_TASK, _TELEOP_GROOT_TASK),
+            extra_tasks=(_ARM_TRAJECTORY_TASK,),
             locomotion_task=_WATERING_GROOT_TASK,
+            twist_sources=_TWIST_SOURCES,
         ),
         SimBodyPose.blueprint(body_name="plant_pot_1"),
         PoseTargetObservationModule.blueprint(
@@ -114,7 +120,30 @@ unitree_g1_water_demo_sim = (
             source="sim_ground_truth",
         ),
         g1_manipulation(),
-        WateringTaskModule.blueprint(target_id="plant_pot_1"),
+        BasicPathFollower.blueprint(
+            speed=0.25,
+            min_linear_speed=0.15,
+            slowdown_distance=0.4,
+            control_frequency=10.0,
+            goal_tolerance=0.06,
+            orientation_tolerance=math.radians(5.0),
+            align_goal_yaw=True,
+            rotate_before_drive=True,
+            drive_heading_tolerance=math.radians(20.0),
+            heading_gain=1.5,
+            max_angular=0.25,
+            min_angular=0.12,
+            lookahead_time_s=1.0,
+            min_lookahead_m=0.2,
+            max_lookahead_m=0.4,
+            pose_timeout=0.5,
+        ),
+        WateringTaskModule.blueprint(
+            target_id="plant_pot_1",
+            motion_enabled=False,
+            approach_motion_enabled=True,
+            pour_motion_enabled=True,
+        ),
         _viewer(),
     )
     .remappings(cast("Any", _demo_remappings))
