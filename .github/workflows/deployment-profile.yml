@@ -70,13 +70,12 @@ jobs:
           print(resolve_db_path('$PROFILE_DB'))
           "
 
-      # Same benchmark, its own measures: a threshold is per measure, so
-      # coldstart-* is watchable independently of the full run instead of
-      # hiding under a limit sized for it.
+      # Its own benchmark, so the comment gets a second row instead of five
+      # more columns. Safe with percentage thresholds, which compare each
+      # benchmark to its own history rather than to one shared limit.
       - name: Profile cold start
         run: |
-          bin/rusage --name "$PROFILE_BLUEPRINT-replay" --measure-prefix coldstart- \
-            --out coldstart.json -- \
+          bin/rusage --name "$PROFILE_BLUEPRINT-coldstart" --out coldstart.json -- \
             timeout --kill-after=60s 300 \
             uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
             --run-for 0 run "$PROFILE_BLUEPRINT"
@@ -102,10 +101,12 @@ jobs:
         run: |
           files=$(ls rusage.json coldstart.json size.json 2>/dev/null) || true
           [ -n "$files" ] || exit 0
-          # Recursive merge, not `add`: both profiles write the same benchmark
-          # key, and `add` would keep only the last one's measures.
           jq -s 'reduce .[] as $x ({}; . * $x)' $files >metrics.json
           cat metrics.json
+          # The user/sys split is diagnostic -- worth having in the artifact
+          # when a number moves, not worth two more columns on every comment.
+          jq 'map_values(del(."cpu-user-seconds", ."cpu-system-seconds"))' \
+            metrics.json >bencher.json
 
       - name: Job summary
         if: always()
@@ -136,4 +137,4 @@ jobs:
             --testbed ubuntu-latest \
             --adapter json \
             --github-actions "${{ secrets.GITHUB_TOKEN }}" \
-            --file metrics.json
+            --file bencher.json

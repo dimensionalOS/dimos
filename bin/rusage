@@ -20,7 +20,7 @@ set -euo pipefail
 
 name=""
 out=""
-prefix=""
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--name)
@@ -29,10 +29,6 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--out)
 		out="$2"
-		shift 2
-		;;
-	--measure-prefix)
-		prefix="$2"
 		shift 2
 		;;
 	--)
@@ -48,7 +44,7 @@ done
 
 if [[ -z $name || -z $out || $# -eq 0 ]]; then
 	echo "usage: bin/rusage --name <benchmark> --out <results.json>" \
-		"[--measure-prefix <p>] -- <cmd> [args...]" >&2
+		"-- <cmd> [args...]" >&2
 	exit 2
 fi
 
@@ -108,11 +104,11 @@ read -r cpu_user cpu_system cpu_total peak_mib < <(
 cat >"$out" <<JSON
 {
   "$name": {
-    "${prefix}cpu-core-seconds": { "value": $cpu_total },
-    "${prefix}cpu-user-seconds": { "value": $cpu_user },
-    "${prefix}cpu-system-seconds": { "value": $cpu_system },
-    "${prefix}peak-memory-mib": { "value": $peak_mib },
-    "${prefix}wall-seconds": { "value": $wall }
+    "cpu-core-seconds": { "value": $cpu_total },
+    "cpu-user-seconds": { "value": $cpu_user },
+    "cpu-system-seconds": { "value": $cpu_system },
+    "peak-memory-mib": { "value": $peak_mib },
+    "wall-seconds": { "value": $wall }
   }
 }
 JSON
