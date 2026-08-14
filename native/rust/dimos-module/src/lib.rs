@@ -42,6 +42,7 @@ pub use dimos_lcm::LcmOptions;
 /// coordinator picks at runtime. The coordinator always sets the variable, so an
 /// unset or unknown value is an error.
 pub async fn run_with_transport<M: Module>() {
+    crate::module::init_tracing();
     match std::env::var("DIMOS_TRANSPORT").as_deref() {
         Ok("lcm") => {
             run::<M, _>(

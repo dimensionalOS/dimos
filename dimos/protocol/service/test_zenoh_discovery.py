@@ -95,6 +95,7 @@ def test_pool_inserts_the_discovery_config(zenoh_defaults, monkeypatch, multicas
         captured["multicast"] = zconfig.get_json("scouting/multicast/enabled")
         captured["gossip"] = zconfig.get_json("scouting/gossip/enabled")
         captured["interface"] = zconfig.get_json("scouting/multicast/interface")
+        captured["connect_timeout"] = zconfig.get_json("connect/timeout_ms")
         return object()
 
     monkeypatch.setattr(zenohservice.zenoh, "open", fake_open)
@@ -103,3 +104,4 @@ def test_pool_inserts_the_discovery_config(zenoh_defaults, monkeypatch, multicas
     assert captured["multicast"] == str(multicast).lower()
     assert captured["gossip"] == str(gossip).lower()
     assert captured["interface"] == f'"{zenohservice.LOOPBACK_INTERFACE}"'
+    assert captured["connect_timeout"] == "1000"

@@ -223,7 +223,7 @@ class NativeModule(Module):
 
     def _spawn_env(self) -> dict[str, str]:
         """Env for the native subprocess, carrying transport and logging config."""
-        env = {**os.environ, **self.config.extra_env}
+        env = dict(os.environ)
 
         # set transport so native modules know which one to spawn
         env["DIMOS_TRANSPORT"] = global_config.transport
@@ -237,6 +237,9 @@ class NativeModule(Module):
         env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
             os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
         )
+        # Applied last so a blueprint can override per module, e.g. one native
+        # as a zenoh router and its sibling as a client.
+        env.update(self.config.extra_env)
         return env
 
     @rpc
