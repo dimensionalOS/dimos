@@ -25,9 +25,11 @@ permissions:
 
 jobs:
   profile:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
-      BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+      # The CLI rejects a project key passed as --token; it wants BENCHER_API_KEY.
+      BENCHER_API_KEY: ${{ secrets.BENCHER_API_TOKEN }}
       PROFILE_SECONDS: ${{ inputs.seconds || '180' }}
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
       PROFILE_DB: ${{ inputs.db || 'go2_short' }}
@@ -37,10 +39,16 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - name: Install dependency for pyaudio
+      # Pinned: a moving interpreter would move the numbers this job exists to
+      # compare. Same version the cockpit e2e runs a real deployment on.
+      - name: Setup Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dimos
         run: uv sync --group tests --frozen
 
@@ -80,10 +88,10 @@ jobs:
           path: rusage.json
 
       - name: Record in Bencher
-        if: always() && env.BENCHER_API_TOKEN != ''
+        if: always() && env.BENCHER_API_KEY != ''
         uses: bencherdev/bencher@main
       - name: Push metrics
-        if: always() && env.BENCHER_API_TOKEN != ''
+        if: always() && env.BENCHER_API_KEY != ''
         run: |
           bencher run \
             --project dimos \
