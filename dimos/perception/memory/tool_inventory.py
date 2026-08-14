@@ -262,15 +262,15 @@ def main() -> int:
         naming_vocabulary = DEFAULT_VOCABULARY
 
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
+    from dimos.perception.detection.detectors.omdet import OmDetDetector
 
     segmenter = EdgeTAMImageSegmenter()
-    owl = Owlv2Detector()
+    detector = OmDetDetector()
 
     instances = inventory(
         store,
         segmenter=segmenter,
-        owl=owl,
+        detector=detector,
         naming_vocabulary=naming_vocabulary,
         after=after,
         before=before,
@@ -278,7 +278,7 @@ def main() -> int:
         log_progress=args.log_progress,
     )
 
-    owl.stop()
+    detector.stop()
     del segmenter
 
     print(f"instances: {len(instances)}")

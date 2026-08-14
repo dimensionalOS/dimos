@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from functools import cached_property
 
+import numpy as np
 from PIL import Image as PILImage
 import torch
 
@@ -111,6 +112,50 @@ class OmDetDetector(HuggingFaceModel):
                 detections.append(det)
 
         return ImageDetections2D(image=image, detections=detections)
+
+    def query_score_rows(
+        self,
+        image: Image,
+        queries: list[str],
+        threshold: float = 0.3,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Score every query against every kept box; no argmax, no label.
+
+        Same selection as the stock post-processing behind
+        ``query_detections()``: top-k over the (proposal, query) score
+        matrix, the per-box threshold, then class-wise NMS. A proposal
+        surviving under several queries returns once with its whole
+        ``n_queries`` score row, so a caller can rank queries and refuse.
+        The task prompt is fixed instead of the processor default, which
+        lists every query in one sentence and truncates it at 77 tokens,
+        silently conditioning the decoder on a prefix of a large
+        vocabulary. Returns pixel ``(x1, y1, x2, y2)`` boxes and their
+        score rows.
+        """
+        from torchvision.ops.boxes import batched_nms  # type: ignore[import-untyped]
+        from transformers.image_transforms import center_to_corners_format
+
+        pil = PILImage.fromarray(image.to_rgb().data)
+        with torch.inference_mode():
+            inputs = self._processor(
+                images=pil, text=queries, task="Detect all objects.", return_tensors="pt"
+            ).to(self.config.device)
+            outputs = self._model(**inputs)
+            rows = torch.sigmoid(outputs.decoder_class_logits[0])
+            n_proposals, n_queries = rows.shape
+            scores, pairs = rows.flatten().topk(n_proposals, sorted=False)
+            passing = scores > threshold
+            scores, pairs = scores[passing], pairs[passing]
+            scale = torch.tensor([pil.width, pil.height, pil.width, pil.height], device=rows.device)
+            boxes = center_to_corners_format(outputs.decoder_coord_logits[0]) * scale
+            survivors = batched_nms(boxes[pairs // n_queries], scores, pairs % n_queries, 0.5)
+            proposals = (pairs[survivors] // n_queries).unique()
+            kept_boxes = boxes[proposals].float().cpu().numpy()
+            kept_rows = rows[proposals].float().cpu().numpy()
+
+        kept_boxes[:, 0::2] = kept_boxes[:, 0::2].clip(0.0, float(pil.width))
+        kept_boxes[:, 1::2] = kept_boxes[:, 1::2].clip(0.0, float(pil.height))
+        return kept_boxes, kept_rows
 
     def stop(self) -> None:
         if "_processor" in self.__dict__:
