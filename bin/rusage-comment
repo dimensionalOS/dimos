@@ -16,20 +16,38 @@ import json
 from pathlib import Path
 import sys
 
-TEMPLATE = """\
+PROJECT = "dimos"
+PERF = f"https://bencher.dev/perf/{PROJECT}"
+
+TEMPLATE = f"""\
 <!-- dimos-profile -->
-### Deployment resource footprint
+### [Deployment resource footprint]({PERF}) <sub>vs `{{ref}}`</sub>
 
-{blocks}
-
-<sub>vs. last green run on `{ref}` &middot; `bin/rusage`, cgroup accounting
-over the whole process tree &middot; recorded, not gated</sub>
+{{blocks}}
 """
 
-BLOCK = "**{benchmark}** &nbsp; {cells}"
+# The name links to that benchmark's plots -- every number here is one point on
+# a trend line, and the trend is the part worth clicking through to.
+BLOCK = f"**[{{benchmark}}]({PERF}/benchmarks/{{benchmark}})** &nbsp; {{cells}}"
 
 CELL = "{label} {value}{delta}"
 JOIN = " &nbsp; "
+INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;"
+
+# One list per printed line: time on the first, what it cost on the second.
+# A line whose measures are all absent is skipped.
+ROWS = [
+    ["wall-seconds", "cpu-core-seconds", "cpu-user-seconds", "cpu-system-seconds"],
+    [
+        "peak-memory-mib",
+        "peak-threads",
+        "disk-read-mib",
+        "disk-write-mib",
+        "net-rx-mib",
+        "net-tx-mib",
+        "install-size-mib",
+    ],
+]
 
 # Short labels, in the order they are printed. Measures missing from a
 # benchmark are skipped, so `venv` prints as a single Size cell.
@@ -71,16 +89,24 @@ def delta(value: float, baseline: float | None) -> str:
 
 
 def block(benchmark: str, measures: dict, base: dict) -> str:
-    cells = [
-        CELL.format(
-            label=label,
-            value=number(slug, measures[slug]["value"]),
-            delta=delta(measures[slug]["value"], base.get(slug, {}).get("value")),
-        )
-        for slug, label in LABELS.items()
-        if slug in measures
-    ]
-    return BLOCK.format(benchmark=benchmark, cells=JOIN.join(cells))
+    lines = []
+    for row in ROWS:
+        cells = [
+            CELL.format(
+                label=LABELS[slug],
+                value=number(slug, measures[slug]["value"]),
+                delta=delta(measures[slug]["value"], base.get(slug, {}).get("value")),
+            )
+            for slug in row
+            if slug in measures
+        ]
+        if cells:
+            lines.append(JOIN.join(cells))
+
+    if not lines:
+        return BLOCK.format(benchmark=benchmark, cells="")
+    head = BLOCK.format(benchmark=benchmark, cells=lines[0])
+    return "<br>\n".join([head, *(INDENT + line for line in lines[1:])])
 
 
 def main() -> None:
