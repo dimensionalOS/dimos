@@ -51,6 +51,7 @@ class LiberoProEvaluation:
             raise TypeError("libero-pro received the wrong configuration type")
         if not isinstance(context.runtime, CodePolicyRuntime):
             raise TypeError("libero-pro requires the code-policy-v1 runtime")
+        runtime = context.runtime
         manifest_path = Path(config.task_manifest)
         if not manifest_path.is_absolute():
             manifest_path = context.spec_dir / manifest_path
@@ -70,11 +71,11 @@ class LiberoProEvaluation:
                 policy,
                 init_index=init_index,
                 path=path,
-                runtime=context.runtime,
+                runtime=runtime,
                 run_id=f"{context.run_id}-debug-{number}",
             )[0]
 
-        exploration = context.runtime.explore(
+        exploration = runtime.explore(
             evaluation_protocol=EVALUATION_PROTOCOL,
             task_input=manifest.task.instruction,
             submit_debug_trial=submit,
@@ -88,7 +89,7 @@ class LiberoProEvaluation:
             exploration.policy,
             init_index=manifest.episodes.scored_init_state_index,
             path=scored_path,
-            runtime=context.runtime,
+            runtime=runtime,
             run_id=f"{context.run_id}-scored",
         )
         if trial.outcome.status != "completed":
