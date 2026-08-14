@@ -12,24 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM keyboard teleop blueprints."""
+"""OpenYAM keyboard and Quest teleop blueprints."""
 
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     planner,
+    teleop_ik_task,
 )
 from dimos.robot.manipulators.common.coordinators import (
     ArmTwistCoordinator,
 )
-from dimos.robot.manipulators.common.topics import (
-    EEF_TWIST_TASK_NAME,
-)
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
     OPENYAM_GRIPPER_JOINT,
@@ -39,6 +40,7 @@ from dimos.robot.manipulators.openyam.config import (
     openyam_hardware,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 _openyam_keyboard_hw = openyam_hardware()
 _openyam_model = make_openyam_model_config()
@@ -82,6 +84,61 @@ keyboard_teleop_openyam = autoconnect(
         visualization={"backend": "viser"},
     ),
 )
+
+OPENYAM_QUEST_TASK_NAME = "teleop_openyam"
+
+_openyam_quest_pink = PinkKinematicsConfig(
+    dt=0.01,
+    position_cost=8.0,
+    orientation_cost=2.0,
+    posture_cost=0.01,
+    joint_limit_posture_margin=0.3,
+    lm_damping=0.01,
+    gain=0.25,
+)
+_openyam_quest_hw = openyam_hardware()
+_openyam_quest_model = make_openyam_model_config(name="arm")
+_openyam_quest_task = teleop_ik_task(
+    _openyam_quest_hw,
+    robot_model=_openyam_quest_model,
+    name=OPENYAM_QUEST_TASK_NAME,
+    joint_names=OPENYAM_ARM_JOINTS,
+    priority=10,
+    bindings=[
+        {
+            "hand": "right",
+            "target_frame": _openyam_quest_model.end_effector_link,
+            "gripper_joint": OPENYAM_GRIPPER_JOINT,
+            "gripper_open_position": 1.0,
+            "gripper_closed_position": 0.0,
+        }
+    ],
+    params={
+        "pink": _openyam_quest_pink,
+        "timeout": 0.5,
+        "max_command_tracking_error_deg": 10.0,
+        "max_joint_velocity_rad_s": 2.0,
+        "joint_command_filter_cutoff_hz": 5.0,
+    },
+)
+
+# Single-arm Quest teleop: right controller -> OpenYAM arm
+teleop_quest_openyam = autoconnect(
+    ArmTeleopModule.blueprint(task_names={"right": OPENYAM_QUEST_TASK_NAME}),
+    TeleopControlCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        hardware=[_openyam_quest_hw],
+        tasks=[
+            _openyam_quest_task,
+            _trajectory_task(priority=20),
+        ],
+    ),
+    ManipulationModule.blueprint(
+        robots=[_openyam_quest_model],
+        kinematics=_openyam_quest_pink,
+        visualization={"backend": "viser"},
+    ),
+).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
 
 _openyam_keyboard_planner_hw = openyam_hardware()
 
