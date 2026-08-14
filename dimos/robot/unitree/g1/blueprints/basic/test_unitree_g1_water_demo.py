@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import pickle
 
 import pytest
@@ -65,7 +66,7 @@ def test_demo_module_set_is_exactly_what_the_robot_needs() -> None:
         "pointlio",
         "g1liobasepose",
         "posetargetobservationmodule",
-        "basicpathfollower",
+        "rpppathfollower",
         "wateringtaskmodule",
     }
 
@@ -167,7 +168,7 @@ def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
     assert _stream("wateringtaskmodule", "operator_command") == "tele_cmd_vel"
     assert _stream("ControlCoordinator", "operator_twist_command") == "tele_cmd_vel"
     assert _stream("ControlCoordinator", "autonomy_twist_command") == "autonomy_cmd_vel"
-    assert _stream("basicpathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
+    assert _stream("rpppathfollower", "nav_cmd_vel") == "autonomy_cmd_vel"
 
     (coordinator,) = [
         atom
@@ -212,15 +213,15 @@ def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() ->
     assert watering["motion_enabled"] is False
     assert watering["approach_motion_enabled"] is True
     assert watering["pour_motion_enabled"] is True
-    follower = _kwargs("basicpathfollower")
+    follower = _kwargs("rpppathfollower")
     assert follower["speed"] == 0.25
     assert follower["min_linear_speed"] == 0.15
     assert follower["slowdown_distance"] == 0.4
-    assert follower["max_angular"] == 0.25
-    assert follower["align_goal_yaw"] is True
-    assert follower["rotate_before_drive"] is True
+    assert follower["max_yaw_rate"] == 0.25
+    assert follower["rotation_threshold"] == pytest.approx(math.radians(20.0))
+    assert follower["synthesize_tangent_headings"] is True
     assert _stream("wateringtaskmodule", "approach_command_path") == ("approach_command_path")
-    assert _stream("basicpathfollower", "path") == "approach_command_path"
+    assert _stream("rpppathfollower", "path") == "approach_command_path"
     assert _stream("wateringtaskmodule", "approach_path") == "path"
 
 

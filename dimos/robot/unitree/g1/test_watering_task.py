@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from typing import cast
 from unittest.mock import MagicMock, create_autospec
@@ -24,6 +25,8 @@ from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.mobile.target_observation import TargetObservation
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.manip_stance import PourReachMap
 from dimos.robot.unitree.g1.watering_task import (
     ApproachCommandSink,
@@ -32,6 +35,7 @@ from dimos.robot.unitree.g1.watering_task import (
     WateringSequence,
     WateringState,
     WateringTaskConfig,
+    build_approach_preview,
 )
 from dimos.spec.utils import spec_annotation_compliance
 
@@ -133,6 +137,29 @@ def _sequence(
 
 def test_manipulation_module_satisfies_the_task_dependency() -> None:
     assert spec_annotation_compliance(ManipulationModule, WateringManipulationSpec)
+
+
+def test_approach_preview_is_an_oriented_pose_path(reach_map: PourReachMap) -> None:
+    inputs = _inputs(reach_map, at_reachable_stance=False)
+    base_yaw = 1.1
+    inputs.update_base_pose(
+        PoseStamped(
+            ts=NOW,
+            frame_id="world",
+            position=[0.0, 0.0, 0.74],
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, base_yaw)),
+        )
+    )
+    snapshot = inputs.snapshot(TARGET_ID)
+    assert snapshot is not None
+
+    path, goal = build_approach_preview(snapshot, reach_map, margin_cells=3)
+
+    dx = goal.position.x - path.poses[0].position.x
+    dy = goal.position.y - path.poses[0].position.y
+    assert path.poses[0].orientation.euler[2] == pytest.approx(math.atan2(dy, dx))
+    assert path.poses[-1].orientation.euler[2] == pytest.approx(base_yaw)
+    assert path.poses[-1].orientation.euler[2] == pytest.approx(goal.orientation.euler[2])
 
 
 def test_successful_sequence_preserves_the_verified_sim_order(

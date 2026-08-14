@@ -277,6 +277,7 @@ all_modules = {
     "replanning-a-star-planner": "dimos.navigation.replanning_a_star.module.ReplanningAStarPlanner",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
+    "rpp-path-follower": "dimos.navigation.rpp_path_follower.module.RPPPathFollower",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory2.module.SemanticSearch",
     "sim-body-pose": "dimos.simulation.engines.sim_body_pose.SimBodyPose",

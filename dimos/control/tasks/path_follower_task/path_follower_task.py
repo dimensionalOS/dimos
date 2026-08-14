@@ -27,6 +27,7 @@ benchmark battery is obstacle-free.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import math
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -54,6 +55,7 @@ from dimos.control.tasks.velocity_tracking_pid import (
 from dimos.core.global_config import global_config as _gc
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -124,6 +126,16 @@ class PathFollowerTaskConfig:
     ff_config: FeedforwardGainConfig | None = None
     # Optional curvature velocity-profile cap. None ⟹ off
     velocity_profile_config: VelocityProfileConfig | None = None
+    # Minimum usable commands for bases with a velocity deadband. These match
+    # PController's historical defaults; robot-specific callers can lower them.
+    min_linear_speed: float = 0.2
+    min_angular_speed: float = 0.2
+    # Rotate in place above this path-heading error, then resume pursuit.
+    rotation_threshold: float = math.pi / 2
+    # Optional position-goal regulation. The forward command ramps down inside
+    # this radius, but never below min_linear_speed until goal_tolerance trips.
+    # Zero preserves the historical controller behavior.
+    slowdown_distance: float = 0.0
 
 
 class PathFollowerTask(BaseControlTask):
@@ -150,6 +162,9 @@ class PathFollowerTask(BaseControlTask):
         self._controller = PController(global_config, config.speed, config.control_frequency)
         # Override the class-level _k_angular for this instance only.
         self._controller._k_angular = config.k_angular
+        self._controller._min_linear_velocity = config.min_linear_speed
+        self._controller._min_angular_velocity = config.min_angular_speed
+        self._controller._rotation_threshold = config.rotation_threshold
         self._pid: VelocityTrackingPID | None = (
             VelocityTrackingPID(config.pid_config) if config.pid_config else None
         )
@@ -228,11 +243,6 @@ class PathFollowerTask(BaseControlTask):
                         orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(pyaw))),
                     ),
                 )
-        if not self.is_active():
-            return None
-        if self._path is None or self._distancer is None:
-            return None
-
         # Pull pose from CoordinatorState. The twist-base ConnectedHardware
         # routes adapter.read_odometry() -> [x, y, yaw]
         pos = state.joints.joint_positions
@@ -248,6 +258,43 @@ class PathFollowerTask(BaseControlTask):
         if self._current_odom is None:
             return None
 
+        command = self.compute_twist(
+            self._current_odom,
+            Twist(
+                linear=Vector3(
+                    state.joints.joint_velocities.get(self._joint_names_list[0], 0.0),
+                    state.joints.joint_velocities.get(self._joint_names_list[1], 0.0),
+                    0.0,
+                ),
+                angular=Vector3(
+                    0.0,
+                    0.0,
+                    state.joints.joint_velocities.get(self._joint_names_list[2], 0.0),
+                ),
+            ),
+        )
+        if command is None:
+            return None
+        return JointCommandOutput(
+            joint_names=self._joint_names_list,
+            velocities=[command.linear.x, command.linear.y, command.angular.z],
+            mode=ControlMode.VELOCITY,
+        )
+
+    def compute_twist(
+        self,
+        current_odom: PoseStamped,
+        actual_twist: Twist | None = None,
+    ) -> Twist | None:
+        """Advance from a world-frame pose and return the desired base Twist.
+
+        This transport-neutral seam is shared by the coordinator task and
+        stream-based modules. It deliberately performs no command arbitration.
+        """
+        if not self.is_active() or self._path is None or self._distancer is None:
+            return None
+        self._current_odom = current_odom
+
         match self._state:
             case "initial_rotation":
                 vx, vy, wz = self._step_initial_rotation()
@@ -257,6 +304,18 @@ class PathFollowerTask(BaseControlTask):
                 vx, vy, wz = self._step_final_rotation()
             case _:
                 return None
+
+        # Slow only the forward component near the position goal. Steering is
+        # left intact so final convergence does not become under-actuated.
+        if self._state == "path_following" and self._config.slowdown_distance > 0.0:
+            pos = np.array([current_odom.position.x, current_odom.position.y])
+            distance = self._distancer.distance_to_goal(pos)
+            if distance < self._config.slowdown_distance:
+                speed_limit = max(
+                    self._config.min_linear_speed,
+                    self._config.speed * distance / self._config.slowdown_distance,
+                )
+                vx = max(-speed_limit, min(speed_limit, vx))
 
         # Pursuit-speed proxy for next tick's adaptive lookahead: the |vx|
         # this controller just commanded (controller frame, pre-FF). Captured
@@ -296,9 +355,9 @@ class PathFollowerTask(BaseControlTask):
         # set). Applied AFTER the cap so it inverts the plant gain on the capped
         # desired velocity.
         if self._pid is not None:
-            actual_vx = state.joints.joint_velocities.get(self._joint_names_list[0], 0.0)
-            actual_vy = state.joints.joint_velocities.get(self._joint_names_list[1], 0.0)
-            actual_wz = state.joints.joint_velocities.get(self._joint_names_list[2], 0.0)
+            actual_vx = actual_twist.linear.x if actual_twist is not None else 0.0
+            actual_vy = actual_twist.linear.y if actual_twist is not None else 0.0
+            actual_wz = actual_twist.angular.z if actual_twist is not None else 0.0
             vx, vy, wz = self._pid.compute(vx, vy, wz, actual_vx, actual_vy, actual_wz)
         elif self._ff is not None:
             # Static gain compensation: cmd_to_robot = controller_cmd / K_plant
@@ -319,11 +378,7 @@ class PathFollowerTask(BaseControlTask):
             assert abs(vy) < 1e-6, f"PathFollowerTask forward_only: vy={vy} must be 0"
             vx = max(0.0, vx)
 
-        return JointCommandOutput(
-            joint_names=self._joint_names_list,
-            velocities=[vx, vy, wz],
-            mode=ControlMode.VELOCITY,
-        )
+        return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names and self.is_active():
@@ -630,6 +685,10 @@ class PathFollowerTaskParams(BaseConfig):
     lookahead_speed_scale: float = 0.0
     max_yaw_rate: float | None = None
     forward_only: bool = False
+    min_linear_speed: float = 0.2
+    min_angular_speed: float = 0.2
+    rotation_threshold: float = math.pi / 2
+    slowdown_distance: float = 0.0
 
 
 def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
@@ -650,6 +709,10 @@ def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
             lookahead_speed_scale=params.lookahead_speed_scale,
             max_yaw_rate=params.max_yaw_rate,
             forward_only=params.forward_only,
+            min_linear_speed=params.min_linear_speed,
+            min_angular_speed=params.min_angular_speed,
+            rotation_threshold=params.rotation_threshold,
+            slowdown_distance=params.slowdown_distance,
         ),
         global_config=_gc,
     )

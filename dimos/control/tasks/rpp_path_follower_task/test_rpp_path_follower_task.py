@@ -264,6 +264,29 @@ def test_degenerate_path_gets_tangent_headings():
     assert math.isclose(yaws[4], yaws[3], abs_tol=1e-6)
 
 
+def test_artifact_calibration_can_be_disabled_for_an_uncalibrated_robot():
+    task = _task(
+        "/does/not/exist.json",
+        max_yaw_rate=0.25,
+        use_artifact_feedforward=False,
+        use_artifact_velocity_profile=False,
+        use_artifact_yaw_limit=False,
+        synthesize_tangent_headings=False,
+    )
+    path = _ident_path([(0.0, 0.0), (0.0, 1.0)])
+
+    assert task.start_path(path, _odom())
+
+    assert task._artifact_loaded
+    assert task._ff is None
+    assert task._profile_cap is None
+    assert task._config.max_yaw_rate == 0.25
+    # The equal endpoint yaws are meaningful for a manipulation stance and
+    # must not be replaced by the +Y path tangent.
+    assert task._path is path
+    assert task._path.poses[-1].orientation.euler[2] == pytest.approx(0.0)
+
+
 def test_positions_unchanged_by_synthesis():
     pts = [(0, 0), (1, 0), (1, 1)]
     out = _with_tangent_headings(_ident_path(pts))

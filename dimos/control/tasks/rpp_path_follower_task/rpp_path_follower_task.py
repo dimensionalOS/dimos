@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regulated-pure-pursuit nav path-follower: PathFollowerTask self-calibrated
-from a characterization artifact.
+"""Regulated-pure-pursuit nav path-follower with optional artifact calibration.
 
 A thin subclass of :class:`PathFollowerTask` for the navigation stack. The
 benchmark configures the bare path_follower over RPC (feedforward + curvature
-profile built by the Benchmarker); in nav there is no Benchmarker, so this task
-loads the artifact itself — lazily on the first ``start_path()`` so a missing
-default never blocks startup — and builds the same calibration:
+profile built by the Benchmarker); in nav there is no Benchmarker, so when
+artifact calibration is enabled this task loads it lazily on the first
+``start_path()`` and builds the same calibration:
 
 * feedforward gain compensation with ``FF.K = plant.K`` (commanded == achieved;
   the same convention the trajectory tracker uses),
@@ -28,8 +27,10 @@ default never blocks startup — and builds the same calibration:
 * the runtime yaw-rate clamp from the artifact's measured turn-rate ceiling.
 
 The pursuit knobs (adaptive lookahead, ``k_angular``, ``forward_only``) come from
-the task config. ``set_path`` (inherited from the base) arms it on a clicked nav
-goal or a replan; each path resets the pursuit cleanly — no clock to re-sync.
+the task config. Artifact components may be disabled for another robot while
+retaining the same pursuit implementation. ``set_path`` (inherited from the
+base) arms it on a clicked nav goal or a replan; each path resets the pursuit
+cleanly — no clock to re-sync.
 """
 
 from __future__ import annotations
@@ -119,8 +120,7 @@ def _with_tangent_headings(path: Path) -> Path:
 
 
 class RPPPathFollowerTask(PathFollowerTask):
-    """Path follower that self-calibrates its feedforward + curvature velocity
-    profile from a tuning artifact (loaded lazily on first ``start_path``)."""
+    """RPP follower with optional lazily loaded robot calibration."""
 
     def __init__(
         self,
@@ -129,18 +129,37 @@ class RPPPathFollowerTask(PathFollowerTask):
         global_config: GlobalConfig,
         artifact_path: str,
         v_max_override: float | None = None,
+        use_artifact_feedforward: bool = True,
+        use_artifact_velocity_profile: bool = True,
+        use_artifact_yaw_limit: bool = True,
+        synthesize_tangent_headings: bool = True,
     ) -> None:
         super().__init__(name, config, global_config=global_config)
         self._artifact_path = artifact_path
         self._v_max_override = float(v_max_override) if v_max_override is not None else None
+        self._use_artifact_feedforward = use_artifact_feedforward
+        self._use_artifact_velocity_profile = use_artifact_velocity_profile
+        self._use_artifact_yaw_limit = use_artifact_yaw_limit
+        self._synthesize_tangent_headings = synthesize_tangent_headings
         self._artifact_loaded = False
 
     def start_path(self, path: Path, current_odom: PoseStamped) -> bool:
         if not self._artifact_loaded:
             self._load_artifact()
-        return super().start_path(_with_tangent_headings(path), current_odom)
+        if self._synthesize_tangent_headings:
+            path = _with_tangent_headings(path)
+        return super().start_path(path, current_odom)
 
     def _load_artifact(self) -> None:
+        enabled = (
+            self._use_artifact_feedforward
+            or self._use_artifact_velocity_profile
+            or self._use_artifact_yaw_limit
+        )
+        if not enabled:
+            self._artifact_loaded = True
+            logger.info(f"RPPPathFollowerTask '{self._name}': artifact calibration disabled")
+            return
         if not self._artifact_path:
             raise RuntimeError(
                 f"RPPPathFollowerTask '{self._name}': artifact_path is empty; "
@@ -156,13 +175,14 @@ class RPPPathFollowerTask(PathFollowerTask):
         # and the robot achieves the commanded velocity (same convention as the
         # trajectory tracker; the artifact's `feedforward` block stores 1/K and
         # is inverted for the compensator, so build from `plant` directly).
-        self._ff = FeedforwardGainCompensator(
-            FeedforwardGainConfig(
-                K_vx=art.plant.vx.K,
-                K_vy=art.plant.vy.K,
-                K_wz=art.plant.wz.K,
+        if self._use_artifact_feedforward:
+            self._ff = FeedforwardGainCompensator(
+                FeedforwardGainConfig(
+                    K_vx=art.plant.vx.K,
+                    K_vy=art.plant.vy.K,
+                    K_wz=art.plant.wz.K,
+                )
             )
-        )
 
         # Curvature speed regulation from the artifact's velocity profile.
         # Stash the profile config + the measured top-speed ceiling on the base
@@ -170,28 +190,34 @@ class RPPPathFollowerTask(PathFollowerTask):
         # the cap to the new cruise speed, clamped to this ceiling.
         vp = art.velocity_profile
         v_max = self._v_max_override if self._v_max_override is not None else vp.max_linear_speed
-        self._v_max_cap = v_max
-        self._config.velocity_profile_config = VelocityProfileConfig(
-            max_linear_speed=min(self._config.speed, v_max),
-            max_angular_speed=vp.max_angular_speed,
-            max_centripetal_accel=vp.max_centripetal_accel,
-            max_linear_accel=vp.max_linear_accel,
-            max_linear_decel=vp.max_linear_decel,
-            min_speed=vp.min_speed,
-        )
-        self._profile_cap = PathSpeedCap(self._config.velocity_profile_config)
+        if self._use_artifact_velocity_profile:
+            self._v_max_cap = v_max
+            self._config.velocity_profile_config = VelocityProfileConfig(
+                max_linear_speed=min(self._config.speed, v_max),
+                max_angular_speed=vp.max_angular_speed,
+                max_centripetal_accel=vp.max_centripetal_accel,
+                max_linear_accel=vp.max_linear_accel,
+                max_linear_decel=vp.max_linear_decel,
+                min_speed=vp.min_speed,
+            )
+            self._profile_cap = PathSpeedCap(self._config.velocity_profile_config)
 
         # Runtime yaw-rate clamp = the measured turn-rate ceiling, unless the
         # config set it explicitly.
-        if self._config.max_yaw_rate is None:
+        if self._use_artifact_yaw_limit and self._config.max_yaw_rate is None:
             self._config.max_yaw_rate = vp.max_angular_speed
 
         self._artifact_loaded = True
+        parts = []
+        if self._use_artifact_feedforward:
+            parts.append("feedforward")
+        if self._use_artifact_velocity_profile:
+            parts.append("velocity profile")
+        if self._use_artifact_yaw_limit:
+            parts.append("yaw limit")
         logger.info(
-            f"RPPPathFollowerTask '{self._name}': loaded artifact {self._artifact_path} "
-            f"(FF.K=plant.K, v_max={min(self._config.speed, v_max):.3f}, "
-            f"a_lat={vp.max_centripetal_accel:.2f}, yaw_cap={vp.max_angular_speed:.3f}, "
-            f"min_speed={vp.min_speed:.3f})"
+            f"RPPPathFollowerTask '{self._name}': loaded {', '.join(parts)} "
+            f"from {self._artifact_path}"
         )
 
 
@@ -211,6 +237,14 @@ class RPPPathFollowerTaskParams(BaseConfig):
     max_yaw_rate: float | None = None  # None ⟹ artifact's measured turn-rate ceiling
     forward_only: bool = True
     v_max_override: float | None = None
+    min_linear_speed: float = 0.2
+    min_angular_speed: float = 0.2
+    rotation_threshold: float = math.pi / 2
+    slowdown_distance: float = 0.0
+    use_artifact_feedforward: bool = True
+    use_artifact_velocity_profile: bool = True
+    use_artifact_yaw_limit: bool = True
+    synthesize_tangent_headings: bool = True
 
 
 def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
@@ -231,8 +265,16 @@ def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
             lookahead_speed_scale=params.lookahead_speed_scale,
             max_yaw_rate=params.max_yaw_rate,
             forward_only=params.forward_only,
+            min_linear_speed=params.min_linear_speed,
+            min_angular_speed=params.min_angular_speed,
+            rotation_threshold=params.rotation_threshold,
+            slowdown_distance=params.slowdown_distance,
         ),
         global_config=_gc,
         artifact_path=params.artifact_path,
         v_max_override=params.v_max_override,
+        use_artifact_feedforward=params.use_artifact_feedforward,
+        use_artifact_velocity_profile=params.use_artifact_velocity_profile,
+        use_artifact_yaw_limit=params.use_artifact_yaw_limit,
+        synthesize_tangent_headings=params.synthesize_tangent_headings,
     )

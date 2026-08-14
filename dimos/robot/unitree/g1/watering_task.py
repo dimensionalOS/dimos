@@ -315,6 +315,13 @@ def build_approach_preview(
     )
     start = copy_pose_stamped(base)
     start.frame_id = "world"
+    dx = stance.x - float(base.position.x)
+    dy = stance.y - float(base.position.y)
+    # This is a pose path, not merely an XY polyline: align to the first
+    # segment before translating, then retain the reach-map-selected yaw on the
+    # final pose so manipulation gets the base orientation it planned around.
+    if math.hypot(dx, dy) > 1e-9:
+        start.orientation = Quaternion.from_euler(Vector3(0.0, 0.0, math.atan2(dy, dx)))
     return NavPath(ts=base.ts, frame_id="world", poses=[start, goal]), goal
 
 
