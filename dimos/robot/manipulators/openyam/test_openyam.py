@@ -47,7 +47,9 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
-    return _module_kwargs(blueprint, ControlCoordinator)
+    return next(
+        atom.kwargs for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
 
 
 def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
@@ -82,7 +84,18 @@ def test_openyam_hardware_physical_mode_returns_one_whole_body(
         HardwareType.WHOLE_BODY,
         "openyam_damiao",
     )
-    assert hardware.adapter_kwargs["runtime_config"].bus_addresses == {"openyam": "can1"}
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
+
+
+def test_openyam_hardware_without_can_port_uses_platform_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+    monkeypatch.setattr(global_config, "can_port", None)
+
+    hardware = openyam_hardware()
+
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {}
 
 
 def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(

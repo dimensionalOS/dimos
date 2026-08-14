@@ -53,8 +53,11 @@ def openyam_hardware() -> HardwareComponent:
             velocity_max=[None] * len(OPENYAM_JOINTS),
         )
     else:
+        bus_devices = (
+            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
+        )
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses={"openyam": global_config.can_port or "can0"},
+            bus_devices=bus_devices,
             gravity_comp=True,
         )
     return HardwareComponent(
