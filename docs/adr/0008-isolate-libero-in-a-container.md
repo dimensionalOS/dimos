@@ -1,0 +1,3 @@
+# Isolate LIBERO in a container
+
+LIBERO, robosuite, MuJoCo, benchmark assets, and their pinned legacy dependencies run in a dedicated container rather than the DimOS Python environment. Each debug or measured trial creates a fresh LIBERO container and a fresh complete DimOS blueprint; an ordinary Python `LiberoConnection` module carries non-privileged robot control and observations between them. This preserves one policy interface across simulation and real hardware, keeps incompatible dependencies out of core DimOS, and gives later batch execution a reproducible container artifact without requiring a generic Docker module worker in this PR.

@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "case_id": "libero-pro-goal-task-0-single-trial",
+  "source": {
+    "repository": "Zxy-MLlab/LIBERO-PRO",
+    "revision": "eafdb809426b13153aa1e4c42d6601844217dfec",
+    "dataset_repository": "zhouxueyang/LIBERO-Pro",
+    "dataset_revision": "e9f3a5356efed7a23b06c28cfe880a22c3306074"
+  },
+  "task": {
+    "suite": "libero_goal_task",
+    "task_order_index": 0,
+    "task_index": 0,
+    "task_name": "open_the_middle_drawer_of_the_cabinet",
+    "instruction": "open the bottom drawer of the cabinet"
+  },
+  "assets": {
+    "bddl": {
+      "repository_path": "bddl_files/libero_goal_task/open_the_middle_drawer_of_the_cabinet.bddl",
+      "sha256": "79069933e60bdeb0a7ba4c414b3e2db3ac44ca02408dfc00a73607e201c3b334",
+      "size_bytes": 2937
+    },
+    "init_states": {
+      "repository_path": "init_files/libero_goal_task/open_the_middle_drawer_of_the_cabinet.pruned_init",
+      "sha256": "aca0dd09ccc97b099a6fbd3b3c0f6700e438234cc1b0272b47fb53b88290c6cf",
+      "size_bytes": 4111
+    }
+  },
+  "episodes": {
+    "debug_init_state_indices": [1, 2, 3, 4, 5],
+    "scored_init_state_index": 0
+  },
+  "contract": {
+    "robot": "Panda",
+    "controller": "JOINT_POSITION",
+    "cameras": [
+      {"name": "agentview", "width": 128, "height": 128},
+      {"name": "robot0_eye_in_hand", "width": 128, "height": 128}
+    ],
+    "control_frequency_hz": 20,
+    "settling_ticks": 5,
+    "horizon_ticks": 300,
+    "clock": "continuous_real_time",
+    "success": "native_bddl_goal_predicates"
+  }
+}

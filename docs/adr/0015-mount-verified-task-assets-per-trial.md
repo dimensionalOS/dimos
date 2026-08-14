@@ -1,0 +1,3 @@
+# Mount verified task assets per trial
+
+The pinned LIBERO-PRO container image contains the Python runtime, LIBERO-PRO source, robosuite, MuJoCo, gRPC server, and locked dependencies, while the Evaluation supplies the selected BDDL, initialization tensor, and task manifest as verified read-only mounts. Debug and measured containers use the same image, protocol, suite, task, and task language. Each trial selects a fresh initial state from that task's benchmark data. This keeps task identity explicit, avoids rebuilding the runtime image for asset changes, and lets future parallel workers reuse one content-addressed image without introducing a separate LIBERO integration.

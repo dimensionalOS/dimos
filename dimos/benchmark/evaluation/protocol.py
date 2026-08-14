@@ -46,7 +46,7 @@ class PolicyArtifact:
 
 @dataclass(frozen=True)
 class PolicyExecution:
-    status: Literal["completed", "policy_error", "timed_out", "infrastructure_error"]
+    status: Literal["completed", "policy_error", "stopped", "infrastructure_error"]
     duration_seconds: float
     error: str | None = None
 
@@ -165,12 +165,21 @@ class CodePolicyRuntime(EvaluationRuntime, Protocol):
         max_submissions: int = 5,
     ) -> ExplorationOutcome: ...
 
-    def execute(
+    def prepare(
         self,
         policy: PolicyArtifact,
         *,
-        timeout_s: float,
-    ) -> PolicyExecution: ...
+        startup_timeout_s: float,
+    ) -> PolicyExecutionHandle: ...
+
+
+@runtime_checkable
+class PolicyExecutionHandle(Protocol):
+    """A loaded policy waiting behind an evaluator-owned start gate."""
+
+    def start(self) -> None: ...
+
+    def finish(self, *, grace_s: float = 1.0) -> PolicyExecution: ...
 
 
 @dataclass(frozen=True)

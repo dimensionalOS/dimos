@@ -1,0 +1,3 @@
+# Defer the policy sandbox to parallel evaluation
+
+The single-trial LIBERO-PRO integration keeps the Evaluation Control Interface out of the blueprint, policy environment, Memory2, logs, and trial artifacts and protects it with an unshared per-trial capability, but it does not claim containment against deliberately hostile same-user Python. A policy sandbox with process and network isolation is required before parallel or untrusted evaluation and will provide that stronger guarantee later. This PR preserves an interface seam that can cross the future sandbox without expanding the first vertical slice into a general execution-security project.

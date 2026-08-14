@@ -1,0 +1,3 @@
+# Run unified policies in real time
+
+The LIBERO-PRO integration evaluates the same ordinary DimOS Policy Artifact shape used in simulation and on real robots, so the simulator advances freely while `policy(app)` computes and commands the running blueprint. We accept and explicitly report the resulting temporal deviation from upstream LIBERO, whose synchronous evaluator pauses between native actions, because a policy that depends on paused inference cannot satisfy the unified real/sim product requirement. Tasks, permitted observations, native action semantics, initial states, privileged BDDL success, and score reporting remain benchmark-faithful wherever they do not conflict with continuous execution.

@@ -1,0 +1,3 @@
+# Separate policy and evaluation container interfaces
+
+The LIBERO container exposes two interfaces with different owners. `LiberoConnection` adapts a non-privileged Policy Interface into the complete DimOS blueprint, making ordinary observations, robot state, commands, and operational health available to `policy(app)`. In parallel, the Evaluation exclusively uses an Evaluation Control Interface for suite and task configuration, reset and initial-state selection, readiness and clock control, native terminal state, privileged diagnostics, and scoring. The Evaluation owns the container lifecycle; no control-interface capability is registered in the blueprint, recorded in Memory2, or returned through debug-trial artifacts.
