@@ -1,5 +1,9 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
+  "runtime": {
+    "model": "gpt-5.6-luna",
+    "thinking_level": "medium"
+  },
   "evaluation": {
     "name": "libero-pro",
     "config": {

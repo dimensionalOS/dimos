@@ -43,11 +43,14 @@ callable runs, so policies must tolerate real execution latency.
 
 class LiberoProEvaluation:
     name = "libero-pro"
+    runtime_profile = "code-policy-v1"
     config_model: type[BaseModel] = LiberoProConfig
 
     def run(self, config: BaseModel, context: EvaluationContext) -> EvaluationReport:
         if not isinstance(config, LiberoProConfig):
             raise TypeError("libero-pro received the wrong configuration type")
+        if not isinstance(context.runtime, CodePolicyRuntime):
+            raise TypeError("libero-pro requires the code-policy-v1 runtime")
         manifest_path = Path(config.task_manifest)
         if not manifest_path.is_absolute():
             manifest_path = context.spec_dir / manifest_path
