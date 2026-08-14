@@ -14,7 +14,6 @@
 
 from collections.abc import Iterator
 
-from pydantic import ValidationError
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -50,7 +49,7 @@ def test_translation_scale_changes_pose_delta(module: QuestTeleopModule) -> None
     module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
     module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
 
-    module.set_translation_scale(2.0)
+    module._set_translation_scale(2.0)
 
     output = module._get_output_pose(Hand.RIGHT)
     assert output is not None
@@ -63,10 +62,10 @@ def test_translation_scale_changes_pose_delta(module: QuestTeleopModule) -> None
 def test_translation_scale_must_be_positive_and_finite(
     module: QuestTeleopModule, translation_scale: float
 ) -> None:
-    with pytest.raises(ValidationError):
-        module.set_translation_scale(translation_scale)
+    with pytest.raises(ValueError):
+        module._set_translation_scale(translation_scale)
 
-    assert module.config.translation_scale == 1.0
+    assert module._translation_scale == 1.0
 
 
 def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:

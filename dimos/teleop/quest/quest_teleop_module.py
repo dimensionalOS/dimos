@@ -23,6 +23,7 @@ deltas, and publishes PoseStamped commands.
 
 import asyncio
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import threading
 import time
@@ -33,7 +34,6 @@ from dimos_lcm.sensor_msgs import Joy as LCMJoy
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, FiniteFloat
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -69,7 +69,6 @@ class QuestTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
-    translation_scale: FiniteFloat = Field(default=1.0, gt=0.0)
 
 
 _Config = TypeVar("_Config", bound=QuestTeleopConfig)
@@ -107,6 +106,7 @@ class QuestTeleopModule(Module):
             Hand.RIGHT: None,
         }
         self._lock = threading.RLock()
+        self._translation_scale = 1.0
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
@@ -367,19 +367,18 @@ class QuestTeleopModule(Module):
 
         delta = current_pose - initial_pose
         return PoseStamped(
-            position=delta.position * self.config.translation_scale,
+            position=delta.position * self._translation_scale,
             orientation=delta.orientation,
             ts=current_pose.ts,
             frame_id=current_pose.frame_id,
         )
 
-    @rpc
-    def set_translation_scale(self, translation_scale: float) -> None:
+    def _set_translation_scale(self, translation_scale: float) -> None:
         """Set the positive multiplier applied to controller position deltas."""
+        if not math.isfinite(translation_scale) or translation_scale <= 0.0:
+            raise ValueError("translation_scale must be finite and positive")
         with self._lock:
-            self.config = type(self.config).model_validate(
-                {**self.config.model_dump(), "translation_scale": translation_scale}
-            )
+            self._translation_scale = translation_scale
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.

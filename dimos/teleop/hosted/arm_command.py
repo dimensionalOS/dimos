@@ -25,7 +25,6 @@ import time
 from typing import Any
 
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
-from pydantic import ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
@@ -169,7 +168,7 @@ class ArmCommandModule(ArmTeleopModule):
             return
         self._last_twist_ts = ts
         with self._lock:
-            scale = self.config.translation_scale
+            scale = self._translation_scale
         self.coordinator_ee_twist_command.publish(
             TwistStamped(
                 frame_id=EEF_TWIST_TASK_NAME,
@@ -178,11 +177,7 @@ class ArmCommandModule(ArmTeleopModule):
                     msg.linear.y * scale,
                     msg.linear.z * scale,
                 ],
-                angular=[
-                    msg.angular.x * scale,
-                    msg.angular.y * scale,
-                    msg.angular.z * scale,
-                ],
+                angular=[msg.angular.x, msg.angular.y, msg.angular.z],
                 ts=msg.ts,
             )
         )
@@ -224,8 +219,8 @@ class ArmCommandModule(ArmTeleopModule):
             self._send_ack(nonce, False)
             return
         try:
-            self.set_translation_scale(float(msg["scale"]))
-        except (KeyError, TypeError, ValueError, ValidationError):
+            self._set_translation_scale(float(msg["scale"]))
+        except (KeyError, TypeError, ValueError):
             self._send_ack(nonce, False)
             return
         self._send_ack(nonce, True)
@@ -293,7 +288,7 @@ class ArmCommandModule(ArmTeleopModule):
                     "left": self._is_engaged[Hand.LEFT],
                     "right": self._is_engaged[Hand.RIGHT],
                 },
-                "teleop_scale": self.config.translation_scale,
+                "teleop_scale": self._translation_scale,
             }
         try:
             self.robot_state.publish(json.dumps(state).encode())
