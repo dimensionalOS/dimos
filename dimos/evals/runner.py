@@ -41,8 +41,8 @@ if TYPE_CHECKING:
 
     from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.memory2.store.base import Store
-    from dimos.memory2.stream import Stream
+    from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
 
 logger = setup_logger()
 
@@ -197,12 +197,12 @@ class EvalRunner(Configurable, CompositeResource):
         return f"http://localhost:{global_config.mcp_port}/mcp"
 
     def open_dataset(self, name: str) -> Store:
-        from dimos.memory2.cli.dataset import open_dataset
+        from dimos.memory.cli.dataset import open_dataset
 
         return open_dataset(name)
 
     def live_store(self) -> Store:
-        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.memory.store.sqlite import SqliteStore
 
         return SqliteStore(path=self.config.live_db, must_exist=True)
 
