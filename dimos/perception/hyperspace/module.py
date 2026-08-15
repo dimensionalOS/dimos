@@ -83,6 +83,16 @@ class HyperspaceModuleConfig(ModuleConfig):
     nearby_radius_m: float = 3.0
     nearby_bin_deg: float = 5.0
     rerun_entity: str = "world/hyperspace"
+    #: Generic prompts a query is contrasted against; empty list disables.
+    background_prompts: list[str] = [
+        "the floor",
+        "a wall",
+        "the ceiling",
+        "an office",
+        "furniture",
+        "a doorway",
+        "clutter on a desk",
+    ]
 
 
 class HyperspaceModule(Module):
@@ -176,10 +186,26 @@ class HyperspaceModule(Module):
             return self.map
 
     def _query_scores(self, query: str) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-        """(centers (N, 3), cosine scores (N,)) for a text query."""
+        """(centers (N, 3), scores (N,)) for a text query.
+
+        Scores are the query's cosine similarity contrasted against generic
+        background prompts (score = cos(query) - max cos(background)) — raw
+        patch-token cosines are noisy, the margin against "some other office
+        thing" is what localizes the query.
+        """
         voxels = self._require_map()
-        text = self._text_model.embed_text(query)
-        return voxels.query(text.to_numpy())
+        prompts = [query, *self.config.background_prompts]
+        embeddings = self._text_model.embed_text(*prompts)
+        if not isinstance(embeddings, list):
+            embeddings = [embeddings]
+        centers, scores = voxels.query(embeddings[0].to_numpy())
+        # A background prompt that IS the query (querying "floor" against
+        # "the floor") would cancel the signal — drop near-duplicates.
+        distinct = [e for e in embeddings[1:] if embeddings[0] @ e < 0.85]
+        if distinct:
+            background = np.stack([voxels.query(e.to_numpy())[1] for e in distinct]).max(axis=0)
+            scores = scores - background
+        return centers, scores
 
     @rpc
     def stats(self) -> dict[str, Any]:
@@ -288,6 +314,8 @@ class HyperspaceModule(Module):
             "direction": direction,
             "best_score": float(bin_scores[best_bin]),
             "voxels_considered": int(centers.shape[0]),
+            "robot_xy": [float(position[0]), float(position[1])],
+            "robot_yaw_deg": math.degrees(yaw),
         }
 
     @skill
