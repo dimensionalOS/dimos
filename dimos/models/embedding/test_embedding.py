@@ -20,6 +20,7 @@ import torch
 
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPModel
+from dimos.models.embedding.siglip2 import SigLIP2Model
 from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
@@ -31,8 +32,9 @@ from dimos.utils.data import get_data
         (CLIPModel, "CLIP", True),
         pytest.param(MobileCLIPModel, "MobileCLIP", True),
         (TorchReIDModel, "TorchReID", False),
+        (SigLIP2Model, "SigLIP2", True),
     ],
-    ids=["clip", "mobileclip", "treid"],
+    ids=["clip", "mobileclip", "treid", "siglip2"],
 )
 @pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
@@ -140,6 +142,43 @@ def test_text_image_retrieval(model_class: type, model_name: str) -> None:
     assert cafe_sims[0] > other_sims[0], "Cafe query should match cafe image better than dog query"
 
     print(f"\n{model_name} retrieval test passed!")
+
+
+@pytest.mark.self_hosted
+@pytest.mark.skipif_in_ci
+def test_siglip2_patch_embeddings() -> None:
+    """Test SigLIP 2 per-patch embedding grids."""
+    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image.frame_id = "camera_optical"
+
+    model = SigLIP2Model()
+    model.start()
+
+    patches = model.embed_patches(image)
+    print(f"Patch grid: {patches.grid_shape}, dim: {patches.dim}")
+
+    # siglip2-base-patch16-256: 256px / 16px patches -> 16x16 grid, 768-dim
+    assert patches.grid_shape == (16, 16)
+    assert patches.dim == 768
+    assert patches.frame_id == "camera_optical"
+    assert patches.timestamp == image.ts
+
+    # Normalized: every patch vector should be unit length
+    flat = patches.to_torch().reshape(-1, patches.dim)
+    norms = flat.norm(dim=-1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-3)
+
+    # Batch call returns one grid per image
+    batch = model.embed_patches(image, image)
+    assert len(batch) == 2
+    assert all(p.grid_shape == (16, 16) for p in batch)
+
+    # Patch tokens are pre-pooling features: text similarity is only meaningful
+    # relatively (patch vs patch for one query), so just check it computes.
+    cafe_text = model.embed_text("a cafe interior")
+    sims = flat @ cafe_text.to_torch(model.device)
+    assert sims.shape == (256,)
+    print(f"Patch-text similarity range: [{sims.min():.4f}, {sims.max():.4f}]")
 
 
 @pytest.mark.self_hosted

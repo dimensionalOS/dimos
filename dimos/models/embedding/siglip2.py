@@ -1,0 +1,166 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from functools import cached_property
+import math
+from typing import Any, overload
+
+from PIL import Image as PILImage
+import torch
+import torch.nn.functional as functional
+from transformers import AutoModel, AutoProcessor
+
+from dimos.models.base import HuggingFaceModel
+from dimos.models.embedding.base import (
+    Embedding,
+    EmbeddingModel,
+    HuggingFaceEmbeddingModelConfig,
+    PatchEmbeddings,
+)
+from dimos.msgs.sensor_msgs.Image import Image
+
+
+class SigLIP2ModelConfig(HuggingFaceEmbeddingModelConfig):
+    model_name: str = "google/siglip2-base-patch16-256"
+    dtype: torch.dtype = torch.float32
+    #: SigLIP text towers are trained on fixed-length padded input (64 tokens).
+    text_max_length: int = 64
+
+
+class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
+    """SigLIP 2 vision-language embedding model.
+
+    Supports pooled image/text embeddings (``embed`` / ``embed_text``) and
+    per-patch embedding grids (``embed_patches``). Works with both the
+    fixed-resolution SigLIP 2 checkpoints and the NaFlex variants
+    (``google/siglip2-*-naflex``), whose patch grid follows the input
+    aspect ratio.
+    """
+
+    config: SigLIP2ModelConfig
+    _model_class = AutoModel
+
+    @cached_property
+    def _model(self) -> Any:
+        self._ensure_cuda_initialized()
+        return super()._model.eval()
+
+    @cached_property
+    def _processor(self) -> Any:
+        return AutoProcessor.from_pretrained(self.config.model_name, use_fast=True)
+
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
+    def embed(self, *images: Image) -> Embedding | list[Embedding]:
+        """Embed one or more images into pooled image-level vectors."""
+        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+
+        with torch.inference_mode():
+            inputs = self._processor(images=pil_images, return_tensors="pt")
+            inputs = self._move_inputs_to_device(dict(inputs))
+            image_features = self._model.get_image_features(**inputs)
+
+            if self.config.normalize:
+                image_features = functional.normalize(image_features, dim=-1)
+
+        embeddings: list[Embedding] = []
+        for i, feat in enumerate(image_features):
+            embeddings.append(Embedding(vector=feat, timestamp=images[i].ts))
+
+        return embeddings[0] if len(images) == 1 else embeddings
+
+    @overload
+    def embed_patches(self, image: Image, /) -> PatchEmbeddings: ...
+    @overload
+    def embed_patches(self, *images: Image) -> list[PatchEmbeddings]: ...
+    def embed_patches(self, *images: Image) -> PatchEmbeddings | list[PatchEmbeddings]:
+        """Embed one or more images into per-patch embedding grids.
+
+        Returns one (grid_h, grid_w, dim) grid per image from the vision
+        tower's final hidden state. For fixed-resolution checkpoints the grid
+        is square (e.g. 16x16 for patch16-256); for NaFlex checkpoints it
+        follows the processor's spatial_shapes.
+        """
+        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+
+        with torch.inference_mode():
+            inputs = self._processor(images=pil_images, return_tensors="pt")
+            # NaFlex processors emit per-image patch grid shapes; fixed-res ones don't.
+            spatial_shapes = inputs.get("spatial_shapes")
+            inputs = self._move_inputs_to_device(dict(inputs))
+            vision_outputs = self._model.vision_model(**inputs)
+            hidden = vision_outputs.last_hidden_state
+
+            if self.config.normalize:
+                hidden = functional.normalize(hidden, dim=-1)
+
+        results: list[PatchEmbeddings] = []
+        for i, image in enumerate(images):
+            patches = hidden[i]
+            if spatial_shapes is not None:
+                grid_h, grid_w = (int(v) for v in spatial_shapes[i])
+                patches = patches[: grid_h * grid_w]  # drop NaFlex padding
+            else:
+                side = math.isqrt(patches.shape[0])
+                if side * side != patches.shape[0]:
+                    raise ValueError(
+                        f"Cannot infer square patch grid from {patches.shape[0]} patches "
+                        f"for model {self.config.model_name}"
+                    )
+                grid_h, grid_w = side, side
+            results.append(
+                PatchEmbeddings(
+                    vector=patches.reshape(grid_h, grid_w, -1),
+                    frame_id=image.frame_id,
+                    timestamp=image.ts,
+                )
+            )
+
+        return results[0] if len(images) == 1 else results
+
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
+    def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
+        """Embed one or more text strings."""
+        with torch.inference_mode():
+            inputs = self._processor(
+                text=list(texts),
+                return_tensors="pt",
+                padding="max_length",
+                max_length=self.config.text_max_length,
+                truncation=True,
+            )
+            inputs = self._move_inputs_to_device(dict(inputs))
+            text_features = self._model.get_text_features(**inputs)
+
+            if self.config.normalize:
+                text_features = functional.normalize(text_features, dim=-1)
+
+        embeddings: list[Embedding] = []
+        for feat in text_features:
+            embeddings.append(Embedding(vector=feat))
+
+        return embeddings[0] if len(texts) == 1 else embeddings
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        if "_processor" in self.__dict__:
+            del self.__dict__["_processor"]
+        super().stop()

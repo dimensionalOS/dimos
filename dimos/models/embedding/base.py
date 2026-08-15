@@ -88,6 +88,76 @@ class Embedding(Timestamped):
         return self
 
 
+class PatchEmbeddings(Timestamped):
+    """Grid of per-patch embeddings for a single image.
+
+    ``vector`` has shape (grid_h, grid_w, dim) — one embedding per image patch,
+    laid out in row-major image order.
+    """
+
+    vector: torch.Tensor | np.ndarray
+    frame_id: str
+
+    def __init__(
+        self,
+        vector: torch.Tensor | np.ndarray,
+        frame_id: str = "",
+        timestamp: float | None = None,
+    ) -> None:
+        if vector.ndim != 3:
+            raise ValueError(
+                f"PatchEmbeddings requires a (grid_h, grid_w, dim) array, got shape {tuple(vector.shape)}"
+            )
+        self.vector = vector
+        self.frame_id = frame_id
+        if timestamp:
+            self.timestamp = timestamp
+        else:
+            self.timestamp = time.time()
+
+    def __repr__(self) -> str:
+        return (
+            f"PatchEmbeddings(grid={self.grid_shape}, dim={self.dim}, "
+            f"frame_id='{self.frame_id}', timestamp={self.timestamp})"
+        )
+
+    @property
+    def grid_shape(self) -> tuple[int, int]:
+        """(grid_h, grid_w) — the patch grid layout."""
+        return int(self.vector.shape[0]), int(self.vector.shape[1])
+
+    @property
+    def dim(self) -> int:
+        """Embedding dimension of each patch."""
+        return int(self.vector.shape[2])
+
+    def flat(self) -> torch.Tensor | np.ndarray:
+        """Patch embeddings flattened to (grid_h * grid_w, dim)."""
+        return self.vector.reshape(-1, self.vector.shape[2])
+
+    def to_numpy(self) -> np.ndarray:
+        """Convert to numpy array (moves to CPU if needed)."""
+        if isinstance(self.vector, torch.Tensor):
+            return self.vector.detach().cpu().numpy()
+        return self.vector
+
+    def to_torch(self, device: str | torch.device | None = None) -> torch.Tensor:
+        """Convert to torch tensor on specified device."""
+        if isinstance(self.vector, np.ndarray):
+            tensor = torch.from_numpy(self.vector)
+            return tensor.to(device) if device else tensor
+
+        if device is not None and self.vector.device != torch.device(device):
+            return self.vector.to(device)
+        return self.vector
+
+    def to_cpu(self) -> PatchEmbeddings:
+        """Move embeddings to CPU, returning self for chaining."""
+        if isinstance(self.vector, torch.Tensor):
+            self.vector = self.vector.cpu()
+        return self
+
+
 class EmbeddingModel(Resource, ABC):
     """Abstract base class for embedding models supporting vision and language."""
 
