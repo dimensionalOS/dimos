@@ -163,6 +163,30 @@ impl VoxelRayMapper {
             .into_pyarray(py)
     }
 
+    /// Centers of every voxel that was ever hit and has not been carved away,
+    /// regardless of health or neighbor support. Complements `global_map`: a
+    /// surface seen only briefly never turns healthy, but its entry persists
+    /// here until rays see through it, so "absent from observed_map" means
+    /// carved (or never sampled) rather than "not yet trusted".
+    fn observed_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let voxel_size = self.config.voxel_size;
+        let half = voxel_size * 0.5;
+        let map = &self.map;
+        let positions: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
+            for &(kx, ky, kz) in map.voxels.keys() {
+                out.push(kx as f32 * voxel_size + half);
+                out.push(ky as f32 * voxel_size + half);
+                out.push(kz as f32 * voxel_size + half);
+            }
+            out
+        });
+        let n = positions.len() / 3;
+        Array2::from_shape_vec((n, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py)
+    }
+
     /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
     /// matching order. The normal is the zero vector where there is no plane.
     fn global_map_normals<'py>(

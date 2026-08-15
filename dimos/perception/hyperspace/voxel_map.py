@@ -53,12 +53,7 @@ def dilate_keys(keys: NDArray[np.int64], radius: int = 1) -> NDArray[np.int64]:
 def keys_near_mask(
     keys: NDArray[np.int64], keep_keys: NDArray[np.int64], radius: int = 1
 ) -> NDArray[np.bool_]:
-    """Which of ``keys`` lie within ``radius`` voxels of any key in ``keep_keys``.
-
-    Used to filter embedding voxels against the lidar ray-traced clean map:
-    a voxel survives if the lidar still sees solid geometry in or next to it
-    (the one-voxel slack absorbs depth-vs-lidar discretization offsets).
-    """
+    """Which of ``keys`` lie within ``radius`` voxels of any key in ``keep_keys``."""
     keys = np.asarray(keys, dtype=np.int64)
     if keep_keys.size == 0:
         return np.zeros(keys.shape, dtype=bool)

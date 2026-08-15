@@ -46,7 +46,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.hyperspace.cluster import VoxelCluster, top_clusters
-from dimos.perception.hyperspace.projection import project_patches_to_world
+from dimos.perception.hyperspace.projection import depth_to_meters, project_patches_to_world
 from dimos.perception.hyperspace.query import DEFAULT_BACKGROUND_PROMPTS, score_query
 from dimos.perception.hyperspace.render import (
     VIEWS,
@@ -87,7 +87,10 @@ class HyperspaceModuleConfig(ModuleConfig):
     #: Take every Nth depth pixel when projecting patches to 3D.
     depth_stride: int = 4
     min_depth_m: float = 0.3
-    max_depth_m: float = 6.0
+    #: D455 depth is noisy past ~6 m but still real; ceilings and far walls
+    #: live out there, and median aggregation plus the clean-map filter
+    #: absorb the extra scatter.
+    max_depth_m: float = 10.0
     depth_match_tolerance_s: float = 0.05
     #: Nearest-stamp tolerance; world odometry in recordings can gap ~1 s.
     tf_tolerance_s: float = 1.0
@@ -110,13 +113,26 @@ class HyperspaceModuleConfig(ModuleConfig):
     aggregate: Aggregate = "median"
     #: Frame samples kept per voxel for the robust aggregation modes.
     max_samples_per_voxel: int = 8
-    #: Maintain a ray-traced lidar voxel map and drop embedding voxels with no
-    #: solid lidar geometry nearby (carves ghosts and dynamic objects).
+    #: Maintain a ray-traced clean map fed by the lidar AND the camera depth
+    #: points; raycast clearing carves ghosts and dynamics, and embedding
+    #: voxels off its healthy surfaces are dropped at query time. Feeding the
+    #: camera too keeps coverage aligned with the embedding map (a lidar-only
+    #: feed vetoes camera-only zones like alcoves the lidar never swept).
     use_lidar_clean_map: bool = True
     lidar_max_range_m: float = 30.0
-    #: Chebyshev slack (in voxels) when matching embedding voxels to lidar
-    #: voxels; absorbs depth-vs-lidar discretization offsets.
-    lidar_clean_dilation: int = 1
+    #: Neighbor-support the ray mapper demands before emitting a voxel. Its
+    #: default (4) denoises well for dense lidar but prunes thin surfaces the
+    #: camera only saw a few times (a fridge front at 6 cm voxels).
+    lidar_support_min: int = 2
+    #: Depth frames feed the clean map at this rate, independent of the
+    #: (much slower, frame-dropping) embedding path.
+    clean_map_depth_hz: float = 5.0
+    #: Depth pixel stride for clean-map projection. Matches depth_stride so
+    #: every embedded point also lands an observed-map entry.
+    clean_map_depth_stride: int = 4
+    #: Chebyshev slack (in voxels) for counting an embedding voxel as ON
+    #: clean-map geometry; absorbs sensor discretization offsets.
+    lidar_clean_dilation: int = 2
 
 
 class HyperspaceModule(Module):
@@ -150,6 +166,9 @@ class HyperspaceModule(Module):
         self._ray_lock = threading.Lock()
         #: Clouds whose world tf hasn't arrived yet; drained on later arrivals.
         self._lidar_pending: deque[PointCloud2] = deque()
+        #: Depth frames headed for the clean map, waiting on their world tf.
+        self._depth_pending: deque[Image] = deque()
+        self._last_clean_depth_ts = 0.0
         #: Camera frames waiting for their world tf, same pattern as lidar.
         #: Drained from both the ingest and reduce threads, hence the lock.
         self._frame_pending: deque[tuple[PatchEmbeddings, Image]] = deque()
@@ -244,6 +263,59 @@ class HyperspaceModule(Module):
         self._points_inserted += int(points.shape[0])
         return "used"
 
+    # ------------------------------------------------------------------ clean map
+
+    def _on_depth_clean(self, depth: Image) -> None:
+        """Feed depth frames into the clean map, decoupled from embedding.
+
+        Embedding runs at a few Hz and drops frames freely; if only those
+        frames fed the ray mapper, surfaces the camera saw briefly (a fridge
+        seen in two frames) would never turn healthy and the clean-map filter
+        would erase their embeddings. Every depth frame is cheap to project,
+        so the clean map gets them all, rate-limited.
+        """
+        mapper = self._ray_mapper
+        if mapper is None:
+            return
+        if depth.ts - self._last_clean_depth_ts < 1.0 / self.config.clean_map_depth_hz:
+            return
+        depth_info = self._depth_info
+        if depth_info is None:
+            return
+        self._depth_pending.append(depth)
+        while self._depth_pending:
+            head = self._depth_pending[0]
+            world_from_depth = self.tfbuffer.get(
+                self.config.world_frame, head.frame_id, head.ts, self.config.tf_tolerance_s
+            )
+            if world_from_depth is None:
+                if depth.ts - head.ts > _LIDAR_PENDING_S:
+                    self._depth_pending.popleft()
+                    continue
+                return
+            self._depth_pending.popleft()
+            self._last_clean_depth_ts = head.ts
+            meters = depth_to_meters(head)
+            stride = self.config.clean_map_depth_stride
+            height, width = meters.shape[:2]
+            vs, us = np.mgrid[0:height:stride, 0:width:stride]
+            z = meters[vs, us].reshape(-1)
+            us, vs = us.reshape(-1), vs.reshape(-1)
+            ok = np.isfinite(z) & (z > self.config.min_depth_m) & (z < self.config.max_depth_m)
+            if not ok.any():
+                continue
+            us, vs, z = us[ok], vs[ok], z[ok]
+            k = depth_info.K
+            rays = np.stack([(us - k[2]) / k[0] * z, (vs - k[5]) / k[4] * z, z], axis=1).astype(
+                np.float32
+            )
+            matrix = world_from_depth.to_matrix()
+            points = rays @ matrix[:3, :3].T.astype(np.float32) + matrix[:3, 3].astype(np.float32)
+            with self._ray_lock:
+                mapper.add_frame(
+                    points, (float(matrix[0, 3]), float(matrix[1, 3]), float(matrix[2, 3]))
+                )
+
     # ------------------------------------------------------------------ lidar
 
     def _on_lidar(self, cloud: PointCloud2) -> None:
@@ -280,14 +352,21 @@ class HyperspaceModule(Module):
             self._lidar_frames += 1
 
     def _lidar_clean_mask(self, voxel_map: EmbeddingVoxelMap) -> NDArray[np.bool_] | None:
-        """Which embedding voxels have solid lidar geometry nearby; None = no filter."""
+        """Which embedding voxels the clean map still endorses; None = no filter.
+
+        Uses observed_map(), not global_map(): an entry there means "hit at
+        least once and never carved by rays". Requiring healthy status
+        instead would erase surfaces the camera only saw briefly (that is
+        how the fridge vanished), while carved-away entries are exactly the
+        seen-through ghosts and dynamics we want gone.
+        """
         mapper = self._ray_mapper
         if mapper is None:
             return None
         with self._ray_lock:
-            if mapper.voxel_count() == 0:
-                return None
-            centers = mapper.global_map()
+            centers = mapper.observed_map()
+        if centers.shape[0] == 0:
+            return None
         lidar_keys = self._pack_lidar_keys(centers)
         return keys_near_mask(
             voxel_map.voxel_keys(), lidar_keys, radius=self.config.lidar_clean_dilation
@@ -342,8 +421,8 @@ class HyperspaceModule(Module):
         mapper = self._ray_mapper
         if mapper is not None:
             with self._ray_lock:
-                centers = mapper.global_map() if mapper.voxel_count() else None
-            if centers is not None:
+                centers = mapper.observed_map()
+            if centers.shape[0]:
                 extras["lidar_keys"] = self._pack_lidar_keys(centers)
                 extras["lidar_dilation"] = np.int64(self.config.lidar_clean_dilation)
         frame_log = list(self._frame_log)
@@ -533,9 +612,13 @@ class HyperspaceModule(Module):
             self._ray_mapper = VoxelRayMapper(
                 voxel_size=self.config.voxel_size_m,
                 max_range=self.config.lidar_max_range_m,
+                support_min=self.config.lidar_support_min,
             )
             self.register_disposable(
                 backpressure(self.lidar.pure_observable()).subscribe(self._on_lidar)
+            )
+            self.register_disposable(
+                backpressure(self.depth_image.pure_observable()).subscribe(self._on_depth_clean)
             )
 
         paired = align_timestamped(

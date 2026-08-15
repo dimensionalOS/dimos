@@ -47,6 +47,14 @@ class VoxelRayMapper:
         """Return the centers of all healthy voxels as (M, 3) float32."""
         ...
 
+    def observed_map(self) -> NDArray[np.float32]:
+        """Centers of every voxel ever hit and not yet carved, (M, 3) float32.
+
+        No health or neighbor-support gate: absence means carved by rays (or
+        never sampled), not merely "seen too briefly to trust".
+        """
+        ...
+
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return healthy voxel centers and their surface normals, both (M, 3) float32.
 
