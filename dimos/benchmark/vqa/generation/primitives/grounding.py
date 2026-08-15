@@ -18,37 +18,43 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.benchmark.vqa.contracts import CalibratedFrame, GroundedObject, ProjectionConfig
-from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
+from dimos.benchmark.vqa.contracts import CalibratedFrame, GroundedObject, ProjectedPoints
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
+
+
+def points_in_mask(
+    projected: ProjectedPoints, mask: np.ndarray, image_shape: tuple[int, int]
+) -> np.ndarray:
+    """Return projected camera points covered by one foreground mask."""
+    if mask.shape != image_shape:
+        raise ValueError("segmentation mask dimensions must match the image")
+    points = [
+        point
+        for point, (x, y) in zip(projected.camera_points, projected.pixels, strict=True)
+        if mask[y, x] > 0
+    ]
+    return np.asarray(points, dtype=np.float64).reshape((-1, 3))
 
 
 def ground_segmented_objects(
     frame: CalibratedFrame,
+    projected: ProjectedPoints,
     detections: list[Detection2DSeg],
     *,
     min_foreground_points: int = 3,
-    projection: ProjectionConfig = ProjectionConfig(),
 ) -> list[GroundedObject]:
     """Create object geometry from visible points covered by each foreground mask."""
     if min_foreground_points < 1:
         raise ValueError("min_foreground_points must be positive")
 
-    projected = project_visible_points(frame, projection)
     grounded: list[GroundedObject] = []
     for index, detection in enumerate(detections):
         mask = detection.mask
-        if mask.shape != (frame.image.height, frame.image.width):
-            raise ValueError("segmentation mask dimensions must match the image")
-        selected = [
-            point
-            for point, (x, y) in zip(projected.camera_points, projected.pixels, strict=True)
-            if mask[y, x] > 0
-        ]
+        selected = points_in_mask(projected, mask, (frame.image.height, frame.image.width))
         if len(selected) < min_foreground_points:
             continue
 
-        ranges = np.linalg.norm(np.asarray(selected), axis=1)
+        ranges = np.linalg.norm(selected, axis=1)
         image_x = [x for x, y in projected.pixels if mask[y, x] > 0]
         median_x = float(np.median(image_x))
         direction = _horizontal_direction(median_x, frame.image.width)

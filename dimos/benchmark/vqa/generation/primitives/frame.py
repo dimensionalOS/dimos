@@ -28,11 +28,14 @@ from dimos.benchmark.vqa.contracts import (
     ObjectSegmenter,
     PointObjectSegmenter,
     PrimitiveGroundingConfig,
+    ProjectedPoints,
     VisualObject,
 )
-from dimos.benchmark.vqa.generation.primitives.geometry import points_in_mask
-from dimos.benchmark.vqa.generation.primitives.grounding import ground_segmented_objects
-from dimos.benchmark.vqa.generation.primitives.results import HorizontalRelationResult
+from dimos.benchmark.vqa.generation.primitives.grounding import (
+    ground_segmented_objects,
+    points_in_mask,
+)
+from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -54,7 +57,7 @@ class FramePerceptionPrimitives:
     ) -> None:
         if config.min_mask_area_px < 1 or config.min_foreground_points < 1:
             raise ValueError("grounding thresholds must be positive")
-        if not 0 < config.duplicate_mask_iou_threshold <= 1:
+        if not 0 < config.duplicate_iou_threshold <= 1:
             raise ValueError("duplicate mask IoU threshold must be in (0, 1]")
         if config.duplicate_range_tolerance_m < 0:
             raise ValueError("duplicate range tolerance must be non-negative")
@@ -73,6 +76,7 @@ class FramePerceptionPrimitives:
         self._visual_objects: dict[str, VisualObject] = {}
         self._objects: dict[str, GroundedObject] = {}
         self._object_masks: dict[str, Detection2DSeg] = {}
+        self._projected: ProjectedPoints | None = None
         self._next_object_id = 0
         self._next_visual_id = 0
 
@@ -85,8 +89,8 @@ class FramePerceptionPrimitives:
         self._detected[query] = detections
         return detections
 
-    def segment_detections(self, query: str) -> list[Detection2DSeg]:
-        """Segment accepted detections, falling back to point localization when available."""
+    def segment_objects(self, query: str) -> list[Detection2DSeg]:
+        """Segment all detected objects, falling back to point localization when available."""
         if query in self._segmented_queries:
             return self._masks.get(query, [])
         detections = self.detect_objects(query)
@@ -94,7 +98,7 @@ class FramePerceptionPrimitives:
             masks = [
                 mask
                 for index in range(len(detections))
-                for mask in self.segment_detection(query, index)
+                for mask in self.segment_object(query, index)
             ]
         else:
             points = self._localized_points(query)
@@ -107,7 +111,7 @@ class FramePerceptionPrimitives:
         self._segmented_queries.add(query)
         return masks
 
-    def segment_detection(self, query: str, index: int) -> list[Detection2DSeg]:
+    def segment_object(self, query: str, index: int) -> list[Detection2DSeg]:
         """Segment one frozen detection selected by its query-local index."""
         detections = self.detect_objects(query)
         if index < 0 or index >= len(detections):
@@ -158,23 +162,29 @@ class FramePerceptionPrimitives:
         self._visuals[query] = objects
         return objects
 
-    def ground_mask(self, mask: Detection2DSeg) -> GroundedObject | None:
+    def ground_object(self, mask: Detection2DSeg) -> GroundedObject | None:
         """Ground one mask and resolve it to a frame-scoped canonical object."""
         objects = ground_segmented_objects(
-            self.frame, [mask], min_foreground_points=self._config.min_foreground_points
+            self.frame,
+            self._projected_points(),
+            [mask],
+            min_foreground_points=self._config.min_foreground_points,
         )
         if len(objects) != 1:
             return None
         return self._canonicalize_object(objects[0], mask)
 
-    def ground_masks(self, query: str) -> list[GroundedObject]:
+    def ground_objects(self, query: str) -> list[GroundedObject]:
         """Project visible point-cloud support through accepted masks."""
         cached = self._groundings.get(query)
         if cached is not None:
             return cached
-        masks = self.segment_detections(query)
+        masks = self.segment_objects(query)
         objects = ground_segmented_objects(
-            self.frame, masks, min_foreground_points=self._config.min_foreground_points
+            self.frame,
+            self._projected_points(),
+            masks,
+            min_foreground_points=self._config.min_foreground_points,
         )
         canonical: list[GroundedObject] = []
         seen_ids: set[str] = set()
@@ -198,29 +208,29 @@ class FramePerceptionPrimitives:
     def can_localize_points(self) -> bool:
         return self._localizer is not None and self._point_segmenter is not None
 
-    def classify_horizontal_relation(
-        self, first: GroundedObject, second: GroundedObject
-    ) -> HorizontalRelationResult:
-        """Classify whether the first object's support centroid is left or right of the second's."""
-        if first.id == second.id:
-            return HorizontalRelationResult(None, (), "duplicate_object_id")
+    def horizontal_offset_m(self, first: GroundedObject, second: GroundedObject) -> float | None:
+        """Return the first object's camera-frame X offset from the second object."""
         first_points = self._object_points(first)
         second_points = self._object_points(second)
         if first_points is None or second_points is None:
-            return HorizontalRelationResult(None, (), "insufficient_object_support")
-        horizontal_offset_m = float(np.median(first_points[:, 0]) - np.median(second_points[:, 0]))
-        if abs(horizontal_offset_m) < 0.1:
-            return HorizontalRelationResult(None, (), "ambiguous_horizontal_relation")
-        return HorizontalRelationResult(
-            "left" if horizontal_offset_m < 0 else "right", ("camera_frame_support_centroids",)
-        )
+            return None
+        return float(np.median(first_points[:, 0]) - np.median(second_points[:, 0]))
 
     def _object_points(self, object: GroundedObject) -> np.ndarray | None:
         mask = self._object_masks.get(object.id)
         if mask is None:
             raise ValueError(f"unknown grounded object: {object.id}")
-        points = points_in_mask(self.frame, mask.mask)
+        points = points_in_mask(
+            self._projected_points(),
+            mask.mask,
+            (self.frame.image.height, self.frame.image.width),
+        )
         return points if len(points) >= 6 else None
+
+    def _projected_points(self) -> ProjectedPoints:
+        if self._projected is None:
+            self._projected = project_visible_points(self.frame)
+        return self._projected
 
     def _canonicalize_object(
         self, candidate: GroundedObject, mask: Detection2DSeg
@@ -239,8 +249,7 @@ class FramePerceptionPrimitives:
         for existing in self._visual_objects.values():
             if (
                 candidate.label.casefold() == existing.label.casefold()
-                and _bbox_iou(candidate.bbox, existing.bbox)
-                >= self._config.duplicate_mask_iou_threshold
+                and _bbox_iou(candidate.bbox, existing.bbox) >= self._config.duplicate_iou_threshold
             ):
                 return existing
         self._next_visual_id += 1
@@ -281,7 +290,7 @@ class FramePerceptionPrimitives:
             return False
         return (
             _mask_iou(candidate_mask.mask, existing_mask.mask)
-            >= self._config.duplicate_mask_iou_threshold
+            >= self._config.duplicate_iou_threshold
         )
 
 

@@ -29,7 +29,6 @@ from dimos.benchmark.vqa.contracts import (
 from dimos.benchmark.vqa.generation.deterministic_answerer import DeterministicAnswerer
 from dimos.benchmark.vqa.generation.families import GroundingResult, render_question
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.primitives.results import HorizontalRelationResult
 from dimos.benchmark.vqa.generation.question_authors import ConstrainedQuestionAuthor
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -416,8 +415,8 @@ def test_deterministic_answerer_compares_pairwise_left_right(monkeypatch: object
     )
     monkeypatch.setattr(
         agent.context.primitives,
-        "classify_horizontal_relation",
-        lambda first, second: HorizontalRelationResult("left", ("camera_frame_support_centroids",)),
+        "horizontal_offset_m",
+        lambda first, second: -0.5,
     )
 
     result = agent.answer(
@@ -427,3 +426,10 @@ def test_deterministic_answerer_compares_pairwise_left_right(monkeypatch: object
     assert result.status == "answered"
     assert result.answer == "left"
     assert result.question.allowed_answers == ("left", "right")
+
+    monkeypatch.setattr(agent.context.primitives, "horizontal_offset_m", lambda first, second: 0.0)
+    ambiguous = agent.answer(
+        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table")
+    )
+    assert ambiguous.status == "rejected"
+    assert ambiguous.reason == "ambiguous_horizontal_relation"

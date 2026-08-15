@@ -35,7 +35,8 @@ from dimos.benchmark.vqa.generation.answer_choices import (
     count_choice,
 )
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
-from dimos.benchmark.vqa.generation.primitives.selection import select_nearest_object
+
+MIN_HORIZONTAL_RELATION_OFFSET_M = 0.1
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class FamilyContext:
         """Detect, segment, and ground one semantic query with traceable cache reuse."""
         if self.primitives.has_grounding(object_query):
             return GroundingResult(
-                tuple(self.primitives.ground_masks(object_query)),
+                tuple(self.primitives.ground_objects(object_query)),
                 (ToolTrace("reuse_grounding", object_query),),
             )
         trace: list[ToolTrace] = [ToolTrace("detect_objects", object_query)]
@@ -74,14 +75,14 @@ class FamilyContext:
             trace.append(ToolTrace("segment_objects", f"count={len(detections)}"))
         elif self.primitives.can_localize_points:
             trace.append(ToolTrace("locate_object_point", object_query))
-        masks = self.primitives.segment_detections(object_query)
+        masks = self.primitives.segment_objects(object_query)
         if len(detections) and self.primitives.used_point_localization(object_query):
             trace.append(ToolTrace("fallback_locate_object_point", object_query))
             trace.append(ToolTrace("fallback_segment_object_point", object_query))
         elif self.primitives.used_point_localization(object_query):
             trace.append(ToolTrace("segment_object_point", object_query))
         trace.append(ToolTrace("get_foreground_geometry", f"masks={len(masks)}"))
-        return GroundingResult(tuple(self.primitives.ground_masks(object_query)), tuple(trace))
+        return GroundingResult(tuple(self.primitives.ground_objects(object_query)), tuple(trace))
 
     def observe(self, object_query: str) -> VisualResult:
         """Detect visible object instances without requiring point-cloud support."""
@@ -122,6 +123,13 @@ def render_question(intent: QuestionIntent) -> str:
             "Answer yes or no."
         )
     raise ValueError(f"unsupported deterministic question kind: {intent.kind}")
+
+
+def _select_nearest_object(
+    objects: list[GroundedObject], side: str | None = None
+) -> GroundedObject | None:
+    candidates = [item for item in objects if side is None or item.horizontal_direction == side]
+    return min(candidates, key=lambda item: item.range_m) if candidates else None
 
 
 def rejected_result(
@@ -182,7 +190,7 @@ def answer_basic_object_question(
         return rejected_result(
             context, intent, grounded.objects, grounded.trace, "no_grounded_object"
         )
-    nearest = select_nearest_object(list(grounded.objects))
+    nearest = _select_nearest_object(list(grounded.objects))
     if nearest is None:
         return rejected_result(
             context, intent, grounded.objects, grounded.trace, "no_grounded_object"
@@ -226,7 +234,7 @@ def count_visible_objects(intent: QuestionIntent, context: FamilyContext) -> Gro
 def bucket_camera_range(intent: QuestionIntent, context: FamilyContext) -> GroundTruthResult:
     grounded = context.ground(intent.object_query)
     objects, trace = grounded.objects, grounded.trace
-    selected = select_nearest_object(list(objects))
+    selected = _select_nearest_object(list(objects))
     if selected is None:
         return rejected_result(context, intent, objects, trace, "no_grounded_object")
     answer = camera_range_choice(selected.range_m)
@@ -253,32 +261,44 @@ def compare_left_right(intent: QuestionIntent, context: FamilyContext) -> Ground
         return rejected_result(
             context, intent, [*objects, *other_objects], trace, "ambiguous_second_relation_object"
         )
-    relation = context.primitives.classify_horizontal_relation(objects[0], other_objects[0])
+    first, second = objects[0], other_objects[0]
+    if first.id == second.id:
+        rejection_reason = "duplicate_object_id"
+        offset_m = None
+    else:
+        offset_m = context.primitives.horizontal_offset_m(first, second)
+        if offset_m is None:
+            rejection_reason = "insufficient_object_support"
+        elif abs(offset_m) < MIN_HORIZONTAL_RELATION_OFFSET_M:
+            rejection_reason = "ambiguous_horizontal_relation"
+        else:
+            rejection_reason = None
     trace = (
         *trace,
         ToolTrace(
-            "classify_horizontal_relation",
-            relation.relation or relation.rejection_reason or "rejected",
+            "measure_horizontal_offset",
+            rejection_reason if rejection_reason is not None else f"{offset_m:.3f}m",
         ),
     )
-    if relation.relation is None:
+    if rejection_reason is not None or offset_m is None:
         return rejected_result(
             context,
             intent,
             [*objects, *other_objects],
             trace,
-            relation.rejection_reason or "horizontal_relation_rejected",
+            rejection_reason or "horizontal_relation_rejected",
         )
+    answer = "left" if offset_m < 0 else "right"
     example = VqaExample(
         f"{context.frame.id}-{intent.object_query}-{intent.comparison_query}-left-right",
         render_question(intent),
-        relation.relation,
+        answer,
         "choice",
         (objects[0].id, other_objects[0].id),
         ("left", "right"),
     )
     return GroundTruthResult(
-        intent, example, "answered", relation.relation, None, (objects[0], other_objects[0]), trace
+        intent, example, "answered", answer, None, (objects[0], other_objects[0]), trace
     )
 
 
@@ -287,8 +307,8 @@ def compare_nearest_by_side(intent: QuestionIntent, context: FamilyContext) -> G
     objects, trace = grounded.objects, grounded.trace
     if not objects:
         return rejected_result(context, intent, objects, trace, "no_grounded_object")
-    left = select_nearest_object(list(objects), "left")
-    right = select_nearest_object(list(objects), "right")
+    left = _select_nearest_object(list(objects), "left")
+    right = _select_nearest_object(list(objects), "right")
     if left is None or right is None:
         return rejected_result(context, intent, objects, trace, "missing_grounded_side")
     if abs(left.range_m - right.range_m) <= 0.1:

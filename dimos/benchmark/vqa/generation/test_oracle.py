@@ -44,6 +44,7 @@ from dimos.benchmark.vqa.generation.answer_choices import (
     camera_range_choice,
     count_choice,
 )
+from dimos.benchmark.vqa.generation.primitives import frame as frame_primitives
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 from dimos.benchmark.vqa.generation.question_authors import AgenticQuestionAuthor
 from dimos.models.vl.openai import OpenAIVlModel
@@ -70,10 +71,10 @@ class _Grounding:
     def visual_objects(self, query: str) -> list[Any]:
         return [VisualObject("visual-chair", query, 1.0, (0.0, 0.0, 1.0, 1.0), "left")]
 
-    def segment_detections(self, query: str) -> list[Any]:
+    def segment_objects(self, query: str) -> list[Any]:
         return []
 
-    def ground_masks(self, query: str) -> list[Any]:
+    def ground_objects(self, query: str) -> list[Any]:
         return [
             type(
                 "Object",
@@ -351,23 +352,34 @@ def test_grounding_reuses_canonical_object_across_queries_and_registries() -> No
     assert seat["objects"][0]["label"] == "chair"
 
 
-def test_grounding_does_not_merge_ambiguous_overlapping_masks() -> None:
+def test_frame_projection_is_reused_across_grounding_and_geometry(monkeypatch: Any) -> None:
     frame = _measurement_frame()
     full_mask = np.full((frame.image.height, frame.image.width), 255, dtype=np.uint8)
     partial_mask = full_mask.copy()
     partial_mask[:10] = 0
+    projection_calls = 0
+    project_visible_points = frame_primitives.project_visible_points
+
+    def tracked_projection(frame: CalibratedFrame) -> Any:
+        nonlocal projection_calls
+        projection_calls += 1
+        return project_visible_points(frame)
+
+    monkeypatch.setattr(frame_primitives, "project_visible_points", tracked_projection)
     primitives = _frame_primitives(frame, full_mask)
 
-    first = primitives.ground_mask(
+    first = primitives.ground_object(
         Detection2DSeg((0.0, 0.0, 99.0, 99.0), 0, -1, 1.0, "chair", 0.0, frame.image, full_mask)
     )
-    second = primitives.ground_mask(
+    second = primitives.ground_object(
         Detection2DSeg((0.0, 10.0, 99.0, 99.0), 1, -1, 1.0, "chair", 0.0, frame.image, partial_mask)
     )
 
     assert first is not None
     assert second is not None
     assert first.id != second.id
+    assert primitives.horizontal_offset_m(first, second) is not None
+    assert projection_calls == 1
 
 
 def test_local_registry_exposes_core_perception_tools() -> None:
@@ -401,7 +413,7 @@ def test_count_and_camera_range_choices_are_fixed_and_non_overlapping() -> None:
     ]
 
 
-def test_horizontal_relation_uses_camera_frame_support_centroids(monkeypatch: Any) -> None:
+def test_horizontal_offset_uses_camera_frame_support_centroids(monkeypatch: Any) -> None:
     left = GroundedObject("left", "chair", 8, 1.0, "left")
     right = GroundedObject("right", "table", 8, 2.0, "right")
     primitives = _frame_primitives(_measurement_frame())
@@ -411,12 +423,9 @@ def test_horizontal_relation_uses_camera_frame_support_centroids(monkeypatch: An
     }
     monkeypatch.setattr(primitives, "_object_points", lambda item: centers[item.id])
 
-    assert primitives.classify_horizontal_relation(left, right).relation == "left"
-    monkeypatch.setattr(primitives, "_object_points", lambda item: np.zeros((6, 3)))
-    assert (
-        primitives.classify_horizontal_relation(left, right).rejection_reason
-        == "ambiguous_horizontal_relation"
-    )
+    assert primitives.horizontal_offset_m(left, right) == pytest.approx(-0.6)
+    monkeypatch.setattr(primitives, "_object_points", lambda item: None)
+    assert primitives.horizontal_offset_m(left, right) is None
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:

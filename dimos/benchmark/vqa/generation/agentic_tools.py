@@ -86,7 +86,7 @@ class VqaPrimitiveToolRegistry:
         if handle is None:
             return self._record_rejection("segment_object", "", "unknown_detection_id")
         query, index = handle
-        masks = self._primitives.segment_detection(query, index)
+        masks = self._primitives.segment_object(query, index)
         mask_ids = []
         for mask in masks:
             mask_id = self._id("mask")
@@ -106,7 +106,7 @@ class VqaPrimitiveToolRegistry:
         if handle is None:
             return self._record_rejection("ground_mask", "", "unknown_mask_id")
         query, mask = handle
-        object = self._primitives.ground_mask(mask)
+        object = self._primitives.ground_object(mask)
         if object is None:
             return self._record_rejection("ground_mask", query, "insufficient_foreground_support")
         result = OracleToolResult("ground_mask", query, (_grounding_evidence(object),))

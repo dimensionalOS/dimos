@@ -53,7 +53,7 @@ class PrimitiveGroundingConfig:
 
     min_mask_area_px: int = 128
     min_foreground_points: int = 3
-    duplicate_mask_iou_threshold: float = 0.95
+    duplicate_iou_threshold: float = 0.95
     duplicate_range_tolerance_m: float = 0.1
 
 
