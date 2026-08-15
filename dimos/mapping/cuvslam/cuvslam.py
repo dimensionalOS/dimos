@@ -32,6 +32,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -157,7 +158,7 @@ class CuvslamConfig(NativeModuleConfig):
     # drops the `result` symlink in the cwd.
     build_command: str | None = Field(
         default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
-        f"c8a36de8074a2872ecf1656e523abc08afbd2d6b#{sdk_variant()}"
+        f"f64e67879b6ef969360e8341c140ecbcb43f2637#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
@@ -184,16 +185,9 @@ class CuvslamConfig(NativeModuleConfig):
     # closure and relocalization moved downstream, into the fusion filter.
     publish_map_to_odom: bool = True
 
-    # cuVSLAM's Inertial mode: the stereo pair plus one IMU.
+    # cuVSLAM's Inertial mode: the stereo pair plus one IMU. The noise model and frame
+    # come from the imu_info stream, published by the driver the way camera_info is.
     enable_imu: bool = False
-    # IMU noise model, continuous-time densities the way kalibr reports them. All four
-    # at zero with enable_imu on is a misconfiguration the module rejects.
-    imu_gyro_noise_density: float = 0.0
-    imu_gyro_random_walk: float = 0.0
-    imu_accel_noise_density: float = 0.0
-    imu_accel_random_walk: float = 0.0
-    # The rate actually fed; declaring more than arrives never initialises alignment.
-    imu_frequency: float = 0.0
     # Rebase guard: a frame whose translation standard deviation (root of the largest
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
     # path rebased onto the held pose, so the published odometry never carries a teleport
@@ -236,6 +230,7 @@ class CuvslamOdometry(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
+    imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
     tf: IO[TFMessage]
