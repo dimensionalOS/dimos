@@ -14,6 +14,7 @@
 
 """Session mode comes from global config, so a robot can be put behind a router."""
 
+from pydantic import ValidationError
 import pytest
 import zenoh
 
@@ -60,22 +61,18 @@ def test_router_without_a_listen_endpoint_rejected(zenoh_defaults):
         ZenohConfig(mode="router")
 
 
-def test_global_router_mode_still_needs_a_listen_endpoint(zenoh_defaults, monkeypatch):
-    monkeypatch.setattr(global_config, "zenoh_mode", "router")
-    with pytest.raises(ValueError, match="needs an explicit listen endpoint"):
-        ZenohConfig()
-    assert ZenohConfig(listen=["tcp/0.0.0.0:7447"]).mode == "router"
+def test_router_is_not_a_whole_process_mode(monkeypatch):
+    """Every process would bind the same port, and the second one would fail."""
+    monkeypatch.setenv("ZENOH_MODE", "router")
+    with pytest.raises(ValidationError, match="'peer' or 'client'"):
+        GlobalConfig()
 
 
-def test_global_listen_endpoints_satisfy_router_mode(zenoh_defaults, monkeypatch):
-    """--zenoh-mode router --zenoh-listen is a whole-process router."""
-    monkeypatch.setattr(global_config, "zenoh_mode", "router")
-    monkeypatch.setattr(global_config, "zenoh_listen", "tcp/0.0.0.0:17450, tcp/0.0.0.0:17451")
-    assert ZenohConfig().listen == ["tcp/0.0.0.0:17450", "tcp/0.0.0.0:17451"]
-
-
-def test_listen_defaults_to_empty(zenoh_defaults):
+def test_listen_is_never_derived_from_global_config(zenoh_defaults, monkeypatch):
+    """A listen port belongs to one session, so nothing hands it to all of them."""
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/127.0.0.1:17450")
     assert ZenohConfig().listen == []
+    assert not any(name.startswith("zenoh_listen") for name in GlobalConfig.model_fields)
 
 
 def test_rebased_rederives_only_the_fields_the_caller_left_unset(zenoh_defaults, monkeypatch):
