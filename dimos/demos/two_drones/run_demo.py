@@ -301,7 +301,7 @@ def main() -> None:
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
         scene.exec(
-            "window.__demoDirectorCam = {x: 0, y: 62, z: -58, tx: 0, ty: 0, tz: 4};"
+            "window.__demoDirectorCam = {x: 0, y: 56, z: -26, tx: 0, ty: 0, tz: -2};"
             "return 'director camera set';"
         )
 
