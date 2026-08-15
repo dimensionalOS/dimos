@@ -28,8 +28,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.manip_stance import (
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
     POUR_Z,
     RIGHT_PALM_FRAME,
+    TIP_RADIANS,
     WATERING_SPOUT_FRAME,
     PourReachMap,
     palm_pose_for_spout,
@@ -92,8 +94,6 @@ def manipulation() -> MagicMock:
     mock = create_autospec(WateringManipulationSpec, instance=True)
     mock.reset.return_value = SkillResult.ok("reset")
     mock.latch_base_pose.return_value = True
-    mock.plan_to_pose.return_value = True
-    mock.clear_planned_path.return_value = True
     mock.get_error.return_value = ""
     mock.move_to_pose.return_value = SkillResult.ok("moved")
     mock.go_init.return_value = SkillResult.ok("home")
@@ -235,7 +235,6 @@ def test_successful_sequence_preserves_the_verified_sim_order(
         WateringState.APPROACHING,
         WateringState.SETTLING,
         WateringState.LATCHING_BASE,
-        WateringState.VERIFYING_REACH,
         WateringState.MOVING_OVER_TARGET,
         WateringState.TIPPING,
         WateringState.HOLDING,
@@ -243,7 +242,6 @@ def test_successful_sequence_preserves_the_verified_sim_order(
         WateringState.COMPLETED,
     ]
     manipulation.latch_base_pose.assert_called_once()
-    assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
     assert all(
         call.kwargs["pre_lift"] is False for call in manipulation.move_to_pose.call_args_list
@@ -281,7 +279,6 @@ def test_approach_only_reaches_the_stance_without_touching_manipulation(
     ]
     manipulation.reset.assert_not_called()
     manipulation.latch_base_pose.assert_not_called()
-    manipulation.plan_to_pose.assert_not_called()
     manipulation.move_to_pose.assert_not_called()
     manipulation.go_init.assert_not_called()
     base.start.assert_called_once()
@@ -366,7 +363,6 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
         WateringState.WAITING_INPUT,
         WateringState.RESETTING,
         WateringState.LATCHING_BASE,
-        WateringState.VERIFYING_REACH,
         WateringState.MOVING_OVER_TARGET,
         WateringState.TIPPING,
         WateringState.HOLDING,
@@ -374,7 +370,6 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
         WateringState.COMPLETED,
     ]
     manipulation.latch_base_pose.assert_called_once()
-    assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
     manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
     base.start.assert_not_called()
@@ -405,25 +400,20 @@ def test_pour_uses_spout_tcp_and_keeps_the_palm_fixed_while_tipping(
     result = sequence.run_pour(TARGET_ID)
 
     assert result.success
-    upright_plan = manipulation.plan_to_pose.call_args_list[0].args[0]
-    tipped_plan = manipulation.plan_to_pose.call_args_list[1].args[0]
-    assert tuple(upright_plan.position) == pytest.approx(tuple(tipped_plan.position))
-    assert upright_plan.position.z == pytest.approx(POUR_Z + 0.20)
-
     upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
     tipped_move = manipulation.move_to_pose.call_args_list[1].kwargs
     assert (upright_move["x"], upright_move["y"], upright_move["z"]) == pytest.approx(
         (tipped_move["x"], tipped_move["y"], tipped_move["z"])
     )
+    assert upright_move["z"] == pytest.approx(POUR_Z + 0.20)
 
 
-def test_pour_only_uses_live_planning_as_the_final_reach_gate(
+def test_pour_only_relies_on_move_planning_as_the_live_reach_gate(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
 ) -> None:
-    manipulation.plan_to_pose.return_value = False
-    manipulation.get_error.return_value = "no IK"
+    manipulation.move_to_pose.return_value = SkillResult.fail("PLANNING_FAILED", "no IK")
     transitions: list[WateringState] = []
     sequence = _sequence(
         reach_map,
@@ -438,11 +428,10 @@ def test_pour_only_uses_live_planning_as_the_final_reach_gate(
 
     assert not result.success
     assert result.state is WateringState.FAILED
-    assert "after 3 attempts" in result.message
-    assert manipulation.reset.call_count == 4
-    assert manipulation.latch_base_pose.call_count == 3
-    assert manipulation.plan_to_pose.call_count == 6
-    manipulation.move_to_pose.assert_not_called()
+    assert "Failed to move over target: PLANNING_FAILED: no IK" == result.message
+    assert manipulation.reset.call_count == 2
+    manipulation.latch_base_pose.assert_called_once()
+    manipulation.move_to_pose.assert_called_once()
     base.start.assert_not_called()
     assert base.stop.call_count == 2
 
@@ -464,7 +453,6 @@ def test_pour_only_accepts_offline_map_miss_when_live_plans_succeed(
     result = sequence.run_pour(TARGET_ID)
 
     assert result.success
-    assert manipulation.plan_to_pose.call_count == 2
     assert manipulation.move_to_pose.call_count == 2
     base.start.assert_not_called()
 
@@ -487,11 +475,13 @@ def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(
 
     assert result.success
     expected_world_z = -0.27 - 0.74 + 0.90
-    planned_pose = manipulation.plan_to_pose.call_args_list[0].args[0]
-    assert planned_pose.position.z == pytest.approx(expected_world_z)
-    assert manipulation.move_to_pose.call_args_list[0].kwargs["z"] == pytest.approx(
-        expected_world_z
+    upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
+    expected_palm = palm_pose_for_spout(
+        Vector3(1.0, 0.0, expected_world_z),
+        Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, upright_move["yaw"])),
+        DEFAULT_SPOUT_OFFSET_IN_PALM,
     )
+    assert upright_move["z"] == pytest.approx(expected_palm.position.z)
 
 
 def test_cancellation_during_approach_stops_before_latching_or_pouring(
@@ -548,13 +538,11 @@ def test_stale_target_fails_before_the_robot_moves(
     base.stop.assert_called_once()
 
 
-def test_reach_verification_exhausts_bounded_retries(
+def test_full_run_does_not_repeat_probe_plans_before_pouring(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
 ) -> None:
-    manipulation.plan_to_pose.return_value = False
-    manipulation.get_error.return_value = "no IK"
     transitions: list[WateringState] = []
     sequence = _sequence(
         reach_map,
@@ -567,12 +555,8 @@ def test_reach_verification_exhausts_bounded_retries(
 
     result = sequence.run(TARGET_ID)
 
-    assert not result.success
-    assert result.state is WateringState.FAILED
-    assert "after 3 attempts" in result.message
-    assert manipulation.latch_base_pose.call_count == 3
-    assert manipulation.plan_to_pose.call_count == 6
-    assert manipulation.reset.call_count == 4
-    # A failed arm-plan check must not trigger an unverified blind base nudge.
+    assert result.success
+    manipulation.latch_base_pose.assert_called_once()
+    assert manipulation.move_to_pose.call_count == 2
+    assert manipulation.reset.call_count == 1
     base.start.assert_called_once()
-    manipulation.move_to_pose.assert_not_called()

@@ -50,7 +50,7 @@ from dimos.manipulation.mobile.target_observation import (
     TargetObservation,
     copy_pose_stamped,
 )
-from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.models import RobotName
 from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -92,15 +92,6 @@ class WateringManipulationSpec(Spec, Protocol):
         self, pose: PoseStamped | None = None, robot_name: RobotName | None = None
     ) -> bool: ...
 
-    def plan_to_pose(
-        self,
-        pose: Pose,
-        robot_name: RobotName | None = None,
-        group_id: PlanningGroupID | None = None,
-    ) -> bool: ...
-
-    def clear_planned_path(self) -> bool: ...
-
     def get_error(self) -> str: ...
 
     def cancel(self) -> bool: ...
@@ -140,7 +131,6 @@ class WateringState(str, Enum):
     APPROACHING = "approaching"
     SETTLING = "settling"
     LATCHING_BASE = "latching_base"
-    VERIFYING_REACH = "verifying_reach"
     NUDGING = "nudging"
     MOVING_OVER_TARGET = "moving_over_target"
     TIPPING = "tipping"
@@ -202,7 +192,6 @@ class WateringTaskConfig(ModuleConfig):
     base_pose_max_age: float = Field(default=2.0, gt=0.0)
     settle_seconds: float = Field(default=3.0, ge=0.0)
     hold_seconds: float = Field(default=3.0, ge=0.0)
-    verify_attempts: int = Field(default=3, ge=1)
     reach_margin_cells: int = Field(default=3, ge=1)
     nominal_pelvis_height: float = Field(default=G1_NOMINAL_PELVIS_Z, gt=0.0)
     stop_repetitions: int = Field(default=5, ge=1)
@@ -438,7 +427,7 @@ class WateringSequence:
                 raise _WateringFailureError(f"Manipulation reset failed: {reset}")
 
             self._approach(target_id, snapshot)
-            target, yaw, pour_z = self._latch_and_verify(target_id)
+            target, yaw, pour_z = self._latch_for_pour(target_id)
             self._pour(target, yaw, pour_z)
             message = f"Watered target '{target_id}'"
             self._transition(WateringState.COMPLETED, message, 0)
@@ -531,7 +520,7 @@ class WateringSequence:
             if not reset.is_success():
                 raise _WateringFailureError(f"Manipulation reset failed: {reset}")
 
-            target, yaw, pour_z = self._latch_and_verify(target_id)
+            target, yaw, pour_z = self._latch_for_pour(target_id)
             self._pour(target, yaw, pour_z)
             message = f"Poured at target '{target_id}' without moving the base"
             self._transition(WateringState.COMPLETED, message, 0)
@@ -659,82 +648,31 @@ class WateringSequence:
             f"Path follower timed out after {self._config.servo_timeout:.1f}s"
         )
 
-    def _latch_and_verify(self, target_id: str) -> tuple[TargetObservation, float, float]:
-        for attempt in range(1, self._config.verify_attempts + 1):
-            snapshot = self._require_snapshot(target_id)
-            self._transition(
-                WateringState.LATCHING_BASE,
-                "Latching the stopped base pose into the planning world",
-                attempt,
-            )
-            if not self._manipulation.latch_base_pose(snapshot.base_pose, self._config.robot_name):
-                raise _WateringFailureError(f"Base latch failed: {self._manipulation.get_error()}")
+    def _latch_for_pour(self, target_id: str) -> tuple[TargetObservation, float, float]:
+        """Latch the stopped base and express the reach-map pour in LIO world.
 
-            pot = self._pot_xy(snapshot)
-            seen = self._seen_offset(snapshot)
-            _, _, base_yaw = self._base_pose(snapshot)
-            yaw = tool_yaw_for(seen, base_yaw)
-            pour_z = self._pour_world_z(snapshot)
-            self._transition(
-                WateringState.VERIFYING_REACH,
-                f"Planning upright and tipped pour poses at world z={pour_z:.2f} m "
-                f"(attempt {attempt})",
-                attempt,
-            )
-            solved = self._verify_poses(pot, yaw, pour_z)
-            if all(solved.values()):
-                return snapshot.target, yaw, pour_z
+        The approach stance already comes from the TCP-aware reach map. The
+        actual ``move_to_pose`` calls remain the live planning gates; probing
+        both poses here first only repeated the same expensive planner work.
+        """
+        snapshot = self._require_snapshot(target_id)
+        self._transition(
+            WateringState.LATCHING_BASE,
+            "Latching the stopped base pose into the planning world",
+            0,
+        )
+        if not self._manipulation.latch_base_pose(snapshot.base_pose, self._config.robot_name):
+            raise _WateringFailureError(f"Base latch failed: {self._manipulation.get_error()}")
 
-            failed = ", ".join(name for name, ok in solved.items() if not ok)
-            error = self._manipulation.get_error()
-            reset = self._manipulation.reset()
-            if not reset.is_success():
-                raise _WateringFailureError(
-                    f"Reach verification failed ({failed}) and reset failed: {reset}"
-                )
-            if attempt == self._config.verify_attempts:
-                raise _WateringFailureError(
-                    f"Pour poses did not plan after {attempt} attempts ({failed}): {error}"
-                )
-            self._transition(
-                WateringState.VERIFYING_REACH,
-                f"Retrying pose planning without moving the verified stance ({attempt + 1})",
-                attempt,
-            )
-
-        raise AssertionError("verify_attempts is constrained to at least one")
+        seen = self._seen_offset(snapshot)
+        _, _, base_yaw = self._base_pose(snapshot)
+        yaw = tool_yaw_for(seen, base_yaw)
+        return snapshot.target, yaw, self._pour_world_z(snapshot)
 
     def _pour_world_z(self, snapshot: WateringInputSnapshot) -> float:
         """Convert the ground-relative reach-map height into the live LIO world."""
         ground_z = float(snapshot.base_pose.position.z) - self._config.nominal_pelvis_height
         return ground_z + self._reach.pour_z
-
-    def _verify_poses(self, pot: tuple[float, float], yaw: float, pour_z: float) -> dict[str, bool]:
-        spout = Vector3(pot[0], pot[1], pour_z)
-        upright_orientation = Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
-        tipped_orientation = Quaternion.from_euler(Vector3(TIP_RADIANS, 0.0, yaw))
-        tipped_pose = palm_pose_for_spout(
-            spout,
-            tipped_orientation,
-            self._config.spout_offset_in_palm,
-        )
-        # Keep the palm stationary during the pour. The upright spout starts
-        # beside the pot and sweeps onto it as the can rolls, which is both the
-        # physical pouring motion and much easier to plan than translating the
-        # palm 20 cm while simultaneously rotating it 90 degrees.
-        upright_pose = Pose(tipped_pose.position, upright_orientation)
-        poses = {
-            "upright": upright_pose,
-            "tipped": tipped_pose,
-        }
-        solved: dict[str, bool] = {}
-        for name, pose in poses.items():
-            self._check_cancelled()
-            solved[name] = self._manipulation.plan_to_pose(
-                pose, self._config.robot_name, self._config.group_id
-            )
-        self._manipulation.clear_planned_path()
-        return solved
 
     def _pour(self, target: TargetObservation, yaw: float, pour_z: float) -> None:
         pot = (float(target.pose.position.x), float(target.pose.position.y))
@@ -751,7 +689,8 @@ class WateringSequence:
         self._check_cancelled()
         self._transition(
             WateringState.MOVING_OVER_TARGET,
-            f"Moving right tool over target at ({pot[0]:.2f}, {pot[1]:.2f})",
+            f"Planning and moving right tool over target at "
+            f"({pot[0]:.2f}, {pot[1]:.2f}), spout world z={pour_z:.2f} m",
             0,
         )
         over = self._manipulation.move_to_pose(

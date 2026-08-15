@@ -30,7 +30,11 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_water_demo import unitree_g1_water_demo
-from dimos.robot.unitree.g1.manip_stance import RIGHT_PALM_FRAME, WATERING_SPOUT_FRAME
+from dimos.robot.unitree.g1.manip_stance import (
+    DEFAULT_SPOUT_OFFSET_IN_PALM,
+    RIGHT_PALM_FRAME,
+    WATERING_SPOUT_FRAME,
+)
 
 CAMERA = "realsensecamera"
 BRIDGE = "rerunbridgemodule"
@@ -168,8 +172,8 @@ def test_rerun_shows_the_configured_watering_spout_on_the_palm() -> None:
 
     assert marker.parent_link == RIGHT_PALM_FRAME
     assert marker.frame_name == WATERING_SPOUT_FRAME
-    assert marker.translation == (0.0, 0.20, 0.0)
-    assert _kwargs("g1wateringspouttf")["spout_offset_in_palm"] == (0.0, 0.20, 0.0)
+    assert marker.translation == DEFAULT_SPOUT_OFFSET_IN_PALM
+    assert _kwargs("g1wateringspouttf")["spout_offset_in_palm"] == DEFAULT_SPOUT_OFFSET_IN_PALM
 
 
 def test_viewer_teleop_reaches_the_single_hardware_policy() -> None:
@@ -220,7 +224,7 @@ def test_no_nav_stack() -> None:
 def test_pointlio_is_visible_and_separate_hardware_motion_steps_are_enabled() -> None:
     assert callable(_kwargs(BRIDGE)["visual_override"]["world/lidar"])
     watering = _kwargs("wateringtaskmodule")
-    assert watering["spout_offset_in_palm"] == (0.0, 0.20, 0.0)
+    assert watering["spout_offset_in_palm"] == DEFAULT_SPOUT_OFFSET_IN_PALM
     assert watering["motion_enabled"] is False
     assert watering["approach_motion_enabled"] is True
     assert watering["pour_motion_enabled"] is True
