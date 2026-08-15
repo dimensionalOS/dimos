@@ -36,9 +36,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory2.embed import EmbedImages
-from dimos.memory2.tf import StreamTF
-from dimos.memory2.transform import throttle
+from dimos.memory.embed import EmbedImages
+from dimos.memory.tf import StreamTF
+from dimos.memory.transform import throttle
 from dimos.perception.detection.project import sees
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
@@ -50,7 +50,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.memory2.stream import Stream
+    from dimos.memory.stream import Stream
     from dimos.models.embedding.base import Embedding
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter

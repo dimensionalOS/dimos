@@ -31,9 +31,9 @@ from pathlib import Path
 import sys
 from typing import Any, cast
 
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF
-from dimos.memory2.transform import throttle
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
+from dimos.memory.transform import throttle
 from dimos.perception.memory import gates
 from dimos.perception.memory.localize import LocalizeTrace, embed_index, localize
 from dimos.perception.memory.types import Localization
@@ -186,7 +186,7 @@ def main() -> int:
         metavar="query",
         help="one or more object queries, optionally followed by an out.rrd to write",
     )
-    parser.add_argument("--dataset", type=Path, help="memory2 recording database")
+    parser.add_argument("--dataset", type=Path, help="memory recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
     )

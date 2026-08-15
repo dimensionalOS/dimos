@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory2.tf import StreamTF
+from dimos.memory.tf import StreamTF
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.memory import gates
 from dimos.perception.memory.gates import (

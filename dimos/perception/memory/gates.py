@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-frame gates and lookups over a memory2 recording: poses, stillness, frames.
+"""Per-frame gates and lookups over a memory recording: poses, stillness, frames.
 
 Two per-frame gates live here and both are required:
 
@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.protocol.tf.tf import TFLookup

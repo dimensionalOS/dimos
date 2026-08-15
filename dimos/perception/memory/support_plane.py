@@ -34,7 +34,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.protocol.tf.tf import TFLookup
 

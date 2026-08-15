@@ -54,9 +54,9 @@ from pathlib import Path
 import sys
 from typing import Any, cast
 
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF
-from dimos.memory2.transform import throttle
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
+from dimos.memory.transform import throttle
 from dimos.perception.memory import gates
 from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
 from dimos.perception.memory.types import Instance, SupportObservation
@@ -95,7 +95,7 @@ def render(out: str, store: Any, instances: list[Instance], t0: float, t1: float
     import rerun as rr
     import rerun.blueprint as rrb
 
-    from dimos.memory2.vis.color import Color
+    from dimos.memory.vis.color import Color
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
 
@@ -208,7 +208,7 @@ def main() -> int:
     parser.add_argument(
         "out", nargs="?", default=None, help="rerun recording to write; omitted writes none"
     )
-    parser.add_argument("--dataset", type=Path, help="memory2 recording database")
+    parser.add_argument("--dataset", type=Path, help="memory recording database")
     parser.add_argument(
         "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
     )
