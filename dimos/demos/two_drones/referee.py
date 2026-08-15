@@ -137,10 +137,17 @@ class Referee:
                         client.stop()
                     except Exception:
                         pass
-                    fresh = SceneClient(host=client.host, port=client.port)
-                    fresh.start()
-                    self._clients[tag] = fresh
+                    # A reconnect that itself fails must not wedge the caller:
+                    # drop the client so the next tick builds a new one.
+                    self._clients.pop(tag, None)
                     self._fail_counts[tag] = 0
+                    try:
+                        fresh = SceneClient(host=client.host, port=client.port)
+                        fresh.start()
+                    except Exception:
+                        logger.warning(f"referee exec[{tag}] reconnect failed", exc_info=True)
+                        raise
+                    self._clients[tag] = fresh
                     return fresh.exec(code, timeout=timeout)
                 raise
 
@@ -443,14 +450,15 @@ class Referee:
                         g.position.set({tx:.2f}, 0.045, {tz:.2f});
                         g.traverse(o => {{ o.userData.__demoIgnoreLOS = true; }});
                         scene.add(g);
-                        // Older marks fade so recency is visible; cap the total.
-                        for (const old of marks) {{
+                        // Fade only the recent tail (full-list traversal every
+                        // marker is what starves the page's main thread).
+                        for (const old of marks.slice(-40)) {{
                             old.traverse(o => {{
-                                if (o.material) o.material.opacity *= 0.965;
+                                if (o.material) o.material.opacity *= 0.94;
                             }});
                         }}
                         marks.push(g);
-                        if (marks.length > 300) {{
+                        if (marks.length > 140) {{
                             const dead = marks.shift();
                             scene.remove(dead);
                         }}
@@ -689,20 +697,24 @@ class Referee:
         if (!t) return null;
         const out = {{target: [t.position.x, t.position.y, t.position.z],
                       vis: {{}}, dist: {{}}, pos: {{}}}};
-        // Raycast only against occluder MESHES. Testing scene.children
-        // recursively also tests the lidar viz Points cloud, whose cost grows
-        // with the map until every tick blows the exec timeout.
-        const occluders = [];
-        scene.traverse(o => {{
-            if (!o.isMesh || o.visible === false || o === t) return;
-            let p = o, skip = false;
-            while (p) {{
-                if (p.userData && p.userData.__demoIgnoreLOS) {{ skip = true; break; }}
-                if (p === t) {{ skip = true; break; }}
-                p = p.parent;
-            }}
-            if (!skip) occluders.push(o);
-        }});
+        // Raycast only against occluder MESHES, and cache that list: walls do
+        // not move, while scene.traverse cost grows with every trail, ghost and
+        // goal marker until each tick blows the exec timeout.
+        if (!window.__demoOccluders || (window.__demoOccTick = (window.__demoOccTick || 0) + 1) % 40 === 0) {{
+            const occluders = [];
+            scene.traverse(o => {{
+                if (!o.isMesh || o.visible === false || o === t) return;
+                let p = o, skip = false;
+                while (p) {{
+                    if (p.userData && p.userData.__demoIgnoreLOS) {{ skip = true; break; }}
+                    if (p === t) {{ skip = true; break; }}
+                    p = p.parent;
+                }}
+                if (!skip) occluders.push(o);
+            }});
+            window.__demoOccluders = occluders;
+        }}
+        const occluders = window.__demoOccluders;
         const ray = new THREE.Raycaster();
         for (const name of {drones_js}) {{
             const av = agents.get(name);

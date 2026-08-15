@@ -189,6 +189,9 @@ class SceneClient:
         if self.channel:
             url += f"&channel={self.channel}"
         self._ws = websocket.WebSocket()
+        # Bound the handshake: without a timeout a half-open connection blocks
+        # the calling thread forever (the caller has no way to recover).
+        self._ws.settimeout(10.0)
         self._ws.connect(url)  # type: ignore[no-untyped-call]
         self._ws.settimeout(1.0)
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
