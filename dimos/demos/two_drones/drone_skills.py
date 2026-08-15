@@ -493,7 +493,12 @@ class DroneSkillContainer(Module):
         def run() -> None:
             self._sweep_status = f"intercept ({x:.1f}, {y:.1f}): direct"
             result = self._direct_fly(
-                x, y, cancel, arrive_r=self.config.arrive_radius_m, timeout=150.0
+                x,
+                y,
+                cancel,
+                arrive_r=self.config.arrive_radius_m,
+                timeout=240.0,
+                track=True,
             )
             if result == "blocked":
                 od = self._latest_odom
@@ -518,11 +523,31 @@ class DroneSkillContainer(Module):
             f"Re-issue intercept with new coordinates as the target moves."
         )
 
+    def _live_target(self) -> tuple[float, float] | None:
+        """Target coordinates from this drone's OWN sensor, if it sees it."""
+        ev = self._latest_target_event
+        if not ev.startswith("VISIBLE"):
+            return None
+        try:
+            inside = ev[ev.index("(") + 1 : ev.index(")")]
+            x_s, y_s = inside.split(",")
+            return float(x_s), float(y_s)
+        except (ValueError, IndexError):
+            return None
+
     def _direct_fly(
-        self, x: float, y: float, cancel: threading.Event, arrive_r: float, timeout: float
+        self,
+        x: float,
+        y: float,
+        cancel: threading.Event,
+        arrive_r: float,
+        timeout: float,
+        track: bool = False,
     ) -> str:
-        """Straight-line velocity flight to (x, y). Returns arrived | blocked |
-        cancelled | timeout. Zeroes the teleop stream on exit."""
+        """Straight-line velocity flight to (x, y). With ``track``, the goal is
+        continuously refreshed from this drone's own sensor while the target is
+        visible, and the drone holds station on it instead of stopping at a
+        stale point. Returns arrived | blocked | cancelled | timeout."""
         prog_pos = None
         prog_t = time.time()
         t0 = time.time()
@@ -532,11 +557,23 @@ class DroneSkillContainer(Module):
                 if od is None:
                     time.sleep(0.2)
                     continue
+                if track:
+                    live = self._live_target()
+                    if live is not None:
+                        x, y = live
                 px, py = od.position.x, od.position.y
                 dx, dy = x - px, y - py
                 dist = math.hypot(dx, dy)
                 if dist < arrive_r:
-                    return "arrived"
+                    if not track:
+                        return "arrived"
+                    # Chasing a moving target: hold station on it. Reset the
+                    # no-progress watchdog — sitting on the target is success.
+                    self._sweep_status = f"holding on target ({dist:.1f} m)"
+                    prog_t = time.time()
+                    self.tele_cmd_vel.publish(Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)))
+                    time.sleep(0.15)
+                    continue
                 cur = (px, py)
                 if prog_pos is None or math.hypot(cur[0] - prog_pos[0], cur[1] - prog_pos[1]) > 0.4:
                     prog_pos = cur
