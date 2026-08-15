@@ -19,13 +19,13 @@ import platform
 import socket
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, model_validator
 import zenoh
 
-from dimos.core.global_config import ZenohMode, global_config
-from dimos.protocol.service.spec import BaseConfig, Service
+from dimos.core.global_config import TransportBackend, ZenohMode, global_config
+from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
 zenoh.init_log_from_env_or("warn")
@@ -47,6 +47,11 @@ LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 ALL_INTERFACES = "auto"
 
 
+def _locators(value: str) -> list[str]:
+    """Split a comma-separated locator list, dropping blanks."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _default_connect_endpoints() -> list[str]:
     """Dial known robots directly instead of trusting multicast scouting.
 
@@ -55,18 +60,18 @@ def _default_connect_endpoints() -> list[str]:
     zenoh-transported and a robot IP is configured, it becomes an explicit
     endpoint; scouting stays on for everything else. An IP carrying its own
     ``:port`` is used as given.
+
+    ``zenoh_connect`` adds locators that name no robot, such as a router.
     """
     if global_config.transport != "zenoh":
         return []
-    ips = [global_config.robot_ip or "", *(global_config.robot_ips or "").split(",")]
-    out: list[str] = []
-    for ip in (x.strip() for x in ips):
-        if not ip:
-            continue
-        endpoint = f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}"
-        if endpoint not in out:
-            out.append(endpoint)
-    return out
+    ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
+    robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
+    return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+
+
+def _default_listen_endpoints() -> list[str]:
+    return _locators(global_config.zenoh_listen)
 
 
 def _default_scouting() -> bool:
@@ -112,10 +117,12 @@ def endpoint_addresses(endpoint: str) -> set[str]:
     return out
 
 
-class ZenohConfig(BaseConfig):
+class ZenohConfig(SessionConfig):
+    transport: ClassVar[TransportBackend] = "zenoh"
+
     mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
-    listen: list[str] = []
+    listen: list[str] = Field(default_factory=_default_listen_endpoints)
     # Discover peers across the network. Off keeps discovery on loopback.
     scouting: bool = Field(default_factory=_default_scouting)
     # Named interface to scout on, overriding scouting. Empty derives it.
@@ -129,6 +136,19 @@ class ZenohConfig(BaseConfig):
     # Also bounds zenoh's own dial retries at open, which is what lets a
     # client session survive starting moments before its router.
     connect_timeout: float = Field(default_factory=_default_connect_timeout)
+
+    @model_validator(mode="after")
+    def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
+        """Reject a router that would fall back to zenoh's default listen port.
+
+        That default is 7447, which the robot's own bridge listens on.
+        """
+        if self.mode == "router" and not self.listen:
+            raise ValueError(
+                "zenoh router mode needs an explicit listen endpoint, e.g. "
+                f"listen=['tcp/0.0.0.0:{ROBOT_ZENOH_PORT}'] or --zenoh-listen"
+            )
+        return self
 
     @property
     def multicast_interface(self) -> str:
@@ -147,6 +167,22 @@ class ZenohConfig(BaseConfig):
             f"|{self.multicast}|{self.gossip_enabled}"
         )
 
+    def to_wire(self) -> dict[str, Any]:
+        """This session as the JSON object a native module reads on stdin.
+
+        Derived fields are resolved here, so the native side derives nothing.
+        """
+        warn_client_single_link(self)
+        return {
+            "mode": self.mode,
+            "connect": self.connect,
+            "listen": self.listen,
+            "multicast": self.multicast,
+            "gossip": self.gossip_enabled,
+            "interface": self.multicast_interface,
+            "connect_timeout_ms": int(self.connect_timeout * 1000),
+        }
+
 
 def warn_client_single_link(config: ZenohConfig) -> None:
     """Warn when a client config lists several endpoints. Zenoh keeps one link."""
@@ -155,19 +191,6 @@ def warn_client_single_link(config: ZenohConfig) -> None:
             f"Zenoh client mode holds a single link: {sorted(config.connect)} are "
             "dialed as alternatives, traffic flows only through the first that connects"
         )
-
-
-def native_env(config: ZenohConfig) -> dict[str, str]:
-    """DIMOS_ZENOH_* env vars that mirror this config into a native module."""
-    return {
-        "DIMOS_ZENOH_CONNECT": ",".join(config.connect),
-        "DIMOS_ZENOH_LISTEN": ",".join(config.listen),
-        "DIMOS_ZENOH_MODE": config.mode,
-        "DIMOS_ZENOH_MULTICAST": "true" if config.multicast else "false",
-        "DIMOS_ZENOH_GOSSIP": "true" if config.gossip_enabled else "false",
-        "DIMOS_ZENOH_INTERFACE": config.multicast_interface,
-        "DIMOS_ZENOH_CONNECT_TIMEOUT_MS": str(int(config.connect_timeout * 1000)),
-    }
 
 
 class ZenohSessionPool:

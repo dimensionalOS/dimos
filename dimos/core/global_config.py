@@ -30,10 +30,10 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
-# Routers are external zenohd processes. A dimos process never hosts one:
-# every process opens its own session, and a second router-mode session on a
-# host would fail binding zenoh's fixed router listen port.
-ZenohMode: TypeAlias = Literal["peer", "client"]
+# How a zenoh session joins the network. A peer meshes directly with every peer
+# it discovers or dials, a client sends everything through one router, and a
+# router accepts clients and forwards between them.
+ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -60,6 +60,14 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     replay_db: str = "go2_short"
     new_memory: bool = False
+    # How every zenoh session this process opens joins the network.
+    zenoh_mode: ZenohMode = "peer"
+    # Extra locators every session dials, alongside those derived from --robot-ip.
+    # Comma-separated, e.g. tcp/127.0.0.1:7447. Names a router or any non-robot peer.
+    zenoh_connect: str = ""
+    # Locators every session listens on, comma-separated. A router needs one.
+    # Empty keeps zenoh's own defaults, which bind an ephemeral port for a peer.
+    zenoh_listen: str = ""
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:
     # Sibling worker processes still find each other,
@@ -73,8 +81,6 @@ class GlobalConfig(BaseSettings):
     # Whether peers propagate the peers they already know over established links.
     # None follows zenoh_scouting, preserving its isolation contract above.
     zenoh_gossip: bool | None = None
-    # Session mode. client routes through a single router instead of meshing.
-    zenoh_mode: ZenohMode = "peer"
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = 1.0
