@@ -32,15 +32,14 @@ zenoh.init_log_from_env_or("warn")
 
 logger = setup_logger()
 
-# Robot-side bridges (e.g. go2web) listen here so a remote dimos can dial in
-# when multicast discovery fails. Zenoh's own default port.
+# Zenoh's own default port, which robot-side bridges listen on.
 ROBOT_ZENOH_PORT = 7447
 
 # Poll interval while waiting for connect endpoints to link.
 _CONNECT_POLL_INTERVAL = 0.05
 
-# Interface scouting falls back to when network discovery is off. Zenoh takes an
-# interface name, and Darwin spells loopback differently.
+# Interface scouting falls back to when network discovery is off.
+# Darwin spells loopback differently.
 LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
 
 # Zenoh's own name for "every multicast-capable interface".
@@ -55,23 +54,14 @@ def _locators(value: str) -> list[str]:
 def _default_connect_endpoints() -> list[str]:
     """Dial known robots directly instead of trusting multicast scouting.
 
-    Many APs filter multicast between WiFi clients, so a robot that is
-    perfectly reachable over TCP never answers a scout. When the session is
-    zenoh-transported and a robot IP is configured, it becomes an explicit
-    endpoint; scouting stays on for everything else. An IP carrying its own
-    ``:port`` is used as given.
-
-    ``zenoh_connect`` adds locators that name no robot, such as a router.
+    Many APs filter multicast between WiFi clients, so a robot reachable over
+    TCP never answers a scout. An IP carrying its own port is used as given.
     """
     if global_config.transport != "zenoh":
         return []
     ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
     robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
     return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
-
-
-def _default_listen_endpoints() -> list[str]:
-    return _locators(global_config.zenoh_listen)
 
 
 def _default_scouting() -> bool:
@@ -99,10 +89,9 @@ def _default_connect_timeout() -> float:
 
 
 def endpoint_addresses(endpoint: str) -> set[str]:
-    """Resolve a locator to the ``host:port`` forms a live link may report.
+    """Resolve a locator to the host:port forms a live link may report.
 
-    ``tcp/go2:7447`` is dialled by name but the established link reports the
-    resolved address, so the name alone never matches.
+    A locator dialed by name never matches the address the link reports.
     """
     _, _, address = endpoint.rpartition("/")
     host, _, port = address.rpartition(":")
@@ -122,7 +111,8 @@ class ZenohConfig(SessionConfig):
 
     mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
-    listen: list[str] = Field(default_factory=_default_listen_endpoints)
+    # Pinned per session, never global. Only one process can hold a listen port.
+    listen: list[str] = []
     # Discover peers across the network. Off keeps discovery on loopback.
     scouting: bool = Field(default_factory=_default_scouting)
     # Named interface to scout on, overriding scouting. Empty derives it.
@@ -132,21 +122,17 @@ class ZenohConfig(SessionConfig):
     # Learn peers from the peers already linked, not only from the dialed ones.
     # None follows scouting.
     gossip: bool | None = Field(default_factory=_default_gossip)
-    # Seconds to block in start() waiting for `connect` endpoints to link.
-    # Also bounds zenoh's own dial retries at open, which is what lets a
-    # client session survive starting moments before its router.
+    # Seconds to block in start() waiting for the connect endpoints to link.
+    # Also bounds zenoh's dial retries at open. 0 skips both.
     connect_timeout: float = Field(default_factory=_default_connect_timeout)
 
     @model_validator(mode="after")
     def _router_needs_a_listen_endpoint(self) -> ZenohConfig:
-        """Reject a router that would fall back to zenoh's default listen port.
-
-        That default is 7447, which the robot's own bridge listens on.
-        """
+        """Reject a router that would fall back to 7447, the robot bridge's port."""
         if self.mode == "router" and not self.listen:
             raise ValueError(
                 "zenoh router mode needs an explicit listen endpoint, e.g. "
-                f"listen=['tcp/0.0.0.0:{ROBOT_ZENOH_PORT}'] or --zenoh-listen"
+                f"listen=['tcp/127.0.0.1:{ROBOT_ZENOH_PORT}']"
             )
         return self
 
@@ -161,10 +147,11 @@ class ZenohConfig(SessionConfig):
 
     @property
     def session_key(self) -> str:
+        """Identity of the session this config opens. Every setting zenoh sees."""
         return (
             f"{self.mode}|{json.dumps(sorted(self.connect))}"
             f"|{json.dumps(sorted(self.listen))}|{self.multicast_interface}"
-            f"|{self.multicast}|{self.gossip_enabled}"
+            f"|{self.multicast}|{self.gossip_enabled}|{self.connect_timeout}"
         )
 
     def to_wire(self) -> dict[str, Any]:
@@ -210,9 +197,14 @@ class ZenohSessionPool:
                     zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
                 if config.listen:
                     zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
-                zconfig.insert_json5("connect/timeout_ms", str(int(config.connect_timeout * 1000)))
-                # Loopback multicast by default keeps sibling worker processes
-                # discovering each other.
+                # Zenoh reads a zero timeout as dial once and never retry.
+                # Leaving the key unset keeps its own retry policy.
+                if config.connect_timeout > 0:
+                    zconfig.insert_json5(
+                        "connect/timeout_ms", str(int(config.connect_timeout * 1000))
+                    )
+                # Loopback multicast keeps sibling worker processes discovering
+                # each other.
                 zconfig.insert_json5("scouting/multicast/enabled", json.dumps(config.multicast))
                 zconfig.insert_json5(
                     "scouting/multicast/interface", json.dumps(config.multicast_interface)
@@ -272,28 +264,25 @@ class ZenohService(Service):
     def _await_connect(self, session: zenoh.Session) -> None:
         """Block until the configured connect endpoints have established links.
 
-        Opening a zenoh session returns before its endpoints are dialled, so
-        without this a blueprint starts publishing into a session that has
-        nowhere to send yet and the first messages are simply lost. LCM blocks
-        in start() for the same reason.
-
-        Unreachable endpoints are a warning, not an error: one robot being down
-        should not stop the rest of the graph from coming up. Client mode is
-        the exception, since zenoh refuses to open a session without a router.
+        Opening a session returns before its endpoints are dialed, so without
+        this the first published messages have nowhere to go. An endpoint that
+        never links is a warning, so one robot being down does not stop the
+        graph from coming up.
         """
         pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
         if not pending or self.config.connect_timeout <= 0:
             return
-        # A client session holds exactly one link. Zenoh dials the endpoints
-        # as alternatives and keeps the first that connects.
+        # A client session holds one link. Zenoh dials the endpoints as
+        # alternatives and keeps the first that connects.
         needed = 1 if self.config.mode == "client" else len(pending)
+        total = len(pending)
         deadline = time.monotonic() + self.config.connect_timeout
         while True:
             linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
             for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
                 logger.debug(f"Zenoh linked {endpoint}")
                 del pending[endpoint]
-            if len(self.config.connect) - len(pending) >= needed:
+            if total - len(pending) >= needed:
                 return
             if time.monotonic() >= deadline:
                 logger.warning(

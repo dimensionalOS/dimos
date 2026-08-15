@@ -122,6 +122,13 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
     assert elapsed < 1.0
 
 
+def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults):
+    """One endpoint listed twice is still one link to wait for."""
+    duplicate = "tcp/192.0.2.199:7447"
+    elapsed = _await(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
+    assert elapsed >= 0.3
+
+
 def test_await_gives_up_after_timeout(zenoh_defaults):
     elapsed = _await(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3)
     assert 0.3 <= elapsed < 3.0
