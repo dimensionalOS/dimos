@@ -1,0 +1,1 @@
+"""Python-native module example."""
