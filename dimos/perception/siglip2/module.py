@@ -36,15 +36,17 @@ if TYPE_CHECKING:
 
 
 class SigLIP2ModuleConfig(ModuleConfig):
-    model_name: str = "google/siglip2-base-patch16-256"
+    #: so400m at a 144-token budget beat base-256, so400m-384 and naflex@64 on
+    #: fridge/human/flag localization while costing about the same as base.
+    model_name: str = "google/siglip2-so400m-patch16-naflex"
     normalize: bool = True
     #: Embed at most this many frames per second (sharpest frame per window).
     max_freq: float = 2.0
     #: Model device; None auto-selects cuda when available.
     device: str | None = None
-    #: NaFlex token budget per image (e.g. 64 -> ~6x10 grid on a wide frame);
+    #: NaFlex token budget per image (144 -> 9x16 grid on a wide frame);
     #: None keeps the checkpoint default. Ignored by fixed-resolution models.
-    max_num_patches: int | None = None
+    max_num_patches: int | None = 144
 
 
 class SigLIP2Module(Module):

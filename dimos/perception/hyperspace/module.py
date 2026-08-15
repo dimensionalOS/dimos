@@ -92,7 +92,7 @@ class HyperspaceModuleConfig(ModuleConfig):
     #: several seconds, so keep well more than the default 10 s.
     tf_buffer_s: float = 120.0
     #: Text tower for queries; must match the SigLIP 2 module's model.
-    model_name: str = "google/siglip2-base-patch16-256"
+    model_name: str = "google/siglip2-so400m-patch16-naflex"
     device: str | None = None
     nearby_radius_m: float = 3.0
     nearby_bin_deg: float = 5.0
