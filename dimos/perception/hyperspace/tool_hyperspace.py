@@ -94,7 +94,9 @@ def main(argv: list[str] | None = None) -> None:
     blueprint = autoconnect(
         D455ReplayModule.blueprint(db_path=db_path, speed=args.speed),
         SigLIP2Module.blueprint(max_freq=args.max_freq, **vision_kwargs),
-        HyperspaceModule.blueprint(**model_kwargs),
+        # Text tower on CPU: a second full-model copy on the GPU next to the
+        # vision worker OOMs 8 GB cards with the bigger checkpoints.
+        HyperspaceModule.blueprint(device="cpu", **model_kwargs),
     ).transports(heavy_stream_transports())
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
