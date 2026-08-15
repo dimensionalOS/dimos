@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import cached_property
 import math
-from typing import Any, overload
+from typing import Any, cast, overload
 
 from PIL import Image as PILImage
 import torch
@@ -38,6 +38,10 @@ class SigLIP2ModelConfig(HuggingFaceEmbeddingModelConfig):
     dtype: torch.dtype = torch.float32
     #: SigLIP text towers are trained on fixed-length padded input (64 tokens).
     text_max_length: int = 64
+    #: Run each patch token through the vision attention-pooling head so patch
+    #: embeddings live in the text-aligned space. Raw vision-tower tokens are
+    #: NOT aligned with text embeddings — cosine against them is noise.
+    pooled_patches: bool = True
 
 
 class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
@@ -106,6 +110,8 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
             vision_outputs = self._model.vision_model(**inputs)
             hidden = vision_outputs.last_hidden_state
 
+            if self.config.pooled_patches:
+                hidden = self._pool_patch_tokens(hidden)
             if self.config.normalize:
                 hidden = functional.normalize(hidden, dim=-1)
 
@@ -134,6 +140,24 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
             )
 
         return results[0] if len(images) == 1 else results
+
+    def _pool_patch_tokens(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Map (B, L, D) vision tokens into the text-aligned pooled space.
+
+        Applies the model's attention-pooling head to every token as its own
+        length-one sequence (attention over one token reduces to its value
+        projection), mirroring the head's probe -> attention -> residual MLP
+        computation. This is the MaskCLIP trick: it preserves per-patch
+        locality while landing in the space text embeddings are trained
+        against.
+        """
+        head = self._model.vision_model.head
+        batch, length, dim = hidden.shape
+        tokens = hidden.reshape(batch * length, 1, dim)
+        probe = head.probe.repeat(tokens.shape[0], 1, 1)
+        attn = head.attention(probe, tokens, tokens)[0]
+        pooled = attn + head.mlp(head.layernorm(attn))
+        return cast("torch.Tensor", pooled[:, 0].reshape(batch, length, dim))
 
     @overload
     def embed_text(self, text: str, /) -> Embedding: ...
