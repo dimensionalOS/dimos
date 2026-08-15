@@ -15,9 +15,11 @@
 """Query memory for objects, localize them in 3D via depth, render in rerun.
 
 Run: uv run python -m dimos.perception.memory.tool_localize [query ...] [out.rrd]
-         [--from <s>] [--duration <s>]
+         [--from <s>] [--duration <s>] [--multi]
 
-Queries share one model load and one .rrd. Exit code 0 with a printed
+Queries share one model load and one .rrd; with --multi they go to
+localize() as one list, sharing a single detection pass per frame.
+Exit code 0 with a printed
 position per verified hit; exit code 1 when no query is verified, with
 "no verified detection of ..." per miss - the honest answer that the object
 is not there. An ambiguous hit (identical twins in view) is printed with its
@@ -34,6 +36,7 @@ from dimos.memory2.tf import StreamTF
 from dimos.memory2.transform import throttle
 from dimos.perception.memory import gates
 from dimos.perception.memory.localize import LocalizeTrace, embed_index, localize
+from dimos.perception.memory.types import Localization
 from dimos.utils.data import get_data
 
 REFUSAL_MARGIN = 0.15
@@ -148,6 +151,33 @@ def render(
             )
 
 
+def report(query: str, hit: Localization | None, lo: float) -> bool:
+    """Print one query's outcome; True when it counts as a hit."""
+    if hit is None:
+        print(f"no verified detection of {query!r}")
+        return False
+    offset = hit.pose_timestamp - lo
+    if hit.position_world_xyz is None:
+        print(
+            f"hit {query!r} without pose: reason={hit.reason} "
+            f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
+        )
+        return True
+    x, y, z = hit.position_world_xyz
+    cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
+    print(
+        f"hit {query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
+        f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
+        f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
+    )
+    if hit.ambiguity_margin < REFUSAL_MARGIN:
+        print(
+            f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
+            f"{REFUSAL_MARGIN:.2f} - multiple coexisting matches, this pick is flagged"
+        )
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -165,6 +195,11 @@ def main() -> int:
         "--allow-no-pose",
         action="store_true",
         help="return an RGB-only hit with a null position instead of refusing",
+    )
+    parser.add_argument(
+        "--multi",
+        action="store_true",
+        help="pass all queries to localize() as one list (one shared detection pass per frame)",
     )
     args = parser.parse_args()
 
@@ -193,45 +228,38 @@ def main() -> int:
 
     traces: list[tuple[str, LocalizeTrace]] = []
     hits = 0
-    for query in queries:
-        trace = LocalizeTrace()
-        hit = localize(
+    if args.multi:
+        qtraces = [LocalizeTrace() for _ in queries]
+        results = localize(
             store,
-            query,
+            queries,
             index=index,
             siglip=siglip,
             detector=detector,
             segmenter=segmenter,
             require_pose=not args.allow_no_pose,
-            trace=trace,
+            trace=qtraces,
         )
-
-        if hit is None:
-            print(f"no verified detection of {query!r}")
-            continue
-        hits += 1
-        traces.append((query, trace))
-
-        offset = hit.pose_timestamp - lo
-        if hit.position_world_xyz is None:
-            print(
-                f"hit {query!r} without pose: reason={hit.reason} "
-                f"score={hit.semantic_score:.2f} ts_offset={offset:.1f}s"
+        for query, qtrace, hit in zip(queries, qtraces, results, strict=True):
+            if report(query, hit, lo):
+                hits += 1
+                traces.append((query, qtrace))
+    else:
+        for query in queries:
+            trace = LocalizeTrace()
+            hit = localize(
+                store,
+                query,
+                index=index,
+                siglip=siglip,
+                detector=detector,
+                segmenter=segmenter,
+                require_pose=not args.allow_no_pose,
+                trace=trace,
             )
-            continue
-
-        x, y, z = hit.position_world_xyz
-        cloud_points = len(hit.point_cloud) if hit.point_cloud is not None else 0
-        print(
-            f"hit {query!r}: position=({x:.3f}, {y:.3f}, {z:.3f}) frame={hit.frame_id} "
-            f"ts_offset={offset:.1f}s points={cloud_points} views={hit.n_views} "
-            f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
-        )
-        if hit.ambiguity_margin < REFUSAL_MARGIN:
-            print(
-                f"ambiguity: margin {hit.ambiguity_margin:.2f} below refusal threshold "
-                f"{REFUSAL_MARGIN:.2f} - multiple coexisting matches, this pick is flagged"
-            )
+            if report(query, hit, lo):
+                hits += 1
+                traces.append((query, trace))
 
     siglip.stop()
     detector.stop()

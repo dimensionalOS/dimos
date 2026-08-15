@@ -160,31 +160,35 @@ def _axes_observed(
 
 
 class _DetectionCache:
-    """One OmDet + EdgeTAM pass per unique frame, shared across clusters."""
+    """One OmDet + EdgeTAM pass per unique frame, shared across queries and clusters."""
 
-    def __init__(self, detector: Any, segmenter: Any, query: str, floor: float) -> None:
+    def __init__(self, detector: Any, segmenter: Any, queries: list[str], floor: float) -> None:
         self.detector = detector
         self.segmenter = segmenter
-        self.query = query
+        self.queries = queries
         self.floor = floor
         self._cache: dict[float, ImageDetections2D] = {}
 
-    def detect(self, image: Any) -> ImageDetections2D:
+    def detect(self, image: Any, query: str) -> ImageDetections2D:
         key = image.ts
-        hit = self._cache.get(key)
-        if hit is not None:
-            return hit
-        detections: ImageDetections2D = self.detector.query_detections(
-            image, [self.query], threshold=self.floor
-        )
-        detections = ImageDetections2D(
-            image,
-            sorted(detections.detections, key=lambda d: -d.confidence)[:BOXES_PER_FRAME],
-        )
-        if len(detections):
-            detections = self.segmenter.segment(detections)
-        self._cache[key] = detections
-        return detections
+        cached = self._cache.get(key)
+        if cached is None:
+            detections: ImageDetections2D = self.detector.query_detections(
+                image, self.queries, threshold=self.floor
+            )
+            ranked = sorted(detections.detections, key=lambda d: -d.confidence)
+            cached = ImageDetections2D(
+                image,
+                [
+                    det
+                    for label in self.queries
+                    for det in [d for d in ranked if d.name == label][:BOXES_PER_FRAME]
+                ],
+            )
+            if len(cached):
+                cached = self.segmenter.segment(cached)
+            self._cache[key] = cached
+        return cached.filter(lambda d: d.name == query)
 
 
 def _lift(
@@ -322,7 +326,7 @@ def _retrieve(
 
 def localize(
     store: Any,
-    query: str,
+    query: str | list[str],
     *,
     index: Stream[Any, Any],
     siglip: SigLIPModel,
@@ -334,8 +338,8 @@ def localize(
     world_frame: str = WORLD_FRAME,
     optical_frame: str = OPTICAL_FRAME,
     tf_tolerance: float = TF_TOLERANCE,
-    trace: LocalizeTrace | None = None,
-) -> Localization | None:
+    trace: LocalizeTrace | list[LocalizeTrace] | None = None,
+) -> Localization | list[Localization | None] | None:
     """Latest unambiguous 3D localization of *query*, or ``None``.
 
     ``None`` is a first-class answer: nothing reached the accept score, no
@@ -343,6 +347,10 @@ def localize(
     no valid depth and ``require_pose`` holds. An ambiguity between
     coexisting candidates is returned with ``ambiguity_margin`` below
     ``refusal_margin`` - a flagged hit, never a silent guess.
+
+    A list *query* runs every label through one shared detection cache -
+    OmDet takes the whole list per frame - and returns one result per label,
+    in input order; ``trace`` then takes a list of the same length.
 
     The index and the three models belong to the caller: nothing here is
     loaded or stopped, so one process can call this repeatedly on warm
@@ -355,6 +363,50 @@ def localize(
         raise ValueError("recording has no tf stream")
     camera_info = store.streams.camera_info.first().data
 
+    queries = [query] if isinstance(query, str) else query
+    traces: list[LocalizeTrace | None] = (
+        list(trace) if isinstance(trace, list) else [trace] * len(queries)
+    )
+    cache = _DetectionCache(detector, segmenter, queries, policy.candidate_floor)
+    results = [
+        _localize_one(
+            store,
+            q,
+            index=index,
+            siglip=siglip,
+            cache=cache,
+            tf=tf,
+            camera_info=camera_info,
+            require_pose=require_pose,
+            policy=policy,
+            cloud_mode=cloud_mode,
+            world_frame=world_frame,
+            optical_frame=optical_frame,
+            tf_tolerance=tf_tolerance,
+            trace=t,
+        )
+        for q, t in zip(queries, traces, strict=True)
+    ]
+    return results[0] if isinstance(query, str) else results
+
+
+def _localize_one(
+    store: Any,
+    query: str,
+    *,
+    index: Stream[Any, Any],
+    siglip: SigLIPModel,
+    cache: _DetectionCache,
+    tf: TFLookup,
+    camera_info: CameraInfo,
+    require_pose: bool,
+    policy: LocalizePolicy,
+    cloud_mode: str,
+    world_frame: str,
+    optical_frame: str,
+    tf_tolerance: float,
+    trace: LocalizeTrace | None,
+) -> Localization | None:
     # Pass 1 - SigLIP: rank the indexed frames by the query.
     query_embedding = siglip.embed_text(query)
     frames = _retrieve(index, tf, query_embedding, optical_frame, world_frame, tf_tolerance)
@@ -369,8 +421,6 @@ def localize(
     )
 
     # Pass 2 - OmDet + EdgeTAM: detect, segment, lift, verify.
-    cache = _DetectionCache(detector, segmenter, query, policy.candidate_floor)
-
     clusters: list[_Cluster] = []
     ungrounded_best: tuple[float, float] | None = None  # (score, ts)
     processed: set[float] = set()
@@ -380,7 +430,7 @@ def localize(
         if frame_obs.ts in processed:
             return
         processed.add(frame_obs.ts)
-        detections = cache.detect(frame_obs.data)
+        detections = cache.detect(frame_obs.data, query)
         if not len(detections):
             return
         if trace is not None and not is_verify:
