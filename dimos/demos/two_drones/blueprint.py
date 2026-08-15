@@ -38,9 +38,6 @@ from dimos.demos.two_drones.drone_skills import DroneSkillContainer
 from dimos.demos.two_drones.radio import RadioModule
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
-    WavefrontFrontierExplorer,
-)
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -95,16 +92,12 @@ radio prompts with actions (tools), not just words."""
 dimsim_drone = (
     autoconnect(
         GO2Connection.blueprint(camera=False),
-        VoxelGridMapper.blueprint(emit_every=5),
+        # Walls don't move: mapping only has to be fresh enough to feed the
+        # away-from-walls search prior. A 42x68 m arena makes every voxel/
+        # costmap pass expensive, and starving the host stalls the sim itself.
+        VoxelGridMapper.blueprint(emit_every=20),
         CostMapper.blueprint(),
         ReplanningAStarPlanner.blueprint(),
-        # Tuned for the 42x68 m arena: allow far frontier goals so exploration
-        # strides across the map instead of orbiting the spawn corner.
-        WavefrontFrontierExplorer.blueprint(
-            goal_timeout=30.0,
-            max_explored_distance=28.0,
-            lookahead_distance=10.0,
-        ),
         MovementManager.blueprint(),
         McpServer.blueprint(),
         McpClient.blueprint(
@@ -125,5 +118,5 @@ dimsim_drone = (
         ),
     )
     .namespace(DRONE_NAME)
-    .global_config(n_workers=11, mcp_port=DRONE_MCP_PORT, robot_model="unitree_go2")
+    .global_config(n_workers=9, mcp_port=DRONE_MCP_PORT, robot_model="unitree_go2")
 )

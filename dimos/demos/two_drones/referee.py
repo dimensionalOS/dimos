@@ -64,7 +64,7 @@ class SensorConfig:
     fov_deg: float = 140.0
     # Mission is accomplished when a drone gets this close to the target.
     reach_radius_m: float = 1.0
-    tick_s: float = 0.5
+    tick_s: float = 0.7
     # consecutive ticks needed to switch visible/lost (hysteresis)
     debounce: int = 2
     # seconds between "[SENSOR] still visible at ..." context refreshers

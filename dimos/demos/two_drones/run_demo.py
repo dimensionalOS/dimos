@@ -141,7 +141,7 @@ def start_sim(log_dir: Path) -> subprocess.Popen:  # type: ignore[type-arg]
         "--scene", "empty", "--port", str(SIM_PORT), "--no-depth",
         # Camera images are unused by this demo (perception is the LOS
         # referee); publishing them costs a render+readback+JPEG per tick.
-        "--image-rate", "3600000", "--lidar-rate", "300",
+        "--image-rate", "3600000", "--lidar-rate", "600",
         "--robots", ",".join(DRONES),
     ]
     logf = open(log_dir / "sim.log", "w")
