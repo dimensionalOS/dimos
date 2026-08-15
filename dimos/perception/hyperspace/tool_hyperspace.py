@@ -69,6 +69,28 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="NaFlex token budget per image (e.g. 144 -> 9x16 grid)",
     )
+    parser.add_argument(
+        "--depth-stride",
+        type=int,
+        default=None,
+        help="Take every Nth depth pixel when projecting patches (lower = denser)",
+    )
+    parser.add_argument(
+        "--voxel-size",
+        type=float,
+        default=None,
+        help="Voxel edge in meters. Sample-store RAM scales with voxel count:"
+        " going finer usually needs a lower --max-samples.",
+    )
+    parser.add_argument(
+        "--max-samples", type=int, default=None, help="Frame samples kept per voxel"
+    )
+    parser.add_argument(
+        "--lidar-dilation",
+        type=int,
+        default=None,
+        help="Clean-map match slack in voxels (finer voxels want 2+)",
+    )
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out).expanduser()
@@ -96,7 +118,14 @@ def main(argv: list[str] | None = None) -> None:
         SigLIP2Module.blueprint(max_freq=args.max_freq, **vision_kwargs),
         # Text tower on CPU: a second full-model copy on the GPU next to the
         # vision worker OOMs 8 GB cards with the bigger checkpoints.
-        HyperspaceModule.blueprint(device="cpu", **model_kwargs),
+        HyperspaceModule.blueprint(
+            device="cpu",
+            **model_kwargs,
+            **({"depth_stride": args.depth_stride} if args.depth_stride else {}),
+            **({"voxel_size_m": args.voxel_size} if args.voxel_size else {}),
+            **({"max_samples_per_voxel": args.max_samples} if args.max_samples else {}),
+            **({"lidar_clean_dilation": args.lidar_dilation} if args.lidar_dilation else {}),
+        ),
     ).transports(heavy_stream_transports())
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
