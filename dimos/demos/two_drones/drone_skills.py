@@ -134,6 +134,11 @@ class DroneSkillsConfig(ModuleConfig):
     search_step_m: float = 11.0
     # Consider the target reached within this distance (mission: < 1 m).
     arrive_radius_m: float = 0.9
+    # Standing order: if the agent has not commanded any search this many
+    # seconds after boot, the firmware starts the coordinated search itself.
+    # A drone launched on a search mission should not sit on the pad while its
+    # LLM composes; the agent still owns negotiation, reporting and re-tasking.
+    auto_search_after_s: float = 30.0
 
 
 class DroneSkillContainer(Module):
@@ -179,6 +184,7 @@ class DroneSkillContainer(Module):
         self._stopping = threading.Event()
         self._supervisor: threading.Thread | None = None
         self._search_armed = False  # set once the agent starts searching
+        self._booted_at = time.time()
         # Coordinated-search memory (all built from LOCAL knowledge + radio):
         self._visited: list[tuple[float, float]] = []  # own covered points
         self._visited_at = 0.0
@@ -205,6 +211,7 @@ class DroneSkillContainer(Module):
             self.register_disposable(
                 Disposable(self.global_costmap.subscribe(self._on_costmap))
             )
+        self._booted_at = time.time()
         self._supervisor = threading.Thread(target=self._supervisor_loop, daemon=True)
         self._supervisor.start()
 
@@ -217,10 +224,24 @@ class DroneSkillContainer(Module):
         super().stop()
 
     def _supervisor_loop(self) -> None:
-        """Never idle: once search has been commanded, resume it whenever a
-        movement task ends (pursuit finished, target lost, leg timed out)."""
+        """Never idle: start the search on the standing order if the agent is
+        slow, and resume it whenever a movement task ends (pursuit finished,
+        target lost, leg timed out)."""
         while not self._stopping.wait(4.0):
-            if not self.config.auto_pursuit or not self._search_armed:
+            if not self.config.auto_pursuit:
+                continue
+            if (
+                not self._search_armed
+                and self._latest_odom is not None
+                and time.time() - self._booted_at > self.config.auto_search_after_s
+            ):
+                logger.info("standing order: starting coordinated search")
+                try:
+                    self.begin_coordinated_search()
+                except Exception:
+                    logger.warning("standing-order search failed", exc_info=True)
+                continue
+            if not self._search_armed:
                 continue
             thread = self._sweep_thread
             if thread is not None and thread.is_alive():
