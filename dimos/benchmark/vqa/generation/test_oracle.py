@@ -27,7 +27,6 @@ from dimos.benchmark.vqa.contracts import (
     BooleanAnswerContract,
     CalibratedFrame,
     ChoiceAnswerContract,
-    GroundedObject,
     OracleEvidence,
     OracleToolResult,
     PrimitiveGroundingConfig,
@@ -127,7 +126,11 @@ class _MaskDetector:
 
 
 class _IdentitySegmenter:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def segment(self, detections: Any) -> Any:
+        self.calls += 1
         return detections
 
 
@@ -330,6 +333,34 @@ def test_empty_segmentation_is_an_explicit_rejection() -> None:
     assert payload["rejection_reason"] == "no_segmentation_mask"
 
 
+def test_perception_is_reused_across_agentic_registries(monkeypatch: Any) -> None:
+    frame = _measurement_frame()
+    segmenter = _IdentitySegmenter()
+    grounding_calls = 0
+    ground_segmented_object = frame_primitives.ground_segmented_object
+
+    def tracked_grounding(*args: Any, **kwargs: Any) -> Any:
+        nonlocal grounding_calls
+        grounding_calls += 1
+        return ground_segmented_object(*args, **kwargs)
+
+    monkeypatch.setattr(frame_primitives, "ground_segmented_object", tracked_grounding)
+    primitives = FramePerceptionPrimitives(
+        frame,
+        _MaskDetector(np.full((100, 100), 255, dtype=np.uint8)),
+        segmenter,
+        config=PrimitiveGroundingConfig(min_mask_area_px=1),
+    )
+
+    for registry in (VqaPrimitiveToolRegistry(primitives), VqaPrimitiveToolRegistry(primitives)):
+        detection = json.loads(registry.detect_objects("chair"))
+        masks = json.loads(registry.segment_object(detection["detections"][0]["detection_id"]))
+        registry.ground_mask(masks["mask_ids"][0])
+
+    assert segmenter.calls == 1
+    assert grounding_calls == 1
+
+
 def test_grounding_reuses_canonical_object_across_queries_and_registries() -> None:
     primitives = _frame_primitives(_measurement_frame())
     chair_registry = VqaPrimitiveToolRegistry(primitives)
@@ -352,7 +383,7 @@ def test_grounding_reuses_canonical_object_across_queries_and_registries() -> No
     assert seat["objects"][0]["label"] == "chair"
 
 
-def test_frame_projection_is_reused_across_grounding_and_geometry(monkeypatch: Any) -> None:
+def test_frame_projection_is_reused_across_grounded_objects(monkeypatch: Any) -> None:
     frame = _measurement_frame()
     full_mask = np.full((frame.image.height, frame.image.width), 255, dtype=np.uint8)
     partial_mask = full_mask.copy()
@@ -378,7 +409,8 @@ def test_frame_projection_is_reused_across_grounding_and_geometry(monkeypatch: A
     assert first is not None
     assert second is not None
     assert first.id != second.id
-    assert primitives.horizontal_offset_m(first, second) is not None
+    assert first.camera_x_m is not None
+    assert second.camera_x_m is not None
     assert projection_calls == 1
 
 
@@ -411,21 +443,6 @@ def test_count_and_camera_range_choices_are_fixed_and_non_overlapping() -> None:
         "2 to under 4 m",
         "4 m or more",
     ]
-
-
-def test_horizontal_offset_uses_camera_frame_support_centroids(monkeypatch: Any) -> None:
-    left = GroundedObject("left", "chair", 8, 1.0, "left")
-    right = GroundedObject("right", "table", 8, 2.0, "right")
-    primitives = _frame_primitives(_measurement_frame())
-    centers = {
-        "left": np.tile((-0.3, 0.0, 1.0), (6, 1)),
-        "right": np.tile((0.3, 0.0, 1.0), (6, 1)),
-    }
-    monkeypatch.setattr(primitives, "_object_points", lambda item: centers[item.id])
-
-    assert primitives.horizontal_offset_m(left, right) == pytest.approx(-0.6)
-    monkeypatch.setattr(primitives, "_object_points", lambda item: None)
-    assert primitives.horizontal_offset_m(left, right) is None
 
 
 def test_oracle_validates_evidence_and_answer_contract() -> None:

@@ -75,6 +75,7 @@ class GroundedObject:
     point_count: int
     range_m: float
     horizontal_direction: str
+    camera_x_m: float | None = None
 
 
 @dataclass(frozen=True)

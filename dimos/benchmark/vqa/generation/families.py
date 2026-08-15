@@ -37,6 +37,7 @@ from dimos.benchmark.vqa.generation.answer_choices import (
 from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
 
 MIN_HORIZONTAL_RELATION_OFFSET_M = 0.1
+MIN_HORIZONTAL_RELATION_POINTS = 6
 
 
 @dataclass(frozen=True)
@@ -265,11 +266,17 @@ def compare_left_right(intent: QuestionIntent, context: FamilyContext) -> Ground
     if first.id == second.id:
         rejection_reason = "duplicate_object_id"
         offset_m = None
+    elif (
+        first.camera_x_m is None
+        or second.camera_x_m is None
+        or first.point_count < MIN_HORIZONTAL_RELATION_POINTS
+        or second.point_count < MIN_HORIZONTAL_RELATION_POINTS
+    ):
+        rejection_reason = "insufficient_object_support"
+        offset_m = None
     else:
-        offset_m = context.primitives.horizontal_offset_m(first, second)
-        if offset_m is None:
-            rejection_reason = "insufficient_object_support"
-        elif abs(offset_m) < MIN_HORIZONTAL_RELATION_OFFSET_M:
+        offset_m = first.camera_x_m - second.camera_x_m
+        if abs(offset_m) < MIN_HORIZONTAL_RELATION_OFFSET_M:
             rejection_reason = "ambiguous_horizontal_relation"
         else:
             rejection_reason = None

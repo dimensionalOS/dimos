@@ -406,19 +406,13 @@ def test_deterministic_answerer_compares_pairwise_left_right(monkeypatch: object
         _Segmenter(),
         config=PrimitiveGroundingConfig(min_mask_area_px=1),
     )
-    chair = GroundedObject("chair-0", "chair", 8, 1.0, "left")
-    table = GroundedObject("table-0", "table", 8, 2.0, "right")
+    chair = GroundedObject("chair-0", "chair", 8, 1.0, "left", camera_x_m=-0.5)
+    table = GroundedObject("table-0", "table", 8, 2.0, "right", camera_x_m=0.0)
     monkeypatch.setattr(
         agent.context,
         "ground",
         lambda query: GroundingResult((chair,) if query == "chair" else (table,), ()),
     )
-    monkeypatch.setattr(
-        agent.context.primitives,
-        "horizontal_offset_m",
-        lambda first, second: -0.5,
-    )
-
     result = agent.answer(
         QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table")
     )
@@ -427,9 +421,26 @@ def test_deterministic_answerer_compares_pairwise_left_right(monkeypatch: object
     assert result.answer == "left"
     assert result.question.allowed_answers == ("left", "right")
 
-    monkeypatch.setattr(agent.context.primitives, "horizontal_offset_m", lambda first, second: 0.0)
+    ambiguous_chair = GroundedObject("chair-1", "chair", 8, 1.0, "center", camera_x_m=0.05)
+    monkeypatch.setattr(
+        agent.context,
+        "ground",
+        lambda query: GroundingResult((ambiguous_chair,) if query == "chair" else (table,), ()),
+    )
     ambiguous = agent.answer(
         QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table")
     )
     assert ambiguous.status == "rejected"
     assert ambiguous.reason == "ambiguous_horizontal_relation"
+
+    weak_chair = GroundedObject("chair-2", "chair", 5, 1.0, "left", camera_x_m=-0.5)
+    monkeypatch.setattr(
+        agent.context,
+        "ground",
+        lambda query: GroundingResult((weak_chair,) if query == "chair" else (table,), ()),
+    )
+    unsupported = agent.answer(
+        QuestionIntent(kind="compare_left_right", object_query="chair", comparison_query="table")
+    )
+    assert unsupported.status == "rejected"
+    assert unsupported.reason == "insufficient_object_support"
