@@ -21,9 +21,9 @@ import os
 from pathlib import Path
 import platform
 import sys
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field
 
 from dimos.constants import CACHE_DIR
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -32,6 +32,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -149,24 +150,15 @@ def _driver_env() -> dict[str, str]:
     return {"LD_LIBRARY_PATH": ":".join(parts)}
 
 
-class ImuCalibration(BaseModel):
-    """Noise model for one physical IMU, measured per unit. Where it sits comes from tf."""
-
-    gyro_noise_density: float
-    gyro_random_walk: float
-    accel_noise_density: float
-    accel_random_walk: float
-    # The rate actually fed. Declaring more than arrives disables fusion, silently.
-    frequency: float
-
-
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
     # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned tag. `nix build` drops the `result` symlink in the cwd.
+    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
+    # drops the `result` symlink in the cwd.
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.1.0#{sdk_variant()}"
+        default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
+        f"53cc07dad60fb5435b5c82974a037e586aed855b#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
@@ -200,8 +192,9 @@ class CuvslamConfig(NativeModuleConfig):
     # Poses in the pose graph, not a distance. 0 is unlimited.
     slam_max_poses: int = 300
     slam_throttling_ms: int = 0
+    # The noise model arrives on the ``imu_info`` stream, published by the driver
+    # the way ``camera_info`` is; the tracker waits for it before building the rig.
     enable_imu: bool = False
-    imu_calibration: ImuCalibration | None = None
     # Rebase guard: a frame whose translation standard deviation (root of the largest
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
     # path rebased onto the held pose, so the published odometry never carries a teleport
@@ -220,23 +213,6 @@ class CuvslamConfig(NativeModuleConfig):
     # rgbd only: raw depth units per metre. cuVSLAM assumes 1, and depth images are
     # 16-bit millimetres.
     depth_units_per_meter: float = 1000.0
-
-    @model_validator(mode="after")
-    def _imu_needs_calibration(self) -> CuvslamConfig:
-        if self.enable_imu and self.imu_calibration is None:
-            raise ValueError(
-                "enable_imu is on but imu_calibration is unset. Measure it for the unit "
-                "actually plugged in rather than borrowing another one's noise model."
-            )
-        return self
-
-    def to_config_dict(self) -> dict[str, Any]:
-        """Flatten the calibration into imu_* keys; the native struct is a plain aggregate."""
-        blob = super().to_config_dict()
-        calibration = blob.pop("imu_calibration", None) or dict.fromkeys(
-            ImuCalibration.model_fields, 0.0
-        )
-        return blob | {f"imu_{key}": value for key, value in calibration.items()}
 
 
 class CuvslamOdometry(NativeModule):
@@ -262,6 +238,7 @@ class CuvslamOdometry(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
+    imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
     corrected_odometry: Out[Odometry]
