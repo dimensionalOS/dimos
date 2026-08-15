@@ -127,7 +127,9 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
                 PatchEmbeddings(
                     vector=patches.reshape(grid_h, grid_w, -1),
                     frame_id=image.frame_id,
-                    timestamp=image.ts,
+                    ts=image.ts,
+                    source_width=image.width,
+                    source_height=image.height,
                 )
             )
 

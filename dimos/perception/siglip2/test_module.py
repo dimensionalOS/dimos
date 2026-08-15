@@ -36,7 +36,7 @@ def test_siglip2_module_process() -> None:
         assert patches.grid_shape == (16, 16)
         assert patches.dim == 768
         assert patches.frame_id == "camera_optical"
-        assert patches.timestamp == image.ts
+        assert patches.ts == image.ts
         assert patches.flat().shape == (256, 768)
     finally:
         module.model.stop()

@@ -161,7 +161,7 @@ def test_siglip2_patch_embeddings() -> None:
     assert patches.grid_shape == (16, 16)
     assert patches.dim == 768
     assert patches.frame_id == "camera_optical"
-    assert patches.timestamp == image.ts
+    assert patches.ts == image.ts
 
     # Normalized: every patch vector should be unit length
     flat = patches.to_torch().reshape(-1, patches.dim)

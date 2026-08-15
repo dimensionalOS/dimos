@@ -92,17 +92,25 @@ class PatchEmbeddings(Timestamped):
     """Grid of per-patch embeddings for a single image.
 
     ``vector`` has shape (grid_h, grid_w, dim) — one embedding per image patch,
-    laid out in row-major image order.
+    laid out in row-major image order. ``source_width``/``source_height`` are
+    the pixel size of the image the grid was computed from: the model resizes
+    to its own square input, so patch (i, j) covers the source-pixel region
+    ``[j * source_width / grid_w, (j + 1) * source_width / grid_w) x
+    [i * source_height / grid_h, (i + 1) * source_height / grid_h)``.
     """
 
     vector: torch.Tensor | np.ndarray
     frame_id: str
+    source_width: int
+    source_height: int
 
     def __init__(
         self,
         vector: torch.Tensor | np.ndarray,
         frame_id: str = "",
-        timestamp: float | None = None,
+        ts: float | None = None,
+        source_width: int = 0,
+        source_height: int = 0,
     ) -> None:
         if vector.ndim != 3:
             raise ValueError(
@@ -110,16 +118,27 @@ class PatchEmbeddings(Timestamped):
             )
         self.vector = vector
         self.frame_id = frame_id
-        if timestamp:
-            self.timestamp = timestamp
-        else:
-            self.timestamp = time.time()
+        self.source_width = source_width
+        self.source_height = source_height
+        self.ts = ts if ts else time.time()
 
     def __repr__(self) -> str:
         return (
             f"PatchEmbeddings(grid={self.grid_shape}, dim={self.dim}, "
-            f"frame_id='{self.frame_id}', timestamp={self.timestamp})"
+            f"frame_id='{self.frame_id}', source={self.source_width}x{self.source_height}, "
+            f"ts={self.ts})"
         )
+
+    def patch_index_for_pixel(
+        self, u: np.ndarray, v: np.ndarray
+    ) -> np.ndarray:
+        """Flat patch index for source-image pixel coords (u=x, v=y), vectorized."""
+        if not self.source_width or not self.source_height:
+            raise ValueError("PatchEmbeddings has no source image size")
+        grid_h, grid_w = self.grid_shape
+        col = np.clip((u * grid_w) // self.source_width, 0, grid_w - 1).astype(np.int64)
+        row = np.clip((v * grid_h) // self.source_height, 0, grid_h - 1).astype(np.int64)
+        return row * grid_w + col
 
     @property
     def grid_shape(self) -> tuple[int, int]:
