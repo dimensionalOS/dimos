@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
@@ -33,7 +34,7 @@ def pool():
     pool.close_all()
 
 
-def _service(pool: ZenohSessionPool, **config) -> ZenohService:
+def _service(pool: ZenohSessionPool, **config: Any) -> ZenohService:
     """A started service with discovery off, so only the dialed links exist."""
     service = ZenohService(session_pool=pool, multicast=False, gossip=False, **config)
     service.start()

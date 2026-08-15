@@ -43,8 +43,7 @@ pub use dimos_lcm::LcmOptions;
 ///
 /// Every transport is compiled in, so one binary follows whichever transport the
 /// coordinator picks at runtime. The coordinator always sets the variable, so an
-/// unset or unknown value is an error. Its session settings come from the launch
-/// config, which is why that is read first.
+/// unset or unknown value is an error.
 pub async fn run_with_transport<M: Module>() {
     crate::module::init_tracing();
     let launch = read_launch_config()
