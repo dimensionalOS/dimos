@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Record Point-LIO odometry + lidar into a memory2 SQLite db.
+"""Record Point-LIO odometry + lidar into a memory SQLite db.
 
 A ``Recorder`` that records its In ports under their own names
 (``pointlio_odometry`` / ``pointlio_lidar``) — wire them to PointLio's
@@ -25,7 +25,7 @@ map global`` can register the body-frame cloud directly (no ``pose-fill`` pass).
 from __future__ import annotations
 
 from dimos.core.stream import In
-from dimos.memory2.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

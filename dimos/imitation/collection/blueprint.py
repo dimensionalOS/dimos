@@ -14,7 +14,7 @@
 
 """Recording blueprints.
 
-`CollectionRecorder` (a memory2 Recorder) captures the obs/action/status
+`CollectionRecorder` (a memory Recorder) captures the obs/action/status
 streams to a SQLite session DB during the run and flushes it durably on
 shutdown. DataPrep reads that DB afterwards.
 """
