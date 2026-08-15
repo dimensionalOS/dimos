@@ -19,9 +19,10 @@ from typing import Any
 
 import numpy as np
 
-from dimos.benchmark.vqa.generation.recording import (
+from dimos.benchmark.vqa.generation.preprocessing import (
+    Go2FramePreprocessor,
     _align_one,
-    _rectify_go2_image,
+    _ImageRectifier,
     _resolve_pointcloud_to_camera,
 )
 from dimos.memory2.store.sqlite import SqliteStore
@@ -53,6 +54,36 @@ def test_align_one_selects_nearest_observation(tmp_path: Path) -> None:
         assert aligned.ts == 9.97
     finally:
         store.stop()
+
+
+def test_preprocessor_builds_calibrated_frame_from_recording(tmp_path: Path) -> None:
+    path = str(tmp_path / "recording.db")
+    store = SqliteStore(path=path)
+    store.start()
+    try:
+        image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+        image.frame_id = "camera_optical"
+        image.ts = 10.0
+        cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]], dtype=np.float32))
+        cloud.frame_id = "world"
+        cloud.ts = 10.0
+        camera_info = CameraInfo.from_intrinsics(
+            2.0, 2.0, 2.0, 2.0, 4, 4, frame_id="camera_optical"
+        )
+        camera_info.ts = 10.0
+        store.stream("color_image", Image).append(image, ts=10.0, pose=Pose())
+        store.stream("lidar", PointCloud2).append(cloud, ts=10.0, pose=Pose())
+        store.stream("camera_info", CameraInfo).append(camera_info, ts=10.0)
+    finally:
+        store.stop()
+
+    with Go2FramePreprocessor(path) as frames:
+        frame = frames.load(0)
+
+    assert frame.id == "go2-0"
+    assert frame.image_is_rectified
+    assert frame.image.frame_id == frame.camera_info.frame_id == "camera_optical"
+    assert frame.pointcloud.frame_id == "world"
 
 
 def test_pointcloud_transform_prefers_recorded_tf() -> None:
@@ -101,6 +132,9 @@ def test_world_pointcloud_uses_captured_robot_pose_and_static_mount_without_tf()
 
 def test_rectification_supports_standard_and_fisheye_calibration() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    image.ts = 12.0
+    image.frame_id = "camera_optical"
+    rectifier = _ImageRectifier()
     for model, distortion in (("plumb_bob", [0.0] * 5), ("equidistant", [0.0] * 4)):
         source = CameraInfo(
             width=4,
@@ -108,9 +142,41 @@ def test_rectification_supports_standard_and_fisheye_calibration() -> None:
             K=[2.0, 0.0, 2.0, 0.0, 2.0, 2.0, 0.0, 0.0, 1.0],
             D=distortion,
             distortion_model=model,
+            frame_id="camera_optical",
         )
 
-        rectified, camera_info = _rectify_go2_image(image, source)
+        rectified, camera_info = rectifier.rectify(image, source)
 
         assert rectified.shape == image.shape
         assert camera_info.width == image.width
+        assert camera_info.D == [0.0] * 5
+        assert camera_info.ts == image.ts
+        assert rectified.frame_id == camera_info.frame_id == "camera_optical"
+
+
+def test_rectification_maps_are_reused(monkeypatch: Any) -> None:
+    import cv2
+
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    source = CameraInfo(
+        width=4,
+        height=4,
+        K=[2.0, 0.0, 2.0, 0.0, 2.0, 2.0, 0.0, 0.0, 1.0],
+        D=[0.0] * 4,
+        distortion_model="equidistant",
+    )
+    original = cv2.fisheye.initUndistortRectifyMap
+    calls = 0
+
+    def tracked(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cv2.fisheye, "initUndistortRectifyMap", tracked)
+    rectifier = _ImageRectifier()
+
+    rectifier.rectify(image, source)
+    rectifier.rectify(image, source)
+
+    assert calls == 1

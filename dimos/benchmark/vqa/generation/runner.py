@@ -70,12 +70,12 @@ def execute_generation(
         EdgeTamObjectSegmenter,
         MoondreamObjectDetector,
     )
+    from dimos.benchmark.vqa.generation.preprocessing import Go2FramePreprocessor
     from dimos.benchmark.vqa.generation.primitives.frame import FramePerceptionPrimitives
     from dimos.benchmark.vqa.generation.question_authors import (
         AgenticQuestionAuthor,
         ConstrainedQuestionAuthor,
     )
-    from dimos.benchmark.vqa.generation.recording import load_go2_frame
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
@@ -95,9 +95,11 @@ def execute_generation(
         f"Generating {len(frame_indices)} sampled frames from {recording} into {output}",
     )
     model = MoondreamVlModel()
+    frames = Go2FramePreprocessor(str(resolve_named_path(recording, ".db")))
     _emit(progress, "Loading private MoonDream model")
     model.start()
     try:
+        frames.start()
         detector = MoondreamObjectDetector(model)
         segmenter = EdgeTamObjectSegmenter(EdgeTAMImageSegmenter())
         question_author = ConstrainedQuestionAuthor(OpenAIVlModel(model_name=QUESTION_MODEL))
@@ -118,7 +120,7 @@ def execute_generation(
                 progress,
                 f"Frame {frame_number}/{len(frame_indices)}: loading recording index {frame_index}",
             )
-            frame = load_go2_frame(str(resolve_named_path(recording, ".db")), frame_index)
+            frame = frames.load(frame_index)
             _emit(progress, f"Frame {frame_index}: proposing questions with {QUESTION_MODEL}")
             if question_mode == "agentic":
                 if agentic_author is None:
@@ -179,6 +181,7 @@ def execute_generation(
             )
             _emit(progress, f"Generated frame {frame_index}")
     finally:
+        frames.stop()
         model.stop()
     summary = dataset.finalize(generation, frame_indices)
     return GenerationResult(output, summary)
