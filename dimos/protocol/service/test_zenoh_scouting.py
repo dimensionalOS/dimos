@@ -16,7 +16,7 @@
 
 import time
 
-from dimos.core.global_config import global_config
+from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.zenohservice import (
     ALL_INTERFACES,
     LOOPBACK_INTERFACE,
@@ -85,8 +85,8 @@ class _FakeSession:
         self.info = _FakeInfo([_FakeLink(dst) for dst in links])
 
 
-def _await(
-    session: _FakeSession, connect: list[str], connect_timeout: float, mode: str = "peer"
+def _await_elapsed(
+    session: _FakeSession, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
 ) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
     service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
@@ -97,12 +97,12 @@ def _await(
 
 def test_await_returns_once_endpoint_is_linked(zenoh_defaults):
     session = _FakeSession(["tcp/192.0.2.10:7447"])
-    assert _await(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
+    assert _await_elapsed(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
 
 
 def test_await_waits_for_every_endpoint(zenoh_defaults):
     session = _FakeSession(["tcp/192.0.2.10:7447"])
-    elapsed = _await(
+    elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
         connect_timeout=0.3,
@@ -113,7 +113,7 @@ def test_await_waits_for_every_endpoint(zenoh_defaults):
 def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
     """A client session holds a single link, so one linked alternative is done."""
     session = _FakeSession(["tcp/192.0.2.10:7447"])
-    elapsed = _await(
+    elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
         connect_timeout=5.0,
@@ -125,18 +125,23 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
 def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults):
     """One endpoint listed twice is still one link to wait for."""
     duplicate = "tcp/192.0.2.199:7447"
-    elapsed = _await(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
+    elapsed = _await_elapsed(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
     assert elapsed >= 0.3
 
 
 def test_await_gives_up_after_timeout(zenoh_defaults):
-    elapsed = _await(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3)
+    elapsed = _await_elapsed(
+        _FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
+    )
     assert 0.3 <= elapsed < 3.0
 
 
 def test_await_is_skipped_without_connect_endpoints(zenoh_defaults):
-    assert _await(_FakeSession([]), connect=[], connect_timeout=30.0) < 1.0
+    assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 1.0
 
 
 def test_zero_timeout_disables_the_wait(zenoh_defaults):
-    assert _await(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0) < 1.0
+    assert (
+        _await_elapsed(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
+        < 1.0
+    )

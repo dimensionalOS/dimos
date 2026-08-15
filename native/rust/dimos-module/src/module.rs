@@ -481,16 +481,16 @@ fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     }
 }
 
-/// Read the one JSON line the coordinator writes to stdin: the topics, the
-/// module config, the publisher qos, and the transport's session settings.
-///
-/// The session settings decide how the transport itself is opened, so this runs
-/// before the transport is built.
+/// Read the launch config the coordinator writes to stdin as one JSON line.
 pub async fn read_launch_config() -> io::Result<serde_json::Value> {
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
         .await?;
+    parse_launch_config(&line)
+}
+
+fn parse_launch_config(line: &str) -> io::Result<serde_json::Value> {
     serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
@@ -566,9 +566,16 @@ mod tests {
     fn parse_config_json<C: DeserializeOwned + Serialize>(
         line: &str,
     ) -> io::Result<(HashMap<String, String>, C)> {
-        let json: serde_json::Value = serde_json::from_str(line.trim())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        parse_config_value(&json)
+        parse_config_value(&parse_launch_config(line)?)
+    }
+
+    #[test]
+    fn an_empty_launch_line_is_an_error_not_a_hang() {
+        // The module is spawned with a pipe, so EOF arrives as an empty line.
+        for line in ["", "\n", "not json"] {
+            let err = parse_launch_config(line).expect_err("empty line rejected");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
     }
 
     type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
