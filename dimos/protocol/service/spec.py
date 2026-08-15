@@ -12,14 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from abc import ABC
-from typing import Any, get_type_hints
+from typing import Any, ClassVar, get_type_hints
 
 from pydantic import BaseModel
+
+from dimos.core.global_config import TransportBackend
 
 
 class BaseConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
+
+
+class SessionConfig(BaseConfig):
+    """One transport's session settings, as opposed to a module's own config."""
+
+    transport: ClassVar[TransportBackend]
+
+    def to_wire(self) -> dict[str, Any]:
+        """This session as the JSON object a native module reads on stdin."""
+        return {}
+
+    def rebased(self) -> SessionConfig:
+        """This config's explicit fields over the current global config defaults.
+
+        The fields the caller never set are derived again, at spawn time.
+        """
+        return type(self)(**{name: getattr(self, name) for name in self.model_fields_set})
 
 
 class Configurable:

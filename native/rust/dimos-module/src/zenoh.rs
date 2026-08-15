@@ -12,27 +12,94 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
+use std::net::ToSocketAddrs;
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
 use ::zenoh::Session;
+use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::transport::{Dispatch, Transport};
 
-/// Env vars the python launcher sets to mirror its own session config
-/// (native_env in zenohservice.py). Python owns every value. A var it
-/// left unset keeps zenoh's own default, and an invalid value is an error.
-const ENV_CONNECT: &str = "DIMOS_ZENOH_CONNECT";
-const ENV_LISTEN: &str = "DIMOS_ZENOH_LISTEN";
-const ENV_MODE: &str = "DIMOS_ZENOH_MODE";
-const ENV_MULTICAST: &str = "DIMOS_ZENOH_MULTICAST";
-const ENV_GOSSIP: &str = "DIMOS_ZENOH_GOSSIP";
-const ENV_INTERFACE: &str = "DIMOS_ZENOH_INTERFACE";
-const ENV_CONNECT_TIMEOUT_MS: &str = "DIMOS_ZENOH_CONNECT_TIMEOUT_MS";
+/// Key the launch config carries the session settings under.
+const SESSION_KEY: &str = "session";
+
+/// Poll interval while waiting for the dialed endpoints to link.
+const CONNECT_POLL: Duration = Duration::from_millis(50);
+
+/// The session settings python sends on the launch line (`ZenohConfig.to_wire`).
+///
+/// Python owns every value and resolves every derived one, so each field is
+/// required and nothing here has a default.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionSettings {
+    mode: String,
+    connect: Vec<String>,
+    listen: Vec<String>,
+    multicast: bool,
+    gossip: bool,
+    interface: String,
+    connect_timeout_ms: u64,
+}
+
+/// A setting as the JSON text zenoh's config setter takes.
+fn json_text<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value).expect("session settings are JSON")
+}
+
+impl SessionSettings {
+    /// The settings the launch config carried, absent when it carried none.
+    ///
+    /// A module started by hand gets no launch line of its own, and keeps
+    /// zenoh's own defaults.
+    fn from_launch(launch: &serde_json::Value) -> io::Result<Option<Self>> {
+        match launch.get(SESSION_KEY) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => serde_json::from_value(value.clone())
+                .map(Some)
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("failed to deserialize zenoh session settings: {e}"),
+                    )
+                }),
+        }
+    }
+
+    /// These settings as a zenoh session config.
+    fn zenoh_config(&self) -> io::Result<::zenoh::Config> {
+        let mut config = ::zenoh::Config::default();
+        let mut inserts = vec![
+            ("mode", json_text(&self.mode)),
+            ("scouting/multicast/enabled", json_text(&self.multicast)),
+            ("scouting/multicast/interface", json_text(&self.interface)),
+            ("scouting/gossip/enabled", json_text(&self.gossip)),
+            ("connect/timeout_ms", json_text(&self.connect_timeout_ms)),
+        ];
+        // An empty list means "whatever zenoh listens on by default", which for
+        // a peer is an ephemeral port, not nothing at all.
+        if !self.connect.is_empty() {
+            inserts.push(("connect/endpoints", json_text(&self.connect)));
+        }
+        if !self.listen.is_empty() {
+            inserts.push(("listen/endpoints", json_text(&self.listen)));
+        }
+        for (key, value) in inserts {
+            config.insert_json5(key, &value).map_err(to_io)?;
+        }
+        Ok(config)
+    }
+
+    fn connect_timeout(&self) -> Duration {
+        Duration::from_millis(self.connect_timeout_ms)
+    }
+}
 
 /// Publisher QoS for one channel. `None` fields keep zenoh's defaults.
 #[derive(Clone, Default)]
@@ -72,79 +139,105 @@ pub struct ZenohTransport {
     publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
-/// Trimmed value of an env var, None when unset or blank.
-fn env_setting(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok()?;
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
+/// The `host:port` forms a live link to this locator may report.
+///
+/// `tcp/go2:7447` is dialed by name while the established link reports the
+/// resolved address, so the name on its own never matches.
+fn endpoint_addresses(endpoint: &str) -> HashSet<String> {
+    let address = endpoint.rsplit('/').next().unwrap_or(endpoint);
+    let mut out = HashSet::from([address.to_string()]);
+    if let Ok(resolved) = address.to_socket_addrs() {
+        out.extend(resolved.map(|addr| addr.to_string()));
+    }
+    out
 }
 
-/// Comma-separated locator list as a JSON array, None if nothing remains.
-fn endpoints_json(endpoints: &str) -> Option<String> {
-    let list: Vec<&str> = endpoints
-        .split(',')
-        .map(str::trim)
-        .filter(|e| !e.is_empty())
+/// Block until the dialed endpoints have links, bounded by `timeout`.
+///
+/// A peer's `open()` returns before its endpoints are dialed, so without this
+/// the module starts publishing into a session that has nowhere to send yet and
+/// the first messages are simply dropped. Unreachable endpoints are a warning:
+/// one robot being down should not stop the module from coming up.
+async fn await_connect(session: &Session, endpoints: &[String], mode: &str, timeout: Duration) {
+    if endpoints.is_empty() || timeout.is_zero() {
+        return;
+    }
+    let mut pending: Vec<(&str, HashSet<String>)> = endpoints
+        .iter()
+        .map(|endpoint| (endpoint.as_str(), endpoint_addresses(endpoint)))
         .collect();
-    if list.is_empty() {
-        None
-    } else {
-        Some(serde_json::Value::from(list).to_string())
-    }
-}
-
-/// A bare string as a JSON string literal.
-fn json_str(value: &str) -> String {
-    serde_json::Value::String(value.to_string()).to_string()
-}
-
-/// Session config with every setting the launcher provided applied verbatim.
-fn apply_settings(
-    mut config: ::zenoh::Config,
-    get: impl Fn(&str) -> Option<String>,
-) -> io::Result<::zenoh::Config> {
-    let inserts = [
-        (
-            "connect/endpoints",
-            get(ENV_CONNECT).as_deref().and_then(endpoints_json),
-        ),
-        (
-            "listen/endpoints",
-            get(ENV_LISTEN).as_deref().and_then(endpoints_json),
-        ),
-        ("mode", get(ENV_MODE).as_deref().map(json_str)),
-        ("scouting/multicast/enabled", get(ENV_MULTICAST)),
-        (
-            "scouting/multicast/interface",
-            get(ENV_INTERFACE).as_deref().map(json_str),
-        ),
-        ("scouting/gossip/enabled", get(ENV_GOSSIP)),
-        ("connect/timeout_ms", get(ENV_CONNECT_TIMEOUT_MS)),
-    ];
-    for (key, value) in inserts {
-        if let Some(value) = value {
-            config.insert_json5(key, &value).map_err(to_io)?;
+    // A client session holds a single link. Zenoh dials the endpoints as
+    // alternatives and keeps the first that answers.
+    let needed = if mode == "client" { 1 } else { pending.len() };
+    let deadline = Instant::now() + timeout;
+    loop {
+        let linked: HashSet<String> = session
+            .info()
+            .links()
+            .await
+            .map(|link| link.dst().address().to_string())
+            .collect();
+        pending.retain(|(_, addresses)| addresses.is_disjoint(&linked));
+        if endpoints.len() - pending.len() >= needed {
+            return;
         }
+        if Instant::now() >= deadline {
+            let unlinked: Vec<&str> = pending.iter().map(|(endpoint, _)| *endpoint).collect();
+            tracing::warn!(
+                endpoints = ?unlinked,
+                timeout_ms = timeout.as_millis(),
+                "zenoh endpoints not linked, published messages may be dropped"
+            );
+            return;
+        }
+        tokio::time::sleep(CONNECT_POLL).await;
     }
-    Ok(config)
 }
 
 impl ZenohTransport {
+    /// Open the session the launch config describes.
+    pub async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
+        match SessionSettings::from_launch(launch)? {
+            Some(settings) => Self::open(&settings).await,
+            None => Self::new().await,
+        }
+    }
+
+    /// Open a session on zenoh's own defaults.
     pub async fn new() -> io::Result<Self> {
-        let config = apply_settings(::zenoh::Config::default(), env_setting)?;
-        let session = ::zenoh::open(config).await.map_err(to_io)?;
+        let session = ::zenoh::open(::zenoh::Config::default())
+            .await
+            .map_err(to_io)?;
+        Ok(Self::wrap(session))
+    }
+
+    async fn open(settings: &SessionSettings) -> io::Result<Self> {
+        let session = ::zenoh::open(settings.zenoh_config()?)
+            .await
+            .map_err(to_io)?;
         tracing::info!(
             zid = %session.zid(),
-            mode = env_setting(ENV_MODE).as_deref().unwrap_or("peer"),
-            connect = env_setting(ENV_CONNECT).as_deref().unwrap_or("none"),
-            listen = env_setting(ENV_LISTEN).as_deref().unwrap_or("none"),
+            mode = %settings.mode,
+            connect = ?settings.connect,
+            listen = ?settings.listen,
             "zenoh session opened"
         );
-        Ok(Self {
+        await_connect(
+            &session,
+            &settings.connect,
+            &settings.mode,
+            settings.connect_timeout(),
+        )
+        .await;
+        Ok(Self::wrap(session))
+    }
+
+    fn wrap(session: Session) -> Self {
+        Self {
             session,
             qos: OnceLock::new(),
             publishers: Mutex::new(HashMap::new()),
-        })
+        }
     }
 
     async fn declare_publisher(&self, channel: &str) -> io::Result<Publisher<'static>> {
@@ -213,38 +306,49 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Settings map for tests, pinning the exact names python's native_env emits.
-    fn from_map(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-        move |name| {
-            pairs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.to_string())
+    /// A launch config carrying the session settings python's
+    /// `ZenohConfig.to_wire` produces, with these fields overridden.
+    fn launch(overrides: serde_json::Value) -> serde_json::Value {
+        let mut session = serde_json::json!({
+            "mode": "peer",
+            "connect": [],
+            "listen": [],
+            "multicast": true,
+            "gossip": false,
+            "interface": "lo",
+            "connect_timeout_ms": 1000,
+        });
+        let session_map = session.as_object_mut().unwrap();
+        for (key, value) in overrides.as_object().expect("an object of overrides") {
+            assert!(
+                session_map.insert(key.clone(), value.clone()).is_some(),
+                "{key} is not a session setting"
+            );
         }
+        serde_json::json!({"topics": {}, "config": null, "session": session})
+    }
+
+    fn settings(overrides: serde_json::Value) -> SessionSettings {
+        SessionSettings::from_launch(&launch(overrides))
+            .expect("settings deserialize")
+            .expect("a session was sent")
     }
 
     #[test]
     fn settings_reach_the_session_config() {
-        let config = apply_settings(
-            ::zenoh::Config::default(),
-            from_map(&[
-                (
-                    "DIMOS_ZENOH_CONNECT",
-                    "tcp/10.0.0.9:7447, tcp/10.0.0.10:7447",
-                ),
-                ("DIMOS_ZENOH_MODE", "client"),
-                ("DIMOS_ZENOH_MULTICAST", "true"),
-                ("DIMOS_ZENOH_GOSSIP", "false"),
-                ("DIMOS_ZENOH_INTERFACE", "lo"),
-                ("DIMOS_ZENOH_CONNECT_TIMEOUT_MS", "1000"),
-            ]),
-        )
+        let config = settings(serde_json::json!({
+            "mode": "client",
+            "connect": ["tcp/10.0.0.9:7447", "tcp/10.0.0.10:7447"],
+            "interface": "wlan0",
+        }))
+        .zenoh_config()
         .expect("valid settings apply");
+
+        assert_eq!(config.get_json("mode").unwrap(), r#""client""#);
         assert_eq!(
             config.get_json("connect/endpoints").unwrap(),
             r#"["tcp/10.0.0.9:7447","tcp/10.0.0.10:7447"]"#
         );
-        assert_eq!(config.get_json("mode").unwrap(), r#""client""#);
         assert_eq!(
             config.get_json("scouting/multicast/enabled").unwrap(),
             "true"
@@ -252,22 +356,17 @@ mod tests {
         assert_eq!(config.get_json("scouting/gossip/enabled").unwrap(), "false");
         assert_eq!(
             config.get_json("scouting/multicast/interface").unwrap(),
-            r#""lo""#
+            r#""wlan0""#
         );
         assert_eq!(config.get_json("connect/timeout_ms").unwrap(), "1000");
     }
 
     #[test]
-    fn absent_settings_keep_zenohs_defaults() {
-        let config = apply_settings(::zenoh::Config::default(), |_| None).expect("no-op applies");
+    fn empty_endpoint_lists_keep_zenohs_defaults() {
+        // An empty listen list must not be sent as "listen on nothing".
+        let config = settings(serde_json::json!({})).zenoh_config().unwrap();
         let default = ::zenoh::Config::default();
-        for key in [
-            "mode",
-            "connect/endpoints",
-            "scouting/multicast/enabled",
-            "scouting/multicast/interface",
-            "scouting/gossip/enabled",
-        ] {
+        for key in ["connect/endpoints", "listen/endpoints"] {
             assert_eq!(
                 config.get_json(key).unwrap(),
                 default.get_json(key).unwrap()
@@ -276,23 +375,118 @@ mod tests {
     }
 
     #[test]
-    fn invalid_setting_is_an_error_not_a_fallback() {
-        let bad_bool = from_map(&[("DIMOS_ZENOH_MULTICAST", "bananas")]);
-        assert!(apply_settings(::zenoh::Config::default(), bad_bool).is_err());
+    fn a_launch_without_a_session_keeps_zenohs_defaults() {
+        let launch = serde_json::json!({"topics": {}, "config": null});
+        assert!(SessionSettings::from_launch(&launch).unwrap().is_none());
     }
 
     #[test]
-    fn endpoints_json_empty_yields_none() {
-        assert_eq!(endpoints_json(""), None);
-        assert_eq!(endpoints_json("  , ,  "), None);
+    fn a_missing_setting_is_an_error_not_a_default() {
+        let launch = serde_json::json!({"session": {"mode": "peer"}});
+        assert!(SessionSettings::from_launch(&launch).is_err());
     }
 
     #[test]
-    fn endpoints_json_filters_blank_segments() {
-        assert_eq!(
-            endpoints_json(" ,tcp/go2:7447,, "),
-            Some(r#"["tcp/go2:7447"]"#.to_string())
-        );
+    fn an_unknown_setting_is_an_error() {
+        let mut incoming = launch(serde_json::json!({}));
+        incoming["session"]["reliability"] = serde_json::json!("reliable");
+        assert!(SessionSettings::from_launch(&incoming).is_err());
+    }
+
+    #[test]
+    fn endpoint_addresses_keeps_the_literal_address() {
+        assert!(endpoint_addresses("tcp/192.0.2.10:7447").contains("192.0.2.10:7447"));
+    }
+
+    #[test]
+    fn endpoint_addresses_resolves_names() {
+        assert!(endpoint_addresses("tcp/localhost:7447").contains("127.0.0.1:7447"));
+    }
+
+    /// Session in a test topology, discovery off so only the dialed endpoints
+    /// can produce a link.
+    async fn open_session(mode: &str, connect: &[&str], listen: &[&str]) -> Session {
+        let config = settings(serde_json::json!({
+            "mode": mode,
+            "connect": connect,
+            "listen": listen,
+            "multicast": false,
+        }))
+        .zenoh_config()
+        .expect("valid settings apply");
+        ::zenoh::open(config).await.expect("open session")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn await_connect_returns_once_the_endpoint_links() {
+        let endpoint = "tcp/127.0.0.1:17461";
+        let _router = open_session("router", &[], &[endpoint]).await;
+        let peer = open_session("peer", &[endpoint], &[]).await;
+
+        let started = Instant::now();
+        await_connect(
+            &peer,
+            &[endpoint.to_string()],
+            "peer",
+            Duration::from_secs(10),
+        )
+        .await;
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(peer.info().links().await.next().is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn await_connect_gives_up_after_the_timeout() {
+        // Nothing listens here, so the endpoint never links.
+        let endpoint = "tcp/127.0.0.1:17462";
+        let peer = open_session("peer", &[endpoint], &[]).await;
+
+        let started = Instant::now();
+        await_connect(
+            &peer,
+            &[endpoint.to_string()],
+            "peer",
+            Duration::from_millis(300),
+        )
+        .await;
+
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn await_connect_is_skipped_without_endpoints_or_timeout() {
+        let peer = open_session("peer", &[], &[]).await;
+        let started = Instant::now();
+        await_connect(&peer, &[], "peer", Duration::from_secs(30)).await;
+        await_connect(
+            &peer,
+            &["tcp/127.0.0.1:17462".to_string()],
+            "peer",
+            Duration::ZERO,
+        )
+        .await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn client_await_is_satisfied_by_one_of_its_alternatives() {
+        let endpoint = "tcp/127.0.0.1:17463";
+        let unreachable = "tcp/127.0.0.1:17464";
+        let _router = open_session("router", &[], &[endpoint]).await;
+        let client = open_session("client", &[endpoint, unreachable], &[]).await;
+
+        let started = Instant::now();
+        await_connect(
+            &client,
+            &[endpoint.to_string(), unreachable.to_string()],
+            "client",
+            Duration::from_secs(10),
+        )
+        .await;
+
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

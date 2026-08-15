@@ -32,6 +32,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.protocol.service.zenohservice import ZenohConfig
 
 _RUST_DIR = Path(__file__).parent / "rust"
 _EXAMPLES = _RUST_DIR / "target" / "release"
@@ -73,24 +74,20 @@ class PongModule(NativeModule):
 
 
 def blueprint(topology: bool = False):
-    ping_env: dict[str, str] = {}
-    pong_env: dict[str, str] = {}
+    ping_zenoh = None
+    pong_zenoh = None
     if topology:
-        pong_env = {
-            "DIMOS_ZENOH_MODE": "router",
-            "DIMOS_ZENOH_LISTEN": _ROUTER_ENDPOINT,
-            "DIMOS_ZENOH_CONNECT": "",
-        }
-        ping_env = {
-            "DIMOS_ZENOH_MODE": "client",
-            "DIMOS_ZENOH_CONNECT": _ROUTER_ENDPOINT,
+        pong_zenoh = ZenohConfig(mode="router", listen=[_ROUTER_ENDPOINT], connect=[])
+        ping_zenoh = ZenohConfig(
+            mode="client",
+            connect=[_ROUTER_ENDPOINT],
             # The client dials until the router native is up, however slowly it
             # cold-starts. A client with no router fails hard at open.
-            "DIMOS_ZENOH_CONNECT_TIMEOUT_MS": "10000",
-        }
+            connect_timeout=10.0,
+        )
     return autoconnect(
-        PingModule.blueprint(extra_env=ping_env),
-        PongModule.blueprint(extra_env=pong_env),
+        PingModule.blueprint(session=ping_zenoh),
+        PongModule.blueprint(session=pong_zenoh),
     )
 
 

@@ -481,30 +481,35 @@ fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     }
 }
 
-pub async fn run<M, T>(transport: T)
+/// Read the one JSON line the coordinator writes to stdin: the topics, the
+/// module config, the publisher qos, and the transport's session settings.
+///
+/// The session settings decide how the transport itself is opened, so this runs
+/// before the transport is built.
+pub async fn read_launch_config() -> io::Result<serde_json::Value> {
+    let mut line = String::new();
+    BufReader::new(tokio::io::stdin())
+        .read_line(&mut line)
+        .await?;
+    serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+pub async fn run<M, T>(transport: T, launch: serde_json::Value)
 where
     M: Module,
     T: Transport,
 {
-    if let Err(e) = run_fallible::<M, T>(transport).await {
+    if let Err(e) = run_fallible::<M, T>(transport, launch).await {
         error!("{e}");
         std::process::exit(1);
     }
 }
 
-async fn run_fallible<M, T>(transport: T) -> io::Result<()>
+async fn run_fallible<M, T>(transport: T, json: serde_json::Value) -> io::Result<()>
 where
     M: Module,
     T: Transport,
 {
-    init_tracing();
-
-    let mut line = String::new();
-    BufReader::new(tokio::io::stdin())
-        .read_line(&mut line)
-        .await?;
-    let json: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let (topics, config) = parse_config_value::<M::Config>(&json)?;
     validate_config(&config)?;
     transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));

@@ -41,15 +41,59 @@ def test_env_var_sets_mode(monkeypatch):
 
 
 def test_unknown_mode_rejected():
-    with pytest.raises(ValueError, match="'peer' or 'client'"):
+    with pytest.raises(ValueError, match="'peer', 'client' or 'router'"):
         ZenohConfig(mode="mesh")
 
 
-def test_router_mode_rejected():
-    """Routers are external zenohd processes. A second router-mode session on a
-    host would fail binding zenoh's fixed router listen port."""
-    with pytest.raises(ValueError, match="'peer' or 'client'"):
+def test_a_session_can_be_opened_as_a_router(zenoh_defaults, monkeypatch):
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    config = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:17450"], connect=[])
+    assert config.mode == "router"
+    assert config.listen == ["tcp/127.0.0.1:17450"]
+    # An explicit empty list clears the endpoints robot_ip would have derived.
+    assert config.connect == []
+
+
+def test_router_without_a_listen_endpoint_rejected(zenoh_defaults):
+    """A bare router falls back to 7447, the robot bridge's own port."""
+    with pytest.raises(ValueError, match="needs an explicit listen endpoint"):
         ZenohConfig(mode="router")
+
+
+def test_global_router_mode_still_needs_a_listen_endpoint(zenoh_defaults, monkeypatch):
+    monkeypatch.setattr(global_config, "zenoh_mode", "router")
+    with pytest.raises(ValueError, match="needs an explicit listen endpoint"):
+        ZenohConfig()
+    assert ZenohConfig(listen=["tcp/0.0.0.0:7447"]).mode == "router"
+
+
+def test_global_listen_endpoints_satisfy_router_mode(zenoh_defaults, monkeypatch):
+    """--zenoh-mode router --zenoh-listen is a whole-process router."""
+    monkeypatch.setattr(global_config, "zenoh_mode", "router")
+    monkeypatch.setattr(global_config, "zenoh_listen", "tcp/0.0.0.0:17450, tcp/0.0.0.0:17451")
+    assert ZenohConfig().listen == ["tcp/0.0.0.0:17450", "tcp/0.0.0.0:17451"]
+
+
+def test_listen_defaults_to_empty(zenoh_defaults):
+    assert ZenohConfig().listen == []
+
+
+def test_rebased_rederives_only_the_fields_the_caller_left_unset(zenoh_defaults, monkeypatch):
+    """Blueprints build configs before global config is settled, so unset
+    fields must follow the values in force at spawn time."""
+    pinned = ZenohConfig(mode="client")
+    assert pinned.connect == []
+
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    rebased = pinned.rebased()
+    assert rebased.mode == "client"
+    assert rebased.connect == ["tcp/192.0.2.10:7447"]
+
+
+def test_rebased_keeps_an_explicit_empty_list(zenoh_defaults, monkeypatch):
+    pinned = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:17450"], connect=[])
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    assert pinned.rebased().connect == []
 
 
 class _RaisingPool:
