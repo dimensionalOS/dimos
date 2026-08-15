@@ -35,7 +35,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 
 class SigLIP2ModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "google/siglip2-base-patch16-256"
-    dtype: torch.dtype = torch.float32
+    #: fp16 halves VRAM (so400m: 4.6 -> 2.3 GB) at no visible quality cost.
+    #: Pass float32 explicitly for CPU inference — fp16 has no fast CPU path.
+    dtype: torch.dtype = torch.float16
     #: SigLIP text towers are trained on fixed-length padded input (64 tokens).
     text_max_length: int = 64
     #: Run each patch token through the vision attention-pooling head so patch

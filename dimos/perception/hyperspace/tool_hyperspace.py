@@ -114,8 +114,6 @@ def main(argv: list[str] | None = None) -> None:
         if not stats["voxels"]:
             raise RuntimeError(f"no voxels ingested: {stats}")
         (out_dir / "stats.json").write_text(json.dumps(stats, indent=2))
-        hyperspace.save_map(str(out_dir / "map.npz"))
-        logger.info("wrote %s", out_dir / "map.npz")
 
         for query in args.queries:
             for view in args.views:
@@ -142,6 +140,11 @@ def main(argv: list[str] | None = None) -> None:
             path = out_dir / f"nearby_{query.replace(' ', '_')}.png"
             cv2.imwrite(str(path), cv2.cvtColor(image.data, cv2.COLOR_RGB2BGR))
             logger.info("wrote %s", path)
+
+        # Save last: the first query above has already paid the one-off
+        # aggregation cost, so this stays well inside the RPC deadline.
+        hyperspace.save_map(str(out_dir / "map.npz"))
+        logger.info("wrote %s", out_dir / "map.npz")
     finally:
         coordinator.stop()
 

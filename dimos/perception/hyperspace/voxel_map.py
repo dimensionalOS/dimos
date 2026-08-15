@@ -118,6 +118,7 @@ class EmbeddingVoxelMap:
         self._sample_counts: NDArray[np.int32] = np.empty(0, dtype=np.int32)
         #: Cached aggregated embeddings; None = stale.
         self._agg: NDArray[np.float32] | None = None
+        self._agg_normalized: NDArray[np.float32] | None = None
         #: Aggregate loaded from disk for a map whose samples were not saved.
         self._frozen_agg: NDArray[np.float32] | None = None
 
@@ -211,6 +212,7 @@ class EmbeddingVoxelMap:
                 pending = self._pending
                 self._pending = []
                 self._agg = None
+                self._agg_normalized = None
                 self._frozen_agg = None
 
                 old_keys = self._keys
@@ -277,8 +279,16 @@ class EmbeddingVoxelMap:
                 chunk[empty, 0] = mean_fill
                 filled[empty, 0] = True
             if self.aggregate == "median":
-                chunk[~filled] = np.nan
-                out[start:stop] = np.nanmedian(chunk, axis=1)
+                # Sort-based median: inf-pad the empty slots and pick the
+                # middle of the filled prefix. Much faster than nanmedian,
+                # which dominates save/query time on 300k+ voxel maps.
+                counts = filled.sum(axis=1)
+                chunk[~filled] = np.inf
+                chunk.sort(axis=1)
+                rows = np.arange(chunk.shape[0])
+                lo = chunk[rows, (counts - 1) // 2]
+                hi = chunk[rows, counts // 2]
+                out[start:stop] = (lo + hi) * 0.5
             else:  # medoid: the sample most aligned with the voxel's sample mean
                 norms = np.linalg.norm(chunk, axis=2, keepdims=True)
                 unit = chunk / np.maximum(norms, 1e-12)
@@ -298,6 +308,8 @@ class EmbeddingVoxelMap:
         """
         with self._lock:
             self.reduce()
+            if normalize and self._agg_normalized is not None:
+                return self._keys.copy(), self._agg_normalized
             if self._frozen_agg is not None:
                 agg = self._frozen_agg
             elif self.aggregate == "mean" or not self._track_samples:
@@ -308,7 +320,12 @@ class EmbeddingVoxelMap:
                 agg = self._agg
             if normalize:
                 norms = np.linalg.norm(agg, axis=1, keepdims=True)
-                agg = agg / np.maximum(norms, 1e-12)
+                agg = np.asarray(agg / np.maximum(norms, 1e-12), dtype=np.float32)
+                # Queries score one text vector per prompt against the same
+                # matrix; renormalizing 100k+ x 1152 floats per prompt is the
+                # bulk of query latency, so keep the normalized copy.
+                self._agg_normalized = agg
+                return self._keys.copy(), agg
             return self._keys.copy(), np.asarray(agg, dtype=np.float32)
 
     def mean_embeddings(
@@ -355,6 +372,7 @@ class EmbeddingVoxelMap:
             self._sample_weights = np.empty((0, self.max_samples), dtype=np.float32)
             self._sample_counts = np.empty(0, dtype=np.int32)
             self._agg = None
+            self._agg_normalized = None
             self._frozen_agg = None
 
     def smooth_scores(

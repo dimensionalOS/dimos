@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import reactivex as rx
 from reactivex.disposable import Disposable
+import torch
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -159,6 +160,8 @@ class HyperspaceModule(Module):
         model_kwargs: dict[str, Any] = {"model_name": self.config.model_name}
         if self.config.device is not None:
             model_kwargs["device"] = self.config.device
+            if self.config.device == "cpu":
+                model_kwargs["dtype"] = torch.float32  # fp16 has no fast CPU path
         self._text_model = SigLIP2Model(**model_kwargs)
 
     # ------------------------------------------------------------------ ingest
