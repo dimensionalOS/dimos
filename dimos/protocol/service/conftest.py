@@ -24,6 +24,8 @@ def zenoh_defaults(monkeypatch):
     monkeypatch.setattr(global_config, "robot_ip", None)
     monkeypatch.setattr(global_config, "robot_ips", None)
     monkeypatch.setattr(global_config, "zenoh_mode", "peer")
+    monkeypatch.setattr(global_config, "zenoh_connect", "")
+    monkeypatch.setattr(global_config, "zenoh_listen", "")
     monkeypatch.setattr(global_config, "zenoh_scouting", False)
     monkeypatch.setattr(global_config, "zenoh_interface", "")
     monkeypatch.setattr(global_config, "zenoh_multicast", True)

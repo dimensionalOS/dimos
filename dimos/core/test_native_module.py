@@ -21,10 +21,10 @@ The echo script writes received CLI args to a temp file for assertions.
 import contextlib
 from io import BytesIO
 import json
-import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -43,6 +43,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
+from dimos.protocol.service.zenohservice import ZenohConfig
 
 _ECHO = str(Path(__file__).parent / "demos" / "native_echo.py")
 
@@ -298,44 +299,58 @@ def test_build_native_forces_build(tmp_path: Path) -> None:
     assert run_build(tmp_path, build_native=True).exists()
 
 
-def _spawn_env(
-    monkeypatch, transport: str, extra_env: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Env the native subprocess would be spawned with, without spawning it."""
-    for key in list(os.environ):
-        if key.startswith("DIMOS_ZENOH_"):
-            monkeypatch.delenv(key)
+def _launch(monkeypatch, transport: str, **config_kwargs) -> dict[str, Any]:
+    """The launch line the native subprocess would get, without spawning it."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", transport)
     monkeypatch.setattr(native_module_mod.global_config, "robot_ip", "192.0.2.10")
     monkeypatch.setattr(native_module_mod.global_config, "robot_ips", None)
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_interface", "")
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_connect", "")
+    monkeypatch.setattr(native_module_mod.global_config, "zenoh_listen", "")
     # A port-less module: constructing one with ports opens its transports.
-    module = StubBuildModule(executable=_ECHO, extra_env=extra_env or {})
+    module = StubBuildModule(executable=_ECHO, **config_kwargs)
     try:
-        return module._spawn_env()
+        return json.loads(module._stdin_blob({}))
     finally:
         module.stop()
 
 
-def test_zenoh_spawn_env_pins_the_session(monkeypatch) -> None:
-    env = _spawn_env(monkeypatch, "zenoh")
-    assert env["DIMOS_ZENOH_CONNECT"] == "tcp/192.0.2.10:7447"
-    assert env["DIMOS_ZENOH_MODE"] == "peer"
+def test_the_launch_line_carries_the_session(monkeypatch) -> None:
+    session = _launch(monkeypatch, "zenoh")["session"]
+    assert session["mode"] == "peer"
+    assert session["connect"] == ["tcp/192.0.2.10:7447"]
 
 
-def test_lcm_spawn_env_has_no_zenoh_vars(monkeypatch) -> None:
-    env = _spawn_env(monkeypatch, "lcm")
-    assert env["DIMOS_TRANSPORT"] == "lcm"
-    assert not any(key.startswith("DIMOS_ZENOH_") for key in env)
+def test_lcm_sends_no_session_settings(monkeypatch) -> None:
+    assert _launch(monkeypatch, "lcm")["session"] == {}
 
 
-def test_extra_env_overrides_the_derived_zenoh_env(monkeypatch) -> None:
-    """A blueprint can give one native a different role, e.g. router or client."""
-    env = _spawn_env(monkeypatch, "zenoh", extra_env={"DIMOS_ZENOH_MODE": "client"})
-    assert env["DIMOS_ZENOH_MODE"] == "client"
-    assert env["DIMOS_ZENOH_CONNECT"] == "tcp/192.0.2.10:7447"
+def test_a_pinned_mode_reaches_the_launch_line(monkeypatch) -> None:
+    """A blueprint can give one native a different role, keeping the rest derived."""
+    session = _launch(monkeypatch, "zenoh", session=ZenohConfig(mode="client"))["session"]
+    assert session["mode"] == "client"
+    assert session["connect"] == ["tcp/192.0.2.10:7447"]
+
+
+def test_a_native_can_be_opened_as_the_router(monkeypatch) -> None:
+    pinned = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:17450"], connect=[])
+    session = _launch(monkeypatch, "zenoh", session=pinned)["session"]
+    assert session["mode"] == "router"
+    assert session["listen"] == ["tcp/127.0.0.1:17450"]
+    assert session["connect"] == []
+
+
+def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
+    """Native config structs reject unknown keys, so it stays out of `config`."""
+    assert _launch(monkeypatch, "zenoh", session=ZenohConfig())["config"] is None
+
+
+def test_a_session_for_another_transport_is_rejected(monkeypatch) -> None:
+    """A module pinned as a zenoh router must not start silently under LCM."""
+    with pytest.raises(ValueError, match="but the transport is lcm"):
+        _launch(monkeypatch, "lcm", session=ZenohConfig(mode="client"))
 
 
 def test_base_field_not_sent_without_opt_in() -> None:

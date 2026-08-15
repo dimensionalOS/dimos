@@ -26,7 +26,10 @@ pub mod zenoh;
 
 pub use dimos_module_macros::{native_config, Module};
 pub use lcm::LcmTransport;
-pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
+pub use module::{
+    read_launch_config, run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig,
+    Output,
+};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::Transport;
 pub use zenoh::ZenohTransport;
@@ -40,25 +43,25 @@ pub use dimos_lcm::LcmOptions;
 ///
 /// Every transport is compiled in, so one binary follows whichever transport the
 /// coordinator picks at runtime. The coordinator always sets the variable, so an
-/// unset or unknown value is an error.
+/// unset or unknown value is an error. Its session settings come from the launch
+/// config, which is why that is read first.
 pub async fn run_with_transport<M: Module>() {
     crate::module::init_tracing();
+    let launch = read_launch_config()
+        .await
+        .expect("failed to read the launch config from stdin");
     match std::env::var("DIMOS_TRANSPORT").as_deref() {
         Ok("lcm") => {
-            run::<M, _>(
-                LcmTransport::new()
-                    .await
-                    .expect("failed to create lcm transport"),
-            )
-            .await
+            let transport = LcmTransport::new()
+                .await
+                .expect("failed to create lcm transport");
+            run::<M, _>(transport, launch).await
         }
         Ok("zenoh") => {
-            run::<M, _>(
-                ZenohTransport::new()
-                    .await
-                    .expect("failed to create zenoh transport"),
-            )
-            .await
+            let transport = ZenohTransport::from_launch(&launch)
+                .await
+                .expect("failed to create zenoh transport");
+            run::<M, _>(transport, launch).await
         }
         other => panic!("DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"),
     }
