@@ -27,13 +27,14 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -299,7 +300,7 @@ def test_build_native_forces_build(tmp_path: Path) -> None:
     assert run_build(tmp_path, build_native=True).exists()
 
 
-def _launch(monkeypatch, transport: str, **config_kwargs) -> dict[str, Any]:
+def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
     """The launch line the native subprocess would get, without spawning it."""
     monkeypatch.setattr(native_module_mod.global_config, "transport", transport)
     monkeypatch.setattr(native_module_mod.global_config, "robot_ip", "192.0.2.10")
@@ -309,7 +310,7 @@ def _launch(monkeypatch, transport: str, **config_kwargs) -> dict[str, Any]:
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_connect", "")
     # A port-less module: constructing one with ports opens its transports.
-    module = StubBuildModule(executable=_ECHO, **config_kwargs)
+    module = StubBuildModule(executable=_ECHO, stdin_config=True, **config_kwargs)
     try:
         return json.loads(module._stdin_blob({}))
     finally:
@@ -350,6 +351,12 @@ def test_a_session_for_another_transport_is_rejected(monkeypatch) -> None:
     """A module pinned as a zenoh router must not start silently under LCM."""
     with pytest.raises(ValueError, match="but the transport is lcm"):
         _launch(monkeypatch, "lcm", session=ZenohConfig(mode="client"))
+
+
+def test_a_session_without_the_stdin_line_is_rejected() -> None:
+    """The session reaches the module on that line or not at all."""
+    with pytest.raises(ValidationError, match="stdin_config off"):
+        NativeModuleConfig(executable=_ECHO, session=ZenohConfig(), stdin_config=False)
 
 
 def test_base_field_not_sent_without_opt_in() -> None:
