@@ -33,6 +33,7 @@ ViewName = Literal["top", "side", "front", "isometric"]
 VIEWS: tuple[str, ...] = ("top", "side", "front", "isometric")
 
 _GRAY = np.array([130.0, 130.0, 130.0])
+_BLUE = np.array([40.0, 90.0, 255.0])
 _RED = np.array([255.0, 30.0, 30.0])
 
 _ISO_AZIMUTH_RAD = math.radians(45.0)
@@ -63,9 +64,11 @@ def normalize_scores(
 
 
 def scores_to_colors(normalized: NDArray[np.floating]) -> NDArray[np.uint8]:
-    """(N,) scores in [0, 1] -> (N, 3) RGB, gray for low, red for high."""
+    """(N,) scores in [0, 1] -> (N, 3) RGB along a gray -> blue -> red gradient."""
     t = np.asarray(normalized, dtype=np.float32).reshape(-1, 1)
-    return np.asarray(_GRAY + (_RED - _GRAY) * t, dtype=np.uint8)
+    low = _GRAY + (_BLUE - _GRAY) * np.clip(t * 2.0, 0.0, 1.0)
+    high = _BLUE + (_RED - _BLUE) * np.clip(t * 2.0 - 1.0, 0.0, 1.0)
+    return np.asarray(np.where(t <= 0.5, low, high), dtype=np.uint8)
 
 
 def _view_coords(

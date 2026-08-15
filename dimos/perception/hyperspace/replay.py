@@ -32,6 +32,7 @@ from dimos.core.stream import Out
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -51,8 +52,13 @@ class D455ReplayModuleConfig(ModuleConfig):
         "realsense_depth_image": "depth_image",
         "realsense_color_image_camera_info": "camera_info",
         "realsense_depth_image_camera_info": "depth_camera_info",
+        "pointlio_lidar": "lidar",
         "tf": "tf",
     }
+    #: Publish every Nth message of a stream. Observation decode is lazy, so
+    #: skipped messages cost ~0.1 ms; decoding every mid360 cloud (~100 ms
+    #: each) would eat a core of GIL and starve the tf pump.
+    decimate: dict[str, int] = {"pointlio_lidar": 8}
 
 
 class D455ReplayModule(Module):
@@ -64,6 +70,7 @@ class D455ReplayModule(Module):
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
     _stores: list[SqliteStore]
@@ -75,13 +82,16 @@ class D455ReplayModule(Module):
     def _pump(self, store: SqliteStore, stream_name: str, port_name: str) -> None:
         port = getattr(self, port_name)
         speed = self.config.speed
-        may_drop = stream_name.endswith("_image")
+        may_drop = stream_name.endswith("_image") or stream_name == "pointlio_lidar"
+        decimate = self.config.decimate.get(stream_name, 1)
         published = dropped = 0
         obs: Any
         while not self._stop.is_set():
-            for obs in store.stream(stream_name):
+            for i, obs in enumerate(store.stream(stream_name)):
                 if self._stop.is_set():
                     return
+                if decimate > 1 and i % decimate:
+                    continue
                 target = self._wall_t0 + (obs.ts - self._replay_t0) / speed
                 delay = target - time.time()
                 if delay > 0:

@@ -38,10 +38,11 @@ def _room(n: int = 2000, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 
 
 def test_scores_to_colors_endpoints() -> None:
-    colors = scores_to_colors(np.array([0.0, 1.0]))
-    assert colors.shape == (2, 3)
+    colors = scores_to_colors(np.array([0.0, 0.5, 1.0]))
+    assert colors.shape == (3, 3)
     np.testing.assert_array_equal(colors[0], [130, 130, 130])  # gray
-    np.testing.assert_array_equal(colors[1], [255, 30, 30])  # red
+    np.testing.assert_array_equal(colors[1], [40, 90, 255])  # blue midpoint
+    np.testing.assert_array_equal(colors[2], [255, 30, 30])  # red
     assert colors.dtype == np.uint8
 
 

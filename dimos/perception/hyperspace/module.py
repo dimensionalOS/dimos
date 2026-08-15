@@ -22,6 +22,7 @@ every voxel by cosine similarity: heatmap renders, cluster coordinates, a
 
 from __future__ import annotations
 
+from collections import deque
 import math
 import threading
 import time
@@ -35,10 +36,13 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices
 from dimos.models.embedding.base import PatchEmbeddings
 from dimos.models.embedding.siglip2 import SigLIP2Model
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.hyperspace.cluster import VoxelCluster, top_clusters
 from dimos.perception.hyperspace.projection import project_patches_to_world
@@ -50,7 +54,11 @@ from dimos.perception.hyperspace.render import (
     render_view,
     scores_to_colors,
 )
-from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap
+from dimos.perception.hyperspace.voxel_map import (
+    Aggregate,
+    EmbeddingVoxelMap,
+    keys_near_mask,
+)
 from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
@@ -60,6 +68,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = setup_logger()
+
+#: Stream-time seconds a lidar cloud may wait for its world transform.
+_LIDAR_PENDING_S = 12.0
+#: Stream-time seconds a camera frame may wait for its world transform.
+_FRAME_PENDING_S = 20.0
 
 
 class HyperspaceModuleConfig(ModuleConfig):
@@ -88,6 +101,19 @@ class HyperspaceModuleConfig(ModuleConfig):
     background_prompts: list[str] = list(DEFAULT_BACKGROUND_PROMPTS)
     #: Rounds of 6-neighbor score averaging to suppress speckle.
     score_smooth_iterations: int = 2
+    #: Per-voxel aggregation of frame contributions. The robust modes
+    #: (median/medoid) keep a few samples per voxel and suppress single-frame
+    #: outliers that give the mean false positives.
+    aggregate: Aggregate = "median"
+    #: Frame samples kept per voxel for the robust aggregation modes.
+    max_samples_per_voxel: int = 8
+    #: Maintain a ray-traced lidar voxel map and drop embedding voxels with no
+    #: solid lidar geometry nearby (carves ghosts and dynamic objects).
+    use_lidar_clean_map: bool = True
+    lidar_max_range_m: float = 30.0
+    #: Chebyshev slack (in voxels) when matching embedding voxels to lidar
+    #: voxels; absorbs depth-vs-lidar discretization offsets.
+    lidar_clean_dilation: int = 1
 
 
 class HyperspaceModule(Module):
@@ -100,6 +126,7 @@ class HyperspaceModule(Module):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     tf: In[TFMessage]
+    lidar: In[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -111,6 +138,21 @@ class HyperspaceModule(Module):
         self._frames_used = 0
         self._points_inserted = 0
         self._last_skip_reason = ""
+        #: (frame ts, voxel keys the frame contributed to) — provenance for
+        #: mapping query matches back to source images.
+        self._frame_log: list[tuple[float, NDArray[np.int64]]] = []
+        self._ray_mapper: VoxelRayMapper | None = None
+        #: The Rust mapper is single-borrow (RefCell): concurrent add_frame /
+        #: voxel_count from the lidar and RPC threads raises, so serialize.
+        self._ray_lock = threading.Lock()
+        #: Clouds whose world tf hasn't arrived yet; drained on later arrivals.
+        self._lidar_pending: deque[PointCloud2] = deque()
+        #: Camera frames waiting for their world tf, same pattern as lidar.
+        #: Drained from both the ingest and reduce threads, hence the lock.
+        self._frame_pending: deque[tuple[PatchEmbeddings, Image]] = deque()
+        self._frame_pending_lock = threading.Lock()
+        self._lidar_frames = 0
+        self._lidar_skipped = 0
         #: Timestamp of the newest processed frame — the map's "now". Replayed
         #: data carries recording-epoch stamps, so never use wall clock.
         self._last_ts: float | None = None
@@ -124,7 +166,12 @@ class HyperspaceModule(Module):
     def _ensure_map(self, dim: int) -> EmbeddingVoxelMap:
         with self._map_lock:
             if self.map is None:
-                self.map = EmbeddingVoxelMap(voxel_size=self.config.voxel_size_m, dim=dim)
+                self.map = EmbeddingVoxelMap(
+                    voxel_size=self.config.voxel_size_m,
+                    dim=dim,
+                    aggregate=self.config.aggregate,
+                    max_samples=self.config.max_samples_per_voxel,
+                )
             return self.map
 
     def _ingest(self, pair: tuple[PatchEmbeddings, ...]) -> None:
@@ -134,13 +181,31 @@ class HyperspaceModule(Module):
         if depth is None:
             self._last_skip_reason = "no depth frame within tolerance"
             return
+        self._last_ts = patches.ts
+        # The tf feed can trail the frame stream by seconds; frames whose
+        # transform isn't buffered yet wait and retry instead of dropping.
+        self._frame_pending.append((patches, depth))
+        self._drain_pending_frames(now_ts=patches.ts)
+
+    def _drain_pending_frames(self, now_ts: float) -> None:
+        with self._frame_pending_lock:
+            while self._frame_pending:
+                patches, depth = self._frame_pending[0]
+                outcome = self._try_process_frame(patches, depth)
+                if outcome == "tf_not_ready":
+                    if now_ts - patches.ts > _FRAME_PENDING_S:
+                        self._frame_pending.popleft()
+                        continue
+                    return
+                self._frame_pending.popleft()
+
+    def _try_process_frame(self, patches: PatchEmbeddings, depth: Image) -> str:
         color_info, depth_info = self._color_info, self._depth_info
         if color_info is None or depth_info is None:
             self._last_skip_reason = "camera_info not yet received"
-            return
+            return "tf_not_ready"
 
         ts = patches.ts
-        self._last_ts = ts
         tol = self.config.tf_tolerance_s
         color_from_depth = self.tfbuffer.get(color_info.frame_id, depth.frame_id, ts, tol)
         world_from_depth = self.tfbuffer.get(self.config.world_frame, depth.frame_id, ts, tol)
@@ -150,7 +215,7 @@ class HyperspaceModule(Module):
                 f"{color_from_depth is not None}, "
                 f"{self.config.world_frame}<-{depth.frame_id}: {world_from_depth is not None})"
             )
-            return
+            return "tf_not_ready"
 
         points, patch_idx = project_patches_to_world(
             patches,
@@ -165,12 +230,73 @@ class HyperspaceModule(Module):
         )
         if points.shape[0] == 0:
             self._last_skip_reason = "no valid depth points"
-            return
+            return "skipped"
 
         flat = np.asarray(patches.to_numpy(), dtype=np.float32).reshape(-1, patches.dim)
-        self._ensure_map(patches.dim).insert_points(points, flat, patch_indices=patch_idx)
+        keys = self._ensure_map(patches.dim).insert_points(points, flat, patch_indices=patch_idx)
+        self._frame_log.append((ts, keys))
         self._frames_used += 1
         self._points_inserted += int(points.shape[0])
+        return "used"
+
+    # ------------------------------------------------------------------ lidar
+
+    def _on_lidar(self, cloud: PointCloud2) -> None:
+        """Feed point-lio lidar clouds into the ray-traced clean map.
+
+        The world tf for a cloud's timestamp usually arrives after the cloud
+        itself, so clouds queue until their transform shows up; ones still
+        unresolved after ``_LIDAR_PENDING_S`` of stream time are dropped.
+        """
+        mapper = self._ray_mapper
+        if mapper is None:
+            return
+        self._lidar_pending.append(cloud)
+        while self._lidar_pending:
+            head = self._lidar_pending[0]
+            world_from_lidar = self.tfbuffer.get(
+                self.config.world_frame, head.frame_id, head.ts, self.config.tf_tolerance_s
+            )
+            if world_from_lidar is None:
+                if cloud.ts - head.ts > _LIDAR_PENDING_S:
+                    self._lidar_pending.popleft()
+                    self._lidar_skipped += 1
+                    continue
+                return
+            self._lidar_pending.popleft()
+            matrix = world_from_lidar.to_matrix()
+            points = head.points_f32() @ matrix[:3, :3].T.astype(np.float32) + matrix[:3, 3].astype(
+                np.float32
+            )
+            with self._ray_lock:
+                mapper.add_frame(
+                    points, (float(matrix[0, 3]), float(matrix[1, 3]), float(matrix[2, 3]))
+                )
+            self._lidar_frames += 1
+
+    def _lidar_clean_mask(self, voxel_map: EmbeddingVoxelMap) -> NDArray[np.bool_] | None:
+        """Which embedding voxels have solid lidar geometry nearby; None = no filter."""
+        mapper = self._ray_mapper
+        if mapper is None:
+            return None
+        with self._ray_lock:
+            if mapper.voxel_count() == 0:
+                return None
+            centers = mapper.global_map()
+        lidar_keys = self._pack_lidar_keys(centers)
+        return keys_near_mask(
+            voxel_map.voxel_keys(), lidar_keys, radius=self.config.lidar_clean_dilation
+        )
+
+    def _pack_lidar_keys(self, centers: NDArray[np.float32]) -> NDArray[np.int64]:
+        idx = np.floor(centers / self.config.voxel_size_m).astype(np.int64) + KEY_OFFSET
+        return np.unique(pack_indices(idx))
+
+    def _lidar_voxel_count(self) -> int:
+        if self._ray_mapper is None:
+            return 0
+        with self._ray_lock:
+            return int(self._ray_mapper.voxel_count())
 
     # ------------------------------------------------------------------ queries
 
@@ -181,19 +307,47 @@ class HyperspaceModule(Module):
             return self.map
 
     def _query_scores(self, query: str) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-        """(centers (N, 3), scores (N,)) for a text query — see score_query()."""
-        return score_query(
-            self._require_map(),
+        """(centers (N, 3), scores (N,)) for a text query — see score_query().
+
+        Smoothing runs on the full map (it needs complete neighborhoods),
+        then voxels with no nearby lidar geometry are dropped.
+        """
+        voxel_map = self._require_map()
+        centers, scores = score_query(
+            voxel_map,
             self._text_model,
             query,
             background_prompts=self.config.background_prompts,
             smooth_iterations=self.config.score_smooth_iterations,
         )
+        mask = self._lidar_clean_mask(voxel_map)
+        if mask is not None:
+            centers, scores = centers[mask], scores[mask]
+        return centers, scores
 
     @rpc
     def save_map(self, path: str) -> str:
-        """Persist the reduced voxel map to an .npz for offline queries."""
-        self._require_map().save(path)
+        """Persist the voxel map plus lidar clean-map keys and frame provenance.
+
+        The extras let offline tools apply the same lidar filtering and map
+        query matches back to the recording frames that produced them.
+        """
+        voxel_map = self._require_map()
+        extras: dict[str, Any] = {}
+        mapper = self._ray_mapper
+        if mapper is not None:
+            with self._ray_lock:
+                centers = mapper.global_map() if mapper.voxel_count() else None
+            if centers is not None:
+                extras["lidar_keys"] = self._pack_lidar_keys(centers)
+                extras["lidar_dilation"] = np.int64(self.config.lidar_clean_dilation)
+        frame_log = list(self._frame_log)
+        if frame_log:
+            extras["frame_ts"] = np.array([ts for ts, _ in frame_log])
+            extras["frame_keys"] = np.concatenate([keys for _, keys in frame_log])
+            sizes = [keys.size for _, keys in frame_log]
+            extras["frame_key_offsets"] = np.concatenate([[0], np.cumsum(sizes)])
+        voxel_map.save(path, extras=extras)
         return path
 
     @rpc
@@ -212,6 +366,9 @@ class HyperspaceModule(Module):
             "frames_used": self._frames_used,
             "points_inserted": self._points_inserted,
             "voxels": voxel_count,
+            "lidar_frames": self._lidar_frames,
+            "lidar_skipped": self._lidar_skipped,
+            "lidar_voxels": self._lidar_voxel_count(),
             "last_skip_reason": self._last_skip_reason,
             "tf_lag_s": tf_lag,
         }
@@ -367,6 +524,15 @@ class HyperspaceModule(Module):
             )
         )
 
+        if self.config.use_lidar_clean_map:
+            self._ray_mapper = VoxelRayMapper(
+                voxel_size=self.config.voxel_size_m,
+                max_range=self.config.lidar_max_range_m,
+            )
+            self.register_disposable(
+                backpressure(self.lidar.pure_observable()).subscribe(self._on_lidar)
+            )
+
         paired = align_timestamped(
             backpressure(self.patch_embeddings.pure_observable()),
             self.depth_image.pure_observable(),
@@ -376,6 +542,9 @@ class HyperspaceModule(Module):
         self.register_disposable(paired.subscribe(self._ingest))
 
         def _periodic_reduce(_: Any) -> None:
+            # Retry frames that were waiting on tf when the stream went quiet.
+            if self._last_ts is not None:
+                self._drain_pending_frames(now_ts=self._last_ts)
             with self._map_lock:
                 if self.map is not None:
                     voxels = self.map.reduce()

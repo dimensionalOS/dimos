@@ -15,7 +15,11 @@
 import numpy as np
 import pytest
 
-from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap
+from dimos.perception.hyperspace.voxel_map import (
+    EmbeddingVoxelMap,
+    dilate_keys,
+    keys_near_mask,
+)
 
 
 def test_insert_and_mean() -> None:
@@ -122,6 +126,75 @@ def test_save_load_roundtrip(tmp_path) -> None:
     lk, lm = loaded.mean_embeddings(normalize=False)
     np.testing.assert_array_equal(ok, lk)
     np.testing.assert_allclose(om, lm, atol=1e-6)
+
+
+def test_median_rejects_outlier_frame() -> None:
+    m = EmbeddingVoxelMap(voxel_size=1.0, dim=3, aggregate="median")
+    point = np.array([[0.5, 0.5, 0.5]])
+    # Four consistent frames and one outlier frame in the same voxel.
+    for _ in range(4):
+        m.insert_points(point, np.array([[1.0, 0.0, 0.0]], dtype=np.float32))
+    m.insert_points(point, np.array([[0.0, 0.0, 9.0]], dtype=np.float32))
+    _, agg = m.embeddings(normalize=False)
+    np.testing.assert_allclose(agg[0], [1.0, 0.0, 0.0], atol=1e-3)
+    # The mean would have been dragged toward the outlier.
+    _, mean = m.mean_embeddings(normalize=False)
+    assert mean[0, 2] > 1.0
+
+
+def test_medoid_returns_observed_sample() -> None:
+    m = EmbeddingVoxelMap(voxel_size=1.0, dim=2, aggregate="medoid")
+    point = np.array([[0.5, 0.5, 0.5]])
+    m.insert_points(point, np.array([[1.0, 0.1]], dtype=np.float32))
+    m.insert_points(point, np.array([[1.0, -0.1]], dtype=np.float32))
+    m.insert_points(point, np.array([[-1.0, 0.0]], dtype=np.float32))
+    _, agg = m.embeddings(normalize=False)
+    # The medoid is one of the two aligned samples, never a blend.
+    assert abs(agg[0, 0] - 1.0) < 1e-2
+    assert abs(abs(agg[0, 1]) - 0.1) < 1e-2
+
+
+def test_sample_cap_keeps_first_k() -> None:
+    m = EmbeddingVoxelMap(voxel_size=1.0, dim=2, aggregate="median", max_samples=2)
+    point = np.array([[0.5, 0.5, 0.5]])
+    for value in (1.0, 3.0, 100.0):
+        m.insert_points(point, np.array([[value, 0.0]], dtype=np.float32))
+        m.reduce()
+    _, agg = m.embeddings(normalize=False)
+    np.testing.assert_allclose(agg[0], [2.0, 0.0], atol=1e-2)
+
+
+def test_robust_save_load_freezes_aggregate(tmp_path) -> None:
+    rng = np.random.default_rng(4)
+    m = EmbeddingVoxelMap(voxel_size=0.2, dim=6, aggregate="median")
+    for _ in range(3):
+        m.insert_points(rng.uniform(-1, 1, (50, 3)), rng.normal(size=(50, 6)).astype(np.float32))
+        m.reduce()
+    path = str(tmp_path / "map.npz")
+    m.save(path, extras={"frame_ts": np.array([1.0, 2.0])})
+    loaded = EmbeddingVoxelMap.load(path)
+    assert loaded.aggregate == "median"
+    np.testing.assert_allclose(loaded.extras["frame_ts"], [1.0, 2.0])
+    _, om = m.embeddings(normalize=False)
+    _, lm = loaded.embeddings(normalize=False)
+    np.testing.assert_allclose(om, lm, atol=2e-2)
+
+
+def test_keys_near_mask() -> None:
+    m = EmbeddingVoxelMap(voxel_size=1.0, dim=2)
+    m.insert_points(
+        np.array([[0.5, 0.5, 0.5], [1.5, 0.5, 0.5], [8.5, 0.5, 0.5]]),
+        np.ones((3, 2), dtype=np.float32),
+    )
+    keys = m.voxel_keys()
+    keep = EmbeddingVoxelMap(voxel_size=1.0, dim=2)
+    keep_keys = keep.insert_points(np.array([[0.5, 0.5, 0.5]]), np.ones((1, 2), dtype=np.float32))
+    # Radius 1 keeps the seed voxel and its direct neighbor, not the far one.
+    mask = keys_near_mask(keys, keep_keys, radius=1)
+    assert mask.sum() == 2
+    assert keys_near_mask(keys, keep_keys, radius=0).sum() == 1
+    assert keys_near_mask(keys, np.empty(0, dtype=np.int64)).sum() == 0
+    assert dilate_keys(keep_keys, radius=1).size == 27
 
 
 def test_input_validation() -> None:

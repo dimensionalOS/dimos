@@ -36,7 +36,7 @@ from dimos.perception.hyperspace.render import (
     render_view,
     scores_to_colors,
 )
-from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap
+from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap, keys_near_mask
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -60,8 +60,20 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("loaded %s: %d voxels, dim %d", map_path, voxel_map.voxel_count, voxel_map.dim)
     model = SigLIP2Model()
 
+    # Same lidar clean-map filtering the live module applies, if it was saved.
+    keep_mask = None
+    if "lidar_keys" in voxel_map.extras:
+        keep_mask = keys_near_mask(
+            voxel_map.voxel_keys(),
+            voxel_map.extras["lidar_keys"],
+            radius=int(voxel_map.extras.get("lidar_dilation", 1)),
+        )
+        logger.info("lidar clean map keeps %d/%d voxels", int(keep_mask.sum()), keep_mask.size)
+
     for query in args.queries:
         centers, scores = score_query(voxel_map, model, query, smooth_iterations=args.smooth)
+        if keep_mask is not None:
+            centers, scores = centers[keep_mask], scores[keep_mask]
         slug = query.replace(" ", "_")
         for view in args.views:
             img = render_view(centers, scores, view=view, voxel_size=voxel_map.voxel_size)

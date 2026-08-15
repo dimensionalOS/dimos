@@ -24,6 +24,7 @@ from dimos.core.stream import Transport
 from dimos.core.transport import pSHMTransport
 from dimos.models.embedding.base import PatchEmbeddings
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.hyperspace.module import HyperspaceModule
 from dimos.perception.hyperspace.replay import D455ReplayModule
 from dimos.perception.siglip2.module import SigLIP2Module
@@ -45,6 +46,10 @@ def heavy_stream_transports() -> dict[tuple[str, type], TransportSpec | Transpor
         ),
         ("patch_embeddings", PatchEmbeddings): pSHMTransport(
             "/patch_embeddings", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        ),
+        # Mid-360 clouds are ~3 MB at 10 Hz — enough to drown the tf stream on LCM.
+        ("lidar", PointCloud2): pSHMTransport(
+            "/lidar", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
         ),
     }
 
