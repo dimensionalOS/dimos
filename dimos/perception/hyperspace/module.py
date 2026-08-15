@@ -78,8 +78,10 @@ _FRAME_PENDING_S = 20.0
 
 class HyperspaceModuleConfig(ModuleConfig):
     voxel_size_m: float = 0.1
-    #: Fold pending voxel contributions into means at this period.
-    reduce_interval_s: float = 5.0
+    #: Fold pending voxel contributions into means at this period. Folds
+    #: reindex the whole sample store, so on big maps they should be rare;
+    #: inserts and queries stay correct regardless (queries fold on demand).
+    reduce_interval_s: float = 20.0
     world_frame: str = "world"
     robot_frame: str = "base_link"
     #: Take every Nth depth pixel when projecting patches to 3D.

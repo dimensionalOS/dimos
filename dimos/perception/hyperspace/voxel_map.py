@@ -106,6 +106,10 @@ class EmbeddingVoxelMap:
         #: Arbitrary arrays saved/loaded alongside the map (provenance, lidar keys).
         self.extras: dict[str, NDArray[Any]] = {}
         self._lock = threading.RLock()
+        #: Guards only the pending list. Inserts must never wait on a fold:
+        #: reduce() reindexes the whole sample store (seconds on 100k+ voxel
+        #: maps) and a shared lock would stall ingest and drop frames.
+        self._pending_lock = threading.Lock()
         # Canonical state: sorted unique keys, per-voxel embedding sums and weights.
         self._keys: NDArray[np.int64] = np.empty(0, dtype=np.int64)
         self._sums: NDArray[np.float32] = np.empty((0, dim), dtype=np.float32)
@@ -123,7 +127,7 @@ class EmbeddingVoxelMap:
         self._frozen_agg: NDArray[np.float32] | None = None
 
     def __len__(self) -> int:
-        with self._lock:
+        with self._lock, self._pending_lock:
             pending = {int(k) for keys, _, _ in self._pending for k in np.unique(keys)}
             return int(np.union1d(self._keys, np.fromiter(pending, np.int64, len(pending))).size)
 
@@ -136,7 +140,7 @@ class EmbeddingVoxelMap:
     @property
     def pending_count(self) -> int:
         """Number of contribution batches not yet folded by reduce()."""
-        with self._lock:
+        with self._pending_lock:
             return len(self._pending)
 
     def voxel_keys(self) -> NDArray[np.int64]:
@@ -198,7 +202,7 @@ class EmbeddingVoxelMap:
             weights = np.zeros(uniq.size, dtype=np.float32)
             np.add.at(weights, inverse, pair_weights)
 
-        with self._lock:
+        with self._pending_lock:
             self._pending.append((uniq, sums, weights))
         return uniq
 
@@ -208,9 +212,10 @@ class EmbeddingVoxelMap:
         Returns the number of voxels in the reduced map.
         """
         with self._lock:
-            if self._pending:
+            with self._pending_lock:
                 pending = self._pending
                 self._pending = []
+            if pending:
                 self._agg = None
                 self._agg_normalized = None
                 self._frozen_agg = None
