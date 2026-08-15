@@ -42,6 +42,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
@@ -67,6 +68,16 @@ def default_base_transform() -> Transform:
     )
 
 
+def default_imu_info() -> ImuInfo:
+    """D455 IMU noise model, measured by the kalibr run in datasets/d455."""
+    return ImuInfo(
+        gyro_noise_density=2.0e-4,
+        gyro_random_walk=1.0e-5,
+        accel_noise_density=1.8e-3,
+        accel_random_walk=1.0e-4,
+    )
+
+
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
@@ -86,6 +97,12 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     enable_imu: bool = False
     # Gyro rate, and so the Imu output rate.
     imu_hz: int = 400
+    # Noise model published on ``imu_info`` alongside the samples. Only the Allan
+    # constants are read from here: the frame and delivered rate the driver knows
+    # and stamps itself. The device cannot report these (the calibration table
+    # carries no noise variances), so they ride in config; the defaults are D455
+    # values from a kalibr run. None publishes nothing.
+    imu_info: ImuInfo | None = Field(default_factory=default_imu_info)
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
@@ -98,6 +115,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     infrared_left: Out[Image]
     infrared_right: Out[Image]
     imu: Out[Imu]
+    imu_info: Out[ImuInfo]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
@@ -367,6 +385,11 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         ):
             if info is not None:
                 stream.publish(info.with_ts(ts))
+        if self.config.enable_imu and self.config.imu_info is not None:
+            imu_info = self.config.imu_info.with_ts(ts)
+            imu_info.frame_id = self._imu_optical_frame
+            imu_info.frequency = float(self.config.imu_hz)
+            self.imu_info.publish(imu_info)
 
     def _build_camera_info(self) -> None:
         import pyrealsense2 as rs
