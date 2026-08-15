@@ -50,7 +50,7 @@ POUR_Z = 0.90
 TIP_RADIANS = -np.pi / 2
 # Water-exit point relative to ``right_hand_palm_link``. At the upright
 # watering pose, +y points toward the robot's left.
-DEFAULT_SPOUT_OFFSET_IN_PALM = (0.0, 0.20, 0.0)
+DEFAULT_SPOUT_OFFSET_IN_PALM = (0.0, 0.10, 0.0)
 RIGHT_PALM_FRAME = "right_hand_palm_link"
 WATERING_SPOUT_FRAME = "right_watering_spout"
 
