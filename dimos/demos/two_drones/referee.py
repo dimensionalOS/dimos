@@ -64,6 +64,8 @@ class SensorConfig:
     fov_deg: float = 140.0
     # Mission is accomplished when a drone gets this close to the target.
     reach_radius_m: float = 1.0
+    # Planned overlap between the two drones' radar footprints (HUD readout).
+    overlap_target_m: float = 2.0
     tick_s: float = 0.7
     # consecutive ticks needed to switch visible/lost (hysteresis)
     debounce: int = 2
@@ -652,6 +654,19 @@ class Referee:
         tp = self.target_pos_ros
         if tp:
             lines.append(["#e11d48", f"target ({tp[0]:5.1f},{tp[1]:6.1f})  moving"])
+
+        # Formation geometry: how much the two radar footprints actually overlap.
+        if len(self._pos) == 2:
+            (ax, ay), (bx, by) = list(self._pos.values())
+            sep = math.hypot(ax - bx, ay - by)
+            overlap = 2 * self.sensor.range_m - sep
+            if overlap > 0:
+                geo = f"radar overlap {overlap:5.1f} m (planned {self.sensor.overlap_target_m:.0f} m)"
+                color = "#22c55e" if abs(overlap - self.sensor.overlap_target_m) < 3 else "#93c5fd"
+            else:
+                geo = f"gap {-overlap:5.1f} m between radar footprints"
+                color = "#f59e0b"
+            lines.append([color, f"FORMATION {sep:5.1f} m abreast · {geo}"])
 
         # Radio link: state is shared (same jam schedule), rates are per drone.
         any_link = next(iter(self._link.values()), None)

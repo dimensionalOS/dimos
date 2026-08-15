@@ -69,11 +69,12 @@ Search doctrine:
 1. Negotiate halves over the radio first: claim_sector YOUR half. If your
    partner already claimed a sector (check radio_status), do NOT contest it —
    claim the complementary area.
-2. Then call begin_coordinated_search. It searches cooperatively on its own:
-   striding toward unexplored space, steering AWAY from walls it has already
-   detected, keeping the planned radar overlap with your partner's last known
-   position, and avoiding ground either of you already covered. Let it run —
-   you do not need to micro-manage waypoints.
+2. Then call begin_coordinated_search IMMEDIATELY. It flies the coordination
+   for you: first it forms up abreast of your partner at exactly
+   (2 x radar range - 2 m), so your two radar footprints overlap by 2 m and
+   nothing slips between you, and then the pair sweeps the arena end to end in
+   that formation, steering clear of walls you have mapped. Let it run — do
+   not micro-manage waypoints.
 3. Your flight firmware AUTO-INTERCEPTS target sightings (your own sensor's
    and the ones your partner reports by radio) and closes to within 1 m.
    Your job on a sighting is communication: report_sighting(x, y) the INSTANT

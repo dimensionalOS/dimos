@@ -183,6 +183,7 @@ class DroneSkillContainer(Module):
         self._visited: list[tuple[float, float]] = []  # own covered points
         self._visited_at = 0.0
         self._peer_pos: tuple[float, float] | None = None  # last radio belief
+        self._peer_name: str = ""
         self._peer_trail: list[tuple[float, float]] = []  # partner coverage
         self._walls: np.ndarray | None = None  # Nx2 occupied points (world)
         self._last_heading = 0.0
@@ -246,10 +247,16 @@ class DroneSkillContainer(Module):
                     self._visited.pop(0)
             self._visited_at = now
 
+    def _own_name(self) -> str:
+        # "droneA/droneskillcontainer" -> "droneA"
+        inst = self.config.instance_name or ""
+        return inst.split("/", 1)[0] if "/" in inst else inst
+
     def _on_peer_belief(self, raw: str) -> None:
         try:
             data = json.loads(raw)
-            for _, b in data.get("beliefs", {}).items():
+            for name, b in data.get("beliefs", {}).items():
+                self._peer_name = name
                 pos = b.get("position")
                 if pos is not None:
                     p = (float(pos[0]), float(pos[1]))
@@ -629,6 +636,29 @@ class DroneSkillContainer(Module):
             return 1e9
         return min(math.hypot(x - p[0], y - p[1]) for p in points[-300:])
 
+    def _formation_sign(self) -> float:
+        """Which side of the search line this drone takes. Decided from the two
+        names so both drones agree without negotiating (and without a leader)."""
+        me = self._own_name()
+        peer = self._peer_name
+        if peer:
+            return -1.0 if me < peer else 1.0
+        # No radio contact yet: fall back to which half of the arena we are in.
+        od = self._latest_odom
+        return -1.0 if (od is None or od.position.y < 0) else 1.0
+
+    def _lane_clear_of_walls(self, lane_x: float, y: float) -> float:
+        """Shift the lane inward if this drone has mapped a wall next to it —
+        flying along a wall wastes half the radar cone on it."""
+        walls = self._walls
+        if walls is None or not walls.size:
+            return lane_x
+        near = float(np.min(np.hypot(walls[:, 0] - lane_x, walls[:, 1] - y)))
+        if near >= 6.0:
+            return lane_x
+        shifted = lane_x - math.copysign(4.0, lane_x)
+        return max(-self.config.bound_x + 2.0, min(self.config.bound_x - 2.0, shifted))
+
     def _pick_search_goal(self) -> tuple[float, float] | None:
         od = self._latest_odom
         if od is None:
@@ -674,10 +704,11 @@ class DroneSkillContainer(Module):
 
     @skill(uses=[CAP_MOVEMENT])
     def begin_coordinated_search(self) -> str:
-        """Search the arena cooperatively: repeatedly strides toward unexplored
-        space, away from detected walls, keeping ~(2*sensor_range - overlap)
-        separation from your partner's last known position and avoiding areas
-        either of you already covered. Runs until cancelled (stop_moving) or
+        """Search the arena cooperatively: first form up abreast of your
+        partner at exactly (2*sensor_range - radar_overlap) metres, so the two
+        radar footprints overlap by the planned margin and nothing between you
+        is missed, then sweep the arena end to end in that formation, keeping
+        clear of walls you have mapped. Runs until cancelled (stop_moving) or
         until a sighting triggers the intercept reflex."""
         self._cancel_sweep()
         if self._latest_odom is None:
@@ -686,36 +717,66 @@ class DroneSkillContainer(Module):
         self._sweep_cancel = threading.Event()
         cancel = self._sweep_cancel
 
+        half_sep = (2 * self.config.sensor_range_m - self.config.radar_overlap_m) / 2
+
         def run() -> None:
+            # --- phase 1: form up on the search line -------------------------
+            # Both drones take a lane offset from the arena centre so their
+            # radar footprints touch with exactly `radar_overlap_m` of overlap.
+            # The slot is picked from the drone names (no leader, no
+            # negotiation): the lexicographically smaller name flies west.
+            sign = self._formation_sign()
+            lane_x = max(-self.config.bound_x + 2.0, min(self.config.bound_x - 2.0, sign * half_sep))
+            od = self._latest_odom
+            start_y = od.position.y if od else 0.0
+            peer = self._peer_pos
+            if peer is not None:
+                start_y = (start_y + peer[1]) / 2  # both compute the same line
+            start_y = max(-self.config.bound_y + 4, min(self.config.bound_y - 4, start_y))
+            self._sweep_status = (
+                f"forming up at x={lane_x:.0f} "
+                f"({2 * half_sep:.0f} m apart, {self.config.radar_overlap_m:.0f} m radar overlap)"
+            )
+            self._mark(lane_x, start_y, "destination")
+            if self._direct_fly(lane_x, start_y, cancel, arrive_r=3.0, timeout=60.0) == "cancelled":
+                self._sweep_status = "formation: cancelled"
+                return
+
+            # --- phase 2: sweep the arena abreast ----------------------------
+            # Fly the lane end to end; the pair's two 15 m footprints plus the
+            # planned overlap cover the full width in a single pass.
             legs = 0
+            far = self.config.bound_y - 4
+            direction = 1.0 if start_y < 0 else -1.0
             while not cancel.is_set():
-                goal = self._pick_search_goal()
-                if goal is None:
-                    time.sleep(1.0)
-                    continue
-                gx, gy = goal
+                gy = far * direction
+                # Nudge the lane away from any wall this drone has mapped.
+                gx = self._lane_clear_of_walls(lane_x, gy)
                 legs += 1
                 self._mark(gx, gy, "hop")
-                self._sweep_status = f"coordinated search: leg {legs} -> ({gx:.1f}, {gy:.1f})"
-                result = self._direct_fly(gx, gy, cancel, arrive_r=2.5, timeout=45.0)
-                if result == "blocked":
-                    # Remember the blockage as a virtual wall so scoring learns.
-                    od = self._latest_odom
-                    if od is not None:
-                        p = np.array([[od.position.x, od.position.y]])
-                        self._walls = p if self._walls is None else np.vstack([self._walls, p])
+                self._sweep_status = (
+                    f"formation sweep: leg {legs} -> ({gx:.0f}, {gy:.0f}), "
+                    f"{2 * half_sep:.0f} m abreast"
+                )
+                result = self._direct_fly(gx, gy, cancel, arrive_r=3.0, timeout=90.0)
                 if result == "cancelled":
-                    self._sweep_status = "coordinated search: cancelled"
+                    self._sweep_status = "formation sweep: cancelled"
                     return
-            self._sweep_status = "coordinated search: stopped"
+                if result == "blocked":
+                    o = self._latest_odom
+                    if o is not None:
+                        p = np.array([[o.position.x, o.position.y]])
+                        self._walls = p if self._walls is None else np.vstack([self._walls, p])
+                direction = -direction
+            self._sweep_status = "formation sweep: stopped"
 
         self._sweep_thread = threading.Thread(target=run, daemon=True)
         self._sweep_thread.start()
         sep = 2 * self.config.sensor_range_m - self.config.radar_overlap_m
         return (
-            f"Coordinated search running: striding {self.config.search_step_m:.0f} m legs "
-            f"toward unexplored space, keeping ~{sep:.0f} m from partner "
-            f"(radar overlap {self.config.radar_overlap_m:.0f} m), away from mapped walls."
+            f"Coordinated search running: forming up {sep:.0f} m abreast of your partner "
+            f"({self.config.radar_overlap_m:.0f} m radar overlap), then sweeping the arena "
+            f"end to end together, keeping clear of mapped walls."
         )
 
     @skill
