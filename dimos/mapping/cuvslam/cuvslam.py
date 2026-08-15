@@ -32,7 +32,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.ImuInfo import ImuInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -153,12 +152,12 @@ def _driver_env() -> dict[str, str]:
 class CuvslamConfig(NativeModuleConfig):
     cwd: str | None = str(MODULE_DIR)
     executable: str = "result/bin/cuvslam_odometry"
-    # The C++ lives in dimSLAM (cuVSLAM + the module built on it); dimos just
-    # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
+    # The module lives in dimSLAM (cuVSLAM + the Rust module built on it); dimos just
+    # builds the pinned rev (fused-odom-rust tip; tag on merge). `nix build`
     # drops the `result` symlink in the cwd.
     build_command: str | None = Field(
         default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
-        f"53cc07dad60fb5435b5c82974a037e586aed855b#{sdk_variant()}"
+        f"c8a36de8074a2872ecf1656e523abc08afbd2d6b#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
@@ -181,20 +180,20 @@ class CuvslamConfig(NativeModuleConfig):
     # optical frame reproduces NVIDIA's examples, whose rig is the left camera; output stays
     # on base_frame either way, the two differing by a fixed transform.
     rig_frame: str = ""
-    # Only read when Slam is off, where map->odom can only be identity.
+    # map->odom can only be identity: this module carries no map correction. Loop
+    # closure and relocalization moved downstream, into the fusion filter.
     publish_map_to_odom: bool = True
 
-    # Pose graph and loop closure; without it map->odom is identity.
-    enable_slam: bool = True
-    # Runs Slam on its own thread. Its GetPose() carries no timestamp, so a thread running
-    # behind cannot be matched to the odometry pose it corrects.
-    slam_async: bool = False
-    # Poses in the pose graph, not a distance. 0 is unlimited.
-    slam_max_poses: int = 300
-    slam_throttling_ms: int = 0
-    # The noise model arrives on the ``imu_info`` stream, published by the driver
-    # the way ``camera_info`` is; the tracker waits for it before building the rig.
+    # cuVSLAM's Inertial mode: the stereo pair plus one IMU.
     enable_imu: bool = False
+    # IMU noise model, continuous-time densities the way kalibr reports them. All four
+    # at zero with enable_imu on is a misconfiguration the module rejects.
+    imu_gyro_noise_density: float = 0.0
+    imu_gyro_random_walk: float = 0.0
+    imu_accel_noise_density: float = 0.0
+    imu_accel_random_walk: float = 0.0
+    # The rate actually fed; declaring more than arrives never initialises alignment.
+    imu_frequency: float = 0.0
     # Rebase guard: a frame whose translation standard deviation (root of the largest
     # translation term of cuVSLAM's covariance) exceeds this has its motion dropped and the
     # path rebased onto the held pose, so the published odometry never carries a teleport
@@ -226,9 +225,8 @@ class CuvslamOdometry(NativeModule):
     color) is reprojected onto the rig camera through ``depth_camera_info`` and tf.
 
     ``odometry`` is one continuous ``odom`` -> ``base_link`` path; restarts after a
-    tracking loss are rebased onto the last published pose. ``corrected_odometry`` is
-    the pose-graph ``map`` -> ``base_link`` and jumps at loop closures. ``tf`` carries
-    ``odom`` -> ``base_link`` and ``map`` -> ``odom``.
+    tracking loss are rebased onto the last published pose. ``tf`` carries
+    ``odom`` -> ``base_link`` and an identity ``map`` -> ``odom``.
     """
 
     config: CuvslamConfig
@@ -238,8 +236,6 @@ class CuvslamOdometry(NativeModule):
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     imu: In[Imu]
-    imu_info: In[ImuInfo]
 
     odometry: Out[Odometry]
-    corrected_odometry: Out[Odometry]
     tf: IO[TFMessage]
