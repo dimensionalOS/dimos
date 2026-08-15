@@ -16,13 +16,41 @@
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import autoconnect
+from typing import Any
+
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
+from dimos.core.coordination.blueprints import TransportSpec, autoconnect
+from dimos.core.stream import Transport
+from dimos.core.transport import pSHMTransport
+from dimos.models.embedding.base import PatchEmbeddings
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.hyperspace.module import HyperspaceModule
 from dimos.perception.hyperspace.replay import D455ReplayModule
 from dimos.perception.siglip2.module import SigLIP2Module
+
+
+def heavy_stream_transports() -> dict[tuple[str, type], TransportSpec | Transport[Any]]:
+    """Shared-memory transports for the high-bandwidth streams.
+
+    Raw replayed images saturate LCM UDP multicast and drown the tf stream
+    (dropped tf = failed world lookups = skipped frames), so the heavy
+    streams ride shared memory instead.
+    """
+    return {
+        ("color_image", Image): pSHMTransport(
+            "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        ),
+        ("depth_image", Image): pSHMTransport(
+            "/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
+        ),
+        ("patch_embeddings", PatchEmbeddings): pSHMTransport(
+            "/patch_embeddings", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        ),
+    }
+
 
 hyperspace_replay = autoconnect(
     D455ReplayModule.blueprint(),
     SigLIP2Module.blueprint(),
     HyperspaceModule.blueprint(),
-)
+).transports(heavy_stream_transports())

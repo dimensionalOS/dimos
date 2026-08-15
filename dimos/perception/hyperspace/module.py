@@ -50,6 +50,7 @@ from dimos.perception.hyperspace.render import (
     scores_to_colors,
 )
 from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap
+from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -71,7 +72,11 @@ class HyperspaceModuleConfig(ModuleConfig):
     min_depth_m: float = 0.3
     max_depth_m: float = 6.0
     depth_match_tolerance_s: float = 0.05
-    tf_tolerance_s: float = 0.5
+    #: Nearest-stamp tolerance; world odometry in recordings can gap ~1 s.
+    tf_tolerance_s: float = 1.0
+    #: TF history depth in stream time. Replay pipelines lag the tf feed by
+    #: several seconds, so keep well more than the default 10 s.
+    tf_buffer_s: float = 120.0
     #: Text tower for queries; must match the SigLIP 2 module's model.
     model_name: str = "google/siglip2-base-patch16-256"
     device: str | None = None
@@ -101,6 +106,9 @@ class HyperspaceModule(Module):
         self._frames_used = 0
         self._points_inserted = 0
         self._last_skip_reason = ""
+        #: Timestamp of the newest processed frame — the map's "now". Replayed
+        #: data carries recording-epoch stamps, so never use wall clock.
+        self._last_ts: float | None = None
         model_kwargs: dict[str, Any] = {"model_name": self.config.model_name}
         if self.config.device is not None:
             model_kwargs["device"] = self.config.device
@@ -127,6 +135,7 @@ class HyperspaceModule(Module):
             return
 
         ts = patches.ts
+        self._last_ts = ts
         tol = self.config.tf_tolerance_s
         color_from_depth = self.tfbuffer.get(color_info.frame_id, depth.frame_id, ts, tol)
         world_from_depth = self.tfbuffer.get(self.config.world_frame, depth.frame_id, ts, tol)
@@ -177,12 +186,19 @@ class HyperspaceModule(Module):
         """Ingestion counters and map size, for monitoring and tests."""
         with self._map_lock:
             voxel_count = self.map.reduce() if self.map is not None else 0
+        tf_lag: dict[str, float] = {}
+        if self._last_ts is not None and self._tf is not None:
+            for key, buffer in self._tf.buffers.items():
+                newest = buffer.last()
+                if key[0] in (self.config.world_frame, "base_link") and newest is not None:
+                    tf_lag[f"{key[0]}->{key[1]}"] = round(self._last_ts - newest.ts, 3)
         return {
             "frames_in": self._frames_in,
             "frames_used": self._frames_used,
             "points_inserted": self._points_inserted,
             "voxels": voxel_count,
             "last_skip_reason": self._last_skip_reason,
+            "tf_lag_s": tf_lag,
         }
 
     @skill
@@ -212,8 +228,10 @@ class HyperspaceModule(Module):
 
     def _robot_pose(self) -> tuple[NDArray[np.float64], float]:
         """Latest (position (3,), yaw) of the robot in the world frame."""
+        if self._last_ts is None:
+            raise RuntimeError("no frames processed yet — robot pose unknown")
         pose = self.tfbuffer.get(
-            self.config.world_frame, self.config.robot_frame, time.time(), 60.0
+            self.config.world_frame, self.config.robot_frame, self._last_ts, 60.0
         )
         if pose is None:
             raise RuntimeError(
@@ -318,6 +336,10 @@ class HyperspaceModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+
+        # Deep TF history: lookups happen at frame timestamps that trail the
+        # live tf feed, and the default 10 s window prunes past them.
+        self._tf = TF(self.tf, buffer_size=self.config.tf_buffer_s)
 
         self.register_disposable(
             Disposable(self.camera_info.subscribe(lambda info: setattr(self, "_color_info", info)))

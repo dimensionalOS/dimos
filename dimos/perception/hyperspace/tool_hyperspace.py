@@ -32,6 +32,7 @@ import cv2
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.perception.hyperspace.blueprints import heavy_stream_transports
 from dimos.perception.hyperspace.module import HyperspaceModule
 from dimos.perception.hyperspace.render import VIEWS
 from dimos.perception.hyperspace.replay import D455ReplayModule
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> None:
         D455ReplayModule.blueprint(db_path=db_path, speed=args.speed),
         SigLIP2Module.blueprint(max_freq=args.max_freq),
         HyperspaceModule.blueprint(),
-    )
+    ).transports(heavy_stream_transports())
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
