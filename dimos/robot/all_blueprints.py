@@ -233,6 +233,7 @@ all_modules = {
     "joystick-module": "dimos.robot.unitree.b1.joystick_module.JoystickModule",
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
+    "le-robot-policy-module": "dimos.experimental.robot_policy.lerobot.module.LeRobotPolicyModule",
     "local-planner": "dimos.navigation.cmu_nav.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "manipulation-skills": "dimos.manipulation.manipulation_skills.ManipulationSkills",
