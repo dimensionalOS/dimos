@@ -543,19 +543,24 @@ class DroneSkillContainer(Module):
                     prog_t = time.time()
                 elif time.time() - prog_t > 6.0:
                     return "blocked"
-                # World-frame delta -> body frame (yaw from odom quaternion).
+                # Point the nose where we are going: the target sensor is a
+                # forward cone, so a drone that strafes with a frozen heading
+                # searches with its eyes shut. Turn toward the goal, and let
+                # forward speed fall off with heading error.
                 q = od.orientation
                 yaw = math.atan2(
                     2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
                 )
-                fwd = math.cos(yaw) * dx + math.sin(yaw) * dy
-                lat = -math.sin(yaw) * dx + math.cos(yaw) * dy
-                n = math.hypot(fwd, lat) or 1.0
-                scale = min(1.0, dist / 2.0)  # ease in near the goal
+                desired = math.atan2(dy, dx)
+                err = (desired - yaw + math.pi) % (2 * math.pi) - math.pi
+                turn = max(-1.0, min(1.0, 2.0 * err))
+                speed = max(0.0, math.cos(err)) * min(1.0, dist / 2.0)
+                # A little strafe keeps progress while the turn completes.
+                strafe = 0.35 * math.sin(err) * min(1.0, dist / 4.0)
                 self.tele_cmd_vel.publish(
                     Twist(
-                        Vector3(fwd / n * scale, lat / n * scale, 0.0),
-                        Vector3(0.0, 0.0, 0.0),
+                        Vector3(speed, strafe, 0.0),
+                        Vector3(0.0, 0.0, turn),
                     )
                 )
                 time.sleep(0.12)
