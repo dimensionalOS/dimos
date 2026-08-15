@@ -96,6 +96,34 @@ def test_negative_coordinates() -> None:
     np.testing.assert_allclose(centers[0], [-0.35, -0.35, -0.35], atol=0.051)
 
 
+def test_smooth_scores_averages_neighbors() -> None:
+    m = EmbeddingVoxelMap(voxel_size=1.0, dim=2)
+    # Two adjacent voxels along x and one far away.
+    m.insert_points(
+        np.array([[0.5, 0.5, 0.5], [1.5, 0.5, 0.5], [9.5, 0.5, 0.5]]),
+        np.eye(3, 2, dtype=np.float32),
+    )
+    m.reduce()
+    scores = np.array([1.0, 0.0, 1.0], dtype=np.float32)
+    smoothed = m.smooth_scores(scores, iterations=1)
+    # Adjacent pair averages toward each other, isolated voxel is unchanged.
+    np.testing.assert_allclose(smoothed, [0.5, 0.5, 1.0])
+
+
+def test_save_load_roundtrip(tmp_path) -> None:
+    rng = np.random.default_rng(3)
+    m = EmbeddingVoxelMap(voxel_size=0.2, dim=6)
+    m.insert_points(rng.uniform(-1, 1, (100, 3)), rng.normal(size=(100, 6)).astype(np.float32))
+    path = str(tmp_path / "map.npz")
+    m.save(path)
+    loaded = EmbeddingVoxelMap.load(path)
+    assert loaded.voxel_size == m.voxel_size
+    ok, om = m.mean_embeddings(normalize=False)
+    lk, lm = loaded.mean_embeddings(normalize=False)
+    np.testing.assert_array_equal(ok, lk)
+    np.testing.assert_allclose(om, lm, atol=1e-6)
+
+
 def test_input_validation() -> None:
     m = EmbeddingVoxelMap(voxel_size=0.1, dim=4)
     with pytest.raises(ValueError):

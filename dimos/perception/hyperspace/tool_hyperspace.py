@@ -97,6 +97,8 @@ def main(argv: list[str] | None = None) -> None:
         if not stats["voxels"]:
             raise RuntimeError(f"no voxels ingested: {stats}")
         (out_dir / "stats.json").write_text(json.dumps(stats, indent=2))
+        hyperspace.save_map(str(out_dir / "map.npz"))
+        logger.info("wrote %s", out_dir / "map.npz")
 
         for query in args.queries:
             for view in args.views:

@@ -21,7 +21,7 @@ import threading
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
+from dimos.mapping.voxels.keys import KEY_OFFSET, X_SHIFT, Y_SHIFT, pack_indices, unpack_keys
 
 
 class EmbeddingVoxelMap:
@@ -176,3 +176,52 @@ class EmbeddingVoxelMap:
             self._sums = np.empty((0, self.dim), dtype=np.float32)
             self._weights = np.empty(0, dtype=np.float32)
             self._pending.clear()
+
+    def smooth_scores(
+        self, scores: NDArray[np.float32], iterations: int = 1
+    ) -> NDArray[np.float32]:
+        """Average each voxel's score with its 6-connected neighbors.
+
+        Isolated single-voxel spikes are noise (real objects span contiguous
+        voxels); a couple of iterations keep blobs and suppress speckle.
+        Scores must be ordered like the reduced keys (query() output).
+        """
+        with self._lock:
+            self.reduce()
+            keys = self._keys
+        offsets = (1 << X_SHIFT, -(1 << X_SHIFT), 1 << Y_SHIFT, -(1 << Y_SHIFT), 1, -1)
+        smoothed = np.asarray(scores, dtype=np.float32)
+        for _ in range(iterations):
+            total = smoothed.copy()
+            count = np.ones_like(smoothed)
+            for offset in offsets:
+                neighbor = keys + offset
+                idx = np.searchsorted(keys, neighbor)
+                idx_clipped = np.minimum(idx, keys.size - 1)
+                valid = keys[idx_clipped] == neighbor
+                total[valid] += smoothed[idx_clipped[valid]]
+                count[valid] += 1
+            smoothed = total / count
+        return smoothed
+
+    def save(self, path: str) -> None:
+        """Persist the reduced map as an .npz archive."""
+        with self._lock:
+            self.reduce()
+            np.savez_compressed(
+                path,
+                voxel_size=self.voxel_size,
+                keys=self._keys,
+                sums=self._sums,
+                weights=self._weights,
+            )
+
+    @classmethod
+    def load(cls, path: str) -> EmbeddingVoxelMap:
+        """Load a map previously written by save()."""
+        data = np.load(path)
+        voxel_map = cls(voxel_size=float(data["voxel_size"]), dim=int(data["sums"].shape[1]))
+        voxel_map._keys = data["keys"].astype(np.int64)
+        voxel_map._sums = data["sums"].astype(np.float32)
+        voxel_map._weights = data["weights"].astype(np.float32)
+        return voxel_map

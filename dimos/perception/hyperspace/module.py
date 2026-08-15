@@ -42,6 +42,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.hyperspace.cluster import VoxelCluster, top_clusters
 from dimos.perception.hyperspace.projection import project_patches_to_world
+from dimos.perception.hyperspace.query import DEFAULT_BACKGROUND_PROMPTS, score_query
 from dimos.perception.hyperspace.render import (
     VIEWS,
     normalize_scores,
@@ -84,15 +85,9 @@ class HyperspaceModuleConfig(ModuleConfig):
     nearby_bin_deg: float = 5.0
     rerun_entity: str = "world/hyperspace"
     #: Generic prompts a query is contrasted against; empty list disables.
-    background_prompts: list[str] = [
-        "the floor",
-        "a wall",
-        "the ceiling",
-        "an office",
-        "furniture",
-        "a doorway",
-        "clutter on a desk",
-    ]
+    background_prompts: list[str] = list(DEFAULT_BACKGROUND_PROMPTS)
+    #: Rounds of 6-neighbor score averaging to suppress speckle.
+    score_smooth_iterations: int = 2
 
 
 class HyperspaceModule(Module):
@@ -186,26 +181,20 @@ class HyperspaceModule(Module):
             return self.map
 
     def _query_scores(self, query: str) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-        """(centers (N, 3), scores (N,)) for a text query.
+        """(centers (N, 3), scores (N,)) for a text query — see score_query()."""
+        return score_query(
+            self._require_map(),
+            self._text_model,
+            query,
+            background_prompts=self.config.background_prompts,
+            smooth_iterations=self.config.score_smooth_iterations,
+        )
 
-        Scores are the query's cosine similarity contrasted against generic
-        background prompts (score = cos(query) - max cos(background)) — raw
-        patch-token cosines are noisy, the margin against "some other office
-        thing" is what localizes the query.
-        """
-        voxels = self._require_map()
-        prompts = [query, *self.config.background_prompts]
-        embeddings = self._text_model.embed_text(*prompts)
-        if not isinstance(embeddings, list):
-            embeddings = [embeddings]
-        centers, scores = voxels.query(embeddings[0].to_numpy())
-        # A background prompt that IS the query (querying "floor" against
-        # "the floor") would cancel the signal — drop near-duplicates.
-        distinct = [e for e in embeddings[1:] if embeddings[0] @ e < 0.85]
-        if distinct:
-            background = np.stack([voxels.query(e.to_numpy())[1] for e in distinct]).max(axis=0)
-            scores = scores - background
-        return centers, scores
+    @rpc
+    def save_map(self, path: str) -> str:
+        """Persist the reduced voxel map to an .npz for offline queries."""
+        self._require_map().save(path)
+        return path
 
     @rpc
     def stats(self) -> dict[str, Any]:
