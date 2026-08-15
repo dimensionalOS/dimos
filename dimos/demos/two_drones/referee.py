@@ -185,14 +185,14 @@ class Referee:
         self.scene.add_wall(tx1, tz1, tx2, tz2, height=height, thickness=0.4, color=0x7C6F64)
 
     def install_target(self, waypoints_ros: list[tuple[float, float]], speed: float = 0.6,
-                       altitude: float = 0.6, loop: bool = True) -> None:
+                       altitude: float = 0.6, loop: bool = True, size: float = 0.8) -> None:
         """Spawn the red cube and drive it along ROS waypoints browser-side."""
         pts = [ros_to_three(x, y) for (x, y) in waypoints_ros]
         pts_js = json.dumps([[x, z] for (x, z) in pts])
         self.scene.exec(f"""
         const old = scene.getObjectByName('demo_target');
         if (old) scene.remove(old);
-        const geo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const geo = new THREE.BoxGeometry({size}, {size}, {size});
         const mat = new THREE.MeshStandardMaterial({{color: 0xe11d48, emissive: 0x991b33, emissiveIntensity: 0.5}});
         const cube = new THREE.Mesh(geo, mat);
         cube.name = 'demo_target';
@@ -284,6 +284,9 @@ class Referee:
             if (!av.group.getObjectByName('demo_quad')) {{
                 const quad = buildQuad(colors[name] || '#888888');
                 quad.name = 'demo_quad';
+                // Oversized on purpose: at director-camera distance a
+                // true-scale 0.7 m airframe is a couple of pixels.
+                quad.scale.setScalar(2.4);
                 quad.traverse(o => {{ o.userData.__demoIgnoreLOS = true; }});
                 av.group.add(quad);
             }}

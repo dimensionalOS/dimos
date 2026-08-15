@@ -310,7 +310,9 @@ def main() -> None:
         referee.build_arena(ARENA_HALF_X, ARENA_HALF_Y)
         for (p1, p2) in scenario["obstacles"]:
             referee.add_obstacle_wall(p1[0], p1[1], p2[0], p2[1])
-        referee.install_target(scenario["target_path"], speed=scenario["target_speed"])
+        referee.install_target(
+            scenario["target_path"], speed=scenario["target_speed"], size=2.0
+        )
         referee.mark_drones_for_los()
         referee.install_ghosts()
         referee.style_scene_for_video()
@@ -322,7 +324,7 @@ def main() -> None:
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
         scene.exec(
-            "window.__demoDirectorCam = {x: 0, y: 56, z: -26, tx: 0, ty: 0, tz: -2};"
+            "window.__demoDirectorCam = {x: 0, y: 60, z: -34, tx: 0, ty: 0, tz: 5};"
             "return 'director camera set';"
         )
 
