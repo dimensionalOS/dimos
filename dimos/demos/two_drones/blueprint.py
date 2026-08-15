@@ -50,6 +50,12 @@ DRONE_MCP_PORT = int(os.environ.get("DRONE_MCP_PORT", "9990"))
 DRONE_MODEL = os.environ.get("DRONE_MODEL", "ollama:gemma4")
 DRONE_BOUND_X = float(os.environ.get("DRONE_BOUND_X", "10.2"))
 DRONE_BOUND_Y = float(os.environ.get("DRONE_BOUND_Y", "6.2"))
+DRONE_SENSOR_RANGE = float(os.environ.get("DRONE_SENSOR_RANGE", "15.0"))
+# Desired overlap between the two drones' radar footprints (m).
+DRONE_RADAR_OVERLAP = float(os.environ.get("DRONE_RADAR_OVERLAP", "2.0"))
+# Radio interference schedule (s): channel up, then jammed.
+RADIO_ON_S = float(os.environ.get("RADIO_ON_S", "0"))
+RADIO_OFF_S = float(os.environ.get("RADIO_OFF_S", "0"))
 
 _SYSTEM_PROMPT = f"""You are {DRONE_NAME}, an autonomous search drone flying inside a shared
 simulated arena with one partner drone. You cannot see the partner directly —
@@ -60,24 +66,28 @@ Your target sensor is a forward cone: field of view 140 degrees, range 15 m,
 blocked by walls. Plan coverage with that footprint in mind (sweep lanes up to
 ~12-18 m apart still overlap; hugging walls wastes half the cone).
 
+MISSION: find the moving red target and get within 1 metre of it.
+
 Search doctrine:
 1. Negotiate halves over the radio first: claim_sector YOUR half. If your
    partner already claimed a sector (check radio_status), do NOT contest it —
    claim the complementary area.
-2. Then cover your half: fly_to a point inside it, then begin_exploration
-   (autonomous frontier exploration — it keeps moving toward unmapped space
-   on its own). sweep_area is the alternative for methodical lanes. Only one
-   movement mode can run at a time: call end_exploration or stop_moving
-   before starting a different movement tool.
+2. Then call begin_coordinated_search. It searches cooperatively on its own:
+   striding toward unexplored space, steering AWAY from walls it has already
+   detected, keeping the planned radar overlap with your partner's last known
+   position, and avoiding ground either of you already covered. Let it run —
+   you do not need to micro-manage waypoints.
 3. Your flight firmware AUTO-INTERCEPTS target sightings (your own sensor's
-   and the ones your partner reports by radio) — pursuit happens without you.
-   Your job on a sighting is communication and strategy: report_sighting(x, y)
-   the INSTANT your sensor sees it, and end_exploration so exploration stops
-   fighting the pursuit.
-4. When your partner reports a sighting, acknowledge briefly by radio and
-   end_exploration; your firmware is already converging on it.
-5. If the target is lost: tell your partner where it was last seen and split a
-   LOCAL re-search around that position (small sectors, not the whole arena).
+   and the ones your partner reports by radio) and closes to within 1 m.
+   Your job on a sighting is communication: report_sighting(x, y) the INSTANT
+   your sensor sees it, and keep re-reporting while you can see it.
+4. When your partner reports a sighting, acknowledge briefly by radio. Your
+   firmware is already converging on the reported position.
+5. THE RADIO LINK IS UNRELIABLE — it suffers periodic interference and some of
+   your transmissions never arrive. You cannot tell when. So: repeat important
+   information (sightings above all) several times, spaced out, instead of
+   assuming one transmission got through. Use radio_status to see whether your
+   partner is actually being heard from.
 
 Keep radio messages short, factual, and cooperative. Always answer sensor and
 radio prompts with actions (tools), not just words."""
@@ -102,8 +112,17 @@ dimsim_drone = (
             mcp_server_url=f"http://localhost:{DRONE_MCP_PORT}/mcp",
             system_prompt=_SYSTEM_PROMPT,
         ),
-        DroneSkillContainer.blueprint(bound_x=DRONE_BOUND_X, bound_y=DRONE_BOUND_Y),
-        RadioModule.blueprint(drone_name=DRONE_NAME),
+        DroneSkillContainer.blueprint(
+            bound_x=DRONE_BOUND_X,
+            bound_y=DRONE_BOUND_Y,
+            sensor_range_m=DRONE_SENSOR_RANGE,
+            radar_overlap_m=DRONE_RADAR_OVERLAP,
+        ),
+        RadioModule.blueprint(
+            drone_name=DRONE_NAME,
+            interference_on_s=RADIO_ON_S,
+            interference_off_s=RADIO_OFF_S,
+        ),
     )
     .namespace(DRONE_NAME)
     .global_config(n_workers=11, mcp_port=DRONE_MCP_PORT, robot_model="unitree_go2")

@@ -62,6 +62,8 @@ def three_to_ros(x: float, z: float) -> tuple[float, float]:
 class SensorConfig:
     range_m: float = 15.0
     fov_deg: float = 140.0
+    # Mission is accomplished when a drone gets this close to the target.
+    reach_radius_m: float = 1.0
     tick_s: float = 0.5
     # consecutive ticks needed to switch visible/lost (hysteresis)
     debounce: int = 2
@@ -105,6 +107,13 @@ class Referee:
             t.start()
         self._belief_subs: list[pLCMTransport] = []
         self.target_pos_ros: tuple[float, float] | None = None
+        # Mission outcome: which drones have reached the target (<1 m) and when.
+        self.reached: dict[str, float] = {}
+        self.first_sighting_at: float | None = None
+        self.started_at = time.time()
+        self._link: dict[str, dict] = {}  # type: ignore[type-arg]
+        self._dist: dict[str, float] = {}  # drone -> distance to target (m)
+        self._pos: dict[str, tuple[float, float]] = {}  # drone -> ROS position
 
     def _exec(self, code: str, timeout: float = 5.0):  # type: ignore[no-untyped-def]
         """Serialized exec with automatic reconnect after repeated failures
@@ -357,7 +366,7 @@ class Referee:
             d.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999;' +
                 'font:12px/1.55 ui-monospace,monospace;color:#fff;' +
                 'background:rgba(10,10,14,0.62);padding:10px 14px;border-radius:10px;' +
-                'max-width:560px;pointer-events:none';
+                'max-width:660px;pointer-events:none';
             d.innerHTML = '<div id="demo-hud-status"></div>' +
                 '<div id="demo-hud-radio" style="margin-top:6px;border-top:1px solid ' +
                 'rgba(255,255,255,0.25);padding-top:6px"></div>';
@@ -594,6 +603,68 @@ class Referee:
         except Exception:
             logger.warning("ghost update failed", exc_info=True)
 
+    def start_link_telemetry(self) -> None:
+        """Track each drone's radio link state + throughput for the HUD."""
+        for drone in self.drones:
+            sub = pLCMTransport(f"/{drone}/link_stats")
+            sub.start()
+
+            def on_stats(raw: str, drone: str = drone) -> None:
+                try:
+                    self._link[drone] = json.loads(raw)
+                except (TypeError, ValueError):
+                    pass
+
+            sub.subscribe(on_stats)
+            self._belief_subs.append(sub)
+
+    def _hud_js(self) -> str:
+        """Build the on-screen status block (English) from Python state."""
+        lines: list[list[str]] = []
+        elapsed = time.time() - self.started_at
+        lines.append(["#e5e7eb", f"MISSION: reach the red target (< {self.sensor.reach_radius_m:.1f} m)   t+{elapsed:.0f}s"])
+        for drone in self.drones:
+            s = self._sense[drone]
+            d = self._dist.get(drone)
+            if drone in self.reached:
+                state = f"REACHED TARGET ✓ (t+{self.reached[drone] - self.started_at:.0f}s)"
+            elif s.visible:
+                state = "TARGET IN SIGHT — closing in"
+            elif s.last_seen is not None:
+                state = "pursuing last known position"
+            else:
+                state = "searching (coordinated)"
+            pos = self._pos.get(drone)
+            pos_s = f"({pos[0]:5.1f},{pos[1]:6.1f})" if pos else "(  ?  ,   ?  )"
+            dist_s = f"{d:5.1f} m" if d is not None else "  ?  "
+            lines.append([DRONE_COLORS.get(drone, "#ccc"), f"{drone} {pos_s}  range {dist_s}  {state}"])
+        tp = self.target_pos_ros
+        if tp:
+            lines.append(["#e11d48", f"target ({tp[0]:5.1f},{tp[1]:6.1f})  moving"])
+
+        # Radio link: state is shared (same jam schedule), rates are per drone.
+        any_link = next(iter(self._link.values()), None)
+        if any_link is not None:
+            up = bool(any_link.get("up", True))
+            tx = sum(float(v.get("tx_kbps", 0)) for v in self._link.values())
+            rx = sum(float(v.get("rx_kbps", 0)) for v in self._link.values())
+            lost = sum(int(v.get("lost", 0)) for v in self._link.values())
+            sent = sum(int(v.get("sent", 0)) for v in self._link.values())
+            state = "● LINK ONLINE" if up else "✕ LINK JAMMED (transmissions lost)"
+            color = "#22c55e" if up else "#ef4444"
+            lines.append([color, f"RADIO {state}"])
+            lines.append([
+                "#93c5fd",
+                f"data rate {tx:.2f} kbit/s TX · {rx:.2f} kbit/s RX · "
+                f"{sent} msgs through · {lost} lost to jamming",
+            ])
+        if self.reached:
+            who = ", ".join(sorted(self.reached))
+            lines.append(["#22c55e", f"*** MISSION ACCOMPLISHED — {who} within "
+                                     f"{self.sensor.reach_radius_m:.1f} m of the target ***"])
+        payload = json.dumps(lines)
+        return f"if (window.__demoHudStatus) window.__demoHudStatus({payload});\n"
+
     # -- LOS sensor loop ------------------------------------------------------
 
     def start_sensor(self) -> None:
@@ -616,7 +687,8 @@ class Referee:
         code = f"""
         const t = scene.getObjectByName('demo_target');
         if (!t) return null;
-        const out = {{target: [t.position.x, t.position.y, t.position.z], vis: {{}}}};
+        const out = {{target: [t.position.x, t.position.y, t.position.z],
+                      vis: {{}}, dist: {{}}, pos: {{}}}};
         // Raycast only against occluder MESHES. Testing scene.children
         // recursively also tests the lidar viz Points cloud, whose cost grows
         // with the map until every tick blows the exec timeout.
@@ -653,6 +725,8 @@ class Referee:
                 if (ray.intersectObjects(occluders, false).length > 0) visible = false;
             }}
             out.vis[name] = visible;
+            out.dist[name] = Math.hypot(t.position.x - p.x, t.position.z - p.z);
+            out.pos[name] = [p.x, p.z];
 
             // --- visual feedback: sighting line + wedge highlight ---
             window.__demoLos = window.__demoLos || {{}};
@@ -680,30 +754,16 @@ class Referee:
             if (wedge) wedge.material.opacity = visible ? 0.14 : 0.035;
         }}
 
-        // --- HUD status (director info: positions in mission/ROS coords) ---
-        if (window.__demoHudStatus) {{
-            const colors = {{'droneA': '#3b82f6', 'droneB': '#f59e0b'}};
-            const lines = [];
-            for (const name of {drones_js}) {{
-                const av = agents.get(name);
-                if (!av) continue;
-                const p = av.group.position;
-                const st = out.vis[name]
-                    ? 'TARGET IN SIGHT (' + t.position.z.toFixed(1) + ', ' + t.position.x.toFixed(1) + ')'
-                    : 'searching';
-                lines.push([colors[name] || '#ccc',
-                    name + '  (' + p.z.toFixed(1) + ', ' + p.x.toFixed(1) + ')  ' + st]);
-            }}
-            lines.push(['#e11d48',
-                'target (' + t.position.z.toFixed(1) + ', ' + t.position.x.toFixed(1) + ')']);
-            window.__demoHudStatus(lines);
-        }}
         return out;
         """
         while not self._stop.is_set():
             t0 = time.time()
             try:
-                result = self._exec_on("sensor", self._client_for("sensor"), code, timeout=5.0)
+                # The HUD is rendered from Python state (link telemetry, mission
+                # status) and rides along with the sensor tick — one round trip.
+                result = self._exec_on(
+                    "sensor", self._client_for("sensor"), self._hud_js() + code, timeout=5.0
+                )
                 if result:
                     self._process_sense(result)
             except Exception:
@@ -717,6 +777,18 @@ class Referee:
         rx, ry = three_to_ros(tx, tz)
         self.target_pos_ros = (rx, ry)
         now = time.time()
+        for drone, p in result.get("pos", {}).items():
+            self._pos[drone] = three_to_ros(float(p[0]), float(p[1]))
+        # Mission progress: distance to target + first reach (< reach_radius).
+        for drone, dist in result.get("dist", {}).items():
+            self._dist[drone] = float(dist)
+            if float(dist) <= self.sensor.reach_radius_m and drone not in self.reached:
+                self.reached[drone] = now
+                logger.info(f"MISSION: {drone} reached the target ({dist:.2f} m)")
+                self._human_inputs[drone].publish(
+                    f"[SENSOR] MISSION ACCOMPLISHED — you are {dist:.1f} m from the target. "
+                    f"Announce it on the radio and hold station near it."
+                )
         for drone, raw_visible in result["vis"].items():
             s = self._sense[drone]
             if raw_visible != s.visible:

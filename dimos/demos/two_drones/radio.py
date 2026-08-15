@@ -100,6 +100,8 @@ class RadioStats:
     sent_bytes: int = 0
     recv_events: int = 0
     recv_bytes: int = 0
+    lost_events: int = 0  # transmissions attempted during a jammed window
+    lost_bytes: int = 0
     started_at: float = field(default_factory=time.time)
 
     def summary(self) -> str:
@@ -118,6 +120,13 @@ class RadioConfig(ModuleConfig):
     # Wire format: "hybrid" (Nostr-style: tags + text), "text" (content only),
     # "struct" (tags only). Used by the comms-scheme comparison.
     wire_format: str = "hybrid"
+    # Link interference simulation: the shared channel cycles ON for
+    # interference_on_s seconds, then OFF for interference_off_s seconds.
+    # Transmissions during OFF windows are silently lost (counted in stats).
+    # The agents are NOT told the schedule — they must adapt by repeating
+    # important information. 0/0 disables interference.
+    interference_on_s: float = 0.0
+    interference_off_s: float = 0.0
 
 
 class RadioModule(Module):
@@ -136,12 +145,16 @@ class RadioModule(Module):
     # Partner target sightings ("x y"), for the flight firmware's
     # auto-intercept reflex (DroneSkillContainer).
     partner_sighting: Out[str]
+    # Live link telemetry as JSON for the video HUD: channel up/jammed,
+    # measured throughput, and how much traffic the jamming destroyed.
+    link_stats: Out[str]
 
     _radio: PubSubTransport[str] | None = None
     _key: Ed25519PrivateKey
     _pubkey_hex: str
     _latest_odom: PoseStamped | None = None
     _beacon_thread: threading.Thread | None = None
+    _link_thread: threading.Thread | None = None
     _stop_event: threading.Event
     _my_sector: list[float] | None = None
 
@@ -177,6 +190,8 @@ class RadioModule(Module):
         if self.config.beacon_period > 0:
             self._beacon_thread = threading.Thread(target=self._beacon_loop, daemon=True)
             self._beacon_thread.start()
+        self._link_thread = threading.Thread(target=self._link_stats_loop, daemon=True)
+        self._link_thread.start()
         logger.info(
             f"[radio:{self.config.drone_name}] up, pubkey {self._pubkey_hex[:16]}…, "
             f"format={self.config.wire_format}"
@@ -244,11 +259,23 @@ class RadioModule(Module):
         event["id"] = _event_id(self._pubkey_hex, created_at, kind, tags, content)
         event["sig"] = self._key.sign(event["id"].encode()).hex()
         wire = json.dumps(event, separators=(",", ":"))
+        # Interference: transmissions during a jammed window vanish. The drone
+        # doesn't get an error — exactly like a real contested RF link.
+        if not self._channel_up():
+            self.stats.lost_events += 1
+            self.stats.lost_bytes += len(wire)
+            return event
         assert self._radio is not None
         self._radio.publish(wire)
         self.stats.sent_events += 1
         self.stats.sent_bytes += len(wire)
         return event
+
+    def _channel_up(self) -> bool:
+        on, off = self.config.interference_on_s, self.config.interference_off_s
+        if on <= 0 or off <= 0:
+            return True
+        return (time.time() % (on + off)) < on
 
     def _on_radio_raw(self, wire: str) -> None:
         try:
@@ -345,6 +372,28 @@ class RadioModule(Module):
             logger.warning("peer_belief publish failed", exc_info=True)
 
     # -- beacon ---------------------------------------------------------------
+
+    def _link_stats_loop(self) -> None:
+        """Publish live link telemetry (2 Hz) for the video HUD."""
+        while not self._stop_event.wait(0.5):
+            try:
+                dt = max(time.time() - self.stats.started_at, 1e-6)
+                self.link_stats.publish(
+                    json.dumps(
+                        {
+                            "drone": self.config.drone_name,
+                            "up": self._channel_up(),
+                            "tx_kbps": round(self.stats.sent_bytes * 8 / dt / 1000, 2),
+                            "rx_kbps": round(self.stats.recv_bytes * 8 / dt / 1000, 2),
+                            "sent": self.stats.sent_events,
+                            "recv": self.stats.recv_events,
+                            "lost": self.stats.lost_events,
+                            "lost_bytes": self.stats.lost_bytes,
+                        }
+                    )
+                )
+            except Exception:
+                pass
 
     def _beacon_loop(self) -> None:
         while not self._stop_event.wait(self.config.beacon_period):

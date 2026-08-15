@@ -62,13 +62,25 @@ BOUND_Y = ARENA_HALF_Y - 0.8
 
 SPAWNS = {"droneA": (-19.0, -30.0), "droneB": (-19.0, 30.0)}
 
+# Search geometry: radar reach and the planned overlap between the two drones'
+# footprints (they aim to stay 2*range - overlap apart).
+SENSOR_RANGE_M = 15.0
+RADAR_OVERLAP_M = 2.0
+# Radio interference cycle: usable for RADIO_ON_S, jammed for RADIO_OFF_S.
+# The agents are not told the schedule — they must repeat what matters.
+RADIO_ON_S = 10.0
+RADIO_OFF_S = 5.0
+# Mission success: a drone must get this close to the target.
+REACH_RADIUS_M = 1.0
+
 SCENARIOS: dict[str, dict] = {  # type: ignore[type-arg]
     "open": {
         "obstacles": [],
         # The cube patrols most of the arena, so exploring drones cross its
         # path instead of having to reach a far corner it hides in.
         "target_path": [(15, -25), (15, 25), (-12, 25), (-12, -25)],
-        "target_speed": 1.7,
+        # Slow enough that a drone that reaches it can close to < 1 m.
+        "target_speed": 0.9,
     },
     "obstacles": {
         "obstacles": [
@@ -93,16 +105,16 @@ SCENARIOS: dict[str, dict] = {  # type: ignore[type-arg]
 }
 
 MISSION = (
-    "MISSION BRIEFING for {name}: You and your partner {partner} must find and "
-    "then keep pursuing a moving RED TARGET somewhere in the arena "
-    "x in [-21, 21], y in [-34, 34] (big: 42 x 68 m). You start at "
-    "({sx:.0f}, {sy:.0f}); your partner starts at ({px:.0f}, {py:.0f}). There may "
-    "be walls; navigation avoids them. ACT NOW in a single response: "
-    "claim_sector (your half, don't overlap your partner) AND fly_to a point "
-    "well inside your half. When you arrive, begin_exploration to search it. "
-    "The instant either of you sights the target: report_sighting, then "
-    "end_exploration and intercept(x, y) — both drones converge straight on it. "
-    "React immediately to every [SENSOR] and [RADIO] message."
+    "MISSION BRIEFING for {name}: find the moving RED TARGET in the arena "
+    "x in [-21, 21], y in [-34, 34] (42 x 68 m) and GET WITHIN 1 METRE of it, "
+    "together with your partner {partner}. You start at ({sx:.0f}, {sy:.0f}); "
+    "your partner starts at ({px:.0f}, {py:.0f}). Your radar reaches 15 m and the "
+    "search plan keeps a 2 m overlap between your radar footprint and your "
+    "partner's, so you cover different ground. ACT NOW in a single response: "
+    "call BOTH claim_sector (your half — don't overlap your partner's claim) "
+    "AND begin_coordinated_search. Then react to every [SENSOR] and [RADIO] "
+    "message: report sightings repeatedly (the radio suffers interference and "
+    "drops messages), and let your firmware fly the intercept."
 )
 
 
@@ -173,6 +185,10 @@ def start_stack(name: str, log_dir: Path, model: str) -> subprocess.Popen:  # ty
         DRONE_NAME=name,
         DRONE_BOUND_X=str(BOUND_X),
         DRONE_BOUND_Y=str(BOUND_Y),
+        DRONE_SENSOR_RANGE=str(SENSOR_RANGE_M),
+        DRONE_RADAR_OVERLAP=str(RADAR_OVERLAP_M),
+        RADIO_ON_S=str(RADIO_ON_S),
+        RADIO_OFF_S=str(RADIO_OFF_S),
         DRONE_MCP_PORT=str(MCP_PORTS[name]),
         # Workers re-read GlobalConfig from the environment, so the MCP port
         # must travel via env (the --mcp-port flag stays in the coordinator).
@@ -258,7 +274,7 @@ def main() -> None:
 
         for name in DRONES:
             scene.set_embodiment(
-                "drone", robot=name, max_speed=4.0, turn_rate=3.0, max_altitude=5.0
+                "drone", robot=name, max_speed=6.0, turn_rate=3.5, max_altitude=5.0
             )
         time.sleep(1.5)
 
@@ -286,7 +302,11 @@ def main() -> None:
                                f"{ {n: str(latest_odom.get(n)) for n in DRONES} }")
         print("[demo] drones placed at spawns")
 
-        referee = Referee(scene, DRONES, SensorConfig())
+        referee = Referee(
+            scene,
+            DRONES,
+            SensorConfig(range_m=SENSOR_RANGE_M, reach_radius_m=REACH_RADIUS_M),
+        )
         referee.build_arena(ARENA_HALF_X, ARENA_HALF_Y)
         for (p1, p2) in scenario["obstacles"]:
             referee.add_obstacle_wall(p1[0], p1[1], p2[0], p2[1])
@@ -297,6 +317,7 @@ def main() -> None:
         referee.start_ghost_renderer()
         referee.start_radio_hud()
         referee.start_goal_markers()
+        referee.start_link_telemetry()
 
         # Director camera: high oblique view of the whole arena (render-loop
         # override; player/agent camera modes can't fight it).
@@ -358,12 +379,34 @@ def main() -> None:
         print(f"[demo] running scenario '{args.scenario}' for {args.duration:.0f}s...")
         t0 = time.time()
         while time.time() - t0 < args.duration:
-            time.sleep(20)
+            time.sleep(10)
             tp = referee.target_pos_ros
             if tp:
-                print(f"[demo] t={time.time() - t0:6.0f}s target at ({tp[0]:.1f}, {tp[1]:.1f})", flush=True)
+                dists = " ".join(
+                    f"{d}={referee._dist.get(d, float('nan')):.0f}m" for d in DRONES
+                )
+                print(
+                    f"[demo] t={time.time() - t0:6.0f}s target ({tp[0]:.1f}, {tp[1]:.1f})  {dists}",
+                    flush=True,
+                )
+            # Mission accomplished — let the pursuit be visible for a bit, then wrap.
+            if referee.reached:
+                first = min(referee.reached.values())
+                if time.time() - first > 60:
+                    print("[demo] mission accomplished — wrapping up", flush=True)
+                    break
 
         print("[demo] done. radio messages exchanged:", len(radio_log))
+        if referee.reached:
+            for drone, ts in sorted(referee.reached.items(), key=lambda kv: kv[1]):
+                print(
+                    f"[demo] MISSION: {drone} reached the target at "
+                    f"t+{ts - referee.started_at:.0f}s",
+                    flush=True,
+                )
+        else:
+            print("[demo] MISSION NOT ACCOMPLISHED: nobody got within "
+                  f"{REACH_RADIUS_M:.1f} m", flush=True)
         # Suggest a head-trim so the published video starts just before the
         # first radio transmission instead of the boot/briefing dead time.
         if first_radio_ts:
