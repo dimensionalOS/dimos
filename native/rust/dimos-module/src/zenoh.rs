@@ -21,25 +21,31 @@ use std::time::{Duration, Instant};
 use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
 use ::zenoh::Session;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::transport::{Dispatch, Transport};
 
-/// Key the launch config carries the session settings under.
 const SESSION_KEY: &str = "session";
 
 /// Poll interval while waiting for the dialed endpoints to link.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
 
-/// The session settings python sends on the launch line (`ZenohConfig.to_wire`).
-///
-/// Python owns every value and resolves every derived one, so each field is
-/// required and nothing here has a default.
+/// How this session joins the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Mode {
+    Peer,
+    Client,
+    Router,
+}
+
+/// The session settings python sends on the launch line. It owns every value
+/// and resolves every derived one, so no field here has a default.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionSettings {
-    mode: String,
+    mode: Mode,
     connect: Vec<String>,
     listen: Vec<String>,
     multicast: bool,
@@ -54,10 +60,9 @@ fn json_text<T: serde::Serialize>(value: &T) -> String {
 }
 
 impl SessionSettings {
-    /// The settings the launch config carried, absent when it carried none.
+    /// The settings the launch carried, absent when it carried none.
     ///
-    /// A module started by hand gets no launch line of its own, and keeps
-    /// zenoh's own defaults.
+    /// A module started by hand keeps zenoh's own defaults.
     fn from_launch(launch: &serde_json::Value) -> io::Result<Option<Self>> {
         match launch.get(SESSION_KEY) {
             None | Some(serde_json::Value::Null) => Ok(None),
@@ -143,10 +148,9 @@ pub struct ZenohTransport {
     publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
-/// The `host:port` forms a live link to this locator may report.
+/// The host:port forms a live link to this locator may report.
 ///
-/// `tcp/go2:7447` is dialed by name while the established link reports the
-/// resolved address, so the name on its own never matches.
+/// A locator dialed by name never matches the address the link reports.
 fn endpoint_addresses(endpoint: &str) -> HashSet<String> {
     let address = endpoint.rsplit('/').next().unwrap_or(endpoint);
     let mut out = HashSet::from([address.to_string()]);
@@ -156,13 +160,11 @@ fn endpoint_addresses(endpoint: &str) -> HashSet<String> {
     out
 }
 
-/// Block until the dialed endpoints have links, bounded by `timeout`.
+/// Block until the dialed endpoints have links, bounded by the timeout.
 ///
-/// A peer's `open()` returns before its endpoints are dialed, so without this
-/// the module starts publishing into a session that has nowhere to send yet and
-/// the first messages are simply dropped. Unreachable endpoints are a warning:
-/// one robot being down should not stop the module from coming up.
-async fn await_connect(session: &Session, endpoints: &[String], mode: &str, timeout: Duration) {
+/// A peer opens before its endpoints are dialed, so without this the first
+/// published messages have nowhere to go.
+async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, timeout: Duration) {
     if endpoints.is_empty() || timeout.is_zero() {
         return;
     }
@@ -170,9 +172,13 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: &str, time
         .iter()
         .map(|endpoint| (endpoint.as_str(), endpoint_addresses(endpoint)))
         .collect();
-    // A client session holds a single link. Zenoh dials the endpoints as
+    // A client session holds one link. Zenoh dials the endpoints as
     // alternatives and keeps the first that answers.
-    let needed = if mode == "client" { 1 } else { pending.len() };
+    let needed = if mode == Mode::Client {
+        1
+    } else {
+        pending.len()
+    };
     let deadline = Instant::now() + timeout;
     loop {
         let linked: HashSet<String> = session
@@ -221,7 +227,7 @@ impl ZenohTransport {
             .map_err(to_io)?;
         tracing::info!(
             zid = %session.zid(),
-            mode = %settings.mode,
+            mode = ?settings.mode,
             connect = ?settings.connect,
             listen = ?settings.listen,
             "zenoh session opened"
@@ -229,7 +235,7 @@ impl ZenohTransport {
         await_connect(
             &session,
             &settings.connect,
-            &settings.mode,
+            settings.mode,
             settings.connect_timeout(),
         )
         .await;
@@ -424,15 +430,52 @@ mod tests {
     /// Session in a test topology, discovery off so only the dialed endpoints
     /// can produce a link.
     async fn open_session(mode: &str, connect: &[&str], listen: &[&str]) -> Session {
-        let config = settings(serde_json::json!({
+        let config = settings(topology(mode, connect, listen))
+            .zenoh_config()
+            .expect("valid settings apply");
+        ::zenoh::open(config).await.expect("open session")
+    }
+
+    /// Session settings for a test topology, with discovery off.
+    fn topology(mode: &str, connect: &[&str], listen: &[&str]) -> serde_json::Value {
+        serde_json::json!({
             "mode": mode,
             "connect": connect,
             "listen": listen,
             "multicast": false,
-        }))
-        .zenoh_config()
-        .expect("valid settings apply");
-        ::zenoh::open(config).await.expect("open session")
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn from_launch_opens_the_session_the_launch_describes() {
+        let endpoint = "tcp/127.0.0.1:17465";
+        let transport = ZenohTransport::from_launch(&launch(topology("router", &[], &[endpoint])))
+            .await
+            .expect("open from launch");
+
+        // The listen endpoint reached zenoh only if a peer can dial it.
+        let peer = open_session("peer", &[endpoint], &[]).await;
+        await_connect(
+            &peer,
+            &[endpoint.to_string()],
+            Mode::Peer,
+            Duration::from_secs(10),
+        )
+        .await;
+        assert!(peer.info().links().await.next().is_some());
+        drop(transport);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn from_launch_without_a_session_still_opens() {
+        let launch = serde_json::json!({"topics": {}, "config": null});
+        assert!(ZenohTransport::from_launch(&launch).await.is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn from_launch_rejects_settings_it_cannot_read() {
+        let launch = serde_json::json!({"session": {"mode": "mesh"}});
+        assert!(ZenohTransport::from_launch(&launch).await.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -445,7 +488,7 @@ mod tests {
         await_connect(
             &peer,
             &[endpoint.to_string()],
-            "peer",
+            Mode::Peer,
             Duration::from_secs(10),
         )
         .await;
@@ -464,7 +507,7 @@ mod tests {
         await_connect(
             &peer,
             &[endpoint.to_string()],
-            "peer",
+            Mode::Peer,
             Duration::from_millis(300),
         )
         .await;
@@ -477,11 +520,11 @@ mod tests {
     async fn await_connect_is_skipped_without_endpoints_or_timeout() {
         let peer = open_session("peer", &[], &[]).await;
         let started = Instant::now();
-        await_connect(&peer, &[], "peer", Duration::from_secs(30)).await;
+        await_connect(&peer, &[], Mode::Peer, Duration::from_secs(30)).await;
         await_connect(
             &peer,
             &["tcp/127.0.0.1:17462".to_string()],
-            "peer",
+            Mode::Peer,
             Duration::ZERO,
         )
         .await;
@@ -499,7 +542,7 @@ mod tests {
         await_connect(
             &client,
             &[endpoint.to_string(), unreachable.to_string()],
-            "client",
+            Mode::Client,
             Duration::from_secs(10),
         )
         .await;

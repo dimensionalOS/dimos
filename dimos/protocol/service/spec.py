@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from abc import ABC
 from typing import Any, ClassVar, get_type_hints
 
@@ -35,11 +33,8 @@ class SessionConfig(BaseConfig):
         """This session as the JSON object a native module reads on stdin."""
         return {}
 
-    def rebased(self) -> SessionConfig:
-        """This config's explicit fields over the current global config defaults.
-
-        The fields the caller never set are derived again, at spawn time.
-        """
+    def rebased(self) -> "SessionConfig":
+        """This config's explicit fields over the current global config defaults."""
         return type(self)(**{name: getattr(self, name) for name in self.model_fields_set})
 
 

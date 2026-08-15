@@ -54,7 +54,7 @@ import threading
 import time
 from typing import IO, Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -137,6 +137,16 @@ class NativeModuleConfig(ModuleConfig):
     # Native config structs reject unknown fields, so a base field only crosses
     # the boundary if that module's native struct declares it.
     base_fields: frozenset[str] = frozenset()
+
+    @model_validator(mode="after")
+    def _session_needs_the_stdin_line(self) -> NativeModuleConfig:
+        """A pinned session reaches the module on the stdin line or not at all."""
+        if self.session is not None and not self.stdin_config:
+            raise ValueError(
+                f"{self.executable} pins a session config but has stdin_config off, "
+                "so the module would open its own defaults instead"
+            )
+        return self
 
     def _ignore_fields(self) -> set[str]:
         return set(NativeModuleConfig.model_fields) - self.base_fields
@@ -224,7 +234,6 @@ class NativeModule(Module):
         self._maybe_build()
 
     def _spawn_env(self) -> dict[str, str]:
-        """Env for the native subprocess, carrying transport and logging config."""
         env = {**os.environ, **self.config.extra_env}
 
         # set transport so native modules know which one to spawn

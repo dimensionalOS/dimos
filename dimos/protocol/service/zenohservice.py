@@ -175,9 +175,37 @@ def warn_client_single_link(config: ZenohConfig) -> None:
     """Warn when a client config lists several endpoints. Zenoh keeps one link."""
     if config.mode == "client" and len(config.connect) > 1:
         logger.warning(
-            f"Zenoh client mode holds a single link: {sorted(config.connect)} are "
-            "dialed as alternatives, traffic flows only through the first that connects"
+            "Zenoh client mode holds a single link, traffic flows only through "
+            "the first endpoint that connects",
+            connect=sorted(config.connect),
         )
+
+
+# Wire setting to the zenoh config key that carries it. A python session inserts
+# these into a zenoh.Config, a native module reads the same values off stdin.
+_ZENOH_KEYS = {
+    "mode": "mode",
+    "connect": "connect/endpoints",
+    "listen": "listen/endpoints",
+    "multicast": "scouting/multicast/enabled",
+    "interface": "scouting/multicast/interface",
+    "gossip": "scouting/gossip/enabled",
+    "connect_timeout_ms": "connect/timeout_ms",
+}
+
+# Settings zenoh decides for itself when we send nothing. An empty listen list
+# means its own default port, and a zero timeout means its own retry policy.
+_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "connect_timeout_ms")
+
+
+def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
+    """The zenoh session config these settings open."""
+    zconfig = zenoh.Config()
+    for name, value in config.to_wire().items():
+        if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
+            continue
+        zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
+    return zconfig
 
 
 class ZenohSessionPool:
@@ -190,27 +218,7 @@ class ZenohSessionPool:
         key = config.session_key
         with self._lock:
             if key not in self._sessions:
-                warn_client_single_link(config)
-                zconfig = zenoh.Config()
-                zconfig.insert_json5("mode", json.dumps(config.mode))
-                if config.connect:
-                    zconfig.insert_json5("connect/endpoints", json.dumps(config.connect))
-                if config.listen:
-                    zconfig.insert_json5("listen/endpoints", json.dumps(config.listen))
-                # Zenoh reads a zero timeout as dial once and never retry.
-                # Leaving the key unset keeps its own retry policy.
-                if config.connect_timeout > 0:
-                    zconfig.insert_json5(
-                        "connect/timeout_ms", str(int(config.connect_timeout * 1000))
-                    )
-                # Loopback multicast keeps sibling worker processes discovering
-                # each other.
-                zconfig.insert_json5("scouting/multicast/enabled", json.dumps(config.multicast))
-                zconfig.insert_json5(
-                    "scouting/multicast/interface", json.dumps(config.multicast_interface)
-                )
-                zconfig.insert_json5("scouting/gossip/enabled", json.dumps(config.gossip_enabled))
-                self._sessions[key] = zenoh.open(zconfig)
+                self._sessions[key] = zenoh.open(_zenoh_config(config))
                 logger.info(
                     "Zenoh session opened",
                     mode=config.mode,
@@ -230,7 +238,7 @@ class ZenohSessionPool:
                 try:
                     session.close()
                 except zenoh.ZError as e:
-                    logger.warning(f"Zenoh session close failed for {key}: {e}")
+                    logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
 
 
