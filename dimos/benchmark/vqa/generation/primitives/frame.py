@@ -31,7 +31,10 @@ from dimos.benchmark.vqa.contracts import (
     ProjectedPoints,
     VisualObject,
 )
-from dimos.benchmark.vqa.generation.primitives.grounding import ground_segmented_object
+from dimos.benchmark.vqa.generation.primitives.grounding import (
+    ground_segmented_object,
+    image_horizontal_direction,
+)
 from dimos.benchmark.vqa.generation.primitives.projection import project_visible_points
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -66,14 +69,12 @@ class FramePerceptionPrimitives:
         self._config = config
         self._detected: dict[str, ImageDetections2D] = {}
         self._segmented_detections: dict[tuple[str, int], list[Detection2DSeg]] = {}
-        self._segmented_queries: set[str] = set()
         self._masks: dict[str, list[Detection2DSeg]] = {}
-        self._points: dict[str, list[Detection2DPoint]] = {}
+        self._points: dict[str, ImageDetections2D[Detection2DPoint]] = {}
         self._groundings: dict[str, list[GroundedObject]] = {}
         self._visuals: dict[str, list[VisualObject]] = {}
-        self._visual_objects: dict[str, VisualObject] = {}
-        self._objects: dict[str, GroundedObject] = {}
-        self._object_masks: dict[str, Detection2DSeg] = {}
+        self._visual_objects: list[VisualObject] = []
+        self._objects: list[tuple[GroundedObject, Detection2DSeg]] = []
         self._grounded_masks: dict[int, tuple[Detection2DSeg, GroundedObject | None]] = {}
         self._projected: ProjectedPoints | None = None
         self._next_object_id = 0
@@ -88,10 +89,10 @@ class FramePerceptionPrimitives:
         self._detected[query] = detections
         return detections
 
-    def segment_objects(self, query: str) -> list[Detection2DSeg]:
+    def _segment_objects(self, query: str) -> list[Detection2DSeg]:
         """Segment all detected objects, falling back to point localization when available."""
-        if query in self._segmented_queries:
-            return self._masks.get(query, [])
+        if query in self._masks:
+            return self._masks[query]
         detections = self.detect_objects(query)
         if len(detections):
             masks = [
@@ -107,7 +108,6 @@ class FramePerceptionPrimitives:
                 else []
             )
         self._masks[query] = masks
-        self._segmented_queries.add(query)
         return masks
 
     def segment_object(self, query: str, index: int) -> list[Detection2DSeg]:
@@ -160,7 +160,7 @@ class FramePerceptionPrimitives:
                 detection.name,
                 float(detection.confidence),
                 (float(x1), float(y1), float(x2), float(y2)),
-                _horizontal_direction(detection.center_bbox[0], self.frame.image.width),
+                image_horizontal_direction(detection.center_bbox[0], self.frame.image.width),
             )
             object = self._canonicalize_visual(candidate)
             if object.id not in seen_ids:
@@ -189,7 +189,7 @@ class FramePerceptionPrimitives:
         cached = self._groundings.get(query)
         if cached is not None:
             return cached
-        masks = self.segment_objects(query)
+        masks = self._segment_objects(query)
         canonical: list[GroundedObject] = []
         seen_ids: set[str] = set()
         for mask in masks:
@@ -200,16 +200,6 @@ class FramePerceptionPrimitives:
         self._groundings[query] = canonical
         return canonical
 
-    def used_point_localization(self, query: str) -> bool:
-        return query in self._points
-
-    def has_grounding(self, query: str) -> bool:
-        return query in self._groundings
-
-    @property
-    def can_localize_points(self) -> bool:
-        return self._localizer is not None and self._point_segmenter is not None
-
     def _projected_points(self) -> ProjectedPoints:
         if self._projected is None:
             self._projected = project_visible_points(self.frame)
@@ -218,18 +208,16 @@ class FramePerceptionPrimitives:
     def _canonicalize_object(
         self, candidate: GroundedObject, mask: Detection2DSeg
     ) -> GroundedObject:
-        for object_id, existing in self._objects.items():
-            existing_mask = self._object_masks[object_id]
+        for existing, existing_mask in self._objects:
             if self._is_duplicate_object(candidate, mask, existing, existing_mask):
                 return existing
         self._next_object_id += 1
         object = replace(candidate, id=f"object:v1:{self.frame.id}:{self._next_object_id:04d}")
-        self._objects[object.id] = object
-        self._object_masks[object.id] = mask
+        self._objects.append((object, mask))
         return object
 
     def _canonicalize_visual(self, candidate: VisualObject) -> VisualObject:
-        for existing in self._visual_objects.values():
+        for existing in self._visual_objects:
             if (
                 candidate.label.casefold() == existing.label.casefold()
                 and _bbox_iou(candidate.bbox, existing.bbox) >= self._config.duplicate_iou_threshold
@@ -239,7 +227,7 @@ class FramePerceptionPrimitives:
         object = replace(
             candidate, id=f"visual-object:v1:{self.frame.id}:{self._next_visual_id:04d}"
         )
-        self._visual_objects[object.id] = object
+        self._visual_objects.append(object)
         return object
 
     def _localized_points(self, query: str) -> ImageDetections2D[Detection2DPoint]:
@@ -247,10 +235,9 @@ class FramePerceptionPrimitives:
         if cached is None:
             if self._localizer is None:
                 return ImageDetections2D(self.frame.image, [])
-            points = self._localizer.locate(self.frame.image, query)
-            cached = [item for item in points if isinstance(item, Detection2DPoint)]
+            cached = self._localizer.locate(self.frame.image, query)
             self._points[query] = cached
-        return ImageDetections2D(self.frame.image, cached)
+        return cached
 
     def _accepted_masks(
         self, detections: ImageDetections2D | list[Detection2D]
@@ -301,11 +288,3 @@ def _bbox_iou(
     second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
     union = first_area + second_area - intersection
     return intersection / union if union else 0.0
-
-
-def _horizontal_direction(x: float, width: int) -> str:
-    if x < width / 3:
-        return "left"
-    if x >= 2 * width / 3:
-        return "right"
-    return "center"

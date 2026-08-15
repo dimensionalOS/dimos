@@ -70,24 +70,6 @@ class _Grounding:
     def visual_objects(self, query: str) -> list[Any]:
         return [VisualObject("visual-chair", query, 1.0, (0.0, 0.0, 1.0, 1.0), "left")]
 
-    def segment_objects(self, query: str) -> list[Any]:
-        return []
-
-    def ground_objects(self, query: str) -> list[Any]:
-        return [
-            type(
-                "Object",
-                (),
-                {
-                    "id": "synthetic-chair-0",
-                    "label": query,
-                    "range_m": 1.0,
-                    "horizontal_direction": "left",
-                    "point_count": 4,
-                },
-            )()
-        ]
-
 
 def _measurement_frame(points: np.ndarray | None = None) -> CalibratedFrame:
     ground = [[x, 1.0, z] for z in (3.0, 4.0, 5.0) for x in (-1.0, -0.5, 0.0, 0.5, 1.0)]

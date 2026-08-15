@@ -60,30 +60,16 @@ class VisualResult:
 class FamilyContext:
     """Shared calibrated frame and cached primitives for deterministic families."""
 
-    frame: CalibratedFrame
     primitives: FramePerceptionPrimitives
 
+    @property
+    def frame(self) -> CalibratedFrame:
+        return self.primitives.frame
+
     def ground(self, object_query: str) -> GroundingResult:
-        """Detect, segment, and ground one semantic query with traceable cache reuse."""
-        if self.primitives.has_grounding(object_query):
-            return GroundingResult(
-                tuple(self.primitives.ground_objects(object_query)),
-                (ToolTrace("reuse_grounding", object_query),),
-            )
-        trace: list[ToolTrace] = [ToolTrace("detect_objects", object_query)]
-        detections = self.primitives.detect_objects(object_query)
-        if len(detections):
-            trace.append(ToolTrace("segment_objects", f"count={len(detections)}"))
-        elif self.primitives.can_localize_points:
-            trace.append(ToolTrace("locate_object_point", object_query))
-        masks = self.primitives.segment_objects(object_query)
-        if len(detections) and self.primitives.used_point_localization(object_query):
-            trace.append(ToolTrace("fallback_locate_object_point", object_query))
-            trace.append(ToolTrace("fallback_segment_object_point", object_query))
-        elif self.primitives.used_point_localization(object_query):
-            trace.append(ToolTrace("segment_object_point", object_query))
-        trace.append(ToolTrace("get_foreground_geometry", f"masks={len(masks)}"))
-        return GroundingResult(tuple(self.primitives.ground_objects(object_query)), tuple(trace))
+        """Ground one semantic query through the shared frame perception cache."""
+        objects = tuple(self.primitives.ground_objects(object_query))
+        return GroundingResult(objects, (ToolTrace("ground_objects", object_query),))
 
     def observe(self, object_query: str) -> VisualResult:
         """Detect visible object instances without requiring point-cloud support."""

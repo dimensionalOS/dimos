@@ -50,12 +50,12 @@ def ground_segmented_object(
         label=detection.name,
         point_count=len(points),
         range_m=float(np.median(np.linalg.norm(points, axis=1))),
-        horizontal_direction=_horizontal_direction(median_image_x, frame.image.width),
+        horizontal_direction=image_horizontal_direction(median_image_x, frame.image.width),
         camera_x_m=float(np.median(points[:, 0])),
     )
 
 
-def _horizontal_direction(x: float, width: int) -> str:
+def image_horizontal_direction(x: float, width: int) -> str:
     if x < width / 3:
         return "left"
     if x >= 2 * width / 3:

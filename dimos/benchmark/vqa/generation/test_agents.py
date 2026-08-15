@@ -199,11 +199,7 @@ def test_deterministic_answerer_records_tools_and_rejects_unsupported_question()
     assert answered.status == "answered"
     assert answered.answer == "yes"
     assert answered.evidence[0].point_count == 3
-    assert [item.tool for item in answered.trace] == [
-        "detect_objects",
-        "segment_objects",
-        "get_foreground_geometry",
-    ]
+    assert [item.tool for item in answered.trace] == ["ground_objects"]
     assert rejected.status == "rejected"
     assert rejected.reason == "no_visual_detection"
     assert absent.status == "rejected"
@@ -250,12 +246,7 @@ def test_deterministic_answerer_falls_back_to_point_prompt() -> None:
     )
 
     assert result.answer == "yes"
-    assert [item.tool for item in result.trace] == [
-        "detect_objects",
-        "locate_object_point",
-        "segment_object_point",
-        "get_foreground_geometry",
-    ]
+    assert [item.tool for item in result.trace] == ["ground_objects"]
 
 
 def test_deterministic_answerer_compares_nearest_objects_by_side() -> None:

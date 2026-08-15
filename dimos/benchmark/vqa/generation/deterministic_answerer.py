@@ -41,7 +41,7 @@ class DeterministicAnswerer:
     """Dispatch intents while sharing one frame-scoped family context."""
 
     def __init__(self, primitives: FramePerceptionPrimitives) -> None:
-        self.context = FamilyContext(primitives.frame, primitives)
+        self.context = FamilyContext(primitives)
 
     def answer(self, intent: QuestionIntent) -> GroundTruthResult:
         """Run the complete deterministic family recipe for one intent."""
