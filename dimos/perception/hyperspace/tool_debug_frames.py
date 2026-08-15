@@ -198,7 +198,11 @@ def main(argv: list[str] | None = None) -> None:
         voxel_map.aggregate,
         sorted(voxel_map.extras),
     )
-    model = SigLIP2Model()
+    model_kwargs = {}
+    if "model_name" in voxel_map.extras:
+        model_kwargs["model_name"] = str(voxel_map.extras["model_name"])
+        logger.info("using the map's model: %s", model_kwargs["model_name"])
+    model = SigLIP2Model(**model_kwargs)
     _, scores = score_query(voxel_map, model, args.query, smooth_iterations=args.smooth)
 
     keep_mask = None

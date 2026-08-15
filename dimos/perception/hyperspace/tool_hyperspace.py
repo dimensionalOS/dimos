@@ -58,6 +58,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--rrd", action="store_true", help="Also save a .rrd per query")
     parser.add_argument("--nearby", nargs="*", default=[], help="Queries for the nearby skill")
     parser.add_argument("--max-freq", type=float, default=2.0, help="SigLIP embed rate (Hz)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="SigLIP 2 checkpoint for both the vision and text towers",
+    )
+    parser.add_argument(
+        "--max-patches",
+        type=int,
+        default=None,
+        help="NaFlex token budget per image (e.g. 144 -> 9x16 grid)",
+    )
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out).expanduser()
@@ -76,10 +87,14 @@ def main(argv: list[str] | None = None) -> None:
         run_seconds = (last.ts - first.ts) / args.speed + 20.0
         logger.info("recording spans %.0fs -> running %.0fs", last.ts - first.ts, run_seconds)
 
+    model_kwargs = {"model_name": args.model} if args.model else {}
+    vision_kwargs = dict(model_kwargs)
+    if args.max_patches is not None:
+        vision_kwargs["max_num_patches"] = args.max_patches
     blueprint = autoconnect(
         D455ReplayModule.blueprint(db_path=db_path, speed=args.speed),
-        SigLIP2Module.blueprint(max_freq=args.max_freq),
-        HyperspaceModule.blueprint(),
+        SigLIP2Module.blueprint(max_freq=args.max_freq, **vision_kwargs),
+        HyperspaceModule.blueprint(**model_kwargs),
     ).transports(heavy_stream_transports())
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)

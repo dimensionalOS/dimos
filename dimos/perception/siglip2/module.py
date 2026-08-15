@@ -42,6 +42,9 @@ class SigLIP2ModuleConfig(ModuleConfig):
     max_freq: float = 2.0
     #: Model device; None auto-selects cuda when available.
     device: str | None = None
+    #: NaFlex token budget per image (e.g. 64 -> ~6x10 grid on a wide frame);
+    #: None keeps the checkpoint default. Ignored by fixed-resolution models.
+    max_num_patches: int | None = None
 
 
 class SigLIP2Module(Module):
@@ -65,6 +68,8 @@ class SigLIP2Module(Module):
         }
         if self.config.device is not None:
             model_kwargs["device"] = self.config.device
+        if self.config.max_num_patches is not None:
+            model_kwargs["max_num_patches"] = self.config.max_num_patches
         self.model = SigLIP2Model(**model_kwargs)
 
     def _process(self, image: Image) -> PatchEmbeddings:

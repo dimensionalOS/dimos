@@ -333,7 +333,7 @@ class HyperspaceModule(Module):
         query matches back to the recording frames that produced them.
         """
         voxel_map = self._require_map()
-        extras: dict[str, Any] = {}
+        extras: dict[str, Any] = {"model_name": np.str_(self.config.model_name)}
         mapper = self._ray_mapper
         if mapper is not None:
             with self._ray_lock:

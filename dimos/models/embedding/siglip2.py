@@ -42,6 +42,10 @@ class SigLIP2ModelConfig(HuggingFaceEmbeddingModelConfig):
     #: embeddings live in the text-aligned space. Raw vision-tower tokens are
     #: NOT aligned with text embeddings — cosine against them is noise.
     pooled_patches: bool = True
+    #: Token budget per image for NaFlex checkpoints (e.g. 64 -> ~8x8 grid).
+    #: Fewer tokens = quadratically cheaper vision tower at coarser spatial
+    #: resolution. Ignored by fixed-resolution checkpoints.
+    max_num_patches: int | None = None
 
 
 class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
@@ -103,10 +107,17 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
         pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
 
         with torch.inference_mode():
-            inputs = self._processor(images=pil_images, return_tensors="pt")
+            processor_kwargs: dict[str, Any] = {}
+            if self.config.max_num_patches is not None:
+                processor_kwargs["max_num_patches"] = self.config.max_num_patches
+            inputs = self._processor(images=pil_images, return_tensors="pt", **processor_kwargs)
             # NaFlex processors emit per-image patch grid shapes; fixed-res ones don't.
             spatial_shapes = inputs.get("spatial_shapes")
             inputs = self._move_inputs_to_device(dict(inputs))
+            # The NaFlex processor names the mask pixel_attention_mask; the
+            # vision tower's forward takes it as attention_mask.
+            if "pixel_attention_mask" in inputs:
+                inputs["attention_mask"] = inputs.pop("pixel_attention_mask")
             vision_outputs = self._model.vision_model(**inputs)
             hidden = vision_outputs.last_hidden_state
 

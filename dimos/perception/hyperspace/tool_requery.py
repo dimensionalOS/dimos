@@ -58,7 +58,11 @@ def main(argv: list[str] | None = None) -> None:
 
     voxel_map = EmbeddingVoxelMap.load(str(map_path))
     logger.info("loaded %s: %d voxels, dim %d", map_path, voxel_map.voxel_count, voxel_map.dim)
-    model = SigLIP2Model()
+    model_kwargs = {}
+    if "model_name" in voxel_map.extras:
+        model_kwargs["model_name"] = str(voxel_map.extras["model_name"])
+        logger.info("using the map's text tower: %s", model_kwargs["model_name"])
+    model = SigLIP2Model(**model_kwargs)
 
     # Same lidar clean-map filtering the live module applies, if it was saved.
     keep_mask = None
