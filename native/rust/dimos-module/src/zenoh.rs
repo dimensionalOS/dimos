@@ -80,7 +80,6 @@ impl SessionSettings {
             ("scouting/multicast/enabled", json_text(&self.multicast)),
             ("scouting/multicast/interface", json_text(&self.interface)),
             ("scouting/gossip/enabled", json_text(&self.gossip)),
-            ("connect/timeout_ms", json_text(&self.connect_timeout_ms)),
         ];
         // An empty list means "whatever zenoh listens on by default", which for
         // a peer is an ephemeral port, not nothing at all.
@@ -89,6 +88,11 @@ impl SessionSettings {
         }
         if !self.listen.is_empty() {
             inserts.push(("listen/endpoints", json_text(&self.listen)));
+        }
+        // Zero means "don't wait", which zenoh reads as "dial once and never
+        // retry". Leaving the key unset keeps its own retry policy.
+        if self.connect_timeout_ms > 0 {
+            inserts.push(("connect/timeout_ms", json_text(&self.connect_timeout_ms)));
         }
         for (key, value) in inserts {
             config.insert_json5(key, &value).map_err(to_io)?;
@@ -372,6 +376,20 @@ mod tests {
                 default.get_json(key).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn a_zero_timeout_keeps_zenohs_own_retry_policy() {
+        // Zenoh reads a zero timeout as dial once and never retry.
+        let config = settings(serde_json::json!({"connect_timeout_ms": 0}))
+            .zenoh_config()
+            .unwrap();
+        assert_eq!(
+            config.get_json("connect/timeout_ms").unwrap(),
+            ::zenoh::Config::default()
+                .get_json("connect/timeout_ms")
+                .unwrap()
+        );
     }
 
     #[test]

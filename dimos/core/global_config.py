@@ -30,10 +30,11 @@ from dimos.visualization.rerun.constants import (
 )
 
 TransportBackend: TypeAlias = Literal["lcm", "zenoh"]
-# How a zenoh session joins the network. A peer meshes directly with every peer
-# it discovers or dials, a client sends everything through one router, and a
-# router accepts clients and forwards between them.
+# How one zenoh session joins the network.
 ZenohMode: TypeAlias = Literal["peer", "client", "router"]
+# How every session in every process joins it. A router binds a port only one
+# process can hold, so it is pinned on the one session that owns that port.
+ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -61,13 +62,10 @@ class GlobalConfig(BaseSettings):
     replay_db: str = "go2_short"
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
-    zenoh_mode: ZenohMode = "peer"
+    zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.
     # Comma-separated, e.g. tcp/127.0.0.1:7447. Names a router or any non-robot peer.
     zenoh_connect: str = ""
-    # Locators every session listens on, comma-separated. A router needs one.
-    # Empty keeps zenoh's own defaults, which bind an ephemeral port for a peer.
-    zenoh_listen: str = ""
     # Discover zenoh peers across the network.
     # Toggling off drops back to loopback-only discovery:
     # Sibling worker processes still find each other,
