@@ -117,6 +117,10 @@ class DroneSkillsConfig(ModuleConfig):
     # an endless "following_path" crawl against the wall.
     bound_x: float = 10.2
     bound_y: float = 6.2
+    # Firmware reflex: intercept target sightings (own sensor or partner's
+    # radio report) without waiting for the LLM. The agent keeps strategy
+    # (negotiation, exploration, re-search); the reflex keeps pursuit sharp.
+    auto_pursuit: bool = True
 
 
 class DroneSkillContainer(Module):
@@ -136,6 +140,11 @@ class DroneSkillContainer(Module):
     # Direct velocity override (MovementManager gives teleop priority over the
     # planner) — used by intercept() for straight-line pursuit.
     tele_cmd_vel: Out[Twist]
+    # Partner sightings relayed by the radio ("x y") — auto-pursuit input.
+    partner_sighting: In[str]
+    # Own-sensor sightings pushed to the radio for automatic broadcast, so the
+    # partner converges even if this drone's LLM is slow to report.
+    auto_sighting: Out[str]
 
     _navigation: NavigationInterfaceSpec
 
@@ -144,6 +153,7 @@ class DroneSkillContainer(Module):
     _sweep_thread: threading.Thread | None = None
     _sweep_cancel: threading.Event
     _sweep_status: str = "idle"
+    _last_pursuit: tuple[float, float, float] = (1e9, 1e9, 0.0)
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -154,6 +164,10 @@ class DroneSkillContainer(Module):
         super().start()
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
         self.register_disposable(Disposable(self.target_event.subscribe(self._on_target_event)))
+        if self.partner_sighting.transport is not None:
+            self.register_disposable(
+                Disposable(self.partner_sighting.subscribe(self._on_partner_sighting))
+            )
 
     @rpc
     def stop(self) -> None:
@@ -167,6 +181,44 @@ class DroneSkillContainer(Module):
 
     def _on_target_event(self, event: str) -> None:
         self._latest_target_event = event
+        # Firmware reflex: own sensor contact → pursue immediately.
+        if self.config.auto_pursuit and event.startswith("VISIBLE"):
+            try:
+                # "VISIBLE at (x, y)"
+                inside = event[event.index("(") + 1 : event.index(")")]
+                x_s, y_s = inside.split(",")
+                self._auto_pursue(float(x_s), float(y_s), source="own sensor")
+            except (ValueError, IndexError):
+                pass
+
+    def _on_partner_sighting(self, raw: str) -> None:
+        # Partner radioed a sighting → converge unless we have our own contact
+        # (own sensor is fresher than a relayed report).
+        if not self.config.auto_pursuit:
+            return
+        if self._latest_target_event.startswith("VISIBLE"):
+            return
+        try:
+            x_s, y_s = raw.split()
+            self._auto_pursue(float(x_s), float(y_s), source="partner radio")
+        except ValueError:
+            pass
+
+    def _auto_pursue(self, x: float, y: float, source: str) -> None:
+        """Start/redirect the straight-line intercept, rate-limited so a
+        stream of updates doesn't thrash the pursuit thread."""
+        now = time.time()
+        lx, ly, lt = self._last_pursuit
+        if now - lt < 3.0 and math.hypot(x - lx, y - ly) < 2.0:
+            return
+        self._last_pursuit = (x, y, now)
+        logger.info(f"auto-pursuit ({source}) -> ({x:.1f}, {y:.1f})")
+        if source == "own sensor":
+            try:
+                self.auto_sighting.publish(f"{x} {y}")
+            except Exception:
+                pass
+        self.intercept(x, y)
 
     # -- skills ---------------------------------------------------------------
 

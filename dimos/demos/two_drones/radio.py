@@ -127,9 +127,15 @@ class RadioModule(Module):
 
     odom: In[PoseStamped]
     human_input: Out[str]  # inbox injection into this stack's McpClient
+    # Firmware sightings ("x y") auto-broadcast as signed kind-3 events, so
+    # the partner's reflex converges even while this drone's LLM composes.
+    auto_sighting: In[str]
     # This drone's current beliefs about its peers, as JSON — the ghost
     # overlay renders from THIS (what the drone thinks, not the truth).
     peer_belief: Out[str]
+    # Partner target sightings ("x y"), for the flight firmware's
+    # auto-intercept reflex (DroneSkillContainer).
+    partner_sighting: Out[str]
 
     _radio: PubSubTransport[str] | None = None
     _key: Ed25519PrivateKey
@@ -164,6 +170,10 @@ class RadioModule(Module):
         from reactivex.disposable import Disposable
 
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        if self.auto_sighting.transport is not None:
+            self.register_disposable(
+                Disposable(self.auto_sighting.subscribe(self._on_auto_sighting))
+            )
         if self.config.beacon_period > 0:
             self._beacon_thread = threading.Thread(target=self._beacon_loop, daemon=True)
             self._beacon_thread.start()
@@ -184,6 +194,23 @@ class RadioModule(Module):
 
     def _on_odom(self, odom: PoseStamped) -> None:
         self._latest_odom = odom
+
+    def _on_auto_sighting(self, raw: str) -> None:
+        try:
+            x_s, y_s = raw.split()
+            x, y = float(x_s), float(y_s)
+        except ValueError:
+            return
+        tags = [["sighting", round(x, 2), round(y, 2)]]
+        pos = self._position_tag()
+        if pos:
+            tags.append(pos)
+        try:
+            self._publish_event(
+                KIND_SIGHTING, tags, f"[firmware] Target in sight at ({x:.1f}, {y:.1f})."
+            )
+        except Exception:
+            logger.warning("auto sighting broadcast failed", exc_info=True)
 
     # -- wire -----------------------------------------------------------------
 
@@ -268,6 +295,11 @@ class RadioModule(Module):
             elif t[0] == "sighting" and len(t) >= 3:
                 belief.target_sighting = (float(t[1]), float(t[2]))
                 belief.sighting_at = time.time()
+                # Feed the flight firmware's auto-intercept reflex.
+                try:
+                    self.partner_sighting.publish(f"{float(t[1])} {float(t[2])}")
+                except Exception:
+                    pass
 
         self._publish_beliefs()
 

@@ -728,14 +728,16 @@ class Referee:
                         s.last_seen = (rx, ry)
                         s.last_inject = now
                         self._human_inputs[drone].publish(
-                            f"[SENSOR] TARGET IN SIGHT at ({rx:.1f}, {ry:.1f}). "
-                            f"Immediately report_sighting({rx:.1f}, {ry:.1f}) and then fly_to it."
+                            f"[SENSOR] TARGET IN SIGHT at ({rx:.1f}, {ry:.1f}). Your flight "
+                            f"firmware is already intercepting it. Immediately "
+                            f"report_sighting({rx:.1f}, {ry:.1f}) so your partner converges too."
                         )
                     else:
                         last = s.last_seen or (rx, ry)
                         self._human_inputs[drone].publish(
                             f"[SENSOR] You LOST sight of the target. Last seen at "
-                            f"({last[0]:.1f}, {last[1]:.1f}). Tell your partner and re-search."
+                            f"({last[0]:.1f}, {last[1]:.1f}). Tell your partner and organize a "
+                            f"local re-search around that point."
                         )
             else:
                 s.streak = 0
@@ -744,8 +746,8 @@ class Referee:
                 if now - s.last_inject >= cfg.refresh_s:
                     s.last_inject = now
                     self._human_inputs[drone].publish(
-                        f"[SENSOR] Target still in sight, now at ({rx:.1f}, {ry:.1f}). "
-                        f"Keep pursuing: fly_to({rx:.1f}, {ry:.1f}) and update your partner."
+                        f"[SENSOR] Target still in sight, now at ({rx:.1f}, {ry:.1f}); firmware "
+                        f"pursuit active. Keep your partner updated (report_sighting)."
                     )
             state = f"VISIBLE at ({rx:.1f}, {ry:.1f})" if s.visible else (
                 f"NOT VISIBLE (last seen at ({s.last_seen[0]:.1f}, {s.last_seen[1]:.1f}))"

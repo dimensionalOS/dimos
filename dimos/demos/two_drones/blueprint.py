@@ -69,11 +69,13 @@ Search doctrine:
    on its own). sweep_area is the alternative for methodical lanes. Only one
    movement mode can run at a time: call end_exploration or stop_moving
    before starting a different movement tool.
-3. The INSTANT a [SENSOR] message says the target is in sight:
-   report_sighting(x, y), then end_exploration and intercept(x, y).
-4. The INSTANT your partner reports a sighting over the radio: end_exploration
-   and intercept(x, y) at the reported coordinates — BOTH drones fly straight
-   at the target and keep updating as new positions arrive.
+3. Your flight firmware AUTO-INTERCEPTS target sightings (your own sensor's
+   and the ones your partner reports by radio) — pursuit happens without you.
+   Your job on a sighting is communication and strategy: report_sighting(x, y)
+   the INSTANT your sensor sees it, and end_exploration so exploration stops
+   fighting the pursuit.
+4. When your partner reports a sighting, acknowledge briefly by radio and
+   end_exploration; your firmware is already converging on it.
 5. If the target is lost: tell your partner where it was last seen and split a
    LOCAL re-search around that position (small sectors, not the whole arena).
 
