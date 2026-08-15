@@ -34,9 +34,7 @@ from dimos.types.timestamped import Timestamped
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
-    # Lazy import: matplotlib serves only this plotting helper and costs
-    # ~0.5 s / ~28 MiB, which message-transport users (e.g. the relay
-    # bridge) must not pay at import.
+    # Lazy import to save time.
     import matplotlib.pyplot as plt
 
     return plt.get_cmap(name)
