@@ -31,7 +31,13 @@ from dimos.benchmark.vqa.contracts import (
     QuestionProposal,
     RejectedOracleResult,
 )
-from dimos.benchmark.vqa.generation.config import ORACLE_MODEL, QUESTION_MODEL, GenerationConfig
+from dimos.benchmark.vqa.generation.config import (
+    ORACLE_MODEL,
+    QUESTION_AUTHOR_VERSION,
+    QUESTION_MODEL,
+    QUESTION_PARSER_VERSION,
+    GenerationConfig,
+)
 from dimos.constants import STATE_DIR
 from dimos.utils.data import resolve_named_path
 
@@ -170,6 +176,8 @@ def execute_generation(
                     if question_mode == "agentic"
                     else "openai_image_agent",
                     "question_model": QUESTION_MODEL,
+                    "question_author_version": QUESTION_AUTHOR_VERSION,
+                    "question_parser_version": QUESTION_PARSER_VERSION,
                     "oracle_model": ORACLE_MODEL if question_mode == "agentic" else None,
                     "grounding": grounding.model_dump(mode="json"),
                     "question_author_rejections": (

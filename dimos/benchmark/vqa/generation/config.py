@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 QUESTION_MODEL = "gpt-4o-mini"
 ORACLE_MODEL = "gpt-4o-mini"
+QUESTION_AUTHOR_VERSION = "v2"
+QUESTION_PARSER_VERSION = "v2"
 
 
 class GroundingConfig(BaseModel):

@@ -32,7 +32,13 @@ from dimos.benchmark.vqa.contracts import (
     QuestionProposal,
     RejectedOracleResult,
 )
-from dimos.benchmark.vqa.generation.config import ORACLE_MODEL, QUESTION_MODEL, GenerationConfig
+from dimos.benchmark.vqa.generation.config import (
+    ORACLE_MODEL,
+    QUESTION_AUTHOR_VERSION,
+    QUESTION_MODEL,
+    QUESTION_PARSER_VERSION,
+    GenerationConfig,
+)
 
 
 class GenerationDataset:
@@ -168,6 +174,8 @@ def _write_generation_run(
         "generation": {**generation.model_dump(mode="json"), "output": str(output)},
         "models": {
             "question_author": QUESTION_MODEL,
+            "question_author_version": QUESTION_AUTHOR_VERSION,
+            "question_parser_version": QUESTION_PARSER_VERSION,
             "oracle": ORACLE_MODEL if generation.question_mode == "agentic" else None,
         },
         "summary": summary,
@@ -196,6 +204,8 @@ def _validate_completed_frame(
         or payload.get("frame_index") != frame_index
         or payload.get("question_source") != expected_source
         or payload.get("question_model") != QUESTION_MODEL
+        or payload.get("question_author_version") != QUESTION_AUTHOR_VERSION
+        or payload.get("question_parser_version") != QUESTION_PARSER_VERSION
         or payload.get("oracle_model")
         != (ORACLE_MODEL if generation.question_mode == "agentic" else None)
         or grounding != generation.grounding.model_dump(mode="json")

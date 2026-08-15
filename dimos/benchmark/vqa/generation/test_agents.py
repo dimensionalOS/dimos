@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import cast
 
 import numpy as np
+import pytest
 
 from dimos.benchmark.vqa.contracts import (
     CalibratedFrame,
@@ -151,6 +152,25 @@ def test_constrained_question_author_deduplicates_identical_intents() -> None:
     )
 
     assert intents == [QuestionIntent(kind="presence", object_query="chair")]
+
+
+def test_constrained_question_author_records_invalid_items_immutably() -> None:
+    class _InvalidQuestionModel:
+        def query(self, image: Image, prompt: str) -> str:
+            return """[
+                {"kind":"within_distance","object_query":"chair","threshold_m":true},
+                {"kind":"presence","object_query":"chair","threshold_m":1.0}
+            ]"""
+
+    frame, _ = _frame_and_detection()
+    author = ConstrainedQuestionAuthor(cast("OpenAIVlModel", _InvalidQuestionModel()))
+
+    with pytest.raises(ValueError, match="returned no valid intents"):
+        author.propose(frame.image)
+    assert author.rejections == (
+        "intent-1:invalid_distance_threshold",
+        "intent-2:unexpected_fields",
+    )
 
 
 def test_question_rendering_handles_plural_queries_and_singular_units() -> None:

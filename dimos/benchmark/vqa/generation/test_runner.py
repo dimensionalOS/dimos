@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from dimos.benchmark.vqa.generation.config import QUESTION_MODEL, GenerationConfig
+from dimos.benchmark.vqa.generation.config import (
+    QUESTION_AUTHOR_VERSION,
+    QUESTION_MODEL,
+    QUESTION_PARSER_VERSION,
+    GenerationConfig,
+)
 from dimos.benchmark.vqa.generation.dataset import (
     _validate_completed_frame,
     _write_generation_run,
@@ -37,6 +42,8 @@ def test_generation_run_records_resolved_request(tmp_path: Path) -> None:
 
     assert payload["generation"]["recording"] == "go2.db"
     assert payload["generation"]["output"] == str(tmp_path)
+    assert payload["models"]["question_author_version"] == QUESTION_AUTHOR_VERSION
+    assert payload["models"]["question_parser_version"] == QUESTION_PARSER_VERSION
     assert payload["summary"]["accepted_question_count"] == 3
 
 
@@ -50,6 +57,8 @@ def test_completed_frame_must_match_generation_settings(tmp_path: Path) -> None:
                 "frame_index": 1,
                 "question_source": "openai_image_agent",
                 "question_model": QUESTION_MODEL,
+                "question_author_version": QUESTION_AUTHOR_VERSION,
+                "question_parser_version": QUESTION_PARSER_VERSION,
                 "oracle_model": None,
                 "grounding": {"min_mask_area_px": 128, "min_foreground_points": 3},
             }
@@ -65,3 +74,24 @@ def test_completed_frame_must_match_generation_settings(tmp_path: Path) -> None:
             GenerationConfig(recording="other.db", stop_index=10),
             1,
         )
+
+
+@pytest.mark.parametrize("version_field", ["question_author_version", "question_parser_version"])
+def test_completed_frame_must_match_question_versions(tmp_path: Path, version_field: str) -> None:
+    frame = tmp_path / "audit" / "frame-000001"
+    frame.mkdir(parents=True)
+    payload = {
+        "recording": "go2.db",
+        "frame_index": 1,
+        "question_source": "openai_image_agent",
+        "question_model": QUESTION_MODEL,
+        "question_author_version": QUESTION_AUTHOR_VERSION,
+        "question_parser_version": QUESTION_PARSER_VERSION,
+        "oracle_model": None,
+        "grounding": {"min_mask_area_px": 128, "min_foreground_points": 3},
+    }
+    payload[version_field] = "outdated"
+    (frame / "frame.json").write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="different settings"):
+        _validate_completed_frame(frame, GenerationConfig(recording="go2.db", stop_index=10), 1)

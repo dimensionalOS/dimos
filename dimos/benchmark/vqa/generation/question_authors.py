@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2026 Dimensional Inc.
 """Image-only constrained VQA question proposal."""
 
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -53,9 +53,10 @@ Prioritize high-quality, relevant questions over exhaustively covering every vis
 Do not return bare object names, questions, answers, explanations, Markdown, or information not
 visible in the image."""
 
-AGENTIC_QUESTION_PROMPT = """Author challenging, visually answerable single-frame VQA questions.
+AGENTIC_QUESTION_PROMPT = """Author challenging, visually grounded single-frame VQA questions.
 Inspect only this image. Do not use or infer depth, point clouds, calibration, metadata, or answers.
-Return JSON only: an array of objects with question, answer_contract, and optional object_queries.
+Return JSON only: an array of objects with question, answer_contract, optional object_queries, and
+optional id.
 answer_contract is {"kind":"boolean"} or
 {"kind":"choice","choices":[...]}.
 Prioritize questions that a private point-cloud oracle can validate from grounded object range and
@@ -70,10 +71,8 @@ and name both objects.
 Use concise, mutually exclusive fixed choices. Prioritize high-quality, relevant questions over
 exhaustively covering every visible object.
 Use object_queries for every referenced object. The private oracle chooses its own sequence of reusable
-perception and grounding primitives; no answer-level composite tools are available. For counts, enumerate,
-segment, and ground every returned detection for the named query, cite every grounded instance, and reject
-if completeness is uncertain. Use visibility/presence questions
-only when no stronger geometric question is available.
+perception and grounding primitives; no answer-level composite tools are available. Use
+visibility/presence questions only when no stronger geometric question is available.
 Do not ask about color, material, text, intent, full physical size, hidden parts, or exact
 metric distances without a supplied choice contract. Use only visible objects. Do not include
 answers, explanations, Markdown, or background surfaces."""
@@ -84,15 +83,16 @@ class ConstrainedQuestionAuthor:
 
     def __init__(self, model: OpenAIVlModel) -> None:
         self._model = model
-        self.rejections: list[str] = []
+        self.rejections: tuple[str, ...] = ()
 
     def propose(self, image: Image) -> list[QuestionIntent]:
-        self.rejections = []
+        self.rejections = ()
         payload = _query_json_array(self._model, image, QUESTION_PROMPT, "question agent")
         intents: list[QuestionIntent] = []
+        rejections: list[str] = []
         for index, item in enumerate(payload, start=1):
             if not isinstance(item, dict):
-                self.rejections.append(f"intent-{index}:not_an_object")
+                rejections.append(f"intent-{index}:not_an_object")
                 continue
             kind, query, threshold = (
                 item.get("kind"),
@@ -108,30 +108,40 @@ class ConstrainedQuestionAuthor:
                 "compare_nearest_by_side",
                 "compare_left_right",
             ):
-                self.rejections.append(f"intent-{index}:unsupported_kind")
+                rejections.append(f"intent-{index}:unsupported_kind")
+                continue
+            expected_fields = {"kind", "object_query"}
+            if kind == "within_distance":
+                expected_fields.add("threshold_m")
+            elif kind == "compare_left_right":
+                expected_fields.add("comparison_query")
+            if set(item) - expected_fields:
+                rejections.append(f"intent-{index}:unexpected_fields")
                 continue
             if not isinstance(query, str) or not query.strip():
-                self.rejections.append(f"intent-{index}:missing_object_query")
+                rejections.append(f"intent-{index}:missing_object_query")
                 continue
             query = query.strip()
-            if kind == "within_distance" and (
-                not isinstance(threshold, (int, float)) or threshold <= 0
-            ):
-                self.rejections.append(f"intent-{index}:invalid_distance_threshold")
+            if kind == "within_distance" and not _valid_distance_threshold(threshold):
+                rejections.append(f"intent-{index}:invalid_distance_threshold")
                 continue
             if kind != "within_distance":
                 threshold = None
             comparison_query = item.get("comparison_query")
-            if kind == "compare_left_right" and (
-                not isinstance(comparison_query, str)
-                or not comparison_query
-                or comparison_query == query
-            ):
-                self.rejections.append(f"intent-{index}:invalid_comparison_query")
-                continue
-            if kind != "compare_left_right":
+            if kind == "compare_left_right":
+                if not isinstance(comparison_query, str):
+                    rejections.append(f"intent-{index}:invalid_comparison_query")
+                    continue
+                comparison_query = comparison_query.strip()
+                if not comparison_query or comparison_query.casefold() == query.casefold():
+                    rejections.append(f"intent-{index}:invalid_comparison_query")
+                    continue
+            else:
                 comparison_query = None
             intents.append(QuestionIntent(kind, query, threshold, comparison_query))
+        self.rejections = tuple(rejections)
+        if payload and not intents:
+            raise ValueError("question agent returned no valid intents")
         return list(dict.fromkeys(intents))
 
 
@@ -143,41 +153,56 @@ class AgenticQuestionAuthor:
         model: OpenAIVlModel,
     ) -> None:
         self._model = model
-        self.rejections: list[str] = []
+        self.rejections: tuple[str, ...] = ()
 
     def propose(self, image: Image) -> list[QuestionProposal]:
-        self.rejections = []
+        self.rejections = ()
         payload = _query_json_array(self._model, image, AGENTIC_QUESTION_PROMPT, "question author")
-        proposals = []
-        errors: list[ValueError] = []
+        proposals: list[QuestionProposal] = []
+        rejections: list[str] = []
         for index, item in enumerate(payload, start=1):
             try:
                 proposals.append(_proposal_from_json(item, index))
             except ValueError as exc:
-                errors.append(exc)
-                self.rejections.append(f"proposal-{index}:{exc}")
+                rejections.append(f"proposal-{index}:{exc}")
                 continue
-        if not proposals and errors:
-            raise errors[0]
+        self.rejections = tuple(rejections)
+        if payload and not proposals:
+            raise ValueError("question author returned no valid proposals")
         return _uniquify_proposal_ids(proposals)
+
+
+def _valid_distance_threshold(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
 def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
     if not isinstance(item, dict):
         raise ValueError("question proposal must be an object")
+    if set(item) - {"id", "question", "answer_contract", "object_queries"}:
+        raise ValueError("question proposal contains unexpected fields")
     identifier, question = item.get("id"), item.get("question")
-    if not isinstance(question, str) or not question:
+    if not isinstance(question, str) or not question.strip():
         raise ValueError("question proposal requires question")
-    if not isinstance(identifier, str) or not identifier:
+    question = question.strip()
+    if identifier is not None and (not isinstance(identifier, str) or not identifier.strip()):
+        raise ValueError("question proposal id must be a non-empty string")
+    if identifier is None:
         identifier = f"proposal-{index:02d}"
+    else:
+        identifier = identifier.strip()
     queries = _string_tuple(item.get("object_queries", []), "object_queries")
     contract = item.get("answer_contract")
     if not isinstance(contract, dict):
         raise ValueError("question proposal requires answer_contract")
     kind = contract.get("kind")
     if kind == "boolean":
+        if set(contract) != {"kind"}:
+            raise ValueError("boolean contract contains unexpected fields")
         answer_contract: AnswerContract = BooleanAnswerContract()
     elif kind == "choice":
+        if set(contract) != {"kind", "choices"}:
+            raise ValueError("choice contract contains unexpected fields")
         choices = _string_tuple(contract.get("choices"), "choices")
         if len(choices) < 2:
             raise ValueError("choice contract requires at least two choices")
@@ -200,13 +225,11 @@ def _proposal_from_json(item: Any, index: int) -> QuestionProposal:
 
 
 def _string_tuple(value: Any, name: str) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        value = [value]
     if not isinstance(value, list):
-        return ()
-    return tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
+        raise ValueError(f"{name} must be an array")
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ValueError(f"{name} must contain only non-empty strings")
+    return tuple(item.strip() for item in value)
 
 
 def _query_json_array(model: OpenAIVlModel, image: Image, prompt: str, label: str) -> list[Any]:
@@ -224,11 +247,16 @@ def _query_json_array(model: OpenAIVlModel, image: Image, prompt: str, label: st
 
 def _uniquify_proposal_ids(proposals: list[QuestionProposal]) -> list[QuestionProposal]:
     counts: dict[str, int] = {}
+    used: set[str] = set()
     unique: list[QuestionProposal] = []
     for proposal in proposals:
         count = counts.get(proposal.id, 0) + 1
-        counts[proposal.id] = count
         identifier = proposal.id if count == 1 else f"{proposal.id}-{count}"
+        while identifier in used:
+            count += 1
+            identifier = f"{proposal.id}-{count}"
+        counts[proposal.id] = count
+        used.add(identifier)
         unique.append(
             QuestionProposal(
                 identifier,
@@ -244,7 +272,4 @@ def _parse_json_array(response: str) -> Any:
     stripped = response.strip()
     if stripped.startswith("```"):
         stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE)
-    start, end = stripped.find("["), stripped.rfind("]")
-    if start < 0 or end < start:
-        raise json.JSONDecodeError("expected JSON array", stripped, 0)
-    return json.loads(stripped[start : end + 1])
+    return json.loads(stripped)

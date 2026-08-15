@@ -53,14 +53,44 @@ output flags. A specification is a reproducible generation request:
 Generation writes the resolved request, model IDs, and aggregate counts to private
 `audit/run.json`. This is an output record, not the input specification.
 
-## 2. Create Questions
+## 2. Preprocess Each Frame
+
+Generation creates one `Go2FramePreprocessor` for the complete recording run. Setup performed once:
+
+- Open the Memory2 recording.
+- Discover and order image, LiDAR, camera-info, and TF streams.
+- Initialize reusable nearest-time alignment and TF access.
+- Cache OpenCV rectification maps for each distinct camera calibration.
+
+For each requested image index, the preprocessor:
+
+1. Loads the image and nearest LiDAR/camera-info observations within tolerance.
+2. Rectifies the image and emits matching zero-distortion pinhole intrinsics.
+3. Resolves camera-from-point-cloud using recorded TF or captured-pose fallback.
+4. Returns one read-only `CalibratedFrame`.
+
+```text
+CalibratedFrame
+  image                     rectified RGB used by authors and detectors
+  pointcloud                unchanged source/world-frame LiDAR points
+  camera_info               intrinsics matching the rectified image
+  pointcloud_to_camera      transform applied only if geometry is requested
+```
+
+The image pixels must be remapped for every frame because the scene changes. The expensive
+rectification maps, recording streams, and TF access are reused. Preprocessing does not run
+MoonDream, EdgeTAM, point-cloud projection, or grounding.
+
+## 3. Create Questions
 
 ### Constrained
 
-The image author inspects the scene and returns structured intents in one JSON array. Invalid JSON
-is retried once. It selects only
-families likely to be useful for the visible arrangement, rather than expanding every object into
-every family. Private grounding still rejects unsupported or ambiguous candidates.
+The image author inspects the scene and returns structured intents in one JSON array. Malformed JSON
+is retried once. Strict per-item parsing rejects unsupported kinds, unexpected fields, and invalid
+family parameters into the private author audit. The author selects only families likely to be useful
+for the visible arrangement, rather than expanding every object into every family. Private grounding
+still rejects unsupported or ambiguous candidates. A non-empty response with no valid intents fails
+the frame instead of publishing a resumable zero-question completion marker.
 
 | Family | Sample question | Choices |
 |---|---|---|
@@ -79,39 +109,53 @@ The image-only author returns a frozen question with one contract:
 - Boolean: `{"kind":"boolean"}`; public choices are `yes`, `no`.
 - Choice: `{"kind":"choice","choices":[...]}`; at least two choices.
 
+The same strict array and per-item validation applies. Invalid proposals are retained as private
+author rejections; accepted proposal IDs are made unique within the frame before oracle execution. A
+non-empty response with no valid proposals fails the frame.
+
 The agentic oracle is not bound to a constrained family. It can inspect individual detection, mask,
 and object handles, choose its own tool sequence, and either return a cited answer or privately
 reject the proposal with the missing evidence.
 
-## 3. Pre-Answer Evidence Checks
+## 4. Pre-Answer Evidence Checks
 
-Presence, visible count, and image direction use valid MoonDream detections directly. Range families
-need a detected mask with enough visible 3D point support. Questions are authored from RGB only;
-private LiDAR evidence establishes range labels.
+Presence, visible count, and image direction use valid MoonDream detections directly. They do not
+segment objects or project LiDAR. Range and pairwise geometry families need an EdgeTAM mask with
+enough visible 3D point support. Questions are authored from RGB only; private LiDAR evidence
+establishes geometric labels.
 
 - Presence and count: accepted visual detections. `0` is an exhaustive distractor; empty detector
   output is unverified absence and rejects rather than producing a zero label.
-- Range: accepted grounded instances only. Failed box segmentation attempts point-prompt fallback.
+- Range: accepted grounded instances only. If boxes are absent or box segmentation fails, MoonDream
+  can return positive image points that EdgeTAM expands into masks.
 - Left/right comparison: one grounded instance per named object with clear separation.
 
 Missing, sparse, or ambiguous evidence rejects the question.
 
-## 4. Create Answers
+## 5. Create Answers
 
 ### Constrained
 
-Each deterministic family runs its own fixed sequence. `ground(A)` below is always the same private
-primitive chain supplied by the shared family context. The deterministic question answerer only
-dispatches the intent to the matching family; the family owns grounding, measurements, quality
-gates, and answer selection:
+Each deterministic family runs its own fixed sequence. `ground(A)` below is one cached
+`ground_objects(A)` call through the shared frame perception facade. The deterministic answerer only
+dispatches the intent to the matching family; the family owns evidence requirements, quality gates,
+selection, and answer policy:
 
 ```text
 ground(A)
 -> detect_objects(A)
--> segment_detections(A)
--> ground_masks(A)
--> accepted grounded A instances, or reject if the family requires an unavailable instance
+-> _segment_objects(A)
+   -> segment_object(A, detection_index) for every box
+   -> optional MoonDream point -> EdgeTAM mask fallback
+-> project_visible_points(frame) once, on first geometric request
+-> ground_object(mask) for every accepted mask
+-> canonical grounded A instances, or reject when support is unavailable
 ```
+
+`project_visible_points()` transforms source points into the camera frame, drops points behind or
+outside the camera, maps the remainder into rectified image pixels, and keeps the nearest point per
+pixel. Each `ground_object(mask)` then filters that cached sparse projection by the mask. Calibration
+and projection are not rerun for every object.
 
 ```text
 presence(A)
@@ -130,15 +174,15 @@ horizontal_direction(A)
 ```text
 within_distance(A, T)
 -> ground(A)
--> select_nearest_object(grounded A instances) -> nearest A
+-> _select_nearest_object(grounded A instances) -> nearest A
 -> nearest A range_m <= T: yes/no
 ```
 
 ```text
 compare_nearest_by_side(A)
 -> ground(A)
--> select_nearest_object(grounded A instances, left) -> nearest left A
--> select_nearest_object(grounded A instances, right) -> nearest right A
+-> _select_nearest_object(grounded A instances, left) -> nearest left A
+-> _select_nearest_object(grounded A instances, right) -> nearest right A
 -> either side missing or ranges within 0.1 m: reject
 -> compare the two range_m values: left/right
 ```
@@ -154,14 +198,15 @@ visible_count(A)
 ```text
 camera_range(A)
 -> ground(A)
--> select_nearest_object(...) -> bucket camera-origin range
+-> _select_nearest_object(...) -> bucket camera-origin range
 ```
 
 ```text
 compare_left_right(A, B)
 -> ground(A), ground(B)
 -> require exactly one accepted A and B
--> compare camera-frame support centroids
+-> compare stored median camera-frame X measurements
+-> require at least six support points per object
 -> separation under 0.1 m: reject -> otherwise choose left/right
 ```
 
@@ -179,7 +224,7 @@ recipes. It interprets their measurements and selects an answer itself:
 Opaque IDs chain tool results; raw masks and point-cloud arrays are not exposed to the oracle. The
 oracle returns a candidate answer and cited evidence IDs.
 
-## 5. Post-Answer Validation
+## 6. Post-Answer Validation
 
 The candidate is rejected unless:
 
@@ -190,7 +235,7 @@ Tool failures, quality-gate failures, invalid citations, and invalid answer form
 rejected generation records. The tool-calling oracle currently interprets whether its cited evidence
 supports a freeform question without a second model judge.
 
-## 6. Write Dataset Artifacts
+## 7. Write Dataset Artifacts
 
 The generated root is directly evaluable while retaining private audit state:
 
@@ -244,6 +289,10 @@ one record is:
 
 The files store each record as one JSON object per physical line; the examples above are expanded
 only for documentation readability.
+
+Each `frame.json` records the question-author and parser versions. Resume accepts a completed frame
+only when those versions, model IDs, generation mode, recording, frame index, and grounding settings
+match the current run.
 
 Run the generated dataset through the standard evaluation framework:
 

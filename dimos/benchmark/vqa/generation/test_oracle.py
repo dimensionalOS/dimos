@@ -195,22 +195,21 @@ def test_agentic_question_author_rejects_numeric_contracts() -> None:
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    try:
-        AgenticQuestionAuthor(cast("OpenAIVlModel", _NumericContractModel())).propose(image)
-    except ValueError as exc:
-        assert "unsupported answer contract" in str(exc)
-    else:
-        raise AssertionError("numeric answer contract was accepted")
+    author = AgenticQuestionAuthor(cast("OpenAIVlModel", _NumericContractModel()))
+
+    with pytest.raises(ValueError, match="returned no valid proposals"):
+        author.propose(image)
+    assert author.rejections == ("proposal-1:unsupported answer contract",)
 
 
-def test_agentic_question_author_normalizes_optional_queries() -> None:
+def test_agentic_question_author_rejects_malformed_optional_queries() -> None:
     class _ModelWithOptionalQueries:
         def query(self, image: Image, prompt: str) -> str:
             return """[
                 {
                     "question":"How tall is the chair?",
                     "answer_contract":{"kind":"choice","choices":["short","tall"]},
-                    "object_queries":"chair"
+                    "object_queries":["chair"]
                 },
                 {
                     "question":"How tall is the table?",
@@ -221,11 +220,12 @@ def test_agentic_question_author_normalizes_optional_queries() -> None:
 
     image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
 
-    proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithOptionalQueries())).propose(
-        image
-    )
+    author = AgenticQuestionAuthor(cast("OpenAIVlModel", _ModelWithOptionalQueries()))
 
-    assert [proposal.object_queries for proposal in proposals] == [("chair",), ()]
+    proposals = author.propose(image)
+
+    assert [proposal.object_queries for proposal in proposals] == [("chair",)]
+    assert author.rejections == ("proposal-2:object_queries must be an array",)
 
 
 def test_agentic_question_author_retries_invalid_json_once() -> None:
@@ -269,6 +269,40 @@ def test_agentic_question_author_allows_many_questions_and_repairs_duplicate_ids
     assert len(proposals) == 20
     assert proposals[0].id == "question"
     assert proposals[-1].id == "question-20"
+
+
+def test_agentic_question_author_avoids_generated_id_collisions() -> None:
+    class _CollidingIdModel:
+        def query(self, image: Image, prompt: str) -> str:
+            return json.dumps(
+                [
+                    {
+                        "id": identifier,
+                        "question": f"Is object {index} visible?",
+                        "answer_contract": {"kind": "boolean"},
+                    }
+                    for index, identifier in enumerate(("question", "question-2", "question"))
+                ]
+            )
+
+    image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
+
+    proposals = AgenticQuestionAuthor(cast("OpenAIVlModel", _CollidingIdModel())).propose(image)
+
+    assert [proposal.id for proposal in proposals] == ["question", "question-2", "question-3"]
+
+
+def test_agentic_question_author_rejects_json_surrounded_by_prose() -> None:
+    class _ProseModel:
+        def query(self, image: Image, prompt: str) -> str:
+            return (
+                'Questions: [{"question":"Is there a chair?","answer_contract":{"kind":"boolean"}}]'
+            )
+
+    image = Image.from_numpy(np.zeros((1, 1, 3), dtype=np.uint8))
+
+    with pytest.raises(ValueError, match="did not return a JSON array"):
+        AgenticQuestionAuthor(cast("OpenAIVlModel", _ProseModel())).propose(image)
 
 
 def test_local_tool_returns_grounding_and_evidence_ids() -> None:
