@@ -551,6 +551,7 @@ class DroneSkillContainer(Module):
         prog_pos = None
         prog_t = time.time()
         t0 = time.time()
+        lost_since: float | None = None
         try:
             while not cancel.is_set() and time.time() - t0 < timeout:
                 od = self._latest_odom
@@ -561,17 +562,33 @@ class DroneSkillContainer(Module):
                     live = self._live_target()
                     if live is not None:
                         x, y = live
+                        lost_since = None
+                    else:
+                        # Sensor contact dropped: keep flying to the last known
+                        # position, but give up after a while so the supervisor
+                        # can resume the coordinated search.
+                        lost_since = lost_since or time.time()
+                        if time.time() - lost_since > 12.0:
+                            return "lost"
                 px, py = od.position.x, od.position.y
                 dx, dy = x - px, y - py
                 dist = math.hypot(dx, dy)
                 if dist < arrive_r:
                     if not track:
                         return "arrived"
-                    # Chasing a moving target: hold station on it. Reset the
-                    # no-progress watchdog — sitting on the target is success.
+                    # Chasing a moving target: hold station on it, but KEEP
+                    # POINTING AT IT — a drone that freezes its heading loses
+                    # the target out of its 140-degree cone within seconds.
                     self._sweep_status = f"holding on target ({dist:.1f} m)"
                     prog_t = time.time()
-                    self.tele_cmd_vel.publish(Twist(Vector3(0, 0, 0), Vector3(0, 0, 0)))
+                    q = od.orientation
+                    yaw = math.atan2(
+                        2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                    )
+                    err = (math.atan2(dy, dx) - yaw + math.pi) % (2 * math.pi) - math.pi
+                    self.tele_cmd_vel.publish(
+                        Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, max(-1.0, min(1.0, 2.0 * err))))
+                    )
                     time.sleep(0.15)
                     continue
                 cur = (px, py)
