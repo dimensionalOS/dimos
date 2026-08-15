@@ -78,6 +78,7 @@ from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
     g1_costmap,
+    g1_scene_transform_filter,
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
@@ -530,17 +531,26 @@ _rerun_config: dict[str, Any] = {
         "world/depth_image": None,
         "world/depth_camera_info": None,
         _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path=_G1_ROOT),
+        "world/tf": g1_scene_transform_filter(),
         "world/global_costmap": g1_costmap,
         "world/navigation_costmap": g1_costmap,
         "world/path": _g1_nav_path,
     },
     "max_hz": {
+        # The URDF adapter now logs fixed links once and only the 29 actuated
+        # links thereafter, so the robot can remain smooth without backlogging.
         _G1_JOINTS_ENTITY: 20.0,
+        # Scene articulation remains smooth. The TF override drops duplicate
+        # G1 links and unchanged scene frames before they reach Rerun.
+        "world/tf": 15.0,
         # Raw state streams arrive at ~440 Hz; useful only as debug plots.
         "world/g1/imu": 10.0,
         "world/g1/motor_states": 10.0,
         "world/g1/motor_command": 10.0,
         "world/odometry": 15.0,
+        # Rerun is an operator view, not the raw 10 Hz lidar recorder. Logging
+        # every 15k-point scan eventually puts the viewer minutes behind.
+        "world/lidar": 2.0,
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
         "world/navigation_costmap": 2.0,
@@ -548,6 +558,14 @@ _rerun_config: dict[str, Any] = {
         # planned path. Throttling this entity drops the real path.
         "world/path": 0,
     },
+    "latest_state": {
+        "world/lidar",
+        "world/global_map",
+        "world/global_costmap",
+        "world/navigation_costmap",
+    },
+    # Bound both the Rerun gRPC history buffer and the native viewer store.
+    "memory_limit": "2GB",
     "static": _static_rerun_entities,
 }
 
@@ -556,8 +574,12 @@ for _section in ("static", "visual_override", "max_hz"):
         **_rerun_config.get(_section, {}),
         **_provider_rerun_config.get(_section, {}),
     }
+_rerun_config["latest_state"] = {
+    *_rerun_config.get("latest_state", set()),
+    *_provider_rerun_config.get("latest_state", set()),
+}
 for _key, _value in _provider_rerun_config.items():
-    if _key not in {"static", "visual_override", "max_hz"}:
+    if _key not in {"static", "visual_override", "max_hz", "latest_state"}:
         _rerun_config[_key] = _value
 
 if global_config.simulation != "mujoco":

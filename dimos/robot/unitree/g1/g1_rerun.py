@@ -23,6 +23,7 @@ import numpy as np
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
+    UrdfRobotTransformFilter,
 )
 
 G1_RERUN_ROOT = "world/odom/g1"
@@ -54,6 +55,17 @@ def g1_urdf_static_robot(root_path: str = G1_RERUN_ROOT) -> UrdfRobotStaticRerun
 def g1_urdf_joint_state(root_path: str = G1_RERUN_ROOT) -> UrdfRobotJointStateRerunFactory:
     """Create a Rerun JointState converter for the G1 URDF."""
     return UrdfRobotJointStateRerunFactory(urdf_path=G1_RERUN_URDF, root_path=root_path)
+
+
+def g1_scene_transform_filter(
+    child_frame_prefix: str = "pimsim/g1",
+) -> UrdfRobotTransformFilter:
+    """Keep scene TF motion while dropping robot links animated by the URDF."""
+
+    return UrdfRobotTransformFilter(
+        urdf_path=G1_RERUN_URDF,
+        child_frame_prefix=child_frame_prefix,
+    )
 
 
 def g1_static_robot(rr: Any) -> list[Any]:

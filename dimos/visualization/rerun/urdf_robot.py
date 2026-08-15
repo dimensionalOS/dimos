@@ -21,12 +21,20 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import get_data
 
 JointNameMapper = Callable[[str], str]
+_TransformState = tuple[
+    str,
+    tuple[float, float, float],
+    tuple[float, float, float, float],
+]
 RERUN_URDF_INSTALL_HINT = (
     "Rerun URDF robot visualization requires yourdfpy. Install it with: "
     "uv sync --extra visualization. Linux aarch64 is currently unsupported "
@@ -82,6 +90,85 @@ def _mesh_to_rerun(rr: Any, mesh: Any) -> Any:
 
 def _rerun_path_part(name: str) -> str:
     return name.replace("/", "_").replace(" ", "_")
+
+
+@dataclass
+class UrdfRobotTransformFilter:
+    """Drop duplicate robot TF and forward only changed non-robot frames."""
+
+    urdf_path: str | Path
+    child_frame_prefix: str
+    translation_epsilon_m: float = 1e-5
+    quaternion_epsilon: float = 1e-7
+    _robot_link_names: frozenset[str] | None = field(default=None, init=False, repr=False)
+    _states: dict[str, _TransformState] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.child_frame_prefix.strip("/"):
+            raise ValueError("child_frame_prefix must not be empty")
+        if self.translation_epsilon_m < 0.0:
+            raise ValueError("translation_epsilon_m must be non-negative")
+        if self.quaternion_epsilon < 0.0:
+            raise ValueError("quaternion_epsilon must be non-negative")
+        self.child_frame_prefix = self.child_frame_prefix.rstrip("/")
+
+    def __call__(self, message: TFMessage) -> TFMessage:
+        robot_link_names = self._load_robot_link_names()
+        changed: list[Transform] = []
+        for transform in message:
+            if self._is_robot_link(transform.child_frame_id, robot_link_names):
+                continue
+            state = _transform_state(transform)
+            previous = self._states.get(transform.child_frame_id)
+            if previous is None or self._changed(previous, state):
+                changed.append(transform)
+                self._states[transform.child_frame_id] = state
+        return TFMessage(*changed)
+
+    def reset(self) -> None:
+        """Make the next non-robot TF snapshot seed a fresh recording."""
+
+        self._states.clear()
+
+    def _load_robot_link_names(self) -> frozenset[str]:
+        if self._robot_link_names is None:
+            root = ElementTree.parse(_resolve_urdf_path(self.urdf_path)).getroot()
+            self._robot_link_names = frozenset(
+                name for link in root.findall(".//link") if (name := link.attrib.get("name"))
+            )
+        return self._robot_link_names
+
+    def _is_robot_link(self, child_frame_id: str, robot_link_names: frozenset[str]) -> bool:
+        prefix = f"{self.child_frame_prefix}/"
+        if not child_frame_id.startswith(prefix):
+            return False
+        return child_frame_id.removeprefix(prefix) in robot_link_names
+
+    def _changed(self, previous: _TransformState, current: _TransformState) -> bool:
+        if previous[0] != current[0]:
+            return True
+        translation_delta = max(
+            abs(first - second) for first, second in zip(previous[1], current[1], strict=True)
+        )
+        if translation_delta > self.translation_epsilon_m:
+            return True
+        direct = max(
+            abs(first - second) for first, second in zip(previous[2], current[2], strict=True)
+        )
+        negated = max(
+            abs(first + second) for first, second in zip(previous[2], current[2], strict=True)
+        )
+        return min(direct, negated) > self.quaternion_epsilon
+
+
+def _transform_state(transform: Transform) -> _TransformState:
+    translation = transform.translation
+    rotation = transform.rotation
+    return (
+        transform.frame_id,
+        (translation.x, translation.y, translation.z),
+        (rotation.x, rotation.y, rotation.z, rotation.w),
+    )
 
 
 def _yourdfpy_urdf() -> Any:
@@ -175,10 +262,18 @@ class UrdfRobotJointStateRerunFactory:
     root_path: str
     joint_name_mapper: JointNameMapper = default_joint_name_mapper
     clamp_joint_limits: bool = False
+    joint_position_epsilon: float = 1e-6
     _tree: Any = field(default=None, init=False, repr=False)
     _joints: list[Any] = field(default_factory=list, init=False, repr=False)
     _joint_paths: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _joint_values: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _logged_joint_values: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    _movable_joints: list[Any] = field(default_factory=list, init=False, repr=False)
+    _fixed_joints_logged: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.joint_position_epsilon < 0.0:
+            raise ValueError("joint_position_epsilon must be non-negative")
 
     def __call__(self, msg: Any) -> list[tuple[str, Any]]:
         self._load_tree()
@@ -190,7 +285,20 @@ class UrdfRobotJointStateRerunFactory:
 
         import rerun as rr
 
-        return [
+        joints = (
+            self._joints
+            if not self._fixed_joints_logged
+            else [
+                joint
+                for joint in self._movable_joints
+                if abs(
+                    self._joint_values[joint.name]
+                    - self._logged_joint_values.get(joint.name, float("inf"))
+                )
+                > self.joint_position_epsilon
+            ]
+        )
+        entities = [
             (
                 self._joint_paths[joint.name],
                 _rerun_transform_without_frames(
@@ -201,8 +309,19 @@ class UrdfRobotJointStateRerunFactory:
                     ),
                 ),
             )
-            for joint in self._joints
+            for joint in joints
         ]
+        for joint in joints:
+            if joint.name in self._joint_values:
+                self._logged_joint_values[joint.name] = self._joint_values[joint.name]
+        self._fixed_joints_logged = True
+        return entities
+
+    def reset(self) -> None:
+        """Re-emit fixed joints when Rerun starts a fresh recording."""
+
+        self._fixed_joints_logged = False
+        self._logged_joint_values.clear()
 
     def _load_tree(self) -> None:
         if self._tree is None:
@@ -231,3 +350,6 @@ class UrdfRobotJointStateRerunFactory:
                 for joint in self._joints
                 if joint.joint_type in {"revolute", "continuous", "prismatic"}
             }
+            self._movable_joints = [
+                joint for joint in self._joints if joint.name in self._joint_values
+            ]

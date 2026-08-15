@@ -16,20 +16,21 @@
 
 These tests verify that:
 1. The dimos-viewer binary is installed and discoverable
-2. rerun_bindings.spawn() accepts the executable_name parameter
-3. bridge.py has the correct spawn logic
+2. The bridge owns the spawned viewer process
+3. The stock Rerun viewer remains a fallback
 
 These run in CI where dimos-viewer is a core dependency, so the binary
-is always available. The main risk we're guarding against is rerun-sdk
-pushing an update that breaks the spawn interface.
+is always available. Process ownership lets topology replacement release
+the old viewer's decoded static meshes.
 """
 
-import inspect
+import os
 import shutil
+import subprocess
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs
+from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, _resolve_pubsubs
 
 
 class TestViewerBinaryInstallation:
@@ -45,81 +46,84 @@ class TestViewerBinaryInstallation:
 
     def test_binary_executable(self):
         """dimos-viewer binary must be executable."""
-        import os
-
         path = shutil.which("dimos-viewer")
         assert path is not None
         assert os.access(path, os.X_OK), f"dimos-viewer at {path} is not executable"
 
 
-class TestRerunBindingsInterface:
-    """Verify rerun_bindings.spawn() interface hasn't changed."""
+class TestBridgeViewerLifecycle:
+    def test_stop_owned_viewer_terminates_and_reaps_process(self, mocker):
+        bridge = RerunBridgeModule()
+        process = mocker.Mock()
+        process.poll.return_value = None
+        bridge._viewer_process = process
 
-    def test_spawn_accepts_executable_name(self):
-        """rerun_bindings.spawn must accept executable_name kwarg.
+        try:
+            bridge._stop_native_viewer()
+        finally:
+            bridge.stop()
 
-        This is the mechanism we use to launch dimos-viewer instead of
-        stock rerun. If rerun-sdk removes this parameter, our integration
-        breaks silently (falls back to stock rerun).
-        """
-        import rerun_bindings
+        assert bridge._viewer_process is None
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5.0)
+        process.kill.assert_not_called()
 
-        sig = inspect.signature(rerun_bindings.spawn)
-        assert "executable_name" in sig.parameters, (
-            "rerun_bindings.spawn() no longer accepts 'executable_name'. "
-            "This means rerun-sdk changed its spawn interface. "
-            "The dimos-viewer integration in bridge.py will fail."
+    def test_spawn_keeps_owned_dimos_viewer_process(self, mocker):
+        bridge = RerunBridgeModule(memory_limit="2GB")
+        process = mocker.Mock()
+        popen = mocker.patch(
+            "dimos.visualization.rerun.bridge.subprocess.Popen",
+            return_value=process,
+        )
+        mocker.patch(
+            "dimos.visualization.rerun.bridge.shutil.which",
+            side_effect=lambda name: "/venv/bin/dimos-viewer" if name == "dimos-viewer" else None,
         )
 
-    def test_spawn_accepts_port(self):
-        """rerun_bindings.spawn must accept port kwarg."""
-        import rerun_bindings
+        try:
+            spawned = bridge._spawn_native_viewer("rerun+http://127.0.0.1:9877/proxy")
+            assert bridge._viewer_process is process
+        finally:
+            bridge._viewer_process = None
+            bridge.stop()
 
-        sig = inspect.signature(rerun_bindings.spawn)
-        assert "port" in sig.parameters, "rerun_bindings.spawn() no longer accepts 'port'. "
-
-    def test_spawn_accepts_expected_params(self):
-        """All spawn params used by bridge.py must be available."""
-        import rerun_bindings
-
-        sig = inspect.signature(rerun_bindings.spawn)
-        required = {"port", "executable_name"}
-        missing = required - set(sig.parameters.keys())
-        assert not missing, (
-            f"rerun_bindings.spawn() missing parameters: {missing}. "
-            "rerun-sdk may have changed its interface."
+        assert spawned is True
+        popen.assert_called_once_with(
+            [
+                "/venv/bin/dimos-viewer",
+                "--connect",
+                "rerun+http://127.0.0.1:9877/proxy",
+                "--memory-limit",
+                "2GB",
+                "--expect-data-soon",
+                "--ws-url",
+                "ws://127.0.0.1:3030/ws",
+            ],
+            stdin=subprocess.DEVNULL,
         )
 
-
-class TestBridgeSpawnLogic:
-    """Verify bridge.py has the correct dimos-viewer spawn logic."""
-
-    def test_bridge_references_dimos_viewer(self):
-        """bridge.py must attempt to spawn dimos-viewer."""
-        from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-        src = inspect.getsource(RerunBridgeModule.start)
-        assert "dimos-viewer" in src, (
-            "bridge.py start() does not reference 'dimos-viewer'. "
-            "The viewer integration may have been removed."
+    def test_spawn_falls_back_to_stock_rerun(self, mocker):
+        bridge = RerunBridgeModule()
+        process = mocker.Mock()
+        popen = mocker.patch(
+            "dimos.visualization.rerun.bridge.subprocess.Popen",
+            return_value=process,
+        )
+        mocker.patch(
+            "dimos.visualization.rerun.bridge.shutil.which",
+            side_effect=lambda name: "/venv/bin/rerun" if name == "rerun" else None,
         )
 
-    def test_bridge_uses_rerun_bindings(self):
-        """bridge.py must use rerun_bindings (not subprocess) for spawn."""
-        from dimos.visualization.rerun.bridge import RerunBridgeModule
+        try:
+            spawned = bridge._spawn_native_viewer("rerun+http://127.0.0.1:9877/proxy")
+        finally:
+            bridge._viewer_process = None
+            bridge.stop()
 
-        src = inspect.getsource(RerunBridgeModule.start)
-        assert "rerun_bindings" in src, "bridge.py start() does not use rerun_bindings. "
-
-    def test_bridge_has_fallback(self):
-        """bridge.py must fall back to stock rerun if dimos-viewer unavailable."""
-        from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-        src = inspect.getsource(RerunBridgeModule.start)
-        assert "ImportError" in src or "except" in src, (
-            "bridge.py start() has no fallback for missing dimos-viewer. "
-            "Users without dimos-viewer will crash."
-        )
+        assert spawned is True
+        args = popen.call_args.args[0]
+        assert args[0] == "/venv/bin/rerun"
+        assert "--ws-url" not in args
 
 
 class ExplicitPubSubOverride:

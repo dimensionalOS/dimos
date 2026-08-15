@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import shutil
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from typing import (
     TYPE_CHECKING,
@@ -34,6 +36,7 @@ from typing import (
     runtime_checkable,
 )
 from urllib.parse import urlparse
+import uuid
 
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -265,6 +268,18 @@ class RerunBridgeModule(Module):
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
         self._frame_attached: dict[str, str] = {}
+        self._recording_condition = threading.Condition()
+        self._replacement_lock = threading.Lock()
+        self._recording_paused = False
+        self._active_recording_writes = 0
+        self._recording: Any | None = None
+        self._recording_server_uri: str | None = None
+        self._recording_connect_url: str | None = None
+        self._recording_grpc_port: int | None = None
+        self._owns_recording_server = False
+        self._viewer_process: subprocess.Popen[bytes] | None = None
+        self._active_static_entities = dict(self.config.static)
+        self._blueprint_graph: tuple[str, list[str]] | None = None
 
     @property
     def host(self) -> str:
@@ -336,38 +351,200 @@ class RerunBridgeModule(Module):
         """Handle incoming message - log to rerun."""
         import rerun as rr
 
-        entity_path: str = self._get_entity_path(topic)
-
-        # Throttle entities with a max_hz limit
-        if entity_path in self._min_intervals:
-            now = time.monotonic()
-            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
-                return
-            self._last_log[entity_path] = now
-
-        rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
-
-        if not rerun_data:
+        if not self._begin_recording_write():
             return
+        try:
+            entity_path: str = self._get_entity_path(topic)
 
-        # TFMessage for example returns list of (entity_path, archetype) tuples
-        if is_rerun_multi(rerun_data):
-            for path, archetype in rerun_data:
-                rr.log(path, archetype, static=path in self.config.latest_state)
-        else:
-            latest_state = entity_path in self.config.latest_state
-            rr.log(entity_path, cast("Archetype", rerun_data), static=latest_state)
-            # if source msg carries a frame_id, attach the entity to that TF frame
-            # should skip if archetype is a Transform3D
-            if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
-                if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    rr.log(
-                        entity_path,
-                        rr.Transform3D(parent_frame=f"tf#/{frame_id}"),
-                        static=latest_state,
-                    )
-                    self._frame_attached[entity_path] = frame_id
+            # Throttle entities with a max_hz limit
+            if entity_path in self._min_intervals:
+                now = time.monotonic()
+                if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
+                    return
+                self._last_log[entity_path] = now
+
+            rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
+
+            if not rerun_data:
+                return
+
+            # TFMessage for example returns list of (entity_path, archetype) tuples
+            if is_rerun_multi(rerun_data):
+                for path, archetype in rerun_data:
+                    rr.log(path, archetype, static=path in self.config.latest_state)
+            else:
+                latest_state = entity_path in self.config.latest_state
+                rr.log(entity_path, cast("Archetype", rerun_data), static=latest_state)
+                # if source msg carries a frame_id, attach the entity to that TF frame
+                # should skip if archetype is a Transform3D
+                if not isinstance(rerun_data, rr.Transform3D):
+                    frame_id = getattr(msg, "frame_id", None)
+                    if frame_id and self._frame_attached.get(entity_path) != frame_id:
+                        rr.log(
+                            entity_path,
+                            rr.Transform3D(parent_frame=f"tf#/{frame_id}"),
+                            static=latest_state,
+                        )
+                        self._frame_attached[entity_path] = frame_id
+        finally:
+            self._end_recording_write()
+
+    def _begin_recording_write(self) -> bool:
+        with self._recording_condition:
+            if self._recording_paused:
+                return False
+            self._active_recording_writes += 1
+            return True
+
+    def _end_recording_write(self) -> None:
+        with self._recording_condition:
+            self._active_recording_writes -= 1
+            if self._active_recording_writes == 0:
+                self._recording_condition.notify_all()
+
+    def _pause_recording_writes(self) -> None:
+        with self._recording_condition:
+            self._recording_paused = True
+            while self._active_recording_writes:
+                self._recording_condition.wait()
+
+    def _resume_recording_writes(self) -> None:
+        with self._recording_condition:
+            self._recording_paused = False
+
+    @staticmethod
+    def _port_in_use(host: str, port: int) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except OSError:
+            return False
+
+    def _start_recording(self) -> str:
+        import rerun as rr
+
+        assert self._recording_connect_url is not None
+        parsed = urlparse(self._recording_connect_url.replace("rerun+", "", 1))
+        grpc_port = parsed.port or RERUN_GRPC_PORT
+        grpc_host = parsed.hostname or "127.0.0.1"
+        self._recording_grpc_port = grpc_port
+        self._owns_recording_server = not self._port_in_use(grpc_host, grpc_port)
+
+        server_uri = rerun_init(
+            start_grpc=True,
+            grpc_config={
+                "connect_url": self._recording_connect_url,
+                "server_memory_limit": self.config.memory_limit,
+            },
+            recording_id=uuid.uuid4(),
+        )
+        assert server_uri is not None
+        self._recording = rr.get_global_data_recording()
+        self._recording_server_uri = server_uri
+        return server_uri
+
+    def _wait_for_recording_port(self, *, released: bool, timeout: float = 5.0) -> None:
+        assert self._recording_connect_url is not None
+        assert self._recording_grpc_port is not None
+        parsed = urlparse(self._recording_connect_url.replace("rerun+", "", 1))
+        host = parsed.hostname or "127.0.0.1"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            in_use = self._port_in_use(host, self._recording_grpc_port)
+            expected_in_use = not released
+            if in_use is expected_in_use:
+                return
+            time.sleep(0.05)
+        state = "release" if released else "start listening on"
+        raise RuntimeError(f"Rerun gRPC server did not {state} port {self._recording_grpc_port}")
+
+    def _spawn_native_viewer(self, server_uri: str) -> bool:
+        viewer = shutil.which("dimos-viewer")
+        supports_dimos_controls = viewer is not None
+        if viewer is None:
+            viewer = shutil.which("rerun")
+        if viewer is None:
+            return False
+
+        args = [
+            viewer,
+            "--connect",
+            server_uri,
+            "--memory-limit",
+            self.config.memory_limit,
+            "--expect-data-soon",
+        ]
+        if supports_dimos_controls:
+            args.extend(
+                [
+                    "--ws-url",
+                    (f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"),
+                ]
+            )
+        try:
+            self._viewer_process = subprocess.Popen(args, stdin=subprocess.DEVNULL)
+        except OSError:
+            logger.warning("Failed to start Rerun native viewer", exc_info=True)
+            self._viewer_process = None
+            return False
+        return True
+
+    def _stop_native_viewer(self) -> None:
+        process = self._viewer_process
+        self._viewer_process = None
+        if process is None or process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5.0)
+
+    def _send_blueprint(self) -> None:
+        import rerun as rr
+
+        if self.config.blueprint:
+            rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
+
+    def _restart_recording(
+        self,
+        static_entities: dict[str, Callable[[Any], Any]],
+    ) -> None:
+        if self._recording is None or not self._owns_recording_server:
+            raise RuntimeError(
+                "Rerun static topology replacement requires a bridge-owned gRPC server"
+            )
+
+        self._stop_native_viewer()
+        self._recording.disconnect()
+        self._recording = None
+        self._recording_server_uri = None
+        self._wait_for_recording_port(released=True)
+
+        self._reset_visual_overrides()
+        server_uri = self._start_recording()
+        self._wait_for_recording_port(released=False)
+        self._last_log.clear()
+        self._frame_attached.clear()
+        self._send_blueprint()
+        self._log_static_entities(static_entities)
+        if self._blueprint_graph is not None:
+            self._log_blueprint_graph(*self._blueprint_graph)
+
+        if self.config.rerun_open in ("native", "both"):
+            self._spawn_native_viewer(server_uri)
+
+    def _reset_visual_overrides(self) -> None:
+        self._override_cache.clear()
+        reset_ids: set[int] = set()
+        for override in self.config.visual_override.values():
+            if override is None or id(override) in reset_ids:
+                continue
+            reset = getattr(override, "reset", None)
+            if callable(reset):
+                reset()
+                reset_ids.add(id(override))
 
     @rpc
     def start(self) -> None:
@@ -386,15 +563,9 @@ class RerunBridgeModule(Module):
         connect_url = self.config.connect_url
         if connect_url is None:
             connect_url = f"rerun+http://{self.host}:{RERUN_GRPC_PORT}/proxy"
-
-        server_uri = rerun_init(
-            start_grpc=True,
-            grpc_config={
-                "connect_url": connect_url,
-                "server_memory_limit": self.config.memory_limit,
-            },
-        )
-        assert server_uri is not None  # start_grpc=True guarantees a URI
+        self._recording_connect_url = connect_url
+        self._active_static_entities = dict(self.config.static)
+        server_uri = self._start_recording()
 
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -407,37 +578,13 @@ class RerunBridgeModule(Module):
 
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            try:
-                import rerun_bindings
-
-                # Use --connect so the viewer connects to the bridge's gRPC
-                # server rather than starting its own (which would conflict).
-                rerun_bindings.spawn(
-                    executable_name="dimos-viewer",
-                    memory_limit=self.config.memory_limit,
-                    extra_args=["--connect", server_uri],
-                )
-                spawned = True
-            except ImportError:
-                pass  # dimos-viewer not installed
-            except Exception:
-                logger.warning(
-                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
-                    exc_info=True,
-                )
-
-            # fallback on normal (non-dimos-viewer) rerun
+            spawned = self._spawn_native_viewer(server_uri)
             if not spawned:
-                try:
-                    rr.spawn(connect=True, memory_limit=self.config.memory_limit)
-                    spawned = True
-                except (RuntimeError, FileNotFoundError):
-                    logger.warning(
-                        "Rerun native viewer not available (headless?). "
-                        "Bridge will continue without a viewer — data is still "
-                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
-                        exc_info=True,
-                    )
+                logger.warning(
+                    "Rerun native viewer not available (headless?). "
+                    "Bridge will continue without a viewer — data is still "
+                    "accessible via --rerun-open web or by connecting a viewer to the gRPC server."
+                )
 
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
@@ -455,8 +602,12 @@ class RerunBridgeModule(Module):
         ):
             self._log_connect_hints(grpc_port)
 
-        if self.config.blueprint:
-            rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
+        self._send_blueprint()
+
+        # Static assets may be expensive to decode and enqueue. Install them
+        # before subscribing so live sensor messages never accumulate behind
+        # the initial scene upload.
+        self._log_static_entities(self._active_static_entities)
 
         # Resolve pubsubs lazily — the module-level global_config singleton in worker
         # processes doesn't have CLI overrides. Use self.config.g which is the parent's
@@ -475,8 +626,6 @@ class RerunBridgeModule(Module):
         for pubsub in pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
-
-        self._log_static()
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
@@ -505,10 +654,13 @@ class RerunBridgeModule(Module):
 
         logger.info("\n".join(lines))
 
-    def _log_static(self) -> None:
+    def _log_static_entities(
+        self,
+        entities: dict[str, Callable[[Any], Any]],
+    ) -> None:
         import rerun as rr
 
-        for entity_path, factory in self.config.static.items():
+        for entity_path, factory in entities.items():
             data = factory(rr)
             if is_rerun_multi(data):
                 logger.info(
@@ -536,6 +688,56 @@ class RerunBridgeModule(Module):
                 )
                 rr.log(entity_path, data, static=True)
 
+    def _log_static(self) -> None:
+        self._log_static_entities(self.config.static)
+
+    @rpc
+    def replace_static_entities(
+        self,
+        root_path: str,
+        entities: dict[str, Callable[[Any], Any]],
+    ) -> dict[str, Any]:
+        """Replace one static subtree in a fresh bounded Rerun recording.
+
+        Rerun never evicts static blobs. Rotating the recording and its owned
+        native viewer is therefore required to release the previous topology.
+        """
+        root = root_path.strip().strip("/")
+        if not root:
+            raise ValueError("static replacement root_path must not be empty")
+        invalid_paths = sorted(
+            path for path in entities if path != root and not path.startswith(f"{root}/")
+        )
+        if invalid_paths:
+            raise ValueError(
+                f"static replacement entities must be inside {root!r}: {invalid_paths}"
+            )
+
+        with self._replacement_lock:
+            retained = {
+                path: factory
+                for path, factory in self._active_static_entities.items()
+                if path != root and not path.startswith(f"{root}/")
+            }
+            replacement = {**retained, **entities}
+            self._pause_recording_writes()
+            try:
+                self._restart_recording(replacement)
+                self._active_static_entities = replacement
+            finally:
+                self._resume_recording_writes()
+
+        logger.info(
+            "Rerun static subtree replaced in a fresh recording",
+            root_path=root,
+            entity_count=len(entities),
+        )
+        return {
+            "root_path": root,
+            "entity_count": len(entities),
+            "recording_rotated": True,
+        }
+
     @rpc
     def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
         """Log a blueprint module graph from a Graphviz DOT string.
@@ -547,6 +749,11 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
+        with self._replacement_lock:
+            self._blueprint_graph = (dot_code, list(module_names))
+            self._log_blueprint_graph(dot_code, module_names)
+
+    def _log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
         import rerun as rr
 
         try:
@@ -604,8 +811,14 @@ class RerunBridgeModule(Module):
 
     @rpc
     def stop(self) -> None:
-        self._override_cache.clear()
-        self._frame_attached.clear()
+        with self._replacement_lock:
+            self._pause_recording_writes()
+            self._stop_native_viewer()
+            if self._recording is not None:
+                self._recording.disconnect()
+                self._recording = None
+            self._override_cache.clear()
+            self._frame_attached.clear()
         super().stop()
 
 
