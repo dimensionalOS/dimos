@@ -308,7 +308,6 @@ def _launch(monkeypatch, transport: str, **config_kwargs) -> dict[str, Any]:
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_scouting", False)
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_mode", "peer")
     monkeypatch.setattr(native_module_mod.global_config, "zenoh_connect", "")
-    monkeypatch.setattr(native_module_mod.global_config, "zenoh_listen", "")
     # A port-less module: constructing one with ports opens its transports.
     module = StubBuildModule(executable=_ECHO, **config_kwargs)
     try:
