@@ -233,6 +233,7 @@ class Objective:
         window: float | tuple[float, float] | None = (0.05, 0.8),
         schedule_seed: int = 0,
         suspended: bool = False,
+        normalise: bool = True,
     ) -> None:
         self.rollouts = rollouts
         self.segments = list(segments)
@@ -241,6 +242,11 @@ class Objective:
         self.window = window
         self.schedule_seed = schedule_seed
         self.suspended = suspended
+        # normalise=False scores RAW residuals (the frozen instrument's
+        # convention, meaningful only for a single-channel weight vector —
+        # m/s² and rad cannot be summed unscaled). It exists so the
+        # meta-search can hold the frozen scorer and this one in one space.
+        self.normalise = normalise
         self._protect = protected(list(spans))
         wanted = {c for (c, _r), w in self.weights.items() if w > 0}
         self.channels = tuple(sorted(wanted & backend_channels))
@@ -267,7 +273,7 @@ class Objective:
         """Set the scales from the baseline plant's residuals, then freeze them."""
         results = self.rollouts.run(self._specs(baseline))
         terms = [segment_terms(r, self.spans, self.channels) for r in results]
-        self.scales = scales_from(terms)
+        self.scales = scales_from(terms) if self.normalise else {c: 1.0 for c in self.channels}
         return score_terms(terms, self.weights, self.scales)
 
     def evaluate(self, values: Mapping[str, float]) -> Score:
