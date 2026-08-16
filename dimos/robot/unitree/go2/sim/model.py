@@ -22,12 +22,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.plant import (
-    MUJOCO_ACTUATOR_NAMES,
-    UNITREE_MOTOR_NAMES,
-    UNITREE_TO_MUJOCO,
-)
-from dimos.robot.unitree.go2.sim.ranges import CONTACT_KEYS, PHYSICS_KEYS
+from dimos.robot.unitree.go2.sim.ranges import PHYSICS_KEYS
 
 # Where the accelerometer actually is: the menagerie model's `imu` site,
 # (-0.02557, 0, 0.04232) — 49 mm from the body origin. The virtual IMU must be
@@ -141,19 +136,3 @@ def foot_geom_ids(model: mujoco.MjModel) -> np.ndarray:
     return np.array(
         [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) for n in FOOT_GEOMS], dtype=int
     )
-
-
-__all__ = [
-    "CONTACT_KEYS",
-    "FOOT_GEOMS",
-    "FOOT_RADIUS",
-    "IMU_SITE",
-    "LEG_DOFS",
-    "MUJOCO_ACTUATOR_NAMES",
-    "UNITREE_MOTOR_NAMES",
-    "UNITREE_TO_MUJOCO",
-    "apply_physics",
-    "foot_geom_ids",
-    "load",
-    "scene_path",
-]

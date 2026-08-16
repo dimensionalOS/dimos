@@ -19,9 +19,31 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.mujoco
-
 mujoco = pytest.importorskip("mujoco")
+
+
+def _menagerie_available() -> bool:
+    """A missing checkout is an ENVIRONMENT gap, not a failure of this package."""
+    from dimos.robot.unitree.go2.sim.model import scene_path
+
+    try:
+        scene_path()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+# NOT `pytest.mark.mujoco`: the repo's addopts deselects that marker wholesale,
+# which is how a run once reported 70 passed while the acceptance test was
+# failing. These skip on a missing menagerie with the reason printed — a test
+# that vanishes silently is worse than one that fails.
+pytestmark = [
+    pytest.mark.go2sim,
+    pytest.mark.skipif(
+        not _menagerie_available(),
+        reason="no mujoco_menagerie checkout: set MUJOCO_MENAGERIE",
+    ),
+]
 
 from dimos.robot.unitree.go2.sim import anchors, model as go2_model
 from dimos.robot.unitree.go2.sim.backend import (

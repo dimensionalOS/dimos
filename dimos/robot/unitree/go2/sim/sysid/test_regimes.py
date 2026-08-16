@@ -56,9 +56,6 @@ def _grounded(n: int) -> np.ndarray:
     return np.tile([0.0, 0.0, 9.5], (n, 1))
 
 
-# ---- the clip schedule -------------------------------------------------------
-
-
 def test_no_window_never_reinitialises():
     assert len(clip_schedule(0.0, 10.0, None)) == 0
 
@@ -131,9 +128,6 @@ def test_a_span_outside_the_rollout_is_ignored():
     assert np.allclose(got, clip_schedule(0.0, 2.0, 0.4))
 
 
-# ---- flight ------------------------------------------------------------------
-
-
 def test_flight_is_where_the_accelerometer_goes_quiet():
     """The IMU is the contact sensor. It has to be: foot_force on this Go2 Air
     reads 40-61 counts and never drops, even mid-jump."""
@@ -149,9 +143,6 @@ def test_flight_is_where_the_accelerometer_goes_quiet():
 def test_no_accelerometer_means_no_spans_not_a_crash():
     st = _streams(np.zeros(0), np.zeros((0, 3)), tau=np.zeros((0, 12)))
     assert flight_spans(st).shape == (0, 2)
-
-
-# ---- the one labelling pass --------------------------------------------------
 
 
 def test_a_jump_recording_is_floor_with_flight_inside_it():
