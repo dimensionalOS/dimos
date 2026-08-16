@@ -40,7 +40,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.siglip2 import SigLIP2Model
 from dimos.perception.hyperspace.query import DEFAULT_BACKGROUND_PROMPTS, score_query
 from dimos.perception.hyperspace.render import normalize_scores, scores_to_colors
-from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap, keys_near_mask
+from dimos.perception.hyperspace.voxel_map import EmbeddingVoxelMap, clean_mask_from_extras
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -205,14 +205,9 @@ def main(argv: list[str] | None = None) -> None:
     model = SigLIP2Model(**model_kwargs)
     _, scores = score_query(voxel_map, model, args.query, smooth_iterations=args.smooth)
 
-    keep_mask = None
-    if "lidar_keys" in voxel_map.extras:
-        keep_mask = keys_near_mask(
-            voxel_map.voxel_keys(),
-            voxel_map.extras["lidar_keys"],
-            radius=int(voxel_map.extras.get("lidar_dilation", 1)),
-        )
-        logger.info("lidar clean map keeps %d/%d voxels", int(keep_mask.sum()), keep_mask.size)
+    keep_mask = clean_mask_from_extras(voxel_map)
+    if keep_mask is not None:
+        logger.info("clean map keeps %d/%d voxels", int(keep_mask.sum()), keep_mask.size)
 
     picked = rank_frames(voxel_map, scores, keep_mask, args.top_frames, args.min_gap_s)
     if not picked:

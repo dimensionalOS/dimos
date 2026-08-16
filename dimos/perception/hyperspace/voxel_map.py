@@ -63,6 +63,30 @@ def keys_near_mask(
     return np.asarray(dilated[idx] == keys)
 
 
+def clean_mask_from_extras(voxel_map: EmbeddingVoxelMap) -> NDArray[np.bool_] | None:
+    """The clean-map filter a saved map was built with; None when unsaved.
+
+    Mirrors the live module's filter: a voxel must be near ray-observed space
+    (absence means carved or unsampled) and either near healthy ray geometry
+    or supported by multiple camera frames (one-frame observations off
+    healthy surfaces are depth-noise shells).
+    """
+    extras = voxel_map.extras
+    if "lidar_keys" not in extras:
+        return None
+    radius = int(extras.get("lidar_dilation", 2))
+    keys = voxel_map.voxel_keys()
+    near_observed = keys_near_mask(keys, extras["lidar_keys"].astype(np.int64), radius=radius)
+    if "healthy_keys" not in extras:
+        return near_observed
+    near_healthy = keys_near_mask(keys, extras["healthy_keys"].astype(np.int64), radius=radius)
+    counts = extras.get("sample_counts")
+    if counts is None or counts.size != keys.size:
+        counts = voxel_map.sample_counts()
+    supported = counts.astype(np.int64) >= int(extras.get("min_frame_support", 2))
+    return np.asarray(near_observed & (near_healthy | supported))
+
+
 class EmbeddingVoxelMap:
     """Sparse world-frame voxel grid of aggregated embedding vectors.
 
@@ -144,6 +168,18 @@ class EmbeddingVoxelMap:
             self.reduce()
             return self._keys.copy()
 
+    def sample_counts(self) -> NDArray[np.int32]:
+        """Per-voxel count of contributing frames, ordered like the keys.
+
+        Capped at ``max_samples``; all-ones for maps without a sample store
+        (mean mode or legacy loads), where frame support is unknown.
+        """
+        with self._lock:
+            self.reduce()
+            if self._track_samples and self._sample_counts.size == self._keys.size:
+                return self._sample_counts.copy()
+            return np.ones(self._keys.size, dtype=np.int32)
+
     def insert_points(
         self,
         points: NDArray[np.floating],
@@ -183,19 +219,19 @@ class EmbeddingVoxelMap:
             patch_indices = np.asarray(patch_indices, dtype=np.int64)
             if patch_indices.shape[0] != points.shape[0]:
                 raise ValueError("patch_indices must have one entry per point")
-            # Group by (voxel, palette row): each unique pair contributes
-            # count * palette[row], so the N x dim intermediate never exists.
+            # Group by (voxel, palette row): a dense (voxels, palette) count
+            # matrix turns the fold into one BLAS matmul. The palette is small
+            # (a patch grid), so the count matrix stays tiny, and this runs an
+            # order of magnitude faster than np.add.at scatter -- insert speed
+            # bounds how many camera frames survive backpressure.
             uniq, key_ids = np.unique(keys, return_inverse=True)
             n_rows = embeddings.shape[0]
-            combo = key_ids * n_rows + patch_indices
-            uniq_combo, pair_counts = np.unique(combo, return_counts=True)
-            pair_weights = pair_counts.astype(np.float32)
-            contrib = embeddings[uniq_combo % n_rows] * pair_weights[:, None]
-            inverse = uniq_combo // n_rows
-            sums = np.zeros((uniq.size, self.dim), dtype=np.float32)
-            np.add.at(sums, inverse, contrib)
-            weights = np.zeros(uniq.size, dtype=np.float32)
-            np.add.at(weights, inverse, pair_weights)
+            counts = np.bincount(
+                key_ids * n_rows + patch_indices, minlength=uniq.size * n_rows
+            ).reshape(uniq.size, n_rows)
+            counts = counts.astype(np.float32)
+            sums = np.asarray(counts @ embeddings, dtype=np.float32)
+            weights = counts.sum(axis=1)
 
         with self._pending_lock:
             self._pending.append((uniq, sums, weights))

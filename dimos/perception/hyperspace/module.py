@@ -133,6 +133,11 @@ class HyperspaceModuleConfig(ModuleConfig):
     #: Chebyshev slack (in voxels) for counting an embedding voxel as ON
     #: clean-map geometry; absorbs sensor discretization offsets.
     lidar_clean_dilation: int = 2
+    #: Voxels off healthy ray-map geometry additionally need this many
+    #: contributing camera frames. Long-range depth jitter paints one-frame
+    #: noise shells behind surfaces where rays cannot carve; real surfaces
+    #: accumulate multi-frame support.
+    min_frame_support: int = 2
 
 
 class HyperspaceModule(Module):
@@ -364,13 +369,16 @@ class HyperspaceModule(Module):
         if mapper is None:
             return None
         with self._ray_lock:
-            centers = mapper.observed_map()
-        if centers.shape[0] == 0:
+            observed = mapper.observed_map()
+            healthy = mapper.global_map()
+        if observed.shape[0] == 0:
             return None
-        lidar_keys = self._pack_lidar_keys(centers)
-        return keys_near_mask(
-            voxel_map.voxel_keys(), lidar_keys, radius=self.config.lidar_clean_dilation
-        )
+        keys = voxel_map.voxel_keys()
+        radius = self.config.lidar_clean_dilation
+        near_observed = keys_near_mask(keys, self._pack_lidar_keys(observed), radius=radius)
+        near_healthy = keys_near_mask(keys, self._pack_lidar_keys(healthy), radius=radius)
+        supported = voxel_map.sample_counts() >= self.config.min_frame_support
+        return np.asarray(near_observed & (near_healthy | supported))
 
     def _pack_lidar_keys(self, centers: NDArray[np.float32]) -> NDArray[np.int64]:
         idx = np.floor(centers / self.config.voxel_size_m).astype(np.int64) + KEY_OFFSET
@@ -421,10 +429,14 @@ class HyperspaceModule(Module):
         mapper = self._ray_mapper
         if mapper is not None:
             with self._ray_lock:
-                centers = mapper.observed_map()
-            if centers.shape[0]:
-                extras["lidar_keys"] = self._pack_lidar_keys(centers)
+                observed = mapper.observed_map()
+                healthy = mapper.global_map()
+            if observed.shape[0]:
+                extras["lidar_keys"] = self._pack_lidar_keys(observed)
+                extras["healthy_keys"] = self._pack_lidar_keys(healthy)
                 extras["lidar_dilation"] = np.int64(self.config.lidar_clean_dilation)
+                extras["min_frame_support"] = np.int64(self.config.min_frame_support)
+                extras["sample_counts"] = voxel_map.sample_counts()
         frame_log = list(self._frame_log)
         if frame_log:
             extras["frame_ts"] = np.array([ts for ts, _ in frame_log])
