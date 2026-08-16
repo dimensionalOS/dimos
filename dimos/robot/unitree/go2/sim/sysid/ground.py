@@ -1,0 +1,557 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Loop 2 — Mode B: the REAL policy, closed loop, scored on statistics.
+
+    python -m dimos.robot.unitree.go2.sim.sysid.ground REC.mcap NET.bin \
+        --preset accel --view
+
+Loop 1 turns the knobs; this says whether turning them helped. It runs the
+net that PRODUCED the recording (verify with ``sysid.verify_net`` first —
+a grounding against the wrong net is confident and meaningless) closed loop
+in the candidate plant, driven by the recording's operator commands, and
+compares the eleven chaos-tolerant statistics of the two runs
+(:mod:`~dimos.robot.unitree.go2.sim.sysid.stats`). Never trajectories:
+position error measures how long ago two chaotic runs diverged, not whether
+the plant is right — the preset fitted on closed-loop trajectories was worse
+than no overrides at all under the open-loop objective.
+
+Each statistic is normalised by its own NOISE FLOOR: the sim disagrees with
+ITSELF under chaos, so ``SNR = |sim - real| / floor``, and an SNR under ~1
+means matched to within what chaos already does — no better is askable. The
+floor's SOURCE is a parameter of the claim:
+
+* :func:`sim_noise` repeats the rollout from perturbed initial poses —
+  measures what chaos alone does. Available today, and the default.
+* :func:`robot_noise` spreads the statistics across REPEAT RECORDINGS of the
+  same walk — captures battery sag and motor temperature too, and is the
+  yardstick the publishable claim needs: *"the simulator differs from the
+  robot by less than the robot differs from itself, on N of 11 statistics."*
+  Swapping it in is ``--noise-from REC2.mcap``, not a rewrite.
+
+A well-stabilised policy can drive a floor to ~0, sending that SNR to
+infinity and letting one term dominate; :func:`usable_floor` clamps against
+the same statistic's floor on another recording plus 5% of the real value.
+
+HARD RULE, learned expensively: identify with Mode A, validate here, never
+fit the plant on this loop. ~11 statistics support selecting two or three
+METHOD hyperparameters (:mod:`~dimos.robot.unitree.go2.sim.sysid.meta`);
+they cannot fit thirteen plant parameters.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+from dimos.robot.unitree.go2.sim.backend import GhostTrack
+from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
+from dimos.robot.unitree.go2.sim.policy import FreePolicy
+from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
+from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, mount_matrix, read_streams
+from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
+from dimos.robot.unitree.go2.sim.sysid.stats import NOT_COMPARABLE, Summary, spread_of, summarize
+
+CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
+
+# Per-axis slew the executor applies to operator commands before the policy
+# sees them: max change in (vx, vy, vyaw) per 20 ms control tick (go2web
+# policy.rs ramp_velocity). The recorded control_log carries the operator
+# TARGET; the policy on hardware only ever saw the ramped command.
+COMMAND_SLEW = np.array([0.05, 0.04, 0.10])
+
+# Body height a gait-height net holds when nobody moves the slider (obs 45,
+# raw metres). 45-channel nets (himloco freewalk) never see it.
+NOMINAL_GAIT_HEIGHT = 0.31
+
+PERTURB_RAD = 0.05
+"""Initial-pose spread for :func:`sim_noise` — about 3 degrees.
+
+Small on purpose: the gait is chaotic enough that this already decorrelates
+position within seconds, so it measures the noise a comparison has to beat
+rather than a plausible modelling error.
+"""
+
+
+def projected_gravity(quat_wxyz: np.ndarray) -> np.ndarray:
+    w, x, y, z = quat_wxyz
+    return np.array([-2 * (x * z - w * y), -2 * (y * z + w * x), -(1 - 2 * (x * x + y * y))])
+
+
+@dataclass
+class PolicyRun:
+    """One closed-loop rollout, sampled at the policy rate.
+
+    ``t`` starts at 0 = recording time ``start``; ``cmd`` is the slewed
+    command the policy actually saw at each sample.
+    """
+
+    t: np.ndarray
+    pos: np.ndarray = field(repr=False)  # (n, 3) base position, sim world
+    quat: np.ndarray = field(repr=False)  # (n, 4) wxyz
+    cmd: np.ndarray = field(repr=False)  # (n, 3)
+    target: np.ndarray = field(repr=False)  # (n, 12) commanded joint targets
+
+
+def cmd_at(st: Streams, t_abs: np.ndarray) -> np.ndarray:
+    """The operator command in force at each absolute recording time."""
+    if len(st.wt) == 0:
+        return np.zeros((len(t_abs), 3))
+    idx = np.clip(np.searchsorted(st.wt, t_abs, "right") - 1, 0, len(st.wt) - 1)
+    return st.wcmd[idx]
+
+
+def rollout_policy(
+    st: Streams,
+    policy: FreePolicy,
+    preset: Preset,
+    *,
+    start: float = 6.0,
+    seconds: float | None = None,
+    settle: float = 0.5,
+    command_delay: float = 0.0,
+    envelope: TorqueEnvelope | None = None,
+    perturb: np.ndarray | None = None,
+    menagerie: Path | None = None,
+    view: bool = False,
+    speed: float = 1.0,
+    ghost: GhostTrack | None = None,
+) -> PolicyRun:
+    """Step the real policy in the candidate plant, driven by the recording.
+
+    Closed loop, so it lives below the Mode-A seam: the policy must sit
+    INSIDE the physics step loop, which :class:`RolloutPlan` (a complete
+    instruction sheet decided before any physics) deliberately cannot
+    express. A second backend brings its own closed-loop driver.
+
+    ``perturb`` offsets the initial joint pose — :func:`sim_noise`'s knob.
+    ``command_delay`` is kept at 0 by default: it is not identified open
+    loop, and holding it identical across candidate plants cancels it from
+    every between-plant comparison (the lag statistics carry the same
+    constant offset on all of them).
+
+    THE VIEWER AND THE HEADLESS RUN ARE THE SAME FUNCTION: ``view`` only
+    attaches a viewer and paces to wall clock; ``ghost`` draws the recorded
+    tracker pose, anchored once at the start pose (closed loop never snaps).
+    """
+    import mujoco
+
+    from dimos.robot.unitree.go2.sim.model import (
+        GHOST_BODY,
+        apply_physics,
+        load,
+        mocap_index,
+    )
+
+    if len(st.wt) == 0:
+        raise ValueError("recording has no control_log walk commands: Mode B needs the drive")
+    span = float(st.wt[-1])
+    if start >= span:
+        raise ValueError(f"start={start:g}s is at or past the last command ({span:.1f}s)")
+    duration = span - start if seconds is None else seconds
+
+    ghost = ghost if view else None
+    model, data = load(menagerie, ghost=ghost is not None)
+    if preset.physics:
+        apply_physics(model, preset.physics)
+    sim_dt = float(model.opt.timestep)
+    decim = max(1, round(CONTROL_DT / sim_dt))
+    gi = mocap_index(model, GHOST_BODY) if ghost is not None else -1
+
+    kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")  # type: ignore[attr-defined]
+    if kid >= 0:
+        mujoco.mj_resetDataKeyframe(model, data, kid)
+    pose0 = policy.default_pose + (perturb if perturb is not None else 0.0)
+    data.qpos[7:19] = pose0
+    mujoco.mj_forward(model, data)
+
+    # Ghost anchor: rigid room -> sim-world map, fixed at the start pose.
+    g_anchor_r = np.eye(3)
+    g_anchor_p = np.zeros(3)
+    if ghost is not None:
+        j = int(np.clip(np.searchsorted(ghost.t, start, "right") - 1, 0, len(ghost.t) - 1))
+        g_anchor_r = quat_to_mat(data.qpos[3:7].copy()) @ ghost.rot[j].T
+        g_anchor_p = data.qpos[0:3].copy() - g_anchor_r @ ghost.pos[j]
+
+    hist: collections.deque[np.ndarray] = collections.deque(maxlen=policy.hist)
+    last_action = np.zeros(policy.act_dim)
+    target = pose0.copy()
+    applied = np.zeros(12)
+
+    def observe(cmd: np.ndarray, height: float) -> np.ndarray:
+        q = data.qpos[7:19]
+        dq = data.qvel[6:18]
+        raw = np.concatenate(
+            [cmd, data.qvel[3:6], projected_gravity(data.qpos[3:7]), q, dq, last_action]
+        )
+        extra = policy.obs_per_frame - raw.size
+        if extra > 0:
+            raw = np.concatenate([raw, [height], np.zeros(extra - 1)])
+        return policy.normalize(raw)
+
+    def target_cmd(t: float) -> np.ndarray:
+        k = int(np.searchsorted(st.wt, t + start - command_delay, "right")) - 1
+        held: np.ndarray = st.wcmd[max(0, k)]
+        return held
+
+    def height_at(t: float) -> float:
+        if len(st.ght) == 0:
+            return NOMINAL_GAIT_HEIGHT
+        i = int(np.searchsorted(st.ght, t + start - command_delay, "right")) - 1
+        return float(st.gh[i]) if i >= 0 else NOMINAL_GAIT_HEIGHT
+
+    # The live command; starts converged on the schedule, the steady state
+    # the real slew is in mid-run.
+    vel_cmd = target_cmd(0.0).astype(float).copy()
+    for _ in range(policy.hist):
+        hist.append(observe(vel_cmd, height_at(0.0)))
+
+    ts: list[float] = []
+    pos: list[np.ndarray] = []
+    quat: list[np.ndarray] = []
+    used: list[np.ndarray] = []
+    targets: list[np.ndarray] = []
+
+    viewer_cm = None
+    if view:
+        from mujoco import viewer as mj_viewer
+
+        viewer_cm = mj_viewer.launch_passive(model, data)
+    viewer = viewer_cm.__enter__() if viewer_cm is not None else None
+
+    try:
+        import time
+
+        wall = time.perf_counter()
+        for step in range(int(duration / sim_dt)):
+            t = step * sim_dt
+            if step % decim == 0:
+                vel_cmd += np.clip(target_cmd(t) - vel_cmd, -COMMAND_SLEW, COMMAND_SLEW)
+                if t >= settle:
+                    hist.append(observe(vel_cmd, height_at(t)))
+                    p_obs = np.concatenate(list(hist)[::-1])  # newest first
+                    last_action, target = policy.act(p_obs, vel_cmd)
+                if ghost is not None:
+                    j = int(
+                        np.clip(
+                            np.searchsorted(ghost.t, t + start, "right") - 1, 0, len(ghost.t) - 1
+                        )
+                    )
+                    data.mocap_pos[gi] = g_anchor_r @ ghost.pos[j] + g_anchor_p
+                    data.mocap_quat[gi] = mat_to_quat(g_anchor_r @ ghost.rot[j])
+                ts.append(t)
+                pos.append(data.qpos[0:3].copy())
+                quat.append(data.qpos[3:7].copy())
+                used.append(vel_cmd.copy())
+                targets.append(target.copy())
+
+            tau = policy.kp * (target - data.qpos[7:19]) - policy.kd * data.qvel[6:18]
+            tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
+            applied = actuator_step(
+                applied, tau, sim_dt, preset.actuator_tau, dq=data.qvel[6:18], envelope=envelope
+            )
+            data.ctrl[:] = applied
+            mujoco.mj_step(model, data)
+
+            if viewer is not None:
+                if not viewer.is_running():
+                    break
+                viewer.sync()
+                wall += sim_dt / max(speed, 1e-6)
+                lag = wall - time.perf_counter()
+                if lag > 0:
+                    time.sleep(lag)
+                else:
+                    wall = time.perf_counter()
+    finally:
+        if viewer_cm is not None:
+            viewer_cm.__exit__(None, None, None)
+
+    return PolicyRun(
+        t=np.array(ts),
+        pos=np.array(pos),
+        quat=np.array(quat),
+        cmd=np.array(used),
+        target=np.array(targets),
+    )
+
+
+def sim_summary(run: PolicyRun) -> Summary:
+    """The sim side, with height read by a VIRTUAL TRACKER on the base.
+
+    Height statistics are compared in sensor space: the real side keeps the
+    raw tracker height, so the sim mounts a virtual tracker with the same
+    lever arm — the guess distorts both sides identically and mostly cancels.
+    """
+    rot = quat_to_mat(run.quat)
+    p = run.pos.copy()
+    p[:, 2] = (run.pos + rot @ np.array([0.0, 0.0, TRACKER_Z]))[:, 2]
+    return summarize(run.t, p, run.quat, run.cmd)
+
+
+def real_summary(st: Streams, *, start: float, seconds: float) -> Summary:
+    """The recording's statistics over the same stretch, from the tracker."""
+    if not st.has_markers:
+        raise ValueError("recording has no tracker: loop 2 has no real side to compare")
+    base_p, base_r = st.base_pose_room(mount_matrix())
+    sel = (st.vt >= start) & (st.vt < start + seconds)
+    p = base_p[sel].copy()
+    p[:, 2] = st.vp[sel][:, 2]  # sensor-space height; see sim_summary
+    quat = np.stack([mat_to_quat(r) for r in base_r[sel]])
+    return summarize(st.vt[sel] - start, p, quat, cmd_at(st, st.vt[sel]))
+
+
+# ------------------------------------------------------------- noise floors
+
+
+def sim_noise(
+    st: Streams,
+    policy: FreePolicy,
+    preset: Preset,
+    *,
+    seeds: int = 4,
+    start: float = 6.0,
+    seconds: float | None = None,
+    **kw: object,
+) -> dict[str, float]:
+    """Noise floor measured by perturbing the SIM's initial pose.
+
+    What chaos alone does to each statistic. Measure once per (recording,
+    preset) and reuse: it is a property of the system, not of any one
+    comparison, and holding it fixed keeps losses comparable between trials.
+    """
+    runs = []
+    for seed in range(seeds):
+        rng = np.random.default_rng(seed)
+        run = rollout_policy(
+            st,
+            policy,
+            preset,
+            start=start,
+            seconds=seconds,
+            perturb=rng.normal(0.0, PERTURB_RAD, 12),
+            **kw,  # type: ignore[arg-type]
+        )
+        runs.append(sim_summary(run))
+    return spread_of(runs)
+
+
+def robot_noise(
+    recordings: Sequence[Streams],
+    *,
+    start: float = 6.0,
+    seconds: float | None = None,
+) -> dict[str, float]:
+    """Noise floor measured as the ROBOT against itself: repeat recordings.
+
+    The better yardstick — it carries battery sag and motor temperature, not
+    just chaos — and the one the publishable claim is expressed against.
+    Needs two or more recordings of the same walk; the spread of their
+    statistics IS the floor.
+    """
+    if len(recordings) < 2:
+        raise ValueError("robot_noise needs at least two recordings of the same walk")
+    sums = []
+    for st in recordings:
+        span = float(st.wt[-1]) - start
+        sums.append(real_summary(st, start=start, seconds=span if seconds is None else seconds))
+    return spread_of(sums)
+
+
+def usable_floor(
+    raw: dict[str, float],
+    real: dict[str, float],
+    cross: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Clamp a collapsed floor so a well-resolved statistic cannot dominate.
+
+    The floor is a resolution limit, and a well-stabilised policy can drive
+    one to ~0, sending its SNR to infinity and making the loss meaningless.
+    Clamping to the same statistic's floor on ANOTHER recording plus 5% of
+    the real value keeps every term finite and comparable.
+    """
+    cross = cross or {}
+    return {
+        k: max(v, cross.get(k, 0.0), 0.05 * abs(real.get(k, 0.0)), 1e-4) for k, v in raw.items()
+    }
+
+
+# ------------------------------------------------------------------ report
+
+
+@dataclass
+class Report:
+    """One plant's grounding: sim vs real statistics over their noise floor."""
+
+    preset: str
+    sim: Summary
+    real: Summary
+    noise: dict[str, float]
+    floor_source: str  # "sim-perturb" | "robot-repeat" — part of any claim
+    start: float
+    seconds: float
+
+    def snr(self) -> dict[str, float]:
+        """Sim-real difference over the statistic's own floor, per statistic."""
+        s, r = self.sim.as_dict(), self.real.as_dict()
+        out = {}
+        for k in s:
+            if k in NOT_COMPARABLE:
+                continue
+            n = self.noise.get(k, 0.0)
+            out[k] = abs(s[k] - r[k]) / n if n > 1e-9 else float("inf")
+        return out
+
+    def loss(self) -> float:
+        """RMS over valid SNRs — the single number the meta-search minimises."""
+        vals = [v for v in self.snr().values() if np.isfinite(v)]
+        return float(np.sqrt(np.mean([v * v for v in vals]))) if vals else float("inf")
+
+    def n_matched(self) -> tuple[int, int]:
+        """How many statistics sit within their own floor: the (N, of) pair
+        in "the sim differs from the robot by less than the robot differs
+        from itself on N of M statistics" — meaningful as that claim only
+        when ``floor_source`` is robot-repeat."""
+        snr = self.snr()
+        return sum(1 for v in snr.values() if v <= 1.0), len(snr)
+
+    def table(self) -> str:
+        s, r = self.sim.as_dict(), self.real.as_dict()
+        snr = self.snr()
+        n, of = self.n_matched()
+        lines = [
+            f"preset {self.preset}  {self.seconds:.0f}s from t={self.start:.0f}s  "
+            f"floor: {self.floor_source}",
+            f"{'statistic':>14} {'sim':>9} {'real':>9} {'floor':>9} {'SNR':>7}",
+        ]
+        for k in sorted(snr, key=lambda k: -snr[k]):
+            lines.append(
+                f"{k:>14} {s[k]:9.3f} {r[k]:9.3f} {self.noise.get(k, 0):9.3f} {snr[k]:7.1f}"
+            )
+        for k in NOT_COMPARABLE:
+            lines.append(f"{k:>14} {s[k]:9.3f} {r[k]:9.3f} {'--':>9} {'n/a':>7}")
+        lines.append(f"{'loss':>14} {self.loss():9.2f}   ({n} of {of} within the floor)")
+        return "\n".join(lines)
+
+
+def ground(
+    st: Streams,
+    policy: FreePolicy,
+    preset: Preset,
+    *,
+    start: float = 6.0,
+    seconds: float | None = None,
+    noise: dict[str, float] | None = None,
+    floor_source: str = "sim-perturb",
+    seeds: int = 4,
+    view: bool = False,
+    speed: float = 1.0,
+    with_ghost: bool = True,
+    menagerie: Path | None = None,
+) -> Report:
+    """THE loop-2 call: one closed-loop run, both summaries, the report.
+
+    ``noise=None`` measures the sim-perturb floor here (``seeds`` extra
+    rollouts); pass a floor from :func:`robot_noise` to ground against the
+    robot's own variability instead — the ``floor_source`` string travels
+    with the report so no claim silently upgrades itself.
+    """
+    span = float(st.wt[-1]) - start
+    seconds = span if seconds is None else seconds
+    run = rollout_policy(
+        st,
+        policy,
+        preset,
+        start=start,
+        seconds=seconds,
+        menagerie=menagerie,
+        view=view,
+        speed=speed,
+        ghost=ghost_track(st) if with_ghost else None,
+    )
+    sim = sim_summary(run)
+    real = real_summary(st, start=start, seconds=seconds)
+    if noise is None:
+        raw = sim_noise(
+            st, policy, preset, seeds=seeds, start=start, seconds=seconds, menagerie=menagerie
+        )
+        noise = usable_floor(raw, real.as_dict())
+        floor_source = "sim-perturb"
+    return Report(
+        preset=preset.name,
+        sim=sim,
+        real=real,
+        noise=noise,
+        floor_source=floor_source,
+        start=start,
+        seconds=seconds,
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="go2.sim.sysid.ground")
+    ap.add_argument("recording")
+    ap.add_argument("policy_bin", help="the net that PRODUCED the recording (verify_net first)")
+    ap.add_argument("--preset", default="measured", help="plant preset name or JSON path")
+    ap.add_argument("--start", type=float, default=6.0)
+    ap.add_argument("--seconds", type=float, default=None)
+    ap.add_argument("--seeds", type=int, default=4, help="perturbed reruns for the sim floor")
+    ap.add_argument(
+        "--noise-from",
+        nargs="+",
+        default=None,
+        metavar="REC",
+        help="repeat recordings of the same walk: floor = the robot against itself",
+    )
+    ap.add_argument("--view", action="store_true", help="watch it against the recorded ghost")
+    ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
+    args = ap.parse_args()
+
+    st = read_streams(args.recording)
+    policy = FreePolicy.load(args.policy_bin)
+    preset = load_preset(args.preset)
+    noise = None
+    source = "sim-perturb"
+    if args.noise_from:
+        repeats = [read_streams(r) for r in args.noise_from]
+        raw = robot_noise([st, *repeats], start=args.start, seconds=args.seconds)
+        span = float(st.wt[-1]) - args.start
+        real = real_summary(
+            st, start=args.start, seconds=span if args.seconds is None else args.seconds
+        )
+        noise = usable_floor(raw, real.as_dict())
+        source = "robot-repeat"
+    report = ground(
+        st,
+        policy,
+        preset,
+        start=args.start,
+        seconds=args.seconds,
+        noise=noise,
+        floor_source=source,
+        seeds=args.seeds,
+        view=args.view,
+        speed=args.speed,
+    )
+    print(report.table())
+
+
+if __name__ == "__main__":
+    main()

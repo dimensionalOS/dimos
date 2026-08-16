@@ -72,6 +72,13 @@ class Streams:
     vq: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
     seg_t: np.ndarray = field(default_factory=lambda: np.zeros(0))
     seg_mode: tuple[str, ...] = ()
+    # Operator command schedule (control_log "walk" actions): what drives the
+    # policy closed loop in Mode B, and the cmd axis of loop 2's statistics.
+    wt: np.ndarray = field(default_factory=lambda: np.zeros(0))  # walk cmd time, s
+    wcmd: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))  # vx, vy, vyaw
+    # Gait-height slider ("gait_height" actions); empty when never touched.
+    ght: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    gh: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
     @property
     def has_markers(self) -> bool:
@@ -149,7 +156,7 @@ def command_coverage(cmd_t0: float, cmd_t1: float, n_cmd: int, span_s: float) ->
 
 
 # Bumped whenever the cached field set changes.
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
 def _cache_path(path: Path) -> Path:
@@ -196,6 +203,10 @@ def read_streams(path: str | Path, *, cache: bool = True) -> Streams:
             vq=z["vq"],
             seg_t=z["seg_t"],
             seg_mode=tuple(str(m) for m in z["seg_mode"]),
+            wt=z["wt"],
+            wcmd=z["wcmd"],
+            ght=z["ght"],
+            gh=z["gh"],
         )
     st = _read_streams_uncached(path)
     if cp is not None:
@@ -219,6 +230,10 @@ def read_streams(path: str | Path, *, cache: bool = True) -> Streams:
             vq=st.vq,
             seg_t=st.seg_t,
             seg_mode=np.array(st.seg_mode, dtype="U32"),
+            wt=st.wt,
+            wcmd=st.wcmd,
+            ght=st.ght,
+            gh=st.gh,
         )
     return st
 
@@ -276,6 +291,8 @@ def _read_streams_uncached(path: Path) -> Streams:
 
     viv: list[list[float]] = []
     seg: list[tuple[float, str]] = []
+    walk: list[list[float]] = []
+    gait: list[list[float]] = []
     first_walk: float | None = None
     with path.open("rb") as f:
         for _s, ch, msg in make_reader(f).iter_messages(
@@ -297,6 +314,9 @@ def _read_streams_uncached(path: Path) -> Streams:
                     seg.append((t, str(d["mode"])))
             elif d.get("action") == "walk":
                 first_walk = t if first_walk is None else min(first_walk, t)
+                walk.append([t, d.get("vx", 0.0), d.get("vy", 0.0), d.get("vyaw", 0.0)])
+            elif d.get("action") == "gait_height":
+                gait.append([t, float(d["gh"])])
     if not low or not cmd:
         raise ValueError(f"{path}: needs rt/lowstate and one of policy/lowcmd, rt/lowcmd")
     if first_walk is None:
@@ -326,6 +346,10 @@ def _read_streams_uncached(path: Path) -> Streams:
         cdq=C[:, 49:61],
         seg_t=np.array([s[0] - first_walk for s in seg]) if seg else np.array([0.0]),
         seg_mode=tuple(s[1] for s in seg) or ("unknown",),
+        wt=(np.array([w[0] for w in walk]) - first_walk) if walk else np.zeros(0),
+        wcmd=np.array([w[1:] for w in walk]) if walk else np.zeros((0, 3)),
+        ght=(np.array([g[0] for g in gait]) - first_walk) if gait else np.zeros(0),
+        gh=np.array([g[1] for g in gait]) if gait else np.zeros(0),
     )
     if viv:
         V = np.array(viv)
