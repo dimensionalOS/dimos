@@ -23,11 +23,11 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.memory2.embed import EmbedImages
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF
-from dimos.memory2.transform import throttle
-from dimos.memory2.utils.progress import progress
+from dimos.memory.embed import EmbedImages
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
+from dimos.memory.transform import throttle
+from dimos.memory.utils.progress import progress
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
 from dimos.models.vl.moondream import MoondreamVlModel
@@ -39,7 +39,7 @@ from dimos.visualization.rerun.init import rerun_init
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("query", nargs="?", default="plant")
 parser.add_argument("out", nargs="?", default="localize.rrd")
-parser.add_argument("--dataset", type=Path, help="memory2 recording database")
+parser.add_argument("--dataset", type=Path, help="memory recording database")
 parser.add_argument(
     "--from", dest="start", type=float, default=0.0, help="start offset into the recording (s)"
 )

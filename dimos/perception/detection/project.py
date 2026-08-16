@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
