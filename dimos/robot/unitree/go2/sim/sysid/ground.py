@@ -293,17 +293,23 @@ def rollout_policy(
     )
 
 
-def sim_summary(run: PolicyRun) -> Summary:
+def sim_summary(run: PolicyRun, cmd: np.ndarray | None = None) -> Summary:
     """The sim side, with height read by a VIRTUAL TRACKER on the base.
 
     Height statistics are compared in sensor space: the real side keeps the
     raw tracker height, so the sim mounts a virtual tracker with the same
     lever arm — the guess distorts both sides identically and mostly cancels.
+
+    ``cmd`` is the command axis for the gain/lag statistics. Pass the RAW
+    operator schedule (``cmd_at``) when comparing against a real side, which
+    can only be regressed against the same raw schedule — asymmetric axes
+    (slewed on one side, raw on the other) would bias the lags. ``None``
+    falls back to the slewed command the policy actually saw.
     """
     rot = quat_to_mat(run.quat)
     p = run.pos.copy()
     p[:, 2] = (run.pos + rot @ np.array([0.0, 0.0, TRACKER_Z]))[:, 2]
-    return summarize(run.t, p, run.quat, run.cmd)
+    return summarize(run.t, p, run.quat, run.cmd if cmd is None else cmd)
 
 
 def real_summary(st: Streams, *, start: float, seconds: float) -> Summary:
@@ -349,7 +355,7 @@ def sim_noise(
             perturb=rng.normal(0.0, PERTURB_RAD, 12),
             **kw,  # type: ignore[arg-type]
         )
-        runs.append(sim_summary(run))
+        runs.append(sim_summary(run, cmd_at(st, run.t + start)))
     return spread_of(runs)
 
 
@@ -486,7 +492,7 @@ def ground(
         speed=speed,
         ghost=ghost_track(st) if with_ghost else None,
     )
-    sim = sim_summary(run)
+    sim = sim_summary(run, cmd_at(st, run.t + start))
     real = real_summary(st, start=start, seconds=seconds)
     if noise is None:
         raw = sim_noise(
