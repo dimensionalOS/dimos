@@ -34,7 +34,7 @@ goal_pose = "geometry_msgs.PoseStamped"
 [package.metadata.dimos.module.mls_planner.outputs]
 surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
-node_edges = "nav_msgs.Path"
+node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
 
 [features]

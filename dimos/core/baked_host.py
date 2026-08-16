@@ -96,6 +96,13 @@ class BakedHost(NativeModule):
                 resolved[port] = topics[name]
         return resolved
 
+    def _argv(self, topics: dict[str, str]) -> list[str]:
+        """A baked host takes its whole wiring on the launch line, so no flags.
+
+        The binary rejects an unknown argument rather than ignoring it.
+        """
+        return [self.config.executable, *self.config.extra_args]
+
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         sections: dict[str, object] = {}
         for instance in self._members:

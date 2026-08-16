@@ -15,7 +15,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, Path, Type};
+use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
 #[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
@@ -202,6 +202,15 @@ struct ClassifiedField<'a> {
     name: &'a Ident,
     ty: &'a Type,
     kind: FieldKind,
+    /// The dimos message identity from `msg = "..."`, for a port whose wire
+    /// payload and dimos message type differ.
+    msg: Option<String>,
+}
+
+/// A port field's attribute, parsed.
+struct FieldAttr {
+    kind: FieldKind,
+    msg: Option<String>,
 }
 
 fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -253,8 +262,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     for field in fields {
         let name = field.ident.as_ref().expect("named field has an identifier");
-        let kind = classify_field(field, name)?;
-        if matches!(kind, FieldKind::Config) {
+        let attr = classify_field(field, name)?;
+        if matches!(attr.kind, FieldKind::Config) {
             if let Some(prev) = config_seen {
                 return Err(syn::Error::new_spanned(
                     field,
@@ -268,7 +277,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         classified.push(ClassifiedField {
             name,
             ty: &field.ty,
-            kind,
+            kind: attr.kind,
+            msg: attr.msg,
         });
     }
 
@@ -398,8 +408,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// A port as the struct declares it: field name plus the last path segment of
-/// the `Input<T>`/`Output<T>` payload type.
+/// A port as the struct declares it: field name plus the dimos message type it
+/// carries, which is the payload type unless `msg` names a different one.
 #[derive(Debug, PartialEq, Eq)]
 struct PortDecl {
     name: String,
@@ -437,9 +447,15 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             name: f.name.to_string(),
             // `Tf` carries no generic payload. The port is TFMessage by
             // construction.
+            // An explicit `msg` wins: a view type's wire payload and the dimos
+            // message it stands for are allowed to differ.
             ty: match f.kind {
                 FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
-                _ => port_payload_type(f.ty).unwrap_or_default(),
+                _ => f
+                    .msg
+                    .clone()
+                    .or_else(|| port_payload_type(f.ty))
+                    .unwrap_or_default(),
             },
         })
         .collect()
@@ -530,8 +546,9 @@ fn check_port_table(entry: &toml::Value, kind: &str, declared: &[PortDecl]) -> R
     Ok(())
 }
 
-fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
+fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
     let mut found: Option<FieldKind> = None;
+    let mut msg: Option<String> = None;
 
     for attr in &field.attrs {
         let path = attr.path();
@@ -546,9 +563,12 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
                     decode = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("handler") {
                     handler = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("msg") {
+                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else {
                     return Err(meta.error(
-                        "unrecognized #[input] argument; expected `decode = ...` or `handler = ...`",
+                        "unrecognized #[input] argument; expected `decode = ...`, \
+                         `handler = ...` or `msg = ...`",
                     ));
                 }
                 Ok(())
@@ -565,10 +585,12 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("encode") {
                     encode = Some(meta.value()?.parse()?);
+                } else if meta.path.is_ident("msg") {
+                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else {
-                    return Err(
-                        meta.error("unrecognized #[output] argument; expected `encode = ...`")
-                    );
+                    return Err(meta.error(
+                        "unrecognized #[output] argument; expected `encode = ...` or `msg = ...`",
+                    ));
                 }
                 Ok(())
             })?;
@@ -620,7 +642,10 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
         }
     }
 
-    Ok(found.unwrap_or(FieldKind::State))
+    Ok(FieldAttr {
+        kind: found.unwrap_or(FieldKind::State),
+        msg,
+    })
 }
 
 #[cfg(test)]
@@ -713,6 +738,7 @@ mod tests {
                 encode: parse_quote!(demo::encode),
                 handler: parse_quote!(on_cmd),
             },
+            msg: None,
         }];
         let err = check_registry_ports(&name, &classified).expect_err("io ports are unsupported");
         assert!(err.contains("cmd"), "{err}");
@@ -794,6 +820,8 @@ mod tests {
         );
     }
 
+    /// The package half is checked against the python wrapper by bake, in
+    /// `test_every_baked_port_lands_on_the_key_its_python_wrapper_subscribes_to`.
     #[test]
     fn compares_only_the_last_msg_type_segment() {
         // The manifest spells the package. The struct spells the imported name.
@@ -808,6 +836,23 @@ mod tests {
             &[port("global_map", "PointCloud2")],
         )
         .expect("package-qualified manifest types match bare struct types");
+    }
+
+    /// A view type's wire payload and the dimos message it stands for differ,
+    /// so the port declares the message and the manifest must match that.
+    #[test]
+    fn an_explicit_msg_names_the_dimos_message_type() {
+        let manifest = MANIFEST.replace(
+            "global_map = \"sensor_msgs.PointCloud2\"",
+            "global_map = \"nav_msgs.LineSegments3D\"",
+        );
+        check_manifest_ports(
+            &manifest,
+            "demo",
+            &[port("lidar", "PointCloud2")],
+            &[port("global_map", "LineSegments3D")],
+        )
+        .expect("a declared msg type matches the manifest");
     }
 
     #[test]
