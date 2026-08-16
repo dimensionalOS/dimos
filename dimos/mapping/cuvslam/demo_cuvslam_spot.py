@@ -224,34 +224,15 @@ def compare_and_plot(
     return metrics
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("db", nargs="?", default="/home/dimos/datasets/spot/spot_small_loop.db")
-    parser.add_argument(
-        "--cams", default=",".join(CAMERAS), help="comma list, first is the sync reference"
-    )
-    parser.add_argument(
-        "--depth-cams",
-        default="left,right,back",
-        help="cameras whose depth anchors scale; the front pair's floor-dominated depth "
-        "degrades the solve badly (ATE 14.5 m vs 1.7 m on spot_small_loop)",
-    )
-    parser.add_argument("--max-frames", type=int, default=0)
-    parser.add_argument("--warmup", type=int, default=10, help="reference frames to skip")
-    parser.add_argument("--tolerance-ms", type=float, default=90.0, help="cross-camera sync window")
-    parser.add_argument("--out", default="/tmp/cuvslam_spot_trajectory.json")
-    parser.add_argument("--plot", default="", help="write a comparison PNG here")
-    args = parser.parse_args()
-
-    cameras = [camera.strip() for camera in args.cams.split(",") if camera.strip()]
-    depth_cameras = [camera.strip() for camera in args.depth_cams.split(",") if camera.strip()]
-    depth_cameras = [camera for camera in depth_cameras if camera in cameras]
-    unknown = sorted(set(cameras) - set(CAMERAS))
-    if unknown:
-        raise SystemExit(f"unknown cameras: {unknown}")
-
-    store = SqliteStore(path=args.db, must_exist=True)
-    store.start()
+def replay_spot(
+    store: SqliteStore,
+    cameras: list[str],
+    depth_cameras: list[str],
+    warmup: int = 10,
+    max_frames: int = 0,
+    tolerance_s: float = 0.09,
+) -> dict[str, Any]:
+    """Replay the recording through a Multisensor tracker; returns trajectory and stats."""
     gray_infos = camera_infos(store, "grayscale_info")
     depth_infos = camera_infos(store, "depth_info")
     extrinsics = rig_extrinsics(store)
@@ -261,14 +242,6 @@ def main() -> None:
 
     rig = vslam.Rig()
     rig.cameras = [build_camera(gray_infos[camera], extrinsics[camera]) for camera in cameras]
-    for camera in cameras:
-        info = gray_infos[camera]
-        translation = extrinsics[camera][0]
-        print(
-            f"[spot] {camera}: {info.width}x{info.height} fx={info.K[0]:.1f} "
-            f"t=({translation[0]:.3f},{translation[1]:.3f},{translation[2]:.3f})",
-            flush=True,
-        )
 
     config = vslam.Tracker.OdometryConfig(
         async_sba=False,
@@ -288,7 +261,7 @@ def main() -> None:
         camera: NearestStream(store.stream(f"depth_image_{camera}", Image))
         for camera in depth_cameras
     }
-    tolerance = args.tolerance_ms / 1000.0
+    tolerance = tolerance_s
 
     trajectory: list[list[float]] = []
     frames = 0
@@ -296,13 +269,13 @@ def main() -> None:
     dropped_inputs = 0
     last_stamp: int | None = None
     for index, observation in enumerate(store.stream(f"grayscale_image_{reference}", Image)):
-        if index < args.warmup:
+        if index < warmup:
             for camera in others:
                 gray_streams[camera].at(observation.ts)
             for camera in depth_cameras:
                 depth_streams[camera].at(observation.ts)
             continue
-        if args.max_frames and frames >= args.max_frames:
+        if max_frames and frames >= max_frames:
             break
         stamp_s = observation.ts
         stamp = int(stamp_s * NANOSECONDS_PER_SECOND)
@@ -365,9 +338,55 @@ def main() -> None:
     length = (
         float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum()) if len(points) > 1 else 0.0
     )
+    return {
+        "trajectory": trajectory,
+        "frames": frames,
+        "lost": lost,
+        "dropped_inputs": dropped_inputs,
+        "path_m": length,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("db", nargs="?", default="/home/dimos/datasets/spot/spot_small_loop.db")
+    parser.add_argument(
+        "--cams", default=",".join(CAMERAS), help="comma list, first is the sync reference"
+    )
+    parser.add_argument(
+        "--depth-cams",
+        default="left,right,back",
+        help="cameras whose depth anchors scale; the front pair's floor-dominated depth "
+        "degrades the solve badly (ATE 14.5 m vs 1.7 m on spot_small_loop)",
+    )
+    parser.add_argument("--max-frames", type=int, default=0)
+    parser.add_argument("--warmup", type=int, default=10, help="reference frames to skip")
+    parser.add_argument("--tolerance-ms", type=float, default=90.0, help="cross-camera sync window")
+    parser.add_argument("--out", default="/tmp/cuvslam_spot_trajectory.json")
+    parser.add_argument("--plot", default="", help="write a comparison PNG here")
+    args = parser.parse_args()
+
+    cameras = [camera.strip() for camera in args.cams.split(",") if camera.strip()]
+    depth_cameras = [camera.strip() for camera in args.depth_cams.split(",") if camera.strip()]
+    depth_cameras = [camera for camera in depth_cameras if camera in cameras]
+    unknown = sorted(set(cameras) - set(CAMERAS))
+    if unknown:
+        raise SystemExit(f"unknown cameras: {unknown}")
+
+    store = SqliteStore(path=args.db, must_exist=True)
+    store.start()
+    result = replay_spot(
+        store,
+        cameras,
+        depth_cameras,
+        warmup=args.warmup,
+        max_frames=args.max_frames,
+        tolerance_s=args.tolerance_ms / 1000.0,
+    )
+    trajectory = result["trajectory"]
     print(
-        f"[spot] done: frames={frames} poses={len(trajectory)} lost={lost} "
-        f"dropped_inputs={dropped_inputs} path={length:.1f} m",
+        f"[spot] done: frames={result['frames']} poses={len(trajectory)} lost={result['lost']} "
+        f"dropped_inputs={result['dropped_inputs']} path={result['path_m']:.1f} m",
         flush=True,
     )
 
@@ -378,10 +397,10 @@ def main() -> None:
         "trajectory": trajectory,
         "odometry": odometry,
         "stats": {
-            "frames": frames,
-            "lost": lost,
-            "dropped_inputs": dropped_inputs,
-            "path_m": length,
+            "frames": result["frames"],
+            "lost": result["lost"],
+            "dropped_inputs": result["dropped_inputs"],
+            "path_m": result["path_m"],
         },
     }
     if args.plot and len(trajectory) > 1:
