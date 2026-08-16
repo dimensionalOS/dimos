@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Literal
 
 from dimos.cli.bake.discovery import ModuleInfo, normalize_id
@@ -116,6 +118,21 @@ class Graph:
 
     def qos(self) -> dict[str, dict[str, str]]:
         return {c.topic: dict(c.qos) for c in self.connections if c.qos}
+
+    def fingerprint(self) -> str:
+        """Identity of the wiring a host is baked with, stamped into its config.
+
+        Covers what a stale config file would silently override.
+        """
+        material = json.dumps(
+            {
+                "host": self.host,
+                "topics": self.topics(),
+                "suppress": list(self.suppressed_topics()),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(material.encode()).hexdigest()[:16]
 
     def to_json(self) -> dict[str, object]:
         return {

@@ -123,6 +123,9 @@ pub struct HostSpec {
     pub default_qos: &'static str,
     /// The rendered connection graph, printed by `<host> graph`.
     pub graph_json: &'static str,
+    /// Identity of the wiring this binary was baked with. A config emitted by
+    /// `dimos bake --emit-config` carries the same stamp under `graph`.
+    pub graph_hash: &'static str,
 }
 
 /// What the command line asks the binary to do. A baked host takes its whole
@@ -319,6 +322,28 @@ fn prepare_all(spec: &HostSpec, stdin: &Value) -> io::Result<Vec<Prepared>> {
     Ok(prepared)
 }
 
+/// Refuse a config baked for a different graph than this binary.
+///
+/// The file's topics override the baked ones, so a stale one wires the host to
+/// keys nothing else uses: a clean wiring table and no messages.
+fn check_graph_stamp(spec: &HostSpec, stdin: &Value) -> io::Result<()> {
+    match stdin.get("graph").and_then(Value::as_str) {
+        Some(stamp) if stamp == spec.graph_hash => Ok(()),
+        Some(stamp) => Err(invalid(format!(
+            "config was baked for graph `{stamp}`, this binary is `{}`: \
+             re-run `dimos bake --emit-config`",
+            spec.graph_hash
+        ))),
+        None => {
+            warn!(
+                host = spec.name,
+                "config carries no `graph` stamp, so its wiring is taken on trust"
+            );
+            Ok(())
+        }
+    }
+}
+
 /// Refuse an LCM session over zenoh-shaped topics. The keys a bake emits
 /// (`dimos/<name>/<type>`) name nothing on the LCM bus, so the host would run,
 /// log a clean wiring table and exchange no messages at all.
@@ -383,6 +408,7 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         .build()?;
 
     let stdin = main_rt.block_on(read_launch_config())?;
+    check_graph_stamp(spec, &stdin)?;
     let prepared = prepare_all(spec, &stdin)?;
     let known: Vec<String> = prepared
         .iter()
@@ -561,6 +587,30 @@ mod tests {
     }
 
     #[test]
+    fn a_config_baked_for_another_graph_is_refused() {
+        let spec = spec_with("{}");
+        let err = check_graph_stamp(&spec, &json!({"graph": "0123456789abcdef"}))
+            .expect_err("a stale stamp must fail");
+        let message = err.to_string();
+        assert!(message.contains("0123456789abcdef"), "{message}");
+        assert!(message.contains("test-graph"), "{message}");
+        assert!(message.contains("--emit-config"), "{message}");
+    }
+
+    #[test]
+    fn a_matching_graph_stamp_is_accepted() {
+        let spec = spec_with("{}");
+        check_graph_stamp(&spec, &json!({"graph": "test-graph"})).expect("the stamp matches");
+    }
+
+    /// A python-driven host builds its wiring live, so it sends no stamp.
+    #[test]
+    fn a_config_with_no_graph_stamp_is_taken_on_trust() {
+        let spec = spec_with("{}");
+        check_graph_stamp(&spec, &json!({})).expect("an unstamped config still runs");
+    }
+
+    #[test]
     fn stdin_topics_override_baked_ports_and_keep_the_rest() {
         let defaults = json!({"lidar": "dimos/lidar", "odometry": "dimos/odom"});
         let overrides = json!({"odometry": "dimos/robot/odom"});
@@ -615,6 +665,7 @@ mod tests {
             default_suppress: &["dimos/global_map"],
             default_qos: "{}",
             graph_json: "{}",
+            graph_hash: "test-graph",
         }
     }
 
@@ -800,6 +851,7 @@ mod tests {
             default_suppress: &[],
             default_qos: "{}",
             graph_json: "{}",
+            graph_hash: "test-graph",
         }
     }
 

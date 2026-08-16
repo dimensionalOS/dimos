@@ -54,6 +54,18 @@ def test_main_rs_lists_entries_with_their_thread_counts():
     assert 'include_str!("graph.json")' in main
 
 
+def test_the_binary_carries_the_graph_stamp_its_config_is_checked_against():
+    main = render_main_rs("go2-nav", [MAPPER, PLANNER], GRAPH)
+    assert f'graph_hash: "{GRAPH.fingerprint()}",' in main
+
+
+def test_rewiring_a_topic_changes_the_graph_stamp():
+    remapped = build_graph(
+        "go2-nav", [MAPPER, PLANNER], remaps={("planner", "path"): "route"}, suppress=["local_map"]
+    )
+    assert remapped.fingerprint() != GRAPH.fingerprint()
+
+
 def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path):
     crate = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
     assert crate == tmp_path / "target" / "dimos-bake" / "go2-nav"
