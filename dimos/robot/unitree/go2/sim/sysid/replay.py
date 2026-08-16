@@ -37,6 +37,7 @@ from dimos.robot.unitree.go2.sim.backend import (
     BaseCondition,
     BaseTrack,
     Commands,
+    GhostTrack,
     Prediction,
     RolloutPlan,
     State,
@@ -225,6 +226,20 @@ def score(pred: Prediction, st: Streams, *, mount: np.ndarray | None = None) -> 
     )
 
 
+def ghost_track(st: Streams, *, mount: np.ndarray | None = None) -> GhostTrack | None:
+    """The recorded base pose for a viewer's ghost; ``None`` without a tracker.
+
+    Where no tracker exists the ghost is ABSENT rather than faked — an IMU
+    dead-reckoned stand-in would draw a confident picture of something never
+    measured.
+    """
+    if not st.has_markers:
+        return None
+    mount = mount_matrix() if mount is None else mount
+    base_p, base_r = st.base_pose_room(mount)
+    return GhostTrack(t=st.vt, pos=base_p, rot=base_r)
+
+
 def replay(
     st: Streams,
     t0: float,
@@ -253,3 +268,112 @@ def replay(
         st, t0, duration, schedule=sched, dt=backend.timestep, suspended=suspended, mount=mount
     )
     return score(backend.rollout(plan), st, mount=mount)
+
+
+def _window_arg(vals: list[float]) -> float | tuple[float, float] | None:
+    if len(vals) == 1:
+        return None if vals[0] <= 0 else float(vals[0])
+    return (float(vals[0]), float(vals[1]))
+
+
+def main() -> None:
+    """Watch (or just score) a Mode-A replay.
+
+        python -m dimos.robot.unitree.go2.sim.sysid.replay REC.mcap --view
+        python -m ... REC.mcap --view --no-reinit --speed 0.25   # free divergence
+        python -m ... REC.mcap                                   # numbers only
+
+    The viewer and the headless run are the same function: ``--view`` only
+    attaches a viewer to the backend and paces to wall clock. The ghost is the
+    recorded tracker pose where a tracker exists, absent where none does. A
+    suspended recording shows the held, swinging trunk, because the viewer
+    watches the same weld the physics imposes.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="go2.sim.sysid.replay", description=main.__doc__)
+    ap.add_argument("recording")
+    ap.add_argument("--preset", default="measured", help="plant preset name or JSON path")
+    ap.add_argument("--segment", type=int, default=None, help="policy-mode segment; --list first")
+    ap.add_argument("--list", action="store_true", help="list policy segments and exit")
+    ap.add_argument("--start", type=float, default=None)
+    ap.add_argument("--seconds", type=float, default=None)
+    ap.add_argument(
+        "--window",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.8],
+        metavar="S",
+        help="clip length, s: one value = fixed (0 = never re-initialise), two = U(lo, hi)",
+    )
+    ap.add_argument("--seed", type=int, default=0, help="clip-schedule seed")
+    ap.add_argument(
+        "--no-reinit",
+        action="store_true",
+        help="free open-loop divergence — the only way to SEE what open loop costs",
+    )
+    ap.add_argument("--view", action="store_true", help="attach the MuJoCo viewer")
+    ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
+    ap.add_argument("--no-ghost", action="store_true", help="hide the recorded-pose ghost")
+    args = ap.parse_args()
+
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.ranges import load_preset
+    from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations, read_streams
+    from dimos.robot.unitree.go2.sim.sysid.regimes import protected, regimes
+
+    st = read_streams(args.recording)
+    if args.list or args.segment is not None:
+        print(f"{'idx':>4s} {'policy mode':>12s} {'start':>8s} {'end':>8s} {'dur':>7s}")
+        for i, mode, a, b in st.segments():
+            print(f"{i:4d} {mode:>12s} {a:8.2f} {b:8.2f} {b - a:7.2f}")
+        if args.list:
+            return
+
+    declared = read_declarations(args.recording)
+    suspended = bool(declared.suspended)
+    spans = regimes(st, declared)
+    if args.segment is not None:
+        _i, mode, a, b = st.segments()[args.segment]
+        t0 = a + 0.2 if args.start is None else args.start
+        dur = (b - t0 - 0.2) if args.seconds is None else args.seconds
+        print(f"replaying segment {args.segment} ({mode}) from {t0:.2f}s for {dur:.2f}s")
+    else:
+        t0 = max(float(st.lt[0]), float(st.ct[0])) + 0.5 if args.start is None else args.start
+        dur = 10.0 if args.seconds is None else args.seconds
+
+    window = None if args.no_reinit else _window_arg(args.window)
+    ghost = None if args.no_ghost else ghost_track(st)
+    backend = MujocoBackend(view=args.view, view_speed=args.speed, ghost=ghost)
+    preset = load_preset(args.preset)
+    print(
+        f"preset {preset.name} | re-init "
+        f"{'OFF (free divergence)' if window is None else window} | "
+        f"ghost {'tracker' if ghost is not None and args.view else 'absent'}"
+        f"{' | SUSPENDED (trunk welded to the measured attitude)' if suspended else ''}"
+    )
+    r = replay(
+        st,
+        t0,
+        dur,
+        backend,
+        preset=preset,
+        window=window,
+        seed=args.seed,
+        protect=protected(spans),
+        suspended=suspended,
+    )
+    je = r.joint_err()
+    print(
+        f"\n  joint |error|  mean {je.mean():.4f}  p50 {np.percentile(je, 50):.4f}"
+        f"  p90 {np.percentile(je, 90):.4f}  max {je.max():.4f} rad"
+    )
+    if r.p_real is not None:
+        dp, da = r.body_err()
+        print(f"  body xy error  mean {dp.mean():.4f}  p90 {np.percentile(dp, 90):.4f} m")
+        print(f"  body rot error mean {np.degrees(da.mean()):.2f} deg")
+    print(f"  re-initialisations: {len(r.prediction.reinit_t) - 1}")
+
+
+if __name__ == "__main__":
+    main()

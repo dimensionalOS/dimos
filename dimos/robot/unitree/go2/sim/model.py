@@ -30,6 +30,7 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.backend import (
     CHANNELS,
     BaseCondition,
+    GhostTrack,
     Prediction,
     RolloutPlan,
     State,
@@ -58,6 +59,10 @@ LEG_DOFS = slice(6, 18)
 ANCHOR_BODY = "trunk_anchor"
 WELD_SOLREF = (0.004, 1.0)  # timeconst = 2 * the scene's 2 ms step, critical damping
 WELD_SOLIMP = (0.999, 0.9999, 0.001, 0.5, 2.0)
+
+# The recorded pose drawn beside the sim under --view. Visual only: its geom
+# collides with nothing, so the watched physics is the scored physics.
+GHOST_BODY = "ghost"
 
 
 def scene_path(menagerie: Path | None = None) -> Path:
@@ -98,32 +103,52 @@ def _menagerie_root() -> Path:
 
 
 def load(
-    menagerie: Path | None = None, *, pinned: bool = False
+    menagerie: Path | None = None, *, pinned: bool = False, ghost: bool = False
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
-    """The compiled scene; ``pinned`` adds the rope (mocap anchor + weld).
+    """The compiled scene; ``pinned`` adds the rope (mocap anchor + weld),
+    ``ghost`` a translucent mocap box a viewer drives with the recorded pose.
 
-    The FREE path compiles the menagerie XML untouched — bit-identical to
+    The plain path compiles the menagerie XML untouched — bit-identical to
     every rollout ever scored on it. The PINNED path adds a mocap body and an
     ``mjEQ_WELD`` holding the trunk to it; the mocap body carries no joints
-    and no geoms, so nq/nv and every contact pair are unchanged.
+    and no geoms, so nq/nv and every contact pair are unchanged. The GHOST
+    body is mocap with a contype/conaffinity 0 geom — visual only, it can
+    touch nothing — so attaching it never moves the physics being watched.
     """
-    if not pinned:
+    if not pinned and not ghost:
         model = mujoco.MjModel.from_xml_path(str(scene_path(menagerie)))
         return model, mujoco.MjData(model)
     spec = mujoco.MjSpec.from_file(str(scene_path(menagerie)))
-    spec.worldbody.add_body(name=ANCHOR_BODY, mocap=True)
-    weld = spec.add_equality()
-    weld.type = mujoco.mjtEq.mjEQ_WELD  # type: ignore[attr-defined]  # absent from the bundled stubs
-    weld.objtype = mujoco.mjtObj.mjOBJ_BODY
-    weld.name1 = ANCHOR_BODY
-    weld.name2 = "base"
-    weld.data[:] = 0.0
-    weld.data[6] = 1.0  # relpose quat = identity: base coincides with the anchor
-    weld.data[10] = 1.0  # torquescale: the rope reacts torque, not just force
-    weld.solref = WELD_SOLREF
-    weld.solimp = WELD_SOLIMP
+    if pinned:
+        spec.worldbody.add_body(name=ANCHOR_BODY, mocap=True)
+        weld = spec.add_equality()
+        weld.type = mujoco.mjtEq.mjEQ_WELD  # type: ignore[attr-defined]  # absent from the bundled stubs
+        weld.objtype = mujoco.mjtObj.mjOBJ_BODY
+        weld.name1 = ANCHOR_BODY
+        weld.name2 = "base"
+        weld.data[:] = 0.0
+        weld.data[6] = 1.0  # relpose quat = identity: base coincides with the anchor
+        weld.data[10] = 1.0  # torquescale: the rope reacts torque, not just force
+        weld.solref = WELD_SOLREF
+        weld.solimp = WELD_SOLIMP
+    if ghost:
+        body = spec.worldbody.add_body(name=GHOST_BODY, mocap=True)
+        geom = body.add_geom()
+        geom.type = mujoco.mjtGeom.mjGEOM_BOX
+        geom.size = [0.1881, 0.04675, 0.057]  # the URDF base collision box
+        geom.rgba = [0.2, 1.0, 0.2, 0.35]
+        geom.contype = 0
+        geom.conaffinity = 0
     model = spec.compile()
     return model, mujoco.MjData(model)
+
+
+def mocap_index(model: mujoco.MjModel, name: str) -> int:
+    """The mocap slot of a named mocap body — never assume it is 0."""
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+    if bid < 0:
+        raise KeyError(f"no body named {name!r} in this model")
+    return int(model.body_mocapid[bid])
 
 
 def apply_physics(model: mujoco.MjModel, overrides: dict[str, float]) -> None:
@@ -192,6 +217,17 @@ class MujocoBackend:
     Deterministic by construction: a fresh model is compiled per rollout with
     the currently applied knob values, so no state leaks between rollouts and
     the same plan always yields the same prediction.
+
+    THE VIEWER AND THE HEADLESS RUN ARE THE SAME FUNCTION. ``view=True`` only
+    attaches a passive viewer to :meth:`rollout` and paces it to wall clock
+    (``view_speed`` < 1 is slow motion — the interesting failures are
+    20-50 ms long); the physics, the re-initialisation and every number in
+    the returned :class:`Prediction` come from the same code either way. A
+    ``ghost`` is drawn re-anchored at every snap, exactly as the scorer maps
+    the recorded track (open-loop drift is only defined relative to the pose
+    a clip started from). A PINNED (suspended) rollout shows the held,
+    swinging trunk, because the viewer watches the same weld the physics
+    imposes.
     """
 
     name = "mujoco"
@@ -201,9 +237,15 @@ class MujocoBackend:
         menagerie: Path | None = None,
         *,
         envelope: TorqueEnvelope | None = None,
+        view: bool = False,
+        view_speed: float = 1.0,
+        ghost: GhostTrack | None = None,
     ) -> None:
         self._menagerie = menagerie
         self._envelope = envelope
+        self._view = view
+        self._view_speed = view_speed
+        self._ghost = ghost if view else None
         self._values: dict[str, float] = {}
         self._dt: float | None = None
 
@@ -231,7 +273,8 @@ class MujocoBackend:
 
     def rollout(self, plan: RolloutPlan) -> Prediction:
         pinned = plan.base is BaseCondition.PINNED
-        model, data = load(self._menagerie, pinned=pinned)
+        ghost = self._ghost
+        model, data = load(self._menagerie, pinned=pinned, ghost=ghost is not None)
         physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}
         if physics:
             apply_physics(model, physics)
@@ -239,6 +282,14 @@ class MujocoBackend:
         dt = float(model.opt.timestep)
         feet = foot_geom_ids(model)
         track = plan.base_track if pinned else None
+        ai = mocap_index(model, ANCHOR_BODY) if pinned else -1
+        gi = mocap_index(model, GHOST_BODY) if ghost is not None else -1
+        # Rigid map from the ghost's room frame into this rollout's world,
+        # recomputed at every snap — the same convention the scorer uses:
+        # open-loop drift is only defined relative to the pose a clip
+        # started from, and a fixed anchor reads the snap itself as error.
+        g_anchor_r = np.eye(3)
+        g_anchor_p = np.zeros(3)
         # World-yaw offset between the sim's (yaw-stripped) pose and the
         # measured attitude, refreshed at every snap: anchor @ track.rot(t)
         # then has the measured gravity direction through the legs at EVERY
@@ -256,7 +307,7 @@ class MujocoBackend:
             raise ValueError("plan.reinit must start with the state at t0")
 
         def snap(state: State) -> None:
-            nonlocal anchor
+            nonlocal anchor, g_anchor_r, g_anchor_p
             data.qpos[:] = 0.0
             data.qvel[:] = 0.0
             data.qpos[3:7] = mat_to_quat(state.rot)
@@ -271,11 +322,17 @@ class MujocoBackend:
                 data.qvel[0:3] = state.rot @ state.v_body
             if pinned:
                 data.qpos[2] = max(float(data.qpos[2]), 2.0)  # clear of the floor
-                data.mocap_pos[0] = data.qpos[0:3]
-                data.mocap_quat[0] = data.qpos[3:7]
+                data.mocap_pos[ai] = data.qpos[0:3]
+                data.mocap_quat[ai] = data.qpos[3:7]
                 if track is not None:
                     anchor = state.rot @ track_rot(state.t).T
             mujoco.mj_forward(model, data)
+            if ghost is not None:
+                j = int(
+                    np.clip(np.searchsorted(ghost.t, state.t, "right") - 1, 0, len(ghost.t) - 1)
+                )
+                g_anchor_r = quat_to_mat(data.qpos[3:7].copy()) @ ghost.rot[j].T
+                g_anchor_p = data.qpos[0:3].copy() - g_anchor_r @ ghost.pos[j]
 
         snap(reinit[0])
 
@@ -309,54 +366,85 @@ class MujocoBackend:
         reinit_rot: list[np.ndarray] = [quat_to_mat(data.qpos[3:7].copy())]
         si = 1
 
-        n = int(plan.duration / dt)
-        for step in range(n):
-            t = plan.t0 + step * dt
-            if si < len(reinit) and t >= reinit[si].t:
-                snap(reinit[si])
-                applied[:] = 0.0
-                reinit_t.append(t)
-                reinit_pos.append(data.qpos[0:3].copy())
-                reinit_rot.append(quat_to_mat(data.qpos[3:7].copy()))
-                si += 1
+        viewer_cm = None
+        if self._view:
+            from mujoco import viewer as mj_viewer
 
-            k = int(np.clip(np.searchsorted(cmds.t, t, "right") - 1, 0, len(cmds.t) - 1))
-            tau = (
-                cmds.kp[k] * (cmds.q[k] - data.qpos[7:19])
-                + cmds.kd[k] * (cmds.dq[k] - data.qvel[6:18])
-                + cmds.tau_ff[k]
-            )
-            tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
-            applied = actuator_step(
-                applied, tau, dt, actuator_tau, dq=data.qvel[6:18], envelope=self._envelope
-            )
-            data.ctrl[:] = applied
-            if track is not None:
-                # The measured trunk attitude, re-anchored at the last snap:
-                # the weld drags the trunk through the swing the robot
-                # actually made, so gravity loads the legs the measured way.
-                data.mocap_quat[0] = mat_to_quat(anchor @ track_rot(t))
-            mujoco.mj_step(model, data)
+            viewer_cm = mj_viewer.launch_passive(model, data)
+        viewer = viewer_cm.__enter__() if viewer_cm is not None else None
 
-            # Every step, not every fifth: an impact is ~20 ms wide.
-            # Both exist at runtime; the bundled mujoco stubs omit them.
-            mujoco.mj_rnePostConstraint(model, data)  # type: ignore[attr-defined]
-            mujoco.mj_objectAcceleration(  # type: ignore[attr-defined]
-                model, data, imu_objtype, imu_id, acc6, 1
-            )
-            ats.append(t)
-            asim.append(acc6[3:].copy())
-            # Angular rate in the trunk's own frame — the convention
-            # rt/lowstate's gyroscope reports in.
-            wsim.append(quat_to_mat(data.qpos[3:7]).T @ data.qvel[3:6])
-            tsim.append(applied.copy())
+        try:
+            import time
 
-            if step % 5 == 0:  # pose-rate log at 100 Hz
-                ts.append(t)
-                qs.append(data.qpos[7:19].copy())
-                dqs.append(data.qvel[6:18].copy())
-                ps.append(data.qpos[0:3].copy())
-                rs.append(quat_to_mat(data.qpos[3:7].copy()))
+            wall = time.perf_counter()
+            n = int(plan.duration / dt)
+            for step in range(n):
+                t = plan.t0 + step * dt
+                if si < len(reinit) and t >= reinit[si].t:
+                    snap(reinit[si])
+                    applied[:] = 0.0
+                    reinit_t.append(t)
+                    reinit_pos.append(data.qpos[0:3].copy())
+                    reinit_rot.append(quat_to_mat(data.qpos[3:7].copy()))
+                    si += 1
+
+                k = int(np.clip(np.searchsorted(cmds.t, t, "right") - 1, 0, len(cmds.t) - 1))
+                tau = (
+                    cmds.kp[k] * (cmds.q[k] - data.qpos[7:19])
+                    + cmds.kd[k] * (cmds.dq[k] - data.qvel[6:18])
+                    + cmds.tau_ff[k]
+                )
+                tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
+                applied = actuator_step(
+                    applied, tau, dt, actuator_tau, dq=data.qvel[6:18], envelope=self._envelope
+                )
+                data.ctrl[:] = applied
+                if track is not None:
+                    # The measured trunk attitude, re-anchored at the last snap:
+                    # the weld drags the trunk through the swing the robot
+                    # actually made, so gravity loads the legs the measured way.
+                    data.mocap_quat[ai] = mat_to_quat(anchor @ track_rot(t))
+                mujoco.mj_step(model, data)
+
+                # Every step, not every fifth: an impact is ~20 ms wide.
+                # Both exist at runtime; the bundled mujoco stubs omit them.
+                mujoco.mj_rnePostConstraint(model, data)  # type: ignore[attr-defined]
+                mujoco.mj_objectAcceleration(  # type: ignore[attr-defined]
+                    model, data, imu_objtype, imu_id, acc6, 1
+                )
+                ats.append(t)
+                asim.append(acc6[3:].copy())
+                # Angular rate in the trunk's own frame — the convention
+                # rt/lowstate's gyroscope reports in.
+                wsim.append(quat_to_mat(data.qpos[3:7]).T @ data.qvel[3:6])
+                tsim.append(applied.copy())
+
+                if step % 5 == 0:  # pose-rate log at 100 Hz
+                    ts.append(t)
+                    qs.append(data.qpos[7:19].copy())
+                    dqs.append(data.qvel[6:18].copy())
+                    ps.append(data.qpos[0:3].copy())
+                    rs.append(quat_to_mat(data.qpos[3:7].copy()))
+                    if ghost is not None:
+                        j = int(
+                            np.clip(np.searchsorted(ghost.t, t, "right") - 1, 0, len(ghost.t) - 1)
+                        )
+                        data.mocap_pos[gi] = g_anchor_r @ ghost.pos[j] + g_anchor_p
+                        data.mocap_quat[gi] = mat_to_quat(g_anchor_r @ ghost.rot[j])
+
+                if viewer is not None:
+                    if not viewer.is_running():
+                        break
+                    viewer.sync()
+                    wall += dt / max(self._view_speed, 1e-6)
+                    lag = wall - time.perf_counter()
+                    if lag > 0:
+                        time.sleep(lag)
+                    else:
+                        wall = time.perf_counter()
+        finally:
+            if viewer_cm is not None:
+                viewer_cm.__exit__(None, None, None)
 
         return Prediction(
             t=np.array(ts),

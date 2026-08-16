@@ -123,6 +123,22 @@ class BaseTrack:
 
 
 @dataclass(frozen=True)
+class GhostTrack:
+    """The recorded base pose in the ROOM frame, for a viewer to draw.
+
+    Where a tracker exists the ghost is the measurement; where none exists the
+    ghost is ABSENT rather than faked — build one with
+    :func:`~dimos.robot.unitree.go2.sim.sysid.replay.ghost_track`, which
+    returns ``None`` for a tracker-less recording. Viewer bookkeeping only:
+    nothing scored reads it.
+    """
+
+    t: np.ndarray  # (m,) sample times, recording clock
+    pos: np.ndarray  # (m, 3) base position, room frame
+    rot: np.ndarray  # (m, 3, 3) base rotation, room frame
+
+
+@dataclass(frozen=True)
 class RolloutPlan:
     """One open-loop drive of the plant, fully determined before any physics.
 
