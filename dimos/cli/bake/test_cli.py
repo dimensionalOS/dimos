@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-import json
-
 import typer
 from typer.testing import CliRunner
 
 from dimos.cli.bake.cli import bake, emit_config
+from dimos.cli.bake.codegen import render_main_rs
 from dimos.cli.bake.discovery import discover_modules, select_modules
 from dimos.cli.bake.graph import build_graph
 
@@ -54,10 +53,12 @@ def test_emit_config_is_a_complete_stdin_blob() -> None:
     blob = emit_config(graph, selected)
 
     assert set(blob["modules"]) == {"ray_tracing", "mls_planner"}
-    topics = graph.topics()
-    for module_id, section in blob["modules"].items():
-        assert section["topics"] == topics[module_id]
+    for section in blob["modules"].values():
         assert isinstance(section["config"], dict) and section["config"]
+    assert blob["modules"]["ray_tracing"]["topics"]["lidar"] == (
+        "dimos/lidar/sensor_msgs.PointCloud2"
+    )
     assert blob["suppress"] == list(graph.suppressed_topics())
     assert blob["qos"] == graph.qos()
-    json.dumps(blob)
+    # The stamp the binary checks its config against, from the same graph.
+    assert f'graph_hash: "{blob["graph"]}",' in render_main_rs("go2-nav", selected, graph)

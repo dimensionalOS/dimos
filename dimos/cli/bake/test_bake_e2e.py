@@ -187,3 +187,13 @@ def test_a_poisoned_config_kills_the_host(baked):
     proc = spawn_host(binary, poisoned, free_port())
     assert proc.wait(timeout=30) == 1
     assert b"voxel_size" in (proc.stderr.read() if proc.stderr else b"")
+
+
+def test_a_config_baked_for_another_graph_is_refused(baked):
+    binary, config = baked
+    proc = spawn_host(binary, {**config, "graph": "0123456789abcdef"}, free_port())
+    assert proc.wait(timeout=30) == 1
+    assert proc.stderr is not None
+    stderr = proc.stderr.read()
+    assert b"0123456789abcdef" in stderr
+    assert b"dimos bake --emit-config" in stderr

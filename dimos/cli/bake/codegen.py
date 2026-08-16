@@ -67,6 +67,7 @@ static SPEC: HostSpec = HostSpec {{
     default_suppress: SUPPRESS,
     default_qos: include_str!("default_qos.json"),
     graph_json: include_str!("graph.json"),
+    graph_hash: "{fingerprint}",
 }};
 
 fn main() {{
@@ -113,6 +114,7 @@ def render_main_rs(host: str, modules: Sequence[ModuleInfo], graph: Graph) -> st
         host=host,
         entries=_entries(modules),
         suppress=suppress,
+        fingerprint=graph.fingerprint(),
     )
 
 

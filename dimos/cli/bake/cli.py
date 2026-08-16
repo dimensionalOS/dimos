@@ -56,6 +56,7 @@ def emit_config(graph: Graph, modules: Sequence[ModuleInfo]) -> dict[str, object
             }
             for module in modules
         },
+        "graph": graph.fingerprint(),
         "session": session_config().to_wire(),
         "qos": graph.qos(),
         "suppress": list(graph.suppressed_topics()),
