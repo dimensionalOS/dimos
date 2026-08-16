@@ -36,6 +36,14 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 AdapterT = TypeVar("AdapterT")
 
 
+def _normalize_adapter_name(name: str) -> str:
+    """Normalize adapter names consistently for registration and lookup."""
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("Adapter name must be non-empty")
+    return key
+
+
 class LazyAdapterRegistry(Generic[AdapterT]):
     """Name-to-factory registry resolving ``"module:attr"`` paths on first use."""
 
@@ -60,17 +68,32 @@ class LazyAdapterRegistry(Generic[AdapterT]):
 
     def register_path(self, name: str, factory_path: str) -> None:
         """Register a lazy factory import path; conflicting duplicates raise."""
-        if ":" not in factory_path:
+        module_name, separator, attr = factory_path.partition(":")
+        if (
+            not factory_path.strip()
+            or separator != ":"
+            or factory_path.count(":") != 1
+            or not module_name
+            or not attr
+        ):
             raise ValueError(f"Invalid adapter factory path: {factory_path!r}")
-        key = name.lower()
+        key = _normalize_adapter_name(name)
+        if key in self._factories:
+            raise ValueError(f"Duplicate {self.kind} {key!r}: already registered directly")
         existing = self._factory_paths.get(key)
         if existing is not None and existing != factory_path:
             raise ValueError(f"Duplicate {self.kind} {key!r}: {existing!r} vs {factory_path!r}")
         self._factory_paths[key] = factory_path
 
     def register(self, name: str, cls: Callable[..., AdapterT]) -> None:
-        """Register a factory (class or callable) directly, last-wins."""
-        self._factories[name.lower()] = cls
+        """Register a factory directly; exact re-registration is idempotent."""
+        key = _normalize_adapter_name(name)
+        existing = self._factories.get(key)
+        if existing is cls:
+            return
+        if existing is not None or key in self._factory_paths:
+            raise ValueError(f"Duplicate {self.kind} {key!r}")
+        self._factories[key] = cls
 
     def create(self, name: str, **kwargs: Any) -> AdapterT:
         """Create an adapter instance by registered name.
@@ -87,7 +110,7 @@ class LazyAdapterRegistry(Generic[AdapterT]):
         return sorted(self._factory_paths.keys() | self._factories.keys())
 
     def _resolve_factory(self, name: str) -> Callable[..., AdapterT]:
-        key = name.lower()
+        key = _normalize_adapter_name(name)
         if key in self._factories:
             return self._factories[key]
         if key not in self._factory_paths:
