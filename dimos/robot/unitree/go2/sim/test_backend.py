@@ -46,13 +46,8 @@ pytestmark = [
 ]
 
 from dimos.robot.unitree.go2.sim import anchors, model as go2_model
-from dimos.robot.unitree.go2.sim.backend import (
-    BaseCondition,
-    Commands,
-    MujocoBackend,
-    RolloutPlan,
-    State,
-)
+from dimos.robot.unitree.go2.sim.backend import BaseCondition, Commands, RolloutPlan, State
+from dimos.robot.unitree.go2.sim.model import MujocoBackend
 
 STAND_Q = np.tile([0.0, 0.9, -1.8], 4)
 

@@ -81,7 +81,7 @@ def hanging_streams():
 
 @needs_mixed
 def test_segment_4_reproduces_the_frozen_instruments_numbers(mixed_streams):
-    from dimos.robot.unitree.go2.sim.backend import MujocoBackend
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
@@ -113,7 +113,7 @@ def test_the_tracker_is_detected_and_scores_the_body_channels(mixed_streams):
 def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
     """No tracker, sport-driven, hanging 70-85 deg off level: loads, replays,
     and the trunk stays pinned to the measured pose, clear of any floor."""
-    from dimos.robot.unitree.go2.sim.backend import MujocoBackend
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 

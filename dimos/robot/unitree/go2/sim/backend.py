@@ -17,9 +17,14 @@
 Everything above this seam — ingest, regimes, clip scheduling, channels, the
 fit — is simulator-agnostic. The backend never sees a regime, a channel or a
 fit: it is handed a :class:`RolloutPlan` and returns a :class:`Prediction`.
-MuJoCo implements it today; IsaacLab is the next backend, and PhysX shares no
-contact model with MuJoCo, so fitted VALUES will not transfer — the
-recordings, anchors, and method are what transfer.
+MuJoCo implements it today (:class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`);
+IsaacLab is the next backend, and PhysX shares no contact model with MuJoCo,
+so fitted VALUES will not transfer — the recordings, anchors, and method are
+what transfer.
+
+NO ENGINE IMPORT LIVES HERE, by design: this module is the seam, and importing
+the seam must never drag in a simulator — with two backends installed, using
+either would import both.
 
 Four expensive lessons are encoded in the types rather than left to comments:
 ``Knob.log`` because a bound must be judged in the parameter's own metric;
@@ -34,16 +39,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import enum
-from pathlib import Path
 from typing import Protocol
 
-import mujoco
 import numpy as np
 
-from dimos.robot.unitree.go2.sim import model as go2_model
-from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
-from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
-from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+from dimos.robot.unitree.go2.sim.ranges import Knob
 
 
 @dataclass(frozen=True)
@@ -165,172 +165,3 @@ class Backend(Protocol):
     def rollout(self, plan: RolloutPlan) -> Prediction:
         """Drive the plan and return what the real robot also measures."""
         ...
-
-
-class MujocoBackend:
-    """The menagerie Go2 behind the seam.
-
-    Deterministic by construction: a fresh model is compiled per rollout with
-    the currently applied knob values, so no state leaks between rollouts and
-    the same plan always yields the same prediction.
-    """
-
-    name = "mujoco"
-
-    def __init__(
-        self,
-        menagerie: Path | None = None,
-        *,
-        envelope: TorqueEnvelope | None = None,
-    ) -> None:
-        self._menagerie = menagerie
-        self._envelope = envelope
-        self._values: dict[str, float] = {}
-        self._dt: float | None = None
-
-    @property
-    def timestep(self) -> float:
-        if self._dt is None:
-            model = mujoco.MjModel.from_xml_path(str(go2_model.scene_path(self._menagerie)))
-            self._dt = float(model.opt.timestep)
-        return self._dt
-
-    def knobs(self) -> Mapping[str, Knob]:
-        return KNOBS
-
-    def apply(self, values: Mapping[str, float]) -> None:
-        unknown = set(values) - set(KNOBS)
-        if unknown:
-            raise ValueError(f"unknown knob(s) for {self.name}: {sorted(unknown)}")
-        self._values = dict(values)
-
-    def rollout(self, plan: RolloutPlan) -> Prediction:
-        model, data = go2_model.load(self._menagerie)
-        physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}
-        if physics:
-            go2_model.apply_physics(model, physics)
-        actuator_tau = self._values.get("actuator_tau", 0.0)
-        dt = float(model.opt.timestep)
-        feet = go2_model.foot_geom_ids(model)
-        pinned = plan.base is BaseCondition.PINNED
-
-        reinit = list(plan.reinit)
-        if not reinit or reinit[0].t > plan.t0:
-            raise ValueError("plan.reinit must start with the state at t0")
-
-        def snap(state: State) -> None:
-            data.qpos[:] = 0.0
-            data.qvel[:] = 0.0
-            data.qpos[3:7] = mat_to_quat(state.rot)
-            data.qpos[7:19] = state.q
-            data.qpos[2] = 0.30
-            mujoco.mj_forward(model, data)
-            low = float(np.min(data.geom_xpos[feet, 2])) - go2_model.FOOT_RADIUS
-            data.qpos[2] -= low  # lowest foot exactly on the floor
-            data.qvel[6:18] = state.dq
-            data.qvel[3:6] = state.rot @ state.gyro  # body rates -> world
-            if state.v_body is not None:
-                data.qvel[0:3] = state.rot @ state.v_body
-            mujoco.mj_forward(model, data)
-            if pinned:
-                data.qpos[2] = max(float(data.qpos[2]), 2.0)  # clear of the floor
-
-        snap(reinit[0])
-        pinned_qpos = data.qpos[0:7].copy()
-
-        # The virtual IMU: `mj_objectAcceleration(..., flg_local=1)` returns
-        # [angular, linear] in local coordinates and MuJoCo seeds the world
-        # body with -gravity, so the linear half IS specific force — ~9.8
-        # standing, ~0 in free fall — the same convention as rt/lowstate's
-        # accelerometer. Read AT THE `imu` SITE: 49 mm of lever arm is worth
-        # 1.8x on the landing residual (15.33 vs 8.61 RMS against a 9.01
-        # signal — read at the frame it is worse than predicting zero).
-        imu_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, go2_model.IMU_SITE)
-        imu_objtype = mujoco.mjtObj.mjOBJ_SITE
-        if imu_id < 0:  # a model without the sensor's mount point: fall back
-            imu_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
-            imu_objtype = mujoco.mjtObj.mjOBJ_BODY
-        acc6 = np.zeros(6)
-
-        cmds = plan.commands
-        applied = np.zeros(12)
-        ts: list[float] = []
-        qs: list[np.ndarray] = []
-        dqs: list[np.ndarray] = []
-        ps: list[np.ndarray] = []
-        rs: list[np.ndarray] = []
-        ats: list[float] = []
-        asim: list[np.ndarray] = []
-        wsim: list[np.ndarray] = []
-        tsim: list[np.ndarray] = []
-        reinit_t: list[float] = [plan.t0]
-        reinit_pos: list[np.ndarray] = [data.qpos[0:3].copy()]
-        reinit_rot: list[np.ndarray] = [quat_to_mat(data.qpos[3:7].copy())]
-        si = 1
-
-        n = int(plan.duration / dt)
-        for step in range(n):
-            t = plan.t0 + step * dt
-            if si < len(reinit) and t >= reinit[si].t:
-                snap(reinit[si])
-                if pinned:
-                    pinned_qpos = data.qpos[0:7].copy()
-                applied[:] = 0.0
-                reinit_t.append(t)
-                reinit_pos.append(data.qpos[0:3].copy())
-                reinit_rot.append(quat_to_mat(data.qpos[3:7].copy()))
-                si += 1
-
-            k = int(np.clip(np.searchsorted(cmds.t, t, "right") - 1, 0, len(cmds.t) - 1))
-            tau = (
-                cmds.kp[k] * (cmds.q[k] - data.qpos[7:19])
-                + cmds.kd[k] * (cmds.dq[k] - data.qvel[6:18])
-                + cmds.tau_ff[k]
-            )
-            tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
-            applied = actuator_step(
-                applied, tau, dt, actuator_tau, dq=data.qvel[6:18], envelope=self._envelope
-            )
-            data.ctrl[:] = applied
-            mujoco.mj_step(model, data)
-            if pinned:
-                # The rope holds the trunk, the feet never touch anything. A
-                # free base would drop it onto a floor the real robot never
-                # met and score the impact as plant error.
-                data.qpos[0:7] = pinned_qpos
-                data.qvel[0:6] = 0.0
-
-            # Every step, not every fifth: an impact is ~20 ms wide.
-            # Both exist at runtime; the bundled mujoco stubs omit them.
-            mujoco.mj_rnePostConstraint(model, data)  # type: ignore[attr-defined]
-            mujoco.mj_objectAcceleration(  # type: ignore[attr-defined]
-                model, data, imu_objtype, imu_id, acc6, 1
-            )
-            ats.append(t)
-            asim.append(acc6[3:].copy())
-            # Angular rate in the trunk's own frame — the convention
-            # rt/lowstate's gyroscope reports in.
-            wsim.append(quat_to_mat(data.qpos[3:7]).T @ data.qvel[3:6])
-            tsim.append(applied.copy())
-
-            if step % 5 == 0:  # pose-rate log at 100 Hz
-                ts.append(t)
-                qs.append(data.qpos[7:19].copy())
-                dqs.append(data.qvel[6:18].copy())
-                ps.append(data.qpos[0:3].copy())
-                rs.append(quat_to_mat(data.qpos[3:7].copy()))
-
-        return Prediction(
-            t=np.array(ts),
-            q=np.array(qs).reshape(-1, 12),
-            dq=np.array(dqs).reshape(-1, 12),
-            body_pos=np.array(ps).reshape(-1, 3),
-            body_rot=np.array(rs).reshape(-1, 3, 3),
-            at=np.array(ats),
-            imu_accel=np.array(asim).reshape(-1, 3),
-            imu_gyro=np.array(wsim).reshape(-1, 3),
-            tau=np.array(tsim).reshape(-1, 12),
-            reinit_t=np.array(reinit_t),
-            reinit_pos=np.array(reinit_pos).reshape(-1, 3),
-            reinit_rot=np.array(reinit_rot).reshape(-1, 3, 3),
-        )
