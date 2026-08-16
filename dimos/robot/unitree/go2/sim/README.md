@@ -444,10 +444,92 @@ to that instrument. Physical expectation for two WiFi legs + board cycle is
 constant — the default stays 0, and pinning the number wants a measurement
 (e.g. a hardware timestamp echo), not a fit on the referee.
 
-Caveat for probe readers: the `gait_hz` estimator is bimodal under some
-probes (the autocorrelation peak jumps to the step harmonic, reading ~5 Hz),
-so single-rollout `gait_hz` cells and the losses they inflate deserve
-suspicion; the other statistics move smoothly.
+Caveat for probe readers, since fixed: the `gait_hz` estimator was bimodal
+under some probes — the "first local maximum" rule could lock onto a noise
+ripple near the step harmonic (measured: a −0.010 ripple at 3.85 Hz chosen
+over a +0.171 stride peak at 1.72 Hz). The estimator now yields to a peak
+stronger by `GAIT_PEAK_MARGIN`; the fix fires NOWHERE on the canonical
+default grounding (real side, base and all four floor rollouts identical
+before and after), so every default-path number stands. Cells where the sim
+genuinely doubles its bob can still read high, with the replicate spread
+saying so.
+
+---
+
+## 5c. The mechanisms, measured — and the proxy verdict
+
+§5b earned its mechanisms a fitted value each; this section replaces the
+fits with MEASUREMENTS (`sysid.loop`), and reports honestly how much of the
+gap survives. Spoiler: most of it.
+
+**The loop, measured leg by leg** (2026-08-16 freewalk session):
+
+* **Command transport = 1.34 ms** (p10-p90 1.29-1.48): the recordings carry
+  the same command on `policy/lowcmd` and `rt/lowcmd`; matching all 3539
+  messages by exact 12-float payload times the leg directly
+  (`sysid.loop.transport_leg`).
+* **Target->plant leg ≈ 0**: shifting the recorded command timeline and
+  replaying Mode A is a latency knob scored without any referee
+  (`sysid.loop.command_shift_sweep`) — sharply resolved (44% depth over
+  ±30 ms), optimum −5..+2 ms, +10 ms is 9-12% worse.
+* **Sensor noise is 2-3x BELOW the training levels**: the >20 Hz residual
+  (`sysid.loop.sensor_noise`) measures dq 0.29 rad/s RMS (×0.33 of
+  `ObsNoise`'s ±1.5), gyro 0.073 (×0.63), q 0.0032 (×0.55), gravity ~0
+  (×0.01 — the attitude filter smooths it clean).
+* **The '50 Hz' executor actually runs at 44 Hz**: measured inter-command
+  intervals (`sysid.loop.control_timing`) have median 22.2-22.3 ms on ALL
+  THREE policy recordings, σ 3.5 ms, plus a dropout tail (71 intervals
+  >30 ms on the freewalk file; 8% of intervals on the rubber sessions, max
+  ~200 ms). Zero free parameters; replayed as a sequence by
+  `rollout_policy(control_intervals=...)`.
+
+Adding the leg bounds: 1.3 ms of command transport + a state side bounded by
+the ~3.9 ms lowstate batch spacing + ~0-2 ms executor software =
+`LATENCY_BAND_S` **(1.3, 6) ms**. The fitted 10-14 ms does not fit inside it.
+
+**The measured-mechanism table** (`sysid.meta mechanisms`, 3 replicates,
+shared base floor; fit recording, hard floor / held-out rubber freewalk
+span):
+
+| grounding loss              | fit rec        | held-out span  |
+|-----------------------------|----------------|----------------|
+| ideal loop                  | 5.24 ± .17     | 4.14 ± .23     |
+| FITTED lat 10 ms + noise ×1 | **2.82 ± .18** | **3.54 ± .08** |
+| latency at measured band    | 5.24-6.82      | 4.09-4.28      |
+| noise = measured            | 5.28 ± .23     | 4.18 ± .06     |
+| timing = measured           | 5.57 ± .23     | 4.81 ± .26     |
+| timing+noise+lat 6 ms       | 4.74 ± .14     | 3.76 ± .60     |
+
+Every mechanism at its measured value, alone or stacked, closes at most
+**~10% of the loss** on either recording; the fitted point closes ~46%.
+Two informative surprises: the measured sensor noise is too small to excite
+any body motion at all, and the measured timing makes the sim SLOWER
+(speed 0.483→0.439 vs real 0.571 on the fit recording) — the real robot
+walks faster than the sim while ticking its policy slower, so the 44 Hz
+clock deepens the speed deficit rather than explaining it, and neither
+jitter nor dropouts are the missing oscillation mechanism.
+
+**The proxy question, settled** (`sysid.meta latency` — `action_latency` as
+a bounded loop-2 knob, selected on the fit recording, reported on the
+held-out span; the select/report split is what makes tuning against the
+grounding legitimate):
+
+* With every measured mechanism ON, the unbounded search still wants
+  **12 ms** (select loss 2.83; 16+ ms destabilises). Bounded to the measured
+  band it tops out at 6 ms / 4.74. On the held-out span the preference
+  TRANSFERS: 0 ms → 4.20, 6 ms → 3.76, 12 ms → 3.23.
+* Bare (no other mechanisms) the landscape is noisy (10 ms: ±4.01) and the
+  held-out gain of its 8 ms pick is marginal (4.14 → 4.02).
+
+**Verdict: `action_latency` at 10-14 ms is a PROXY.** The loop cannot
+physically contain it — every leg is measured or bounded, and their sum is
+under 6 ms — yet the referee wants twice that, and the preference survives a
+held-out split. So the delay stands in for a real missing mechanism that is
+NOT a transport delay (candidates: actuator/drive dynamics beyond the
+first-order `actuator_tau`, gear backlash, foot-contact compliance — things
+that add phase lag without being a clock). The mechanisms stay default-off;
+nothing here earned a default promotion, and the honest headline is that
+~90% of the §5b gap survives measured parameterisation.
 
 ---
 
@@ -459,12 +541,15 @@ score, the fit (pins/searches, seeded restarts, paired-SE harvest, LOO-spread
 stopping, median + spread), segment-parallel rollouts, loop 2 (`sysid.ground`:
 closed-loop Mode B, the 11 statistics, pluggable noise floors, SNR reports),
 net-identity verification (`sysid.verify_net`), the meta-search scaffolding
-(`sysid.meta`), `--view` on both modes (ghost, `--speed`, `--no-reinit`;
-the viewer and the headless run are the same function), loop 2's
-identifiability probe (`sysid.probe`) and the three default-off loop
-mechanisms it vindicated (`action_latency`, `ObsNoise`, the torque
-envelope — §5b). Acceptance is bit-identical to the frozen instrument, and
-parallel is bit-identical to serial.
+(`sysid.meta`, including the measured-mechanism table and the select/report
+latency search — §5c), `--view` on both modes (ghost, `--speed`,
+`--no-reinit`; the viewer and the headless run are the same function),
+loop 2's identifiability probe (`sysid.probe`), the four default-off loop
+mechanisms (`action_latency`, `ObsNoise`, `control_intervals`, the torque
+envelope — §5b/§5c), and the loop-measurement instruments (`sysid.loop`:
+transport leg, control timing, sensor noise, command-shift sweep — every
+mechanism's value is measured, not fitted). Acceptance is bit-identical to
+the frozen instrument, and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each);
 the robot-repeat noise floor (needs two recordings of the same walk).

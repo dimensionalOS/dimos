@@ -52,6 +52,8 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+import numpy as np
+
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.fit import (
@@ -63,15 +65,24 @@ from dimos.robot.unitree.go2.sim.sysid.fit import (
     merged,
 )
 from dimos.robot.unitree.go2.sim.sysid.ground import (
+    ObsNoise,
     Report,
     ground,
     real_summary,
     sim_noise,
     usable_floor,
 )
-from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_declarations, read_streams
+from dimos.robot.unitree.go2.sim.sysid.loop import (
+    LATENCY_BAND_S,
+    sensor_noise,
+    timing_of,
+    transport_leg,
+)
+from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
 from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
+from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 
 @dataclass(frozen=True)
@@ -253,6 +264,253 @@ def experiment(
     return "\n".join(lines)
 
 
+# ------------------------------------------- the measured-mechanism grounding
+
+
+@dataclass(frozen=True)
+class MeasuredLoop:
+    """One recording span's measured loop mechanisms — no fitted values."""
+
+    noise: ObsNoise  # the >20 Hz sensor floor, per channel
+    intervals: tuple[float, ...]  # the executor's inter-command sequence, s
+    transport_ms: float | None  # median command-transport leg, when measurable
+
+
+def measured_loop(
+    recording: str | Path, st: Streams, *, start: float, seconds: float
+) -> MeasuredLoop:
+    """Measure every loop mechanism this recording span can parameterise."""
+    try:
+        leg: float | None = transport_leg(recording).median_ms
+    except ValueError:
+        leg = None
+    return MeasuredLoop(
+        noise=sensor_noise(st, t0=start, t1=start + seconds).obs_noise(),
+        intervals=tuple(timing_of(st, t0=start, t1=start + seconds).intervals),
+        transport_ms=leg,
+    )
+
+
+def _replicated(
+    name: str, replicates: int, base: dict[str, float], tau: float, **kw: object
+) -> list[Probe]:
+    return [
+        Probe(f"{name} #{i}", dict(base), tau, perturb_seed=10 + i, noise_seed=i, **kw)  # type: ignore[arg-type]
+        for i in range(replicates)
+    ]
+
+
+def mechanism_probes(
+    base_physics: dict[str, float],
+    base_tau: float,
+    ml: MeasuredLoop,
+    *,
+    replicates: int = 3,
+    fitted: tuple[float, float] = (0.010, 1.0),
+) -> list[Probe]:
+    """Each loop mechanism at its MEASURED value, alone and stacked, plus the
+    previously FITTED point (latency 10 ms + training noise) for comparison."""
+    lo, hi = LATENCY_BAND_S
+    configs: list[tuple[str, dict[str, object]]] = [
+        ("ideal loop", {}),
+        (
+            f"FITTED lat={fitted[0] * 1e3:g}ms+noise x{fitted[1]:g}",
+            {"action_latency": fitted[0], "noise_scale": fitted[1]},
+        ),
+        (f"lat={lo * 1e3:g}ms (cmd leg)", {"action_latency": lo}),
+        (f"lat={hi * 1e3:g}ms (band top)", {"action_latency": hi}),
+        ("noise=measured", {"noise": ml.noise}),
+        ("timing=measured", {"timing": ml.intervals}),
+        ("timing+noise", {"timing": ml.intervals, "noise": ml.noise}),
+        (
+            f"timing+noise+lat={lo * 1e3:g}ms",
+            {"timing": ml.intervals, "noise": ml.noise, "action_latency": lo},
+        ),
+        (
+            f"timing+noise+lat={hi * 1e3:g}ms",
+            {"timing": ml.intervals, "noise": ml.noise, "action_latency": hi},
+        ),
+    ]
+    out: list[Probe] = []
+    for name, kw in configs:
+        out += _replicated(name, replicates, base_physics, base_tau, **kw)
+    return out
+
+
+def grouped_losses(spec: Spectrum) -> dict[str, tuple[float, float, list[Summary]]]:
+    """Mean loss, half-spread and the summaries per ``name #i`` probe group."""
+    groups: dict[str, list[Summary]] = {}
+    for probe, s in spec.results:
+        groups.setdefault(probe.name.rsplit(" #", 1)[0], []).append(s)
+    out = {}
+    for name, ss in groups.items():
+        losses = [spec.loss(s) for s in ss]
+        out[name] = (
+            float(np.mean(losses)),
+            float((max(losses) - min(losses)) / 2),
+            ss,
+        )
+    return out
+
+
+def mechanism_table(spec: Spectrum) -> str:
+    """The measured-mechanism comparison, aggregated over replicates."""
+    real = spec.real.as_dict()
+    rows = grouped_losses(spec)
+    lines = [
+        f"MEASURED MECHANISMS  base={spec.preset}  {spec.seconds:.0f}s from "
+        f"t={spec.start:.0f}s  ({len(next(iter(rows.values()))[2])} replicates, "
+        "loss = grounding RMS-SNR over the shared base floor)",
+        "",
+        f"{'config':<28}{'loss':>12}  " + "".join(f"{k:>11}" for k in FOCUS),
+        f"{'(real)':<28}{'':>12}  " + "".join(f"{real[k]:11.3f}" for k in FOCUS),
+        f"{'(base, unperturbed)':<28}{spec.loss(spec.base):>12.2f}  "
+        + "".join(f"{spec.base.as_dict()[k]:11.3f}" for k in FOCUS),
+    ]
+    for name, (loss, spread, ss) in rows.items():
+        means = {k: float(np.mean([s.as_dict()[k] for s in ss])) for k in FOCUS}
+        lines.append(
+            f"{name:<28}{loss:>7.2f} ±{spread:4.2f}  " + "".join(f"{means[k]:11.3f}" for k in FOCUS)
+        )
+    return "\n".join(lines)
+
+
+def run_mechanisms(
+    recording: str | Path,
+    policy_bin: str | Path,
+    *,
+    preset: str = "measured",
+    start: float = 6.0,
+    seconds: float | None = None,
+    replicates: int = 3,
+    workers: int = 1,
+) -> None:
+    """Ground each mechanism at its measured value — §5b redone without fits."""
+    st = read_streams(recording)
+    span = float(st.wt[-1]) - start if seconds is None else seconds
+    ml = measured_loop(recording, st, start=start, seconds=span)
+    p = load_preset(preset)
+    probes = mechanism_probes(dict(p.physics), p.actuator_tau, ml, replicates=replicates)
+    spec = spectrum(
+        recording,
+        policy_bin,
+        probes,
+        preset=preset,
+        start=start,
+        seconds=seconds,
+        workers=workers,
+    )
+    n = ml.noise
+    print(
+        f"measured: transport {ml.transport_ms and round(ml.transport_ms, 2)} ms | "
+        f"timing mean {np.mean(ml.intervals) * 1e3:.2f} ms "
+        f"({len(ml.intervals)} intervals) | noise dq ±{n.dq:.3f} gyro ±{n.gyro:.4f} "
+        f"q ±{n.q:.5f} grav ±{n.gravity:.5f}"
+    )
+    print(mechanism_table(spec))
+
+
+# --------------------------------------------------- the latency proxy search
+
+
+def latency_probes(
+    base_physics: dict[str, float],
+    base_tau: float,
+    grid_s: tuple[float, ...],
+    ml: MeasuredLoop | None,
+    *,
+    replicates: int = 3,
+) -> list[Probe]:
+    out: list[Probe] = []
+    extra: dict[str, object] = {"timing": ml.intervals, "noise": ml.noise} if ml is not None else {}
+    for lat in grid_s:
+        out += _replicated(
+            f"lat={lat * 1e3:g}ms",
+            replicates,
+            base_physics,
+            base_tau,
+            action_latency=lat,
+            **extra,
+        )
+    return out
+
+
+def run_latency(
+    select_rec: str | Path,
+    report_rec: str | Path,
+    policy_bin: str | Path,
+    *,
+    preset: str = "measured",
+    grid_ms: tuple[float, ...] = (0.0, 1.5, 3.0, 4.5, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0),
+    with_measured: bool = True,
+    replicates: int = 3,
+    workers: int = 1,
+    select_start: float = 6.0,
+    select_seconds: float | None = None,
+    report_start: float = 6.0,
+    report_seconds: float | None = None,
+) -> None:
+    """``action_latency`` as a loop-2 knob, selected/reported on SPLIT recordings.
+
+    The train/select/report split is what makes tuning against the grounding
+    legitimate: the grid is scored on ``select_rec``, the argmin (once bounded
+    to the measured band, once free) is then quoted on ``report_rec``, which
+    the selection never read. If the UNBOUNDED search pushes far above
+    :data:`LATENCY_BAND_S`, the fitted 10 ms was a PROXY — the one available
+    knob standing in for a mechanism that is not a transport delay.
+    """
+
+    def one(
+        rec: str | Path, start: float, seconds: float | None, grid: tuple[float, ...]
+    ) -> dict[float, tuple[float, float]]:
+        st = read_streams(rec)
+        span = float(st.wt[-1]) - start if seconds is None else seconds
+        ml = measured_loop(rec, st, start=start, seconds=span) if with_measured else None
+        p = load_preset(preset)
+        probes = latency_probes(dict(p.physics), p.actuator_tau, grid, ml, replicates=replicates)
+        spec = spectrum(
+            rec, policy_bin, probes, preset=preset, start=start, seconds=seconds, workers=workers
+        )
+        return {
+            float(name.split("=")[1].removesuffix("ms")) / 1e3: (loss, spread)
+            for name, (loss, spread, _ss) in grouped_losses(spec).items()
+        }
+
+    mech = "measured timing+noise ON" if with_measured else "bare (no other mechanisms)"
+    print(f"SELECT  {Path(str(select_rec)).name}  {mech}")
+    sel = one(select_rec, select_start, select_seconds, tuple(x / 1e3 for x in grid_ms))
+    for lat, (loss, spread) in sorted(sel.items()):
+        print(f"  lat {lat * 1e3:5.1f} ms  loss {loss:6.2f} ±{spread:4.2f}")
+    bounded = min((lat for lat in sel if lat <= LATENCY_BAND_S[1]), key=lambda k: sel[k][0])
+    unbounded = min(sel, key=lambda k: sel[k][0])
+    print(f"  selected: bounded-to-measured {bounded * 1e3:g} ms, unbounded {unbounded * 1e3:g} ms")
+
+    grid_rep = tuple(sorted({0.0, bounded, unbounded}))
+    print(f"\nREPORT  {Path(str(report_rec)).name}  (held out from the selection)")
+    rep = one(report_rec, report_start, report_seconds, grid_rep)
+    for lat, (loss, spread) in sorted(rep.items()):
+        tag = (
+            " <- bounded" * (lat == bounded and lat != 0.0)
+            + " <- unbounded" * (lat == unbounded and lat != 0.0)
+            + " (reference)" * (lat == 0.0)
+        )
+        print(f"  lat {lat * 1e3:5.1f} ms  loss {loss:6.2f} ±{spread:4.2f}{tag}")
+
+    band = f"{LATENCY_BAND_S[0] * 1e3:g}-{LATENCY_BAND_S[1] * 1e3:g} ms"
+    if unbounded > LATENCY_BAND_S[1]:
+        how = f"{unbounded / LATENCY_BAND_S[1]:.1f}x the measured band's top ({band})"
+        print(
+            f"\nVERDICT: the unbounded search wants {unbounded * 1e3:g} ms — {how}. "
+            "A latency the loop cannot physically contain is a PROXY: it moves the right "
+            "statistics for the wrong reason, and the missing mechanism is still missing."
+        )
+    else:
+        print(
+            f"\nVERDICT: the unbounded search stays within the measured band ({band}) — "
+            "the latency mechanism is real and its measured value carries it."
+        )
+
+
 # ------------------------------------------------------------ the outer study
 
 
@@ -349,6 +607,38 @@ def main() -> None:
     ot.add_argument("--max-studies", type=int, default=12)
     ot.add_argument("--out", default=None, help="JSON log path, written after every trial")
 
+    me = sub.add_parser("mechanisms", help="ground each loop mechanism at its MEASURED value")
+    me.add_argument("recording")
+    me.add_argument("policy_bin")
+    me.add_argument("--preset", default="measured")
+    me.add_argument("--start", type=float, default=6.0)
+    me.add_argument("--seconds", type=float, default=None)
+    me.add_argument("--replicates", type=int, default=3)
+    me.add_argument("--workers", type=int, default=1)
+
+    la = sub.add_parser("latency", help="the proxy question: select on one, report on another")
+    la.add_argument("select_recording")
+    la.add_argument("report_recording")
+    la.add_argument("policy_bin")
+    la.add_argument("--preset", default="measured")
+    la.add_argument(
+        "--grid-ms",
+        type=float,
+        nargs="+",
+        default=[0.0, 1.5, 3.0, 4.5, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0],
+    )
+    la.add_argument(
+        "--bare",
+        action="store_true",
+        help="search latency ALONE (no measured timing/noise) — the fitted regime",
+    )
+    la.add_argument("--replicates", type=int, default=3)
+    la.add_argument("--workers", type=int, default=1)
+    la.add_argument("--select-start", type=float, default=6.0)
+    la.add_argument("--select-seconds", type=float, default=None)
+    la.add_argument("--report-start", type=float, default=6.0)
+    la.add_argument("--report-seconds", type=float, default=None)
+
     args = ap.parse_args()
     if args.cmd == "experiment":
         print(
@@ -360,6 +650,31 @@ def main() -> None:
                 seconds=args.seconds,
                 seeds=args.seeds,
             )
+        )
+    elif args.cmd == "mechanisms":
+        run_mechanisms(
+            args.recording,
+            args.policy_bin,
+            preset=args.preset,
+            start=args.start,
+            seconds=args.seconds,
+            replicates=args.replicates,
+            workers=args.workers,
+        )
+    elif args.cmd == "latency":
+        run_latency(
+            args.select_recording,
+            args.report_recording,
+            args.policy_bin,
+            preset=args.preset,
+            grid_ms=tuple(args.grid_ms),
+            with_measured=not args.bare,
+            replicates=args.replicates,
+            workers=args.workers,
+            select_start=args.select_start,
+            select_seconds=args.select_seconds,
+            report_start=args.report_start,
+            report_seconds=args.report_seconds,
         )
     else:
         run_outer(
