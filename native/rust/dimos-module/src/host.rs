@@ -125,16 +125,35 @@ pub struct HostSpec {
     pub graph_json: &'static str,
 }
 
+/// What the command line asks the binary to do. A baked host takes its whole
+/// wiring on the launch line, so the only arguments it knows are `graph`.
+#[derive(Debug, PartialEq)]
+enum Action {
+    Run,
+    Graph { raw: bool },
+    Unknown(String),
+}
+
+fn parse_args(args: impl IntoIterator<Item = String>) -> Action {
+    let args: Vec<String> = args.into_iter().collect();
+    match args.first().map(String::as_str) {
+        None => Action::Run,
+        Some("graph") => Action::Graph {
+            raw: args.iter().any(|a| a == "--json"),
+        },
+        Some(other) => Action::Unknown(other.to_string()),
+    }
+}
+
 /// Entry point of a baked host binary. Never returns.
 pub fn host_main(spec: &HostSpec) -> ! {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        None => run_host(spec),
-        Some("graph") => {
-            print_graph(spec, args.iter().any(|a| a == "--json"));
+    match parse_args(std::env::args().skip(1)) {
+        Action::Run => run_host(spec),
+        Action::Graph { raw } => {
+            println!("{}", render_graph(spec, raw));
             std::process::exit(0)
         }
-        Some(other) => {
+        Action::Unknown(other) => {
             eprintln!(
                 "{}: unknown argument {other:?}; usage: {0} [graph [--json]]",
                 spec.name
@@ -144,17 +163,15 @@ pub fn host_main(spec: &HostSpec) -> ! {
     }
 }
 
-fn print_graph(spec: &HostSpec, raw: bool) {
+/// The baked graph as `<host> graph` prints it. Unparseable JSON falls back to
+/// the raw string, so the operator sees what was baked either way.
+fn render_graph(spec: &HostSpec, raw: bool) -> String {
     if raw {
-        println!("{}", spec.graph_json);
-        return;
+        return spec.graph_json.to_string();
     }
-    match serde_json::from_str::<Value>(spec.graph_json)
+    serde_json::from_str::<Value>(spec.graph_json)
         .and_then(|v| serde_json::to_string_pretty(&v))
-    {
-        Ok(pretty) => println!("{pretty}"),
-        Err(_) => println!("{}", spec.graph_json),
-    }
+        .unwrap_or_else(|_| spec.graph_json.to_string())
 }
 
 fn run_host(spec: &HostSpec) -> ! {
@@ -496,6 +513,51 @@ mod tests {
             thread_name("a_very_long_module_name").len(),
             MAX_THREAD_NAME
         );
+    }
+
+    fn argv(args: &[&str]) -> Action {
+        parse_args(args.iter().map(|a| a.to_string()))
+    }
+
+    #[test]
+    fn bare_argv_runs_the_host() {
+        assert_eq!(argv(&[]), Action::Run);
+    }
+
+    #[test]
+    fn graph_argv_selects_pretty_or_raw() {
+        assert_eq!(argv(&["graph"]), Action::Graph { raw: false });
+        assert_eq!(argv(&["graph", "--json"]), Action::Graph { raw: true });
+    }
+
+    /// The wiring arrives on the launch line, so a topic flag is a caller that
+    /// thinks it is driving a lone module. Naming it beats ignoring it.
+    #[test]
+    fn a_topic_flag_is_an_unknown_argument() {
+        assert_eq!(
+            argv(&["--lidar", "dimos/lidar/sensor_msgs.PointCloud2"]),
+            Action::Unknown("--lidar".to_string())
+        );
+    }
+
+    fn graph_spec(graph_json: &'static str) -> HostSpec {
+        HostSpec {
+            graph_json,
+            ..spec_with("{}")
+        }
+    }
+
+    #[test]
+    fn render_graph_pretty_prints_unless_asked_for_raw() {
+        let spec = graph_spec(r#"{"host":"go2-nav"}"#);
+        assert_eq!(render_graph(&spec, true), r#"{"host":"go2-nav"}"#);
+        assert_eq!(render_graph(&spec, false), "{\n  \"host\": \"go2-nav\"\n}");
+    }
+
+    #[test]
+    fn render_graph_falls_back_to_the_raw_string() {
+        let spec = graph_spec("not json");
+        assert_eq!(render_graph(&spec, false), "not json");
     }
 
     #[test]

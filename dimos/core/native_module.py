@@ -258,6 +258,15 @@ class NativeModule(Module):
         # A blueprint builds its config before global config is settled.
         return pinned.rebased()
 
+    def _argv(self, topics: dict[str, str]) -> list[str]:
+        """The command line the native process is spawned with."""
+        cmd = [self.config.executable]
+        for name, topic_str in topics.items():
+            cmd.extend([f"--{name}", topic_str])
+        cmd.extend(self.config.to_cli_args())
+        cmd.extend(self.config.extra_args)
+        return cmd
+
     def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
@@ -283,12 +292,7 @@ class NativeModule(Module):
             return
 
         topics = self._collect_topics()
-
-        cmd = [self.config.executable]
-        for name, topic_str in topics.items():
-            cmd.extend([f"--{name}", topic_str])
-        cmd.extend(self.config.to_cli_args())
-        cmd.extend(self.config.extra_args)
+        cmd = self._argv(topics)
 
         # Built before the spawn: a config that cannot be serialized must fail
         # without leaving a child blocked on a stdin line it will never get.

@@ -105,6 +105,14 @@ def test_member_configs_default_and_are_overridable():
     host.stop()
 
 
+def test_a_baked_host_spawns_its_binary_with_no_arguments():
+    host = host_class()()
+    # What the base class would have sent, and what the binary exits 2 on.
+    assert "--mapper_config" in host.config.to_cli_args()
+    assert host._argv({"lidar": "dimos/lidar", "path": "dimos/path"}) == ["dist/go2-nav"]
+    host.stop()
+
+
 def test_stdin_blob_nests_one_section_per_member():
     host = host_class()()
     topics = {

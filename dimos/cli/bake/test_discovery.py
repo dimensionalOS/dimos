@@ -14,7 +14,9 @@
 
 """Tests for the bake registry: what a Cargo.toml has to say to be bakeable."""
 
+import importlib
 from pathlib import Path
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -25,6 +27,9 @@ from dimos.cli.bake.discovery import (
     select_modules,
 )
 from dimos.cli.bake.errors import BakeError
+from dimos.cli.bake.graph import topic_for
+from dimos.core.stream import In, Out
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 
 MANIFEST = """
 [package]
@@ -133,3 +138,24 @@ def test_the_real_repo_registers_the_two_shipped_modules():
     assert {"ray_tracing", "mls_planner"} <= set(registry)
     assert registry["mls_planner"].threads == 2
     assert "Registered native modules" in render_registry(registry)
+
+
+def wrapper_ports(python_ref: str) -> dict[str, type]:
+    """The python wrapper's ports, keyed by name, as message classes."""
+    module_name, _, class_name = python_ref.partition(":")
+    wrapper = getattr(importlib.import_module(module_name), class_name)
+    return {
+        name: get_args(hint)[0]
+        for name, hint in get_type_hints(wrapper).items()
+        if get_origin(hint) in (In, Out)
+    }
+
+
+def test_every_baked_port_lands_on_the_key_its_python_wrapper_subscribes_to():
+    """A manifest naming the rust payload rather than the dimos message goes dark."""
+    for module in discover_modules().values():
+        ports = wrapper_ports(module.python_ref)
+        for port, msg_type in module.ports.items():
+            assert port in ports, f"{module.id}.{port} is not a port of {module.python_ref}"
+            subscribed = ZenohTopic(f"dimos/{port}", ports[port]).key_expr
+            assert topic_for(port, msg_type) == subscribed

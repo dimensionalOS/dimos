@@ -69,7 +69,8 @@ pub struct MlsPlanner {
     #[output(encode = PointCloud2::encode)]
     nodes: Output<PointCloud2>,
 
-    #[output(encode = Path::encode)]
+    // The wire payload is a Path. dimos names the channel LineSegments3D.
+    #[output(encode = Path::encode, msg = "LineSegments3D")]
     node_edges: Output<Path>,
 
     #[output(encode = Path::encode)]
