@@ -44,9 +44,10 @@ class LowCmd(PrettyMsg):
     fan: np.ndarray  # u8[2]
     gpio: int
     reserve: int
-    # NOTE: the SDK's trailing `crc` (uint32) is absent on this Go2's firmware
-    # wire format — verified against the recording (body ends after `reserve`),
-    # matching the same omission in LowState.
+    crc: int
+    # `crc` is real: an earlier "absent on this firmware" note was an artifact
+    # of the CDR decoder's struct-alignment bug (see cdr.py), whose phantom
+    # padding bytes exactly covered it.
 
     __cdr_fields__ = [
         ("head", ("array", "u8", 2)),
@@ -62,4 +63,5 @@ class LowCmd(PrettyMsg):
         ("fan", ("array", "u8", 2)),
         ("gpio", "u8"),
         ("reserve", "u32"),
+        ("crc", "u32"),
     ]
