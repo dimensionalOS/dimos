@@ -111,6 +111,13 @@ def pitch_roll_of(quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return pitch, roll
 
 
+# A candidate first peak yields to a peak this much stronger (normalised-ac
+# units). Measured on the freewalk grounding: the pathological lock chose a
+# -0.010 ripple at 3.85 Hz over a +0.171 peak at 1.72 Hz (margin 0.18), while
+# every benign ambiguity measured sits under 0.05 — so 0.1 separates them.
+GAIT_PEAK_MARGIN = 0.1
+
+
 def gait_frequency(z: np.ndarray, *, rate: float = RESAMPLE_HZ) -> float:
     """Bob frequency, from the autocorrelation of the high-passed height.
 
@@ -118,6 +125,14 @@ def gait_frequency(z: np.ndarray, *, rate: float = RESAMPLE_HZ) -> float:
     the fundamental. Autocorrelation asks a steadier question — what delay
     does this signal most resemble itself at — and the first peak inside the
     gait band is the stride, not a harmonic of it.
+
+    The first peak is kept UNLESS another peak beats it by
+    :data:`GAIT_PEAK_MARGIN`: under some closed-loop probes the first local
+    maximum is a noise ripple at the step harmonic (~2x the stride reading)
+    an order of magnitude weaker than the true stride peak behind it, which
+    made single-rollout ``gait_hz`` bimodal — a draw, not a measurement. Two
+    comparable peaks (a genuine fundamental/harmonic pair) still resolve to
+    the first, exactly as before.
     """
     bob = z - _moving_average(z, int(rate))  # drop the drift around the room
     bob = bob - bob.mean()
@@ -133,7 +148,13 @@ def gait_frequency(z: np.ndarray, *, rate: float = RESAMPLE_HZ) -> float:
     # first local maximum, not the global one: at low frequencies the envelope
     # can rise again and outscore the true stride peak.
     peaks = np.where((window[1:-1] > window[:-2]) & (window[1:-1] >= window[2:]))[0] + 1
-    idx = int(peaks[0]) if len(peaks) else int(np.argmax(window))
+    if len(peaks):
+        idx = int(peaks[0])
+        strongest = int(peaks[np.argmax(window[peaks])])
+        if window[strongest] > window[idx] + GAIT_PEAK_MARGIN:
+            idx = strongest
+    else:
+        idx = int(np.argmax(window))
     return float(rate / (lo + idx))
 
 

@@ -48,6 +48,17 @@ def test_gait_frequency_finds_the_stride_not_a_harmonic():
     assert gait_frequency(z) == pytest.approx(2.0, abs=0.15)
 
 
+def test_gait_frequency_does_not_lock_onto_a_noise_ripple():
+    """The bimodality fix: a weak first local maximum (a noise ripple near the
+    step harmonic) must yield to a much stronger stride peak behind it, so a
+    probe's gait_hz is a measurement rather than a draw. This seed made the
+    pre-fix estimator read ~3 Hz on a clean 1.5 Hz gait."""
+    rng = np.random.default_rng(4)
+    t = np.arange(0, 20, 0.01)
+    z = 0.01 * np.sin(2 * np.pi * 1.5 * t) + 0.004 * rng.normal(size=len(t))
+    assert gait_frequency(z) == pytest.approx(1.5, abs=0.1)
+
+
 def test_gain_recovers_slope_and_lag():
     rng = np.random.default_rng(0)
     t = np.arange(0, 40, 0.01)
