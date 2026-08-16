@@ -184,6 +184,29 @@ def test_a_pinned_base_holds_the_trunk_and_frees_the_legs():
     assert np.abs(pred.q - pred.q[0]).max() > 0.1  # commands drive the legs
 
 
+def test_a_suspended_clip_repins_to_the_measured_orientation_not_t0s():
+    """The robot hung 70-85 deg off level and MOVED while hanging: each clip
+    must pin the trunk to the pose measured at ITS start. Holding t0's pose
+    points gravity the wrong way through every leg for the rest of the file."""
+    from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+
+    tilted = quat_to_mat(np.array([np.cos(0.6), np.sin(0.6), 0.0, 0.0]))  # 68.7 deg roll
+    plan = RolloutPlan(
+        t0=0.0,
+        duration=0.2,
+        commands=_plan().commands,
+        reinit=[
+            State(t=0.0, q=STAND_Q.copy(), dq=np.zeros(12), rot=np.eye(3), gyro=np.zeros(3)),
+            State(t=0.1, q=STAND_Q.copy(), dq=np.zeros(12), rot=tilted, gyro=np.zeros(3)),
+        ],
+        base=BaseCondition.PINNED,
+    )
+    pred = MujocoBackend().rollout(plan)
+    first, second = pred.body_rot[pred.t < 0.1], pred.body_rot[pred.t >= 0.1]
+    assert np.allclose(first, np.eye(3), atol=1e-9)
+    assert np.allclose(second, tilted, atol=1e-9)
+
+
 def test_the_prediction_samples_the_imu_at_the_physics_rate():
     """An impact is 30-50 ms wide with a ~30 ms rise; at 100 Hz its rise is
     two points, which is not a profile."""
