@@ -266,6 +266,10 @@ perception = [
     "sentencepiece>=0.2.0",
 ]
 
+twitch = [
+    "twitchio>=2,<3",
+]
+
 unitree = [
     "dimos[base,mapping]",
     "unitree-webrtc-connect>=2.1.2",
@@ -616,7 +620,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*|.*/native/build(/|$)"
 
 [[tool.mypy.overrides]]
 module = [
@@ -698,6 +702,10 @@ follow_imports = "skip"
 [[tool.mypy.overrides]]
 module = ["transformers", "transformers.*"]
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["twitchio", "twitchio.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["pyarrow", "pyarrow.*"]
