@@ -131,6 +131,20 @@ def test_the_anchor_constants_match_the_menagerie_model():
     assert m.body_mass.sum() == pytest.approx(anchors.STOCK_MODEL_TOTAL_MASS, abs=1e-5)
 
 
+def test_the_derived_anchors_reproduce_the_weighed_mass_on_the_compiled_model():
+    """The physics-facing check the anchors' reproduction test cannot be:
+    trunk_mass_scale exists to make the MODEL weigh what the kitchen scale
+    read, 16.500 kg. This goes through the real compiled model and
+    apply_physics, so it fails if menagerie masses drift, the stock
+    constants go stale, or the mass bookkeeping breaks — physics reasons,
+    not the solved-payload algebra."""
+    spec = anchors.RobotSpec(mass_kg=16.500)
+    got = anchors.derive(spec)
+    model, _ = go2_model.load()
+    go2_model.apply_physics(model, {"trunk_mass_scale": got["trunk_mass_scale"]})
+    assert model.body_mass.sum() == pytest.approx(16.500, abs=1e-4)
+
+
 def test_apply_physics_writes_what_it_names_and_nothing_else():
     fresh, _ = go2_model.load()
     model, _ = go2_model.load()

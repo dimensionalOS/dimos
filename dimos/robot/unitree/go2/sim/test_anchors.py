@@ -39,26 +39,53 @@ WEIGHED = RobotSpec.from_dict(
 
 
 def test_weighing_the_robot_reproduces_the_published_mass_anchor():
+    """The one output that IS a derivation, exact at any mass."""
     got = derive(WEIGHED)
     # (6.921 + 16.500 - 15.206408) / 6.921 = 1.186908; the published 1.18693
     # was computed from the 3-decimal model total, hence the 2e-5 slack.
     assert got["trunk_mass_scale"] == pytest.approx(1.18693, abs=5e-5)
 
 
-def test_the_parallel_axis_consequences_match_the_published_anchors():
-    """trunk_com_x and trunk_inertia_scale are DERIVED from the weighing, not
-    fitted: left free the inertia goes to 2.218 and buys 1.6 in-sample points,
-    but the physical 1.118 generalises better (-10.4% vs -6.6% held out)."""
+def test_the_parallel_axis_form_reconstructs_r8_fit2_by_construction():
+    """ALGEBRA GUARD ONLY — this cannot fail for a physics reason. The payload
+    position was SOLVED to hit these two numbers (two unknowns, two targets),
+    so exact agreement is guaranteed; what this catches is someone breaking
+    the parallel-axis arithmetic. The physics case for 1.118 is elsewhere:
+    left free the inertia goes to 2.218 and buys 1.6 in-sample points, but
+    1.118 generalises better (-10.4% vs -6.6% on held-out jumps), and the
+    derived anchors reproduce the weighed total mass on the compiled model
+    (test_backend)."""
     got = derive(WEIGHED)
     assert got["trunk_com_x"] == pytest.approx(-0.01204, abs=5e-5)
     assert got["trunk_inertia_scale"] == pytest.approx(1.118, abs=5e-3)
 
 
+def test_the_effective_payload_point_is_outside_the_robot_and_says_so():
+    """The solved z = -0.102 is 45 mm below the trunk's underside (the
+    collision box ends at z = -0.057): an effective parameter, not a battery
+    location. Pinned here so nobody re-reads it as a measurement — if a
+    future analysis replaces it with a physical, in-body position, this test
+    MUST flip and the interpolation labels in anchors.py come off with it."""
+    x, y, z = PAYLOAD_SITES["battery_bay"]
+    trunk_underside_z = -0.057  # menagerie go2 trunk collision box half-height
+    assert z < trunk_underside_z, "payload point moved inside the trunk: relabel anchors.py"
+
+
+def test_a_mass_away_from_the_calibration_point_is_refused_not_extrapolated():
+    """The live risk: mass_kg = 17.2 for a bigger battery would project
+    CoM/inertia anchors from the outside-the-robot point, calibrated at a
+    surplus that no longer applies. Refuse, and say what remains valid."""
+    with pytest.raises(ValueError, match="calibrated") as e:
+        derive(RobotSpec(mass_kg=17.2))
+    assert "trunk_mass_scale" in str(e.value)  # the exact part is named as still usable
+
+
 def test_the_inertia_scale_stays_physical_across_plausible_bay_positions():
-    """R8-FIT2 quotes 1.07-1.21 across its bay candidates; a ±2 cm box around
-    ours grazes 1.069, so the assertion carries a hair of slack. The point is
-    the same: the scale stays near 1.1, never near the 2.2-3.5 a free search
-    runs to, and the CoM shift stays negative."""
+    """Robustness of the interpolation's neighbourhood, not a validation:
+    R8-FIT2 quotes 1.07-1.21 across its bay candidates; a ±2 cm box around
+    the solved point grazes 1.069, so the assertion carries a hair of slack.
+    The point stands: the scale stays near 1.1, never near the 2.2-3.5 a
+    free search runs to, and the CoM shift stays negative."""
     import dimos.robot.unitree.go2.sim.anchors as anchors
 
     base = PAYLOAD_SITES["battery_bay"]
