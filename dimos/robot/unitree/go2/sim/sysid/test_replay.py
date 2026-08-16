@@ -119,15 +119,21 @@ def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
 
     st = hanging_streams
     r = replay(st, 10.0, 20.0, MujocoBackend(), preset=MEASURED, window=0.4, suspended=True)
-    # frozen reference: joint mean 0.05685969199042827, max 2.4079772840531506
+    # Reference for the WELD mechanism (trunk held DURING the step, attitude
+    # tracking the measurement). The frozen instrument's numbers (joint mean
+    # 0.05685969199042827, max 2.4079772840531506) were measured in a
+    # WEIGHTLESS plant — the old post-step snap let the whole robot free-fall
+    # through mj_step, so gravity cancelled out of the leg dynamics — and
+    # their movement here is the bug fix, not a regression.
     je = r.joint_err()
-    assert je.mean() == pytest.approx(0.05685969199042827, rel=1e-9)
-    assert je.max() == pytest.approx(2.4079772840531506, rel=1e-9)
+    assert je.mean() == pytest.approx(0.05482657148294461, rel=1e-9)
+    assert je.max() == pytest.approx(2.2805870870306104, rel=1e-9)
     assert len(r.prediction.reinit_t) - 1 == 49
     # no tracker: the body channels are simply absent, not a special mode
     assert r.p_real is None and r.r_real is None
-    # the trunk never met a floor and never moved between snaps
-    assert np.all(r.prediction.body_pos[:, 2] >= 2.0)
+    # the trunk never met a floor and, within the weld's hold error, never
+    # left the snapped position between snaps
+    assert np.all(r.prediction.body_pos[:, 2] >= 1.999)
 
 
 @needs_hanging

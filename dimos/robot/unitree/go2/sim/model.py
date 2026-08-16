@@ -43,6 +43,16 @@ FOOT_RADIUS = 0.022
 # Leg dofs in qvel/dof indexing: 6 free-joint dofs, then the twelve joints.
 LEG_DOFS = slice(6, 18)
 
+# The rope, as MuJoCo can express it: a mocap body welded to the trunk, so the
+# trunk is held DURING mj_step and gravity loads the legs. (A post-step snap
+# lets the whole robot free-fall within the step and the legs end up in a
+# weightless plant — see BaseCondition.PINNED.) Stiff on purpose: with these
+# values the hold error is sub-micrometre / sub-microradian over seconds, so
+# the weld is a rigid grip on the measured pose, not a spring to identify.
+ANCHOR_BODY = "trunk_anchor"
+WELD_SOLREF = (0.004, 1.0)  # timeconst = 2 * the scene's 2 ms step, critical damping
+WELD_SOLIMP = (0.999, 0.9999, 0.001, 0.5, 2.0)
+
 
 def scene_path(menagerie: Path | None = None) -> Path:
     """Path to the flat-ground go2 scene (menagerie ``unitree_go2/scene.xml``).
@@ -81,8 +91,32 @@ def _menagerie_root() -> Path:
     )
 
 
-def load(menagerie: Path | None = None) -> tuple[mujoco.MjModel, mujoco.MjData]:
-    model = mujoco.MjModel.from_xml_path(str(scene_path(menagerie)))
+def load(
+    menagerie: Path | None = None, *, pinned: bool = False
+) -> tuple[mujoco.MjModel, mujoco.MjData]:
+    """The compiled scene; ``pinned`` adds the rope (mocap anchor + weld).
+
+    The FREE path compiles the menagerie XML untouched — bit-identical to
+    every rollout ever scored on it. The PINNED path adds a mocap body and an
+    ``mjEQ_WELD`` holding the trunk to it; the mocap body carries no joints
+    and no geoms, so nq/nv and every contact pair are unchanged.
+    """
+    if not pinned:
+        model = mujoco.MjModel.from_xml_path(str(scene_path(menagerie)))
+        return model, mujoco.MjData(model)
+    spec = mujoco.MjSpec.from_file(str(scene_path(menagerie)))
+    spec.worldbody.add_body(name=ANCHOR_BODY, mocap=True)
+    weld = spec.add_equality()
+    weld.type = mujoco.mjtEq.mjEQ_WELD  # type: ignore[attr-defined]  # absent from the bundled stubs
+    weld.objtype = mujoco.mjtObj.mjOBJ_BODY
+    weld.name1 = ANCHOR_BODY
+    weld.name2 = "base"
+    weld.data[:] = 0.0
+    weld.data[6] = 1.0  # relpose quat = identity: base coincides with the anchor
+    weld.data[10] = 1.0  # torquescale: the rope reacts torque, not just force
+    weld.solref = WELD_SOLREF
+    weld.solimp = WELD_SOLIMP
+    model = spec.compile()
     return model, mujoco.MjData(model)
 
 
@@ -184,20 +218,33 @@ class MujocoBackend:
         self._values = dict(values)
 
     def rollout(self, plan: RolloutPlan) -> Prediction:
-        model, data = load(self._menagerie)
+        pinned = plan.base is BaseCondition.PINNED
+        model, data = load(self._menagerie, pinned=pinned)
         physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}
         if physics:
             apply_physics(model, physics)
         actuator_tau = self._values.get("actuator_tau", 0.0)
         dt = float(model.opt.timestep)
         feet = foot_geom_ids(model)
-        pinned = plan.base is BaseCondition.PINNED
+        track = plan.base_track if pinned else None
+        # World-yaw offset between the sim's (yaw-stripped) pose and the
+        # measured attitude, refreshed at every snap: anchor @ track.rot(t)
+        # then has the measured gravity direction through the legs at EVERY
+        # sample, not just at clip starts — the robot swings on the rope.
+        anchor = np.eye(3)
+
+        def track_rot(t: float) -> np.ndarray:
+            assert track is not None
+            k = int(np.clip(np.searchsorted(track.t, t, "right") - 1, 0, len(track.t) - 1))
+            out: np.ndarray = track.rot[k]
+            return out
 
         reinit = list(plan.reinit)
         if not reinit or reinit[0].t > plan.t0:
             raise ValueError("plan.reinit must start with the state at t0")
 
         def snap(state: State) -> None:
+            nonlocal anchor
             data.qpos[:] = 0.0
             data.qvel[:] = 0.0
             data.qpos[3:7] = mat_to_quat(state.rot)
@@ -210,12 +257,15 @@ class MujocoBackend:
             data.qvel[3:6] = state.rot @ state.gyro  # body rates -> world
             if state.v_body is not None:
                 data.qvel[0:3] = state.rot @ state.v_body
-            mujoco.mj_forward(model, data)
             if pinned:
                 data.qpos[2] = max(float(data.qpos[2]), 2.0)  # clear of the floor
+                data.mocap_pos[0] = data.qpos[0:3]
+                data.mocap_quat[0] = data.qpos[3:7]
+                if track is not None:
+                    anchor = state.rot @ track_rot(state.t).T
+            mujoco.mj_forward(model, data)
 
         snap(reinit[0])
-        pinned_qpos = data.qpos[0:7].copy()
 
         # The virtual IMU: `mj_objectAcceleration(..., flg_local=1)` returns
         # [angular, linear] in local coordinates and MuJoCo seeds the world
@@ -252,8 +302,6 @@ class MujocoBackend:
             t = plan.t0 + step * dt
             if si < len(reinit) and t >= reinit[si].t:
                 snap(reinit[si])
-                if pinned:
-                    pinned_qpos = data.qpos[0:7].copy()
                 applied[:] = 0.0
                 reinit_t.append(t)
                 reinit_pos.append(data.qpos[0:3].copy())
@@ -271,13 +319,12 @@ class MujocoBackend:
                 applied, tau, dt, actuator_tau, dq=data.qvel[6:18], envelope=self._envelope
             )
             data.ctrl[:] = applied
+            if track is not None:
+                # The measured trunk attitude, re-anchored at the last snap:
+                # the weld drags the trunk through the swing the robot
+                # actually made, so gravity loads the legs the measured way.
+                data.mocap_quat[0] = mat_to_quat(anchor @ track_rot(t))
             mujoco.mj_step(model, data)
-            if pinned:
-                # The rope holds the trunk, the feet never touch anything. A
-                # free base would drop it onto a floor the real robot never
-                # met and score the impact as plant error.
-                data.qpos[0:7] = pinned_qpos
-                data.qvel[0:6] = 0.0
 
             # Every step, not every fifth: an impact is ~20 ms wide.
             # Both exist at runtime; the bundled mujoco stubs omit them.

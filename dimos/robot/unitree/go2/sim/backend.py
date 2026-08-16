@@ -85,10 +85,32 @@ class BaseCondition(enum.Enum):
     """What holds the trunk — the boundary condition the sim must impose."""
 
     FREE = "free"
-    # The robot hung from a rope: pin the trunk to the MEASURED pose each clip
-    # (it hangs 70-85 deg off level; holding it level points gravity the wrong
-    # way through every leg), clear of a floor the real robot never met.
+    # The robot hung from a rope: hold the trunk at the MEASURED attitude
+    # (it hangs 70-85 deg off level and swings — see BaseTrack), clear of a
+    # floor the real robot never met. The hold must act DURING the step, not
+    # as a reset after it: a post-step snap lets the whole robot free-fall
+    # through mj_step, gravity cancels out of the relative leg dynamics, and
+    # the legs live in a weightless plant (measured: passive pose after 3 s
+    # identical with gravity on and zeroed, to 0.000000 rad).
     PINNED = "pinned"
+
+
+@dataclass(frozen=True)
+class BaseTrack:
+    """The measured trunk attitude over the plan, for a PINNED base to follow.
+
+    The robot swings on the rope — median 5.4 deg of attitude change within a
+    0.4 s clip, p90 26 deg on the hanging recording's rope-free spans — so a
+    trunk held rigid at each clip's start pose misrepresents the boundary
+    condition by tens of degrees. The backend anchors this track to the
+    re-initialised pose at each snap (a constant world-yaw offset), so the
+    gravity direction through the legs matches the measurement at every
+    sample, not just at clip starts. Without a track a PINNED base holds the
+    snap pose rigidly.
+    """
+
+    t: np.ndarray  # (m,) sample times, the recording's lowstate clock
+    rot: np.ndarray  # (m, 3, 3) measured trunk attitude, gravity-referenced
 
 
 @dataclass(frozen=True)
@@ -106,6 +128,7 @@ class RolloutPlan:
     commands: Commands
     reinit: Sequence[State]
     base: BaseCondition = BaseCondition.FREE
+    base_track: BaseTrack | None = None  # PINNED only: measured attitude to follow
 
 
 @dataclass(frozen=True)

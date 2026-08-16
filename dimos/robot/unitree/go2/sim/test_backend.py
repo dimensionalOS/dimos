@@ -203,15 +203,66 @@ def test_two_plants_disagree_or_the_knobs_do_nothing():
     assert not np.array_equal(stiff.rollout(_plan()).q, loose.rollout(_plan()).q)
 
 
+def _motors_off(duration: float = 3.0) -> RolloutPlan:
+    """A pinned plan with every gain zero: the legs are purely passive."""
+    return RolloutPlan(
+        t0=0.0,
+        duration=duration,
+        commands=Commands(
+            t=np.array([0.0]),
+            q=np.zeros((1, 12)),
+            dq=np.zeros((1, 12)),
+            kp=np.zeros((1, 12)),
+            kd=np.zeros((1, 12)),
+            tau_ff=np.zeros((1, 12)),
+        ),
+        reinit=[State(t=0.0, q=STAND_Q.copy(), dq=np.zeros(12), rot=np.eye(3), gyro=np.zeros(3))],
+        base=BaseCondition.PINNED,
+    )
+
+
+def test_gravity_reaches_the_legs_while_the_trunk_is_held(monkeypatch):
+    """THE point of holding the trunk DURING the step, not after it.
+
+    The old mechanism let the base fall freely through ``mj_step`` and snapped
+    it back afterwards, so the whole robot free-fell and gravity cancelled out
+    of the relative leg dynamics: with motors off, the passive leg pose after
+    3 s was IDENTICAL with gravity on and gravity zeroed, to 0.000000 rad —
+    a weightless plant, and every ``damping`` ever fitted on the hanging
+    recording absorbed the gravity torque the legs never felt. With the trunk
+    held by a weld during the step, gravity must load the legs: the two poses
+    must differ measurably."""
+
+    def passive_pose(zero_g: bool) -> np.ndarray:
+        with monkeypatch.context() as m:
+            if zero_g:
+                orig = go2_model.load
+
+                def no_gravity(*a: object, **k: object):
+                    model, data = orig(*a, **k)
+                    model.opt.gravity[:] = 0.0
+                    return model, data
+
+                m.setattr(go2_model, "load", no_gravity)
+            return MujocoBackend().rollout(_motors_off()).q[-1]
+
+    diff = np.abs(passive_pose(zero_g=False) - passive_pose(zero_g=True))
+    assert diff.max() > 0.1, (
+        f"passive leg pose is gravity-independent (max diff {diff.max():.6f} rad): "
+        "the trunk hold has put the legs back in a weightless plant"
+    )
+
+
 def test_a_pinned_base_holds_the_trunk_and_frees_the_legs():
     """The rope fixes the trunk; the feet never meet a floor the real robot
-    never met. And the trunk is pinned to the MEASURED pose, well off the
-    ground, so gravity still points the measured way through every leg."""
+    never met. The hold is a WELD acting during the step — a constraint, not
+    a qpos overwrite — so the tolerances are the weld's measured hold error
+    (~6 um / ~0.003 deg), not machine epsilon."""
     be = MujocoBackend()
     swung = STAND_Q + np.tile([0.0, 0.4, 0.3], 4)
     pred = be.rollout(_plan(duration=0.3, base=BaseCondition.PINNED, target=swung))
-    assert np.all(pred.body_pos[:, 2] >= 2.0)  # clear of the floor entirely
-    assert np.allclose(pred.body_pos, pred.body_pos[0], atol=1e-12)  # trunk held
+    assert np.all(pred.body_pos[:, 2] >= 1.999)  # clear of the floor entirely
+    assert np.allclose(pred.body_pos, pred.body_pos[0], atol=1e-4)  # trunk held
     assert np.abs(pred.q - pred.q[0]).max() > 0.1  # commands drive the legs
 
 
@@ -234,8 +285,36 @@ def test_a_suspended_clip_repins_to_the_measured_orientation_not_t0s():
     )
     pred = MujocoBackend().rollout(plan)
     first, second = pred.body_rot[pred.t < 0.1], pred.body_rot[pred.t >= 0.1]
-    assert np.allclose(first, np.eye(3), atol=1e-9)
-    assert np.allclose(second, tilted, atol=1e-9)
+    assert np.allclose(first, np.eye(3), atol=1e-3)  # weld hold error, not epsilon
+    assert np.allclose(second, tilted, atol=1e-3)
+
+
+def test_a_pinned_base_follows_the_measured_attitude_track():
+    """The robot SWINGS on the rope — median 5.4 deg of attitude change within
+    a 0.4 s clip, p90 26 deg on the hanging recording — so the weld target
+    follows the measured attitude every step instead of freezing the pose the
+    clip started from."""
+    from dimos.robot.unitree.go2.sim.backend import BaseTrack
+    from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+
+    tt = np.arange(0.0, 0.32, 0.002)
+    roll = np.minimum(tt / 0.3, 1.0) * 0.5  # ramp to 0.5 rad over the clip
+    rot = np.stack([quat_to_mat(np.array([np.cos(a / 2), np.sin(a / 2), 0.0, 0.0])) for a in roll])
+    plan = RolloutPlan(
+        t0=0.0,
+        duration=0.3,
+        commands=_plan().commands,
+        reinit=[State(t=0.0, q=STAND_Q.copy(), dq=np.zeros(12), rot=rot[0], gyro=np.zeros(3))],
+        base=BaseCondition.PINNED,
+        base_track=BaseTrack(t=tt, rot=rot),
+    )
+    pred = MujocoBackend().rollout(plan)
+    # held rigid at the start pose the trunk would end 0.5 rad wrong; tracking
+    # the measurement it ends within ~1 deg of the ramp's end (the weld lags
+    # a target moving at 95 deg/s by a fraction of a degree)
+    assert np.abs(pred.body_rot[0] - rot[0]).max() < 1e-3
+    assert np.abs(pred.body_rot[-1] - rot[np.searchsorted(tt, pred.t[-1]) - 1]).max() < 2e-2
+    assert np.abs(pred.body_rot[-1] - rot[0]).max() > 0.4
 
 
 def test_the_prediction_samples_the_imu_at_the_physics_rate():

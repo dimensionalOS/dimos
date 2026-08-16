@@ -35,6 +35,7 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.backend import (
     Backend,
     BaseCondition,
+    BaseTrack,
     Commands,
     Prediction,
     RolloutPlan,
@@ -86,6 +87,22 @@ def measured_state(
     return State(t=t, q=st.lq[i], dq=st.ldq[i], rot=rot, gyro=st.lgyro[i], v_body=v_body)
 
 
+def base_track(st: Streams, t0: float, duration: float) -> BaseTrack:
+    """The measured trunk attitude over ``[t0, t0+duration]``, for a PINNED base.
+
+    Raw IMU attitude, NOT yaw-stripped: the backend anchors the track to the
+    (yaw-stripped) snap pose at each re-initialisation, which cancels the
+    arbitrary yaw as a constant world rotation while keeping every measured
+    attitude increment — including real yaw motion, which per-sample stripping
+    would corrupt near the 70-85 deg hang. One sample of margin either side so
+    zero-order-hold sampling inside the backend never runs off the end.
+    """
+    i0 = max(int(np.searchsorted(st.lt, t0, "right")) - 1, 0)
+    i1 = min(int(np.searchsorted(st.lt, t0 + duration, "right")) + 1, len(st.lt))
+    rots = np.stack([quat_to_mat(q) for q in st.lquat[i0:i1]])
+    return BaseTrack(t=st.lt[i0:i1].copy(), rot=rots)
+
+
 def build_plan(
     st: Streams,
     t0: float,
@@ -120,6 +137,7 @@ def build_plan(
         commands=Commands(t=st.ct, q=st.cq, dq=st.cdq, kp=st.ckp, kd=st.ckd, tau_ff=st.ctau),
         reinit=reinit,
         base=BaseCondition.PINNED if suspended else BaseCondition.FREE,
+        base_track=base_track(st, t0, duration) if suspended else None,
     )
 
 
