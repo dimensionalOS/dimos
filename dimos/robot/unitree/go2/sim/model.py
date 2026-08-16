@@ -61,14 +61,21 @@ def _menagerie_root() -> Path:
     env = os.environ.get("MUJOCO_MENAGERIE")
     if env:
         return Path(env)
-    try:  # mujoco_playground maintains a menagerie checkout of its own
+    # mujoco_playground maintains a checkout of its own, but importing it drags
+    # in mjx -> mujoco_warp, which fails on an mjtEnableBit the installed mujoco
+    # does not have. That surfaces as AttributeError from a third-party module,
+    # not ImportError, so catch broadly: this is a PATH LOOKUP, and no failure
+    # inside an optional dependency should be able to take the package down.
+    try:
         from mujoco_playground._src import mjx_env
 
         return Path(str(mjx_env.MENAGERIE_PATH))
-    except ImportError as e:
-        raise FileNotFoundError(
-            "no menagerie checkout: set MUJOCO_MENAGERIE or install mujoco_playground"
-        ) from e
+    except Exception:
+        pass
+    raise FileNotFoundError(
+        "no menagerie checkout: set MUJOCO_MENAGERIE to a mujoco_menagerie "
+        "clone, or install mujoco_playground"
+    )
 
 
 def load(menagerie: Path | None = None) -> tuple[mujoco.MjModel, mujoco.MjData]:
