@@ -22,45 +22,12 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from dimos.robot.unitree.go2.sim.plant import (
+    MUJOCO_ACTUATOR_NAMES,
+    UNITREE_MOTOR_NAMES,
+    UNITREE_TO_MUJOCO,
+)
 from dimos.robot.unitree.go2.sim.ranges import CONTACT_KEYS, PHYSICS_KEYS
-
-# Unitree SDK LowCmd.motor_cmd / LowState.motor_state order for the 12 leg
-# motors (indices 12-19 are unused on a Go2).
-UNITREE_MOTOR_NAMES: tuple[str, ...] = (
-    "FR_hip",
-    "FR_thigh",
-    "FR_calf",
-    "FL_hip",
-    "FL_thigh",
-    "FL_calf",
-    "RR_hip",
-    "RR_thigh",
-    "RR_calf",
-    "RL_hip",
-    "RL_thigh",
-    "RL_calf",
-)
-
-# menagerie unitree_go2 actuator order — the joint order everything here uses.
-MUJOCO_ACTUATOR_NAMES: tuple[str, ...] = (
-    "FL_hip",
-    "FL_thigh",
-    "FL_calf",
-    "FR_hip",
-    "FR_thigh",
-    "FR_calf",
-    "RL_hip",
-    "RL_thigh",
-    "RL_calf",
-    "RR_hip",
-    "RR_thigh",
-    "RR_calf",
-)
-
-# unitree_vec[UNITREE_TO_MUJOCO] == mujoco_vec
-UNITREE_TO_MUJOCO: tuple[int, ...] = tuple(
-    UNITREE_MOTOR_NAMES.index(n) for n in MUJOCO_ACTUATOR_NAMES
-)
 
 # Where the accelerometer actually is: the menagerie model's `imu` site,
 # (-0.02557, 0, 0.04232) — 49 mm from the body origin. The virtual IMU must be

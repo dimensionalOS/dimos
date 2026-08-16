@@ -25,6 +25,45 @@ import itertools
 
 import numpy as np
 
+# Unitree SDK LowCmd.motor_cmd / LowState.motor_state order for the 12 leg
+# motors (indices 12-19 are unused on a Go2). Lives here rather than in
+# model.py so ingest can map wire order without importing mujoco.
+UNITREE_MOTOR_NAMES: tuple[str, ...] = (
+    "FR_hip",
+    "FR_thigh",
+    "FR_calf",
+    "FL_hip",
+    "FL_thigh",
+    "FL_calf",
+    "RR_hip",
+    "RR_thigh",
+    "RR_calf",
+    "RL_hip",
+    "RL_thigh",
+    "RL_calf",
+)
+
+# menagerie unitree_go2 actuator order — the joint order everything here uses.
+MUJOCO_ACTUATOR_NAMES: tuple[str, ...] = (
+    "FL_hip",
+    "FL_thigh",
+    "FL_calf",
+    "FR_hip",
+    "FR_thigh",
+    "FR_calf",
+    "RL_hip",
+    "RL_thigh",
+    "RL_calf",
+    "RR_hip",
+    "RR_thigh",
+    "RR_calf",
+)
+
+# unitree_vec[UNITREE_TO_MUJOCO] == mujoco_vec
+UNITREE_TO_MUJOCO: tuple[int, ...] = tuple(
+    UNITREE_MOTOR_NAMES.index(n) for n in MUJOCO_ACTUATOR_NAMES
+)
+
 # Per-joint torque limits (hip, thigh, calf) x 4. Slightly tighter than the
 # MJCF ctrlrange, so they bind first.
 TORQUE_LIMITS = np.array([23.0, 23.0, 35.0] * 4)

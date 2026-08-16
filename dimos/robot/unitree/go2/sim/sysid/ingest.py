@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.model import MUJOCO_ACTUATOR_NAMES, UNITREE_MOTOR_NAMES
+from dimos.robot.unitree.go2.sim.plant import MUJOCO_ACTUATOR_NAMES, UNITREE_MOTOR_NAMES
 from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
 
 # The tracker mount for the 2026-08-16 rig (R8-SYSID), fitted as the circular
