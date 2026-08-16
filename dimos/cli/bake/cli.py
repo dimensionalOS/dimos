@@ -29,6 +29,7 @@ from dimos.cli.bake.codegen import check_host_name, generate_crate
 from dimos.cli.bake.discovery import ModuleInfo, discover_modules, render_registry, select_modules
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import Graph, build_graph, parse_remap, render
+from dimos.core.transport_factory import session_config
 
 
 def default_config(module: ModuleInfo) -> dict[str, object]:
@@ -55,6 +56,7 @@ def emit_config(graph: Graph, modules: Sequence[ModuleInfo]) -> dict[str, object
             }
             for module in modules
         },
+        "session": session_config().to_wire(),
         "qos": graph.qos(),
         "suppress": list(graph.suppressed_topics()),
     }
