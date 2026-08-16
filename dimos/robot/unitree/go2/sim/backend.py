@@ -45,6 +45,15 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.ranges import Knob
 
+# The canonical channel names — everything the ROBOT measures, so everything a
+# prediction could be scored against. The set a given backend can PREDICT is
+# backend-specific (PhysX may expose no site-mounted virtual IMU and no
+# delivered-torque readout) and is declared by ``Backend.channels()``, exactly
+# as ``knobs()`` declares what it can vary. Scoring compares the intersection
+# of what the recording has, what the backend predicts, and what the regime
+# permits — see ``sysid.score``.
+CHANNELS: tuple[str, ...] = ("joint", "dq", "tau", "accel", "gyro", "pos", "rot")
+
 
 @dataclass(frozen=True)
 class Commands:
@@ -179,6 +188,16 @@ class Backend(Protocol):
 
     def knobs(self) -> Mapping[str, Knob]:
         """The parameters THIS engine exposes. The set is data, not code."""
+        ...
+
+    def channels(self) -> frozenset[str]:
+        """Which of :data:`CHANNELS` this engine's predictions carry.
+
+        Symmetric with :meth:`knobs`: what a backend can VARY and what it can
+        PREDICT are both declarations, and the fit intersects the latter with
+        what the recording measured. A ``Prediction`` field outside this set
+        may be zero-length; nothing reads it.
+        """
         ...
 
     def apply(self, values: Mapping[str, float]) -> None:

@@ -28,7 +28,7 @@ measured streams, hands it to a :class:`Backend`, and differences the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclasses_field
 
 import numpy as np
 
@@ -152,6 +152,8 @@ class ReplayResult:
     a_real: np.ndarray  # (k,3) at prediction.at
     w_real: np.ndarray  # (k,3)
     tau_real: np.ndarray  # (k,12)
+    dq_real: np.ndarray = dataclasses_field(default_factory=lambda: np.zeros((0, 12)))
+    # (n,12) at prediction.t — measured joint speeds, the `dq` channel
 
     def joint_err(self) -> np.ndarray:
         out: np.ndarray = np.abs(self.prediction.q - self.q_real)
@@ -219,6 +221,7 @@ def score(pred: Prediction, st: Streams, *, mount: np.ndarray | None = None) -> 
         a_real=st.lacc[aidx] if len(st.lacc) else np.zeros((len(pred.at), 3)),
         w_real=st.lgyro[aidx] if len(st.lgyro) else np.zeros((len(pred.at), 3)),
         tau_real=st.ltau[aidx] if len(st.ltau) else np.zeros((len(pred.at), 12)),
+        dq_real=st.ldq[idx] if len(st.ldq) else np.zeros((len(pred.t), 12)),
     )
 
 

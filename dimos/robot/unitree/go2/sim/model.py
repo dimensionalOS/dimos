@@ -27,7 +27,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import BaseCondition, Prediction, RolloutPlan, State
+from dimos.robot.unitree.go2.sim.backend import (
+    CHANNELS,
+    BaseCondition,
+    Prediction,
+    RolloutPlan,
+    State,
+)
 from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
@@ -210,6 +216,12 @@ class MujocoBackend:
 
     def knobs(self) -> Mapping[str, Knob]:
         return KNOBS
+
+    def channels(self) -> frozenset[str]:
+        # MuJoCo predicts everything the robot measures: joints from qpos, the
+        # virtual IMU at the sensor site, delivered torque from the actuator
+        # chain, and the base pose the tracker would see.
+        return frozenset(CHANNELS)
 
     def apply(self, values: Mapping[str, float]) -> None:
         unknown = set(values) - set(KNOBS)
