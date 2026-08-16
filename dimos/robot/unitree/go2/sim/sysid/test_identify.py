@@ -284,10 +284,10 @@ def test_the_jacobian_is_deterministic_and_shares_its_schedules(mixed_streams):
 @needs_rig
 @pytest.mark.go2sim
 def test_every_channel_produces_a_scorable_jacobian(mixed_streams):
+    from dimos.robot.unitree.go2.sim.backend import CHANNELS
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.identify import (
-        CHANNELS,
         analyse,
         format_report,
         format_resolution,

@@ -61,7 +61,12 @@ from pathlib import Path
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.backend import GhostTrack
-from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, actuator_step
+from dimos.robot.unitree.go2.sim.plant import (
+    TORQUE_ENVELOPES,
+    TORQUE_LIMITS,
+    TorqueEnvelope,
+    actuator_step,
+)
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
@@ -88,6 +93,28 @@ Small on purpose: the gait is chaotic enough that this already decorrelates
 position within seconds, so it measures the noise a comparison has to beat
 rather than a plausible modelling error.
 """
+
+
+@dataclass(frozen=True)
+class ObsNoise:
+    """Sensor noise on the policy's observation, in raw units, uniform ±level.
+
+    The real IMU and encoders are noisy and the net was TRAINED with noise —
+    legged_gym adds uniform noise to every observation during training, and
+    these defaults are its standard levels de-scaled to raw units (ang_vel
+    0.2/0.25 · 0.25, dof_vel 1.5, dof_pos 0.01, gravity 0.05). A noiseless
+    closed loop is therefore out-of-distribution smooth: the policy's
+    reaction to noise IS body motion. Default-off — every existing grounding
+    number reproduces bit-for-bit when this is ``None``.
+    """
+
+    gyro: float = 0.2  # rad/s
+    gravity: float = 0.05  # unit-vector components
+    q: float = 0.01  # rad
+    dq: float = 1.5  # rad/s
+
+    def scaled(self, s: float) -> ObsNoise:
+        return ObsNoise(self.gyro * s, self.gravity * s, self.q * s, self.dq * s)
 
 
 def projected_gravity(quat_wxyz: np.ndarray) -> np.ndarray:
@@ -127,6 +154,9 @@ def rollout_policy(
     seconds: float | None = None,
     settle: float = 0.5,
     command_delay: float = 0.0,
+    action_latency: float = 0.0,
+    obs_noise: ObsNoise | None = None,
+    noise_seed: int = 0,
     envelope: TorqueEnvelope | None = None,
     perturb: np.ndarray | None = None,
     menagerie: Path | None = None,
@@ -146,6 +176,22 @@ def rollout_policy(
     loop, and holding it identical across candidate plants cancels it from
     every between-plant comparison (the lag statistics carry the same
     constant offset on all of them).
+
+    Three default-off mechanisms the real loop has and the ideal sim lacks —
+    each is a candidate explanation for the sim walking SMOOTHER than the
+    robot, and each leaves every existing number bit-identical when off:
+
+    * ``action_latency`` — seconds between the policy emitting a joint
+      target and the PD seeing it (obs transport + inference + lowcmd
+      transport, indistinguishable in loop terms). Delay in a feedback loop
+      eats phase margin, so LESS delay means LESS oscillation. This is not
+      ``command_delay``, which shifts the operator schedule.
+    * ``obs_noise`` (with ``noise_seed``) — sensor noise the policy reacts
+      to; see :class:`ObsNoise`.
+    * ``envelope`` — the measured torque derate above 3 rad/s
+      (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`); without
+      it the sim's actuators track crisply at swing speeds the real drive
+      cannot.
 
     THE VIEWER AND THE HEADLESS RUN ARE THE SAME FUNCTION: ``view`` only
     attaches a viewer and paces to wall clock; ``ghost`` draws the recorded
@@ -194,13 +240,21 @@ def rollout_policy(
     last_action = np.zeros(policy.act_dim)
     target = pose0.copy()
     applied = np.zeros(12)
+    rng = np.random.default_rng(noise_seed) if obs_noise is not None else None
+    delay_steps = max(0, round(action_latency / sim_dt))
+    pending: collections.deque[tuple[int, np.ndarray]] = collections.deque()
 
     def observe(cmd: np.ndarray, height: float) -> np.ndarray:
         q = data.qpos[7:19]
         dq = data.qvel[6:18]
-        raw = np.concatenate(
-            [cmd, data.qvel[3:6], projected_gravity(data.qpos[3:7]), q, dq, last_action]
-        )
+        gyro = data.qvel[3:6]
+        grav = projected_gravity(data.qpos[3:7])
+        if obs_noise is not None and rng is not None:
+            gyro = gyro + obs_noise.gyro * rng.uniform(-1.0, 1.0, 3)
+            grav = grav + obs_noise.gravity * rng.uniform(-1.0, 1.0, 3)
+            q = q + obs_noise.q * rng.uniform(-1.0, 1.0, 12)
+            dq = dq + obs_noise.dq * rng.uniform(-1.0, 1.0, 12)
+        raw = np.concatenate([cmd, gyro, grav, q, dq, last_action])
         extra = policy.obs_per_frame - raw.size
         if extra > 0:
             raw = np.concatenate([raw, [height], np.zeros(extra - 1)])
@@ -247,7 +301,13 @@ def rollout_policy(
                 if t >= settle:
                     hist.append(observe(vel_cmd, height_at(t)))
                     p_obs = np.concatenate(list(hist)[::-1])  # newest first
-                    last_action, target = policy.act(p_obs, vel_cmd)
+                    if delay_steps > 0:
+                        # The policy remembers its own action at once (it IS
+                        # last_action in the next obs); only the PD sees it late.
+                        last_action, fresh = policy.act(p_obs, vel_cmd)
+                        pending.append((step + delay_steps, fresh))
+                    else:
+                        last_action, target = policy.act(p_obs, vel_cmd)
                 if ghost is not None:
                     j = int(
                         np.clip(
@@ -262,6 +322,8 @@ def rollout_policy(
                 used.append(vel_cmd.copy())
                 targets.append(target.copy())
 
+            while pending and pending[0][0] <= step:
+                target = pending.popleft()[1]
             tau = policy.kp * (target - data.qpos[7:19]) - policy.kd * data.qvel[6:18]
             tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
             applied = actuator_step(
@@ -467,6 +529,9 @@ def ground(
     noise: dict[str, float] | None = None,
     floor_source: str = "sim-perturb",
     seeds: int = 4,
+    action_latency: float = 0.0,
+    obs_noise: ObsNoise | None = None,
+    envelope: TorqueEnvelope | None = None,
     view: bool = False,
     speed: float = 1.0,
     with_ghost: bool = True,
@@ -477,10 +542,18 @@ def ground(
     ``noise=None`` measures the sim-perturb floor here (``seeds`` extra
     rollouts); pass a floor from :func:`robot_noise` to ground against the
     robot's own variability instead — the ``floor_source`` string travels
-    with the report so no claim silently upgrades itself.
+    with the report so no claim silently upgrades itself. The default-off
+    loop mechanisms (``action_latency``, ``obs_noise``, ``envelope`` — see
+    :func:`rollout_policy`) apply to the floor rollouts too, so a mechanism
+    is judged against its own chaos, not the ideal loop's.
     """
     span = float(st.wt[-1]) - start
     seconds = span if seconds is None else seconds
+    mechanisms: dict[str, object] = {
+        "action_latency": action_latency,
+        "obs_noise": obs_noise,
+        "envelope": envelope,
+    }
     run = rollout_policy(
         st,
         policy,
@@ -491,12 +564,20 @@ def ground(
         view=view,
         speed=speed,
         ghost=ghost_track(st) if with_ghost else None,
+        **mechanisms,  # type: ignore[arg-type]
     )
     sim = sim_summary(run, cmd_at(st, run.t + start))
     real = real_summary(st, start=start, seconds=seconds)
     if noise is None:
         raw = sim_noise(
-            st, policy, preset, seeds=seeds, start=start, seconds=seconds, menagerie=menagerie
+            st,
+            policy,
+            preset,
+            seeds=seeds,
+            start=start,
+            seconds=seconds,
+            menagerie=menagerie,
+            **mechanisms,
         )
         noise = usable_floor(raw, real.as_dict())
         floor_source = "sim-perturb"
@@ -526,6 +607,26 @@ def main() -> None:
         metavar="REC",
         help="repeat recordings of the same walk: floor = the robot against itself",
     )
+    ap.add_argument(
+        "--latency",
+        type=float,
+        default=0.0,
+        metavar="S",
+        help="loop latency: policy target reaches the PD this many seconds late",
+    )
+    ap.add_argument(
+        "--obs-noise",
+        type=float,
+        default=0.0,
+        metavar="SCALE",
+        help="observation noise, as a multiple of the training levels (see ObsNoise)",
+    )
+    ap.add_argument(
+        "--envelope",
+        default=None,
+        choices=sorted(TORQUE_ENVELOPES),
+        help="apply a measured torque envelope to the actuators",
+    )
     ap.add_argument("--view", action="store_true", help="watch it against the recorded ghost")
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     args = ap.parse_args()
@@ -553,6 +654,9 @@ def main() -> None:
         noise=noise,
         floor_source=source,
         seeds=args.seeds,
+        action_latency=args.latency,
+        obs_noise=ObsNoise().scaled(args.obs_noise) if args.obs_noise > 0 else None,
+        envelope=TORQUE_ENVELOPES[args.envelope] if args.envelope else None,
         view=args.view,
         speed=args.speed,
     )

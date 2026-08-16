@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.sysid.ground import (
+    ObsNoise,
     Report,
     cmd_at,
     usable_floor,
@@ -78,6 +79,12 @@ def test_usable_floor_lifts_a_collapsed_noise_floor():
 def test_usable_floor_cross_clamps_against_another_recording():
     floor = usable_floor({"speed": 1e-9}, {"speed": 0.0}, {"speed": 0.03})
     assert floor["speed"] == 0.03
+
+
+def test_obs_noise_scales_every_level_together():
+    n = ObsNoise().scaled(2.0)
+    assert (n.gyro, n.gravity, n.q, n.dq) == (0.4, 0.1, 0.02, 3.0)
+    assert ObsNoise().scaled(0.0) == ObsNoise(0.0, 0.0, 0.0, 0.0)
 
 
 def _report(sim: Summary, real: Summary, noise: dict[str, float]) -> Report:
@@ -144,6 +151,46 @@ def test_the_closed_loop_rollout_is_deterministic_and_summarisable():
     s = sim_summary(a)
     assert 0.35 < s.height_mean < 0.65
     assert s.tilt_p99 < 1.0
+
+
+@pytest.mark.go2sim
+@pytest.mark.skipif(not FREEWALK.is_file(), reason="needs the freewalk recording")
+@pytest.mark.skipif(not FREEWALK_BIN.is_file(), reason="needs the freewalk blob")
+def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
+    """Latency and obs noise must change the physics when on, change NOTHING
+    when off (every existing grounding number reproduces), and be exactly
+    repeatable so a probe result is a measurement, not a draw."""
+    if not _menagerie_available():
+        pytest.skip("no mujoco_menagerie checkout")
+    from dimos.robot.unitree.go2.sim.policy import FreePolicy
+    from dimos.robot.unitree.go2.sim.ranges import load_preset
+    from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy
+    from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
+
+    st = read_streams(FREEWALK)
+    policy = FreePolicy.load(FREEWALK_BIN)
+    preset = load_preset("measured")
+    kw: dict[str, float] = {"start": 6.0, "seconds": 3.0}
+    base = rollout_policy(st, policy, preset, **kw)  # type: ignore[arg-type]
+    explicit_off = rollout_policy(
+        st,
+        policy,
+        preset,
+        action_latency=0.0,
+        obs_noise=None,
+        **kw,  # type: ignore[arg-type]
+    )
+    assert np.array_equal(base.pos, explicit_off.pos)
+
+    lat = rollout_policy(st, policy, preset, action_latency=0.01, **kw)  # type: ignore[arg-type]
+    lat2 = rollout_policy(st, policy, preset, action_latency=0.01, **kw)  # type: ignore[arg-type]
+    assert not np.array_equal(base.pos, lat.pos)
+    assert np.array_equal(lat.pos, lat2.pos)
+
+    nz = rollout_policy(st, policy, preset, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
+    nz2 = rollout_policy(st, policy, preset, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
+    assert not np.array_equal(base.pos, nz.pos)
+    assert np.array_equal(nz.pos, nz2.pos)
 
 
 @pytest.mark.go2sim

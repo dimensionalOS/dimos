@@ -379,6 +379,78 @@ it never reads.
 
 ---
 
+## 5b. The over-damped verdict, probed: it is a missing mechanism
+
+After the lag-axis fix the referee's verdict left one coherent story: every
+body-oscillation statistic ~2x too small and the speed low — the sim walks
+SMOOTHER and slower than the robot (`roll_std` 0.023 vs 0.044, `tilt_p99`
+0.131 vs 0.249, on the verified freewalk net, hard floor).
+
+**`sysid.probe` is loop 2's identifiability instrument**: push each knob to
+the ENDS of its admissible range (endpoints, not derivative nudges — chaos
+makes small-step derivatives noise, and the endpoints bound what any
+admissible value could ever do), roll the real policy, and judge each
+statistic's movement against the chaos floor and against the sim-real gap.
+
+```bash
+python -m dimos.robot.unitree.go2.sim.sysid.probe REC.mcap NET.bin \
+    --preset measured --workers 18
+```
+
+**Finding 1 — no knob in the table closes the oscillation gap.** Across all
+14 knobs at both range ends, the only ones that move `roll_std`/`tilt_p99`
+materially do so by breaking the robot: `armature` at 0.05 or 16+ ms of
+`actuator_tau` produce flailing (grounding loss 5.16 → 6.6-88). Everything
+else moves the oscillation statistics by under ~35% of the gap, mostly
+under the chaos floor. A fit over this table can NEVER close the verdict.
+
+**Finding 2 — the missing mechanisms are in the loop, not the plant.** The
+ideal closed loop lacks three things the real one has, now implemented
+default-off in `rollout_policy` (every existing number reproduces
+bit-for-bit):
+
+* `action_latency` — the policy's target reaches the PD instantly; the
+  real loop has obs transport + inference + command transport + board
+  application. Delay eats phase margin, so LESS delay = LESS oscillation.
+* `obs_noise` — the policy sees perfect state; the real one sees sensor
+  noise, and the net was TRAINED with noise (`ObsNoise` defaults are the
+  legged_gym training levels), so a noiseless loop is out-of-distribution
+  smooth.
+* the measured torque `envelope` (§plant) — the sim's actuators deliver
+  full demand at swing speeds where the real drive delivers ~half.
+
+Measured on the grounding, seed-replicated (3 seeds, shared base floor):
+latency 10 ms + training-level noise takes the loss **5.16 → 2.79 ± 0.13**
+on the fit recording — `roll_std` closes 33% of its gap, `pitch_std` ~100%,
+`tilt_p99` 75%, `speed` 81%. The latency response is monotone and steep:
+each oscillation statistic crosses its real value at 10-14 ms, and 20 ms
+destabilises the gait entirely. On the rubber-floor held-out span the same
+configs move every one of the five statistics toward the real robot (loss
+5.49 → 4.31 at 12 ms), closing less of the gap — the remainder there is
+plausibly the unmodelled 20 mm mat and leg flex.
+
+**The envelope double-counts.** Alone it helps (loss 4.34); stacked on
+latency+noise it overshoots (7.9). The `measured` knobs were fitted open
+loop WITHOUT the envelope, so its average effect is already absorbed in
+them — re-fit loop 1 with the envelope on before stacking it.
+
+**The latency's value is plausible, not yet measured.** A sweep of
+`verify_net --state-offset` puts the executor's software latency at ~0-2 ms
+(obs built from the freshest state, inference fast) — but the ingest clock
+rebase absorbs both one-way transports, so the network legs are invisible
+to that instrument. Physical expectation for two WiFi legs + board cycle is
+5-25 ms; the frozen instrument's closed-loop fit found 9 ms independently.
+10 ms is therefore a NAMED MECHANISM with a plausible value, not a fitted
+constant — the default stays 0, and pinning the number wants a measurement
+(e.g. a hardware timestamp echo), not a fit on the referee.
+
+Caveat for probe readers: the `gait_hz` estimator is bimodal under some
+probes (the autocorrelation peak jumps to the step harmonic, reading ~5 Hz),
+so single-rollout `gait_hz` cells and the losses they inflate deserve
+suspicion; the other statistics move smoothly.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -387,10 +459,12 @@ score, the fit (pins/searches, seeded restarts, paired-SE harvest, LOO-spread
 stopping, median + spread), segment-parallel rollouts, loop 2 (`sysid.ground`:
 closed-loop Mode B, the 11 statistics, pluggable noise floors, SNR reports),
 net-identity verification (`sysid.verify_net`), the meta-search scaffolding
-(`sysid.meta`), and `--view` on both modes (ghost, `--speed`, `--no-reinit`;
-the viewer and the headless run are the same function). Acceptance is
-bit-identical to the frozen instrument, and parallel is bit-identical to
-serial.
+(`sysid.meta`), `--view` on both modes (ghost, `--speed`, `--no-reinit`;
+the viewer and the headless run are the same function), loop 2's
+identifiability probe (`sysid.probe`) and the three default-off loop
+mechanisms it vindicated (`action_latency`, `ObsNoise`, the torque
+envelope — §5b). Acceptance is bit-identical to the frozen instrument, and
+parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each);
 the robot-repeat noise floor (needs two recordings of the same walk).
