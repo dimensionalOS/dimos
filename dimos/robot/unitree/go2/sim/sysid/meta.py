@@ -183,6 +183,7 @@ def shared_floor(
     baseline: str = "measured",
     seeds: int = 4,
     start: float = 6.0,
+    seconds: float | None = None,
 ) -> tuple[dict[str, float], str]:
     """ONE noise floor for every candidate, measured on the baseline plant.
 
@@ -194,8 +195,9 @@ def shared_floor(
     """
     st = read_streams(validation)
     base = load_preset(baseline)
-    raw = sim_noise(st, policy, base, seeds=seeds, start=start)
-    real = real_summary(st, start=start, seconds=float(st.wt[-1]) - start)
+    raw = sim_noise(st, policy, base, seeds=seeds, start=start, seconds=seconds)
+    span = float(st.wt[-1]) - start if seconds is None else seconds
+    real = real_summary(st, start=start, seconds=span)
     return usable_floor(raw, real.as_dict()), f"sim-perturb ({baseline} plant, shared)"
 
 
@@ -208,6 +210,7 @@ def experiment(
     presets: list[str],
     *,
     start: float = 6.0,
+    seconds: float | None = None,
     seeds: int = 4,
 ) -> str:
     """Ground each plant under one shared floor and say which the referee prefers.
@@ -216,9 +219,12 @@ def experiment(
     scorer's winner (``accel``) and this package's (``measured``, plus the
     phase-4 fitted point) disagree; whichever plant the grounding prefers
     tells us which scorer survives into the outer study's seed.
+
+    ``start``/``seconds`` window the comparison — for a mixed recording, run
+    it on the span the verified net actually drove and nothing else.
     """
     policy = FreePolicy.load(policy_bin)
-    noise, source = shared_floor(recording, policy, seeds=seeds, start=start)
+    noise, source = shared_floor(recording, policy, seeds=seeds, start=start, seconds=seconds)
     st = read_streams(recording)
     reports: list[Report] = []
     lines: list[str] = [
@@ -227,7 +233,16 @@ def experiment(
     ]
     for name in presets:
         p = load_preset(name)
-        rep = ground(st, policy, p, start=start, noise=noise, floor_source=source, with_ghost=False)
+        rep = ground(
+            st,
+            policy,
+            p,
+            start=start,
+            seconds=seconds,
+            noise=noise,
+            floor_source=source,
+            with_ghost=False,
+        )
         reports.append(rep)
         lines += [rep.table(), ""]
     order = sorted(reports, key=lambda r: r.loss())
@@ -321,6 +336,7 @@ def main() -> None:
         help="preset names or plant JSON paths",
     )
     ex.add_argument("--start", type=float, default=6.0)
+    ex.add_argument("--seconds", type=float, default=None)
     ex.add_argument("--seeds", type=int, default=4)
 
     ot = sub.add_parser("outer", help="the nested search (EXPENSIVE: trials are inner fits)")
@@ -341,6 +357,7 @@ def main() -> None:
                 args.policy_bin,
                 args.presets,
                 start=args.start,
+                seconds=args.seconds,
                 seeds=args.seeds,
             )
         )

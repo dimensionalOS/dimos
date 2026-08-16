@@ -340,17 +340,60 @@ python -m dimos.robot.unitree.go2.sim.sysid.fit REC.mcap --workers 20 \
 
 ---
 
+## 5a. Loop 2 in practice
+
+**Verify the net first.** Mode B is meaningless unless the net in the sim is
+the one that produced the recording; `sysid.verify_net` checks by
+teacher-forced replay against the recorded `policy/lowcmd`, with a DIFFERENT
+net as the yardstick. Measured: `freewalk_mcf.bin` explains
+`194142_policy-freewalk-hard` at 0.024 rad RMS (ratio 0.123 of the signal)
+and the freewalk span of `015155_policy-mixed` at 0.037 rad (0.181); the v11
+control net is 4-5× worse on both. Same gains, obs 45×6.
+
+**The floor's source is part of the claim.** Today `sim-perturb` (the sim
+against itself under chaos); the better floor is `robot-repeat` — two
+recordings of the same walk, battery sag and motor temperature included —
+which `ground --noise-from REC2.mcap` swaps in without a rewrite, and which
+the publishable sentence needs: *"the simulator differs from the robot by
+less than the robot differs from itself, on N of 11 statistics."* That pair
+has not been recorded yet.
+
+**First grounding result (2026-08-16).** The two disagreeing scorers were put
+to the referee: the real freewalk net closed-loop in `measured`, `accel`, and
+a re-derived phase-4 fit point, under one shared sim-perturb floor.
+
+| grounding loss (RMS SNR)   | fit rec (hard floor) | held-out span (rubber) |
+|----------------------------|----------------------|------------------------|
+| `measured`                 | **7.50**             | **4.81**               |
+| phase-4 fit (re-derived)   | 7.94                 | 5.38                   |
+| `accel`                    | 8.02                 | 5.16                   |
+
+The grounding prefers `measured` on BOTH recordings — the go2sim-style
+scorer's answer, against the frozen scorer's 11-18% preference for `accel`.
+Margins are ~7%, and 0 of 10 statistics sit within the chaos floor (the sim
+is measurably different from the robot on every one — dominated by `yaw_lag`
+on the fit recording, which no plant knob can close because the command
+path's delay is outside the plant). The outer study (`sysid.meta outer`) is
+seeded with both scorer styles; its final number is owed to a third recording
+it never reads.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
 ingest, regimes, segments, Mode A replay, identifiability, the weight-vector
 score, the fit (pins/searches, seeded restarts, paired-SE harvest, LOO-spread
-stopping, median + spread), segment-parallel rollouts. Acceptance is
+stopping, median + spread), segment-parallel rollouts, loop 2 (`sysid.ground`:
+closed-loop Mode B, the 11 statistics, pluggable noise floors, SNR reports),
+net-identity verification (`sysid.verify_net`), the meta-search scaffolding
+(`sysid.meta`), and `--view` on both modes (ghost, `--speed`, `--no-reinit`;
+the viewer and the headless run are the same function). Acceptance is
 bit-identical to the frozen instrument, and parallel is bit-identical to
 serial.
 
-**Not built:** loop 2, meta-search, `--view` (a regression — the frozen tool
-had it).
+**Not run yet:** the full outer study (10-20 trials × one inner fit each);
+the robot-repeat noise floor (needs two recordings of the same walk).
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an accuracy
