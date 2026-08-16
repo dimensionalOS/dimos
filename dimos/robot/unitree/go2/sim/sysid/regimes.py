@@ -159,6 +159,67 @@ def regimes(st: Streams, declared: Declarations | None = None) -> list[Span]:
     return out
 
 
+@dataclass(frozen=True)
+class Segment:
+    """One stretch of the recording that gets scored at all.
+
+    Not a clip. A CLIP is the multiple-shooting interval INSIDE a segment —
+    how often the sim snaps back to measured state (:func:`clip_schedule`). A
+    SEGMENT is which part of the recording contributes rows to the objective.
+    Conflating the two is how "window" came to mean both, and how every fit
+    inherited whatever one contiguous slice happened to contain.
+    """
+
+    t0: float
+    duration: float
+
+    @property
+    def t1(self) -> float:
+        return self.t0 + self.duration
+
+
+def sample_segments(
+    t0: float,
+    t1: float,
+    *,
+    n: int = 8,
+    length: tuple[float, float] = (4.0, 8.0),
+    seed: int = 0,
+) -> list[Segment]:
+    """``n`` scored segments spread across ``[t0, t1]``, seeded.
+
+    One contiguous slice is a measured flaw: the same recording resolved
+    ``trunk_inertia_scale`` at 5.08 from its first 20 s and 0.40 from its
+    first 50 s — a 10x swing on a step change, because the information is
+    concentrated in the most dynamic stretch and t=25/t=40 are
+    near-motionless. Sampling makes the objective an average over the
+    recording instead of a sample of one part of it.
+
+    Stratified, not plain-uniform: segment ``i``'s start is drawn inside the
+    ``i``-th of ``n`` equal strata of the start domain, so the draws cannot
+    cluster and every part of the recording is looked at. Lengths come from
+    ``U(*length)``. Pure function of its arguments — shared across candidate
+    plants exactly as clip schedules are, and for the same reason: segments
+    that move between candidates score the sampling, not the physics.
+    """
+    if n < 1:
+        raise ValueError(f"need at least one segment, got n={n}")
+    lo, hi = length
+    if lo <= 0 or hi < lo:
+        raise ValueError(f"segment length must satisfy 0 < lo <= hi, got {length!r}")
+    span = t1 - t0
+    if span <= 0:
+        raise ValueError(f"empty recording range [{t0}, {t1}]")
+    rng = np.random.default_rng(seed)
+    out: list[Segment] = []
+    for i in range(n):
+        dur = min(float(rng.uniform(lo, hi)), span)
+        room = span - dur  # the start domain, stratified n ways
+        start = t0 + (i + float(rng.uniform())) / n * room
+        out.append(Segment(start, dur))
+    return out
+
+
 def clip_schedule(
     t0: float,
     duration: float,
