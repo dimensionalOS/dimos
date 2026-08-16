@@ -96,9 +96,7 @@ class BakedHost(NativeModule):
                 resolved[port] = topics[name]
         return resolved
 
-    def _stdin_blob(self, topics: dict[str, str]) -> bytes | None:
-        if not self.config.stdin_config:
-            return None
+    def _stdin_blob(self, topics: dict[str, str]) -> bytes:
         sections: dict[str, object] = {}
         for instance in self._members:
             member_config = getattr(self.config, f"{instance}_config")
@@ -106,7 +104,10 @@ class BakedHost(NativeModule):
                 "topics": self._member_topics(instance, topics),
                 "config": member_config.to_config_dict() or None,
             }
-        blob: dict[str, object] = {"modules": sections}
+        blob: dict[str, object] = {
+            "modules": sections,
+            "session": self._session().to_wire(),
+        }
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos

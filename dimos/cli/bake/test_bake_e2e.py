@@ -71,17 +71,25 @@ def baked(tmp_path_factory) -> tuple[Path, dict[str, object]]:
     return out, json.loads(config.read_text())
 
 
-def spawn_host(binary: Path, config: dict[str, object], port: int) -> subprocess.Popen[bytes]:
-    env = {
-        **os.environ,
-        "DIMOS_TRANSPORT": "zenoh",
-        "DIMOS_ZENOH_SCOUTING": "off",
-        "DIMOS_ZENOH_LISTEN": f"tcp/127.0.0.1:{port}",
-        "RUST_LOG": "warn",
+def loopback_session(port: int) -> dict[str, object]:
+    """A session reachable only over loopback, so the test never scouts the LAN."""
+    return {
+        "mode": "peer",
+        "connect": [],
+        "listen": [f"tcp/127.0.0.1:{port}"],
+        "multicast": False,
+        "gossip": False,
+        "interface": "lo",
+        "connect_timeout_ms": 0,
     }
+
+
+def spawn_host(binary: Path, config: dict[str, object], port: int) -> subprocess.Popen[bytes]:
+    env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "RUST_LOG": "warn"}
+    launch = {**config, "session": loopback_session(port)}
     proc = subprocess.Popen([str(binary)], env=env, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None
-    proc.stdin.write(json.dumps(config).encode() + b"\n")
+    proc.stdin.write(json.dumps(launch).encode() + b"\n")
     proc.stdin.close()
     return proc
 
