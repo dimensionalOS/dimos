@@ -90,6 +90,10 @@ class Probe:
     noise_scale: float = 0.0
     envelope: str | None = None
     perturb_seed: int | None = None  # None = unperturbed
+    # Measured-mechanism fields; each defaults to the pre-measurement shape.
+    noise: ObsNoise | None = None  # per-channel levels; overrides noise_scale
+    noise_seed: int = 0
+    timing: tuple[float, ...] | None = None  # measured control intervals, s
 
 
 # Worker-process state, set once by the initializer (spawned, never forked —
@@ -109,6 +113,11 @@ def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: 
     if probe.perturb_seed is not None:
         rng = np.random.default_rng(probe.perturb_seed)
         perturb = rng.normal(0.0, PERTURB_RAD, 12)
+    obs_noise: ObsNoise | None
+    if probe.noise is not None:
+        obs_noise = probe.noise
+    else:
+        obs_noise = ObsNoise().scaled(probe.noise_scale) if probe.noise_scale > 0 else None
     run = rollout_policy(
         st,
         policy,
@@ -116,7 +125,9 @@ def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: 
         start=start,
         seconds=seconds,
         action_latency=probe.action_latency,
-        obs_noise=ObsNoise().scaled(probe.noise_scale) if probe.noise_scale > 0 else None,
+        obs_noise=obs_noise,
+        noise_seed=probe.noise_seed,
+        control_intervals=np.array(probe.timing) if probe.timing is not None else None,
         envelope=TORQUE_ENVELOPES[probe.envelope] if probe.envelope else None,
         perturb=perturb,
         menagerie=_WORKER.get("menagerie"),  # type: ignore[arg-type]

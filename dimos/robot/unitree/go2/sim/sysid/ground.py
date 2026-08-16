@@ -157,6 +157,7 @@ def rollout_policy(
     action_latency: float = 0.0,
     obs_noise: ObsNoise | None = None,
     noise_seed: int = 0,
+    control_intervals: np.ndarray | None = None,
     envelope: TorqueEnvelope | None = None,
     perturb: np.ndarray | None = None,
     menagerie: Path | None = None,
@@ -177,7 +178,7 @@ def rollout_policy(
     every between-plant comparison (the lag statistics carry the same
     constant offset on all of them).
 
-    Three default-off mechanisms the real loop has and the ideal sim lacks —
+    Four default-off mechanisms the real loop has and the ideal sim lacks —
     each is a candidate explanation for the sim walking SMOOTHER than the
     robot, and each leaves every existing number bit-identical when off:
 
@@ -188,6 +189,13 @@ def rollout_policy(
       ``command_delay``, which shifts the operator schedule.
     * ``obs_noise`` (with ``noise_seed``) — sensor noise the policy reacts
       to; see :class:`ObsNoise`.
+    * ``control_intervals`` — the executor's MEASURED inter-command
+      intervals (:func:`~dimos.robot.unitree.go2.sim.sysid.loop
+      .control_timing`), replayed as a sequence (tiled if the rollout
+      outlives it) in place of the ideal 20 ms grid. The measured executor
+      runs at ~44 Hz with jitter and dropouts, not 50 Hz — this mechanism
+      has zero free parameters. ``None`` keeps the exact ``CONTROL_DT``
+      grid, bit-identical to every existing number.
     * ``envelope`` — the measured torque derate above 3 rad/s
       (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`); without
       it the sim's actuators track crisply at swing speeds the real drive
@@ -244,6 +252,21 @@ def rollout_policy(
     delay_steps = max(0, round(action_latency / sim_dt))
     pending: collections.deque[tuple[int, np.ndarray]] = collections.deque()
 
+    # Measured control timing: each tick fires on the first step at or past
+    # its scheduled time. None keeps the exact `step % decim` grid untouched.
+    ctrl_steps: set[int] | None = None
+    if control_intervals is not None:
+        iv = np.asarray(control_intervals, dtype=float)
+        if len(iv) == 0 or np.any(iv <= 0):
+            raise ValueError("control_intervals must be a non-empty positive sequence")
+        n_steps = int(duration / sim_dt)
+        ctrl_steps = set()
+        t_next, i = 0.0, 0
+        while t_next < duration:
+            ctrl_steps.add(min(int(np.ceil(t_next / sim_dt - 1e-9)), n_steps))
+            t_next += float(iv[i % len(iv)])
+            i += 1
+
     def observe(cmd: np.ndarray, height: float) -> np.ndarray:
         q = data.qpos[7:19]
         dq = data.qvel[6:18]
@@ -296,7 +319,7 @@ def rollout_policy(
         wall = time.perf_counter()
         for step in range(int(duration / sim_dt)):
             t = step * sim_dt
-            if step % decim == 0:
+            if (step % decim == 0) if ctrl_steps is None else (step in ctrl_steps):
                 vel_cmd += np.clip(target_cmd(t) - vel_cmd, -COMMAND_SLEW, COMMAND_SLEW)
                 if t >= settle:
                     hist.append(observe(vel_cmd, height_at(t)))
@@ -531,6 +554,7 @@ def ground(
     seeds: int = 4,
     action_latency: float = 0.0,
     obs_noise: ObsNoise | None = None,
+    control_intervals: np.ndarray | None = None,
     envelope: TorqueEnvelope | None = None,
     view: bool = False,
     speed: float = 1.0,
@@ -552,6 +576,7 @@ def ground(
     mechanisms: dict[str, object] = {
         "action_latency": action_latency,
         "obs_noise": obs_noise,
+        "control_intervals": control_intervals,
         "envelope": envelope,
     }
     run = rollout_policy(
@@ -616,10 +641,17 @@ def main() -> None:
     )
     ap.add_argument(
         "--obs-noise",
-        type=float,
-        default=0.0,
+        default="0",
         metavar="SCALE",
-        help="observation noise, as a multiple of the training levels (see ObsNoise)",
+        help="observation noise: a multiple of the training levels (see ObsNoise), "
+        "or 'measured' for the recording's own >20 Hz sensor floor",
+    )
+    ap.add_argument(
+        "--timing",
+        default="ideal",
+        choices=("ideal", "recorded"),
+        help="policy tick schedule: the ideal 20 ms grid, or the recording's own "
+        "measured policy/lowcmd intervals (rate, jitter and dropouts included)",
     )
     ap.add_argument(
         "--envelope",
@@ -634,6 +666,20 @@ def main() -> None:
     st = read_streams(args.recording)
     policy = FreePolicy.load(args.policy_bin)
     preset = load_preset(args.preset)
+    obs_noise: ObsNoise | None
+    if args.obs_noise == "measured":
+        from dimos.robot.unitree.go2.sim.sysid.loop import sensor_noise
+
+        span = float(st.wt[-1])
+        obs_noise = sensor_noise(st, t0=args.start, t1=span).obs_noise()
+    else:
+        scale = float(args.obs_noise)
+        obs_noise = ObsNoise().scaled(scale) if scale > 0 else None
+    intervals = None
+    if args.timing == "recorded":
+        from dimos.robot.unitree.go2.sim.sysid.loop import timing_of
+
+        intervals = timing_of(st).intervals
     noise = None
     source = "sim-perturb"
     if args.noise_from:
@@ -655,7 +701,8 @@ def main() -> None:
         floor_source=source,
         seeds=args.seeds,
         action_latency=args.latency,
-        obs_noise=ObsNoise().scaled(args.obs_noise) if args.obs_noise > 0 else None,
+        obs_noise=obs_noise,
+        control_intervals=intervals,
         envelope=TORQUE_ENVELOPES[args.envelope] if args.envelope else None,
         view=args.view,
         speed=args.speed,
