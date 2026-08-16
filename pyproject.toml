@@ -321,6 +321,16 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+# The measured Go2 plant and its identification pipeline
+# (dimos/robot/unitree/go2/sim). Deliberately NOT `sim`: that extra pulls in
+# `playground`, whose import chain reads an mjtEnableBit the pinned mujoco does
+# not define, and `pygame`, which this package has no use for. Everything here
+# is needed; nothing here is optional.
+go2sim = [
+    "mujoco>=3.3.4",
+    "mcap>=1.1.1",
+]
+
 mapping = [
     # PGO for reloc premap + cmu_nav experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
@@ -710,6 +720,9 @@ env = [
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
 addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (self_hosted or mujoco or self_hosted_large or web_browser)'"
+markers = [
+    "go2sim: the measured Go2 plant; needs a menagerie checkout and the recordings",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
