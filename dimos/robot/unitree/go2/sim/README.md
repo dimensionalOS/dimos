@@ -148,12 +148,23 @@ score = Σ  w[channel, regime] · residual[channel, regime] / scale[channel]
 ```
 
 `scale` makes terms dimensionless — m/s² and rad and N·m cannot be added
-otherwise, and unnormalised weights would just encode unit choices. Use each
-channel's own residual RMS, or its noise floor once a repeat recording exists.
+otherwise, and unnormalised weights would just encode unit choices. Each
+channel's own residual RMS under the BASELINE plant, computed once on the
+shared schedule and then FROZEN (`Objective.calibrate`): a scale that moved
+with the candidate would make the search see a moving objective, exactly as an
+unshared clip schedule would. The noise floor replaces it once a repeat
+recording exists.
 
 So "which channel do we score" and "how much does flight count" are the same
 question: entries in one weight vector. That vector is a **hyperparameter of
 the method**, not a property of the robot — which is what loop 2 selects.
+
+Implemented in `sysid.score`: terms are masked by regime span (a suspended
+span permits only `joint`/`dq`/`tau` — a held trunk makes every trunk-frame
+signal an echo of the boundary condition), missing terms renormalise instead
+of poisoning the total, and the total is the mean over segments of each
+segment's weighted term sum — which is what gives the loss a measurable
+sampling noise (§4a).
 
 ---
 
@@ -252,9 +263,12 @@ runs out:
 k = 3                                # minimum for leave-one-out to mean anything
 loop:
     run study k with seed k
-    harvest every trial within a loss tolerance of that study's best
+    harvest every trial within 1 SE of that study's best
         (a study makes ~90 trials and keeps 1; the near-optimal ones are
-         free samples OF the region)
+         free samples OF the region. The SE is PAIRED per segment — every
+         candidate scores identical segments, so segment difficulty is
+         common mode; the unpaired SE is ~16% of the loss and harvests the
+         search's whole path instead of the region)
     pool across studies
     point  = per-parameter MEDIAN of the pool
     spread = 10th-90th percentiles
@@ -281,6 +295,24 @@ out loud instead of papering over with a point estimate.
 covers (n−1)/(n+1) of the distribution — 60% at n=4 — so a small-n range is too
 NARROW, and under-randomising training is the dangerous direction to be wrong
 in.
+
+### Parallelism: pure functions fan out, the sampler stays sequential
+
+A segment rollout is a pure function of (knob values, plan), so segments fan
+out across worker processes (`sysid.rollouts`) and reassemble in order — this
+speeds up every trial and every Jacobian, and serial vs parallel is
+**bit-identical by construction and by test**. Restarts are independent and
+run in batches sized to the core budget; overshooting the stopping rule is
+accepted (extra samples are what the spread wants anyway). Trials within one
+study are NEVER parallelised: CMA-ES updates its distribution from the history
+it has seen, so parallel trials change what each trial sees and the study
+stops being reproducible from its seed — and seeded reproducibility is what
+the whole restart-and-median argument rests on.
+
+```bash
+python -m dimos.robot.unitree.go2.sim.sysid.fit REC.mcap --workers 20 \
+    --held-out OTHER.mcap --out results/freewalk
+```
 
 ---
 
@@ -310,12 +342,15 @@ in.
 
 ## 6. State
 
-**Built:** seam, MuJoCo backend, plant, ranges, anchors, ingest, regimes,
-segments, Mode A replay, identifiability. Acceptance is bit-identical to the
-frozen instrument.
+**Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
+ingest, regimes, segments, Mode A replay, identifiability, the weight-vector
+score, the fit (pins/searches, seeded restarts, paired-SE harvest, LOO-spread
+stopping, median + spread), segment-parallel rollouts. Acceptance is
+bit-identical to the frozen instrument, and parallel is bit-identical to
+serial.
 
-**Not built:** the fit, loop 2, meta-search, `--view` (a regression — the
-frozen tool had it).
+**Not built:** loop 2, meta-search, `--view` (a regression — the frozen tool
+had it).
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an accuracy

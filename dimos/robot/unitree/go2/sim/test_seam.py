@@ -30,6 +30,9 @@ def test_importing_the_seam_never_imports_an_engine():
         "import dimos.robot.unitree.go2.sim.backend\n"
         "import dimos.robot.unitree.go2.sim.sysid.regimes\n"
         "import dimos.robot.unitree.go2.sim.sysid.replay\n"
+        "import dimos.robot.unitree.go2.sim.sysid.score\n"
+        "import dimos.robot.unitree.go2.sim.sysid.rollouts\n"
+        "import dimos.robot.unitree.go2.sim.sysid.fit\n"
         "banned = [m for m in sys.modules if m == 'mujoco' or m.startswith('mujoco.')]\n"
         "assert not banned, f'the seam dragged in the engine: {banned}'\n"
     )

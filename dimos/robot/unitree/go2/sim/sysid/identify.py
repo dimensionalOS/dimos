@@ -64,7 +64,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import Backend
+from dimos.robot.unitree.go2.sim.backend import CHANNELS, Backend
 from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, load_preset
 from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_declarations, read_streams
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
@@ -74,8 +74,10 @@ from dimos.robot.unitree.go2.sim.sysid.regimes import (
     sample_segments,
 )
 from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
+from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
+from dimos.robot.unitree.go2.sim.sysid.score import predicted, residual as channel_residual
 
-CHANNELS: tuple[str, ...] = ("joint", "rot", "pos", "accel", "gyro", "tau")
+__all__ = ["CHANNELS", "Sensitivity", "analyse", "jacobian", "nudge", "resolution"]
 
 
 def nudge(
@@ -99,58 +101,6 @@ def nudge(
     return {**values, name: float(np.clip(moved, knob.lo, knob.hi))}
 
 
-def _channel(r: ReplayResult, channel: str) -> np.ndarray:
-    """The prediction whose movement we measure, flattened.
-
-    WHICH CHANNEL MATTERS MORE THAN THE KNOBS. Trunk inertia hardly moves a
-    joint angle — it moves the BODY, by counter-rotating it against the legs;
-    scoring only ``joint`` reports it unidentifiable no matter how good the
-    data is. ``accel`` is the trunk's specific force at the full physics rate,
-    the quantity an impact actually lives in, and it resolves 12 of 14 knobs
-    against ``joint``'s 4. ``gyro`` and ``tau`` have never been scored before
-    this port — that is why they are here.
-    """
-    p = r.prediction
-    if channel == "joint":
-        return p.q.ravel()
-    if channel == "rot":
-        return p.body_rot.reshape(len(p.body_rot), 9).ravel()  # entries move ~1:1 with radians
-    if channel == "pos":
-        return p.body_pos.ravel()
-    if channel == "accel":
-        return p.imu_accel.ravel()
-    if channel == "gyro":
-        return p.imu_gyro.ravel()
-    if channel == "tau":
-        return p.tau.ravel()
-    raise ValueError(f"unknown channel {channel!r}: expected one of {CHANNELS}")
-
-
-def _residual(r: ReplayResult, channel: str) -> np.ndarray | None:
-    """Base-plant residual (sim - real) on the channel; None without the real side."""
-    p = r.prediction
-    out: np.ndarray
-    if channel == "joint":
-        out = (p.q - r.q_real).ravel()
-    elif channel == "rot":
-        if r.r_real is None:
-            return None
-        out = (p.body_rot - r.r_real).reshape(len(p.body_rot), 9).ravel()
-    elif channel == "pos":
-        if r.p_real is None:
-            return None
-        out = (p.body_pos - r.p_real).ravel()
-    elif channel == "accel":
-        out = (p.imu_accel - r.a_real).ravel()
-    elif channel == "gyro":
-        out = (p.imu_gyro - r.w_real).ravel()
-    elif channel == "tau":
-        out = (p.tau - r.tau_real).ravel()
-    else:
-        raise ValueError(f"unknown channel {channel!r}: expected one of {CHANNELS}")
-    return out
-
-
 @dataclass(frozen=True)
 class SegmentRows:
     segment: Segment
@@ -168,6 +118,20 @@ class Sensitivity:
     segments: list[SegmentRows]
 
 
+def _variants(
+    values: Mapping[str, float],
+    names: Sequence[str],
+    knobs: Mapping[str, Knob],
+    frac: float,
+) -> list[Mapping[str, float]]:
+    """One segment's rollouts, in the fixed order [base, k0+, k0-, k1+, ...]."""
+    out: list[Mapping[str, float]] = [values]
+    for name in names:
+        for sign in (+1, -1):
+            out.append(nudge(values, name, knobs[name], frac, sign))
+    return out
+
+
 def jacobian(
     st: Streams,
     segments: Sequence[Segment],
@@ -181,6 +145,7 @@ def jacobian(
     channel: str = "joint",
     protect: np.ndarray | None = None,
     suspended: bool = False,
+    rollouts: Rollouts | None = None,
 ) -> Sensitivity:
     """Central-difference ``dx/dtheta`` over the sampled segments.
 
@@ -188,12 +153,34 @@ def jacobian(
     run the residual comes from — shares one clip schedule (pure function of
     the segment, ``window``, ``seed + segment index`` and ``protect``), or
     the differences would measure the schedule instead of the physics.
+
+    Every rollout is a pure function of (values, segment), so ``rollouts``
+    fans them out across worker processes; the serial path evaluates the SAME
+    variants in the same order, bit-identically.
     """
     knobs = backend.knobs()
     names = list(params) if params is not None else list(knobs)
     missing = [n for n in names if n not in knobs]
     if missing:
         raise KeyError(f"backend {backend.name!r} exposes no knob(s) {missing}")
+
+    stride = 1 + 2 * len(names)
+    flat: list[ReplayResult] | None = None
+    if rollouts is not None:
+        specs = [
+            RolloutSpec(
+                values=dict(vals),
+                t0=seg.t0,
+                duration=seg.duration,
+                window=window,
+                seed=seed + seg_i,
+                suspended=suspended,
+                protect=protect,
+            )
+            for seg_i, seg in enumerate(segments)
+            for vals in _variants(values, names, knobs, frac)
+        ]
+        flat = rollouts.run(specs)
 
     def run(seg_i: int, seg: Segment, vals: Mapping[str, float]) -> ReplayResult:
         backend.apply(vals)
@@ -213,23 +200,26 @@ def jacobian(
     rows: list[SegmentRows] = []
     row0 = 0
     for seg_i, seg in enumerate(segments):
-        base = run(seg_i, seg, values)
-        x0 = _channel(base, channel)
-        res = _residual(base, channel)
+        if flat is not None:
+            block = flat[seg_i * stride : (seg_i + 1) * stride]
+        else:
+            block = [run(seg_i, seg, v) for v in _variants(values, names, knobs, frac)]
+        base = block[0]
+        x0 = predicted(base, channel)
+        res = channel_residual(base, channel)
         cols = []
-        for name in names:
-            out = []
-            for sign in (+1, -1):
-                r = run(seg_i, seg, nudge(values, name, knobs[name], frac, sign))
-                out.append(_channel(r, channel))
-            n = min(len(out[0]), len(out[1]))
-            cols.append((out[0][:n] - out[1][:n]) / (2.0 * frac))
+        for j in range(len(names)):
+            up = predicted(block[1 + 2 * j], channel)
+            dn = predicted(block[2 + 2 * j], channel)
+            n = min(len(up), len(dn))
+            cols.append((up[:n] - dn[:n]) / (2.0 * frac))
         n = min(min(len(c) for c in cols), len(x0))
         blocks.append(np.stack([c[:n] for c in cols], axis=1))
         residuals.append(res[:n] if res is not None else np.full(n, np.nan))
         rows.append(SegmentRows(seg, slice(row0, row0 + n)))
         row0 += n
-    backend.apply(dict(values))  # leave the backend as we found it
+    if flat is None:
+        backend.apply(dict(values))  # leave the backend as we found it
     return Sensitivity(
         J=np.concatenate(blocks, axis=0),
         names=names,
@@ -386,6 +376,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--start", type=float, default=None, help="restrict to [start, start+seconds]")
     ap.add_argument("--seconds", type=float, default=None)
+    ap.add_argument("--workers", type=int, default=1, help="fan segment rollouts across processes")
     args = ap.parse_args()
 
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
@@ -422,6 +413,7 @@ def main() -> None:
         f"{Path(args.recording).name}  {len(segs)} segments over t={t_lo:.1f}..{t_hi:.1f}s  "
         f"base {args.preset}  frac {args.frac}  channel {args.channel}"
     )
+    rollouts = Rollouts(args.recording, workers=args.workers) if args.workers > 1 else None
     sens = jacobian(
         st,
         segs,
@@ -433,7 +425,10 @@ def main() -> None:
         channel=args.channel,
         protect=protected(spans),
         suspended=suspended,
+        rollouts=rollouts,
     )
+    if rollouts is not None:
+        rollouts.close()
     print(f"{sens.J.shape[0]} residual samples x {sens.J.shape[1]} knobs\n")
     print(format_report(analyse(sens.J, sens.names)))
     print()

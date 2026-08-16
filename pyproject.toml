@@ -329,6 +329,8 @@ sim = [
 go2sim = [
     "mujoco>=3.3.4",
     "mcap>=1.1.1",
+    "optuna>=4.0",  # sysid.fit: seeded CMA-ES studies
+    "cmaes>=0.11",  # optuna's CmaEsSampler backend, not pulled in by default
 ]
 
 mapping = [
