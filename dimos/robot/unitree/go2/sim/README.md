@@ -4,6 +4,71 @@ A measured Go2 plant, and the pipeline that measured it.
 
 ---
 
+## 0. Watch it
+
+No environment variables and no checkouts: the scene is vendored (§5j), so
+these run from a fresh clone. Both open a MuJoCo viewer; both are the same
+functions the scored runs use, with a viewer attached and paced to wall clock.
+
+**Loop 2 — the real policy in the sim, against the recorded robot.** This is
+the referee, and the closest thing to "does it look right":
+
+```bash
+python -m dimos.robot.unitree.go2.sim.sysid.ground \
+    ~/recordings/hard_floor/20260816-194142_policy-freewalk-hard_vive.mcap \
+    data/ml-trajectory-research/freewalk_mcf.bin \
+    --view --start 6 --seconds 40 --seeds 1
+```
+
+`--seeds 1` skips the extra floor rollouts and gets to the viewer sooner;
+`--speed 0.25` slows it down to watch footfalls. Add `--preset stock` to see
+what bare menagerie does, which is the comparison every claim here rests on.
+
+> **The numbers these commands print are NOT the verdict.** A short window with
+> one seed measures its floor from a single perturbed rerun, so the floor is
+> narrow and the SNRs are inflated — an 8 s `--seeds 1` run reports loss ~13.8
+> and 2 of 11, against the headline 0.74–0.90 and 6–8 of 11. The verdict needs
+> the full span, `--seeds 4`, and the robot-repeat floor via
+> `--noise-from <two same-session repeats>` (§5f). Use these to LOOK; use §5f's
+> invocation to judge.
+
+**Loop 1 — open-loop plant replay, no policy.** Recorded joint targets driven
+straight into the plant:
+
+```bash
+python -m dimos.robot.unitree.go2.sim.sysid.replay \
+    ~/recordings/hard_floor/20260816-194142_policy-freewalk-hard_vive.mcap \
+    --view --no-reinit --speed 0.25
+```
+
+`--no-reinit` disables the multiple-shooting snap-back, which is the only way
+to SEE what open loop actually costs — with re-init on it looks deceptively
+good, because it is corrected every 0.4 s.
+
+### What to trust with your eyes, and what not to
+
+**Do not judge body tilt against the ghost.** The ghost is the recorded
+*tracker* pose, and the tracker's ATTITUDE is the retired instrument (§5e):
+its flexing mount inflates roll by ~2.5x. The ghost will visibly rock more
+than the sim, and that difference is the mount, not the physics — believing it
+is exactly the false conclusion §5b–§5d chased for a day.
+
+**Trust the ghost's POSITION**, which is what it is good for: trajectory,
+where it ends up, how it turns.
+
+**What is actually still wrong** is an ~8% short stride at matched cadence
+(§5g), so expect the sim to fall gradually BEHIND the ghost rather than to
+look wrong — no single step is visibly off, but over 40 s at ~0.5 m/s it
+accumulates into metres of separation. Running with and without
+`--preset stock` makes the difference obvious.
+
+**Which recordings can be watched in loop 2:** only those driven by Ivan's
+executor, e.g. `20260816-194142`. The 2026-08-17 recordings used the Go2's
+native runner, whose smoothed output Mode B does not model (§5f) — they are
+floor and loop-1 material.
+
+---
+
 ## 1. The seam
 
 A backend declares what it can **vary** and what it can **predict**. Both are
@@ -692,11 +757,11 @@ Loop 2 takes `roll_std`/`pitch_std`/`tilt_p99` from the tracker
 a direct body-rate measurement no attitude filter has touched, so it can
 arbitrate between two fused estimates — the tracker is wrong:
 
-| | raw gyro | tracker | ratio | corr |
-|---|---|---|---|---|
-| roll rate | 0.389 | 0.962 | 2.47x | **0.44** |
-| pitch rate | 0.321 | 0.608 | 1.90x | 0.52 |
-| yaw rate | 1.022 | 1.378 | 1.35x | 0.73 |
+|            | raw gyro | tracker | ratio | corr     |
+|------------|----------|---------|-------|----------|
+| roll rate  | 0.389    | 0.962   | 2.47x | **0.44** |
+| pitch rate | 0.321    | 0.608   | 1.90x | 0.52     |
+| yaw rate   | 1.022    | 1.378   | 1.35x | 0.73     |
 
 The correlation matters more than the ratio: a rigid mount correlates 0.95+.
 
