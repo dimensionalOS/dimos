@@ -105,7 +105,10 @@ KNOBS: dict[str, Knob] = {
     "foot_friction": Knob(
         0.5,
         1.0,
-        why="a floor property, not a robot one; 0.8-1.0 covers rubber pads on both measured surfaces, neither slips",
+        why="a floor property, not a robot one; 0.8-1.0 covers rubber pads on both "
+        "measured surfaces, neither slips — and closed loop it does not matter: "
+        "sweeping 0.6-1.6 moves speed 0.4% against an 18% deficit (README 5g), "
+        "so the shipped 0.635 sitting below DR_FLOOR's (0.8, 1.0) is inert",
     ),
     "foot_friction_torsional": Knob(
         0.001,

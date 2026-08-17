@@ -140,6 +140,7 @@ class PolicyRun:
     quat: np.ndarray = field(repr=False)  # (n, 4) wxyz
     cmd: np.ndarray = field(repr=False)  # (n, 3)
     target: np.ndarray = field(repr=False)  # (n, 12) commanded joint targets
+    q: np.ndarray = field(repr=False, default_factory=lambda: np.zeros((0, 12)))  # (n, 12) joints
 
 
 def rollout_policy(
@@ -306,6 +307,7 @@ def rollout_policy(
     quat: list[np.ndarray] = []
     used: list[np.ndarray] = []
     targets: list[np.ndarray] = []
+    joints: list[np.ndarray] = []
 
     viewer_cm = None
     if view:
@@ -345,6 +347,7 @@ def rollout_policy(
                 quat.append(data.qpos[3:7].copy())
                 used.append(vel_cmd.copy())
                 targets.append(target.copy())
+                joints.append(data.qpos[7:19].copy())
 
             while pending and pending[0][0] <= step:
                 target = pending.popleft()[1]
@@ -376,6 +379,7 @@ def rollout_policy(
         quat=np.array(quat),
         cmd=np.array(used),
         target=np.array(targets),
+        q=np.array(joints),
     )
 
 

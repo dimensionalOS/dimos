@@ -865,6 +865,107 @@ sim sits inside them.
 
 ---
 
+## 5g. The speed family, decomposed — understriding, and the envelope's half
+
+§5f left one failure family: `speed`, `speed_gain`, `speed_lag`, `gait_hz` —
+the sim delivers ~15-18% less speed per unit command. Measured 2026-08-17,
+all on the `measured` plant and the verified freewalk net.
+
+**The instrument** (`sysid.gait`): `speed = stride length x stride
+frequency`, measured per leg — foot positions from rigid FK on the joint
+angles (validated bit-exact against MuJoCo), touchdown events from the
+gravity-aligned foot height, stride length as body planar travel between a
+leg's consecutive touchdowns. Engine-free, one code path for both sides:
+the recording contributes `lq` + tracker travel, the rollout contributes
+the new `PolicyRun.q` + `run.pos`. First finding: **`gait_hz` does not
+measure cadence** — it reads 1.33 (sim) vs 1.67 (real) while the legs of
+BOTH cycle at 1.93/1.96 Hz — so its §5f "failure" was an artifact of the
+bob autocorrelation, not a physical mismatch. The stride statistics replace
+it as the cadence claim.
+
+**The decomposition: understriding, not understepping** (194142, ideal
+loop; robot-repeat floor from `153320`+`153558` as §5f):
+
+| | sim | real | floor | SNR |
+|---|---|---|---|---|
+| `stride_hz` | 1.925 | 1.957 | 0.306 | **0.1** |
+| `stride_len` | 0.299 | 0.332 | 0.030 | 1.1 |
+
+The gait cycles at the robot's own rate to within 1.6% and covers 10% less
+ground per cycle. Localising further, with the same instrument on both
+sides: the policy COMMANDS the same steps (AP foot excursion of the
+commanded joints 0.222 sim vs 0.216 real), the plant TRACKS them (achieved
+0.215 vs 0.207), and the sim's feet are not sliding away the difference —
+true world-frame slip is 12-14 mm per stance, ~4% of the stride. What does
+differ: the sim swings 38% higher (0.126 vs 0.091 m) and keeps its feet in
+ground dwell a smaller fraction of the cycle (0.47 vs 0.58) — the leg
+motion budget matches, but less of it is spent propelling.
+
+**Friction is exonerated, at 3x the declared range.** Sweeping
+`foot_friction` 0.6 → 1.6 (deliberately past the knob's 1.0 ceiling,
+torsional friction re-derived at each μ) moves closed-loop speed by
+**0.4%**, non-monotone, inside noise — against an 18% deficit. Nobody
+needs to sweep it again. The provenance inconsistency found on the way is
+recorded on the knob: `measured` ships `foot_friction = 0.635`, BELOW
+`DR_FLOOR`'s declared (0.8, 1.0) and the 0.90 the fit pins — inert for
+every statistic (this sweep), left as shipped.
+
+**The re-probe, against the corrected objective.** §5b's spectrum judged
+knobs on oscillation statistics the tracker had corrupted; re-judged on
+the speed family (now including the stride pair) under the IMU referee and
+the robot-repeat floor, one rollout per candidate (chaos on these
+statistics sits 4-15x below the robot floor — except `speed_lag`, whose
+10 ms lag-grid quantum IS both floors, so its SNR moves in whole steps):
+
+| candidate | speed | gain | lag | stride_len | spd RMS | att RMS | ≤floor |
+|---|---|---|---|---|---|---|---|
+| base `measured` | 0.486 | 0.759 | 0.080 | 0.299 | 1.78 | 0.36 | 7/11 |
+| `frictionloss=0.3` | 0.521 | 0.805 | 0.080 | 0.318 | 1.28 | 0.65 | 8/11 |
+| `frictionloss=0.1` (lo bound) | 0.527 | 0.813 | 0.080 | 0.326 | 1.21 | 0.80 | 8/11 |
+| `actuator_tau=0.016` | 0.527 | 0.822 | 0.090 | 0.298 | 0.98 | **1.15** | 5/11 |
+| **`envelope=central`** | 0.518 | 0.810 | 0.090 | 0.316 | **1.04** | 0.42 | 8/11 |
+| `fl=0.3` + envelope | 0.536 | 0.829 | 0.090 | 0.325 | 0.80 | **0.96** | 7/11 |
+| `armature=0.006` | 0.471 | 0.733 | 0.070 | 0.285 | 2.32 | 0.78 | 6/11 |
+| `accel` preset | 0.484 | 0.755 | 0.080 | 0.324 | 1.77 | 0.62 | 7/11 |
+| `fit6-env` preset | 0.487 | 0.759 | 0.070 | 0.305 | 2.03 | 0.64 | 7/11 |
+
+(real: 0.571 / 0.880 / 0.100 / 0.332)
+
+Three verdicts. **The sluggish-plant hypothesis is refuted**: every
+inertia/dissipation deflation — `armature` to the accel-fit 0.006,
+`leg_mass_scale` to 0.7, the accel and fit6 presets wholesale — makes the
+speed family WORSE (lighter legs stride shorter, 0.268-0.287 m).
+**`frictionloss` helps monotonically but cannot finish**: at its range
+floor it still leaves `speed_gain` at 1.5x the robot floor, and stacked on
+the envelope it buys the rest by breaking pitch/roll (1.6x / 1.2x) — a fix
+that reintroduces an oscillation error is not a fix, and `actuator_tau` at
+16 ms is the same trade (att 1.15, §5d's buy-delay proxy again). **The
+measured torque envelope closes half the family attitude-free**: loss
+1.30 → 0.87 on the §5f statistic set, every speed statistic moved toward
+the robot, attitude family untouched.
+
+**The held-out check transfers.** On the rubber freewalk span
+(t=68.3-83.2, no part in selection), the same base plant shows the same
+−18% speed deficit, and `envelope=central` closes 55% of it (0.365 →
+0.409 vs real 0.445), 61% of `speed_gain`, `speed_lag` to exact, with
+attitude unchanged. The §5d select/report discipline, passed.
+
+**Verdict: no admissible knob setting closes the speed family; the torque
+envelope — a measured mechanism with zero free parameters — closes about
+half of it, on both recordings, without touching attitude.** It is the
+first mechanism to earn a positive closed-loop case under the corrected
+referee (§5f rejected latency+noise for overshooting; the envelope was
+never the overshoot's source). It stays default-off here — promoting it
+belongs with a plant whose preset carries `envelope="central"` so the
+claim travels with the physics (§ranges `Preset.envelope`), a decision for
+the project owner, not this probe. The remaining ~8% speed deficit under
+the envelope is the honest residual: a missing mechanism, with §5d's
+series-compliance hypothesis (leg-link/belt flex, motor-side sensors blind
+to it) still the named candidate — now also consistent with the sim's
+high-swing/low-dwell signature, which no rigid-body knob reproduced.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -886,10 +987,13 @@ discrimination, deadband detector, ddq torque timing — §5d), and
 envelope-consistent fitting (`fit --envelope`, the envelope recorded on the
 preset and honoured by every downstream path), the §5e instrument split
 (`sysid.real`: tracker for position, IMU for attitude, provenance on every
-`Summary`, tracker-less recordings score attitude-only — §5f), and the
+`Summary`, tracker-less recordings score attitude-only — §5f), the
 robot-repeat noise floor, measured (§5f: three 08-17 recordings, verdict
-floor from two with the third held out). Acceptance is bit-identical to the
-frozen instrument, and parallel is bit-identical to serial.
+floor from two with the third held out), and the stride instrument
+(`sysid.gait`: engine-free FK strides, one code path for recording and
+rollout, `PolicyRun.q` feeding the sim side — §5g). Acceptance is
+bit-identical to the frozen instrument, and parallel is bit-identical to
+serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
