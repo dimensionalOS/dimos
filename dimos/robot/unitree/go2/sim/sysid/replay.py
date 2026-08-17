@@ -293,7 +293,7 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.replay", description=main.__doc__)
     ap.add_argument("recording")
-    ap.add_argument("--preset", default="measured", help="plant preset name or JSON path")
+    ap.add_argument("--preset", default=None, help="plant preset name or JSON path")
     ap.add_argument("--segment", type=int, default=None, help="policy-mode segment; --list first")
     ap.add_argument("--list", action="store_true", help="list policy segments and exit")
     ap.add_argument("--start", type=float, default=None)
@@ -344,8 +344,17 @@ def main() -> None:
 
     window = None if args.no_reinit else _window_arg(args.window)
     ghost = None if args.no_ghost else ghost_track(st)
-    backend = MujocoBackend(view=args.view, view_speed=args.speed, ghost=ghost)
     preset = load_preset(args.preset)
+    # The backend is built WITH the preset's envelope: a plant that carries one
+    # must never silently run bare (the two are one claim — see ranges.Preset).
+    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
+
+    backend = MujocoBackend(
+        view=args.view,
+        view_speed=args.speed,
+        ghost=ghost,
+        envelope=TORQUE_ENVELOPES[preset.envelope] if preset.envelope else None,
+    )
     print(
         f"preset {preset.name} | re-init "
         f"{'OFF (free divergence)' if window is None else window} | "

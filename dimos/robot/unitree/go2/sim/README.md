@@ -976,7 +976,8 @@ instrument-artifact member removed and the true cadence shown passing
 (`stride_hz` 0.1). On `measured-env` what remains is `speed_gain` 1.6,
 `speed` 1.1, and `speed_lag` on the 1.0 boundary. `measured-env` is now a
 built-in preset (the measured plant + its measured envelope, one claim);
-**the default plant is unchanged** — promotion is pending with the owner.
+the default was left unchanged at this point so the promotion would be
+judged on the settled set — it landed separately, below.
 
 **Verdict: no admissible knob setting closes the speed family; the torque
 envelope — a measured mechanism with zero free parameters — closes about
@@ -991,6 +992,27 @@ the envelope is the honest residual: a missing mechanism, with §5d's
 series-compliance hypothesis (leg-link/belt flex, motor-side sensors blind
 to it) still the named candidate — now also consistent with the sim's
 high-swing/low-dwell signature, which no rigid-body knob reproduced.
+
+**PROMOTED (2026-08-17, owner-approved).** `measured-env` is now
+`DEFAULT_PRESET`, and the `ground`/`probe`/`replay` CLIs default to it
+(`replay` also now builds its backend WITH the preset's envelope — it
+would previously have run an envelope-carrying preset silently bare in
+Mode A, the exact failure the `Preset.envelope` field exists to prevent).
+What makes this promotable at all is the zero-free-parameters property:
+the envelope is a measurement (`sysid.drive`'s transfer function), not a
+fit, so the promotion spends no data on selection. Before/after on the
+SETTLED v2 statistic set, robot-repeat floor, 194142: **7/11, loss 1.23 →
+8/11, loss 0.77**; held-out rubber span: `speed` 0.365 → 0.409 against
+real 0.445, `speed_gain` 0.691 → 0.777 against 0.832, `speed_lag` to
+exact. **The cost, stated:** the attitude family pays — RMS 0.36 → 0.42
+(`roll_std` 0.5 → 0.8, `pitch_std` 0.2 → 0.5, `tilt_p99` 0.1 → 0.4, all
+still inside the robot floor) — and sim `stride_hz` moves 1.925 → 1.763,
+AWAY from the real 1.957 though only 0.6 of its floor. The hybrid
+provenance (knobs fitted envelope-OFF, run envelope-ON — §5b's
+double-counting, kept because the envelope-consistent refit grounds
+worse) is stated on the preset itself in `ranges.py`, so a future reader
+cannot "fix" it by refitting without meeting the record. `measured` is
+untouched and remains the name that reproduces §5b–§5g.
 
 ---
 
@@ -1081,8 +1103,8 @@ robot-repeat noise floor, measured (§5f: three 08-17 recordings, verdict
 floor from two with the third held out), the stride instrument
 (`sysid.gait`: engine-free FK strides, one code path for recording and
 rollout, `PolicyRun.q` feeding the sim side — §5g), the v2 statistic set
-(stride pair scored, `gait_hz` retired to context, the `measured-env`
-preset — §5g), and the series-compliance instrument (`sysid.compliance`:
+(stride pair scored, `gait_hz` retired to context, `measured-env` promoted
+to the default plant — §5g), and the series-compliance instrument (`sysid.compliance`:
 within-stance-demeaned deflection-vs-load regressions, rigid-sim control,
 spring-recovery tests — §5h). Acceptance is bit-identical to the frozen
 instrument, and parallel is bit-identical to serial.

@@ -59,7 +59,7 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
-from dimos.robot.unitree.go2.sim.ranges import KNOBS, Preset, load_preset
+from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, KNOBS, Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.ground import (
     PERTURB_RAD,
     ObsNoise,
@@ -334,7 +334,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.probe")
     ap.add_argument("recording")
     ap.add_argument("policy_bin", help="the net that PRODUCED the recording (verify_net first)")
-    ap.add_argument("--preset", default="measured", help="base plant: preset name or JSON path")
+    ap.add_argument("--preset", default=DEFAULT_PRESET, help="base plant: preset name or JSON path")
     ap.add_argument("--start", type=float, default=6.0)
     ap.add_argument("--seconds", type=float, default=None)
     ap.add_argument("--workers", type=int, default=1)

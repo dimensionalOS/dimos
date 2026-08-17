@@ -253,12 +253,18 @@ MEASURED = Preset(
 )
 ACCEL = Preset(name="accel", physics=dict(ACCEL_PHYSICS), actuator_tau=ACCEL_ACTUATOR_TAU)
 
-# The measured plant run WITH the measured torque envelope (R10-STRIDE,
-# README 5g): closes ~half the closed-loop speed family on the fit recording
-# AND the held-out rubber span without touching the attitude family — the
-# best-grounded plant known. NOT the default: §5b/§5d caution that `measured`'s
-# knobs were fitted open loop without the envelope, so promotion (or an
-# envelope-consistent refit that grounds at least as well) is an owner's call.
+# The DEFAULT plant (promoted 2026-08-17, README 5g): the measured knobs run
+# WITH the measured torque envelope. HYBRID PROVENANCE, deliberately: these
+# knobs were fitted open loop with the envelope OFF, so running them with it
+# ON is formally the double-counting §5b warns about. It is kept because the
+# referee prefers the hybrid everywhere — 7/11 loss 1.23 -> 8/11 loss 0.77
+# under the robot-repeat floor on the fit recording, and 55-61% of the speed
+# family's gap closed on the held-out rubber span — while the
+# envelope-consistent refit (fit6-env) grounds WORSE than this hybrid (§5d's
+# anti-transfer). DO NOT "fix" the inconsistency by refitting: that was
+# tried, and lost. The envelope itself is a measurement with zero free
+# parameters (sysid.drive), which is what makes the promotion spend no data.
+# `measured` stays untouched as the name that reproduces the §5b-§5g record.
 MEASURED_ENV = Preset(
     name="measured-env",
     physics=dict(MEASURED_PHYSICS),
@@ -267,7 +273,7 @@ MEASURED_ENV = Preset(
 )
 
 BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED, ACCEL, MEASURED_ENV)}
-DEFAULT_PRESET = "measured"
+DEFAULT_PRESET = "measured-env"
 
 
 def load_preset(name: str | None = None) -> Preset:

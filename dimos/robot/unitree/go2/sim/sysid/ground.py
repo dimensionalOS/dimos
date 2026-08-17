@@ -72,7 +72,7 @@ from dimos.robot.unitree.go2.sim.plant import (
     actuator_step,
 )
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
-from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
+from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, Preset, load_preset
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
 from dimos.robot.unitree.go2.sim.sysid.gait import strides
 from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, read_streams
@@ -608,7 +608,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.ground")
     ap.add_argument("recording")
     ap.add_argument("policy_bin", help="the net that PRODUCED the recording (verify_net first)")
-    ap.add_argument("--preset", default="measured", help="plant preset name or JSON path")
+    ap.add_argument("--preset", default=DEFAULT_PRESET, help="plant preset name or JSON path")
     ap.add_argument("--start", type=float, default=6.0)
     ap.add_argument("--seconds", type=float, default=None)
     ap.add_argument("--seeds", type=int, default=4, help="perturbed reruns for the sim floor")
