@@ -47,7 +47,12 @@ import threading
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.backend import Backend
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import GO2_READER
+from dimos.robot.unitree.go2.sim.sysid.recording import (
+    RecordingReader,
+    Streams,
+    read_recording,
+)
 from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
 
 
@@ -92,8 +97,8 @@ def _eval(backend: Backend, st: Streams, spec: RolloutSpec) -> ReplayResult:
 _WORKER: dict[str, object] = {}
 
 
-def _init_worker(recording: str, backend: Backend) -> None:
-    _WORKER["st"] = read_streams(recording)  # cache-warm: the parent read it first
+def _init_worker(recording: str, backend: Backend, reader: RecordingReader) -> None:
+    _WORKER["st"] = read_recording(recording, reader)  # cache-warm: the parent read it first
     _WORKER["backend"] = backend
 
 
@@ -109,7 +114,9 @@ class Rollouts:
 
     ``backend`` is the configured engine — an envelope-carrying
     :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`, an Isaac
-    backend, anything behind the seam. ``workers <= 1`` runs it in-process;
+    backend, anything behind the seam. ``reader`` is the recording format
+    (default: the Go2 DDS reader), pickled to workers exactly like the
+    backend. ``workers <= 1`` runs in-process;
     more spawns that many worker processes (spawned, not forked — a forked
     MuJoCo is a bug that looks like a speedup), each receiving the SAME
     backend by pickle. Results always come back in input order.
@@ -121,10 +128,12 @@ class Rollouts:
         backend: Backend,
         *,
         workers: int = 1,
+        reader: RecordingReader | None = None,
     ) -> None:
         self.recording = Path(recording)
         self.workers = workers
-        self.streams = read_streams(self.recording)  # also warms the cache for workers
+        self._reader = GO2_READER if reader is None else reader
+        self.streams = read_recording(self.recording, self._reader)  # warms the worker cache
         self._backend = backend
         self._pool: concurrent.futures.ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # run() is called from study threads
@@ -136,7 +145,7 @@ class Rollouts:
                     max_workers=self.workers,
                     mp_context=multiprocessing.get_context("spawn"),
                     initializer=_init_worker,
-                    initargs=(str(self.recording), self._backend),
+                    initargs=(str(self.recording), self._backend, self._reader),
                 )
         return self._pool
 

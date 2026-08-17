@@ -54,6 +54,7 @@ ABOVE_SEAM = (
     "sysid.meta",
     "sysid.probe",
     "sysid.real",
+    "sysid.recording",
     "sysid.regimes",
     "sysid.replay",
     "sysid.rollouts",

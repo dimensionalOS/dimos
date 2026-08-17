@@ -44,7 +44,7 @@ from dimos.robot.unitree.go2.sim.backend import (
 )
 from dimos.robot.unitree.go2.sim.ranges import Preset
 from dimos.robot.unitree.go2.sim.rotations import quat_to_mat, rotation_angle, strip_yaw
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, mount_matrix
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, mount_matrix
 from dimos.robot.unitree.go2.sim.sysid.regimes import clip_schedule
 
 
@@ -129,7 +129,7 @@ def build_plan(
     mount = mount_matrix() if mount is None else mount
     base_p = base_r = None
     if st.has_markers:
-        base_p, base_r = st.base_pose_room(mount)
+        base_p, base_r = st.base_pose_room(mount, TRACKER_Z)
     times = _step_quantized(t0, duration, schedule, dt)
     reinit = [measured_state(st, t, base_p=base_p, base_r=base_r) for t in [t0, *times]]
     return RolloutPlan(
@@ -212,7 +212,7 @@ def score(pred: Prediction, st: Streams, *, mount: np.ndarray | None = None) -> 
     aidx = np.clip(np.searchsorted(st.lt, pred.at, "right") - 1, 0, len(st.lt) - 1)
     p_real = r_real = None
     if st.has_markers:
-        base_p, base_r = st.base_pose_room(mount)
+        base_p, base_r = st.base_pose_room(mount, TRACKER_Z)
         p_real, r_real = _real_track_in_sim_world(pred, st, base_p, base_r)
     return ReplayResult(
         prediction=pred,
@@ -236,7 +236,7 @@ def ghost_track(st: Streams, *, mount: np.ndarray | None = None) -> GhostTrack |
     if not st.has_markers:
         return None
     mount = mount_matrix() if mount is None else mount
-    base_p, base_r = st.base_pose_room(mount)
+    base_p, base_r = st.base_pose_room(mount, TRACKER_Z)
     return GhostTrack(t=st.vt, pos=base_p, rot=base_r)
 
 

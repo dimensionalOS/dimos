@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MCAP -> one typed :class:`Streams` object. One reader, cached.
+"""The Go2 DDS reader: MCAP through the Unitree wire types -> :class:`Streams`.
+
+One implementation of the :class:`~dimos.robot.unitree.go2.sim.sysid
+.recording.RecordingReader` seam — everything Go2 about a recording lives
+HERE: the topics, the DDS message classes, the motor-order permutation, both
+generations of the executor's control_log schema, and the tracker rig's
+mount constants. The typed streams, the declarations and the cache are the
+recording module's; a second robot brings a reader, not a fork of this file.
 
 Decodes through the dimos Go2 wire types
 (:mod:`dimos.robot.unitree.go2.dds.msgs`), so a recording and a live robot
@@ -23,7 +30,7 @@ present — a bare Go2 walked around a room is a first-class input.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
@@ -31,7 +38,29 @@ from typing import Any
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.plant import MUJOCO_ACTUATOR_NAMES, UNITREE_MOTOR_NAMES
-from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
+from dimos.robot.unitree.go2.sim.sysid.recording import (
+    Declarations,
+    RecordingReader,
+    Streams,
+    read_declarations,
+    read_recording,
+    sidecar_path,
+)
+
+__all__ = [
+    "MOUNT_FLIP",
+    "MOUNT_YAW_DEG",
+    "TRACKER_Z",
+    "Declarations",
+    "Go2DdsReader",
+    "RecordingReader",
+    "Streams",
+    "command_coverage",
+    "mount_matrix",
+    "read_declarations",
+    "read_streams",
+    "sidecar_path",
+]
 
 # The tracker mount for the 2026-08-16 rig (R8-SYSID), fitted as the circular
 # mean of travel direction in the tracker frame under pure +vx (concentration
@@ -50,99 +79,6 @@ def mount_matrix(yaw_deg: float = MOUNT_YAW_DEG, flip: bool = MOUNT_FLIP) -> np.
     bx = np.array([np.cos(th), np.sin(th), 0.0])
     bz = np.array([0.0, 0.0, -1.0 if flip else 1.0])
     return np.stack([bx, np.cross(bz, bx), bz], 1)
-
-
-@dataclass
-class Streams:
-    """Every recorded signal the pipeline needs, on the first-walk-command epoch."""
-
-    lt: np.ndarray  # lowstate time, s (robot `tick` clock, rebased)
-    lq: np.ndarray  # (n,12) measured joint angles, MuJoCo actuator order
-    ldq: np.ndarray  # (n,12) measured joint speeds
-    ltau: np.ndarray  # (n,12) motor-side torque estimate
-    lquat: np.ndarray  # (n,4) IMU attitude, wxyz
-    lgyro: np.ndarray  # (n,3) body angular rate
-    lacc: np.ndarray  # (n,3) body specific force — ~0 in free fall
-    ct: np.ndarray  # command time, s
-    cq: np.ndarray  # (m,12) COMMANDED joint targets — the replay input
-    ckp: np.ndarray
-    ckd: np.ndarray
-    ctau: np.ndarray  # feed-forward torque (zero from our own executor)
-    cdq: np.ndarray  # (m,12) COMMANDED joint speeds; nonzero from Unitree's builtins
-    vt: np.ndarray = field(default_factory=lambda: np.zeros(0))  # tracker time, s
-    vp: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
-    vq: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
-    seg_t: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    seg_mode: tuple[str, ...] = ()
-    # Operator command schedule (control_log velocity commands, either executor
-    # spelling): what drives the policy closed loop in Mode B, and the cmd axis
-    # of loop 2's statistics.
-    wt: np.ndarray = field(default_factory=lambda: np.zeros(0))  # walk cmd time, s
-    wcmd: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))  # vx, vy, vyaw
-    # Gait-height slider ("gait_height" actions); empty when never touched.
-    ght: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    gh: np.ndarray = field(default_factory=lambda: np.zeros(0))
-
-    @property
-    def has_markers(self) -> bool:
-        return len(self.vt) > 0
-
-    def segments(self) -> list[tuple[int, str, float, float]]:
-        """``(index, policy mode, t_start, t_end)`` for each policy span."""
-        end = float(self.ct[-1])
-        out = []
-        for i, mode in enumerate(self.seg_mode):
-            a = float(self.seg_t[i])
-            b = float(self.seg_t[i + 1]) if i + 1 < len(self.seg_t) else end
-            out.append((i, mode, max(a, float(self.ct[0])), min(b, end)))
-        return out
-
-    def base_pose_room(self, mount: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Measured base position and rotation in the ROOM frame, from the tracker."""
-        rot = quat_to_mat(self.vq)  # tracker -> room
-        base_r = np.einsum("nij,jk->nik", rot, mount.T)  # base -> room
-        base_p = self.vp - base_r @ np.array([0.0, 0.0, TRACKER_Z])
-        return base_p, base_r
-
-
-@dataclass(frozen=True)
-class Declarations:
-    """The two things no signal can reveal; everything else is measured.
-
-    A hanging robot reads ~1 g with unloaded legs — and so does one lying
-    down: suspension is ambiguous in principle. Floor material is in no
-    recorded signal at all. So exactly these two are DECLARED, in order of
-    authority: an MCAP file-level ``go2sim`` metadata record written at
-    capture time, else a ``<recording>.meta.json`` sidecar. A detector may
-    cross-check a declaration; it never decides.
-    """
-
-    suspended: bool | None = None
-    floor: str | None = None
-
-
-def sidecar_path(recording: str | Path) -> Path:
-    return Path(recording).with_suffix(".meta.json")
-
-
-def read_declarations(path: str | Path) -> Declarations:
-    path = Path(path)
-    from mcap.reader import make_reader
-
-    with path.open("rb") as f:
-        for md in make_reader(f).iter_metadata():
-            if md.name != "go2sim":
-                continue
-            kv = dict(md.metadata)
-            return Declarations(
-                suspended=json.loads(kv["suspended"]) if "suspended" in kv else None,
-                floor=kv.get("floor"),
-            )
-    side = sidecar_path(path)
-    if side.is_file():
-        d = json.loads(side.read_text())
-        return Declarations(suspended=d.get("suspended"), floor=d.get("floor"))
-    return Declarations()
 
 
 def command_coverage(cmd_t0: float, cmd_t1: float, n_cmd: int, span_s: float) -> float:
@@ -179,20 +115,32 @@ def _velocity_command(d: Mapping[str, Any]) -> tuple[float, float, float] | None
     return None
 
 
-# Bumped whenever the cached field set OR the parse changes: a stale cache
-# would otherwise hide this file's fixes behind a v2 npz. v3 = velocity_input.
+# The parse version half of the cache tag: bumped whenever the cached field
+# set OR the parse changes — a stale cache would otherwise hide this file's
+# fixes behind a v2 npz. v3 = velocity_input.
 _CACHE_VERSION = 3
 
 
-def _cache_path(path: Path) -> Path:
-    d = Path.home() / ".cache" / "dimos_go2sim"
-    d.mkdir(parents=True, exist_ok=True)
-    stat = path.stat()
-    return d / f"{path.stem}.v{_CACHE_VERSION}.{int(stat.st_mtime)}.{stat.st_size}.npz"
+@dataclass(frozen=True)
+class Go2DdsReader:
+    """The Go2 recording reader. Stateless and picklable — see the protocol."""
+
+    @property
+    def cache_tag(self) -> str:
+        return f"v{_CACHE_VERSION}"
+
+    def read(self, path: Path) -> Streams:
+        return _read_streams_uncached(path)
+
+
+GO2_READER = Go2DdsReader()
 
 
 def read_streams(path: str | Path, *, cache: bool = True) -> Streams:
-    """Read lowstate / lowcmd / tracker / control_log out of one MCAP.
+    """Read lowstate / lowcmd / tracker / control_log out of one Go2 MCAP.
+
+    The Go2 convenience over :func:`~dimos.robot.unitree.go2.sim.sysid
+    .recording.read_recording`.
 
     COMMAND SOURCE. ``policy/lowcmd`` is our own executor's output and drives
     when it covers >= 50% of the measured span; otherwise ``rt/lowcmd``, the
@@ -202,66 +150,8 @@ def read_streams(path: str | Path, *, cache: bool = True) -> Streams:
     control_log — either executor spelling, see :func:`_velocity_command`. A
     sport-only recording has none, so its first command stands in — readable,
     but the epoch is comparable within the file only.
-
-    Decoding a large file takes tens of seconds, so parsed streams are cached
-    under ``~/.cache/dimos_go2sim`` keyed by path, mtime and size.
     """
-    path = Path(path)
-    cp = _cache_path(path) if cache else None
-    if cp is not None and cp.is_file():
-        z = np.load(cp, allow_pickle=False)
-        return Streams(
-            lt=z["lt"],
-            lq=z["lq"],
-            ldq=z["ldq"],
-            ltau=z["ltau"],
-            lquat=z["lquat"],
-            lgyro=z["lgyro"],
-            lacc=z["lacc"],
-            ct=z["ct"],
-            cq=z["cq"],
-            ckp=z["ckp"],
-            ckd=z["ckd"],
-            ctau=z["ctau"],
-            cdq=z["cdq"],
-            vt=z["vt"],
-            vp=z["vp"],
-            vq=z["vq"],
-            seg_t=z["seg_t"],
-            seg_mode=tuple(str(m) for m in z["seg_mode"]),
-            wt=z["wt"],
-            wcmd=z["wcmd"],
-            ght=z["ght"],
-            gh=z["gh"],
-        )
-    st = _read_streams_uncached(path)
-    if cp is not None:
-        np.savez_compressed(
-            cp,
-            lt=st.lt,
-            lq=st.lq,
-            ldq=st.ldq,
-            ltau=st.ltau,
-            lquat=st.lquat,
-            lgyro=st.lgyro,
-            lacc=st.lacc,
-            ct=st.ct,
-            cq=st.cq,
-            ckp=st.ckp,
-            ckd=st.ckd,
-            ctau=st.ctau,
-            cdq=st.cdq,
-            vt=st.vt,
-            vp=st.vp,
-            vq=st.vq,
-            seg_t=st.seg_t,
-            seg_mode=np.array(st.seg_mode, dtype="U32"),
-            wt=st.wt,
-            wcmd=st.wcmd,
-            ght=st.ght,
-            gh=st.gh,
-        )
-    return st
+    return read_recording(path, GO2_READER, cache=cache)
 
 
 def _read_streams_uncached(path: Path) -> Streams:
