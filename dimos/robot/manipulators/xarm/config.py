@@ -68,16 +68,13 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
 
 def make_xarm7_sim_robot_config() -> RobotModelConfig:
-    config = make_xarm7_model_config(
+    return make_xarm7_model_config(
         name="arm",
         add_gripper=True,
+        z_offset=XARM7_SIM_BASE_HEIGHT,
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
     )
-    # Match data/xarm7/xarm7.xml, where link_base is mounted on the pedestal.
-    # Keep base_pose identity because RoboPlan consumes the URDF world joint.
-    config.xacro_args["attach_xyz"] = f"0 0 {XARM7_SIM_BASE_HEIGHT}"
-    return config
 
 
 def make_xarm7_sim_hardware(address: str | Path) -> HardwareComponent:

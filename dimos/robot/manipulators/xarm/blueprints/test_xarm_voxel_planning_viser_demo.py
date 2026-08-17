@@ -51,9 +51,8 @@ def test_sim_planning_world_matches_mujoco_robot_mount() -> None:
     mujoco_base_position = [float(value) for value in link_base.attrib["pos"].split()]
     assert robot.base_pose.x == 0.0
     assert robot.base_pose.y == 0.0
-    assert robot.base_pose.z == 0.0
-    planning_base_position = [float(value) for value in robot.xacro_args["attach_xyz"].split()]
-    assert planning_base_position == mujoco_base_position
+    assert robot.base_pose.z == mujoco_base_position[2]
+    assert [float(value) for value in robot.xacro_args["attach_xyz"].split()] == [0.0, 0.0, 0.0]
 
 
 def test_demo_wires_camera_filter_voxel_map_and_snapshot() -> None:
