@@ -114,7 +114,7 @@ KNOBS: dict[str, Knob] = {
         1.0,
         why="a floor property, not a robot one; 0.8-1.0 covers rubber pads on both "
         "measured surfaces, neither slips — and closed loop it does not matter: "
-        "sweeping 0.6-1.6 moves speed 0.4% against an 18% deficit (README 5g), "
+        "sweeping 0.6-1.6 moves speed 0.4% against an 18% deficit (README 9), "
         "so the shipped 0.635 sitting below DR_FLOOR's (0.8, 1.0) is inert",
     ),
     "foot_friction_torsional": Knob(
@@ -168,9 +168,9 @@ class Preset:
     for the ideal actuator. It travels with the preset because the two are one
     claim: knobs fitted with the envelope on absorb a different share of the
     drive, and running such a plant without its envelope silently changes the
-    physics (§5b: the reverse mistake — stacking the envelope on knobs fitted
-    without it — double-counts). Every built-in carries ``None`` except
-    ``measured-env``, whose envelope IS the claim (README 5g).
+    physics (README 9: the reverse mistake — stacking the envelope on knobs
+    fitted without it — double-counts). Every built-in carries ``None`` except
+    ``measured``, whose envelope IS the claim (README 9).
     """
 
     name: str
@@ -228,7 +228,7 @@ GO2 = RobotSpec(mass_kg=16.500)
 
 # The floor the anchors assume: the centre of DR_FLOOR and the mu the fit
 # pins (fit.default_plan). A declaration, not a measurement — and a nearly
-# inert one closed loop: sweeping mu 0.6-1.6 moved speed 0.4% (README 5g).
+# inert one closed loop: sweeping mu 0.6-1.6 moved speed 0.4% (README 9).
 FLOOR_MU = 0.90
 
 # trunk_mass_scale, trunk_com_x, trunk_inertia_scale, foot_friction_torsional
@@ -242,9 +242,9 @@ _ANCHORS = derive(GO2, floor_mu=FLOOR_MU)
 # the 2026-08-16 open-loop fit resolved, and the measured torque envelope.
 # HYBRID PROVENANCE, deliberately: the knobs were fitted open loop with the
 # envelope OFF, so running them with it ON is formally the double-counting
-# README 5b warns about. It is kept because the referee prefers the hybrid
-# everywhere (README 5g: 8/11 within the robot-repeat floor, and the
-# envelope-consistent refit grounds WORSE — 5d's anti-transfer). DO NOT
+# README 9 warns about. It is kept because the referee prefers the hybrid
+# everywhere (README 8-9: the envelope's loss gain is replicated, and the
+# envelope-consistent refit grounds WORSE — the anti-transfer). DO NOT
 # "fix" the inconsistency by refitting: that was tried, and lost.
 MEASURED_PHYSICS: dict[str, float] = {
     "armature": 0.02899,
@@ -274,7 +274,7 @@ MEASURED = Preset(
         "damping": "fitted: suspended recording's joint channel — the one knob accel cannot see",
         "frictionloss": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
         "leg_mass_scale": "fitted: joint fit ~0.96; kept at 1.0 (CAD trusted)",
-        "foot_friction": "declared: DR_FLOOR centre, the mu the fit pins; closed-loop inert (README 5g)",
+        "foot_friction": "declared: DR_FLOOR centre, the mu the fit pins; closed-loop inert (README 9)",
         "foot_friction_torsional": "derived: torsional_friction(FLOOR_MU, foot radius) via anchors.derive",
         "trunk_mass_scale": "derived: 16.500 kg kitchen-scale weighing (anchors.derive)",
         "trunk_com_x": "derived: parallel-axis payload analysis (anchors.derive)",

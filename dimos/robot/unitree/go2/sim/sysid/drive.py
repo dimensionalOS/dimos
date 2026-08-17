@@ -21,7 +21,7 @@ The recordings carry both sides of the drive: the commands (``cq``, ``ckp``,
 ``ldq``) fix the torque the PD law DEMANDED at every 500 Hz sample, and
 ``ltau`` (``tau_est``) is the torque the drive says it DELIVERED. The
 transfer from one to the other IS the drive, measured on the real robot with
-ZERO free parameters — the instrument §5c's proxy verdict called for, aimed
+ZERO free parameters — the instrument README 9's latency-proxy verdict called for, aimed
 at the three candidate mechanisms an ``action_latency`` could be standing in
 for: drive dynamics beyond first order, backlash/deadband, and (by regime
 contrast against the no-contact suspended recording) contact compliance.

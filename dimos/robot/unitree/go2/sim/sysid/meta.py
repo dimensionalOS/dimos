@@ -418,7 +418,7 @@ def run_mechanisms(
     replicates: int = 3,
     workers: int = 1,
 ) -> None:
-    """Ground each mechanism at its measured value — §5b redone without fits."""
+    """Ground each mechanism at its measured value, not a fitted one (README 9)."""
     st = read_streams(recording)
     span = float(st.wt[-1]) - start if seconds is None else seconds
     ml = measured_loop(recording, st, start=start, seconds=span)

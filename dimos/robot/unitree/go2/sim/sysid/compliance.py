@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Series compliance between the motor-side sensors and the world (README 5h).
+"""Series compliance between the motor-side sensors and the world (README 9).
 
     python -m dimos.robot.unitree.go2.sim.sysid.compliance REC.mcap
 
-§5d's blind spot: ``q``/``dq``/``tau_est`` all live motor-side, so a
+The joint channels' blind spot (README 9): ``q``/``dq``/``tau_est`` all live motor-side, so a
 compliance after the gear — leg-link flex, belt wind-up, pad squash — is
 structurally invisible to every joint-channel instrument. This one closes
-the loop through the tracker's POSITION (its attitude is retracted, §5e;
+the loop through the tracker's POSITION (its attitude is retracted, README 6;
 the IMU supplies all attitude here) with zero free parameters:
 
 * **Vertical stiffness** — during a leg's ground dwell the foot is fixed,
@@ -28,7 +28,7 @@ the IMU supplies all attitude here) with zero free parameters:
   (Jacobian-transpose from measured ``tau_est``) is a deflection per
   newton. Within-stance demeaning first: every slow bias — room-frame
   tilt, the ``TRACKER_Z`` guess, mount yaw — is constant over one 0.3 s
-  stance and drops out, which is what keeps §5e's trap (mount error
+  stance and drops out, which is what keeps README 6's trap (mount error
   masquerading as compliance) shut.
 
 * **Kinematic excess** — with the foot fixed, rigid kinematics predicts

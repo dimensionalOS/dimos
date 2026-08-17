@@ -663,7 +663,7 @@ def main() -> None:
         help="fit WITH this measured torque envelope in the actuator chain; the "
         "name is recorded on the saved preset so the plant is never run without "
         "it (fitting without the envelope absorbs its average effect into the "
-        "viscous/inertial knobs — §5b)",
+        "viscous/inertial knobs — README 9)",
     )
     ap.add_argument("--trials", type=int, default=90)
     ap.add_argument("--min-studies", type=int, default=3)

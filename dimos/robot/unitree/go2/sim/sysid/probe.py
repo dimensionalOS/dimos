@@ -76,7 +76,7 @@ from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 # The probed statistics: the 5b oscillation family, then the 5g speed family
 # measured by the stride instrument (`gait_hz` was retired from scoring — it
-# measured its own estimator, README 5g).
+# measured its own estimator, README 6).
 FOCUS = ("roll_std", "pitch_std", "tilt_p99", "height_std", "stride_hz", "stride_len", "speed")
 
 

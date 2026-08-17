@@ -16,9 +16,8 @@
 
     python -m dimos.robot.unitree.go2.sim.sysid.loop REC.mcap [--sweep]
 
-§5b's verdict said the over-damped gap is a missing loop mechanism; this
-module is where each candidate mechanism gets a MEASURED value instead of a
-fitted one. A mechanism fitted against the referee moves the right statistics
+This module is where each candidate loop mechanism gets a MEASURED value
+instead of a fitted one (README 9: the mechanisms stay default-off). A mechanism fitted against the referee moves the right statistics
 for possibly the wrong reason; one parameterised from a measurement is a
 claim about the robot. Four instruments:
 

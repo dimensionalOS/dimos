@@ -90,7 +90,7 @@ def test_snr_is_the_difference_over_the_floor_and_height_mean_is_excluded():
     snr = rep.snr()
     assert snr["speed"] == pytest.approx(2.0)
     assert "height_mean" not in snr  # room frame: no honest comparison exists
-    assert "gait_hz" not in snr  # retired: it measured its own estimator (README 5g)
+    assert "gait_hz" not in snr  # retired: it measured its own estimator (README 6)
     assert len(snr) == 11
 
 
@@ -237,6 +237,6 @@ def test_a_perturbed_start_diverges_but_the_statistics_survive():
     sa, sb = sim_summary(a), sim_summary(b)
     assert abs(sa.speed - sb.speed) < 0.15
     # stride_hz, not gait_hz: the retired estimator is bimodal under chaos
-    # (locks onto a bob harmonic — README 5g), which is why it was retired.
+    # (locks onto a bob harmonic — README 6), which is why it was retired.
     # The stride instrument is the cadence claim, and it holds to ~0.015.
     assert abs(sa.stride_hz - sb.stride_hz) < 0.3

@@ -262,7 +262,7 @@ def summarize(
     sampled at ``t`` too. ``quat`` is the attitude at ``t_att`` — a SEPARATE
     timeline (default ``t``), because position and attitude may come from
     different instruments: the real side reads position from the tracker and
-    attitude from the IMU (README 5e — the tracker's flexing mount invents
+    attitude from the IMU (README 6 — the tracker's flexing mount invents
     ~2x the roll rate, so it is unusable for attitude and precise for
     position). Both timelines share an epoch; each is resampled onto its own
     uniform grid, and the yaw-gain regression truncates to the shorter.

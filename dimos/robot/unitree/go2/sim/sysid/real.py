@@ -47,7 +47,7 @@ def cmd_at(st: Streams, t_abs: np.ndarray) -> np.ndarray:
 def real_summary(st: Streams, *, start: float, seconds: float, attitude: str = "imu") -> Summary:
     """The recording's statistics: POSITION from the tracker, ATTITUDE from the IMU.
 
-    Split by what each instrument is actually good at (README 5e). The
+    Split by what each instrument is actually good at (README 6). The
     tracker is precise on position and unusable for attitude: its flexing
     mount invents 2.47x the roll rate at correlation 0.44, growing 34x with
     activity, and no constant calibration can remove a time-varying error.

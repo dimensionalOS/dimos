@@ -22,7 +22,7 @@ directly — foot positions from rigid FK on the joint angles, touchdown events
 from the gravity-aligned foot height, stride length as body planar travel
 between a leg's consecutive touchdowns.
 
-Engine-free on purpose (README 5f): the same instrument runs on a recording
+Engine-free on purpose (README 6): the same instrument runs on a recording
 (``st.lq`` + tracker travel) and on a closed-loop rollout (``run.q`` +
 ``run.pos``), so a sim-real stride comparison can never be an instrument
 difference. FK is validated against MuJoCo to machine precision in the tests.

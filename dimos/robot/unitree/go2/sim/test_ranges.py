@@ -150,7 +150,7 @@ def test_an_envelope_free_preset_writes_no_envelope_key(tmp_path):
 
 
 def test_two_builtins_with_distinct_jobs():
-    """One plant to ship (measured knobs + measured envelope, README 5g) and
+    """One plant to ship (measured knobs + measured envelope, README 9) and
     one to compare against (stock = bare menagerie, the experimental control
     every comparative claim needs). Nothing else: a third built-in that
     exists because it used to be someone's answer is history, not

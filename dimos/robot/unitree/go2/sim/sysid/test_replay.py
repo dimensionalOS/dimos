@@ -71,7 +71,7 @@ def test_segment_4_reproduces_the_shipped_plants_numbers(mixed_streams):
     the frozen instrument's 0.03095355487877684 / 0.024648439602975667 /
     5.188627404101316, the friction correction (0.635->0.90 derived pair)
     moved +0.08% / +0.23% / +0.75% — friction is closed-loop-inert and
-    open-loop-nearly-inert, as README 5g measured — and the envelope moved
+    open-loop-nearly-inert, as README 9 measured — and the envelope moved
     joint -3.96%, the direction 5d's drive measurement predicts (the bare
     sim OVER-drives tau 1.1-1.35x; derating toward the measured drive
     tightens the joint residual). Same bit-identical discipline forward."""

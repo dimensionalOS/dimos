@@ -44,7 +44,7 @@ floor's SOURCE is a parameter of the claim:
 
 The REAL side of the comparison (:mod:`~dimos.robot.unitree.go2.sim.sysid
 .real`) is pure recording processing and lives outside this module —
-position from the tracker, attitude from the IMU (README 5e). The SIM side
+position from the tracker, attitude from the IMU (README 6). The SIM side
 is engine-free too: :func:`rollout_policy` is a generic closed-loop driver
 over the :class:`~dimos.robot.unitree.go2.sim.backend.LoopSession` seam,
 and the engine enters only through the ``backend`` argument.
@@ -458,7 +458,7 @@ class Report:
     replicate rollouts in ``sims`` (README 4a applied to loop 2: a 40 s
     contact-rich rollout is one draw of a chaotic system, and a single draw
     resamples across ~±10% of the loss under a 1e-7 anchor wiggle, README
-    5i). ``sims`` carries the replicates so the spread can always be quoted
+    8). ``sims`` carries the replicates so the spread can always be quoted
     beside the point; an empty ``sims`` means a single-rollout report (a
     probe cell, a quick look) and prints without a spread.
     """
@@ -575,7 +575,7 @@ def ground(
     MEDIAN and the replicates ride along so the loss is always quotable as a
     spread. One rollout of a contact-rich 40 s gait is a single draw of a
     chaotic system — a 1e-7 anchor wiggle resamples it across ~0.74-0.90 in
-    loss (README 5i) — so a single draw is a LOOK, never a verdict.
+    loss (README 8) — so a single draw is a LOOK, never a verdict.
     ``replicates=1`` is that look, and the report says so.
 
     ``noise=None`` reuses the SAME replicate rollouts as the sim-perturb
