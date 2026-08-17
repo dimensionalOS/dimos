@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 
+from pydantic import ValidationError
 import pytest
 import pytest_mock
 
@@ -165,3 +166,22 @@ def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> No
     assert status.episodes_discarded == 0
     assert status.state == "idle"
     assert status.last_event == "init"
+
+
+def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    m = make_monitor()
+    _press(m, "B")
+
+    m.stop()
+
+    last = _events(m)[-1]
+    assert last.last_event == "discard"
+    assert last.state == "idle"
+    assert last.episodes_discarded == 1
+
+
+def test_invalid_button_mapping_fails_at_startup(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    with pytest.raises(ValidationError, match="unknown Quest button mappings"):
+        make_monitor(button_map={"toggle": "not_a_button"})

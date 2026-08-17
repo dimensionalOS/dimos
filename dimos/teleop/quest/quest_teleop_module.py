@@ -145,8 +145,7 @@ class QuestTeleopModule(Module):
         async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.accept()
             self._ws_loop = asyncio.get_running_loop()
-            with self._clients_lock:
-                self._connected_clients.add(ws)
+            self._client_connected(ws)
             logger.info("Quest client connected")
             try:
                 while True:
@@ -162,8 +161,20 @@ class QuestTeleopModule(Module):
             except Exception:
                 logger.exception("WebSocket error")
             finally:
-                with self._clients_lock:
-                    self._connected_clients.discard(ws)
+                self._client_disconnected(ws)
+
+    def _client_connected(self, ws: WebSocket) -> None:
+        with self._clients_lock:
+            first_client = not self._connected_clients
+            self._connected_clients.add(ws)
+            if first_client:
+                self._reset_controller_state()
+
+    def _client_disconnected(self, ws: WebSocket) -> None:
+        with self._clients_lock:
+            self._connected_clients.discard(ws)
+            if not self._connected_clients:
+                self._reset_controller_state()
 
     @rpc
     def start(self) -> None:
@@ -177,8 +188,19 @@ class QuestTeleopModule(Module):
     @rpc
     def stop(self) -> None:
         self._stop_control_loop()
+        self._reset_controller_state()
         self._stop_server()
         super().stop()
+
+    def _reset_controller_state(self) -> None:
+        """Clear stale input and publish the zero-button safe command."""
+        with self._lock:
+            for hand in Hand:
+                self._is_engaged[hand] = False
+                self._initial_poses[hand] = None
+                self._current_poses[hand] = None
+                self._controllers[hand] = None
+            self._publish_button_state(None, None)
 
     def _engage(self, hand: Hand | None = None) -> bool:
         """Engage a hand. Assumes self._lock is held."""
@@ -231,7 +253,7 @@ class QuestTeleopModule(Module):
     def _on_joy_bytes(self, data: bytes) -> None:
         """Decode LCM bytes into Joy, parse into QuestControllerState."""
         msg = Joy.lcm_decode(data)
-        hand = Hand.LEFT if msg.frame_id == "left" else Hand.RIGHT
+        hand = self._resolve_hand(msg.frame_id)
         try:
             controller = QuestControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:

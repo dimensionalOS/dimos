@@ -35,3 +35,11 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
         "status",
     ]
     assert recorder.kwargs["record_tf"] is False
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+)
+def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
+    assert blueprint.active_blueprints[0].module is CollectionRecorder

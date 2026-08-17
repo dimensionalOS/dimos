@@ -38,6 +38,7 @@ from dimos.imitation.dataprep.core import (
     StreamField,
     SyncConfig,
     extract_episodes,
+    inspect_episodes,
     is_image_array,
     iter_episode_samples,
     resolve_field,
@@ -182,6 +183,17 @@ def test_extract_pending_at_eof_dropped() -> None:
     store = _FakeStore({"status": _status([(1.0, "start", None)])})
     eps = extract_episodes(store, EpisodeExtractor(status_stream="status"))
     assert eps == []
+
+
+def test_inspect_pending_at_eof_reports_incomplete() -> None:
+    store = _FakeStore({"status": _status([(1.0, "start", "unfinished")])})
+
+    report = inspect_episodes(store, EpisodeExtractor(status_stream="status"))
+
+    assert report.episodes == []
+    assert len(report.incomplete) == 1
+    assert report.incomplete[0].start_ts == 1.0
+    assert report.incomplete[0].task_label == "unfinished"
 
 
 def test_extract_init_and_unknown_are_noops() -> None:

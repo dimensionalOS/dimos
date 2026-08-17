@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -62,13 +62,29 @@ class KeyPress(BaseModel):
     ts: float
 
 
+def _default_button_map() -> dict[EpisodeCommand, str]:
+    return {"toggle": "B", "discard": "Y"}
+
+
 class EpisodeMonitorModuleConfig(ModuleConfig):
-    button_map: dict[EpisodeCommand, str] = {
-        "toggle": "B",
-        "discard": "Y",
-    }
-    keyboard_map: dict[EpisodeCommand, str] = {}
+    button_map: dict[EpisodeCommand, str] = Field(default_factory=_default_button_map)
+    keyboard_map: dict[EpisodeCommand, str] = Field(default_factory=dict)
     default_task_label: str | None = None
+
+    @field_validator("button_map")
+    @classmethod
+    def _validate_button_map(cls, value: dict[EpisodeCommand, str]) -> dict[EpisodeCommand, str]:
+        invalid = {
+            button
+            for button in value.values()
+            if BUTTON_ALIASES.get(button, button) not in Buttons.BITS
+        }
+        if invalid:
+            raise ValueError(
+                f"unknown Quest button mappings: {sorted(invalid)}; "
+                f"valid aliases: {sorted(BUTTON_ALIASES)}"
+            )
+        return value
 
 
 class EpisodeMonitorModule(Module):
@@ -109,6 +125,14 @@ class EpisodeMonitorModule(Module):
             self._prev_bits = {}
             status = self._snapshot("init", time.time())
         return self._emit(status)
+
+    @rpc
+    def stop(self) -> None:
+        with self._lock:
+            recording = self._state == "recording"
+        if recording:
+            self._transition("discard", time.time())
+        super().stop()
 
     # ── port handlers ────────────────────────────────────────────────────────
 

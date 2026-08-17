@@ -16,14 +16,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
+from pathlib import Path
+import time
 
 import pytest
 import pytest_mock
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory2.module import Recorder, RecorderConfig, StreamModule
+from dimos.memory2.module import Recorder, RecorderConfig, StreamModule, _RecordItem
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
 from dimos.memory2.type.observation import Observation
@@ -105,3 +109,45 @@ async def test_poseless_stream_skips_tf_lookup(mocker: pytest_mock.MockerFixture
 
     assert pose is None
     recorder.tf.get.assert_not_called()
+
+
+def test_recorder_fifo_drains_all_accepted_messages(tmp_path: Path) -> None:
+    db_path = tmp_path / "recording.db"
+    recorder = Recorder(
+        db_path=db_path,
+        record_tf=False,
+        poseless_streams=["numbers"],
+        queue_maxsize=100,
+    )
+    stream = recorder.store.stream("numbers", int)
+    recorder._start_record_queue()
+
+    for value in range(20):
+        recorder._submit_record(_RecordItem("numbers", stream, value, time.time()))
+
+    recorder.stop()
+
+    assert recorder.recording_metrics() == {
+        "numbers": {"received": 20, "written": 20, "queued": 0, "dropped": 0, "failed": 0}
+    }
+    with SqliteStore(path=str(db_path), must_exist=True) as reopened:
+        observations = reopened.stream("numbers", int).to_list()
+    assert [observation.data for observation in observations] == list(range(20))
+
+
+def test_recorder_drop_new_saturation_is_counted(mocker: pytest_mock.MockerFixture) -> None:
+    recorder = Recorder(record_tf=False, queue_maxsize=1, drop_warning_interval=0)
+    recorder._record_queue = asyncio.Queue(maxsize=1)
+    recorder._accepting_records = True
+    stream = mocker.MagicMock(spec=Stream)
+    first = _RecordItem("numbers", stream, 1, time.time())
+    second = _RecordItem("numbers", stream, 2, time.time())
+    recorder._submit_record(first)
+    recorder._submit_record(second)
+    time.sleep(0.01)
+
+    metrics = recorder.recording_metrics()["numbers"]
+    assert metrics["received"] == 2
+    assert metrics["dropped"] == 1
+    recorder._record_queue = None
+    recorder.stop()
