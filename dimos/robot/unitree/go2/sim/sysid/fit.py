@@ -758,9 +758,13 @@ def main() -> None:
             batch=batch,
             on_study=progress,
         )
-        held_out_lines: list[str] = []
-        if args.held_out:
-            held_out_lines = _held_out(args, base, plan, res, weights, backend)
+    # After the fit's pool is CLOSED: the held-out evaluation spawns its own
+    # workers, and running both pools at once doubles the process population
+    # for the two cheapest evaluations of the run (measured: the overlap
+    # killed a 40-minute fit at its last step).
+    held_out_lines: list[str] = []
+    if args.held_out:
+        held_out_lines = _held_out(args, base, plan, res, weights, backend)
 
     header = (
         f"FIT  {Path(args.recording).name}  preset {args.preset}  "
