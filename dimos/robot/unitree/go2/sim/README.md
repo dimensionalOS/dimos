@@ -31,8 +31,8 @@ menagerie does, which is the comparison every claim here rests on.
 
 > **The numbers these commands print are NOT the verdict.** A short window
 > with one replicate measures its floor from itself, so the floor is narrow
-> and the SNRs are inflated — and a single 40 s draw of the SAME plant reads
-> anywhere in loss 0.78–1.35, 4–9 of 11 (§8). The verdict needs the full
+> and the SNRs are inflated — and a single draw of the SAME plant reads
+> anywhere in loss 0.80–2.59, 5–8 of 11 (§8). The verdict needs the full
 > span, the default `--replicates 8`, and the robot-repeat floor via
 > `--noise-from <two repeat recordings>` (§7). Use these to LOOK; use
 > §7's floor to judge.
@@ -534,39 +534,50 @@ recording, or the command-conditioned statistics (`speed_gain`,
 at vx ±1.5 against `194142`'s ±0.90, and its `speed_gain` reads 0.49–0.54
 against 0.88.
 
-**The current verdict floor** is built from two of the native-runner trio
-(`153320` + `153558`), with `154201` held entirely out of every selection.
-The robot's own variability across the full trio, `pos:tracker att:imu`,
-full spans (the verdict floor is the 2-sample range of the pair):
+**The current verdict floor** is built from two 2026-08-17 freewalk
+recordings driven by Ivan's OWN executor (`195401` + `195715`), back to
+back in one session, deliberately inside `194142`'s command envelope
+(vx ≤ ±0.81 vs ±0.90, never saturating; their `speed_gain` reads
+0.872/0.882 against `194142`'s 0.880, where the native-runner trio reads
+0.49–0.54) — same executor, comparable envelope, which retires the
+executor and envelope caveats a native-runner floor carries. The third
+recording of that session (`195539`, the cleanest: `verify_net` ratio
+0.077 vs 0.127/0.149) is held entirely out of every selection — reserved
+as the verdict recording for a future same-session grounding.
+Per-statistic 2-sample spreads, `pos:tracker att:imu`, full spans (the
+scoring floor is `usable_floor`: clamped below by 5% of the real value
+and a cross-recording floor, which binds on `speed_gain`):
 
-| statistic       | 3-way spread | chaos floor |
-|-----------------|--------------|-------------|
-| `roll_std`      | 0.005        | 0.001       |
-| `pitch_std`     | 0.004        | 0.001       |
-| `tilt_p99`      | 0.023        | 0.008       |
-| `height_std`    | 0.002        | 0.000       |
-| `speed`         | 0.049        | 0.029       |
-| `speed_gain`    | 0.047        | 0.044       |
-| `yaw_rate_gain` | 0.033        | 0.032       |
-| `speed_lag`     | 0.010        | 0.010       |
-| `yaw_lag`       | 0.020        | 0.013       |
+| statistic       | pair spread |
+|-----------------|-------------|
+| `roll_std`      | 0.003       |
+| `pitch_std`     | 0.005       |
+| `tilt_p99`      | 0.018       |
+| `height_std`    | 0.000       |
+| `speed`         | 0.120       |
+| `speed_gain`    | 0.010       |
+| `yaw_rate_gain` | 0.164       |
+| `speed_lag`     | 0.010       |
+| `yaw_lag`       | 0.160       |
+| `stride_hz`     | 0.217       |
+| `stride_len`    | 0.038       |
 
-(stride pair floor from the same pair: `stride_hz` 0.306, `stride_len`
-0.030.) Two caveats ride this floor, stated rather than buried: it is
-CROSS-EXECUTOR (native-runner repeats judging an executor-driven
-recording) and its command envelope is wider than `194142`'s and
-saturating, so `speed_gain`'s floor may not transfer. The attitude half of
-any verdict is robust to both; the command-conditioned half is weaker.
-Retiring both caveats takes repeat recordings driven by Ivan's executor
-inside the grounded recording's envelope.
+One caveat rides this floor, stated rather than buried: the wide members
+(`speed` 0.120, `yaw_rate_gain` 0.164, `yaw_lag` 0.160) are run-to-run
+DRIVING differences, not robot noise — unsaturated free driving varies
+more between runs than the native trio's envelope-clipped driving did —
+so on those statistics this floor is lenient. The tight members — the
+attitude family, `speed_gain`, the stride pair — are the load-bearing
+ones, and they are tighter than the native-runner pair gave.
 
 ---
 
 ## 8. The verdict is a distribution, not a number
 
 Loop 2's point estimate is a single chaotic rollout, and single rollouts do
-not resolve plant differences. Measured on `194142`, shipped plant,
-robot-repeat floor, full span:
+not resolve plant differences. Variance components, measured on `194142`,
+shipped plant, robot-repeat floor (the prior native-runner one — the
+structure is the claim, not the third decimal), full span:
 
 * **Chaos.** Replicate groundings of the IDENTICAL plant (±3° initial pose)
   span loss 0.77–1.68 (median 0.86, heavy right tail) and 5–9 of 11; the
@@ -594,12 +605,16 @@ rollouts add ~2 min to a 1–2 h outer trial; plant-scale effects (envelope
 `--replicates 16`. What no replication buys: comparisons across windows,
 or more than two or three decisions per recording (§4).
 
-**The headline** (194142, full span, robot-repeat floor, `--replicates 8`):
-`measured` **loss 0.81, 7 of 11** (draws 0.78–1.35, 4–9 of 11); `stock`
-**6.95, 3 of 11** (draws 6.50–7.50). The measured-vs-stock separation is
-~40× the n=8 MDD. The envelope's loss contribution (~0.44) also clears it,
-replicated; its match-count gain does not — the envelope's attitude cost
-sits ON the robot floor, so k is not a claim the envelope can carry.
+**The headline** (194142, full span, robot-repeat floor from
+`195401`+`195715`, `--replicates 8`): `measured` **loss 0.92, 7 of 11**
+(draws 0.80–2.59, 5–8 of 11) — what fails is `roll_std` 1.6 and
+`speed_gain` 1.5, with `height_std`/`speed_lag` on the 1.0 boundary;
+`stock` **12.52, 4 of 11** (draws 11.56–12.99, 3–4 of 11). The
+measured-vs-stock separation is ~70× the n=8 MDD. The envelope's loss
+contribution (~0.44, measured under the prior native-runner floor) also
+clears it, replicated; its match-count gain does not — the envelope's
+attitude cost sits ON the robot floor, so k is not a claim the envelope
+can carry.
 
 ---
 
@@ -737,11 +752,10 @@ the shipped plant.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
-**Owed:** a CAPTURE, not code — repeat freewalk recordings driven by
-Ivan's OWN executor, inside the grounded recording's command envelope.
-That single session retires both caveats on the current floor (§7) at
-once; nothing is owed by `rollout_policy`, which already models the
-executor's loop faithfully.
+**Owed:** a same-session Mode B grounding — the held-out recording
+(`195539`, Ivan's executor, untouched by any selection) is the natural
+verdict recording for the floor built from its two session-mates,
+closing the last floor-vs-verdict session gap.
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an
