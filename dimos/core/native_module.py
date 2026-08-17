@@ -315,7 +315,10 @@ class NativeModule(Module):
                 module=self._module_label,
                 pid=proc.pid,
             )
-            proc.send_signal(signal.SIGTERM)
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 proc.wait(timeout=self.config.shutdown_timeout)
             except subprocess.TimeoutExpired:
@@ -324,7 +327,10 @@ class NativeModule(Module):
                     module=self._module_label,
                     pid=proc.pid,
                 )
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 try:
                     proc.wait(timeout=self.config.shutdown_timeout)
                 except subprocess.TimeoutExpired:
