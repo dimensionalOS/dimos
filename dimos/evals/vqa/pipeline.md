@@ -1,8 +1,7 @@
 # VQA Pipeline
 
-The first implementation target is one presence question generated from one recorded image and
-exported as a standalone evaluation dataset. See [Infrastructure](infrastructure.md) for component
-boundaries.
+The current implementation generates constrained questions from one recorded image and exports them
+as a standalone evaluation dataset. See [Infrastructure](infrastructure.md) for component boundaries.
 
 ## Generate Command
 
@@ -20,8 +19,9 @@ The generation sequence is:
 4. Parse the author response into constrained `QuestionProposal` values.
 5. Dispatch each proposal to its named deterministic family.
 6. Let the family request evidence through its primitive interfaces.
-7. Convert each `FamilyAnswer` into a `PublicCase` and `PrivateLabel`.
-8. Copy the image and write the standalone dataset artifacts.
+7. Retain unsupported proposals as private rejections without exporting them.
+8. Convert each valid `FamilyAnswer` into a `PublicCase` and `PrivateLabel`.
+9. Copy the image and write the standalone dataset artifacts.
 
 Only the image is available to the question author. Primitive evidence and derived answers remain
 private.
@@ -54,6 +54,35 @@ evidence and does not decide how that evidence maps to a public answer.
 
 True-negative authoring and evidence policy are intentionally deferred until the positive presence
 path works end to end.
+
+## Horizontal Direction Family
+
+The proposal is:
+
+```json
+{
+  "family": "horizontal_direction",
+  "object_name": "robot"
+}
+```
+
+The family recipe is:
+
+```text
+object_name
+-> request object detections from ObjectDetector
+-> require exactly one detection
+-> compute the bounding-box center as a fraction of image width
+-> [0, 1/3): left
+-> [1/3, 2/3): center
+-> [2/3, 1]: right
+-> render "Which horizontal region contains the visible <object_name>?"
+-> choices (left, center, right)
+-> return FamilyAnswer
+```
+
+Zero detections cannot establish a direction, while multiple detections make the referenced instance
+ambiguous. Both cases reject the proposal.
 
 ## Dataset Artifacts
 
@@ -94,9 +123,10 @@ The matching private label is:
 }
 ```
 
-`ground_truth.json` retains the proposal, selected answer, object query, detection count, and detected
-boxes. `frame.json` records the source image index and timestamp, while `run.json` records the source
-Memory dataset and enabled families.
+`ground_truth.json` retains answered proposals and rejected proposals with their failure reasons.
+Answered rows include the selected answer, object query, detection count, and detected boxes.
+`frame.json` records the source image index and timestamp, while `run.json` records the source Memory
+dataset and enabled families.
 
 ## Run Command
 
@@ -115,7 +145,6 @@ The evaluation sequence is:
 
 ## Next Steps
 
-1. Run the command against one real recording and inspect its authored proposal and Moondream boxes.
-2. Evaluate that generated dataset with one vision model.
-3. Define a true-negative evidence policy before balancing presence labels.
-4. Add more images, families, and operational behavior only after the first path is understood.
+1. Define a true-negative evidence policy before balancing presence labels.
+2. Add multiple-image generation.
+3. Add segmentation and geometry only when the next family requires them.

@@ -33,7 +33,7 @@ class QuestionProposal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    family: Literal["presence"]
+    family: Literal["presence", "horizontal_direction"]
     object_name: NonEmptyString
 
 
@@ -64,14 +64,28 @@ class FamilySpec:
 
     name: str
     required_fields: tuple[str, ...]
+    description: str
 
 
-PRESENCE_FAMILY = FamilySpec(name="presence", required_fields=("object_name",))
-AVAILABLE_FAMILIES = (PRESENCE_FAMILY,)
+PRESENCE_FAMILY = FamilySpec(
+    name="presence",
+    required_fields=("object_name",),
+    description="Ask whether a clearly visible object category is present.",
+)
+HORIZONTAL_DIRECTION_FAMILY = FamilySpec(
+    name="horizontal_direction",
+    required_fields=("object_name",),
+    description="Use only for one clearly visible object instance.",
+)
+AVAILABLE_FAMILIES = (PRESENCE_FAMILY, HORIZONTAL_DIRECTION_FAMILY)
+
+
+class InsufficientEvidenceError(ValueError):
+    """A family cannot derive an answer from the available primitive evidence."""
 
 
 class ObjectDetector(Protocol):
-    """Object evidence required by the presence family."""
+    """Object evidence required by visual question families."""
 
     def detect(self, image: Image, object_name: str) -> ImageDetections2D: ...
 
@@ -82,6 +96,8 @@ def answer_question(
     """Dispatch one constrained proposal to its deterministic family."""
     if proposal.family == "presence":
         return _answer_presence(proposal, image, detector)
+    if proposal.family == "horizontal_direction":
+        return _answer_horizontal_direction(proposal, image, detector)
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -90,7 +106,9 @@ def _answer_presence(
 ) -> FamilyAnswer:
     detections = detector.detect(image, proposal.object_name)
     if not detections.detections:
-        raise ValueError(f"object detector did not confirm visible {proposal.object_name!r}")
+        raise InsufficientEvidenceError(
+            f"object detector did not confirm visible {proposal.object_name!r}"
+        )
     boxes = [list(map(float, detection.bbox)) for detection in detections.detections]
     return FamilyAnswer(
         question=f"Does the image contain any {proposal.object_name}?",
@@ -101,5 +119,39 @@ def _answer_presence(
             "object_name": proposal.object_name,
             "detection_count": len(detections),
             "boxes": cast("JsonValue", boxes),
+        },
+    )
+
+
+def _answer_horizontal_direction(
+    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+) -> FamilyAnswer:
+    detections = detector.detect(image, proposal.object_name)
+    if len(detections) != 1:
+        raise InsufficientEvidenceError(
+            f"horizontal direction requires exactly one detected {proposal.object_name!r}, "
+            f"got {len(detections)}"
+        )
+
+    box = detections.detections[0].bbox
+    center_x = (box[0] + box[2]) / 2
+    center_fraction = center_x / image.width
+    if center_fraction < 1 / 3:
+        answer = "left"
+    elif center_fraction < 2 / 3:
+        answer = "center"
+    else:
+        answer = "right"
+    return FamilyAnswer(
+        question=f"Which horizontal region contains the visible {proposal.object_name}?",
+        choices=("left", "center", "right"),
+        answer=answer,
+        evidence={
+            "primitive": "object_detector",
+            "object_name": proposal.object_name,
+            "detection_count": 1,
+            "box": cast("JsonValue", list(map(float, box))),
+            "center_x_px": center_x,
+            "center_x_fraction": center_fraction,
         },
     )

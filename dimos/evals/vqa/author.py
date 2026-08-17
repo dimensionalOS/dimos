@@ -20,6 +20,8 @@ from collections.abc import Sequence
 import json
 from typing import TYPE_CHECKING, Protocol
 
+from pydantic import ValidationError
+
 from dimos.evals.vqa.families import FamilySpec, QuestionProposal
 
 if TYPE_CHECKING:
@@ -43,14 +45,28 @@ class OpenAIQuestionAuthor:
 
     def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
         family_shapes = [
-            {"family": family.name, "required_fields": family.required_fields}
+            {
+                "family": family.name,
+                "required_fields": family.required_fields,
+                "description": family.description,
+            }
             for family in families
         ]
         prompt = (
-            "Select one useful question about an object clearly visible in this image. "
-            "Return only one JSON object matching an available deterministic family. "
-            "Do not answer the question or add fields. "
+            "Generate useful questions about objects clearly visible in this image. "
+            "Use any applicable families and object names, preferring specific families when their "
+            "requirements are clearly satisfied. "
+            "Return only a JSON array of objects matching the available deterministic families. "
+            "Do not duplicate a family/object pair. Do not answer questions or add fields. "
             f"Available families: {json.dumps(family_shapes)}"
         )
-        payload = self._model.query_json(image, prompt)
-        return (QuestionProposal.model_validate(payload),)
+        payload: object = self._model.query_json(image, prompt)
+        if not isinstance(payload, list):
+            raise ValueError("question author response must be a JSON array")
+        proposals: list[QuestionProposal] = []
+        for item in payload:
+            try:
+                proposals.append(QuestionProposal.model_validate(item))
+            except ValidationError:
+                continue
+        return tuple(proposals)

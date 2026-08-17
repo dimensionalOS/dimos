@@ -46,12 +46,20 @@ question, and choices; the expected answer remains private.
 
 ## Current Contracts
 
-`QuestionProposal` is the constrained model-authored output. The only available family is currently:
+`QuestionProposal` is the constrained model-authored output. The available families currently share
+one `object_name` input:
 
 ```json
 {
   "family": "presence",
   "object_name": "chair"
+}
+```
+
+```json
+{
+  "family": "horizontal_direction",
+  "object_name": "robot"
 }
 ```
 
@@ -68,15 +76,16 @@ contains the matching case ID and expected answer.
 - Primitive implementations remain replaceable and do not construct questions.
 - Generation reads privileged evidence, while evaluation reads only exported public artifacts.
 - Add abstractions only when a second concrete use requires them.
-- Implement and verify one image and one family before adding batching, resume behavior, or more
-  families.
+- Implement and verify one image at a time before adding batching or resume behavior.
 
 ## Initial Scope
 
 The package currently supports one image selected by index from the `color_image` Memory stream. An
-`OpenAIVlModel` proposes exactly one presence-family input, and `MoondreamVlModel` supplies private
-object detections through the primitive adapter. The family owns fixed yes/no choices, exports a
-confirmed positive answer, and the generator writes the public/private artifact tree.
+`OpenAIVlModel` proposes any number of useful presence or horizontal-direction inputs, and
+`MoondreamVlModel` supplies private object detections through the primitive adapter. Each valid family
+answer becomes one public case. When at least one case is answered, proposals without sufficient
+evidence are skipped and retained in their original order in the private frame audit. If none can be
+answered, generation fails without publishing a dataset.
 
 The initial author proposes a clearly visible object, so an empty detector result rejects generation
 rather than being exported as evidence of absence. Negative presence labels require a separate
@@ -85,5 +94,5 @@ evidence policy.
 The standalone suite loader validates case and label IDs, allowed answers, and dataset-relative image
 paths before constructing VQA cases for the shared `EvalRunner`.
 
-Batching, resume behavior, author retries, true-negative policy, geometric evidence, and additional
+Batching, resume behavior, author retries, true-negative policy, geometric evidence, and further
 families remain intentionally deferred.

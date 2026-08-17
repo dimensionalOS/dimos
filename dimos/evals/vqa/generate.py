@@ -28,6 +28,7 @@ from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     FamilyAnswer,
+    InsufficientEvidenceError,
     NonEmptyString,
     ObjectDetector,
     QuestionProposal,
@@ -124,40 +125,90 @@ def generate_image_dataset(
     detector: ObjectDetector,
 ) -> GenerationResult:
     """Generate and write one dataset from an already loaded image."""
-    proposals = tuple(author.propose(image, AVAILABLE_FAMILIES))
-    if len(proposals) != 1:
-        raise ValueError(f"expected exactly one question proposal, got {len(proposals)}")
+    proposals = _deduplicate_proposals(author.propose(image, AVAILABLE_FAMILIES))
+    if not proposals:
+        raise ValueError("question author returned no proposals")
 
-    answers = tuple(answer_question(proposal, image, detector) for proposal in proposals)
+    answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
+    audit_rows: list[dict[str, object]] = []
+    rejected_count = 0
+    for proposal in proposals:
+        try:
+            answer = answer_question(proposal, image, detector)
+        except InsufficientEvidenceError as exc:
+            rejected_count += 1
+            audit_rows.append(
+                {
+                    "proposal": proposal.model_dump(mode="json"),
+                    "status": "rejected",
+                    "reason": str(exc),
+                }
+            )
+        else:
+            answered.append((proposal, answer))
+            audit_rows.append(
+                {
+                    "proposal": proposal.model_dump(mode="json"),
+                    "status": "answered",
+                    "answer": answer.model_dump(mode="json"),
+                }
+            )
+    if not answered:
+        raise ValueError("no authored question had sufficient deterministic evidence")
+
+    answers = tuple(answer for _, answer in answered)
+    case_ids = _case_ids(request.image_index, tuple(proposal for proposal, _ in answered))
     cases = tuple(
         PublicCase(
-            id=_case_id(request.image_index, proposal),
+            id=case_id,
             image=f"assets/frame-{request.image_index:06d}.jpg",
             question=answer.question,
             choices=answer.choices,
         )
-        for proposal, answer in zip(proposals, answers, strict=True)
+        for case_id, (_, answer) in zip(case_ids, answered, strict=True)
     )
     labels = tuple(
         PrivateLabel(id=case.id, answer=answer.answer)
         for case, answer in zip(cases, answers, strict=True)
     )
-    _write_dataset(request, image, proposals, answers, cases, labels)
+    _write_dataset(
+        request,
+        image,
+        cases,
+        labels,
+        audit_rows,
+        rejected_count,
+    )
     return GenerationResult(output=request.output, cases=cases)
 
 
-def _case_id(image_index: int, proposal: QuestionProposal) -> str:
-    object_id = re.sub(r"[^a-z0-9]+", "-", proposal.object_name.casefold()).strip("-")
-    return f"frame-{image_index:06d}-{object_id}-{proposal.family}"
+def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
+    unique: list[QuestionProposal] = []
+    for proposal in proposals:
+        if proposal not in unique:
+            unique.append(proposal)
+    return tuple(unique)
+
+
+def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tuple[str, ...]:
+    counts: dict[str, int] = {}
+    identifiers: list[str] = []
+    for proposal in proposals:
+        object_id = re.sub(r"[^a-z0-9]+", "-", proposal.object_name.casefold()).strip("-")
+        base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
+        count = counts.get(base, 0) + 1
+        counts[base] = count
+        identifiers.append(base if count == 1 else f"{base}-{count}")
+    return tuple(identifiers)
 
 
 def _write_dataset(
     request: GenerationRequest,
     image: Image,
-    proposals: tuple[QuestionProposal, ...],
-    answers: tuple[FamilyAnswer, ...],
     cases: tuple[PublicCase, ...],
     labels: tuple[PrivateLabel, ...],
+    audit_rows: list[dict[str, object]],
+    rejected_count: int,
 ) -> None:
     output = request.output
     if output.exists() and any(output.iterdir()):
@@ -178,16 +229,7 @@ def _write_dataset(
     _write_jsonl(output / "labels.jsonl", label_rows)
     _write_json(frame_audit / "cases.json", case_rows)
     _write_json(frame_audit / "labels.json", label_rows)
-    _write_json(
-        frame_audit / "ground_truth.json",
-        [
-            {
-                "proposal": proposal.model_dump(mode="json"),
-                "answer": answer.model_dump(mode="json"),
-            }
-            for proposal, answer in zip(proposals, answers, strict=True)
-        ],
-    )
+    _write_json(frame_audit / "ground_truth.json", audit_rows)
     _write_json(
         frame_audit / "frame.json",
         {
@@ -195,6 +237,7 @@ def _write_dataset(
             "image": cases[0].image,
             "timestamp": image.ts,
             "question_count": len(cases),
+            "rejected_question_count": rejected_count,
         },
     )
     _write_json(
@@ -204,6 +247,7 @@ def _write_dataset(
             "image_index": request.image_index,
             "families": [family.name for family in AVAILABLE_FAMILIES],
             "question_count": len(cases),
+            "rejected_question_count": rejected_count,
         },
     )
 
