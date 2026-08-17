@@ -62,8 +62,12 @@ xarm_voxel_planning_viser_demo = (
             planning_collision_max_age_s=1.0,
             visualization={"backend": "viser"},
             world_backend="roboplan",
-            planner_name="roboplan",
-            kinematics={"backend": "pink"},
+            planner={"backend": "roboplan"},
+            # Pink/Pinocchio and RoboPlan currently load incompatible native
+            # dependencies in one process; the first interactive IK call can
+            # abort the worker. Jacobian IK uses RoboPlan's synchronized world
+            # interface and keeps gizmo evaluation in one native backend.
+            kinematics={"backend": "jacobian"},
         ),
         MujocoSimModule.blueprint(
             # The simulator already has the camera's world pose. Publishing

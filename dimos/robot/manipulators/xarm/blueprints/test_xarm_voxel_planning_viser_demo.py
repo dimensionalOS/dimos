@@ -33,8 +33,8 @@ def test_demo_composes_simulation_voxel_planning_modules() -> None:
 
     manip_kwargs = _atom(ManipulationModule).kwargs
     assert manip_kwargs["world_backend"] == "roboplan"
-    assert manip_kwargs["planner_name"] == "roboplan"
-    assert manip_kwargs["kinematics"] == {"backend": "pink"}
+    assert manip_kwargs["planner"] == {"backend": "roboplan"}
+    assert manip_kwargs["kinematics"] == {"backend": "jacobian"}
     assert manip_kwargs["visualization"] == {"backend": "viser"}
     assert manip_kwargs["planning_world_frame"] == "world"
     assert manip_kwargs["planning_voxel_resolution"] == 0.05
