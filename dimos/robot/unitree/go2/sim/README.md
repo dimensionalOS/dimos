@@ -310,14 +310,117 @@ better on the open-loop objective was WORSE on the referee on every window
 tried (§9). The open-loop objective is not a reliable proxy for closed-loop
 fidelity; loop 2 adjudicates every promotion.
 
-### Meta-search: what loop 2 selects
+### Which signals belong to which loop — and why it must be a partition
+
+Each loop can see something the other cannot, and the design intent is that
+each scores **only** what is its own.
+
+- **Loop 1's exclusive capability is joint-level, pointwise.** `q`, `dq` and
+  `tau` across 12 joints — 36 signals at 500 Hz, compared sample by sample.
+  Loop 2 can never access this: over a 40 s free rollout chaos destroys
+  pointwise comparison, which is exactly why loop 2 compares distributions
+  instead. Multiple shooting is what buys it — re-initialising every
+  0.05–0.8 s keeps the residual a measure of dynamics rather than of
+  divergence.
+- **Loop 2's exclusive capability is emergent, body-level.** Where the robot
+  actually went, how it followed commands, how it oscillated — quantities
+  that only exist after seconds of closed-loop behaviour.
+
+  Its intended headline is **windowed positional divergence of `base_link`**:
+  re-initialise the closed loop from measured state every T seconds and ask how
+  far the sim's base is from the robot's at the window's end. Unbounded position
+  error is meaningless — nothing corrects the sim toward the robot, so it
+  diverges eventually whatever the plant — but bounded by T it is the most
+  directly interpretable number this project can produce: *metres, after
+  seconds*, rather than a unitless loss. This is multiple shooting one storey
+  up, and T is measurable rather than guessable: sweep it and take where plant
+  discrimination peaks against the chaos floor (too short and divergence has no
+  time to express; too long and chaos swamps it). Decompose it — **along-track**
+  error is largely the known 8% stride deficit (§9), so **cross-track and
+  heading** carry the new information, and are what a navigation stack cares
+  about. NOT BUILT: `rollout_policy` currently never snaps, so this needs a
+  re-init path on the closed loop. It is a first-class term beside the eleven
+  statistics, not a replacement — a single scalar cannot see oscillation, gains
+  or lags, and collapsing to one number would destroy the misspecification map
+  below.
+
+**The partition is what makes loop 2 a referee.** A referee that judges what
+the fit optimised is not an independent check, and the pair collapses into one
+loop with extra steps. So body-level channels (`pos`, `rot`) carry weight in
+loop 2's verdict, and loop 1 earns its keep on the joints.
+
+Today the objective violates this: loop 1 fits **`accel`** — a body-level
+signal — at 0.5 floor / 0.5 flight, with `pos`, `rot`, `joint`, `dq`, `tau` and
+`gyro` all at zero weight. `accel` was chosen on identifiability grounds (11
+of 14 knobs resolved, against `joint`'s 5) and that reasoning is sound as far
+as it goes, but resolution is not correctness.
+
+**A hypothesis this partition would test, not an established finding:** the
+anti-transfer above may be the overlap biting. Loop 1 fits body acceleration
+over 0.4 s; loop 2 judges body motion over 40 s. Those are the same physical
+quantity at two horizons, and a plant tuned to match one being worse at the
+other is the shape you would expect from two horizons of one quantity fighting.
+If so, fitting joints and judging body is not merely cleaner — it is the fix,
+and it needs no new recordings to try.
+
+### What loop 2 selects — the weight vector is a misspecification map
+
+Loop 2's job is to choose loop 1's **judge weights**, and it is worth being
+precise about what that means, because it is not tuning.
+
+If the simulator were correct, the optimal weights would be a pure *efficiency*
+question — weight by inverse noise variance and be done, since a correct model
+can match every channel at once. There would be no tension to resolve.
+
+The simulator is misspecified, so no parameter setting matches all channels
+simultaneously. Under misspecification the weights decide **which discrepancies
+are absorbed into the parameters and which are left in the residual**. Fitting
+one channel hard distorts the parameters until that channel matches, and the
+distortion reappears elsewhere.
+
+So the fitted weight vector is a **map of where this simulator cannot be made
+to fit** — chosen against what matters downstream. Two consequences:
+
+- **Zero weight must never mean unreported.** A de-weighted channel's residual
+  is part of the deliverable: *"`tau` was down-weighted to 0.1 and its residual
+  sits at 3× the noise floor"* is a precise statement of where the model is
+  wrong. That statement is the product, as much as the plant is.
+- **It makes a falsifiable prediction.** Two misspecifications are already
+  measured directly (§9): real propulsion-axis leg compliance, and MuJoCo's
+  μ-insensitive tangential contact creep. If the selected weights de-weight
+  exactly the channels those contaminate, the map independently confirms them.
+  If they de-weight something else, there is a defect we have not found.
+
+What keeps it anchored to the real robot — both mechanisms already exist and
+must bind the weights too:
+
+- **Knob ranges and measured pins are inviolable.** Mass is weighed, torsional
+  friction is derived; no weight vector may move them. Without this, loop 2
+  drives loop 1 wherever the statistics are flattered — the latency proxy
+  (§9) is the worked example of loop 2 wanting something physically impossible.
+- **Weights are selected on one recording and reported on another**, so a
+  vector that only flatters its selection set is caught.
 
 | hyperparameter           | today                                                     |
 |--------------------------|-----------------------------------------------------------|
-| channel + regime weights | one channel at a time, `accel`; `w_flight` 0.5 (invented) |
+| channel + regime weights | one channel, `accel`; `w_flight` 0.5 (invented)           |
 | clip length range        | U(0.05, 0.8) s, picked by eye                             |
 | segment count / length   | stratified, seeded                                        |
 | loss statistic           | mean (p50 measured better, never switched)                |
+
+**Three of the axes `OuterPoint` exposes are vacuous on the objective as it
+stands, and this is why the outer study has not been run.** With one weighted
+channel, `normalised` is a single constant factor on the loss and cannot change
+which plant wins or which the fit finds. `w_flight` splits weight against a
+`flight` regime that does not exist in an all-floor walking recording — the fit
+recordings are 100% `floor`, and flight lives only in the jumps recording,
+which is held out. And `stratified` is a coverage question that loop 1's own
+identifiability instrument answers far more cheaply than the referee can.
+
+So the objective must be respecified *before* an outer search is worth running:
+weight the joint-level channels, and bring a recording with `flight` into the
+fit so the regime weights refer to something. Only then do the weight axes
+become decisions rather than no-ops.
 
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
