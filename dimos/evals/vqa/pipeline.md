@@ -1,7 +1,8 @@
 # VQA Pipeline
 
-The current implementation generates constrained questions from one recorded image and exports them
-as a standalone evaluation dataset. See [Infrastructure](infrastructure.md) for component boundaries.
+The current implementation generates constrained questions from selected recorded images and exports
+them as a standalone evaluation dataset. See [Infrastructure](infrastructure.md) for component
+boundaries.
 
 ## Generate Command
 
@@ -11,17 +12,31 @@ dimos evals vqa generate <memory-dataset> \
   --output <dataset-directory>
 ```
 
+Range mode uses Python-style exclusive stop semantics:
+
+```bash
+dimos evals vqa generate <memory-dataset> \
+  --start 0 \
+  --stop 100 \
+  --stride 10 \
+  --output <dataset-directory>
+```
+
+`image_index` cannot be combined with range options. Range mode requires `start` and `stop`; `stride`
+defaults to one.
+
 The generation sequence is:
 
 1. Open the recording with the shared Memory dataset loader.
-2. Select one observation from the `color_image` stream by index.
-3. Give the image and available family specifications to the question author.
-4. Parse the author response into constrained `QuestionProposal` values.
-5. Dispatch each proposal to its named deterministic family.
-6. Let the family request evidence through its primitive interfaces.
-7. Retain unsupported proposals as private rejections without exporting them.
-8. Convert each valid `FamilyAnswer` into a `PublicCase` and `PrivateLabel`.
-9. Copy the image and write the standalone dataset artifacts.
+2. Normalize single-frame or range selection into ordered frame indices.
+3. Reuse one question author and one primitive implementation across selected frames.
+4. Give each image and the available family specifications to the question author.
+5. Parse each author response into constrained `QuestionProposal` values.
+6. Dispatch each proposal to its named deterministic family.
+7. Let the family request evidence through its primitive interfaces.
+8. Retain unsupported proposals as private rejections without exporting them.
+9. Convert each valid `FamilyAnswer` into a `PublicCase` and `PrivateLabel`.
+10. Store each image once, write per-frame audit, and aggregate root cases and labels.
 
 Only the image is available to the question author. Primitive evidence and derived answers remain
 private.
@@ -94,9 +109,15 @@ dataset/
   labels.jsonl
   assets/
     frame-000000.jpg
+    frame-000010.jpg
   audit/
     run.json
     frame-000000/
+      frame.json
+      ground_truth.json
+      cases.json
+      labels.json
+    frame-000010/
       frame.json
       ground_truth.json
       cases.json
@@ -125,8 +146,8 @@ The matching private label is:
 
 `ground_truth.json` retains answered proposals and rejected proposals with their failure reasons.
 Answered rows include the selected answer, object query, detection count, and detected boxes.
-`frame.json` records the source image index and timestamp, while `run.json` records the source Memory
-dataset and enabled families.
+`frame.json` records each source image index and timestamp, while `run.json` records the source Memory
+dataset, selection mode, enabled families, frame count, and aggregate question counts.
 
 ## Run Command
 
@@ -146,5 +167,4 @@ The evaluation sequence is:
 ## Next Steps
 
 1. Define a true-negative evidence policy before balancing presence labels.
-2. Add multiple-image generation.
-3. Add segmentation and geometry only when the next family requires them.
+2. Add segmentation and geometry only when the next family requires them.

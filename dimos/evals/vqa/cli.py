@@ -26,13 +26,23 @@ app = typer.Typer(help="Generate and evaluate standalone visual question-answeri
 @app.command("generate")
 def generate(
     dataset: str = typer.Argument(help="Memory dataset name or .db/.mcap path"),
-    image_index: int = typer.Option(0, min=0, help="Index in the color_image stream"),
+    image_index: int | None = typer.Option(None, min=0, help="Process one color_image index"),
+    start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
+    stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
+    stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
     output: Path = typer.Option(..., help="Standalone dataset output directory"),
 ) -> None:
-    """Generate questions for one recorded image."""
+    """Generate questions for one image or an indexed image range."""
     from dimos.evals.vqa.generate import GenerationRequest, generate_dataset
 
-    request = GenerationRequest(dataset=dataset, image_index=image_index, output=output)
+    request = GenerationRequest(
+        dataset=dataset,
+        output=output,
+        image_index=image_index,
+        start=start,
+        stop=stop,
+        stride=stride,
+    )
     result = generate_dataset(request)
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 

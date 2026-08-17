@@ -35,11 +35,9 @@ from dimos.evals.vqa.generate import (
     GenerationRequest,
     PrivateLabel,
     PublicCase,
-    generate_image_dataset,
-    load_memory_image,
+    generate_frames_dataset,
 )
 from dimos.evals.vqa.suite import load_suite
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -61,6 +59,13 @@ class _MixedAuthor:
             QuestionProposal(family="horizontal_direction", object_name="chair"),
             QuestionProposal(family="presence", object_name="chair"),
         )
+
+
+class _EmptyThenAuthor:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        if image.ts == 1.0:
+            return ()
+        return (QuestionProposal(family="presence", object_name="chair"),)
 
 
 class _CollidingAuthor:
@@ -138,6 +143,18 @@ class _PartlyInvalidQuestionModel:
 class _BrokenDetector:
     def detect(self, image: Image, object_name: str) -> ImageDetections2D:
         raise ValueError("detector broke")
+
+
+class _FailsSecondDetector(_Detector):
+    def __init__(self) -> None:
+        super().__init__(present=True)
+        self._calls = 0
+
+    def detect(self, image: Image, object_name: str) -> ImageDetections2D:
+        self._calls += 1
+        if self._calls == 2:
+            raise ValueError("detector broke")
+        return super().detect(image, object_name)
 
 
 class _Rig:
@@ -249,22 +266,33 @@ def test_generation_request_selects_one_memory_image() -> None:
 
     assert request.image_index == 4
     assert request.output == Path("dataset")
+    assert request.frame_indices() == (4,)
 
 
-def test_load_memory_image_selects_by_stream_index(tmp_path: Path) -> None:
-    dataset = tmp_path / "recording.db"
-    store = SqliteStore(path=str(dataset))
-    try:
-        images = store.stream("color_image", Image)
-        images.append(Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8)), ts=1.0)
-        images.append(Image.from_numpy(np.full((2, 2, 3), 42, dtype=np.uint8)), ts=2.0)
-    finally:
-        store.stop()
+def test_generation_request_selects_frame_range() -> None:
+    request = GenerationRequest(
+        dataset="go2_short",
+        start=2,
+        stop=10,
+        stride=3,
+        output=Path("dataset"),
+    )
 
-    image = load_memory_image(str(dataset), 1)
+    assert request.frame_indices() == (2, 5, 8)
 
-    assert image.ts == 2.0
-    assert np.all(image.data == 42)
+
+@pytest.mark.parametrize(
+    "selection",
+    (
+        {},
+        {"image_index": 1, "start": 0, "stop": 2},
+        {"start": 2, "stop": 2},
+        {"start": 0},
+    ),
+)
+def test_generation_request_rejects_invalid_selection(selection: dict[str, int]) -> None:
+    with pytest.raises(ValidationError):
+        GenerationRequest(dataset="go2_short", output=Path("dataset"), **selection)
 
 
 def test_standalone_rows_match_public_private_contract() -> None:
@@ -293,9 +321,9 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
-    result = generate_image_dataset(
+    result = generate_frames_dataset(
         request,
-        image,
+        ((4, image),),
         cast("QuestionAuthor", _Author()),
         _Detector(present=True),
     )
@@ -313,6 +341,64 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert evaluation.score == 1.0
 
 
+def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    request = GenerationRequest(
+        dataset="recording.db",
+        start=1,
+        stop=5,
+        stride=2,
+        output=output,
+    )
+    frames = (
+        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        (3, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=3.0)),
+    )
+
+    result = generate_frames_dataset(
+        request,
+        frames,
+        cast("QuestionAuthor", _Author()),
+        _Detector(present=True),
+    )
+
+    assert [case.id for case in result.cases] == [
+        "frame-000001-chair-presence",
+        "frame-000003-chair-presence",
+    ]
+    assert (output / "assets" / "frame-000001.jpg").is_file()
+    assert (output / "assets" / "frame-000003.jpg").is_file()
+    assert (output / "audit" / "frame-000001" / "frame.json").is_file()
+    assert (output / "audit" / "frame-000003" / "frame.json").is_file()
+    run = json.loads((output / "audit" / "run.json").read_text())
+    assert run["frame_count"] == 2
+    assert run["question_count"] == 2
+    assert run["generation"]["start"] == 1
+    assert run["generation"]["stop"] == 5
+    assert run["generation"]["stride"] == 2
+
+
+def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
+    frames = (
+        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        (2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+    )
+
+    generate_frames_dataset(
+        request,
+        frames,
+        cast("QuestionAuthor", _EmptyThenAuthor()),
+        _Detector(present=True),
+    )
+
+    run = json.loads((output / "audit" / "run.json").read_text())
+    frame = json.loads((output / "audit" / "frame-000001" / "frame.json").read_text())
+    assert run["rejected_question_count"] == 0
+    assert frame["rejected_question_count"] == 0
+
+
 def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8), ts=12.5)
@@ -324,9 +410,9 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
         )
     )
 
-    result = generate_image_dataset(
+    result = generate_frames_dataset(
         request,
-        image,
+        ((4, image),),
         cast("QuestionAuthor", _MixedAuthor()),
         detector,
     )
@@ -343,11 +429,30 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
     with pytest.raises(ValueError, match="detector broke"):
-        generate_image_dataset(
+        generate_frames_dataset(
             request,
-            image,
+            ((4, image),),
             cast("QuestionAuthor", _Author()),
             _BrokenDetector(),
+        )
+
+    assert not output.exists()
+
+
+def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
+    frames = (
+        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        (2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+    )
+
+    with pytest.raises(ValueError, match="detector broke"):
+        generate_frames_dataset(
+            request,
+            frames,
+            cast("QuestionAuthor", _Author()),
+            _FailsSecondDetector(),
         )
 
     assert not output.exists()
@@ -358,9 +463,9 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
 
-    result = generate_image_dataset(
+    result = generate_frames_dataset(
         request,
-        image,
+        ((4, image),),
         cast("QuestionAuthor", _CollidingAuthor()),
         _Detector(present=True),
     )

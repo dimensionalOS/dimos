@@ -38,6 +38,9 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert result.exit_code == 0
     assert "DATASET" in result.stdout
     assert "--image-index" in result.stdout
+    assert "--start" in result.stdout
+    assert "--stop" in result.stdout
+    assert "--stride" in result.stdout
     assert "--output" in result.stdout
 
 
@@ -76,6 +79,46 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert result.exit_code == 0
     assert seen == [GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path)]
     assert "Generated 1 VQA case" in result.stdout
+
+
+def test_vqa_generate_cli_accepts_frame_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(request: GenerationRequest) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output, cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "vqa",
+            "generate",
+            "recording.db",
+            "--start",
+            "2",
+            "--stop",
+            "9",
+            "--stride",
+            "3",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            start=2,
+            stop=9,
+            stride=3,
+            output=tmp_path,
+        )
+    ]
 
 
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

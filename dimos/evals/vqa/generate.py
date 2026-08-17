@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import tempfile
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.families import (
@@ -40,13 +42,34 @@ if TYPE_CHECKING:
 
 
 class GenerationRequest(BaseModel):
-    """One image selected from a recorded Memory dataset."""
+    """Single-frame or range selection from a recorded Memory dataset."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset: NonEmptyString
-    image_index: int = Field(ge=0)
     output: Path
+    image_index: int | None = Field(default=None, ge=0)
+    start: int | None = Field(default=None, ge=0)
+    stop: int | None = Field(default=None, gt=0)
+    stride: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def valid_selection(self) -> GenerationRequest:
+        if self.image_index is not None:
+            if self.start is not None or self.stop is not None or self.stride is not None:
+                raise ValueError("image_index cannot be combined with start, stop, or stride")
+            return self
+        if self.start is None or self.stop is None:
+            raise ValueError("provide image_index or both start and stop")
+        if self.stop <= self.start:
+            raise ValueError("stop must be greater than start")
+        return self
+
+    def frame_indices(self) -> tuple[int, ...]:
+        if self.image_index is not None:
+            return (self.image_index,)
+        assert self.start is not None and self.stop is not None
+        return tuple(range(self.start, self.stop, self.stride or 1))
 
 
 class PublicCase(BaseModel):
@@ -70,7 +93,7 @@ class PrivateLabel(BaseModel):
 
 
 class GenerationResult(BaseModel):
-    """Artifacts produced for one recorded image."""
+    """Artifacts produced for selected recorded images."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -78,65 +101,128 @@ class GenerationResult(BaseModel):
     cases: tuple[PublicCase, ...]
 
 
+@dataclass(frozen=True)
+class _GeneratedFrame:
+    index: int
+    image: Image
+    cases: tuple[PublicCase, ...]
+    labels: tuple[PrivateLabel, ...]
+    audit_rows: tuple[dict[str, object], ...]
+
+
 def generate_dataset(request: GenerationRequest) -> GenerationResult:
-    """Generate a standalone dataset from one Memory image."""
+    """Generate a standalone dataset from selected Memory images."""
+    from dimos.memory.cli.dataset import open_dataset
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
 
-    image = load_memory_image(request.dataset, request.image_index)
+    indices = request.frame_indices()
+    store = open_dataset(request.dataset)
     author_model = OpenAIVlModel()
     detector_model = MoondreamVlModel()
     try:
         from dimos.evals.vqa.primitives.moondream import MoondreamObjectDetector
 
-        return generate_image_dataset(
+        images = store.streams.color_image
+        image_count = images.count()
+        if indices[-1] >= image_count:
+            raise IndexError(
+                f"color_image index {indices[-1]} is out of range for {image_count} images"
+            )
+
+        def selected_frames() -> Iterable[tuple[int, Image]]:
+            for index in indices:
+                observation = images.offset(index).first()
+                yield index, _copy_observation_image(observation.data, observation.ts)
+
+        return generate_frames_dataset(
             request,
-            image,
+            selected_frames(),
             OpenAIQuestionAuthor(author_model),
             MoondreamObjectDetector(detector_model),
         )
     finally:
+        store.stop()
         author_model.stop()
         detector_model.stop()
 
 
-def load_memory_image(dataset: str, image_index: int) -> Image:
-    """Load one indexed image from a recorded Memory dataset."""
-    from dimos.memory.cli.dataset import open_dataset
+def _copy_observation_image(value: object, timestamp: float) -> Image:
     from dimos.msgs.sensor_msgs.Image import Image
 
-    store = open_dataset(dataset)
-    try:
-        observation = store.streams.color_image.offset(image_index).first()
-        image = observation.data
-        if not isinstance(image, Image):
-            raise TypeError("color_image stream must contain dimos Image values")
-        image = image.copy()
-        image.ts = observation.ts
-        return image
-    finally:
-        store.stop()
+    if not isinstance(value, Image):
+        raise TypeError("color_image stream must contain dimos Image values")
+    image = value.copy()
+    image.ts = timestamp
+    return image
 
 
-def generate_image_dataset(
+def generate_frames_dataset(
     request: GenerationRequest,
-    image: Image,
+    frames: Iterable[tuple[int, Image]],
     author: QuestionAuthor,
     detector: ObjectDetector,
 ) -> GenerationResult:
-    """Generate and write one dataset from an already loaded image."""
-    proposals = _deduplicate_proposals(author.propose(image, AVAILABLE_FAMILIES))
-    if not proposals:
-        raise ValueError("question author returned no proposals")
+    """Generate and write one dataset from already loaded indexed images."""
+    _prepare_output(request.output)
+    request.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{request.output.name}-", dir=request.output.parent
+    ) as temporary:
+        staging = Path(temporary)
+        all_cases: list[PublicCase] = []
+        all_labels: list[PrivateLabel] = []
+        frame_count = 0
+        rejected_count = 0
+        for index, image in frames:
+            frame = _generate_frame(index, image, author, detector)
+            _write_frame(staging, frame)
+            all_cases.extend(frame.cases)
+            all_labels.extend(frame.labels)
+            frame_count += 1
+            rejected_count += sum(row.get("status") == "rejected" for row in frame.audit_rows)
 
+        if frame_count == 0:
+            raise ValueError("generation selected no frames")
+        if not all_cases:
+            raise ValueError("no selected frame produced an answerable question")
+        _write_jsonl(
+            staging / "cases.jsonl",
+            [case.model_dump(mode="json") for case in all_cases],
+        )
+        _write_jsonl(
+            staging / "labels.jsonl",
+            [label.model_dump(mode="json") for label in all_labels],
+        )
+        _write_json(
+            staging / "audit" / "run.json",
+            {
+                "generation": request.model_dump(mode="json", exclude={"output"}),
+                "families": [family.name for family in AVAILABLE_FAMILIES],
+                "frame_count": frame_count,
+                "question_count": len(all_cases),
+                "rejected_question_count": rejected_count,
+            },
+        )
+        if request.output.exists():
+            request.output.rmdir()
+        staging.replace(request.output)
+    return GenerationResult(output=request.output, cases=tuple(all_cases))
+
+
+def _generate_frame(
+    image_index: int,
+    image: Image,
+    author: QuestionAuthor,
+    detector: ObjectDetector,
+) -> _GeneratedFrame:
+    proposals = _deduplicate_proposals(author.propose(image, AVAILABLE_FAMILIES))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
     audit_rows: list[dict[str, object]] = []
-    rejected_count = 0
     for proposal in proposals:
         try:
             answer = answer_question(proposal, image, detector)
         except InsufficientEvidenceError as exc:
-            rejected_count += 1
             audit_rows.append(
                 {
                     "proposal": proposal.model_dump(mode="json"),
@@ -153,15 +239,12 @@ def generate_image_dataset(
                     "answer": answer.model_dump(mode="json"),
                 }
             )
-    if not answered:
-        raise ValueError("no authored question had sufficient deterministic evidence")
-
     answers = tuple(answer for _, answer in answered)
-    case_ids = _case_ids(request.image_index, tuple(proposal for proposal, _ in answered))
+    case_ids = _case_ids(image_index, tuple(proposal for proposal, _ in answered))
     cases = tuple(
         PublicCase(
             id=case_id,
-            image=f"assets/frame-{request.image_index:06d}.jpg",
+            image=f"assets/frame-{image_index:06d}.jpg",
             question=answer.question,
             choices=answer.choices,
         )
@@ -171,15 +254,13 @@ def generate_image_dataset(
         PrivateLabel(id=case.id, answer=answer.answer)
         for case, answer in zip(cases, answers, strict=True)
     )
-    _write_dataset(
-        request,
-        image,
-        cases,
-        labels,
-        audit_rows,
-        rejected_count,
+    return _GeneratedFrame(
+        index=image_index,
+        image=image,
+        cases=cases,
+        labels=labels,
+        audit_rows=tuple(audit_rows),
     )
-    return GenerationResult(output=request.output, cases=cases)
 
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
@@ -202,52 +283,36 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
     return tuple(identifiers)
 
 
-def _write_dataset(
-    request: GenerationRequest,
-    image: Image,
-    cases: tuple[PublicCase, ...],
-    labels: tuple[PrivateLabel, ...],
-    audit_rows: list[dict[str, object]],
-    rejected_count: int,
-) -> None:
-    output = request.output
+def _prepare_output(output: Path) -> None:
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"VQA output directory is not empty: {output}")
 
-    assets = output / "assets"
-    frame_audit = output / "audit" / f"frame-{request.image_index:06d}"
-    assets.mkdir(parents=True, exist_ok=True)
+
+def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
+    (output / "assets").mkdir(parents=True, exist_ok=True)
+    frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)
 
-    image_path = output / cases[0].image
-    if not image.save(str(image_path)):
+    image_name = f"assets/frame-{frame.index:06d}.jpg"
+    image_path = output / image_name
+    if not frame.image.save(str(image_path)):
         raise RuntimeError(f"failed to write VQA image: {image_path}")
 
-    case_rows = [case.model_dump(mode="json") for case in cases]
-    label_rows = [label.model_dump(mode="json") for label in labels]
-    _write_jsonl(output / "cases.jsonl", case_rows)
-    _write_jsonl(output / "labels.jsonl", label_rows)
+    case_rows = [case.model_dump(mode="json") for case in frame.cases]
+    label_rows = [label.model_dump(mode="json") for label in frame.labels]
     _write_json(frame_audit / "cases.json", case_rows)
     _write_json(frame_audit / "labels.json", label_rows)
-    _write_json(frame_audit / "ground_truth.json", audit_rows)
+    _write_json(frame_audit / "ground_truth.json", frame.audit_rows)
     _write_json(
         frame_audit / "frame.json",
         {
-            "frame_index": request.image_index,
-            "image": cases[0].image,
-            "timestamp": image.ts,
-            "question_count": len(cases),
-            "rejected_question_count": rejected_count,
-        },
-    )
-    _write_json(
-        output / "audit" / "run.json",
-        {
-            "dataset": request.dataset,
-            "image_index": request.image_index,
-            "families": [family.name for family in AVAILABLE_FAMILIES],
-            "question_count": len(cases),
-            "rejected_question_count": rejected_count,
+            "frame_index": frame.index,
+            "image": image_name,
+            "timestamp": frame.image.ts,
+            "question_count": len(frame.cases),
+            "rejected_question_count": sum(
+                row.get("status") == "rejected" for row in frame.audit_rows
+            ),
         },
     )
 

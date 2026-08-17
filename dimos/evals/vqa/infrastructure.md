@@ -38,8 +38,9 @@ primitive interfaces rather than concrete implementations. The initial `Moondrea
 adapts the existing `MoondreamVlModel` to the object-detection interface.
 
 `generate.py` coordinates the components and converts answered questions into public cases and
-private labels. It opens one Memory image, owns model lifecycle, and writes the standalone artifact
-tree. It does not implement family-specific perception or answer rules.
+private labels. It opens the Memory recording once, owns model lifecycle across all selected frames,
+and writes the standalone artifact tree. It does not implement family-specific perception or answer
+rules.
 
 `suite.py` loads generated artifacts for evaluation. Evaluation receives only the public image,
 question, and choices; the expected answer remains private.
@@ -76,12 +77,13 @@ contains the matching case ID and expected answer.
 - Primitive implementations remain replaceable and do not construct questions.
 - Generation reads privileged evidence, while evaluation reads only exported public artifacts.
 - Add abstractions only when a second concrete use requires them.
-- Implement and verify one image at a time before adding batching or resume behavior.
+- Single-frame and range selection feed the same frame-generation path.
 
 ## Initial Scope
 
-The package currently supports one image selected by index from the `color_image` Memory stream. An
-`OpenAIVlModel` proposes any number of useful presence or horizontal-direction inputs, and
+The package supports one image selected with `image_index` or a `[start, stop)` range with `stride`
+from the `color_image` Memory stream. An `OpenAIVlModel` proposes any number of useful presence or
+horizontal-direction inputs per image, and
 `MoondreamVlModel` supplies private object detections through the primitive adapter. Each valid family
 answer becomes one public case. When at least one case is answered, proposals without sufficient
 evidence are skipped and retained in their original order in the private frame audit. If none can be
@@ -94,5 +96,5 @@ evidence policy.
 The standalone suite loader validates case and label IDs, allowed answers, and dataset-relative image
 paths before constructing VQA cases for the shared `EvalRunner`.
 
-Batching, resume behavior, author retries, true-negative policy, geometric evidence, and further
-families remain intentionally deferred.
+Resume behavior, author retries, true-negative policy, geometric evidence, and further families
+remain intentionally deferred.
