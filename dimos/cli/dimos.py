@@ -799,9 +799,13 @@ map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
 map_app.command("replay-marker")(_map_replay_marker_main)
 
-from dimos.memory2.cli.app import mem_app
+from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
+
+from dimos.evals.cli import app as evals_app
+
+main.add_typer(evals_app, name="evals")
 
 
 @main.command()

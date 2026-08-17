@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 if TYPE_CHECKING:
-    from dimos.memory2.stream import Stream
+    from dimos.memory.stream import Stream
 
 TIMELINE = "ts"
 
@@ -64,9 +64,9 @@ def main(
     """Dump an AprilTag detection replay to .rrd and open it in rerun."""
     import rerun as rr
 
-    from dimos.memory2.cli.dataset import open_store, resolve_dataset
-    from dimos.memory2.transform import QualityWindow, SpeedLimit
-    from dimos.memory2.vis.color import Color
+    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.transform import QualityWindow, SpeedLimit
+    from dimos.memory.vis.color import Color
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers

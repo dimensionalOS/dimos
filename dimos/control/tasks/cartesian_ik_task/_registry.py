@@ -18,6 +18,10 @@ TASK_FACTORIES = {
 
 TASK_CONSUMES = {
     "cartesian_ik": {
-        "coordinator_cartesian_command": ("on_cartesian_command", "by_task_name"),
+        "cartesian_command": ("on_cartesian_command", "direct"),
     },
+}
+
+TASK_EXPOSES = {
+    "cartesian_ik": ["start"],
 }
