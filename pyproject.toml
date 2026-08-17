@@ -499,6 +499,12 @@ tests-self-hosted = [
     "pybind11>=2.12",
 ]
 
+# What the deployment-profile job measures: a go2 install as a user gets it,
+# so no test stack (installed with --no-default-groups).
+deployment-profile = [
+    "dimos[unitree]",
+]
+
 [tool.uv]
 required-version = ">=0.9.17"
 default-groups = ["tests"]

@@ -26,7 +26,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-03T19:08:40.466827Z"
+exclude-newer = "2026-08-10T19:00:13.062009Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1981,6 +1981,9 @@ autofix = [
 browser-tests = [
     { name = "playwright" },
 ]
+deployment-profile = [
+    { name = "dimos", extra = ["unitree"] },
+]
 lint = [
     { name = "aiortc" },
     { name = "chromadb" },
@@ -2281,6 +2284,7 @@ provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web",
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
 browser-tests = [{ name = "playwright", specifier = ">=1.55" }]
+deployment-profile = [{ name = "dimos", extras = ["unitree"] }]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
     { name = "chromadb", specifier = ">=1.0.0" },
