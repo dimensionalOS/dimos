@@ -994,6 +994,67 @@ high-swing/low-dwell signature, which no rigid-body knob reproduced.
 
 ---
 
+## 5h. The series-compliance test — vertical no, propulsion yes
+
+§5d named ONE surviving candidate for what the referee kept buying as
+latency: series compliance between the motor-side sensors and the world,
+structurally invisible to every joint-channel instrument. §5g's residual
+asked the same question of the stride axis. `sysid.compliance` runs the
+test §5d scoped: zero free parameters, no new recording. Measured
+2026-08-17, on 194142 plus both floor recordings.
+
+**The instrument.** Two regressions per leg, both within-stance demeaned —
+one 0.3 s stance holds every slow bias (room-frame tilt, the `TRACKER_Z`
+guess, mount yaw) constant, so it drops out; this is what keeps §5e's trap
+(mount error masquerading as compliance) shut, along with the IMU
+supplying every attitude and the tracker only position. Foot force comes
+from measured `tau_est` through the FK Jacobian transpose. (a) VERTICAL:
+during ground dwell the foot is fixed, rigid FK predicts the base height,
+the tracker measures it; the residual against vertical foot force is a
+deflection per newton. (b) PROPULSION: rigid kinematics predicts the base
+planar speed from the leg sweep; the shortfall against horizontal foot
+force (magnitudes only — frame-free) is the wind-up signature. Both are
+read AGAINST THE SAME INSTRUMENT ON A RIGID-PLANT ROLLOUT: MuJoCo's soft
+contact gives even a rigid sim finite vertical compliance, and rolling
+plus stance slip bias the kinematic gain on both sides. Tests: a rigid rig
+reads zero, an injected 20 kN/m spring is recovered to 10%.
+
+**Vertical: no missing spring.** Real `dz/dFz` is −41…−65 µm/N (k ≈
+15-25 kN/m per leg), load-linear, CI-clean, repeatable across all three
+recordings; the rigid-sim control reads −28…−45 µm/N — MuJoCo's own
+contact softness. Same order: the real excess is ~10-20 µm/N, under a
+millimetre at stance loads. A clean negative for the vertical axis.
+
+**Propulsion: a measured, load-dependent yes.** During dwell the real
+body advances FASTER than motor-side kinematics allows — bias +27…+36
+mm/s — and the excess GROWS with horizontal foot force: +2.4…+8.7
+(mm/s)/N, CIs excluding zero on 7 of 8 leg×recording cells. The rigid
+control shows the opposite bias (−21 mm/s: its measured 12-14 mm/stance
+slip) and slope ≈ 0. Deflection stored under load and released as body
+motion the encoders never see — distal series compliance in the fore-aft
+axis, exactly §5d's hypothesis, now with a sign, a magnitude and a
+repeat.
+
+**The stride accounting.** The 33 mm/stride deficit is not one mechanism:
+the real robot GAINS ~8 mm/stance from compliance release while the sim
+LOSES 12-14 mm/stance to slip the real robot does not have (Ivan sees
+none; §5g's friction sweep moved nothing). The real-minus-control dwell
+gap (≈48 mm/s) integrates to ~13 mm per cycle — this instrument alone
+sees ~40% of the stride gap, before swing-phase differences (the sim's
+38% higher arc, lower dwell fraction) are counted. Which reframes the sim
+half as a CONTACT question: stance slip that is insensitive to μ across
+0.6-1.6 is not friction-limited sliding — the named suspect is soft-contact
+tangential creep (drift ∝ load regardless of μ), and §5b already bounded
+the contact knobs (stiffer `foot_solref` buys speed only by breaking
+attitude), so it is a contact-model question, not a knob.
+
+**A hardware note in passing:** FR's kinematic gain reads 0.63-0.69 on
+all three recordings against 0.88-1.14 for the other legs — whatever it
+is (pad wear, a lazy calf), it is on the robot, consistent, and worth a
+look.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -1017,11 +1078,14 @@ preset and honoured by every downstream path), the §5e instrument split
 (`sysid.real`: tracker for position, IMU for attitude, provenance on every
 `Summary`, tracker-less recordings score attitude-only — §5f), the
 robot-repeat noise floor, measured (§5f: three 08-17 recordings, verdict
-floor from two with the third held out), and the stride instrument
+floor from two with the third held out), the stride instrument
 (`sysid.gait`: engine-free FK strides, one code path for recording and
-rollout, `PolicyRun.q` feeding the sim side — §5g). Acceptance is
-bit-identical to the frozen instrument, and parallel is bit-identical to
-serial.
+rollout, `PolicyRun.q` feeding the sim side — §5g), the v2 statistic set
+(stride pair scored, `gait_hz` retired to context, the `measured-env`
+preset — §5g), and the series-compliance instrument (`sysid.compliance`:
+within-stance-demeaned deflection-vs-load regressions, rigid-sim control,
+spring-recovery tests — §5h). Acceptance is bit-identical to the frozen
+instrument, and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
