@@ -199,7 +199,9 @@ def rollout_policy(
     * ``envelope`` — the measured torque derate above 3 rad/s
       (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`); without
       it the sim's actuators track crisply at swing speeds the real drive
-      cannot.
+      cannot. ``None`` falls back to the PRESET's own envelope — a plant
+      fitted with the envelope on must run with it, or the knobs silently
+      shed the share of the drive the fit assigned to the envelope.
 
     THE VIEWER AND THE HEADLESS RUN ARE THE SAME FUNCTION: ``view`` only
     attaches a viewer and paces to wall clock; ``ghost`` draws the recorded
@@ -214,6 +216,8 @@ def rollout_policy(
         mocap_index,
     )
 
+    if envelope is None and preset.envelope is not None:
+        envelope = TORQUE_ENVELOPES[preset.envelope]
     if len(st.wt) == 0:
         raise ValueError("recording has no control_log walk commands: Mode B needs the drive")
     span = float(st.wt[-1])

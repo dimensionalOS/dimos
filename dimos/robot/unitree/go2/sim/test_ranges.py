@@ -94,3 +94,26 @@ def test_a_fit_result_round_trips_through_json(tmp_path):
 def test_an_unknown_preset_name_is_an_error_not_a_silent_default():
     with pytest.raises(ValueError, match="unknown preset"):
         load_preset("no-such-preset")
+
+
+def test_a_preset_carries_its_envelope_through_json(tmp_path):
+    p = Preset(name="fit-env", physics={"armature": 0.006}, envelope="central")
+    got = load_preset(str(p.save(tmp_path / "fit-env.json")))
+    assert got == p and got.envelope == "central"
+
+
+def test_an_envelope_free_preset_writes_no_envelope_key(tmp_path):
+    import json
+
+    p = Preset(name="fit-plain", physics={"armature": 0.006})
+    d = json.loads(p.save(tmp_path / "fit-plain.json").read_text())
+    assert "envelope" not in d  # older readers see the exact old shape
+
+
+def test_builtins_carry_no_envelope():
+    assert all(p.envelope is None for p in BUILTIN_PRESETS.values())
+
+
+def test_an_unknown_envelope_name_is_rejected_at_construction():
+    with pytest.raises(ValueError, match="envelope"):
+        Preset(name="typo", envelope="centrall")

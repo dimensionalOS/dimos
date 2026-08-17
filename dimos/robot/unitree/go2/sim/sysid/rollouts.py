@@ -91,11 +91,15 @@ def _eval(backend: Backend, st: Streams, spec: RolloutSpec) -> ReplayResult:
 _WORKER: dict[str, object] = {}
 
 
-def _init_worker(recording: str, menagerie: str | None) -> None:
+def _init_worker(recording: str, menagerie: str | None, envelope: str | None = None) -> None:
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 
     _WORKER["st"] = read_streams(recording)  # cache-warm: the parent read it first
-    _WORKER["backend"] = MujocoBackend(Path(menagerie) if menagerie else None)
+    _WORKER["backend"] = MujocoBackend(
+        Path(menagerie) if menagerie else None,
+        envelope=TORQUE_ENVELOPES[envelope] if envelope else None,
+    )
 
 
 def _eval_in_worker(spec: RolloutSpec) -> ReplayResult:
@@ -111,6 +115,12 @@ class Rollouts:
     ``workers <= 1`` runs in-process; more spawns that many worker processes
     (spawned, not forked — a forked MuJoCo is a bug that looks like a
     speedup). Results always come back in input order.
+
+    ``envelope`` names a measured torque envelope
+    (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`) every
+    backend — serial and worker alike — applies in its actuator chain.
+    ``None`` (the default) keeps the ideal actuator, bit-identical to every
+    number scored before the parameter existed.
     """
 
     def __init__(
@@ -119,10 +129,16 @@ class Rollouts:
         *,
         workers: int = 1,
         menagerie: Path | None = None,
+        envelope: str | None = None,
     ) -> None:
+        from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
+
+        if envelope is not None and envelope not in TORQUE_ENVELOPES:
+            raise ValueError(f"unknown envelope {envelope!r}: {sorted(TORQUE_ENVELOPES)}")
         self.recording = Path(recording)
         self.workers = workers
         self._menagerie = menagerie
+        self._envelope = envelope
         self.streams = read_streams(self.recording)  # also warms the cache for workers
         self._backend: Backend | None = None
         self._pool: concurrent.futures.ProcessPoolExecutor | None = None
@@ -131,8 +147,12 @@ class Rollouts:
     def _local_backend(self) -> Backend:
         if self._backend is None:
             from dimos.robot.unitree.go2.sim.model import MujocoBackend
+            from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 
-            self._backend = MujocoBackend(self._menagerie)
+            self._backend = MujocoBackend(
+                self._menagerie,
+                envelope=TORQUE_ENVELOPES[self._envelope] if self._envelope else None,
+            )
         return self._backend
 
     def _ensure_pool(self) -> concurrent.futures.ProcessPoolExecutor:
@@ -145,6 +165,7 @@ class Rollouts:
                     initargs=(
                         str(self.recording),
                         str(self._menagerie) if self._menagerie else None,
+                        self._envelope,
                     ),
                 )
         return self._pool

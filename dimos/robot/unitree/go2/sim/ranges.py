@@ -33,6 +33,8 @@ import json
 import math
 from pathlib import Path
 
+from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
+
 
 @dataclass(frozen=True)
 class Knob:
@@ -150,11 +152,27 @@ class Preset:
     Built-ins are immutable; a fit writes its winner to JSON under a NEW name
     (:meth:`save` refuses built-in names), so a refit against messy data can
     never cost a validated tune.
+
+    ``envelope`` names the torque envelope the plant was FITTED under
+    (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`), or ``None``
+    for the ideal actuator. It travels with the preset because the two are one
+    claim: knobs fitted with the envelope on absorb a different share of the
+    drive, and running such a plant without its envelope silently changes the
+    physics (§5b: the reverse mistake — stacking the envelope on knobs fitted
+    without it — double-counts). Every built-in carries ``None``.
     """
 
     name: str
     physics: dict[str, float] = field(default_factory=dict)
     actuator_tau: float = 0.0
+    envelope: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.envelope is not None and self.envelope not in TORQUE_ENVELOPES:
+            raise ValueError(
+                f"{self.name!r}: unknown envelope {self.envelope!r}; "
+                f"expected one of {sorted(TORQUE_ENVELOPES)}"
+            )
 
     def save(self, path: str | Path) -> Path:
         if self.name in BUILTIN_PRESETS:
@@ -163,12 +181,14 @@ class Preset:
                 "name the result something new"
             )
         out = Path(path)
-        out.write_text(
-            json.dumps(
-                {"name": self.name, "physics": self.physics, "actuator_tau": self.actuator_tau},
-                indent=2,
-            )
-        )
+        d: dict[str, object] = {
+            "name": self.name,
+            "physics": self.physics,
+            "actuator_tau": self.actuator_tau,
+        }
+        if self.envelope is not None:
+            d["envelope"] = self.envelope
+        out.write_text(json.dumps(d, indent=2))
         return out
 
     @classmethod
@@ -178,6 +198,7 @@ class Preset:
             name=d.get("name", Path(path).stem),
             physics=dict(d.get("physics", {})),
             actuator_tau=float(d.get("actuator_tau", 0.0)),
+            envelope=d.get("envelope"),
         )
 
 

@@ -70,3 +70,21 @@ def test_raw_scoring_is_the_frozen_conventions_shape():
     s = obj.calibrate({})
     assert obj.scales == {"accel": 1.0}
     assert s.total == pytest.approx(3.0)  # natural units, unscaled
+
+
+def test_probe_builders_propagate_the_plants_envelope():
+    # A fitted-with-envelope plant must be grounded WITH its envelope: every
+    # probe the latency search and the mechanism table build carries it.
+    from dimos.robot.unitree.go2.sim.sysid.ground import ObsNoise
+    from dimos.robot.unitree.go2.sim.sysid.meta import (
+        MeasuredLoop,
+        latency_probes,
+        mechanism_probes,
+    )
+
+    ml = MeasuredLoop(noise=ObsNoise(), intervals=(0.02, 0.025), transport_ms=1.3)
+    for probes in (
+        latency_probes({}, 0.005, (0.0, 0.006), ml, replicates=2, envelope="central"),
+        mechanism_probes({}, 0.005, ml, replicates=2, envelope="central"),
+    ):
+        assert probes and all(p.envelope == "central" for p in probes)

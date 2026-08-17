@@ -307,9 +307,14 @@ def mechanism_probes(
     *,
     replicates: int = 3,
     fitted: tuple[float, float] = (0.010, 1.0),
+    envelope: str | None = None,
 ) -> list[Probe]:
     """Each loop mechanism at its MEASURED value, alone and stacked, plus the
-    previously FITTED point (latency 10 ms + training noise) for comparison."""
+    previously FITTED point (latency 10 ms + training noise) for comparison.
+
+    ``envelope`` is the base PLANT's own envelope (a fitted-with-envelope
+    preset), applied to every probe — it is part of the plant here, not one of
+    the mechanisms under test."""
     lo, hi = LATENCY_BAND_S
     configs: list[tuple[str, dict[str, object]]] = [
         ("ideal loop", {}),
@@ -333,7 +338,7 @@ def mechanism_probes(
     ]
     out: list[Probe] = []
     for name, kw in configs:
-        out += _replicated(name, replicates, base_physics, base_tau, **kw)
+        out += _replicated(name, replicates, base_physics, base_tau, envelope=envelope, **kw)
     return out
 
 
@@ -390,7 +395,9 @@ def run_mechanisms(
     span = float(st.wt[-1]) - start if seconds is None else seconds
     ml = measured_loop(recording, st, start=start, seconds=span)
     p = load_preset(preset)
-    probes = mechanism_probes(dict(p.physics), p.actuator_tau, ml, replicates=replicates)
+    probes = mechanism_probes(
+        dict(p.physics), p.actuator_tau, ml, replicates=replicates, envelope=p.envelope
+    )
     spec = spectrum(
         recording,
         policy_bin,
@@ -420,6 +427,7 @@ def latency_probes(
     ml: MeasuredLoop | None,
     *,
     replicates: int = 3,
+    envelope: str | None = None,
 ) -> list[Probe]:
     out: list[Probe] = []
     extra: dict[str, object] = {"timing": ml.intervals, "noise": ml.noise} if ml is not None else {}
@@ -430,6 +438,7 @@ def latency_probes(
             base_physics,
             base_tau,
             action_latency=lat,
+            envelope=envelope,
             **extra,
         )
     return out
@@ -467,7 +476,9 @@ def run_latency(
         span = float(st.wt[-1]) - start if seconds is None else seconds
         ml = measured_loop(rec, st, start=start, seconds=span) if with_measured else None
         p = load_preset(preset)
-        probes = latency_probes(dict(p.physics), p.actuator_tau, grid, ml, replicates=replicates)
+        probes = latency_probes(
+            dict(p.physics), p.actuator_tau, grid, ml, replicates=replicates, envelope=p.envelope
+        )
         spec = spectrum(
             rec, policy_bin, probes, preset=preset, start=start, seconds=seconds, workers=workers
         )

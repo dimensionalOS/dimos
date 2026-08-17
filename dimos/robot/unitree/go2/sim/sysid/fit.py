@@ -57,6 +57,7 @@ from typing import Any
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
+from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
@@ -655,6 +656,15 @@ def main() -> None:
         default=0,
         help="seeds segments AND clip schedules; shared by every candidate and every study",
     )
+    ap.add_argument(
+        "--envelope",
+        default=None,
+        choices=sorted(TORQUE_ENVELOPES),
+        help="fit WITH this measured torque envelope in the actuator chain; the "
+        "name is recorded on the saved preset so the plant is never run without "
+        "it (fitting without the envelope absorbs its average effect into the "
+        "viscous/inertial knobs — §5b)",
+    )
     ap.add_argument("--trials", type=int, default=90)
     ap.add_argument("--min-studies", type=int, default=3)
     ap.add_argument("--max-studies", type=int, default=12)
@@ -686,7 +696,7 @@ def main() -> None:
     if suspended and args.weights is None:
         print("suspended recording: scoring joint on the suspended regime")
 
-    rollouts = Rollouts(args.recording, workers=args.workers)
+    rollouts = Rollouts(args.recording, workers=args.workers, envelope=args.envelope)
     st = rollouts.streams
     spans = regimes(st, declared)
     t_lo = max(float(st.lt[0]), float(st.ct[0]))
@@ -722,6 +732,7 @@ def main() -> None:
     print(
         f"{Path(args.recording).name}  {len(segments)} segments over t={t_lo:.1f}..{t_hi:.1f}s"
         f" ({overlap:.1f}s double-covered)  weights {wtxt}  channels {objective.channels}"
+        + (f"  envelope {args.envelope}" if args.envelope else "")
     )
     batch = max(1, args.workers // max(len(segments), 1))
     print(
@@ -766,7 +777,9 @@ def main() -> None:
         name = args.name or f"fit-{Path(args.recording).stem.split('_')[0]}"
         values = merged(base, plan, res.point)
         tau = values.pop("actuator_tau", 0.0)
-        Preset(name=name, physics=values, actuator_tau=tau).save(prefix.with_suffix(".plant.json"))
+        Preset(name=name, physics=values, actuator_tau=tau, envelope=args.envelope).save(
+            prefix.with_suffix(".plant.json")
+        )
         prefix.with_suffix(".ranges.json").write_text(
             json.dumps(
                 {
@@ -806,7 +819,7 @@ def _held_out(
     comparison is honest because BOTH plants see the identical objective.
     """
     declared = read_declarations(args.held_out)
-    ho = Rollouts(args.held_out, workers=args.workers)
+    ho = Rollouts(args.held_out, workers=args.workers, envelope=args.envelope)
     with ho:
         st = ho.streams
         spans = regimes(st, declared)

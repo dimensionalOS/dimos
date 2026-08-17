@@ -290,9 +290,11 @@ def spectrum(
     span = float(st.wt[-1]) - start
     seconds = span if seconds is None else seconds
 
-    base_probe = Probe("(base)", base_physics, base_tau)
+    # The base and floor probes inherit the preset's own envelope: a plant
+    # fitted with the envelope on is grounded with it, floor included.
+    base_probe = Probe("(base)", base_physics, base_tau, envelope=p.envelope)
     floor_probes = [
-        Probe(f"(floor seed {i})", base_physics, base_tau, perturb_seed=i)
+        Probe(f"(floor seed {i})", base_physics, base_tau, envelope=p.envelope, perturb_seed=i)
         for i in range(floor_seeds)
     ]
     all_probes = [base_probe, *floor_probes, *probes]
