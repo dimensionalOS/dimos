@@ -38,29 +38,29 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.omdet import OmDetDetector
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.memory.types import Instance, Localization
 
 
 class DanDetector(Resource):
     """The perception models as one resource.
 
-    ``start()`` constructs SigLIP, OmDet-Turbo, and EdgeTAM. The two
+    ``start()`` constructs SigLIP, OWLv2, and EdgeTAM. The two
     HuggingFace models load lazily on first use, so an inventory-only
     caller never pays for SigLIP; ``stop()`` releases whatever loaded.
     """
 
     siglip: SigLIPModel
-    detector: OmDetDetector
+    detector: Owlv2Detector
     segmenter: EdgeTAMImageSegmenter
 
     def start(self) -> None:
         from dimos.models.embedding.siglip import SigLIPModel
         from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-        from dimos.perception.detection.detectors.omdet import OmDetDetector
+        from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
         self.siglip = SigLIPModel()
-        self.detector = OmDetDetector()
+        self.detector = Owlv2Detector()
         self.segmenter = EdgeTAMImageSegmenter()
         self._live: list[DisposableBase] = []
 
