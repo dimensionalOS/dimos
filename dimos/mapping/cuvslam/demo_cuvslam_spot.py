@@ -231,6 +231,7 @@ def replay_spot(
     warmup: int = 10,
     max_frames: int = 0,
     tolerance_s: float = 0.09,
+    use_gpu: bool = True,
 ) -> dict[str, Any]:
     """Replay the recording through a Multisensor tracker; returns trajectory and stats."""
     gray_infos = camera_infos(store, "grayscale_info")
@@ -246,6 +247,7 @@ def replay_spot(
     config = vslam.Tracker.OdometryConfig(
         async_sba=False,
         odometry_mode=vslam.Tracker.OdometryMode.Multisensor,
+        use_gpu=use_gpu,
     )
     config.multisensor_settings.depth_camera_ids = [
         cameras.index(camera) for camera in depth_cameras

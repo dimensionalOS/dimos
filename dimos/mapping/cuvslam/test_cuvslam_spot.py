@@ -24,6 +24,8 @@ bounds are asserted, not exact poses.
 import numpy as np
 import pytest
 
+pytest.importorskip("cuvslam", reason="pycuvslam is only installed on self-hosted boxes")
+
 from dimos.mapping.cuvslam.demo_cuvslam_spot import (
     CAMERAS,
     recorded_odometry,
@@ -41,6 +43,9 @@ MAX_FRAME_JUMP_M = 1.0
 def test_spot_multicam_snippet_tracks() -> None:
     store = SqliteStore(path=str(get_data("spot_multicam_short.db")), must_exist=True)
     store.start()
+    # GPU, not by choice: Multisensor's depth path runs CUDA kernels even in an
+    # ENFORCE_GPU=OFF build (use_gpu=False aborts with CUDA error 700), so the
+    # reproducible CPU path is not available and the assertions are bounds, not poses.
     result = replay_spot(store, list(CAMERAS), DEPTH_CAMERAS, warmup=2)
 
     trajectory = np.asarray(result["trajectory"], dtype=float)
