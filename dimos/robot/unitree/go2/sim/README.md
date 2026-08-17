@@ -32,7 +32,7 @@ menagerie does, which is the comparison every claim here rests on.
 > **The numbers these commands print are NOT the verdict.** A short window
 > with one replicate measures its floor from itself, so the floor is narrow
 > and the SNRs are inflated — and a single draw of the SAME plant reads
-> anywhere in loss 0.80–2.59, 5–8 of 11 (§8). The verdict needs the full
+> anywhere in loss 1.56–2.57, 6–9 of 16 (§8). The verdict needs the full
 > span, the default `--replicates 8`, and the robot-repeat floor via
 > `--noise-from <two repeat recordings>` (§7). Use these to LOOK; use
 > §7's floor to judge.
@@ -230,8 +230,11 @@ absent and everything else proceeds. A suspended recording has a held trunk, so
 `accel` is meaningless there and drops out. Adding a tracker adds a channel;
 nothing else changes.
 
-Measured so far, as knobs resolved out of 14 on hard-floor walking:
-`accel` 11, `joint` 5, `gyro` 5, `tau` 4.
+Measured (2026-08-17, 194142, 8 segments, 0.4 s clips), as knobs resolved
+out of 14 on hard-floor walking: `accel` 11, `dq` 4, `joint` 3, `tau` 3 —
+and on the flight-bearing jumps recording: `accel` 7, `dq` 4, `joint` 2,
+`tau` 3. `dq` is the only joint-family channel to resolve `actuator_tau`,
+which is what its weight rests on (§4).
 
 ---
 
@@ -326,42 +329,73 @@ each scores **only** what is its own.
   actually went, how it followed commands, how it oscillated — quantities
   that only exist after seconds of closed-loop behaviour.
 
-  Its intended headline is **windowed positional divergence of `base_link`**:
-  re-initialise the closed loop from measured state every T seconds and ask how
-  far the sim's base is from the robot's at the window's end. Unbounded position
-  error is meaningless — nothing corrects the sim toward the robot, so it
-  diverges eventually whatever the plant — but bounded by T it is the most
-  directly interpretable number this project can produce: *metres, after
-  seconds*, rather than a unitless loss. This is multiple shooting one storey
-  up, and T is measurable rather than guessable: sweep it and take where plant
-  discrimination peaks against the chaos floor (too short and divergence has no
-  time to express; too long and chaos swamps it). Decompose it — **along-track**
-  error is largely the known 8% stride deficit (§9), so **cross-track and
-  heading** carry the new information, and are what a navigation stack cares
-  about. NOT BUILT: `rollout_policy` currently never snaps, so this needs a
-  re-init path on the closed loop. It is a first-class term beside the eleven
-  statistics, not a replacement — a single scalar cannot see oscillation, gains
-  or lags, and collapsing to one number would destroy the misspecification map
-  below.
+  Its headline is the **DIVERGENCE RATE** (`sysid.ground`, built): snap the
+  sim back to the measured state every 2 s (`LoopSession.snap`), let the
+  policy run, and fit how fast the sim's pose drifts from the recorded one —
+  *cm/s and deg/s*, per component, pooled over ~35 windows so the gait
+  wobble averages out. Position drift against the tracker (along-track /
+  cross-track), attitude drift against the IMU, tracker printed beside it.
+  One deterministic snapped rollout; uncertainty is the jackknife-over-
+  windows SE. The rate is fitted over 0–0.5/0–1/0–2 s and all three print —
+  the sanity check that the linear regime holds. Measured: the curve has
+  three regimes (gait-envelope rise → linear → chaos), so **1 s is the
+  scored interval**; the 0.5 s fit reads oscillation amplitude as a rate.
+
+  **The along-track pair separates two defects that one number would
+  conflate.** The scored RMS rate measures WANDER — it includes what chaos
+  expresses within 1 s and discriminates plants (shipped vs `stock` on
+  194142: along 11.4 vs 15.2 cm/s, yaw 6.3 vs 33.0 deg/s, cross 2.5 vs
+  5.7 cm/s — and yaw is a new find: 6.3 deg/s heading drift, SNR 5.1,
+  both instruments agreeing to 0.1 deg/s, invisible to the eleven
+  statistics). The signed BIAS measures the stride DEFICIT (§9), and it
+  needs its own, later fit interval: the snap's velocity re-seed HEALS
+  the deficit for ~1 s (bias reads +0.005 m/s at 1 s), after which it
+  converges on `speed_gain`'s prediction — shipped plant **−0.053 m/s
+  over 1–2 s moving windows vs the −0.050 m/s the speed deficit
+  implies** (and −0.048 out at 4 s: linear, because chaos cancels in a
+  signed mean but adds in an RMS). One caveat, stated: the heal time is
+  the PLANT'S relaxation, calibrated here on the shipped plant — a
+  slower-relaxing plant under-reads its bias (the joint-partition fit
+  reads −0.013 against a −0.06 implied deficit), so ACROSS plants
+  `speed_gain` remains the deficit's measure and the bias is the shipped
+  plant's consistency check. The RMS rates compare across plants cleanly
+  (identical windows), and all of it rides BESIDE the eleven statistics,
+  never replacing them.
 
 **The partition is what makes loop 2 a referee.** A referee that judges what
 the fit optimised is not an independent check, and the pair collapses into one
 loop with extra steps. So body-level channels (`pos`, `rot`) carry weight in
 loop 2's verdict, and loop 1 earns its keep on the joints.
 
-Today the objective violates this: loop 1 fits **`accel`** — a body-level
-signal — at 0.5 floor / 0.5 flight, with `pos`, `rot`, `joint`, `dq`, `tau` and
-`gyro` all at zero weight. `accel` was chosen on identifiability grounds (11
-of 14 knobs resolved, against `joint`'s 5) and that reasoning is sound as far
-as it goes, but resolution is not correctness.
+The partition is implemented (`score.DEFAULT_WEIGHTS`): joint .4 / dq .4 /
+tau .2, `w_flight` 0.25, every body-level channel at zero — `accel`
+deliberately so despite being the most identifiable single channel (11 of
+14 knobs vs dq's 4): resolution is not correctness, and any accel weight
+re-couples the fit to the quantity the referee judges. The family weights
+follow the identifiability spectrum (`sysid.identify`, 194142 + jumps): dq
+resolves 4 of the 7 searched knobs and is the only channel to resolve
+`actuator_tau`; joint resolves 3; tau the same 3 from a motor-side
+estimate, so half weight. What the joint family cannot resolve —
+`foot_solref_time`/`_damp` at 1.3–3.1, `leg_mass_scale` at 1.2–1.5 —
+ships as spread, not fiction. Zero weight never means unreported: every
+channel's residual prints on every fit report and on `fit --judge`.
 
-**A hypothesis this partition would test, not an established finding:** the
-anti-transfer above may be the overlap biting. Loop 1 fits body acceleration
-over 0.4 s; loop 2 judges body motion over 40 s. Those are the same physical
-quantity at two horizons, and a plant tuned to match one being worse at the
-other is the shape you would expect from two horizons of one quantity fighting.
-If so, fitting joints and judging body is not merely cleaner — it is the fix,
-and it needs no new recordings to try.
+**The hypothesis this partition tested — and the answer is NO.** The
+anti-transfer could have been the accel/body overlap biting: loop 1
+fitting body acceleration over 0.4 s while loop 2 judges body motion over
+40 s. Tested 2026-08-17: the joint-partition fit (194142 + jumps pooled,
+12 studies, cap hit — the region is wider than the data pins) improved
+its own objective **−11.4%** and held-out 153320 **−16.7%**, and grounds
+at **2.21** with the envelope (2.53 bare) against the incumbent's
+**1.61** — worse by ~3.7× the n=8 MDD, the anti-transfer's signature
+intact (attitude family better: roll_std 1.1 vs 1.6; speed family worse:
+speed_gain 0.769 vs 0.814). Removing the accel overlap did not remove
+the anti-transfer, so the overlap was not its cause. What stands, now
+measured on TWO different objectives: open-loop pointwise fidelity — any
+channel family — is not a proxy for closed-loop fidelity, and loop 2
+adjudicates every promotion. The incumbent plant keeps its seat; the
+partition keeps its independence argument (a referee that judges what
+the fit optimised is no referee), just not the cure claim.
 
 ### What loop 2 selects — the weight vector is a misspecification map
 
@@ -401,26 +435,25 @@ must bind the weights too:
 - **Weights are selected on one recording and reported on another**, so a
   vector that only flatters its selection set is caught.
 
-| hyperparameter           | today                                                     |
-|--------------------------|-----------------------------------------------------------|
-| channel + regime weights | one channel, `accel`; `w_flight` 0.5 (invented)           |
-| clip length range        | U(0.05, 0.8) s, picked by eye                             |
-| segment count / length   | stratified, seeded                                        |
-| loss statistic           | mean (p50 measured better, never switched)                |
+| hyperparameter           | today                                                        |
+|--------------------------|--------------------------------------------------------------|
+| channel + regime weights | joint .4 / dq .4 / tau .2, `w_flight` 0.25 (see below)       |
+| clip length range        | U(0.05, 0.8) s, picked by eye                                |
+| segment count / length   | fit CLI `--segments`/`--segment-length`, seeded              |
+| loss statistic           | mean (p50 measured better, never switched)                   |
 
-**Three of the axes `OuterPoint` exposes are vacuous on the objective as it
-stands, and this is why the outer study has not been run.** With one weighted
-channel, `normalised` is a single constant factor on the loss and cannot change
-which plant wins or which the fit finds. `w_flight` splits weight against a
-`flight` regime that does not exist in an all-floor walking recording — the fit
-recordings are 100% `floor`, and flight lives only in the jumps recording,
-which is held out. And `stratified` is a coverage question that loop 1's own
-identifiability instrument answers far more cheaply than the referee can.
-
-So the objective must be respecified *before* an outer search is worth running:
-weight the joint-level channels, and bring a recording with `flight` into the
-fit so the regime weights refer to something. Only then do the weight axes
-become decisions rather than no-ops.
+`OuterPoint` is exactly the weight vector's three live axes — `w_flight`,
+and the `dq`/`tau` weights relative to `joint`. Two axes it once exposed
+are GONE, not parked: `normalised` (raw residual summation is a unit
+choice, not a hypothesis — normalisation is always on) and `stratified`
+(a coverage question `sysid.identify` answers more cheaply; segment
+sampling lives on the fit CLI). `w_flight` became real when the fit set
+gained flight: `fit` pools recordings into one objective with shared
+scales, default set `194142` (79.8 s floor) + sport-jumps (22 flight
+spans, 2.5 s — sport recordings are legitimate loop-1 data; the replay is
+policy-agnostic). The 2.5 s vs 60 s imbalance is handled by shape, not
+count: each (channel, regime) term is a per-regime MEAN, so `w_flight`
+sets flight's share wherever it occurs.
 
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
@@ -446,6 +479,15 @@ Three consequences worth designing around:
 - **Keep the outer dimension tiny.** Loop 2 yields ~11 statistics per
   recording. That supports two or three decisions. The rest stay at defensible
   defaults, each labelled *"chosen because X, never validated"*.
+- **The losers are DR samples, not discards.** Every trial's fitted plant
+  persists in the `--out` log with its grounding score; the trials the
+  referee cannot distinguish from the winner (within the n=8 MDD, 0.16 —
+  the fit's 1-SE harvest one storey up) span a SECOND DR component:
+  misspecification spread — *depending on which discrepancies the weights
+  absorb, the parameters land elsewhere* — which no amount of data
+  shrinks, unlike the fit's own p10–p90. `meta.second_dr_component`
+  reports it beside, never merged, with the caveat that a small tied set
+  estimates it coarsely.
 
 ---
 
@@ -554,27 +596,31 @@ net as the yardstick. `freewalk_mcf.bin` explains
 `194142_policy-freewalk-hard` at 0.024 rad RMS (ratio 0.123 of the signal);
 the v11 control net is 4-5× worse. Same gains (kp 40 / kd 1.0), obs 45×6.
 
-**Position from the tracker, attitude from the IMU.** Loop 2's real side
-(`sysid.real.real_summary` — pure recording processing, no engine import,
-deliberately outside the MuJoCo-coupled `ground.py`) reads the position
-family from the tracker and the attitude family from the IMU quaternion.
-The split is not a preference, it is a measurement: the tracker's mount
-FLEXES — against the raw gyro it invents roll rate at **2.47×** the true
-value with correlation only **0.44** (a rigid mount correlates 0.95+), and
-the invented rotation grows 34× with activity, so it fails exactly in the
-regime being scored. No constant calibration transform can remove a
-time-varying relationship (a full 3-DOF mount fit moved `roll_std` by
-0.0000). The IMU side is trustworthy three ways: 0.0103 rad/s RMS at rest
-(38× SNR against walking roll), the Go2's own attitude filter reproduces
-the raw gyro at correlation 0.992–1.000, and accel reads 9.591 m/s² static
-(a 2.2% scale error, irrelevant to rates). **Anyone "simplifying" the
-referee back to tracker-everything silently reintroduces a ~2× attitude
-error.** Every `Summary` carries an instrument-provenance `source` field
-(`pos:tracker att:imu`, `sim`, …) printed on every table, so no claim
-silently changes instrument; `attitude="tracker"` keeps the retired
-instrument available for diagnosis. A tracker-less recording scores its
-attitude statistics (position statistics are NaN and drop out of the SNR)
-— the IMU needs no tracker.
+**The instrument split is by QUANTITY, not by axis.**
+
+* **Rates and oscillation statistics → IMU/gyro.** Loop 2's real side
+  (`sysid.real.real_summary` — pure recording processing, engine-free)
+  reads `roll_std`/`pitch_std`/`tilt_p99` and the yaw-rate family from the
+  IMU quaternion. Measured: the tracker invents roll RATE at **2.47×** the
+  gyro's truth at correlation **0.44**, the excess growing 34× with
+  activity; the IMU reads 0.0103 rad/s RMS at rest (38× SNR), its filter
+  reproduces the raw gyro at correlation 0.992–1.000. **"Simplifying" back
+  to tracker-everything silently reintroduces a ~2× attitude error.**
+* **Windowed absolute pose → tracker.** The divergence rate (§4) compares
+  poses at window horizons, where the tracker wins: absolutely referenced,
+  drift-free, its short-horizon error averaging out with window length
+  (tracker-vs-IMU disagreement 1.85/2.95/3.05° instantaneous →
+  0.65/1.11/1.21° over 5 s). That instantaneous 2–3° residual is the IMU's
+  acceleration-induced tilt error, not mount bending — the mount cannot
+  bend 3°. IMU yaw drifts under 1°/min, so IMU yaw increments anchor the
+  windows. Attitude rates print against BOTH instruments; on 194142 they
+  agree to 0.02–1.0 deg/s against a 30°-scale signal, and any future gap
+  is published as the measurement uncertainty.
+
+Every `Summary` carries an instrument-provenance `source` field
+(`pos:tracker att:imu`, `sim`, …) printed on every table;
+`attitude="tracker"` keeps the retired rate instrument for diagnosis. A
+tracker-less recording scores attitude only — the IMU needs no tracker.
 
 **The statistic set: 11 scored, two retired.** The stride pair
 (`stride_hz`, `stride_len`) comes from `sysid.gait` — engine-free by
@@ -709,11 +755,15 @@ rollouts add ~2 min to a 1–2 h outer trial; plant-scale effects (envelope
 or more than two or three decisions per recording (§4).
 
 **The headline** (194142, full span, robot-repeat floor from
-`195401`+`195715`, `--replicates 8`): `measured` **loss 0.92, 7 of 11**
-(draws 0.80–2.59, 5–8 of 11) — what fails is `roll_std` 1.6 and
-`speed_gain` 1.5, with `height_std`/`speed_lag` on the 1.0 boundary;
-`stock` **12.52, 4 of 11** (draws 11.56–12.99, 3–4 of 11). The
-measured-vs-stock separation is ~70× the n=8 MDD. The envelope's loss
+`195401`+`195715`, `--replicates 8`, divergence terms included since
+2026-08-18): `measured` **loss 1.61, 8 of 16** (draws 1.56–2.57, 6–9 of
+16); `stock` **10.46, 4 of 16** (draws 9.67–10.84). Under the previous
+11-statistic loss the same runs read `measured` 0.92, 7 of 11 (draws
+0.80–2.59) and `stock` 12.52, 4 of 11 — the composition changed, not the
+physics. What fails for `measured`: `div_yaw` 5.1 (the 6.3 deg/s heading
+drift §4 found), `roll_std` 1.6, `div_along`/`speed_gain` ~1.5–1.7, with
+`height_std`/`speed_lag`/`div_cross`/`div_roll` on the 1.0 boundary. The
+measured-vs-stock separation is ~55× the n=8 MDD. The envelope's loss
 contribution (~0.44, measured under the prior native-runner floor) also
 clears it, replicated; its match-count gain does not — the envelope's
 attitude cost sits ON the robot floor, so k is not a claim the envelope
@@ -744,17 +794,31 @@ the envelope ON, so the envelope's average effect is double-counted into
 the viscous/inertial knobs. The envelope-consistent refit was run: it is
 the better open-loop identification (−20.3% on loop 1, −2.7% on held-out
 jumps) and it grounds WORSE on the referee on every window — the
-**anti-transfer** result (§4's converse rule). The hybrid is kept because
-the referee prefers it everywhere; the trade is stated on the preset
-itself in `ranges.py`.
+**anti-transfer** result (§4's converse rule). Measured a second time
+2026-08-17 on a different objective: the joint-partition fit (−11.4% /
+−16.7% held-out) grounds at 2.21 vs the hybrid's 1.61 (§4) — the
+anti-transfer is a property of open-loop fitting on this plant, not of
+any one channel family. The hybrid is kept because the referee prefers
+it everywhere; the trade is stated on the preset itself in `ranges.py`.
 
 **The open problem is the speed family.** The sim delivers ~15–18% less
-speed per unit command — understriding, not understepping: the gait cycles
-at the robot's own rate to within 1.6% (`stride_hz`) and covers ~10% less
-ground per cycle (`stride_len`). The policy commands the same steps, the
-plant tracks them; the sim swings higher (0.126 vs 0.091 m) and spends a
-smaller fraction of the cycle in ground dwell (0.47 vs 0.58). What is
-known, so nobody re-opens it:
+speed per unit command. The decomposition below — understriding, not
+understepping: cadence within 1.6% (`stride_hz`), ~10% less ground per
+cycle (`stride_len`), higher swing (0.126 vs 0.091 m), less dwell (0.47
+vs 0.58) — was measured on the ENVELOPE-OFF plant and is date-scoped to
+it. **On the shipped (envelope-ON) plant the split has inverted**
+(2026-08-17, robot-repeat floor, n=8): `stride_hz` 1.776 vs 1.957 (−9%,
+SNR 0.8) and `stride_len` 0.322 vs 0.332 (−3%, SNR 0.3) — a CADENCE
+deficit now, consistent with the envelope's known `stride_hz` cost. Note
+both components sit individually inside the robot floor at this
+replication while `speed_gain` (SNR 1.5) does not: the aggregate defect
+is confirmed, its attribution is not — that is the honest state, and
+quoting the older, sharper split for the shipped plant would be wrong.
+Consequence: the series-compliance candidate below was argued from the
+envelope-OFF signature (high swing / low dwell / short stride) and needs
+RE-DERIVATION against a cadence-shaped deficit before it is cited for
+the shipped plant; the compliance MEASUREMENTS on the robot stand
+regardless. What is known, so nobody re-opens it:
 
 * **No admissible knob setting closes it.** Every inertia/dissipation
   deflation strides SHORTER; `frictionloss` at its range floor still
@@ -836,12 +900,16 @@ reproduce, not "whatever your checkout had that day".
 **Built:** the seam (knobs AND channels, `test_seam.py`-enforced), the
 MuJoCo backend, plant/ranges/anchors with per-value provenance and
 structural tests, ingest, regimes, segments, Mode A replay, identifiability,
-the weight-vector score, the fit (pins/searches, seeded restarts, paired-SE
-harvest, LOO-spread stopping, median + spread), segment-parallel rollouts
-(bit-identical to serial), loop 2 (`sysid.ground`: closed-loop Mode B, the
-11-statistic referee with instrument provenance, pluggable noise floors,
-replicated verdicts with draw spreads), net-identity verification
-(`sysid.verify_net`), the meta-search scaffolding (`sysid.meta`), `--view`
+the weight-vector score (joint-level partition, every channel reported
+scored or not), the fit (pins/searches, seeded restarts, paired-SE
+harvest, LOO-spread stopping, median + spread, multi-recording pooling,
+`--judge`), segment-parallel rollouts (bit-identical to serial), loop 2
+(`sysid.ground`: closed-loop Mode B, the 11-statistic referee with
+instrument provenance, pluggable noise floors, replicated verdicts with
+draw spreads, the divergence-rate instrument with per-statistic draw
+ranges), net-identity verification (`sysid.verify_net`), the meta-search
+scaffolding (`sysid.meta`, per-trial plant persistence + the second DR
+component), `--view`
 on both modes (ghost, `--speed`, `--no-reinit`; the viewer and the headless
 run are the same function), the loop-2 identifiability probe
 (`sysid.probe`), the four default-off loop mechanisms with measured values
@@ -853,7 +921,10 @@ series-compliance instrument (`sysid.compliance`), the robot-repeat floor,
 and the vendored, hash-pinned base model. Acceptance is bit-frozen against
 the shipped plant.
 
-**Not run yet:** the full outer study (10-20 trials × one inner fit each).
+**Not run yet:** the full outer study (10–20 trials × one inner fit each;
+one trial measured at ~45 min on 20 cores). Its three-split assignment
+exists without touching the reserve: fit {194142, jumps}, select on
+195401 (floor 195715 + 194142's real side), quote on 195539.
 
 **Owed:** a same-session Mode B grounding — the held-out recording
 (`195539`, Ivan's executor, untouched by any selection) is the natural
