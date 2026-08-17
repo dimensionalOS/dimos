@@ -159,7 +159,7 @@ class ZenohConfig(SessionConfig):
 
         Derived fields are resolved here, so the native side derives nothing.
         """
-        warn_client_single_link(self)
+        _warn_client_single_link(self)
         return {
             "mode": self.mode,
             "connect": self.connect,
@@ -171,7 +171,7 @@ class ZenohConfig(SessionConfig):
         }
 
 
-def warn_client_single_link(config: ZenohConfig) -> None:
+def _warn_client_single_link(config: ZenohConfig) -> None:
     """Warn when a client config lists several endpoints. Zenoh keeps one link."""
     if config.mode == "client" and len(config.connect) > 1:
         logger.warning(
@@ -270,12 +270,10 @@ class ZenohService(Service):
         super().start()
 
     def _await_connect(self, session: zenoh.Session) -> None:
-        """Block until the configured connect endpoints have established links.
+        """Block until the dialed endpoints have links.
 
-        Opening a session returns before its endpoints are dialed, so without
-        this the first published messages have nowhere to go. An endpoint that
-        never links is a warning, so one robot being down does not stop the
-        graph from coming up.
+        A session opens before its endpoints are dialed, so without this the
+        first published messages have nowhere to go.
         """
         pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
         if not pending or self.config.connect_timeout <= 0:

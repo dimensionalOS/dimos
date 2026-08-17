@@ -14,12 +14,14 @@
 
 """Multicast and gossip are knobs. Gossip follows scouting unless set explicitly."""
 
+import json
+
 import pytest
 import zenoh
 
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.service import zenohservice
-from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
+from dimos.protocol.service.zenohservice import _ZENOH_KEYS, ZenohConfig, ZenohSessionPool
 
 
 def test_multicast_defaults_on(zenoh_defaults):
@@ -77,13 +79,13 @@ def test_unset_gossip_pools_with_its_resolved_value(zenoh_defaults):
     assert ZenohConfig(gossip=None).session_key == ZenohConfig(gossip=False).session_key
 
 
-def test_zenoh_knows_both_discovery_keys():
-    """Zenoh rejects unknown config keys, so a typo'd key fails here."""
+def test_zenoh_knows_every_key_we_write():
+    """Zenoh rejects an unknown config key, so a typo in _ZENOH_KEYS fails here."""
     config = zenoh.Config()
-    config.insert_json5("scouting/multicast/enabled", "false")
-    config.insert_json5("scouting/gossip/enabled", "false")
-    assert config.get_json("scouting/multicast/enabled") == "false"
-    assert config.get_json("scouting/gossip/enabled") == "false"
+    wire = ZenohConfig().to_wire()
+    assert set(wire) == set(_ZENOH_KEYS)
+    for name, value in wire.items():
+        config.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
 
 
 @pytest.mark.parametrize("multicast", [True, False])
