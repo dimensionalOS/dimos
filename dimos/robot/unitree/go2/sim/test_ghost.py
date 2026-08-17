@@ -22,23 +22,9 @@ import pytest
 pytest.importorskip("mujoco")
 
 
-def _menagerie_available() -> bool:
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
-pytestmark = [
-    pytest.mark.go2sim,
-    pytest.mark.skipif(
-        not _menagerie_available(),
-        reason="no mujoco_menagerie checkout: set MUJOCO_MENAGERIE",
-    ),
-]
+# The go2 assets are vendored (data/go2_menagerie): a missing scene is a real
+# failure now, never a skip.
+pytestmark = [pytest.mark.go2sim]
 
 
 def test_the_ghost_geom_can_touch_nothing():

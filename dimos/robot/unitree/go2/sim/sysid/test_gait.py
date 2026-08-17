@@ -22,17 +22,6 @@ import pytest
 from dimos.robot.unitree.go2.sim.sysid.gait import LEGS, Strides, foot_base, strides, touchdowns
 
 
-def _menagerie_available() -> bool:
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
-@pytest.mark.skipif(not _menagerie_available(), reason="no mujoco_menagerie checkout")
 def test_fk_matches_mujoco_exactly() -> None:
     """The hand FK is the model's own kinematics, not an approximation of it."""
     import mujoco

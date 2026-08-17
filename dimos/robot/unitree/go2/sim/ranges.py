@@ -260,6 +260,8 @@ MEASURED_ACTUATOR_TAU = 0.00525
 # is comparative — "the tuned plant matches the robot better than bare
 # menagerie does" — and the eventual sim-to-real transfer experiment is
 # stock-vs-tuned by design. Delete this and the claim becomes unverifiable.
+# Since the assets were vendored (model.MENAGERIE_COMMIT), "bare menagerie"
+# is a fixed object: stock = the pinned scene, untouched.
 STOCK = Preset(name="stock")
 
 MEASURED = Preset(

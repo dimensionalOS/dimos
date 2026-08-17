@@ -1157,6 +1157,42 @@ claims the current tree reproduces):
 
 ---
 
+## 5j. The base model is pinned — vendored assets, exact engine (2026-08-17)
+
+Every fitted knob is a DELTA on menagerie's `unitree_go2/scene.xml`, and
+until now nothing recorded WHICH menagerie: the scene came from a personal
+checkout via `MUJOCO_MENAGERIE`, the fallback (mujoco_playground's bundled
+checkout) never actually imported against the installed mujoco, and
+`mujoco>=3.3.4` left the contact solver free to move under a plant claiming
+rel=1e-9. Three fixes, zero physics change (byte-identical assets, the
+already-installed engine):
+
+* **Vendored.** `data/go2_menagerie` (via `get_data`, the same LFS road as
+  every other data blob) carries the `unitree_go2` subtree + `LICENSE`
+  (menagerie's aggregate file; the `unitree_go2` section is BSD-3-Clause,
+  Unitree Robotics — notice retained verbatim, as that license asks) from
+  google-deepmind/mujoco_menagerie @
+  `4c358ef` (2026-06-04), verified byte-identical per file against the git
+  tree at vendoring time and pinned since by a tree hash
+  (`model.MENAGERIE_TREE_SHA256`, held by `test_vendor.py`). Missing or
+  altered assets are a FAILURE, not a skip — the assets ship with the
+  repo, so unlike the recordings their absence is never an environment
+  gap. `PROVENANCE.md` inside the archive carries the recipe.
+* **Resolution.** Vendored by default; `MUJOCO_MENAGERIE` stays as the
+  explicit developer override — off the pinned bytes, on your own head.
+  The dead playground fallback is deleted, and with it this package's
+  only reach into `mujoco_playground`.
+* **Engine.** `mujoco==3.10.0` exactly, everywhere the repo declares
+  mujoco. A range is a claim that the contact solver doesn't matter, and
+  §5g measured 12-14 mm of contact creep. Bumping is a deliberate act:
+  re-run this package's acceptance suite.
+
+A side effect worth having: `stock` now MEANS something for the first time
+— bare vendored menagerie at a known commit — so tuned-vs-stock is a
+comparison anyone can reproduce, not "whatever your checkout had that day".
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -1188,9 +1224,11 @@ to the default plant — §5g), and the series-compliance instrument (`sysid.com
 within-stance-demeaned deflection-vs-load regressions, rigid-sim control,
 spring-recovery tests — §5h), and the preset consolidation (§5i: one
 shipped plant with derived anchors and per-value provenance, `stock` as the
-control, structural tests for containment and derivation). Acceptance is
-bit-frozen against the shipped plant (re-based §5i, decomposed and
-predicted), and parallel is bit-identical to serial.
+control, structural tests for containment and derivation), and the pinned
+base model (§5j: vendored menagerie @ `4c358ef` via `get_data`, tree-hash
+test, `mujoco==3.10.0`). Acceptance is bit-frozen against the shipped plant
+(re-based §5i, decomposed and predicted), and parallel is bit-identical to
+serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 

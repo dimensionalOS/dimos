@@ -40,6 +40,20 @@ from dimos.robot.unitree.go2.sim.plant import TORQUE_LIMITS, TorqueEnvelope, act
 from dimos.robot.unitree.go2.sim.ranges import KNOBS, PHYSICS_KEYS, Knob
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
 
+# The base model this package's fitted knobs are DELTAS on: the menagerie Go2
+# at this exact commit, vendored byte-identical under `data/go2_menagerie`
+# (via `get_data`, with menagerie's aggregate LICENSE alongside — the
+# unitree_go2 section is BSD-3-Clause, Unitree Robotics; PROVENANCE.md in
+# the archive has the full story). Pinning matters because every fitted
+# number in a preset means "this value, applied to THESE bytes": an upstream
+# retune of the go2's inertia would silently re-meaning every preset.
+# test_vendor.py holds the tree hash against the vendored files.
+MENAGERIE_REPO = "https://github.com/google-deepmind/mujoco_menagerie"
+MENAGERIE_COMMIT = "4c358ef9d9d7f32ca58b40b490884a0c1726a440"  # 2026-06-04
+# sha256 of the sorted per-file manifest of the vendored tree; recipe in
+# data/go2_menagerie/PROVENANCE.md.
+MENAGERIE_TREE_SHA256 = "4ef7ea987b7636c53b7c93910eacdf6e5c0cb763e9f3a7b241674b2c2f1d4a9b"
+
 # Where the accelerometer actually is: the menagerie model's `imu` site,
 # (-0.02557, 0, 0.04232) — 49 mm from the body origin. The virtual IMU must be
 # read THERE, not at the trunk frame; see MujocoBackend.rollout below.
@@ -69,38 +83,32 @@ GHOST_BODY = "ghost"
 def scene_path(menagerie: Path | None = None) -> Path:
     """Path to the flat-ground go2 scene (menagerie ``unitree_go2/scene.xml``).
 
-    Assets are not vendored: point ``MUJOCO_MENAGERIE`` at a mujoco_menagerie
-    checkout, or install ``mujoco_playground``, which manages one.
+    Resolution: the vendored snapshot at :data:`MENAGERIE_COMMIT`
+    (``get_data("go2_menagerie")``), unless ``MUJOCO_MENAGERIE`` points at a
+    developer checkout — an explicit override, and off the pinned bytes.
     """
     root = menagerie or _menagerie_root()
     scene = root / "unitree_go2" / "scene.xml"
     if not scene.is_file():
         raise FileNotFoundError(
-            f"go2 scene not found at {scene}. Point MUJOCO_MENAGERIE at a "
-            "mujoco_menagerie checkout."
+            f"go2 scene not found at {scene}: broken MUJOCO_MENAGERIE "
+            "override, or a stale/partial data/go2_menagerie extraction"
         )
     return scene
 
 
 def _menagerie_root() -> Path:
+    # The explicit developer override wins; the default is the vendored
+    # snapshot, whose absence is a real failure (get_data raises), never a
+    # skip. The old mujoco_playground fallback is gone: its import chain
+    # reads an mjtEnableBit the pinned mujoco does not define, so it never
+    # resolved here — and its checkout would be unpinned anyway.
     env = os.environ.get("MUJOCO_MENAGERIE")
     if env:
         return Path(env)
-    # mujoco_playground maintains a checkout of its own, but importing it drags
-    # in mjx -> mujoco_warp, which fails on an mjtEnableBit the installed mujoco
-    # does not have. That surfaces as AttributeError from a third-party module,
-    # not ImportError, so catch broadly: this is a PATH LOOKUP, and no failure
-    # inside an optional dependency should be able to take the package down.
-    try:
-        from mujoco_playground._src import mjx_env
+    from dimos.utils.data import get_data
 
-        return Path(str(mjx_env.MENAGERIE_PATH))
-    except Exception:
-        pass
-    raise FileNotFoundError(
-        "no menagerie checkout: set MUJOCO_MENAGERIE to a mujoco_menagerie "
-        "clone, or install mujoco_playground"
-    )
+    return Path(get_data("go2_menagerie"))
 
 
 def load(

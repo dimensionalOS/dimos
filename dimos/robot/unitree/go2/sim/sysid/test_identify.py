@@ -223,24 +223,17 @@ def test_the_segment_report_names_where_the_information_came_from():
 # ------------------------------------------------- the instrument, end to end
 
 
-def _menagerie_available() -> bool:
-    try:
-        pytest.importorskip("mujoco")
-        from dimos.robot.unitree.go2.sim.model import scene_path
-
-        scene_path()
-    except (pytest.skip.Exception, FileNotFoundError):
-        return False
-    return True
-
-
 MIXED = __import__("pathlib").Path.home() / (
     "recordings/rubber_floor/20260816-015155_policy-mixed_vive.mcap"
 )
 
+# Recordings are not vendored, so they may legitimately be absent; the go2
+# scene IS (data/go2_menagerie), so no menagerie condition here — a missing
+# scene fails instead of skipping.
 needs_rig = pytest.mark.skipif(
-    not (_menagerie_available() and MIXED.is_file()),
-    reason="needs mujoco + menagerie + the mixed recording",
+    __import__("importlib.util", fromlist=["util"]).find_spec("mujoco") is None
+    or not MIXED.is_file(),
+    reason="needs mujoco + the mixed recording",
 )
 
 

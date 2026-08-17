@@ -106,22 +106,10 @@ def test_loss_is_rms_and_n_matched_counts_within_floor():
 # ------------------------------------------------- against the real recording
 
 
-def _menagerie_available() -> bool:
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
 @pytest.mark.go2sim
 @pytest.mark.skipif(not FREEWALK.is_file(), reason="needs the freewalk recording")
 @pytest.mark.skipif(not FREEWALK_BIN.is_file(), reason="needs the freewalk blob")
 def test_the_closed_loop_rollout_is_deterministic_and_summarisable():
-    if not _menagerie_available():
-        pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
@@ -151,8 +139,6 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
     """Latency and obs noise must change the physics when on, change NOTHING
     when off (every existing grounding number reproduces), and be exactly
     repeatable so a probe result is a measurement, not a draw."""
-    if not _menagerie_available():
-        pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
@@ -193,8 +179,6 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
 def test_a_perturbed_start_diverges_but_the_statistics_survive():
     """The whole premise of loop 2 in one assertion pair: position separates,
     the summary statistics stay within a sensible band."""
-    if not _menagerie_available():
-        pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset

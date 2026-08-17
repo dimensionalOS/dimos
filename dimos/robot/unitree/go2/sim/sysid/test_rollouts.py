@@ -33,23 +33,9 @@ pytest.importorskip("mujoco")
 pytest.importorskip("mcap")
 
 
-def _menagerie_available() -> bool:
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
-pytestmark = [
-    pytest.mark.go2sim,
-    pytest.mark.skipif(
-        not _menagerie_available(),
-        reason="no mujoco_menagerie checkout: set MUJOCO_MENAGERIE",
-    ),
-]
+# The go2 assets are vendored (data/go2_menagerie): a missing scene is a real
+# failure now, never a skip. Only the recording skip below remains.
+pytestmark = [pytest.mark.go2sim]
 
 HARD = Path.home() / "recordings/hard_floor/20260816-194142_policy-freewalk-hard_vive.mcap"
 needs_hard = pytest.mark.skipif(not HARD.is_file(), reason=f"no recording at {HARD}")

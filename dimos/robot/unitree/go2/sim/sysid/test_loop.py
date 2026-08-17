@@ -198,23 +198,11 @@ def test_the_measured_sensor_floor_sits_under_the_training_levels():
 # ------------------------------------------------------------ needs MuJoCo
 
 
-def _menagerie_available() -> bool:
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
 @pytest.mark.go2sim
 @needs_freewalk
 def test_the_command_shift_sweep_reproduces_and_prefers_zero_over_30ms():
     """The open-loop latency probe: deterministic to full precision, and the
     recorded timeline beats a +30 ms delay — the target->plant leg is ~0."""
-    if not _menagerie_available():
-        pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.ranges import load_preset
@@ -240,8 +228,6 @@ def test_the_command_shift_sweep_reproduces_and_prefers_zero_over_30ms():
 def test_measured_control_timing_is_default_off_and_deterministic():
     """An exact 20 ms interval sequence reproduces the default grid
     bit-for-bit; the measured sequence changes the physics, repeatably."""
-    if not _menagerie_available():
-        pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset

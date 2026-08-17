@@ -35,28 +35,12 @@ pytest.importorskip("mujoco")
 pytest.importorskip("mcap")
 
 
-def _menagerie_available() -> bool:
-    """A missing checkout is an ENVIRONMENT gap, not a failure of this package."""
-    from dimos.robot.unitree.go2.sim.model import scene_path
-
-    try:
-        scene_path()
-    except FileNotFoundError:
-        return False
-    return True
-
-
 # NOT `pytest.mark.mujoco`: the repo's addopts deselects that marker wholesale,
 # which is how a run once reported 70 passed while the acceptance test was
-# failing. These skip on a missing recording or menagerie, with the reason
-# printed — a test that vanishes silently is worse than one that fails.
-pytestmark = [
-    pytest.mark.go2sim,
-    pytest.mark.skipif(
-        not _menagerie_available(),
-        reason="no mujoco_menagerie checkout: set MUJOCO_MENAGERIE",
-    ),
-]
+# failing. These skip on a missing RECORDING only (recordings are not
+# vendored); the go2 assets are (data/go2_menagerie), so a missing scene is a
+# real failure, never a skip.
+pytestmark = [pytest.mark.go2sim]
 
 MIXED = Path.home() / "recordings/rubber_floor/20260816-015155_policy-mixed_vive.mcap"
 HANGING = Path.home() / "recordings/hard_floor/20260816-185220_sport-hanging_novive.mcap"
