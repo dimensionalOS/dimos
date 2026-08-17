@@ -21,7 +21,7 @@ and :func:`inventory`: enter once, query many times on warm weights, and
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
@@ -71,6 +71,28 @@ class DanDetector(Resource):
         self.detector.stop()
         del self.segmenter
 
+    @overload
+    def embed(
+        self,
+        store: Any,
+        after: float,
+        before: float,
+        *,
+        live: Literal[False] = False,
+        optical_frame: str = ...,
+        world_frame: str = ...,
+        tf_tolerance: float = ...,
+    ) -> Stream[Any, Any]: ...
+    @overload
+    def embed(
+        self,
+        store: Any,
+        *,
+        live: Literal[True],
+        optical_frame: str = ...,
+        world_frame: str = ...,
+        tf_tolerance: float = ...,
+    ) -> Stream[Any, Any]: ...
     def embed(
         self,
         store: Any,
@@ -93,8 +115,8 @@ class DanDetector(Resource):
             return embed_index(
                 store,
                 self.siglip,
-                after,
-                before,
+                cast("float", after),
+                cast("float", before),
                 optical_frame=optical_frame,
                 world_frame=world_frame,
                 tf_tolerance=tf_tolerance,
