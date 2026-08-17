@@ -58,7 +58,7 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
     def fake_generate(request: GenerationRequest) -> GenerationResult:
         seen.append(request)
         return GenerationResult(
-            output=request.output,
+            output=request.output_directory(),
             cases=(
                 PublicCase(
                     id="q",
@@ -88,7 +88,7 @@ def test_vqa_generate_cli_accepts_frame_range(
 
     def fake_generate(request: GenerationRequest) -> GenerationResult:
         seen.append(request)
-        return GenerationResult(output=request.output, cases=())
+        return GenerationResult(output=request.output_directory(), cases=())
 
     monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
 

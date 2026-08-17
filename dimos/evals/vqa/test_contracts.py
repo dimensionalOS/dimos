@@ -22,6 +22,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.constants import STATE_DIR
 from dimos.evals.types import EvalRig
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.families import (
@@ -296,6 +297,12 @@ def test_generation_request_selects_one_memory_image() -> None:
     assert request.image_index == 4
     assert request.output == Path("dataset")
     assert request.frame_indices() == (4,)
+
+
+def test_generation_request_defaults_output_under_state_directory() -> None:
+    request = GenerationRequest(dataset="recordings/go2_short.db", image_index=4)
+
+    assert request.output_directory() == STATE_DIR / "datasets" / "vqa" / "go2_short-frames"
 
 
 def test_generation_request_selects_frame_range() -> None:

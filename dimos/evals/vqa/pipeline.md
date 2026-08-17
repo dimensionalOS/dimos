@@ -8,8 +8,7 @@ boundaries.
 
 ```bash
 dimos evals vqa generate <memory-dataset> \
-  --image-index 0 \
-  --output <dataset-directory>
+  --image-index 0
 ```
 
 Range mode uses Python-style exclusive stop semantics:
@@ -18,12 +17,12 @@ Range mode uses Python-style exclusive stop semantics:
 dimos evals vqa generate <memory-dataset> \
   --start 0 \
   --stop 100 \
-  --stride 10 \
-  --output <dataset-directory>
+  --stride 10
 ```
 
 `image_index` cannot be combined with range options. Range mode requires `start` and `stop`; `stride`
-defaults to one.
+defaults to one. Generated datasets default to
+`~/.local/state/dimos/datasets/vqa/<recording-stem>-frames`; `--output` overrides that location.
 
 The generation sequence is:
 

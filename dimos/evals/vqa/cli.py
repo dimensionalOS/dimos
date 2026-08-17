@@ -30,7 +30,7 @@ def generate(
     start: int | None = typer.Option(None, min=0, help="First color_image index in range mode"),
     stop: int | None = typer.Option(None, min=1, help="Exclusive color_image stop index"),
     stride: int | None = typer.Option(None, min=1, help="Frame stride in range mode"),
-    output: Path = typer.Option(..., help="Standalone dataset output directory"),
+    output: Path | None = typer.Option(None, help="Override the generated dataset directory"),
 ) -> None:
     """Generate questions for one image or an indexed image range."""
     from dimos.evals.vqa.generate import GenerationRequest, generate_dataset

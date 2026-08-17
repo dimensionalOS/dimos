@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
@@ -47,7 +48,7 @@ class GenerationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset: NonEmptyString
-    output: Path
+    output: Path | None = None
     image_index: int | None = Field(default=None, ge=0)
     start: int | None = Field(default=None, ge=0)
     stop: int | None = Field(default=None, gt=0)
@@ -70,6 +71,11 @@ class GenerationRequest(BaseModel):
             return (self.image_index,)
         assert self.start is not None and self.stop is not None
         return tuple(range(self.start, self.stop, self.stride or 1))
+
+    def output_directory(self) -> Path:
+        if self.output is not None:
+            return self.output.expanduser()
+        return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-frames"
 
 
 class PublicCase(BaseModel):
@@ -164,11 +170,10 @@ def generate_frames_dataset(
     detector: ObjectDetector,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
-    _prepare_output(request.output)
-    request.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=f".{request.output.name}-", dir=request.output.parent
-    ) as temporary:
+    output = request.output_directory()
+    _prepare_output(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         staging = Path(temporary)
         all_cases: list[PublicCase] = []
         all_labels: list[PrivateLabel] = []
@@ -204,10 +209,10 @@ def generate_frames_dataset(
                 "rejected_question_count": rejected_count,
             },
         )
-        if request.output.exists():
-            request.output.rmdir()
-        staging.replace(request.output)
-    return GenerationResult(output=request.output, cases=tuple(all_cases))
+        if output.exists():
+            output.rmdir()
+        staging.replace(output)
+    return GenerationResult(output=output, cases=tuple(all_cases))
 
 
 def _generate_frame(
