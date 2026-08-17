@@ -225,8 +225,11 @@ class NativeModule(Module):
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
-        if not Path(self.config.executable).is_absolute() and self.config.cwd is not None:
-            self.config.executable = str(Path(self.config.cwd) / self.config.executable)
+        if not Path(self.config.executable).is_absolute():
+            # The spawn runs from the executable's own directory, so a relative
+            # path has to be resolved before then or it resolves against itself.
+            base = Path(self.config.cwd) if self.config.cwd is not None else Path.cwd()
+            self.config.executable = str(base / self.config.executable)
 
     @rpc
     def build(self) -> None:

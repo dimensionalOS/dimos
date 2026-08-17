@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import sys
 from typing import get_args, get_origin, get_type_hints
 
 from pydantic import Field, create_model
@@ -134,10 +135,16 @@ def baked_host(
     remaps: Mapping[tuple[str, str], str] | None = None,
     **config_defaults: object,
 ) -> type[BakedHost]:
-    """Build the NativeModule subclass that drives a baked host binary."""
+    """Build the NativeModule subclass that drives a baked host binary.
+
+    Assign the result to `name` at module level: deploying to a worker pickles
+    the class by that path.
+    """
     if not members:
         raise ValueError("a baked host needs at least one member module")
     remaps = dict(remaps or {})
+
+    caller = sys._getframe(1).f_globals.get("__name__", __name__)
 
     fields: dict[str, tuple[type, object]] = {"executable": (str, executable)}
     for instance, member in members.items():
@@ -150,14 +157,18 @@ def baked_host(
     config_cls = create_model(
         f"{name}Config",
         __base__=BakedHostConfig,
+        __module__=caller,
         **fields,  # type: ignore[call-overload]
     )
 
     namespace: dict[str, object] = {
         "__annotations__": {"config": config_cls, **_union_ports(members, remaps)},
         "__doc__": f"Baked host `{name}`: {', '.join(members)}.",
-        "__module__": __name__,
+        "__module__": caller,
         "_members": dict(members),
         "_remaps": remaps,
     }
-    return type(name, (BakedHost,), namespace)
+    host_cls = type(name, (BakedHost,), namespace)
+    # Nothing names the config class, so put it where pickle will look for it.
+    setattr(sys.modules[caller], config_cls.__name__, config_cls)
+    return host_cls

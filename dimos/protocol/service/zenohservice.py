@@ -142,8 +142,12 @@ class ZenohConfig(SessionConfig):
 
     @property
     def gossip_enabled(self) -> bool:
-        """Gossip discovery, following scouting unless set explicitly."""
-        return self.gossip if self.gossip is not None else self.scouting
+        """Gossip discovery, on unless a caller turns it off.
+
+        Off, a peer cannot resolve the key expressions its links send it and
+        drops their data with `Route data with unknown scope`.
+        """
+        return self.gossip if self.gossip is not None else True
 
     @property
     def session_key(self) -> str:

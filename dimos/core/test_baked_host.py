@@ -16,6 +16,8 @@
 
 from collections.abc import Mapping
 import json
+import pathlib
+import pickle
 from typing import get_args, get_origin, get_type_hints
 
 import pytest
@@ -101,7 +103,8 @@ def test_member_configs_default_and_are_overridable():
     host = cls(mapper_config=MapperConfig(voxel_size=0.25))
     assert host.config.mapper_config.voxel_size == 0.25
     assert host.config.planner_config.world_frame == "map"
-    assert host.config.executable == "dist/go2-nav"
+    # Absolute by construction: the spawn runs from the binary's own directory.
+    assert host.config.executable == str(pathlib.Path.cwd() / "dist/go2-nav")
     host.stop()
 
 
@@ -124,7 +127,7 @@ def test_a_baked_host_spawns_its_binary_with_no_arguments():
     host = host_class()()
     # What the base class would have sent, and what the binary exits 2 on.
     assert "--mapper_config" in host.config.to_cli_args()
-    assert host._argv({"lidar": "dimos/lidar", "path": "dimos/path"}) == ["dist/go2-nav"]
+    assert host._argv({"lidar": "dimos/lidar", "path": "dimos/path"}) == [host.config.executable]
     host.stop()
 
 
@@ -173,3 +176,14 @@ def test_an_explicit_suppress_list_replaces_the_baked_one():
 def test_an_empty_member_map_is_refused():
     with pytest.raises(ValueError, match="at least one member"):
         baked_host("Empty", executable="x", members={})
+
+
+Pickled = baked_host("Pickled", executable="dist/x", members=MEMBERS)
+
+
+def test_the_generated_classes_pickle():
+    """Deploying to a worker pickles both, so both must resolve by module path."""
+    assert pickle.loads(pickle.dumps(Pickled)) is Pickled
+    host = Pickled()
+    assert pickle.loads(pickle.dumps(host.config)).mapper_config.voxel_size == 0.1
+    host.stop()

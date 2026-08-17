@@ -73,10 +73,19 @@ impl RayTracingVoxelMap {
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
         // Register with the pose nearest the cloud stamp, never a stale one.
-        let Some((translation, rotation)) = nearest_pose(&self.poses, time_secs(&msg.header.stamp))
-        else {
+        let stamp = time_secs(&msg.header.stamp);
+        let Some((translation, rotation)) = nearest_pose(&self.poses, stamp) else {
+            // An empty buffer means no odometry is arriving at all; a large gap
+            // means it is arriving but cannot be paired.
+            let gap = self
+                .poses
+                .iter()
+                .map(|&(t, ..)| (t - stamp).abs())
+                .fold(f64::INFINITY, f64::min);
             warn_throttled!(
                 Duration::from_secs(1),
+                poses = self.poses.len(),
+                gap_s = gap,
                 "No odometry within tolerance of the cloud stamp, dropped a cloud.",
             );
             return;

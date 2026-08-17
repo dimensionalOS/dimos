@@ -18,7 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 # default-features would pull QUIC/TLS -> `ring`, which breaks static musl
 # cross-linking for the robot builds. tcp+udp is all dimos uses on any target.
-zenoh = { version = "1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable"] }
+zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable"] }
 
 [dev-dependencies]
 tracing-test = "0.2"
