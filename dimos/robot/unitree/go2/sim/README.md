@@ -586,18 +586,27 @@ select/report latency split, identical windows (select on the fit
 recording, report on the rubber freewalk span t=68.3-83.2), measured
 timing+noise on:
 
-| plant                     | unbounded pick | select at pick | report 0 ms → pick |
-|---------------------------|----------------|----------------|--------------------|
-| `measured` (no envelope)  | 12 ms          | 2.83 ± .24     | 6.37 → 6.20        |
-| `fit6-env` (env central)  | **16 ms**      | 4.13 ± .12     | 7.68 → 6.34        |
+| plant                          | unbounded pick | select at pick | report 0 ms → pick |
+|--------------------------------|----------------|----------------|--------------------|
+| `measured` (no envelope)       | 12 ms          | 2.83 ± .24     | 6.37 → 6.20        |
+| `fit6-env` (env central)       | **16 ms**      | 4.13 ± .12     | 7.68 → 6.34        |
+| fit6 knobs, env OFF (control)  | **20 ms**      | 3.06 ± .21     | 8.77 → 6.60        |
 
-The demand ROSE, 12 → 16 ms. The variance structure says how: past 12 ms
-`measured` loses the gait outright (30.9 ± 33.2 at 16 ms, 57.4 ± 34.5 at
-20) while the refit plant is still stable at 16 ms (± 0.12) — it TOLERATES
-more delay before destabilising and NEEDS more delay to fake the same
-oscillation. In effect the refit walks even more over-damped, the opposite
-of what deflating `armature`/`actuator_tau`/`leg_mass_scale` was supposed
-to buy.
+The demand ROSE, and the control run turns the three rows into one
+statement: the unbounded pick sits just under each plant's own stability
+cliff. `measured` loses the gait past 12 ms (30.9 ± 33.2 at 16, 57.4 at
+20); the envelope-refit is stable at 16 (± 0.12) and dies at 20; the
+control is still stable AT 20 (± 0.21) — and each time the referee buys
+delay right up to the edge. The "latency demand" is not a constant of the
+loop; it is each plant's MAXIMUM SURVIVABLE DELAY, which is what finally
+makes it unmistakable as a proxy: a plant that tolerates more delay needs
+more delay to fake the same oscillation, i.e. it walks even more
+over-damped — the opposite of what deflating
+`armature`/`actuator_tau`/`leg_mass_scale` was supposed to buy. The
+envelope itself is not the closed-loop culprit either way (confound
+control, 0 ms: ON helps the rubber window 8.77 → 7.68, marginally hurts the
+hard one 5.73 → 6.16); the regression vs `measured` sits mostly in the
+refit knobs.
 
 **Verdict: a confident negative.** The drive is first-order to within
 measurement error, backlash is absent, the envelope-consistent refit is
