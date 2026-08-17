@@ -28,6 +28,7 @@ from dimos.evals.types import EvalRig
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
+    OBJECT_DISTANCE_FAMILY,
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
@@ -35,17 +36,20 @@ from dimos.evals.vqa.families import (
     answer_question,
 )
 from dimos.evals.vqa.generate import (
+    GenerationFrame,
     GenerationRequest,
     PrivateLabel,
     PublicCase,
     generate_frames_dataset,
 )
+from dimos.evals.vqa.primitives.edgetam import ObjectRangeEvidence
 from dimos.evals.vqa.suite import load_suite
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
+    from dimos.evals.vqa.preprocessing import CalibratedFrame
     from dimos.models.vl.base import VlModel
 
 
@@ -60,6 +64,20 @@ class _MixedAuthor:
             QuestionProposal(family="horizontal_direction", object_name="chair"),
             QuestionProposal(family="presence", object_name="chair"),
         )
+
+
+class _DistanceAuthor:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        return (QuestionProposal(family="object_distance", object_name="chair"),)
+
+
+class _RecordingAuthor(_Author):
+    def __init__(self) -> None:
+        self.family_names: tuple[str, ...] = ()
+
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        self.family_names = tuple(family.name for family in families)
+        return super().propose(image, families)
 
 
 class _EmptyThenAuthor:
@@ -126,11 +144,13 @@ class _QuestionModel:
         assert "presence" in prompt
         assert "horizontal_direction" in prompt
         assert "object_count" in prompt
+        assert "object_distance" in prompt
         assert "JSON array" in prompt
         return [
             {"family": "presence", "object_name": "chair"},
             {"family": "horizontal_direction", "object_name": "robot"},
             {"family": "object_count", "object_name": "box"},
+            {"family": "object_distance", "object_name": "chair"},
         ]
 
 
@@ -141,6 +161,11 @@ class _PartlyInvalidQuestionModel:
             {"family": "unsupported", "object_name": "table"},
             {"family": "presence", "object_name": "door", "answer": "yes"},
         ]
+
+
+class _UnavailableFamilyQuestionModel:
+    def query_json(self, image: Image, prompt: str) -> list[dict[str, str]]:
+        return [{"family": "object_distance", "object_name": "chair"}]
 
 
 class _BrokenDetector:
@@ -160,6 +185,25 @@ class _FailsSecondDetector(_Detector):
         return super().detect(image, object_name)
 
 
+class _RangeEstimator:
+    def __init__(self, range_m: float, quartiles: tuple[float, float, float] | None = None) -> None:
+        self._range_m = range_m
+        self._quartiles = quartiles or (range_m, range_m, range_m)
+
+    def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
+        return ObjectRangeEvidence(
+            object_name=object_name,
+            camera_range_m=self._range_m,
+            supporting_point_count=7,
+            prompt_bbox_xyxy=(0.0, 0.0, 2.0, 2.0),
+            mask_bbox_xyxy=(0.0, 0.0, 2.0, 2.0),
+            mask_area_px=4,
+            range_quartiles_m=self._quartiles,
+            synchronization_delta_s=0.02,
+            calibration_source="test",
+        )
+
+
 class _Rig:
     blind = False
 
@@ -174,6 +218,61 @@ def test_presence_proposal_matches_available_family() -> None:
 
     assert proposal.object_name == "chair"
     assert proposal.family in [family.name for family in AVAILABLE_FAMILIES]
+
+
+def test_object_distance_family_is_available() -> None:
+    proposal = QuestionProposal(family="object_distance", object_name="chair")
+
+    assert OBJECT_DISTANCE_FAMILY.name == proposal.family
+    assert OBJECT_DISTANCE_FAMILY in AVAILABLE_FAMILIES
+
+
+def test_object_distance_requires_range_evidence() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_distance", object_name="chair")
+
+    with pytest.raises(InsufficientEvidenceError, match="calibrated point-cloud"):
+        answer_question(proposal, image, _Detector(present=True))
+
+
+@pytest.mark.parametrize(
+    ("range_m", "expected"),
+    (
+        (0.99, "under 1 meter"),
+        (1.0, "1 to under 2 meters"),
+        (2.0, "2 to under 3 meters"),
+        (3.0, "3 meters or more"),
+    ),
+)
+def test_object_distance_buckets_range_evidence(range_m: float, expected: str) -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_distance", object_name="chair")
+
+    answer = answer_question(
+        proposal,
+        image,
+        _Detector(present=True),
+        cast("CalibratedFrame", object()),
+        _RangeEstimator(range_m),
+    )
+
+    assert answer.answer == expected
+    assert answer.evidence["camera_range_m"] == range_m
+    assert answer.evidence["supporting_point_count"] == 7
+
+
+def test_object_distance_rejects_evidence_crossing_bucket_boundary() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_distance", object_name="chair")
+
+    with pytest.raises(InsufficientEvidenceError, match="uncertainty crosses"):
+        answer_question(
+            proposal,
+            image,
+            _Detector(present=True),
+            cast("CalibratedFrame", object()),
+            _RangeEstimator(2.01, (1.8, 2.01, 2.2)),
+        )
 
 
 def test_question_proposal_rejects_unknown_fields() -> None:
@@ -278,6 +377,7 @@ def test_openai_author_parses_constrained_proposals() -> None:
         QuestionProposal(family="presence", object_name="chair"),
         QuestionProposal(family="horizontal_direction", object_name="robot"),
         QuestionProposal(family="object_count", object_name="box"),
+        QuestionProposal(family="object_distance", object_name="chair"),
     )
 
 
@@ -288,6 +388,15 @@ def test_openai_author_keeps_valid_items_from_partly_invalid_response() -> None:
     proposals = author.propose(image, AVAILABLE_FAMILIES)
 
     assert proposals == (QuestionProposal(family="presence", object_name="chair"),)
+
+
+def test_openai_author_skips_unavailable_family() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    author = OpenAIQuestionAuthor(cast("VlModel", _UnavailableFamilyQuestionModel()))
+
+    proposals = author.propose(image, (AVAILABLE_FAMILIES[0],))
+
+    assert proposals == ()
 
 
 def test_generation_request_selects_one_memory_image() -> None:
@@ -358,7 +467,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
 
     result = generate_frames_dataset(
         request,
-        ((4, image),),
+        (GenerationFrame(4, image),),
         cast("QuestionAuthor", _Author()),
         _Detector(present=True),
     )
@@ -378,6 +487,49 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert evaluation.score == 1.0
 
 
+def test_generate_distance_case_from_calibrated_frame(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+
+    result = generate_frames_dataset(
+        request,
+        (GenerationFrame(4, image, cast("CalibratedFrame", object())),),
+        cast("QuestionAuthor", _DistanceAuthor()),
+        _Detector(present=True),
+        _RangeEstimator(1.5),
+    )
+
+    assert result.cases[0].id == "frame-000004-chair-object_distance"
+    assert result.cases[0].choices == (
+        "under 1 meter",
+        "1 to under 2 meters",
+        "2 to under 3 meters",
+        "3 meters or more",
+    )
+    labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
+    assert labels == [{"id": "frame-000004-chair-object_distance", "answer": "1 to under 2 meters"}]
+
+
+def test_uncalibrated_frame_does_not_expose_distance_family(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=12.5)
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+    author = _RecordingAuthor()
+
+    generate_frames_dataset(
+        request,
+        (GenerationFrame(4, image),),
+        cast("QuestionAuthor", author),
+        _Detector(present=True),
+        _RangeEstimator(1.5),
+    )
+
+    assert author.family_names == ("presence", "horizontal_direction", "object_count")
+    run = json.loads((output / "audit" / "run.json").read_text())
+    assert run["families"] == ["presence", "horizontal_direction", "object_count"]
+
+
 def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     request = GenerationRequest(
@@ -388,8 +540,8 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
         output=output,
     )
     frames = (
-        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        (3, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=3.0)),
+        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(3, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=3.0)),
     )
 
     result = generate_frames_dataset(
@@ -424,8 +576,8 @@ def test_empty_frame_does_not_count_as_rejected_question(tmp_path: Path) -> None
     output = tmp_path / "vqa"
     request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
     frames = (
-        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        (2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
     )
 
     generate_frames_dataset(
@@ -454,7 +606,7 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
 
     result = generate_frames_dataset(
         request,
-        ((4, image),),
+        (GenerationFrame(4, image),),
         cast("QuestionAuthor", _MixedAuthor()),
         detector,
     )
@@ -473,7 +625,7 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="detector broke"):
         generate_frames_dataset(
             request,
-            ((4, image),),
+            (GenerationFrame(4, image),),
             cast("QuestionAuthor", _Author()),
             _BrokenDetector(),
         )
@@ -485,8 +637,8 @@ def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) ->
     output = tmp_path / "vqa"
     request = GenerationRequest(dataset="recording.db", start=1, stop=3, output=output)
     frames = (
-        (1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
-        (2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
+        GenerationFrame(1, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=1.0)),
+        GenerationFrame(2, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), ts=2.0)),
     )
 
     with pytest.raises(ValueError, match="detector broke"):
@@ -507,7 +659,7 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
 
     result = generate_frames_dataset(
         request,
-        ((4, image),),
+        (GenerationFrame(4, image),),
         cast("QuestionAuthor", _CollidingAuthor()),
         _Detector(present=True),
     )

@@ -44,6 +44,7 @@ class OpenAIQuestionAuthor:
         self._model = model
 
     def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        available_names = {family.name for family in families}
         family_shapes = [
             {
                 "family": family.name,
@@ -66,7 +67,9 @@ class OpenAIQuestionAuthor:
         proposals: list[QuestionProposal] = []
         for item in payload:
             try:
-                proposals.append(QuestionProposal.model_validate(item))
+                proposal = QuestionProposal.model_validate(item)
             except ValidationError:
                 continue
+            if proposal.family in available_names:
+                proposals.append(proposal)
         return tuple(proposals)
