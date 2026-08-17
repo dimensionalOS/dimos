@@ -28,6 +28,7 @@ from dimos.robot.unitree.go2.sim.sysid.fit import (
     KnobPlan,
     Pin,
     StudyOutcome,
+    _out_file,
     _overlap_seconds,
     base_values,
     default_plan,
@@ -258,3 +259,13 @@ def test_unresolved_knobs_are_named_in_the_report():
     text = format_report(res)
     assert "UNRESOLVED" in text
     assert "HIT THE STUDY CAP" in text  # the cap is a result, not a failure
+
+
+def test_a_dotted_out_stem_keeps_its_dot():
+    """`--out sweep_lam0.75` once wrote `sweep_lam0.plant.json` — with_suffix
+    ate the `.75`, so all three sweep points collided onto ONE file and the
+    last writer won. The output name must be a plain append."""
+    from pathlib import Path
+
+    assert _out_file(Path("/x/sweep_lam0.75"), ".plant.json") == Path("/x/sweep_lam0.75.plant.json")
+    assert _out_file(Path("/x/plain"), ".ranges.json") == Path("/x/plain.ranges.json")

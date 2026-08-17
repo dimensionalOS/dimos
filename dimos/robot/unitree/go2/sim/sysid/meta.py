@@ -91,19 +91,20 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
     transport_leg,
 )
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
-from dimos.robot.unitree.go2.sim.sysid.real import real_summary
+from dimos.robot.unitree.go2.sim.sysid.real import real_summary, robot_noise
 from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
-# Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%),
+# Loop 2's minimum detectable differences (README 8, bootstrap, 95%),
 # re-measured 2026-08-17 on the CURRENT loss and loop (tracking areas,
 # measured-state seeding — whose honest draw tail is what coarsens n=8;
-# n=16 reads 0.260, so plant-selection verdicts want --replicates 16).
-# Outer trials within this of the best are ties, their fitted plants
-# admissible DR samples (module docstring).
+# plant-selection verdicts want --replicates 16). Outer trials within
+# the matching MDD of the best are ties, their fitted plants admissible
+# DR samples (module docstring).
 MDD_N8 = 0.571
+MDD_N16 = 0.260
 
 
 @dataclass(frozen=True)
@@ -607,20 +608,20 @@ def run_latency(
 # ------------------------------------------------------------ the outer study
 
 
-def second_dr_component(log: Sequence[dict[str, object]]) -> dict[str, object]:
+def second_dr_component(log: Sequence[dict[str, object]], mdd: float = MDD_N8) -> dict[str, object]:
     """The misspecification DR component: per-knob spread over the trials
-    tied with the best (within :data:`MDD_N8` — the fit's 1-SE harvest, one
+    tied with the best (within ``mdd`` — the fit's 1-SE harvest, one
     storey up). Small tied sets make it coarse; the output says so."""
     losses = [float(e["ground_loss"]) for e in log]  # type: ignore[arg-type]
     best = min(losses)
-    tied = [e for e, loss in zip(log, losses, strict=True) if loss - best <= MDD_N8]
+    tied = [e for e, loss in zip(log, losses, strict=True) if loss - best <= mdd]
     knobs: dict[str, list[float]] = {}
     for e in tied:
         for k, v in dict(e["values"]).items():  # type: ignore[call-overload]
             knobs.setdefault(k, []).append(float(v))
     return {
         "admissible_trials": [e["trial"] for e in tied],
-        "mdd": MDD_N8,
+        "mdd": mdd,
         "caveat": f"n={len(tied)} tied trials: a coarse estimate, not a distribution",
         "spread": {k: [min(v), max(v)] for k, v in knobs.items() if max(v) > min(v)},
     }
@@ -636,30 +637,44 @@ def run_outer(
     workers: int = 1,
     inner_trials: int = 90,
     max_studies: int = 12,
-    replicates: int = 8,
+    replicates: int = 16,
+    floor_from: Sequence[str | Path] | None = None,
+    seed_points: Sequence[OuterPoint] = (INCUMBENT_POINT, DEFAULT_POINT),
     out: str | Path | None = None,
 ) -> None:
-    """Nested Optuna: TPE over :class:`OuterPoint`, each trial a full inner fit.
+    """Nested Optuna: TPE over the LIVE axes, each trial a full inner fit.
 
-    Seeded with :data:`DEFAULT_POINT`. The final number must be quoted on a
-    THIRD recording this function never sees — quoting the validation score
-    as the result is the one-storey-up overfit this module exists to
-    prevent. Every trial's fitted plant persists in the ``--out`` log with
-    its grounding score — the losers within the MDD of the winner are the
-    samples of the second DR component (:func:`second_dr_component`), not
-    discards.
+    The searched axes are ``w_accel`` and the ``w_dq``/``w_tau`` ratios;
+    ``w_flight`` is FIXED at the default — measured inert (0.03/0.10 across
+    full refits under two judges), so searching it would spend trials on a
+    dead dial. ``floor_from`` builds the robot-repeat floor from repeat
+    recordings (the sim-perturb ``shared_floor`` is the fallback);
+    ``replicates`` defaults to 16 — the honest seed's draw tail puts the
+    n=8 MDD at 0.571 vs 0.260 at n=16. The final number must be quoted on
+    a recording this function never sees. Every trial's fitted plant
+    persists in the ``--out`` log with its grounding score — the losers
+    within the MDD of the winner are the samples of the second DR
+    component (:func:`second_dr_component`), not discards.
     """
     import optuna
 
     policy = FreePolicy.load(policy_bin)
-    noise, source = shared_floor(validation, policy, backend)
+    if floor_from is not None:
+        st_v = read_streams(validation)
+        span = float(st_v.wt[-1]) - 6.0
+        raw = robot_noise([read_streams(r) for r in floor_from])
+        noise = usable_floor(raw, real_summary(st_v, start=6.0, seconds=span).as_dict())
+        source = "robot-repeat"
+    else:
+        noise, source = shared_floor(validation, policy, backend)
+    mdd = MDD_N16 if replicates >= 16 else MDD_N8
     log: list[dict[str, object]] = []
 
     def objective(trial: optuna.Trial) -> float:
         point = OuterPoint(
             name=f"trial-{trial.number}",
             w_accel=trial.suggest_float("w_accel", 0.0, 1.0),
-            w_flight=trial.suggest_float("w_flight", 0.0, 1.0),
+            w_flight=DEFAULT_POINT.w_flight,
             w_dq=trial.suggest_float("w_dq", 0.0, 2.0),
             w_tau=trial.suggest_float("w_tau", 0.0, 2.0),
         )
@@ -699,23 +714,21 @@ def run_outer(
         )
         if out is not None:
             Path(out).write_text(
-                json.dumps({"trials": log, "second_dr": second_dr_component(log)}, indent=2)
+                json.dumps({"trials": log, "second_dr": second_dr_component(log, mdd)}, indent=2)
             )
         return rep.loss()
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=0))
-    for p in (INCUMBENT_POINT, DEFAULT_POINT):
-        study.enqueue_trial(
-            {"w_accel": p.w_accel, "w_flight": p.w_flight, "w_dq": p.w_dq, "w_tau": p.w_tau}
-        )
+    for p in seed_points:
+        study.enqueue_trial({"w_accel": p.w_accel, "w_dq": p.w_dq, "w_tau": p.w_tau})
     study.optimize(objective, n_trials=trials)
     best = study.best_trial
     print(f"best outer point: {best.params}  ground loss {best.value:.3f}")
-    dr2 = second_dr_component(log)
+    dr2 = second_dr_component(log, mdd)
     print(
         f"second DR component (misspecification spread over {len(dr2['admissible_trials'])} "  # type: ignore[arg-type]
-        f"trials tied within MDD {MDD_N8}): {dr2['spread']}"
+        f"trials tied within MDD {mdd}): {dr2['spread']}"
     )
     print(f"  caveat: {dr2['caveat']}")
     print(
@@ -755,7 +768,22 @@ def main() -> None:
     ot.add_argument("--workers", type=int, default=1)
     ot.add_argument("--inner-trials", type=int, default=90)
     ot.add_argument("--max-studies", type=int, default=12)
-    ot.add_argument("--replicates", type=int, default=8, help="verdict rollouts per trial")
+    ot.add_argument("--replicates", type=int, default=16, help="verdict rollouts per trial")
+    ot.add_argument(
+        "--floor-from",
+        nargs="+",
+        default=None,
+        metavar="REC",
+        help="repeat recordings for a robot-repeat verdict floor (else sim-perturb)",
+    )
+    ot.add_argument(
+        "--seed",
+        action="append",
+        default=None,
+        metavar="JSON",
+        help='extra seed point, e.g. {"w_accel": 0.5, "w_dq": 1.0, "w_tau": 0.5}; '
+        "repeatable. Default seeds: the incumbent objective and the partition point",
+    )
     ot.add_argument("--out", default=None, help="JSON log path, written after every trial")
 
     me = sub.add_parser("mechanisms", help="ground each loop mechanism at its MEASURED value")
@@ -836,6 +864,9 @@ def main() -> None:
             report_seconds=args.report_seconds,
         )
     else:
+        seeds: list[OuterPoint] = [INCUMBENT_POINT, DEFAULT_POINT]
+        for i, blob in enumerate(args.seed or []):
+            seeds.append(OuterPoint(name=f"seed-{i}", **json.loads(blob)))
         run_outer(
             args.fit_recordings,
             args.validation,
@@ -846,6 +877,8 @@ def main() -> None:
             inner_trials=args.inner_trials,
             max_studies=args.max_studies,
             replicates=args.replicates,
+            floor_from=args.floor_from,
+            seed_points=seeds,
             out=args.out,
         )
 

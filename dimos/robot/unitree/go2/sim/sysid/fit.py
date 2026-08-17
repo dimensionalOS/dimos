@@ -760,6 +760,11 @@ def _overlap_seconds(segments: Sequence[Segment]) -> float:
     return sum(max(0.0, a.t1 - b.t0) for a, b in itertools.pairwise(ordered))
 
 
+def _out_file(prefix: Path, ending: str) -> Path:
+    """``prefix`` + ``ending`` by string append — dots in the stem survive."""
+    return prefix.parent / (prefix.name + ending)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.fit")
     ap.add_argument(
@@ -949,14 +954,17 @@ def main() -> None:
     print(text)
 
     if args.out:
-        prefix = Path(args.out)
+        # APPEND to the prefix, never with_suffix: a dotted stem like
+        # "sweep_lam0.75" would have its ".75" REPLACED, colliding every
+        # sweep point onto one file (last writer wins — it happened).
+        prefix = Path(str(args.out))
         name = args.name or f"fit-{Path(args.recordings[0]).stem.split('_')[0]}"
         values = merged(base, plan, res.point)
         tau = values.pop("actuator_tau", 0.0)
         Preset(name=name, physics=values, actuator_tau=tau, envelope=args.envelope).save(
-            prefix.with_suffix(".plant.json")
+            _out_file(prefix, ".plant.json")
         )
-        prefix.with_suffix(".ranges.json").write_text(
+        _out_file(prefix, ".ranges.json").write_text(
             json.dumps(
                 {
                     "point": res.point,
@@ -977,7 +985,7 @@ def main() -> None:
                 indent=2,
             )
         )
-        prefix.with_suffix(".report.md").write_text(text + "\n")
+        _out_file(prefix, ".report.md").write_text(text + "\n")
         print(f"\nwrote {prefix}.plant.json, .ranges.json, .report.md")
 
 
