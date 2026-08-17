@@ -79,25 +79,6 @@ from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_n
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
 from dimos.robot.unitree.go2.sim.sysid.stats import NOT_COMPARABLE, Summary, spread_of, summarize
 
-__all__ = [  # the real side (cmd_at, real_summary, robot_noise) lives in .real
-    "COMMAND_SLEW",
-    "CONTROL_DT",
-    "NOMINAL_GAIT_HEIGHT",
-    "PERTURB_RAD",
-    "ObsNoise",
-    "PolicyRun",
-    "Report",
-    "cmd_at",
-    "ground",
-    "projected_gravity",
-    "real_summary",
-    "robot_noise",
-    "rollout_policy",
-    "sim_noise",
-    "sim_summary",
-    "usable_floor",
-]
-
 CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
 
 # Per-axis slew the executor applies to operator commands before the policy

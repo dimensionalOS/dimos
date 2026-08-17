@@ -197,10 +197,10 @@ range.
 
 ## 4. Two loops
 
-|         | loop 1 — identify           | loop 2 — ground               |
-|---------|-----------------------------|-------------------------------|
-| runs    | open-loop replay, no policy | the real policy, closed loop  |
-| against | recorded signals, per clip  | tracker pose + run statistics |
+|         | loop 1 — identify           | loop 2 — ground                    |
+|---------|-----------------------------|------------------------------------|
+| runs    | open-loop replay, no policy | the real policy, closed loop       |
+| against | recorded signals, per clip  | tracker position + IMU attitude    |
 | speed   | thousands of rollouts       | a handful                     |
 | decides | **the knobs**               | **loop 1's hyperparameters**  |
 
@@ -351,16 +351,19 @@ and the freewalk span of `015155_policy-mixed` at 0.037 rad (0.181); the v11
 control net is 4-5× worse on both. Same gains, obs 45×6.
 
 **The floor's source is part of the claim.** Today `sim-perturb` (the sim
-against itself under chaos); the better floor is `robot-repeat` — two
+against itself under chaos); the better floor is `robot-repeat` — repeat
 recordings of the same walk, battery sag and motor temperature included —
-which `ground --noise-from REC2.mcap` swaps in without a rewrite, and which
-the publishable sentence needs: *"the simulator differs from the robot by
-less than the robot differs from itself, on N of 11 statistics."* That pair
-has not been recorded yet.
+which `ground --noise-from REC2.mcap REC3.mcap` swaps in without a rewrite
+(the grounded recording itself stays out of the floor), and which the
+publishable sentence needs: *"the simulator differs from the robot by less
+than the robot differs from itself, on N of 11 statistics."* Measured
+2026-08-17 — §5f.
 
-**First grounding result (2026-08-16).** The two disagreeing scorers were put
-to the referee: the real freewalk net closed-loop in `measured`, `accel`, and
-a re-derived phase-4 fit point, under one shared sim-perturb floor.
+**First grounding result (2026-08-16).** *(Tracker-frame losses — pre-§5f
+referee; §5f re-checks this ordering under the IMU referee.)* The two
+disagreeing scorers were put to the referee: the real freewalk net
+closed-loop in `measured`, `accel`, and a re-derived phase-4 fit point,
+under one shared sim-perturb floor.
 
 | grounding loss (RMS SNR)   | fit rec (hard floor) | held-out span (rubber) |
 |----------------------------|----------------------|------------------------|
@@ -383,7 +386,9 @@ it never reads.
 > **See 5e — the premise below did not survive.** The ~2x oscillation
 > deficit is mostly the VR tracker's flexing mount, not the simulator.
 > The negative results in this section still stand; the gap they were
-> aimed at does not.
+> aimed at does not. Every `roll_std`/`pitch_std`/`tilt_p99` and every
+> grounding loss quoted below is a TRACKER-frame number (pre-5f referee);
+> §5f gives the IMU-frame recomputation.
 
 After the lag-axis fix the referee's verdict left one coherent story: every
 body-oscillation statistic ~2x too small and the speed low — the sim walks
@@ -464,7 +469,9 @@ saying so.
 > **See 5e — the premise below did not survive.** The ~2x oscillation
 > deficit is mostly the VR tracker's flexing mount, not the simulator.
 > The negative results in this section still stand; the gap they were
-> aimed at does not.
+> aimed at does not. Every `roll_std`/`pitch_std`/`tilt_p99` and every
+> grounding loss quoted below is a TRACKER-frame number (pre-5f referee);
+> §5f gives the IMU-frame recomputation.
 
 §5b earned its mechanisms a fitted value each; this section replaces the
 fits with MEASUREMENTS (`sysid.loop`), and reports honestly how much of the
@@ -545,7 +552,9 @@ nothing here earned a default promotion, and the honest headline is that
 > **See 5e — the premise below did not survive.** The ~2x oscillation
 > deficit is mostly the VR tracker's flexing mount, not the simulator.
 > The negative results in this section still stand; the gap they were
-> aimed at does not.
+> aimed at does not. Every `roll_std`/`pitch_std`/`tilt_p99` and every
+> grounding loss quoted below is a TRACKER-frame number (pre-5f referee);
+> §5f gives the IMU-frame recomputation.
 
 §5c left three candidates. `sysid.drive` interrogates the first two with
 ZERO free parameters and no simulator in the loop: the recorded commands
@@ -705,10 +714,154 @@ And 5d's **anti-transfer** result is untouched: it compares plants against each
 other, not against the tracker's attitude.
 
 **Consequence for loop 2:** split by what each instrument is actually good at —
-**tracker for position** (trajectory, speed, height), **raw gyro for attitude**
-(roll, pitch, tilt). Not yet implemented; the statistics above still come from
-the tracker, so every oscillation number in 5b–5d should be read as a
-tracker-frame number.
+**tracker for position** (trajectory, speed, height), **IMU for attitude**
+(roll, pitch, tilt, yaw rate). Implemented in §5f: ``sysid.real.real_summary``
+reads attitude from the IMU quaternion (which reproduces the raw gyro at corr
+0.992–1.000, so quaternion-vs-integrated-gyro is a readability choice, not a
+numerical one), and every ``Summary`` carries an instrument-provenance
+``source`` field so no claim silently changes instrument. Every oscillation
+number in 5b–5d is a TRACKER-frame number; §5f gives the old-vs-new pairs.
+
+---
+
+## 5f. The instrument split, built — and the first robot-repeat floor
+
+Two things landed together on 2026-08-17: loop 2 now reads **position from
+the tracker and attitude from the IMU** (`sysid.real.real_summary`), and the
+three same-session freewalk recordings gave the project its first
+**robot-repeat noise floor**. All numbers below are from the `measured`
+plant on the verified freewalk net.
+
+**The split as built.** The real side of loop 2 moved to `sysid.real` —
+pure recording processing, no engine import, deliberately outside the
+MuJoCo-coupled `ground.py`. `summarize` takes a separate attitude timeline,
+so the two instrument families ride their own clocks; attitude comes from
+the IMU quaternion (`Streams.lquat`, 500 Hz). Every `Summary` carries a
+`source` field (`pos:tracker att:imu`, `sim`, …) that the grounding table
+prints — no claim silently changes instrument. `attitude="tracker"` keeps
+the retracted instrument for diagnosis and for reproducing pre-split
+numbers. A tracker-less recording now scores its attitude statistics
+(position statistics are NaN and drop out of the SNR) instead of raising —
+the IMU needs no tracker. And `ground --noise-from` no longer folds the
+grounded recording into the robot floor: the floor and the verdict must be
+measured on different data.
+
+**Old vs new referee, from IDENTICAL rollouts** (the sim side and its
+chaos floor are computed once; only the real side's instrument changes).
+Fit recording 194142, ideal loop, full span:
+
+| statistic   | sim   | real (tracker) | real (IMU) | SNR trk | SNR imu |
+|-------------|-------|----------------|------------|---------|---------|
+| `roll_std`  | 0.023 | 0.044          | **0.020**  | 9.6     | 2.3     |
+| `pitch_std` | 0.020 | 0.031          | **0.021**  | 6.8     | 0.7     |
+| `tilt_p99`  | 0.131 | 0.249          | **0.133**  | 9.5     | 0.2     |
+| `speed`     | 0.486 | 0.571          | 0.571      | 3.0     | 3.0     |
+| loss        |       | **5.16**       | **2.06**   |         |         |
+
+The 5.16 reproduces §5b's headline exactly; under the IMU referee it is
+2.06. **§5e's prediction lands**: the oscillation gap closes to within 15%
+(`roll_std` +15%, `pitch_std` −5%, `tilt_p99` −1.5% — the last two inside
+even the chaos floor). What remains is the position family: `speed` (the
+known deficit), `speed_gain`, `speed_lag`, `gait_hz`, `height_std` — all
+tracker-derived, all untouched by the split. On the rubber held-out span
+the same recomputation gives loss 7.31 → 6.75 (roll SNR 6.4 → 2.1, pitch
+6.8 → 0.7, tilt 3.2 → 1.7), with the residual dominated by the
+position-derived `gait_hz`/`height_std` on that 15 s window.
+
+**The fitted mechanisms, re-judged — the flip is total.** Replicated under
+§5c's own conventions (3 seeds, shared base floor; the tracker rows
+reproduce §5c's table exactly):
+
+| loss, fit recording  | tracker referee | IMU referee    |
+|----------------------|-----------------|----------------|
+| ideal loop           | 5.24 ± 0.17     | **2.15 ± 0.10** |
+| FITTED lat 10 ms + noise ×1 | **2.82 ± 0.18** | 6.33 ± 0.27 |
+
+The old referee's star mechanism is the new referee's worst config: it
+OVERSHOOTS the oscillation that was never missing — `roll_std` 0.029 vs
+real 0.020, `pitch_std` 0.030 vs 0.021, `tilt_p99` 0.214 vs 0.133 — and
+what it still buys on the speed axis (`speed` 0.486 → 0.550 against real
+0.571) cannot pay for that. §5b/§5c's oscillation-closure percentages were
+tracker-frame artifacts end to end; the mechanisms stay default-off, now
+for a POSITIVE reason rather than a bookkeeping one. (Under a floor
+measured with the mechanisms applied — `ground()`'s per-config convention —
+the config merely ties the ideal loop, 1.86 vs 2.06 on single rollouts: a
+mechanism-matched floor is wider and forgives the overshoot. The shared
+base floor is the comparable convention, as in §5c.)
+
+**Plant orderings survive the referee change.** All five plants (`measured`,
+`accel`, fit5, fit6-env, fit6-noenv-control), one shared floor per
+recording, both referees: on the fit recording `measured` stays first under
+both (5.16 → 2.06; the accel/fit5 midfield reshuffles within single-rollout
+noise), and on the rubber ideal-loop window the order is IDENTICAL under
+both (fit6-control < fit6-env < measured). So §5a's scorer verdict
+(`measured` survives into the outer study's seed) and §5d's between-plant
+comparisons stand — the instrument swap rescales the losses, it does not
+reorder the plants. What flips is only what §5b/§5c built ON the absolute
+oscillation gap.
+
+**The 2026-08-17 session is usable for the floor, not for Mode B.** The
+three recordings (`153320`/`153558`/`154201`, hard floor, tracker, back to
+back) were driven by a NEW executor, and not just a renamed schema: no
+`policy/lowcmd` at all (commands only on the 500 Hz `rt/lowcmd` bus — the
+same logging regression as the stale `policy/state: sport` label), a true
+20.0 ms tick where the 08-16 executor measured 22.3 ms, and an
+output-smoothing stage: teacher-forced `verify_net` on deduplicated bus
+ticks explains the recordings at ratio only 0.53 (vs 0.123 on 194142),
+per-joint correlation 0.78–0.97 at sub-unity gain with ~1-tick lag, and
+inverting a fitted EMA (α ≈ 0.3–0.5) halves the residual to 0.29 — same
+net, filtered actions. (The freewalk net still beats the v11 control
+decisively, 0.53 vs 0.74, gains kp 40 / kd 1.0 match — the `sport` label is
+wrong, exactly as suspected.) Mode B simulates the 08-16 loop semantics, so
+grounding an 08-17 recording would confound plant error with executor-model
+mismatch; the REAL side needs no net and no executor model, so the floor
+stands. The session difference is visible in the command-conditioned
+statistics: `speed_gain` 0.49–0.54 on 08-17 (wider envelope, vx ±1.5,
+saturating) vs 0.88 on 194142, `yaw_lag` 0.04–0.06 vs 0.25.
+
+**The robot-repeat floor, measured** (start = 6 s, each file's full span,
+`pos:tracker att:imu`):
+
+| statistic       | 153320 | 153558 | 154201 | 3-way spread | chaos floor |
+|-----------------|--------|--------|--------|--------------|-------------|
+| `roll_std`      | 0.017  | 0.022  | 0.023  | **0.005**    | 0.001       |
+| `pitch_std`     | 0.017  | 0.022  | 0.019  | **0.004**    | 0.001       |
+| `tilt_p99`      | 0.118  | 0.141  | 0.141  | **0.023**    | 0.008       |
+| `height_std`    | 0.007  | 0.008  | 0.008  | **0.002**    | 0.000       |
+| `gait_hz`       | 1.020  | 1.282  | 1.250  | **0.262**    | 0.143       |
+| `speed`         | 0.558  | 0.606  | 0.580  | **0.049**    | 0.029       |
+| `speed_gain`    | 0.542  | 0.522  | 0.494  | **0.047**    | 0.044       |
+| `yaw_rate_gain` | 0.801  | 0.826  | 0.834  | **0.033**    | 0.032       |
+| `speed_lag`     | 0.120  | 0.110  | 0.110  | **0.010**    | 0.010       |
+| `yaw_lag`       | 0.060  | 0.050  | 0.040  | **0.020**    | 0.013       |
+
+The robot's own variability is 2–5x the sim-perturb chaos floor on the
+attitude family and height (the command/lag family roughly ties) — so the
+chaos floor was a HARSHER yardstick than the robot itself, never a more
+lenient one. The verdict floor uses only
+`153320`+`153558` (a 2-sample range — if anything too NARROW, §4a), keeping
+`154201` entirely out of every selection.
+
+**The claim, tested.** 194142, `measured` plant, ideal loop, robot-repeat
+floor: *the simulator differs from the robot by less than the robot differs
+from itself on **6 of 10** statistics* — loss 1.30, vs 2.06 on the chaos
+floor.
+
+| holds (SNR)                                              | fails (SNR)          |
+|----------------------------------------------------------|----------------------|
+| `yaw_lag` 0.0, `tilt_p99` 0.1, `pitch_std` 0.2,          | `gait_hz` 1.3x,      |
+| `yaw_rate_gain` 0.2, `roll_std` 0.5, `height_std` 0.7    | `speed` 1.7x,        |
+|                                                          | `speed_lag` 2.0x,    |
+|                                                          | `speed_gain` 2.7x    |
+
+Every failure is the speed axis — the one deficit §5e already said was real
+and unexplained. Caveats, stated rather than buried: the floor is
+CROSS-SESSION (08-17 repeats judging an 08-16 recording; a same-session
+repeat of the verdict walk does not exist), and for the command-conditioned
+gains the "same walk" premise is weak — the 08-17 envelope is wider, so
+`speed_gain`'s floor may not transfer. The attitude half of the verdict is
+robust to both caveats: those spreads are tight, session-stable, and the
+sim sits inside them.
 
 ---
 
@@ -731,18 +884,23 @@ mechanism's value is measured, not fitted), the drive instrument
 (`sysid.drive`: demanded-vs-delivered transfer function, model
 discrimination, deadband detector, ddq torque timing — §5d), and
 envelope-consistent fitting (`fit --envelope`, the envelope recorded on the
-preset and honoured by every downstream path). Acceptance is bit-identical
-to the frozen instrument, and parallel is bit-identical to serial.
+preset and honoured by every downstream path), the §5e instrument split
+(`sysid.real`: tracker for position, IMU for attitude, provenance on every
+`Summary`, tracker-less recordings score attitude-only — §5f), and the
+robot-repeat noise floor, measured (§5f: three 08-17 recordings, verdict
+floor from two with the third held out). Acceptance is bit-identical to the
+frozen instrument, and parallel is bit-identical to serial.
 
-**Not run yet:** the full outer study (10-20 trials × one inner fit each);
-the robot-repeat noise floor — no longer blocked, three same-session walking
-recordings landed 2026-08-17 (`20260817-153320/153558/154201`, hard floor,
-tracker, himloco freewalk).
+**Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
-**Owed:** loop 2 still reads attitude from the tracker, which §5e shows is
-unusable for it — the instrument split (tracker for position, gyro for
-attitude) is designed and unimplemented. Every oscillation number in §5b–§5d
-is a tracker-frame number until then.
+**Owed:** Mode B still simulates the 08-16 executor's loop semantics — the
+08-17 session runs a NEW executor (true 20 ms tick, EMA-like action
+smoothing, `policy/lowcmd`+`policy/state` logging dropped — §5f), so those
+recordings serve the real side only until `rollout_policy` learns the new
+loop and `verify_net` can pass on it. And the verdict floor is
+cross-session: a same-session repeat pair of a VERDICT walk (record the
+repeats with the recording you will ground) would remove §5f's two floor
+caveats at once.
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an accuracy

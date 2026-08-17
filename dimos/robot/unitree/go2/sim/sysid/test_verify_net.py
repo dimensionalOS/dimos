@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.sysid.ground import COMMAND_SLEW
-from dimos.robot.unitree.go2.sim.sysid.test_ground import _streams
+from dimos.robot.unitree.go2.sim.sysid.test_real import _streams
 from dimos.robot.unitree.go2.sim.sysid.verify_net import slewed_commands
 
 FREEWALK = Path.home() / "recordings/hard_floor/20260816-194142_policy-freewalk-hard_vive.mcap"

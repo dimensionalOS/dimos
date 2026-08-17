@@ -91,7 +91,7 @@ def test_sensor_noise_obs_levels_are_rms_times_sqrt3():
 
 def test_sensor_noise_recovers_a_known_floor_and_ignores_the_gait_band():
     from dimos.robot.unitree.go2.sim.sysid.loop import sensor_noise
-    from dimos.robot.unitree.go2.sim.sysid.test_ground import _streams
+    from dimos.robot.unitree.go2.sim.sysid.test_real import _streams
 
     rng = np.random.default_rng(0)
     t = np.arange(0, 10, 1 / 500)
@@ -111,7 +111,7 @@ def test_sensor_noise_recovers_a_known_floor_and_ignores_the_gait_band():
 
 def test_timing_of_windows_the_ingested_command_clock():
     from dimos.robot.unitree.go2.sim.sysid.loop import timing_of
-    from dimos.robot.unitree.go2.sim.sysid.test_ground import _streams
+    from dimos.robot.unitree.go2.sim.sysid.test_real import _streams
 
     st = _streams(np.zeros(0), np.zeros((0, 3)))
     st.ct = np.arange(0.0, 2.0, 0.022)
@@ -123,7 +123,7 @@ def test_timing_of_windows_the_ingested_command_clock():
 def test_timing_of_refuses_a_sport_command_clock():
     """ct at 500 Hz is rt/lowcmd — the builtin controller's clock, not ours."""
     from dimos.robot.unitree.go2.sim.sysid.loop import timing_of
-    from dimos.robot.unitree.go2.sim.sysid.test_ground import _streams
+    from dimos.robot.unitree.go2.sim.sysid.test_real import _streams
 
     st = _streams(np.zeros(0), np.zeros((0, 3)))
     st.ct = np.arange(0.0, 2.0, 0.002)
@@ -133,7 +133,7 @@ def test_timing_of_refuses_a_sport_command_clock():
 
 def test_sensor_noise_refuses_a_starved_window():
     from dimos.robot.unitree.go2.sim.sysid.loop import sensor_noise
-    from dimos.robot.unitree.go2.sim.sysid.test_ground import _streams
+    from dimos.robot.unitree.go2.sim.sysid.test_real import _streams
 
     st = _streams(np.zeros(0), np.zeros((0, 3)))
     with pytest.raises(ValueError, match="samples"):
