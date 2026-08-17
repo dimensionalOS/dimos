@@ -98,12 +98,12 @@ from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 # Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%),
-# re-measured 2026-08-17 on the CURRENT loss (eleven statistics + five
-# tracking areas; every term carries replicate variance, so the interim
-# judge's dilution question dissolved with its zero-variance terms).
+# re-measured 2026-08-17 on the CURRENT loss and loop (tracking areas,
+# measured-state seeding — whose honest draw tail is what coarsens n=8;
+# n=16 reads 0.260, so plant-selection verdicts want --replicates 16).
 # Outer trials within this of the best are ties, their fitted plants
 # admissible DR samples (module docstring).
-MDD_N8 = 0.240
+MDD_N8 = 0.571
 
 
 @dataclass(frozen=True)

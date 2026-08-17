@@ -27,12 +27,16 @@ python -m dimos.robot.unitree.go2.sim.sysid.ground \
 `--replicates 1` runs a single rollout and gets to the viewer sooner — the
 report labels it "a draw, not a verdict" (§8); `--speed 0.25` slows it
 down to watch footfalls. Add `--preset stock` to see what bare
-menagerie does, which is the comparison every claim here rests on.
+menagerie does, which is the comparison every claim here rests on. The
+sim starts from the MEASURED mid-walk state (joints, attitude, tracker
+velocity), so it moves with the ghost from the first frame — it used to
+start standing and spend ~1 s catching up, which was both visible here
+and a bias in every trajectory number.
 
 > **The numbers these commands print are NOT the verdict.** A short window
 > with one replicate measures its floor from itself, so the floor is narrow
 > and the SNRs are inflated — and a single draw of the SAME plant reads
-> anywhere in loss 1.66–2.85, 5–8 of 16 (§8). The verdict needs the full
+> anywhere in loss 1.31–2.61, 5–8 of 14 (§8). The verdict needs the full
 > span, the default `--replicates 8`, and the robot-repeat floor via
 > `--noise-from <two repeat recordings>` (§7). Use these to LOOK; use
 > §7's floor to judge.
@@ -62,10 +66,12 @@ not the physics.
 where it ends up, how it turns.
 
 **What is actually still wrong** is an ~8% short stride at matched cadence
-(§9), so expect the sim to fall gradually BEHIND the ghost rather than to
-look wrong — no single step is visibly off, but over 40 s at ~0.5 m/s it
-accumulates into metres of separation. Running with and without
-`--preset stock` makes the difference obvious.
+(§9) — but on this milling recording the shared command schedule folds
+the deficit back (§4: bounded wander, not accumulation), so expect the
+sim to lag on straight stretches and re-converge on turns rather than to
+separate by metres. Running with and without `--preset stock` makes the
+difference obvious anyway: stock loses the heading permanently at the
+t≈48 s reversal.
 
 **Which recordings can be watched in loop 2:** only those driven by Ivan's
 executor, e.g. `20260816-194142`. Recordings made with the Go2's native
@@ -342,16 +348,37 @@ each scores **only** what is its own.
   / √2 from the same rollouts — §7's "sim against itself", applied here.
   Comparisons only on identical recording and horizon.
 
-  **Measured before adoption, and the shape is a finding**: the free error
-  curves do NOT accumulate for the shipped plant — they MEAN-REVERT (|e|
-  along at 10/30/70 s: 0.33/0.10/0.13 m; yaw 0.43/0.05/0.14 rad), because
-  the shared command schedule regulates the loop back toward the recorded
-  trajectory. So the score reads REGULATED TRACKING WANDER, bounded and
-  strongly discriminating: shipped 0.11–0.22 m along across 8 replicates
-  vs `stock` 0.79–1.39, no overlap on any component. Shipped-plant SNRs
-  sit at 2.3–3.5 on all five — the sim wanders from the robot 2–3× more
-  than from itself: real, well-floored model error the eleven statistics
-  do not express.
+  **Measured before adoption, and the shape is a finding**: the good
+  plant's free error is BOUNDED wander, not growth (|e| along at
+  10/30/70 s: 0.29/0.05/0.23 m; yaw 0.35/0.04/0.09 rad) — the shared
+  command schedule re-anchors both trajectories, so a divergence RATE
+  does not exist as an object here, and the mean error is the correct
+  quantity outright, not a proxy for one. Recording-dependent by
+  construction: on this recording the robot mills, so wander cancels; a
+  long straight walk would accumulate the speed deficit instead —
+  same-recording, same-horizon comparison (already the house rule) is
+  what keeps the number meaningful. Discrimination is stronger than the
+  medians say: **every one of the 8 shipped draws beats every one of the
+  8 stock draws on every component, demoted pitch/roll included** — the first loop-2
+  instrument with measured single-draw-inversion probability ~0.
+  Shipped-plant SNRs sit at 2.6 on all three scored terms: the sim wanders
+  from the robot 2–3× more than from itself, real model error the eleven
+  statistics do not express.
+
+  **Not all five components survive the floor discipline.** The
+  tracker's instantaneous attitude error (§6: 1.85/2.95° = 0.032/
+  0.051 rad) IS the shipped plant's mean pitch/roll error (0.041/0.053 —
+  ratios 1.3×/1.04×): those two areas measure the instrument, so
+  `trk_pitch`/`trk_roll` are REPORTED, NOT SCORED (`gait_hz`'s species),
+  and the scored floors are clamped by the instrument floor either way.
+  Yaw clears its instrument floor 4.4× and stays scored.
+
+  The published curves are the diagnostic product, and they immediately
+  paid: `stock` tracks heading for ~45 s and then departs permanently at
+  the recording's hardest manoeuvre — a full reversal under saturated
+  yaw (vx +0.83 → −0.90 with vyaw −2.16, snapping back to +0.90 with
+  +2.16 at t≈48.3–51 s) — a lead, not yet an investigation. Exhibit:
+  ![yaw tracking error, 8 shipped vs 8 stock draws](assets/tracking_yaw_194142.svg)
 
   **The snapped instrument remains as the LOCAL-RESPONSE DIAGNOSTIC**
   (`LoopSession.snap` + `window_curves`; printed under every table, never
@@ -391,10 +418,10 @@ fitting body acceleration over 0.4 s while loop 2 judges body motion over
 40 s. Tested 2026-08-17: the joint-partition fit (194142 + jumps pooled,
 12 studies, cap hit — the region is wider than the data pins) improved
 its own objective **−11.4%** and held-out 153320 **−16.7%**, and grounds
-at **3.00** with the envelope against the incumbent's **1.79** (tracking
-judge; under the interim snapped-rate judge the same plants read 2.21 vs
-1.61) — worse by ~5× the n=8 MDD (0.240, §8), the anti-transfer's
-signature intact (attitude family better: roll_std 1.1 vs 1.6; speed and
+at **2.60** with the envelope against the incumbent's **1.52** (tracking
+judge, measured-state seeding; under the interim snapped-rate judge the
+same plants read 2.21 vs 1.61) — worse by 1.9× the n=8 MDD and 4.2× the
+n=16 MDD (§8), the anti-transfer's signature intact (attitude family better: roll_std 1.1 vs 1.6; speed and
 tracking family worse: speed_gain 0.769 vs 0.814, trk_along 0.30 vs
 0.18 m). Removing the accel overlap did not remove
 the anti-transfer, so the overlap was not its cause. What stands, now
@@ -476,19 +503,21 @@ point), `run_outer` seeds from both the incumbent and the partition
 points, and any nonzero accel weight must justify itself on the held-out
 RECORDING, not merely held-out segments — which converts the
 independence claim from an architectural assumption into a measured one.
-Axis sensitivities, measured under the tracking judge (n=8 MDD
-0.240, §8): `w_accel` endpoints differ by **1.21** of referee loss
-(~5× MDD) — the principal axis; `w_flight` 0.25→0 (full refits, same
-seeds) differs by **0.34** — marginally resolved (~1.4× MDD), and with
-the OPPOSITE sign to the default's assumption: the flight-less fit
-grounds better. (Under the interim snapped-rate judge these read 0.60
-and 0.03 — the tracking terms discriminate within-family where the old
-judge could not.) The gating step before any full search is a 3–4 point
-sweep of `w_accel` alone (~50 min per point) — and its endpoints are
-ALREADY KNOWN (accel-only is the incumbent at 1.79, joint-only the
-partition at 3.00), so the sweep's entire value is whether an interior
-blend beats 1.79: an interior-optimum question, not a fresh measurement
-of the axis.
+Axis sensitivities, measured under the tracking judge with
+measured-state seeding (§8: n=8 MDD 0.571, n=16 0.260 — the honest seed
+has a heavier draw tail, so PLANT-SELECTION verdicts want
+`--replicates 16`): `w_accel` endpoints differ by **1.08** of referee
+loss (1.9× the n=8 MDD, 4.2× the n=16) — the principal axis;
+`w_flight` 0.25→0 (full refits, same seeds) differs by **0.10** —
+inert. The w_flight axis briefly read 0.34 ("marginally live") while
+the instrument-floored pitch/roll areas were still scored — the floor
+discipline removed a PHANTOM axis before it could steer a search. The
+gating step before any full search is a 3–4 point sweep of `w_accel`
+alone (~50 min per point) — and its endpoints are ALREADY KNOWN
+(accel-only is the incumbent at 1.52, joint-only the partition at
+2.60), so the sweep's entire value is whether an interior blend beats
+1.52: an interior-optimum question, not a fresh measurement of the
+axis.
 
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
@@ -516,7 +545,7 @@ Three consequences worth designing around:
   defaults, each labelled *"chosen because X, never validated"*.
 - **The losers are DR samples, not discards.** Every trial's fitted plant
   persists in the `--out` log with its grounding score; the trials the
-  referee cannot distinguish from the winner (within the n=8 MDD, 0.240 —
+  referee cannot distinguish from the winner (within the n=8 MDD, 0.571 —
   the fit's 1-SE harvest one storey up) span a SECOND DR component:
   misspecification spread — *depending on which discrepancies the weights
   absorb, the parameters land elsewhere* — which no amount of data
@@ -775,16 +804,18 @@ structure is the claim, not the third decimal), full span:
   chaos: **losses compare ONLY on the identical window.**
 
 **Minimum detectable difference** (bootstrap, 95%, same window and floor),
-re-measured 2026-08-17 on the CURRENT loss (eleven statistics + five
-tracking areas, every term carrying replicate variance) from a
-16-replicate pool: median-of-4 **0.362**, median-of-8 **0.240**,
-median-of-16 **0.209**. An interim loss whose five snapped-rate terms
-were constant per plant read 0.064 at n=8 — dilution by construction,
-retired with those terms: the tracking areas vary per draw, so the
-dilution question dissolved and the honest resolution is the coarser
-number above. The match count stays coarse at any n — **k wobbles ±1**
-whenever statistics sit near SNR 1; quote it with its draw range, never
-alone.
+re-measured 2026-08-17 on the CURRENT loss and loop (eleven statistics +
+three scored tracking areas, measured-state seeding) from a 16-replicate
+pool: median-of-4 **0.900**, median-of-8 **0.571**, median-of-16
+**0.260**. The honest seed carries a HEAVIER draw tail than the old
+standstill start (4 of 16 draws above 2.1; excursions and occasional
+falls are real chaos of the seeded loop, not artifacts), which is what
+coarsens n=8 — plant-selection verdicts should run `--replicates 16`.
+Two interim numbers read finer for bad reasons, both retired: 0.064
+(five zero-replicate-variance snapped terms) and 0.240/0.312
+(instrument-floored areas scored, standstill start). The match count
+stays coarse at any n — **k wobbles ±1** whenever statistics sit near
+SNR 1; quote it with its draw range, never alone.
 
 So `ground --replicates` (default 8) rolls perturbed rollouts: the verdict
 is the per-statistic MEDIAN (§4a's shape), the per-draw loss and k ranges
@@ -797,19 +828,19 @@ rollouts add ~2 min to a 1–2 h outer trial; plant-scale effects (envelope
 or more than two or three decisions per recording (§4).
 
 **The headline** (194142, full span, robot-repeat floor from
-`195401`+`195715`, `--replicates 8`, tracking areas scored since
-2026-08-17): `measured` **loss 1.79, 7 of 16** (draws 1.66–2.85, 5–8 of
-16); `stock` **10.55, 4 of 16** (draws 9.74–10.97). Under the previous
-compositions the same runs read 0.92/12.52 (eleven terms) and 1.61/10.46
-(interim snapped-rate terms) — the composition changed, not the physics.
-What fails for `measured`: the tracking family (trk_roll 3.5, trk_yaw
-3.1, trk_cross 3.0, trk_pitch 2.4, trk_along 2.3 — the sim wanders from
-the robot 2–3× more than from itself), `roll_std` 1.6 and `speed_gain`
-1.5. The measured-vs-stock separation is ~37× the n=8 MDD. The
-envelope's loss contribution (~0.44, measured under the prior
-native-runner floor) also clears it, replicated; its match-count gain
-does not — the envelope's attitude cost sits ON the robot floor, so k is
-not a claim the envelope can carry.
+`195401`+`195715`, `--replicates 8`, tracking areas + measured-state
+seeding since 2026-08-17): `measured` **loss 1.52, 6 of 14** (draws
+1.31–2.61, 5–8 of 14); `stock` **11.87, 4 of 14** (draws 10.70–49.43 —
+the top draw is a genuine FALL under the mid-walk seed, absorbed by the
+median). Under the previous compositions the same runs read 0.92/12.52
+(eleven terms, standstill start) and 1.61/10.46 (interim snapped-rate
+terms) — instrument and start honesty changed, not the physics. What
+fails for `measured`: the tracking family (trk_yaw/cross/along all 2.6 —
+the sim wanders from the robot ~2.6× more than from itself), `roll_std`
+1.9, `height_std` 1.6, `speed_gain` 1.4. The measured-vs-stock
+separation is ~18× the n=8 MDD. The envelope's loss contribution
+(~0.44, measured under the prior native-runner floor) also clears it,
+replicated; its match-count gain does not.
 
 ---
 
@@ -838,7 +869,7 @@ the better open-loop identification (−20.3% on loop 1, −2.7% on held-out
 jumps) and it grounds WORSE on the referee on every window — the
 **anti-transfer** result (§4's converse rule). Measured a second time
 2026-08-17 on a different objective: the joint-partition fit (−11.4% /
-−16.7% held-out) grounds at 3.00 vs the hybrid's 1.79 under the
+−16.7% held-out) grounds at 2.60 vs the hybrid's 1.52 under the
 tracking judge (§4) — the anti-transfer is a property of open-loop
 fitting on this plant, not of any one channel family. The hybrid is kept because the referee prefers
 it everywhere; the trade is stated on the preset itself in `ranges.py`.

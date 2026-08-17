@@ -289,8 +289,9 @@ def test_tracking_areas_score_the_free_rollouts():
     assert hi == pytest.approx(expect, rel=1e-3)
     # the pairwise floor is the same separation / sqrt(2)
     assert trk.floors["along"] == pytest.approx(expect / np.sqrt(2), rel=1e-3)
-    assert trk.floors["yaw"] < 1e-9  # identical attitude -> no floor, no SNR term
-    snr = Report(
+    # identical attitude -> zero chaos floor, so the instrument floor clamps
+    assert trk.floor_of("yaw") == pytest.approx(0.053)
+    rep = Report(
         preset="t",
         sim=_summary(),
         real=_summary(),
@@ -299,9 +300,13 @@ def test_tracking_areas_score_the_free_rollouts():
         start=0.0,
         seconds=10.0,
         tracking=trk,
-    ).snr()
+    )
+    snr = rep.snr()
     assert snr["trk_along"] == pytest.approx((expect / 2) / (expect / np.sqrt(2)), rel=1e-3)
-    assert "trk_yaw" not in snr  # unmeasurable floor -> left out, not infinite
+    assert snr["trk_yaw"] == pytest.approx(0.0)  # no error, honest instrument floor
+    # pitch/roll are instrument-floored: reported in the table, never scored
+    assert "trk_pitch" not in snr and "trk_roll" not in snr
+    assert "reported, not scored" in rep.table()
 
 
 # ------------------------------------------------- against the real recording

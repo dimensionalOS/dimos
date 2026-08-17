@@ -111,12 +111,15 @@ COMMAND_SLEW = np.array([0.05, 0.04, 0.10])
 # raw metres). 45-channel nets (himloco freewalk) never see it.
 NOMINAL_GAIT_HEIGHT = 0.31
 
-PERTURB_RAD = 0.05
-"""Initial-pose spread for :func:`sim_noise` — about 3 degrees.
+PERTURB_RAD = 0.005
+"""Replicate joint-pose spread — about 0.3 degrees.
 
-Small on purpose: the gait is chaotic enough that this already decorrelates
-position within seconds, so it measures the noise a comparison has to beat
-rather than a plausible modelling error.
+Exists only to DECORRELATE replicate draws, and README 8 measured that any
+perturbation from 1e-9 up redraws the chaos distribution identically —
+chaos saturates regardless of kick size, so nothing is lost going small.
+The old 3-degree value was calibrated on standing starts and could TOPPLE
+the mid-walk measured seed (a 55-loss fall draw); 0.3 degrees decorrelates
+just as completely and respects the seeded dynamics.
 """
 
 
@@ -178,7 +181,7 @@ def rollout_policy(
     *,
     start: float = 6.0,
     seconds: float | None = None,
-    settle: float = 0.5,
+    settle: float = 0.0,
     command_delay: float = 0.0,
     action_latency: float = 0.0,
     obs_noise: ObsNoise | None = None,
@@ -202,18 +205,25 @@ def rollout_policy(
     steps physics and reports state. A second backend implements the
     session and inherits this whole loop.
 
-    ``perturb`` offsets the initial joint pose — :func:`sim_noise`'s knob.
-    ``command_delay`` is kept at 0 by default: it is not identified open
-    loop, and holding it identical across candidate plants cancels it from
-    every between-plant comparison (the lag statistics carry the same
-    constant offset on all of them).
+    The rollout SEEDS from the measured state at ``start`` (joints,
+    attitude, and — with a tracker — base velocity; tracker-less
+    recordings seed pose only and start at rest), and the policy acts
+    from the FIRST tick — ``settle`` defaults to 0 because holding the
+    seeded pose rigidly while the body glides at walking speed is itself
+    a stumble (measured: a 0.5 s hold read tilt_p99 0.21 against 0.15).
+    The few-tick gait-phase spin-up that remains is real and unavoidable
+    without the policy's true hidden history. ``perturb`` offsets the seeded joint
+    pose — :func:`sim_noise`'s knob. ``command_delay`` is kept at 0 by
+    default: it is not identified open loop, and holding it identical
+    across candidate plants cancels it from every between-plant
+    comparison.
 
-    ``reinit`` is the divergence-rate schedule: measured states the loop is
-    snapped to mid-run via :meth:`LoopSession.snap`. ``None`` (the default,
-    every free verdict rollout) never snaps — bit-identical to every
-    existing number. A snap clears the actuator filter and pending delayed
-    actions (Mode A's convention) but not the policy's observation history
-    (the real policy's memory spans the boundary too), and snapped states
+    ``reinit`` is the local-response schedule: measured states the loop is
+    snapped to mid-run via :meth:`LoopSession.snap`; ``None`` (the
+    default, every free verdict rollout) never snaps mid-run. A snap
+    clears the actuator filter and pending delayed actions (Mode A's
+    convention) but not the policy's observation history (the real
+    policy's memory spans the boundary too), and mid-run snapped states
     are never perturbed (an injection would ride the measured slope).
 
     Four default-off mechanisms the real loop has and the ideal sim lacks —
@@ -256,8 +266,23 @@ def rollout_policy(
 
     ghost = ghost if view else None
     backend.apply(preset.physics)
-    pose0 = policy.default_pose + (perturb if perturb is not None else 0.0)
-    session = backend.session(pose0, ghost=ghost is not None, view=view, view_speed=speed)
+    # Seed from the MEASURED state at `start`, not the standing default:
+    # the recording is mid-walk there, and starting at rest spent the first
+    # ~1 s on standstill catch-up that contaminated every trajectory area
+    # (visible as the early hump in the free curves, and visible to the eye
+    # under --view as the ghost walking away). Joints, yaw-stripped
+    # attitude and — WITH a tracker — the base velocity all come from
+    # measured_state; a tracker-less recording seeds pose but starts at
+    # rest (no velocity to seed), stated here rather than silent. The ±3°
+    # verdict perturbation applies on top of the measured joints.
+    base_p = base_r = None
+    if st.has_markers:
+        base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+    seed_state = measured_state(st, start, base_p=base_p, base_r=base_r)
+    if perturb is not None:
+        seed_state = replace(seed_state, q=seed_state.q + perturb)
+    session = backend.session(seed_state.q, ghost=ghost is not None, view=view, view_speed=speed)
+    session.snap(seed_state)
     sim_dt = session.timestep
     decim = max(1, round(CONTROL_DT / sim_dt))
     s = session.state()
@@ -272,7 +297,7 @@ def rollout_policy(
 
     hist: collections.deque[np.ndarray] = collections.deque(maxlen=policy.hist)
     last_action = np.zeros(policy.act_dim)
-    target = pose0.copy()
+    target = seed_state.q.copy()
     applied = np.zeros(12)
     rng = np.random.default_rng(noise_seed) if obs_noise is not None else None
     delay_steps = max(0, round(action_latency / sim_dt))
@@ -323,8 +348,38 @@ def rollout_policy(
     # The live command; starts converged on the schedule, the steady state
     # the real slew is in mid-run.
     vel_cmd = target_cmd(0.0).astype(float).copy()
-    for _ in range(policy.hist):
-        hist.append(observe(vel_cmd, height_at(0.0)))
+
+    # Teacher-force the observation history from the RECORDING: this net
+    # has no hidden state — its whole memory is `hist` stacked frames plus
+    # its own last action, and the robot recorded all of it. last_action
+    # inverts exactly from the recorded joint targets (act() is
+    # target = action*scale + mean), so the first sim tick computes what
+    # the robot's own tick computed at `start` — the rollout CONTINUES the
+    # stride rather than re-finding the gait from a cold stack.
+    def recorded_action(t_abs: float) -> np.ndarray:
+        ci = int(np.clip(np.searchsorted(cmds_ct, t_abs, "right") - 1, 0, len(cmds_ct) - 1))
+        out: np.ndarray = (st.cq[ci] - policy.act_mean) / policy.act_scale
+        return out
+
+    cmds_ct = st.ct
+    for k in range(policy.hist, 0, -1):
+        t_abs = start - k * CONTROL_DT
+        li = int(np.clip(np.searchsorted(st.lt, t_abs, "right") - 1, 0, len(st.lt) - 1))
+        raw = np.concatenate(
+            [
+                target_cmd(t_abs - start),
+                st.lgyro[li],
+                projected_gravity(st.lquat[li]),
+                st.lq[li],
+                st.ldq[li],
+                recorded_action(t_abs),
+            ]
+        )
+        extra = policy.obs_per_frame - raw.size
+        if extra > 0:
+            raw = np.concatenate([raw, [height_at(t_abs - start)], np.zeros(extra - 1)])
+        hist.append(policy.normalize(raw))
+    last_action = recorded_action(start)
 
     ts: list[float] = []
     pos: list[np.ndarray] = []
@@ -444,20 +499,34 @@ def sim_summary(run: PolicyRun, cmd: np.ndarray | None = None) -> Summary:
 
 # -------------------------------------- tracking error (the headline)
 
-# The scored trajectory terms: mean |error| of the FREE verdict rollouts
-# against the recording over the full horizon, per heading-aligned
-# component — area under the error curve / horizon (ITAE-family), plain
-# units, nothing chosen. Free, not snapped: snapping resets accumulated
-# error, and the snapped bias could not tell three plants apart while
-# whole-rollout instruments could. Measured before adoption (194142, 8
-# replicates each): the curves MEAN-REVERT for the shipped plant — the
-# shared command schedule regulates the loop back toward the recorded
-# trajectory (yaw error at 70 s: 0.14 rad, not 6 deg/s x 70 s) — so the
-# score reads REGULATED TRACKING WANDER, bounded and strongly
-# discriminating (along 0.11-0.22 m vs stock's 0.79-1.39, no overlap).
-# Curves are the diagnostic product; the area is what the search
-# minimises; comparisons only on identical recording and horizon.
+# The trajectory terms: mean |error| of the FREE verdict rollouts against
+# the recording over the full horizon, per heading-aligned component —
+# area under the error curve / horizon, plain units, nothing chosen.
+# Free, not snapped: measured (194142, 8x8), the good plant's error is
+# BOUNDED wander, not growth (|along| at 70 s < at 10 s) — the shared
+# command schedule re-anchors both trajectories, so a divergence RATE
+# does not exist as an object here and the mean error is the correct
+# quantity outright, not a proxy. Recording-dependent by construction:
+# this robot mills, so wander cancels; a long straight walk would
+# accumulate the speed deficit instead — same-recording, same-horizon
+# comparison (the house rule) is what keeps the number meaningful.
 TRACKING_TERMS = ("along", "cross", "yaw", "pitch", "roll")
+
+# What is SCORED: pitch and roll are floor-limited by the instrument and
+# report-not-score (gait_hz's species) — the tracker's instantaneous
+# attitude error (README 6: 1.85/2.95 deg = 0.032/0.051 rad) IS the
+# measured mean error (shipped plant 0.041/0.053: ratios 1.3x/1.04x), so
+# those two areas measure the instrument. Yaw clears its 0.053 rad
+# instrument floor 4.4x and stays scored; scored floors are clamped by
+# the instrument floor either way.
+TRACKING_SCORED = ("along", "cross", "yaw")
+TRACKING_INSTRUMENT_FLOOR = {
+    "along": 0.0,
+    "cross": 0.0,
+    "yaw": 0.053,
+    "pitch": 0.032,
+    "roll": 0.051,
+}
 
 # Where each free rollout is anchored to the room: the first policy-active
 # sample. One-time anchor, tracker truth throughout (README 6).
@@ -533,12 +602,16 @@ class Tracking:
         v = self.areas[term]
         return float(np.min(v)), float(np.max(v))
 
+    def floor_of(self, term: str) -> float:
+        """Chaos floor clamped by the instrument's own error (README 6)."""
+        return max(self.floors.get(term, 0.0), TRACKING_INSTRUMENT_FLOOR.get(term, 0.0))
+
     def snr(self) -> dict[str, float]:
         out = {}
-        for term in TRACKING_TERMS:
+        for term in TRACKING_SCORED:
             if term not in self.areas or not len(self.areas[term]):
                 continue
-            f = self.floors.get(term, float("nan"))
+            f = self.floor_of(term)
             if np.isfinite(f) and f > 1e-9:
                 out[term] = self.median(term) / f
         return out
@@ -1192,11 +1265,21 @@ class Report:
             if k.startswith("trk_"):
                 assert trk is not None
                 term = k[4:]
-                lines.append(row(k, trk.median(term), 0.0, trk.floors[term], snr[k]))
+                lines.append(row(k, trk.median(term), 0.0, trk.floor_of(term), snr[k]))
             else:
                 lines.append(row(k, s[k], r[k], self.noise.get(k, 0.0), snr[k]))
         for k in NOT_COMPARABLE:
             lines.append(f"{k:>14} {s[k]:9.3f} {r[k]:9.3f} {'--':>9} {'n/a':>7}")
+        if trk is not None:
+            for term in TRACKING_TERMS:
+                if term in TRACKING_SCORED or term not in trk.areas:
+                    continue
+                lines.append(
+                    f"{'trk_' + term:>14} {trk.median(term):9.3f} {0.0:9.3f} {'--':>9} "
+                    f"{'n/a':>7}  {self._draw_range('trk_' + term):>14}   "
+                    f"(instrument-floored at {TRACKING_INSTRUMENT_FLOOR[term]:.3f} rad — "
+                    "reported, not scored)"
+                )
         if self.divergence is not None:
             lines += ["", divergence_detail(self.divergence)]
         if self.sims:
