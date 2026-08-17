@@ -1036,8 +1036,9 @@ AWAY from the real 1.957 though only 0.6 of its floor. The hybrid
 provenance (knobs fitted envelope-OFF, run envelope-ON — §5b's
 double-counting, kept because the envelope-consistent refit grounds
 worse) is stated on the preset itself in `ranges.py`, so a future reader
-cannot "fix" it by refitting without meeting the record. `measured` is
-untouched and remains the name that reproduces §5b–§5g.
+cannot "fix" it by refitting without meeting the record. *(Superseded by
+§5i: the presets were consolidated and the old `measured` discarded — the
+numbers above are the record, not reproducible claims.)*
 
 ---
 
@@ -1102,6 +1103,56 @@ look.
 
 ---
 
+## 5i. One plant ships — the consolidation (2026-08-17)
+
+Owner's call: no history, one clean plant. The preset table collapsed to
+**two built-ins with distinct jobs**: `measured` — the shipped plant (the
+measured trunk, the six fitted knobs, the measured torque envelope, the
+friction pair DERIVED) — and `stock`, kept not as history but as the
+experimental control every comparative claim needs (delete the bare plant
+and "the tuned plant matches the robot better than bare menagerie" becomes
+unverifiable, including in the eventual transfer experiment). `accel`,
+`measured-env` and the 4-seed DR table are gone: superseded candidates are
+history, and history is explicitly not wanted.
+
+**Why the old `measured` could not be kept.** It shipped
+`foot_friction = 0.635` with `foot_friction_torsional = 0.00226`. Neither
+was a measurement: `score()` overrides friction per floor, so the early fit
+had NO GRADIENT on it — the optimizer drifted it to a resting place that
+froze into the preset. The proof it is residue: torsional friction is
+derived, `(3π/16)·μ·a`, and 0.00226 implies **μ = 0.349** against the
+preset's own 0.635 — two numbers in one dict that had stopped agreeing.
+The shipped plant now carries `FLOOR_MU = 0.90` (DR_FLOOR's centre, the μ
+the fit pins) with every derived anchor COMPUTED from its source at import
+(`anchors.derive` — the same call `fit.default_plan` pins from, so the
+plant and the fitting discipline agree by construction), and every value
+names its provenance on the preset (`Preset.provenance`). Two structural
+tests hold the discipline: every preset value inside the range that admits
+it, and every derived value equal to its own derivation.
+
+**The re-baseline, predicted then measured** (the numbers §5b–§5h quote for
+`measured`/`measured-env`/`accel` are the record of how we got here, not
+claims the current tree reproduces):
+
+* Mode A acceptance (rubber `MIXED` seg 4, envelope honoured — a preset
+  carrying one never runs bare): joint `0.03095 → 0.02975`, xy
+  `0.02465 → 0.02480`, rot `5.189 → 5.303`. Decomposed: the friction
+  correction moved +0.08% / +0.23% / +0.75% (friction is nearly inert, as
+  §5g measured); the envelope moved joint −3.96% — the direction §5d's
+  drive measurement predicts, since the bare sim OVER-drives tau 1.1–1.35×.
+* Suspended replay: joint mean `0.05483 → 0.06527`. The friction part is
+  +0.06% — feet DO meet other leg geoms while hanging (measured: 194 of
+  1369 contacts in a pinned flail involve a foot) — the rest is the
+  envelope derating the 20 rad/s sport strokes.
+* Loop 2 (194142, robot-repeat floor): the physics change is **+0.01 loss**
+  on a like-for-like chaos draw. But the headline itself is a single
+  chaotic rollout: a 1e-7 anchor perturbation — physically nothing —
+  resamples it across **loss 0.74–0.90, 6–8 of 11**. The pre-consolidation
+  "8/11, 0.77" was one such draw; quote the spread, not the draw (§4a,
+  applied to our own headline).
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -1131,8 +1182,11 @@ rollout, `PolicyRun.q` feeding the sim side — §5g), the v2 statistic set
 (stride pair scored, `gait_hz` retired to context, `measured-env` promoted
 to the default plant — §5g), and the series-compliance instrument (`sysid.compliance`:
 within-stance-demeaned deflection-vs-load regressions, rigid-sim control,
-spring-recovery tests — §5h). Acceptance is bit-identical to the frozen
-instrument, and parallel is bit-identical to serial.
+spring-recovery tests — §5h), and the preset consolidation (§5i: one
+shipped plant with derived anchors and per-value provenance, `stock` as the
+control, structural tests for containment and derivation). Acceptance is
+bit-frozen against the shipped plant (re-based §5i, decomposed and
+predicted), and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 

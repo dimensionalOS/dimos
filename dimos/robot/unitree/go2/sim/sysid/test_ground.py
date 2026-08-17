@@ -214,4 +214,7 @@ def test_a_perturbed_start_diverges_but_the_statistics_survive():
     # ... the distributional statistics do not
     sa, sb = sim_summary(a), sim_summary(b)
     assert abs(sa.speed - sb.speed) < 0.15
-    assert abs(sa.gait_hz - sb.gait_hz) < 0.6
+    # stride_hz, not gait_hz: the retired estimator is bimodal under chaos
+    # (locks onto a bob harmonic — README 5g), which is why it was retired.
+    # The stride instrument is the cadence claim, and it holds to ~0.015.
+    assert abs(sa.stride_hz - sb.stride_hz) < 0.3

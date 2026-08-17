@@ -80,8 +80,19 @@ def hanging_streams():
 
 
 @needs_mixed
-def test_segment_4_reproduces_the_frozen_instruments_numbers(mixed_streams):
+def test_segment_4_reproduces_the_shipped_plants_numbers(mixed_streams):
+    """Acceptance for the SHIPPED plant, envelope honoured (a preset that
+    carries one must never silently run bare). Re-based 2026-08-17 with the
+    preset consolidation, decomposed and predicted before measurement: from
+    the frozen instrument's 0.03095355487877684 / 0.024648439602975667 /
+    5.188627404101316, the friction correction (0.635->0.90 derived pair)
+    moved +0.08% / +0.23% / +0.75% — friction is closed-loop-inert and
+    open-loop-nearly-inert, as README 5g measured — and the envelope moved
+    joint -3.96%, the direction 5d's drive measurement predicts (the bare
+    sim OVER-drives tau 1.1-1.35x; derating toward the measured drive
+    tightens the joint residual). Same bit-identical discipline forward."""
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
@@ -89,18 +100,19 @@ def test_segment_4_reproduces_the_frozen_instruments_numbers(mixed_streams):
     _i, mode, a, b = st.segments()[4]
     assert mode == "freewalk"
     t0 = a + 0.2
-    r = replay(st, t0, b - t0 - 0.2, MujocoBackend(), preset=MEASURED, window=0.4)
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[MEASURED.envelope])
+    r = replay(st, t0, b - t0 - 0.2, backend, preset=MEASURED, window=0.4)
 
     je = r.joint_err()
     dp, da = r.body_err()
-    # The three headline numbers, as the frozen tool printed them ...
-    assert f"{je.mean():.4f}" == "0.0310"
-    assert f"{dp.mean():.4f}" == "0.0246"
-    assert f"{np.degrees(da.mean()):.2f}" == "5.19"
+    # The three headline numbers ...
+    assert f"{je.mean():.4f}" == "0.0298"
+    assert f"{dp.mean():.4f}" == "0.0248"
+    assert f"{np.degrees(da.mean()):.2f}" == "5.30"
     # ... and to full precision, because both paths are deterministic.
-    assert je.mean() == pytest.approx(0.03095355487877684, rel=1e-9)
-    assert dp.mean() == pytest.approx(0.024648439602975667, rel=1e-9)
-    assert np.degrees(da.mean()) == pytest.approx(5.188627404101316, rel=1e-9)
+    assert je.mean() == pytest.approx(0.029752463648512955, rel=1e-9)
+    assert dp.mean() == pytest.approx(0.02480154961255685, rel=1e-9)
+    assert np.degrees(da.mean()) == pytest.approx(5.302594638346394, rel=1e-9)
     assert len(r.prediction.reinit_t) - 1 == 36
 
 
@@ -114,20 +126,27 @@ def test_a_suspended_recording_replays_with_the_trunk_pinned(hanging_streams):
     """No tracker, sport-driven, hanging 70-85 deg off level: loads, replays,
     and the trunk stays pinned to the measured pose, clear of any floor."""
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.replay import replay
 
     st = hanging_streams
-    r = replay(st, 10.0, 20.0, MujocoBackend(), preset=MEASURED, window=0.4, suspended=True)
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[MEASURED.envelope])
+    r = replay(st, 10.0, 20.0, backend, preset=MEASURED, window=0.4, suspended=True)
     # Reference for the WELD mechanism (trunk held DURING the step, attitude
     # tracking the measurement). The frozen instrument's numbers (joint mean
     # 0.05685969199042827, max 2.4079772840531506) were measured in a
     # WEIGHTLESS plant — the old post-step snap let the whole robot free-fall
     # through mj_step, so gravity cancelled out of the leg dynamics — and
     # their movement here is the bug fix, not a regression.
+    # Re-based 2026-08-17 (consolidation): from 0.05482657148294461 /
+    # 2.2805870870306104. The friction part is +0.06% — feet DO meet other
+    # leg geoms while hanging (measured: 194 of 1369 contacts in a pinned
+    # flail involve a foot) — and the rest is the envelope derating the
+    # 20 rad/s strokes this sport recording is made of (+19% mean, +9% max).
     je = r.joint_err()
-    assert je.mean() == pytest.approx(0.05482657148294461, rel=1e-9)
-    assert je.max() == pytest.approx(2.2805870870306104, rel=1e-9)
+    assert je.mean() == pytest.approx(0.06526516273674912, rel=1e-9)
+    assert je.max() == pytest.approx(2.4907904937643277, rel=1e-9)
     assert len(r.prediction.reinit_t) - 1 == 49
     # no tracker: the body channels are simply absent, not a special mode
     assert r.p_real is None and r.r_real is None

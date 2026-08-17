@@ -216,16 +216,20 @@ def test_the_command_shift_sweep_reproduces_and_prefers_zero_over_30ms():
     if not _menagerie_available():
         pytest.skip("no mujoco_menagerie checkout")
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
     from dimos.robot.unitree.go2.sim.sysid.loop import command_shift_sweep
 
     st = read_streams(FREEWALK)
-    p0, p30 = command_shift_sweep(
-        st, MujocoBackend(), (0.0, 30.0), t0=20.0, duration=10.0, preset=load_preset("measured")
-    )
-    assert p0.joint_mean == pytest.approx(0.024606277165766802, rel=1e-9)
-    assert p0.accel_rms == pytest.approx(2.2214191211627377, rel=1e-9)
+    preset = load_preset("measured")
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[preset.envelope])
+    p0, p30 = command_shift_sweep(st, backend, (0.0, 30.0), t0=20.0, duration=10.0, preset=preset)
+    # Re-based 2026-08-17 (consolidation, envelope honoured): from
+    # 0.024606277165766802 / 2.2214191211627377 — friction correction ~+1.8%,
+    # envelope ~+6% on this hard-floor window. The CLAIM is the ordering below.
+    assert p0.joint_mean == pytest.approx(0.026612264870808103, rel=1e-9)
+    assert p0.accel_rms == pytest.approx(2.264508044181515, rel=1e-9)
     assert p30.joint_mean > p0.joint_mean * 1.15
     assert p30.accel_rms > p0.accel_rms
 

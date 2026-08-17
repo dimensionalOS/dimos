@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.robot.unitree.go2.sim.anchors import torsional_friction
 from dimos.robot.unitree.go2.sim.ranges import (
-    ACCEL,
     BUILTIN_PRESETS,
     CONTACT_DEFAULTS,
+    DR_FLOOR,
+    FLOOR_MU,
+    GO2,
     KNOBS,
     MEASURED,
     PHYSICS_KEYS,
@@ -68,15 +71,51 @@ def test_every_preset_key_is_a_known_knob():
         assert set(p.physics) <= PHYSICS_KEYS, p.name
 
 
-def test_the_measured_preset_carries_the_anchors_not_refits():
-    # The robot was weighed; these are measurements, and a changed value here
-    # means someone refitted an anchor, which is exactly the mistake the
-    # anchoring discipline exists to prevent.
-    assert MEASURED.physics["trunk_mass_scale"] == 1.18693
-    assert MEASURED.physics["trunk_com_x"] == -0.01204
-    assert MEASURED.physics["trunk_inertia_scale"] == 1.118
-    assert ACCEL.physics["trunk_mass_scale"] == 1.18693
-    assert ACCEL.physics["foot_friction_torsional"] == 0.00583
+def test_every_preset_value_lies_inside_the_range_that_admits_it():
+    """Containment is the symptom check: the discarded early plant shipped
+    foot_friction = 0.635 BELOW DR_FLOOR's declared (0.8, 1.0) — a value the
+    fit had no gradient on, drifted to a resting place and frozen. A preset
+    value outside its own declared range is residue, not a measurement."""
+    for p in BUILTIN_PRESETS.values():
+        for k, v in p.physics.items():
+            pos = KNOBS[k].position(v)
+            assert 0.0 <= pos <= 1.0, f"{p.name}.{k} = {v} outside its Knob range"
+        if p.actuator_tau:
+            assert 0.0 <= KNOBS["actuator_tau"].position(p.actuator_tau) <= 1.0, p.name
+        if "foot_friction" in p.physics:
+            lo, hi = DR_FLOOR["foot_friction"]
+            assert lo <= p.physics["foot_friction"] <= hi, p.name
+
+
+def test_every_derived_value_matches_its_own_derivation():
+    """The cause check: a derived value stored beside its source can go
+    stale — the discarded plant's torsional friction implied mu = 0.349
+    against its own declared 0.635, two numbers in one dict that had stopped
+    agreeing. Anything the codebase computes from something else must equal
+    its formula where it ships."""
+    for p in BUILTIN_PRESETS.values():
+        if "foot_friction_torsional" in p.physics:
+            assert p.physics["foot_friction_torsional"] == torsional_friction(
+                p.physics["foot_friction"], GO2.foot.radius_m
+            ), p.name
+
+
+def test_the_shipped_plants_anchors_are_the_derivation_not_copies():
+    from dimos.robot.unitree.go2.sim.anchors import derive
+
+    anchors = derive(GO2, floor_mu=FLOOR_MU)
+    for k, v in anchors.items():
+        assert MEASURED.physics[k] == v, k
+
+
+def test_the_shipped_plant_documents_every_values_provenance():
+    """README 3a in the data: every value says whether it was fitted,
+    derived, declared or measured. A value without provenance is a guess
+    wearing a number's clothes — the same rule Knob.why already enforces."""
+    for k in MEASURED.physics:
+        assert MEASURED.provenance.get(k), f"measured.{k}: no provenance"
+    assert MEASURED.provenance.get("actuator_tau")
+    assert MEASURED.provenance.get("envelope")
 
 
 def test_a_builtin_preset_refuses_to_be_overwritten(tmp_path):
@@ -110,16 +149,26 @@ def test_an_envelope_free_preset_writes_no_envelope_key(tmp_path):
     assert "envelope" not in d  # older readers see the exact old shape
 
 
-def test_builtins_carry_no_envelope_except_measured_env():
-    """`measured-env` IS the measured plant plus its envelope — that pairing
-    is the preset's whole claim (README 5g); every other built-in stays bare."""
-    for name, p in BUILTIN_PRESETS.items():
-        if name == "measured-env":
-            assert p.envelope == "central"
-            assert p.physics == BUILTIN_PRESETS["measured"].physics
-            assert p.actuator_tau == BUILTIN_PRESETS["measured"].actuator_tau
-        else:
-            assert p.envelope is None
+def test_two_builtins_with_distinct_jobs():
+    """One plant to ship (measured knobs + measured envelope, README 5g) and
+    one to compare against (stock = bare menagerie, the experimental control
+    every comparative claim needs). Nothing else: a third built-in that
+    exists because it used to be someone's answer is history, not
+    architecture."""
+    assert set(BUILTIN_PRESETS) == {"stock", "measured"}
+    assert MEASURED.envelope == "central"
+    stock = BUILTIN_PRESETS["stock"]
+    assert stock.physics == {} and stock.envelope is None and stock.actuator_tau == 0.0
+
+
+def test_a_preset_round_trips_its_provenance(tmp_path):
+    p = Preset(
+        name="fit-prov",
+        physics={"armature": 0.006},
+        provenance={"armature": "fitted: test"},
+    )
+    got = load_preset(str(p.save(tmp_path / "fit-prov.json")))
+    assert got == p and got.provenance["armature"] == "fitted: test"
 
 
 def test_an_unknown_envelope_name_is_rejected_at_construction():

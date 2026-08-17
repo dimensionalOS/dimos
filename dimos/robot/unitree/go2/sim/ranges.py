@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Knob set, presets and DR spreads for the measured Go2 plant.
+"""Knob set and the two shipped presets for the measured Go2 plant.
 
-Everything here is either a direct measurement with provenance, or a fitted
-value with a stated uncertainty range. The knob SET is data, not code: a
-backend exposes its own (see :mod:`~dimos.robot.unitree.go2.sim.backend`), and
-these are the MuJoCo ones.
+Everything here is a measurement, a derivation from one, a fitted value, or
+a declaration — and each value on a shipped preset says which
+(:attr:`Preset.provenance`). Derived values are COMPUTED from their sources
+at import, never copied: the discarded early plant shipped a torsional
+friction implying mu = 0.349 against its own declared 0.635, a stale copy
+nobody could have caught by reading either number alone. The knob SET is
+data, not code: a backend exposes its own (see
+:mod:`~dimos.robot.unitree.go2.sim.backend`), and these are the MuJoCo ones.
 
-The single most important finding about fitting this plant: the data localises
-it to a REGION, not a point. Four fits differing only in seed agree on the
-loss to within 3 points and disagree on the parameters by up to 8.8x — so a
-preset's values are a CENTRE, the spreads in :data:`DR_ACCEL` are the measured
-procedure variance, and no single number here should be read as identified.
+The single most important finding about fitting this plant: the data
+localises it to a REGION, not a point. Four fits differing only in seed
+agree on the loss to within 3 points and disagree on the parameters by up
+to 8.8x — so a preset's values are a CENTRE, and no single number here
+should be read as identified. Randomization spreads for training must be
+re-measured under the LOO restart rule (README 4a) before anything trains:
+the old 4-seed table belonged to a discarded fit and is gone with it.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import json
 import math
 from pathlib import Path
 
+from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 
 
@@ -170,6 +177,10 @@ class Preset:
     physics: dict[str, float] = field(default_factory=dict)
     actuator_tau: float = 0.0
     envelope: str | None = None
+    # Per-value origin, one line each: "fitted: ...", "derived: ...",
+    # "declared: ...", "measured: ...". README 3a's "everything is a knob;
+    # only the provenance differs", carried in the data instead of in prose.
+    provenance: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.envelope is not None and self.envelope not in TORQUE_ENVELOPES:
@@ -192,6 +203,8 @@ class Preset:
         }
         if self.envelope is not None:
             d["envelope"] = self.envelope
+        if self.provenance:
+            d["provenance"] = self.provenance
         out.write_text(json.dumps(d, indent=2))
         return out
 
@@ -203,77 +216,74 @@ class Preset:
             physics=dict(d.get("physics", {})),
             actuator_tau=float(d.get("actuator_tau", 0.0)),
             envelope=d.get("envelope"),
+            provenance=dict(d.get("provenance", {})),
         )
 
 
-# The measured-trunk plant (R8-FIT2). Anchors, not fits: the robot was WEIGHED
-# (16.500 kg against a 15.206 kg model — a bigger battery no fitting ever
-# found), trunk_inertia_scale and trunk_com_x are parallel-axis consequences of
-# that payload (see anchors.py), and the remaining six were fitted by open-loop
-# multiple shooting on the 2026-08-16 marker session. `damping` is the one
-# parameter the accelerometer cannot see; its value comes from the suspended
-# recording's joint channel and nothing else.
-MEASURED_PHYSICS = {
+# The robot the shipped plant is derived for: weighed 16.500 kg on a kitchen
+# scale, 2026-08-16 — an anchor no amount of fitting ever found (the model
+# was 1.3 kg light). Change the robot, change THIS, and every derived anchor
+# follows.
+GO2 = RobotSpec(mass_kg=16.500)
+
+# The floor the anchors assume: the centre of DR_FLOOR and the mu the fit
+# pins (fit.default_plan). A declaration, not a measurement — and a nearly
+# inert one closed loop: sweeping mu 0.6-1.6 moved speed 0.4% (README 5g).
+FLOOR_MU = 0.90
+
+# trunk_mass_scale, trunk_com_x, trunk_inertia_scale, foot_friction_torsional
+# — computed from the weighing and the contact-patch formula at import, so a
+# stale copy cannot exist. This is the same derive() call the fit uses for
+# its pins: the shipped plant and the fitting discipline agree by
+# construction.
+_ANCHORS = derive(GO2, floor_mu=FLOOR_MU)
+
+# THE shipped plant: the measured trunk (weighed and derived), the six knobs
+# the 2026-08-16 open-loop fit resolved, and the measured torque envelope.
+# HYBRID PROVENANCE, deliberately: the knobs were fitted open loop with the
+# envelope OFF, so running them with it ON is formally the double-counting
+# README 5b warns about. It is kept because the referee prefers the hybrid
+# everywhere (README 5g: 8/11 within the robot-repeat floor, and the
+# envelope-consistent refit grounds WORSE — 5d's anti-transfer). DO NOT
+# "fix" the inconsistency by refitting: that was tried, and lost.
+MEASURED_PHYSICS: dict[str, float] = {
     "armature": 0.02899,
     "damping": 0.03808,
     "frictionloss": 1.46585,
-    "trunk_mass_scale": 1.18693,
-    "trunk_inertia_scale": 1.118,
-    "foot_friction": 0.63548,
-    "foot_friction_torsional": 0.00226,
-    "trunk_com_x": -0.01204,
     "leg_mass_scale": 1.0,
+    "foot_friction": FLOOR_MU,
+    **_ANCHORS,
 }
 MEASURED_ACTUATOR_TAU = 0.00525
 
-# The accel-channel fit (R9-ACCEL): same anchors, contact modelled, virtual IMU
-# read at the sensor site, remaining knobs = per-parameter MEDIAN of four
-# seeded fits (never the best draw — picking it would spend the held-out set).
-# All four draws beat `measured` on held-out jumps (-11.5 to -18.4% accel).
-ACCEL_PHYSICS = {
-    "armature": 0.00595,
-    "damping": 0.03808,
-    "frictionloss": 1.06436,
-    "trunk_mass_scale": 1.18693,
-    "trunk_inertia_scale": 1.118,
-    "foot_friction": 0.90,
-    "foot_friction_torsional": 0.00583,
-    "trunk_com_x": -0.01204,
-    "leg_mass_scale": 1.32236,
-    "foot_solref_time": 0.00853,
-    "foot_solref_damp": 1.17897,
-    "foot_solimp_width": 0.00244,
-    "foot_solimp_dmin": CONTACT_DEFAULTS["foot_solimp_dmin"],
-}
-ACCEL_ACTUATOR_TAU = 0.00271
+# The experimental CONTROL, not a leftover: every claim this package makes
+# is comparative — "the tuned plant matches the robot better than bare
+# menagerie does" — and the eventual sim-to-real transfer experiment is
+# stock-vs-tuned by design. Delete this and the claim becomes unverifiable.
+STOCK = Preset(name="stock")
 
-STOCK = Preset(name="stock")  # no overrides at all: bare menagerie
 MEASURED = Preset(
-    name="measured", physics=dict(MEASURED_PHYSICS), actuator_tau=MEASURED_ACTUATOR_TAU
-)
-ACCEL = Preset(name="accel", physics=dict(ACCEL_PHYSICS), actuator_tau=ACCEL_ACTUATOR_TAU)
-
-# The DEFAULT plant (promoted 2026-08-17, README 5g): the measured knobs run
-# WITH the measured torque envelope. HYBRID PROVENANCE, deliberately: these
-# knobs were fitted open loop with the envelope OFF, so running them with it
-# ON is formally the double-counting §5b warns about. It is kept because the
-# referee prefers the hybrid everywhere — 7/11 loss 1.23 -> 8/11 loss 0.77
-# under the robot-repeat floor on the fit recording, and 55-61% of the speed
-# family's gap closed on the held-out rubber span — while the
-# envelope-consistent refit (fit6-env) grounds WORSE than this hybrid (§5d's
-# anti-transfer). DO NOT "fix" the inconsistency by refitting: that was
-# tried, and lost. The envelope itself is a measurement with zero free
-# parameters (sysid.drive), which is what makes the promotion spend no data.
-# `measured` stays untouched as the name that reproduces the §5b-§5g record.
-MEASURED_ENV = Preset(
-    name="measured-env",
+    name="measured",
     physics=dict(MEASURED_PHYSICS),
     actuator_tau=MEASURED_ACTUATOR_TAU,
     envelope="central",
+    provenance={
+        "armature": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
+        "damping": "fitted: suspended recording's joint channel — the one knob accel cannot see",
+        "frictionloss": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
+        "leg_mass_scale": "fitted: joint fit ~0.96; kept at 1.0 (CAD trusted)",
+        "foot_friction": "declared: DR_FLOOR centre, the mu the fit pins; closed-loop inert (README 5g)",
+        "foot_friction_torsional": "derived: torsional_friction(FLOOR_MU, foot radius) via anchors.derive",
+        "trunk_mass_scale": "derived: 16.500 kg kitchen-scale weighing (anchors.derive)",
+        "trunk_com_x": "derived: parallel-axis payload analysis (anchors.derive)",
+        "trunk_inertia_scale": "derived: parallel-axis payload analysis (anchors.derive)",
+        "actuator_tau": "fitted: R8-FIT2 open-loop multiple shooting, 2026-08-16 markers",
+        "envelope": "measured: sysid.drive demanded-vs-delivered transfer, zero free parameters",
+    },
 )
 
-BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED, ACCEL, MEASURED_ENV)}
-DEFAULT_PRESET = "measured-env"
+BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED)}
+DEFAULT_PRESET = "measured"
 
 
 def load_preset(name: str | None = None) -> Preset:
@@ -290,26 +300,15 @@ def load_preset(name: str | None = None) -> Preset:
     )
 
 
-# What training should randomize over. min/max over n draws covers (n-1)/(n+1)
-# of the distribution — 60% at n=4 — so these 4-seed spreads are too NARROW
-# and should be recomputed under the LOO-stability restart rule before anything
-# trains against them. Under-randomizing is the dangerous direction.
-DR_ACCEL: dict[str, tuple[float, float]] = {
-    "armature": (0.0015, 0.0131),  # 8.8x spread
-    "actuator_tau": (0.0009, 0.0066),  # 7.2x
-    "foot_solimp_width": (0.0021, 0.0069),  # 3.3x
-    "foot_solref_time": (0.0066, 0.0163),  # 2.5x
-    "frictionloss": (0.948, 1.601),  # 1.7x
-    "leg_mass_scale": (1.055, 1.441),  # 1.4x
-    "foot_solref_damp": (1.103, 1.432),  # 1.3x
-}
-
-# Measured or derived, never randomized: randomizing a measurement adds noise,
-# not robustness.
+# Measured or derived, never randomized: randomizing a measurement adds
+# noise, not robustness. Same derive() call as the shipped preset, so the
+# two cannot drift apart. Spreads for the SEARCHED knobs must be re-measured
+# under the LOO restart rule (README 4a) before anything trains — the old
+# 4-seed table belonged to the discarded accel fit.
 DR_PINNED: dict[str, float] = {
-    "trunk_mass_scale": 1.18693,
-    "trunk_com_x": -0.01204,
-    "foot_friction_torsional": 0.00583,
+    "trunk_mass_scale": _ANCHORS["trunk_mass_scale"],
+    "trunk_com_x": _ANCHORS["trunk_com_x"],
+    "foot_friction_torsional": _ANCHORS["foot_friction_torsional"],
 }
 
 DR_FLOOR: dict[str, tuple[float, float]] = {"foot_friction": (0.8, 1.0)}

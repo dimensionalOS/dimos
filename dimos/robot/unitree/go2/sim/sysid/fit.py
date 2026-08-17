@@ -108,9 +108,9 @@ class KnobPlan:
             raise ValueError(f"knob(s) both pinned and searched: {sorted(both)}")
 
 
-# The default search set: the knobs the 2026-08-16 accel fits searched, and
-# the ones DR_ACCEL's seed spreads were measured on. Everything else the
-# spectrum resolves is anchored by a measurement (see default_plan).
+# The default search set: the knobs the 2026-08-16 fits searched — the ones
+# the identifiability spectrum resolves. Everything else is anchored by a
+# measurement (see default_plan).
 DEFAULT_SEARCH: tuple[str, ...] = (
     "armature",
     "actuator_tau",
