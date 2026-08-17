@@ -40,6 +40,8 @@ class _PointCloud:
     def __init__(self, points: np.ndarray) -> None:
         self._points = points
         self.read_count = 0
+        self.frame_id = "lidar"
+        self.ts = 9.98
 
     def as_numpy(self) -> tuple[np.ndarray, None]:
         self.read_count += 1
@@ -187,6 +189,31 @@ def test_rejects_too_few_mask_supporting_points() -> None:
         estimator.estimate(_frame(pointcloud), "bottle")
 
 
+def test_rejects_invalid_camera_intrinsics_before_projection() -> None:
+    frame = _frame(_PointCloud(np.array([[0.0, 0.0, 1.0]])))
+    frame.camera_info.K[0] = 0.0
+
+    estimator = EdgeTamLidarRangeEstimator(
+        _Detector([(0.0, 0.0, 10.0, 10.0)]),
+        _Segmenter(_full_mask()),
+        min_supporting_points=1,
+    )
+
+    with pytest.raises(ValueError, match="positive focal lengths"):
+        estimator.estimate(frame, "bottle")
+
+
+def test_rejects_segmentation_mask_with_wrong_dimensions() -> None:
+    estimator = EdgeTamLidarRangeEstimator(
+        _Detector([(0.0, 0.0, 10.0, 10.0)]),
+        _Segmenter(np.ones((9, 10), dtype=np.uint8)),
+        min_supporting_points=1,
+    )
+
+    with pytest.raises(InsufficientEvidenceError, match="exactly one valid segmentation mask"):
+        estimator.estimate(_frame(_PointCloud(np.array([[0.0, 0.0, 1.0]]))), "bottle")
+
+
 def test_returns_median_euclidean_range_and_auditable_quartiles() -> None:
     points = np.array([[u * z, 0.0, z] for u, z in zip(range(1, 6), [1, 2, 3, 4, 20], strict=True)])
     expected_ranges = np.linalg.norm(points, axis=1)
@@ -206,7 +233,7 @@ def test_returns_median_euclidean_range_and_auditable_quartiles() -> None:
     assert evidence.model_dump(mode="json")["mask_bbox_xyxy"] == [0.0, 0.0, 9.0, 9.0]
 
 
-def test_projection_cache_reuses_only_the_same_explicit_frame() -> None:
+def test_projection_cache_reuses_across_objects_only_for_the_same_explicit_frame() -> None:
     points = np.array([[float(2 * x), 0.0, 2.0] for x in range(5)])
     first_cloud = _PointCloud(points)
     second_cloud = _PointCloud(points)
@@ -217,7 +244,7 @@ def test_projection_cache_reuses_only_the_same_explicit_frame() -> None:
     )
 
     estimator.estimate(first_frame, "box")
-    estimator.estimate(first_frame, "box")
+    estimator.estimate(first_frame, "crate")
     estimator.estimate(second_frame, "box")
 
     assert first_cloud.read_count == 1
