@@ -827,7 +827,11 @@ oscillation gap.
 
 **The 2026-08-17 session is usable for the floor, not for Mode B.** The
 three recordings (`153320`/`153558`/`154201`, hard floor, tracker, back to
-back) were driven by a NEW executor, and not just a renamed schema: no
+back) were driven by a DIFFERENT runner — the Go2 native policy runner, a
+second execution path, NOT the executor any policy deploys through (that is
+Ivan's own executor, which publishes raw un-smoothed actions on
+`policy/lowcmd` and which Mode B models faithfully) — and not just a
+renamed schema: no
 `policy/lowcmd` at all (commands only on the 500 Hz `rt/lowcmd` bus — the
 same logging regression as the stale `policy/state: sport` label), a true
 20.0 ms tick where the 08-16 executor measured 22.3 ms, and an
@@ -1190,14 +1194,17 @@ predicted), and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
-**Owed:** Mode B still simulates the 08-16 executor's loop semantics — the
-08-17 session runs a NEW executor (true 20 ms tick, EMA-like action
-smoothing, `policy/lowcmd`+`policy/state` logging dropped — §5f), so those
-recordings serve the real side only until `rollout_policy` learns the new
-loop and `verify_net` can pass on it. And the verdict floor is
-cross-session: a same-session repeat pair of a VERDICT walk (record the
-repeats with the recording you will ground) would remove §5f's two floor
-caveats at once.
+**Owed:** a CAPTURE, not code. The 08-17 session was driven by the Go2
+NATIVE policy runner (true 20 ms tick, EMA-smoothed output, `rt/lowcmd`
+only — §5f) — a second execution path, not the deployment target. Policies
+deploy through Ivan's own executor, whose loop (raw actions on
+`policy/lowcmd`, no output smoothing) Mode B already models faithfully, so
+nothing here is owed by `rollout_policy` and the fitted α ≈ 0.3–0.5 never
+needs to become a measurement. The 08-17 recordings serve the real-side
+floor and loop 1 only; recording the repeat pair WITH Ivan's executor
+closes everything at once — Mode B grounding on same-session repeats, the
+cross-session floor caveat, and the `speed_gain` envelope mismatch (native
+runs saturate at vx ±1.5 against 194142's ±0.9).
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an accuracy
