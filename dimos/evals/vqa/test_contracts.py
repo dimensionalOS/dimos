@@ -28,6 +28,7 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     FamilyAnswer,
     FamilySpec,
+    InsufficientEvidenceError,
     QuestionProposal,
     answer_question,
 )
@@ -124,10 +125,12 @@ class _QuestionModel:
     def query_json(self, image: Image, prompt: str) -> list[dict[str, str]]:
         assert "presence" in prompt
         assert "horizontal_direction" in prompt
+        assert "object_count" in prompt
         assert "JSON array" in prompt
         return [
             {"family": "presence", "object_name": "chair"},
             {"family": "horizontal_direction", "object_name": "robot"},
+            {"family": "object_count", "object_name": "box"},
         ]
 
 
@@ -240,6 +243,31 @@ def test_horizontal_direction_rejects_ambiguous_instances() -> None:
         answer_question(proposal, image, detector)
 
 
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    ((1, "one"), (2, "two"), (3, "three"), (4, "four or more"), (5, "four or more")),
+)
+def test_object_count_buckets_detected_instances(count: int, expected: str) -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_count", object_name="box")
+    boxes = tuple((float(index), 0.0, float(index + 1), 1.0) for index in range(count))
+
+    answer = answer_question(proposal, image, _BoxesDetector(boxes))
+
+    assert answer.answer == expected
+    assert answer.question == "How many instances of box are visible in the image?"
+    assert answer.choices == ("one", "two", "three", "four or more")
+    assert answer.evidence["detection_count"] == count
+
+
+def test_object_count_requires_at_least_one_detection() -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="object_count", object_name="box")
+
+    with pytest.raises(InsufficientEvidenceError, match="to count"):
+        answer_question(proposal, image, _BoxesDetector(()))
+
+
 def test_openai_author_parses_constrained_proposals() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     author = OpenAIQuestionAuthor(cast("VlModel", _QuestionModel()))
@@ -249,6 +277,7 @@ def test_openai_author_parses_constrained_proposals() -> None:
     assert proposals == (
         QuestionProposal(family="presence", object_name="chair"),
         QuestionProposal(family="horizontal_direction", object_name="robot"),
+        QuestionProposal(family="object_count", object_name="box"),
     )
 
 

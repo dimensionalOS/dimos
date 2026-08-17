@@ -64,6 +64,13 @@ one `object_name` input:
 }
 ```
 
+```json
+{
+  "family": "object_count",
+  "object_name": "box"
+}
+```
+
 `FamilyAnswer` contains the rendered question, fixed choices, and privately derived answer. It
 requires at least two unique choices and requires the answer to match one of them.
 
@@ -82,8 +89,8 @@ contains the matching case ID and expected answer.
 ## Initial Scope
 
 The package supports one image selected with `image_index` or a `[start, stop)` range with `stride`
-from the `color_image` Memory stream. An `OpenAIVlModel` proposes any number of useful presence or
-horizontal-direction inputs per image, and
+from the `color_image` Memory stream. An `OpenAIVlModel` proposes any number of useful presence,
+horizontal-direction, or object-count inputs per image, and
 `MoondreamVlModel` supplies private object detections through the primitive adapter. Each valid family
 answer becomes one public case. When at least one case is answered, proposals without sufficient
 evidence are skipped and retained in their original order in the private frame audit. If none can be

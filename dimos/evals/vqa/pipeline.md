@@ -99,6 +99,21 @@ object_name
 Zero detections cannot establish a direction, while multiple detections make the referenced instance
 ambiguous. Both cases reject the proposal.
 
+## Object Count Family
+
+The proposal is:
+
+```json
+{
+  "family": "object_count",
+  "object_name": "box"
+}
+```
+
+The family counts Moondream detections and maps them to the fixed choices `one`, `two`, `three`, and
+`four or more`. Zero detections reject the proposal rather than publishing a count. The final bucket
+avoids claiming an exact count when the detector reaches its object limit.
+
 ## Dataset Artifacts
 
 The standalone dataset retains the earlier public/private split:

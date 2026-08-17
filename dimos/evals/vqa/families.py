@@ -33,7 +33,7 @@ class QuestionProposal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    family: Literal["presence", "horizontal_direction"]
+    family: Literal["presence", "horizontal_direction", "object_count"]
     object_name: NonEmptyString
 
 
@@ -77,7 +77,12 @@ HORIZONTAL_DIRECTION_FAMILY = FamilySpec(
     required_fields=("object_name",),
     description="Use only for one clearly visible object instance.",
 )
-AVAILABLE_FAMILIES = (PRESENCE_FAMILY, HORIZONTAL_DIRECTION_FAMILY)
+OBJECT_COUNT_FAMILY = FamilySpec(
+    name="object_count",
+    required_fields=("object_name",),
+    description="Count a small number of clearly visible, distinct object instances.",
+)
+AVAILABLE_FAMILIES = (PRESENCE_FAMILY, HORIZONTAL_DIRECTION_FAMILY, OBJECT_COUNT_FAMILY)
 
 
 class InsufficientEvidenceError(ValueError):
@@ -98,6 +103,8 @@ def answer_question(
         return _answer_presence(proposal, image, detector)
     if proposal.family == "horizontal_direction":
         return _answer_horizontal_direction(proposal, image, detector)
+    if proposal.family == "object_count":
+        return _answer_object_count(proposal, image, detector)
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -153,5 +160,31 @@ def _answer_horizontal_direction(
             "box": cast("JsonValue", list(map(float, box))),
             "center_x_px": center_x,
             "center_x_fraction": center_fraction,
+        },
+    )
+
+
+def _answer_object_count(
+    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+) -> FamilyAnswer:
+    detections = detector.detect(image, proposal.object_name)
+    count = len(detections)
+    if count == 0:
+        raise InsufficientEvidenceError(
+            f"object detector did not confirm visible {proposal.object_name!r} to count"
+        )
+
+    choices = ("one", "two", "three", "four or more")
+    answer = choices[min(count, 4) - 1]
+    boxes = [list(map(float, detection.bbox)) for detection in detections.detections]
+    return FamilyAnswer(
+        question=f"How many instances of {proposal.object_name} are visible in the image?",
+        choices=choices,
+        answer=answer,
+        evidence={
+            "primitive": "object_detector",
+            "object_name": proposal.object_name,
+            "detection_count": count,
+            "boxes": cast("JsonValue", boxes),
         },
     )
