@@ -28,6 +28,8 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     PolicyRun,
     Report,
     aggregate_divergence,
+    tracking_curves,
+    tracking_of,
     usable_floor,
     window_curves,
 )
@@ -235,7 +237,7 @@ def test_the_divergence_rate_reads_a_known_drift():
         assert div.terms[term].rate == pytest.approx(0.0, abs=1e-9)
 
 
-def test_divergence_terms_enter_the_report_loss_and_table():
+def test_snapped_rates_are_a_diagnostic_and_never_enter_the_loss():
     st = _static_streams()
     div = aggregate_divergence(window_curves(_drifting_run(0.04), st, start=0.0), 2.0)
     noise = dict.fromkeys(Summary.__dataclass_fields__, 0.1)
@@ -250,14 +252,56 @@ def test_divergence_terms_enter_the_report_loss_and_table():
         seconds=1.0,
         divergence=div,
     )
-    snr = with_div.snr()
-    assert "div_along" in snr and "div_cross" in snr and "div_yaw" in snr
-    assert with_div.loss() != base.loss()  # visibly moves the number
-    n, of = with_div.n_matched()
-    assert of == base.n_matched()[1] + 5  # five scored divergence terms
+    assert not any(k.startswith("div_") for k in with_div.snr())
+    assert with_div.loss() == base.loss()  # the diagnostic moves nothing
     text = with_div.table()
-    assert "div_along" in text and "DIVERGENCE RATE" in text
-    assert "signed bias" in text  # reported with its own SE, never scored
+    assert "LOCAL RESPONSE (diagnostic, not scored)" in text
+    assert "signed bias" in text  # reported with its own SE
+
+
+def _free_drifting_run(v_err: float, seconds: float = 10.0) -> PolicyRun:
+    """A free (never-snapped) sim drifting +x at ``v_err`` m/s."""
+    t = np.arange(0.0, seconds, 0.02)
+    pos = np.zeros((len(t), 3))
+    pos[:, 0] = v_err * t
+    return PolicyRun(
+        t=t,
+        pos=pos,
+        quat=np.tile([1.0, 0.0, 0.0, 0.0], (len(t), 1)),
+        cmd=np.zeros((len(t), 3)),
+        target=np.zeros((len(t), 12)),
+        q=np.zeros((len(t), 12)),
+    )
+
+
+def test_tracking_areas_score_the_free_rollouts():
+    """The headline: mean |error| per component from the free rollouts,
+    chaos floor from the pairwise sim-sim area, median + draws + SNR."""
+    st = _static_streams()
+    fast = tracking_curves(_free_drifting_run(0.04), st, start=0.0)
+    still = tracking_curves(_free_drifting_run(0.0), st, start=0.0)
+    trk = tracking_of([fast, still], 10.0)
+    assert trk is not None
+    # anchored at 0.5 s: |e|(t) = 0.04 (t - 0.5), mean over [0.5, 10)
+    expect = 0.04 * float(np.mean(np.arange(0.5, 10.0, 0.02) - 0.5))
+    lo, hi = trk.draws("along")
+    assert lo == pytest.approx(0.0, abs=1e-9)
+    assert hi == pytest.approx(expect, rel=1e-3)
+    # the pairwise floor is the same separation / sqrt(2)
+    assert trk.floors["along"] == pytest.approx(expect / np.sqrt(2), rel=1e-3)
+    assert trk.floors["yaw"] < 1e-9  # identical attitude -> no floor, no SNR term
+    snr = Report(
+        preset="t",
+        sim=_summary(),
+        real=_summary(),
+        noise=dict.fromkeys(Summary.__dataclass_fields__, 0.1),
+        floor_source="test",
+        start=0.0,
+        seconds=10.0,
+        tracking=trk,
+    ).snr()
+    assert snr["trk_along"] == pytest.approx((expect / 2) / (expect / np.sqrt(2)), rel=1e-3)
+    assert "trk_yaw" not in snr  # unmeasurable floor -> left out, not infinite
 
 
 # ------------------------------------------------- against the real recording

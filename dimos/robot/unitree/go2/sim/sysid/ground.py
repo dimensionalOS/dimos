@@ -26,10 +26,12 @@ compares the eleven chaos-tolerant statistics of the two runs
 trajectories: free position error measures how long ago two chaotic runs
 diverged, not whether the plant is right — the preset fitted on closed-loop
 trajectories was worse than no overrides at all under the open-loop
-objective. Bounded by re-initialisation it becomes measurable: the
-DIVERGENCE RATE (:func:`window_curves`) snaps the loop back to measured
-state every 2 s and fits how fast the sim drifts from the recording —
-cm/s and deg/s per component, the referee's most interpretable product.
+objective. What IS scored on the trajectory is the TRACKING AREA
+(:func:`tracking_curves`): mean |error| of the free rollouts against the
+recording per heading-aligned component — measured to be regulated,
+bounded wander (the shared command schedule pulls the loop back), so the
+number is well defined without any snapping. The snapped LOCAL RESPONSE
+rates (:func:`window_curves`) stay as a printed diagnostic.
 
 Each statistic is normalised by its own NOISE FLOOR: the sim disagrees with
 ITSELF under chaos, so ``SNR = |sim - real| / floor``, and an SNR under ~1
@@ -440,7 +442,132 @@ def sim_summary(run: PolicyRun, cmd: np.ndarray | None = None) -> Summary:
     return replace(s, source="sim")
 
 
-# ----------------------------------------------- the divergence rate
+# -------------------------------------- tracking error (the headline)
+
+# The scored trajectory terms: mean |error| of the FREE verdict rollouts
+# against the recording over the full horizon, per heading-aligned
+# component — area under the error curve / horizon (ITAE-family), plain
+# units, nothing chosen. Free, not snapped: snapping resets accumulated
+# error, and the snapped bias could not tell three plants apart while
+# whole-rollout instruments could. Measured before adoption (194142, 8
+# replicates each): the curves MEAN-REVERT for the shipped plant — the
+# shared command schedule regulates the loop back toward the recorded
+# trajectory (yaw error at 70 s: 0.14 rad, not 6 deg/s x 70 s) — so the
+# score reads REGULATED TRACKING WANDER, bounded and strongly
+# discriminating (along 0.11-0.22 m vs stock's 0.79-1.39, no overlap).
+# Curves are the diagnostic product; the area is what the search
+# minimises; comparisons only on identical recording and horizon.
+TRACKING_TERMS = ("along", "cross", "yaw", "pitch", "roll")
+
+# Where each free rollout is anchored to the room: the first policy-active
+# sample. One-time anchor, tracker truth throughout (README 6).
+TRACKING_ANCHOR_S = 0.5
+
+
+def tracking_curves(run: PolicyRun, st: Streams, *, start: float) -> dict[str, np.ndarray]:
+    """Signed error vs time for ONE free rollout, tracker truth.
+
+    Position split along/cross in the REAL trajectory's heading frame (raw
+    euclidean error over a long rollout is mostly a yaw measurement in
+    disguise); yaw as the anchored increment difference (unwrapped — it
+    may legitimately exceed pi); pitch/roll absolute. Empty dict without a
+    tracker.
+    """
+    if not st.has_markers or len(run.t) == 0:
+        return {}
+    base_p, base_r = st.base_pose_room(mount_matrix(), TRACKER_Z)
+    rq = np.stack([mat_to_quat(r) for r in base_r])
+    yaw_room = np.unwrap(yaw_of(rq))
+    pitch_t, roll_t = pitch_roll_of(rq)
+    yaw_s = np.unwrap(yaw_of(run.quat))
+    pitch_s, roll_s = pitch_roll_of(run.quat)
+    i0 = int(np.searchsorted(run.t, TRACKING_ANCHOR_S - 1e-9, "left"))
+    if i0 >= len(run.t):
+        return {}
+    a0 = float(run.t[i0]) + start
+    a_yaw = float(yaw_s[i0]) - _local_mean(st.vt, yaw_room, a0)
+    c_, s_ = np.cos(a_yaw), np.sin(a_yaw)
+    rot2 = np.array([[c_, -s_], [s_, c_]])
+    p_room0 = np.array([np.interp(a0, st.vt, base_p[:, 0]), np.interp(a0, st.vt, base_p[:, 1])])
+    a_p = run.pos[i0][:2] - rot2 @ p_room0
+    a = run.t[i0:] + start
+    p_room = np.stack(
+        [np.interp(a, st.vt, base_p[:, 0]), np.interp(a, st.vt, base_p[:, 1])], axis=1
+    )
+    e = run.pos[i0:, :2] - (p_room @ rot2.T + a_p)
+    yr = np.interp(a, st.vt, yaw_room)
+    h = yr + a_yaw  # the real heading in the sim frame
+    u = np.stack([np.cos(h), np.sin(h)], axis=1)
+    n = np.stack([-np.sin(h), np.cos(h)], axis=1)
+    return {
+        "along": np.sum(e * u, axis=1),
+        "cross": np.sum(e * n, axis=1),
+        "yaw": (yaw_s[i0:] - float(yaw_s[i0])) - (yr - float(np.interp(a0, st.vt, yaw_room))),
+        "pitch": pitch_s[i0:] - np.interp(a, st.vt, pitch_t),
+        "roll": roll_s[i0:] - np.interp(a, st.vt, roll_t),
+    }
+
+
+@dataclass(frozen=True)
+class Tracking:
+    """The tracking-error verdict: median-of-n mean |error| per component.
+
+    ``areas[term]`` holds every replicate's area (mean |error| over the
+    horizon) so the verdict is the median with the draw range beside it,
+    exactly as the eleven statistics. ``floors`` is the chaos floor, from
+    the SAME rollouts: the median pairwise sim-vs-sim area / sqrt(2) — what
+    a PERFECT plant would still score from chaos alone (7's sim-perturb
+    floor, applied to this instrument; two chaotic deviations from truth
+    add in quadrature, hence the sqrt(2)). No robot-repeat analogue exists:
+    two real walks cannot be trajectory-aligned.
+    """
+
+    horizon_s: float
+    areas: dict[str, np.ndarray]
+    floors: dict[str, float]
+
+    def median(self, term: str) -> float:
+        return float(np.median(self.areas[term]))
+
+    def draws(self, term: str) -> tuple[float, float]:
+        v = self.areas[term]
+        return float(np.min(v)), float(np.max(v))
+
+    def snr(self) -> dict[str, float]:
+        out = {}
+        for term in TRACKING_TERMS:
+            if term not in self.areas or not len(self.areas[term]):
+                continue
+            f = self.floors.get(term, float("nan"))
+            if np.isfinite(f) and f > 1e-9:
+                out[term] = self.median(term) / f
+        return out
+
+
+def tracking_of(curve_sets: list[dict[str, np.ndarray]], horizon_s: float) -> Tracking | None:
+    """Fold the free replicates' curves into the area verdict + chaos floor."""
+    curve_sets = [c for c in curve_sets if c]
+    if len(curve_sets) < 2:
+        return None
+    areas = {
+        t: np.array([float(np.mean(np.abs(c[t]))) for c in curve_sets]) for t in TRACKING_TERMS
+    }
+    floors = {}
+    for t in TRACKING_TERMS:
+        pair = [
+            float(
+                np.mean(
+                    np.abs(a[t][: min(len(a[t]), len(b[t]))] - b[t][: min(len(a[t]), len(b[t]))])
+                )
+            )
+            for i, a in enumerate(curve_sets)
+            for b in curve_sets[i + 1 :]
+        ]
+        floors[t] = float(np.median(pair)) / np.sqrt(2.0)
+    return Tracking(horizon_s=horizon_s, areas=areas, floors=floors)
+
+
+# ------------------------------- local response (snapped, diagnostic)
 
 # Re-init window length: the horizon axis of the curve, not a judged
 # parameter — it must reach BIAS_FIT_S's end, and only trades how many
@@ -452,7 +579,7 @@ DIVERGENCE_WINDOW_S = 2.0
 # Fit intervals; printing all three is the validity check. Measured
 # (194142): the curve has THREE regimes — gait-envelope rise (~half a
 # stride), systematic linear, chaos — so 0.5 s reads oscillation amplitude
-# as a rate, 2 s dilutes into saturation, and 1 s is scored.
+# as a rate, 2 s dilutes into saturation, and 1 s is the quoted rate.
 DIVERGENCE_FIT_S = (0.5, 1.0, 2.0)
 DIVERGENCE_SCORED_FIT_S = 1.0
 
@@ -465,10 +592,13 @@ DIVERGENCE_SCORED_FIT_S = 1.0
 BIAS_FIT_S = (1.0, 2.0)
 BIAS_MOVING_CMD = 0.3  # windows with mean |cmd| below this dilute the bias
 
-# Scored terms -> curve. `along` is the headline: the progress measure for
-# the ~8% stride deficit (README 9); its `speed_gain` overlap is deliberate
-# double-coverage. Attitude scores the TRACKER curve (windowed pose is the
-# tracker's quantity, README 6); the IMU curves print beside it.
+# The five headline components of the DIAGNOSTIC detail table -> curve.
+# DIAGNOSTIC, NEVER SCORED (the tracking areas above are the headline):
+# snapping resets accumulation, and the free-rollout curves showed the
+# snapped rates read local wander the command schedule re-absorbs — the
+# right tool for local response fidelity with clean initial conditions,
+# the wrong one for the judge. Attitude reads the TRACKER curve (windowed
+# pose is the tracker's quantity, README 6); IMU curves print beside it.
 DIVERGENCE_SCORED: dict[str, str] = {
     "along": "along",
     "cross": "cross",
@@ -680,16 +810,13 @@ def _rate_of(x: np.ndarray, tau: np.ndarray, moving: np.ndarray | None = None) -
 
 @dataclass(frozen=True)
 class Divergence:
-    """The divergence-rate verdict: one :class:`TermRate` per term, from a
-    single UNREPLICATED snapped rollout — licensed by measurement, not by
-    determinism (bit-identical is not the same claim as
-    perturbation-insensitive, and §5k is what conflating them cost):
-    three rollouts under the verdict replicates' own +-3 deg perturbations
-    move every scored rate by LESS than its own jackknife SE (spreads
-    0.001-0.019 against SEs 0.012-0.064 on the shipped plant) — the 2 s
-    snap bounds realisation-dependence below the fit's resolution. The
-    scored rates ride beside the eleven statistics (README 4), each
-    judged against its own jackknife SE."""
+    """The local-response diagnostic: one :class:`TermRate` per term, from
+    a single UNREPLICATED snapped rollout — licensed by measurement, not
+    by determinism (three rollouts under the verdict replicates' own
+    +-3 deg perturbations move every rate by LESS than its own jackknife
+    SE: spreads 0.001-0.019 against SEs 0.012-0.064 on the shipped
+    plant). NEVER SCORED — the headline is :class:`Tracking` — printed
+    below every table as the short-horizon response check."""
 
     window_s: float
     n_windows: int
@@ -698,17 +825,6 @@ class Divergence:
     def floor_of(self, name: str) -> float:
         se = self.terms[name].se
         return max(se, 1e-6) if np.isfinite(se) else float("nan")
-
-    def snr(self) -> dict[str, float]:
-        out = {}
-        for label, term in DIVERGENCE_SCORED.items():
-            tc = self.terms.get(term)
-            if tc is None or not np.isfinite(tc.rate):
-                continue
-            f = self.floor_of(term)
-            if np.isfinite(f):
-                out[label] = abs(tc.rate) / f
-        return out
 
 
 def aggregate_divergence(
@@ -763,8 +879,10 @@ def divergence_detail(div: Divergence) -> str:
     unit = {t: ("m/s" if t in ("along", "cross", "pos") else "rad/s") for t in DIVERGENCE_TERMS}
     ivals = "/".join(f"{f:g}" for f in DIVERGENCE_FIT_S)
     lines = [
-        f"DIVERGENCE RATE  {div.n_windows} windows of {div.window_s:g}s, one deterministic "
-        f"snapped rollout; rate over {DIVERGENCE_SCORED_FIT_S:g}s, jackknife SE over windows",
+        f"LOCAL RESPONSE (diagnostic, not scored)  {div.n_windows} windows of "
+        f"{div.window_s:g}s, one snapped rollout; rate over {DIVERGENCE_SCORED_FIT_S:g}s, "
+        "jackknife SE over windows — short-horizon response check, the headline "
+        "is the tracking area above",
         f"  {'term':<11} {'rate':>10} {'':<6} {'se':>8}   rate over {ivals}s  note",
     ]
     for t in DIVERGENCE_TERMS:
@@ -774,7 +892,7 @@ def divergence_detail(div: Divergence) -> str:
             continue
         triple = " ".join(f"{r:+8.4f}" for r in tc.rates)
         deg = f" ({np.degrees(tc.rate):+.2f} deg/s)" if unit[t] == "rad/s" else ""
-        note = f"SCORED as div_{scored[t]}" if t in scored else "reported, not scored"
+        note = "headline component" if t in scored else "secondary"
         note += _stability_note(tc)
         if t == "along":
             note += (
@@ -820,8 +938,13 @@ def _free_one(
     start: float,
     seconds: float,
     mechanisms: dict[str, object],
-) -> Summary:
-    """One free verdict replicate — pure function, serial == parallel."""
+) -> tuple[Summary, dict[str, np.ndarray]]:
+    """One free verdict replicate — pure function, serial == parallel.
+
+    Returns the summary AND the tracking-error curves: the same rollout
+    feeds the eleven statistics and the tracking areas, so the headline
+    costs no extra physics.
+    """
     rng = np.random.default_rng(seed)
     run = rollout_policy(
         st,
@@ -833,7 +956,7 @@ def _free_one(
         perturb=rng.normal(0.0, PERTURB_RAD, 12),
         **mechanisms,  # type: ignore[arg-type]
     )
-    return sim_summary(run, cmd_at(st, run.t + start))
+    return sim_summary(run, cmd_at(st, run.t + start)), tracking_curves(run, st, start=start)
 
 
 def _curves_one(
@@ -866,7 +989,7 @@ def _curves_one(
 
 def _free_in_worker(
     preset: Preset, seed: int, start: float, seconds: float, mechanisms: dict[str, object]
-) -> Summary:
+) -> tuple[Summary, dict[str, np.ndarray]]:
     st, policy, backend = _GROUND_WORKER["st"], _GROUND_WORKER["policy"], _GROUND_WORKER["backend"]
     assert isinstance(st, Streams) and isinstance(policy, FreePolicy)
     return _free_one(st, policy, preset, backend, seed, start, seconds, mechanisms)  # type: ignore[arg-type]
@@ -963,9 +1086,13 @@ class Report:
     start: float
     seconds: float
     sims: list[Summary] = field(default_factory=list)
-    # Divergence rates (README 4): first-class terms BESIDE the eleven,
-    # each floored by its own jackknife SE (no robot-repeat analogue —
-    # two real walks cannot be window-aligned).
+    # Tracking areas (README 4, the headline trajectory terms): mean
+    # |error| of the FREE rollouts per heading-aligned component,
+    # median-of-n with the chaos floor from the same rollouts.
+    tracking: Tracking | None = None
+    # The snapped local-response rates: DIAGNOSTIC ONLY, printed below the
+    # table, never scored — snapping resets the accumulation the headline
+    # measures.
     divergence: Divergence | None = None
 
     def snr(self) -> dict[str, float]:
@@ -974,9 +1101,8 @@ class Report:
         A NaN on either side (a tracker-less real side has no position
         statistics) means NOT COMPARABLE on this recording — the statistic is
         left out entirely rather than scored, matched, or counted. The
-        divergence terms ride along under a ``div_`` prefix; ``div_along``
-        never appears here (reported, not scored — see
-        :data:`DIVERGENCE_SCORED`).
+        tracking areas ride along under a ``trk_`` prefix; the snapped
+        rates never appear here (diagnostic, not scored).
         """
         s, r = self.sim.as_dict(), self.real.as_dict()
         out = {}
@@ -985,9 +1111,9 @@ class Report:
                 continue
             n = self.noise.get(k, 0.0)
             out[k] = abs(s[k] - r[k]) / n if n > 1e-9 else float("inf")
-        if self.divergence is not None:
-            for k, v in self.divergence.snr().items():
-                out[f"div_{k}"] = v
+        if self.tracking is not None:
+            for k, v in self.tracking.snr().items():
+                out[f"trk_{k}"] = v
         return out
 
     def loss(self) -> float:
@@ -1003,12 +1129,17 @@ class Report:
         snr = self.snr()
         return sum(1 for v in snr.values() if v <= 1.0), len(snr)
 
-    def _replicate(self, s: Summary) -> Report:
-        return replace(self, sim=s, sims=[])
+    def _replicate(self, i: int) -> Report:
+        """The report a SINGLE draw would have produced: replicate ``i``'s
+        summary and its own tracking areas (floors stay shared)."""
+        trk = self.tracking
+        if trk is not None:
+            trk = replace(trk, areas={t: v[i : i + 1] for t, v in trk.areas.items()})
+        return replace(self, sim=self.sims[i], sims=[], tracking=trk)
 
     def replicate_losses(self) -> list[float]:
         """Each replicate's own loss — what a single draw COULD have read."""
-        return [self._replicate(s).loss() for s in self.sims]
+        return [self._replicate(i).loss() for i in range(len(self.sims))]
 
     def loss_range(self) -> tuple[float, float]:
         """Min-max of the per-replicate losses (empty ``sims``: the point twice)."""
@@ -1017,17 +1148,19 @@ class Report:
 
     def matched_range(self) -> tuple[int, int]:
         """Min-max of per-replicate "k of M" counts."""
-        ks = [self._replicate(s).n_matched()[0] for s in self.sims] or [self.n_matched()[0]]
+        ks = [self._replicate(i).n_matched()[0] for i in range(len(self.sims))] or [
+            self.n_matched()[0]
+        ]
         return min(ks), max(ks)
 
     def _draw_range(self, k: str) -> str:
-        """min..max of what single replicate draws read for statistic ``k``.
-
-        Divergence rows have no replicate draws (one deterministic snapped
-        rollout); their stability triple lives in the detail block below
-        the table.
-        """
-        if k.startswith("div_") or not self.sims:
+        """min..max of what single replicate draws read for statistic ``k``."""
+        if k.startswith("trk_"):
+            if self.tracking is None:
+                return ""
+            lo, hi = self.tracking.draws(k[4:])
+            return f"{lo:.3f}..{hi:.3f}"
+        if not self.sims:
             return ""
         vals = [x.as_dict()[k] for x in self.sims]
         return f"{min(vals):.3f}..{max(vals):.3f}"
@@ -1036,11 +1169,16 @@ class Report:
         s, r = self.sim.as_dict(), self.real.as_dict()
         snr = self.snr()
         n, of = self.n_matched()
-        div = self.divergence
+        trk = self.tracking
         lines = [
             f"preset {self.preset}  {self.seconds:.0f}s from t={self.start:.0f}s  "
             f"floor: {self.floor_source}  real[{self.real.source or '?'}]"
-            + (f"  divergence: {div.n_windows} windows of {div.window_s:g}s" if div else ""),
+            + (
+                f"  tracking: mean |error| over {trk.horizon_s:.0f}s, "
+                f"chaos floor = pairwise sim-sim / sqrt2"
+                if trk
+                else ""
+            ),
             f"{'statistic':>14} {'sim':>9} {'real':>9} {'floor':>9} {'SNR':>7}  {'draws':>14}",
         ]
 
@@ -1051,16 +1189,16 @@ class Report:
             )
 
         for k in sorted(snr, key=lambda k: -snr[k]):
-            if k.startswith("div_"):
-                assert div is not None
-                term = DIVERGENCE_SCORED[k[4:]]
-                lines.append(row(k, div.terms[term].rate, 0.0, div.floor_of(term), snr[k]))
+            if k.startswith("trk_"):
+                assert trk is not None
+                term = k[4:]
+                lines.append(row(k, trk.median(term), 0.0, trk.floors[term], snr[k]))
             else:
                 lines.append(row(k, s[k], r[k], self.noise.get(k, 0.0), snr[k]))
         for k in NOT_COMPARABLE:
             lines.append(f"{k:>14} {s[k]:9.3f} {r[k]:9.3f} {'--':>9} {'n/a':>7}")
-        if div is not None:
-            lines += ["", divergence_detail(div)]
+        if self.divergence is not None:
+            lines += ["", divergence_detail(self.divergence)]
         if self.sims:
             lo, hi = self.loss_range()
             klo, khi = self.matched_range()
@@ -1117,10 +1255,11 @@ def ground(
     ``envelope`` — see :func:`rollout_policy`) apply to every replicate, so
     a mechanism is judged against its own chaos, not the ideal loop's.
 
-    ``divergence_window`` adds the divergence-rate term (one deterministic
-    snapped rollout of its own — the free verdict rollouts stay free).
-    ``workers`` fans rollouts across processes, bit-identical to serial;
-    a viewing run stays serial.
+    The tracking areas (the scored trajectory terms) come from the SAME
+    free rollouts as the eleven statistics — no extra physics.
+    ``divergence_window`` adds the snapped local-response DIAGNOSTIC (one
+    rollout of its own, printed, never scored). ``workers`` fans rollouts
+    across processes, bit-identical to serial; a viewing run stays serial.
     """
     if replicates < 1:
         raise ValueError("replicates must be >= 1")
@@ -1137,9 +1276,10 @@ def ground(
         if divergence_window
         else None
     )
-    curves: dict[str, np.ndarray] | None = None
+    snap_curves: dict[str, np.ndarray] | None = None
     if view or workers <= 1:
         sims = []
+        curve_sets = []
         for seed in range(replicates):
             rng = np.random.default_rng(seed)
             run = rollout_policy(
@@ -1156,8 +1296,11 @@ def ground(
                 **mechanisms,  # type: ignore[arg-type]
             )
             sims.append(sim_summary(run, cmd_at(st, run.t + start)))
+            curve_sets.append(tracking_curves(run, st, start=start))
         if states is not None:
-            curves = _curves_one(st, policy, preset, backend, start, seconds, mechanisms, states)
+            snap_curves = _curves_one(
+                st, policy, preset, backend, start, seconds, mechanisms, states
+            )
     else:
         import concurrent.futures
         import multiprocessing
@@ -1177,15 +1320,17 @@ def ground(
                 if states is not None
                 else None
             )
-            sims = [f.result() for f in free]
-            curves = cf.result() if cf is not None else None
+            results = [f.result() for f in free]
+            sims = [s for s, _c in results]
+            curve_sets = [c for _s, c in results]
+            snap_curves = cf.result() if cf is not None else None
     real = real_summary(st, start=start, seconds=seconds)
     if noise is None:
         noise = usable_floor(spread_of(sims), real.as_dict())
         floor_source = "sim-perturb"
     div = (
-        aggregate_divergence(curves, divergence_window, moving_windows(st, states))
-        if curves is not None and divergence_window and states is not None
+        aggregate_divergence(snap_curves, divergence_window, moving_windows(st, states))
+        if snap_curves is not None and divergence_window and states is not None
         else None
     )
     return Report(
@@ -1197,6 +1342,7 @@ def ground(
         start=start,
         seconds=seconds,
         sims=sims if replicates > 1 else [],
+        tracking=tracking_of(curve_sets, seconds),
         divergence=div,
     )
 
@@ -1257,8 +1403,8 @@ def main() -> None:
         type=float,
         default=DIVERGENCE_WINDOW_S,
         metavar="WINDOW_S",
-        help="re-init window for the divergence-rate term (0 disables it); the rate "
-        "itself is fitted over the first %(default)ss window's early stretch",
+        help="re-init window for the snapped local-response DIAGNOSTIC "
+        "(0 disables it; the scored tracking areas come from the free rollouts)",
     )
     ap.add_argument(
         "--workers",
