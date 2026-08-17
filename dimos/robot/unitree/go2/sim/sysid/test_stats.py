@@ -93,6 +93,40 @@ def test_summarize_reads_a_synthetic_walk_correctly():
     assert "height_mean" in NOT_COMPARABLE  # room frame: mean is not comparable
 
 
+def test_summarize_attitude_may_ride_its_own_timeline():
+    """The instrument split: position at t, attitude at t_att (a different
+    sensor, its own clock and rate). Passing the same timeline explicitly
+    must change nothing; a genuine second timeline must be read correctly."""
+    t = np.arange(0, 20, 0.02)
+    pos = np.stack([0.5 * t, np.zeros_like(t), np.full_like(t, 0.30)], axis=1)
+    quat = np.tile([1.0, 0.0, 0.0, 0.0], (len(t), 1))
+    cmd = np.tile([0.5, 0.0, 0.0], (len(t), 1))
+    assert summarize(t, pos, quat, cmd) == summarize(t, pos, quat, cmd, t_att=t.copy())
+
+    # attitude at 200 Hz: a 2 Hz roll wobble of 0.05 rad amplitude
+    ta = np.arange(0, 20, 0.005)
+    phi = 0.05 * np.sin(2 * np.pi * 2.0 * ta)
+    quat_a = np.stack([np.cos(phi / 2), np.sin(phi / 2), np.zeros_like(ta), np.zeros_like(ta)], 1)
+    s = summarize(t, pos, quat_a, cmd, t_att=ta)
+    assert s.speed == pytest.approx(0.5, abs=0.03)  # position: untouched by the wobble
+    assert s.roll_std == pytest.approx(0.05 / np.sqrt(2), rel=0.1)
+    assert s.pitch_std == pytest.approx(0.0, abs=1e-6)
+
+
+def test_summarize_without_position_scores_attitude_only():
+    """No tracker: position-derived statistics are NaN (not comparable), the
+    attitude block still measures."""
+    t = np.arange(0, 20, 0.005)
+    phi = 0.05 * np.sin(2 * np.pi * 2.0 * t)
+    quat = np.stack([np.cos(phi / 2), np.sin(phi / 2), np.zeros_like(t), np.zeros_like(t)], 1)
+    cmd = np.tile([0.5, 0.0, 0.0], (len(t), 1))
+    s = summarize(t, None, quat, cmd)
+    for k in ("speed", "speed_gain", "speed_lag", "height_mean", "height_std", "gait_hz"):
+        assert np.isnan(s.as_dict()[k]), k
+    assert s.roll_std == pytest.approx(0.05 / np.sqrt(2), rel=0.1)
+    assert np.isfinite(s.tilt_p99) and np.isfinite(s.yaw_rate_gain)
+
+
 def test_spread_of_is_peak_to_peak_per_statistic():
     t = np.arange(0, 10, 0.02)
     quat = np.tile([1.0, 0.0, 0.0, 0.0], (len(t), 1))

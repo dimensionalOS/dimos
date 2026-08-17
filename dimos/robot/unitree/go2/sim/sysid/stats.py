@@ -214,6 +214,9 @@ class Summary:
     pitch_std: float  # gait-driven pitch oscillation, rad
     roll_std: float  # same, about the roll axis
     tilt_p99: float  # near-worst-case body tilt, rad — the stability tail
+    # Instrument provenance ("pos:tracker att:imu", "sim", ...): part of any
+    # claim, never scored. A claim whose instrument changed is a new claim.
+    source: str = ""
 
     def as_dict(self) -> dict[str, float]:
         return {
@@ -233,49 +236,70 @@ class Summary:
 
 def summarize(
     t: np.ndarray,
-    pos: np.ndarray,
+    pos: np.ndarray | None,
     quat: np.ndarray,
     cmd: np.ndarray,
     *,
+    t_att: np.ndarray | None = None,
     moving_threshold: float = 0.25,
 ) -> Summary:
     """Distributional statistics for one run.
 
-    ``cmd`` is the vx/vy/vyaw in force at each sample of ``t``.
-    """
-    grid, vel = velocity(t, pos)
-    _, c = resample(t, cmd)
-    _, z = resample(t, pos[:, 2])
+    ``cmd`` is the vx/vy/vyaw in force at each sample of ``t``; ``pos`` is
+    sampled at ``t`` too. ``quat`` is the attitude at ``t_att`` — a SEPARATE
+    timeline (default ``t``), because position and attitude may come from
+    different instruments: the real side reads position from the tracker and
+    attitude from the IMU (README 5e — the tracker's flexing mount invents
+    ~2x the roll rate, so it is unusable for attitude and precise for
+    position). Both timelines share an epoch; each is resampled onto its own
+    uniform grid, and the yaw-gain regression truncates to the shorter.
 
-    speed = np.linalg.norm(vel[:, :2], axis=1)
+    ``pos=None`` marks every position-derived statistic NaN — a tracker-less
+    recording still scores its attitude, and NaN pairs drop out of the SNR
+    (they are not comparable on this recording, which is different from
+    matching).
+    """
+    _, c = resample(t, cmd)
     cmd_speed = np.linalg.norm(c[:, :2], axis=1)
     moving = cmd_speed > moving_threshold
 
+    ta = t if t_att is None else t_att
     yaw = np.unwrap(yaw_of(quat))
-    _grid_y, yaw_u = resample(t, yaw)
+    _grid_y, yaw_u = resample(ta, yaw)
     yaw_rate = np.gradient(
         _moving_average(yaw_u, max(2, int(VELOCITY_WINDOW_S * RESAMPLE_HZ))), 1.0 / RESAMPLE_HZ
     )
     n = min(len(yaw_rate), len(c))
-
-    speed_gain, speed_lag = _gain(speed, cmd_speed, moving_threshold)
     yaw_gain, yaw_lag = _gain(yaw_rate[:n], c[:n, 2], 0.2)
 
     # Detrended before the std, like gait_frequency: a slow height sag or a
     # tilted room frame leaking planar travel into z would otherwise read as
     # "bob".
     pitch, roll = pitch_roll_of(quat)
-    _, pitch_u = resample(t, pitch)
-    _, roll_u = resample(t, roll)
-    bob = z - _moving_average(z, int(RESAMPLE_HZ))
+    _, pitch_u = resample(ta, pitch)
+    _, roll_u = resample(ta, roll)
+
+    if pos is not None:
+        grid, vel = velocity(t, pos)
+        _, z = resample(t, pos[:, 2])
+        speed = np.linalg.norm(vel[:, :2], axis=1)
+        speed_gain, speed_lag = _gain(speed, cmd_speed, moving_threshold)
+        bob = z - _moving_average(z, int(RESAMPLE_HZ))
+        speed_v = float(speed[moving].mean()) if moving.any() else 0.0
+        height_mean, height_std = float(z.mean()), float(bob.std())
+        gait_hz = gait_frequency(z)
+    else:
+        nan = float("nan")
+        speed_v = speed_gain = speed_lag = nan
+        height_mean = height_std = gait_hz = nan
 
     return Summary(
-        speed=float(speed[moving].mean()) if moving.any() else 0.0,
+        speed=speed_v,
         speed_gain=speed_gain,
         yaw_rate_gain=yaw_gain,
-        height_mean=float(z.mean()),
-        height_std=float(bob.std()),
-        gait_hz=gait_frequency(z),
+        height_mean=height_mean,
+        height_std=height_std,
+        gait_hz=gait_hz,
         speed_lag=speed_lag,
         yaw_lag=yaw_lag,
         pitch_std=float((pitch_u - _moving_average(pitch_u, int(RESAMPLE_HZ))).std()),
@@ -297,7 +321,10 @@ def spread_of(summaries: list[Summary]) -> dict[str, float]:
     sim-real difference clearly exceeds it.
     """
     keys = summaries[0].as_dict()
+    # np.max/np.min, not the builtins: NaN (a statistic one run cannot measure)
+    # must poison the spread, not silently drop out of it.
     return {
-        k: float(max(s.as_dict()[k] for s in summaries) - min(s.as_dict()[k] for s in summaries))
+        k: float(np.max(vals) - np.min(vals))
         for k in keys
+        if (vals := [s.as_dict()[k] for s in summaries])
     }

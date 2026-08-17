@@ -64,13 +64,12 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     PERTURB_RAD,
     ObsNoise,
     Report,
-    cmd_at,
-    real_summary,
     rollout_policy,
     sim_summary,
     usable_floor,
 )
 from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_streams
+from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 # The under-oscillation verdict's statistics, in its order. `speed` and

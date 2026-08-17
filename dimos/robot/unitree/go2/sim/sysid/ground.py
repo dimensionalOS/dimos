@@ -34,11 +34,16 @@ floor's SOURCE is a parameter of the claim:
 
 * :func:`sim_noise` repeats the rollout from perturbed initial poses —
   measures what chaos alone does. Available today, and the default.
-* :func:`robot_noise` spreads the statistics across REPEAT RECORDINGS of the
-  same walk — captures battery sag and motor temperature too, and is the
-  yardstick the publishable claim needs: *"the simulator differs from the
-  robot by less than the robot differs from itself, on N of 11 statistics."*
-  Swapping it in is ``--noise-from REC2.mcap``, not a rewrite.
+* :func:`~dimos.robot.unitree.go2.sim.sysid.real.robot_noise` spreads the
+  statistics across REPEAT RECORDINGS of the same walk — captures battery
+  sag and motor temperature too, and is the yardstick the publishable claim
+  needs: *"the simulator differs from the robot by less than the robot
+  differs from itself, on N of 11 statistics."* Swapping it in is
+  ``--noise-from REC2.mcap REC3.mcap``, not a rewrite.
+
+The REAL side of the comparison (:mod:`~dimos.robot.unitree.go2.sim.sysid
+.real`) is pure recording processing and lives outside this engine-coupled
+module — position from the tracker, attitude from the IMU (README 5e).
 
 A well-stabilised policy can drive a floor to ~0, sending that SNR to
 infinity and letting one term dominate; :func:`usable_floor` clamps against
@@ -54,8 +59,7 @@ from __future__ import annotations
 
 import argparse
 import collections
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -70,9 +74,29 @@ from dimos.robot.unitree.go2.sim.plant import (
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, mount_matrix, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, read_streams
+from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
 from dimos.robot.unitree.go2.sim.sysid.stats import NOT_COMPARABLE, Summary, spread_of, summarize
+
+__all__ = [  # the real side (cmd_at, real_summary, robot_noise) lives in .real
+    "COMMAND_SLEW",
+    "CONTROL_DT",
+    "NOMINAL_GAIT_HEIGHT",
+    "PERTURB_RAD",
+    "ObsNoise",
+    "PolicyRun",
+    "Report",
+    "cmd_at",
+    "ground",
+    "projected_gravity",
+    "real_summary",
+    "robot_noise",
+    "rollout_policy",
+    "sim_noise",
+    "sim_summary",
+    "usable_floor",
+]
 
 CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
 
@@ -135,14 +159,6 @@ class PolicyRun:
     quat: np.ndarray = field(repr=False)  # (n, 4) wxyz
     cmd: np.ndarray = field(repr=False)  # (n, 3)
     target: np.ndarray = field(repr=False)  # (n, 12) commanded joint targets
-
-
-def cmd_at(st: Streams, t_abs: np.ndarray) -> np.ndarray:
-    """The operator command in force at each absolute recording time."""
-    if len(st.wt) == 0:
-        return np.zeros((len(t_abs), 3))
-    idx = np.clip(np.searchsorted(st.wt, t_abs, "right") - 1, 0, len(st.wt) - 1)
-    return st.wcmd[idx]
 
 
 def rollout_policy(
@@ -398,19 +414,7 @@ def sim_summary(run: PolicyRun, cmd: np.ndarray | None = None) -> Summary:
     rot = quat_to_mat(run.quat)
     p = run.pos.copy()
     p[:, 2] = (run.pos + rot @ np.array([0.0, 0.0, TRACKER_Z]))[:, 2]
-    return summarize(run.t, p, run.quat, run.cmd if cmd is None else cmd)
-
-
-def real_summary(st: Streams, *, start: float, seconds: float) -> Summary:
-    """The recording's statistics over the same stretch, from the tracker."""
-    if not st.has_markers:
-        raise ValueError("recording has no tracker: loop 2 has no real side to compare")
-    base_p, base_r = st.base_pose_room(mount_matrix())
-    sel = (st.vt >= start) & (st.vt < start + seconds)
-    p = base_p[sel].copy()
-    p[:, 2] = st.vp[sel][:, 2]  # sensor-space height; see sim_summary
-    quat = np.stack([mat_to_quat(r) for r in base_r[sel]])
-    return summarize(st.vt[sel] - start, p, quat, cmd_at(st, st.vt[sel]))
+    return replace(summarize(run.t, p, run.quat, run.cmd if cmd is None else cmd), source="sim")
 
 
 # ------------------------------------------------------------- noise floors
@@ -448,28 +452,6 @@ def sim_noise(
     return spread_of(runs)
 
 
-def robot_noise(
-    recordings: Sequence[Streams],
-    *,
-    start: float = 6.0,
-    seconds: float | None = None,
-) -> dict[str, float]:
-    """Noise floor measured as the ROBOT against itself: repeat recordings.
-
-    The better yardstick — it carries battery sag and motor temperature, not
-    just chaos — and the one the publishable claim is expressed against.
-    Needs two or more recordings of the same walk; the spread of their
-    statistics IS the floor.
-    """
-    if len(recordings) < 2:
-        raise ValueError("robot_noise needs at least two recordings of the same walk")
-    sums = []
-    for st in recordings:
-        span = float(st.wt[-1]) - start
-        sums.append(real_summary(st, start=start, seconds=span if seconds is None else seconds))
-    return spread_of(sums)
-
-
 def usable_floor(
     raw: dict[str, float],
     real: dict[str, float],
@@ -504,11 +486,16 @@ class Report:
     seconds: float
 
     def snr(self) -> dict[str, float]:
-        """Sim-real difference over the statistic's own floor, per statistic."""
+        """Sim-real difference over the statistic's own floor, per statistic.
+
+        A NaN on either side (a tracker-less real side has no position
+        statistics) means NOT COMPARABLE on this recording — the statistic is
+        left out entirely rather than scored, matched, or counted.
+        """
         s, r = self.sim.as_dict(), self.real.as_dict()
         out = {}
         for k in s:
-            if k in NOT_COMPARABLE:
+            if k in NOT_COMPARABLE or not (np.isfinite(s[k]) and np.isfinite(r[k])):
                 continue
             n = self.noise.get(k, 0.0)
             out[k] = abs(s[k] - r[k]) / n if n > 1e-9 else float("inf")
@@ -533,7 +520,7 @@ class Report:
         n, of = self.n_matched()
         lines = [
             f"preset {self.preset}  {self.seconds:.0f}s from t={self.start:.0f}s  "
-            f"floor: {self.floor_source}",
+            f"floor: {self.floor_source}  real[{self.real.source or '?'}]",
             f"{'statistic':>14} {'sim':>9} {'real':>9} {'floor':>9} {'SNR':>7}",
         ]
         for k in sorted(snr, key=lambda k: -snr[k]):
@@ -634,7 +621,9 @@ def main() -> None:
         nargs="+",
         default=None,
         metavar="REC",
-        help="repeat recordings of the same walk: floor = the robot against itself",
+        help="two or more repeat recordings of the same walk: floor = the robot "
+        "against itself. The grounded recording itself stays OUT of the floor, "
+        "so the floor and the verdict are measured on different data.",
     )
     ap.add_argument(
         "--latency",
@@ -688,7 +677,7 @@ def main() -> None:
     source = "sim-perturb"
     if args.noise_from:
         repeats = [read_streams(r) for r in args.noise_from]
-        raw = robot_noise([st, *repeats], start=args.start, seconds=args.seconds)
+        raw = robot_noise(repeats, start=args.start, seconds=args.seconds)
         span = float(st.wt[-1]) - args.start
         real = real_summary(
             st, start=args.start, seconds=span if args.seconds is None else args.seconds

@@ -68,7 +68,6 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     ObsNoise,
     Report,
     ground,
-    real_summary,
     sim_noise,
     usable_floor,
 )
@@ -80,6 +79,7 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
     transport_leg,
 )
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
+from dimos.robot.unitree.go2.sim.sysid.real import real_summary
 from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
@@ -201,8 +201,8 @@ def shared_floor(
     Per-candidate floors would let a plant buy small SNRs with its own chaos;
     a shared floor keeps the comparison about the physics. Measured on the
     incumbent and clamped (:func:`usable_floor`) — swap in
-    :func:`~dimos.robot.unitree.go2.sim.sysid.ground.robot_noise` when the
-    repeat recording exists.
+    :func:`~dimos.robot.unitree.go2.sim.sysid.real.robot_noise` when repeat
+    recordings exist.
     """
     st = read_streams(validation)
     base = load_preset(baseline)

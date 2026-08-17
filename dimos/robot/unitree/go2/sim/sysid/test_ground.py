@@ -36,21 +36,33 @@ FREEWALK_BIN = Path(__file__).parents[6] / "data/ml-trajectory-research/freewalk
 
 def _summary(**over: float) -> Summary:
     base = dict.fromkeys(Summary.__dataclass_fields__, 0.0)
+    del base["source"]  # provenance, not a statistic
     base.update(speed=0.5, speed_gain=0.9, gait_hz=1.7, height_mean=0.3)
     base.update(over)
     return Summary(**base)  # type: ignore[arg-type]
 
 
-def _streams(wt: np.ndarray, wcmd: np.ndarray) -> Streams:
+def _streams(
+    wt: np.ndarray,
+    wcmd: np.ndarray,
+    *,
+    lt: np.ndarray | None = None,
+    lquat: np.ndarray | None = None,
+    vt: np.ndarray | None = None,
+    vp: np.ndarray | None = None,
+    vq: np.ndarray | None = None,
+) -> Streams:
     z = np.zeros(0)
-    return Streams(
-        lt=z,
-        lq=np.zeros((0, 12)),
-        ldq=np.zeros((0, 12)),
-        ltau=np.zeros((0, 12)),
-        lquat=np.zeros((0, 4)),
-        lgyro=np.zeros((0, 3)),
-        lacc=np.zeros((0, 3)),
+    lt = z if lt is None else lt
+    n = len(lt)
+    st = Streams(
+        lt=lt,
+        lq=np.zeros((n, 12)),
+        ldq=np.zeros((n, 12)),
+        ltau=np.zeros((n, 12)),
+        lquat=np.tile([1.0, 0.0, 0.0, 0.0], (n, 1)) if lquat is None else lquat,
+        lgyro=np.zeros((n, 3)),
+        lacc=np.zeros((n, 3)),
         ct=z,
         cq=np.zeros((0, 12)),
         ckp=np.zeros((0, 12)),
@@ -60,6 +72,9 @@ def _streams(wt: np.ndarray, wcmd: np.ndarray) -> Streams:
         wt=wt,
         wcmd=wcmd,
     )
+    if vt is not None:
+        st.vt, st.vp, st.vq = vt, vp if vp is not None else np.zeros((len(vt), 3)), vq
+    return st
 
 
 def test_cmd_at_holds_zero_order():
@@ -79,6 +94,86 @@ def test_usable_floor_lifts_a_collapsed_noise_floor():
 def test_usable_floor_cross_clamps_against_another_recording():
     floor = usable_floor({"speed": 1e-9}, {"speed": 0.0}, {"speed": 0.03})
     assert floor["speed"] == 0.03
+
+
+def _roll_quat(phi: np.ndarray) -> np.ndarray:
+    return np.stack([np.cos(phi / 2), np.sin(phi / 2), np.zeros_like(phi), np.zeros_like(phi)], 1)
+
+
+def _split_streams(imu_amp: float, tracker_amp: float) -> Streams:
+    """Tracker walking forward with a flexing mount; IMU with the true wobble.
+
+    ``vq`` is built so the BASE attitude the mount matrix recovers is exactly
+    the intended upright roll wobble — the flex lives in the tracker's story
+    of the base, which is what the split must refuse to read.
+    """
+    from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+    from dimos.robot.unitree.go2.sim.sysid.ingest import mount_matrix
+
+    lt = np.arange(0, 20, 0.002)  # 500 Hz IMU
+    vt = np.arange(0, 20, 0.005)  # 200 Hz tracker
+    vp = np.stack([0.5 * vt, np.zeros_like(vt), np.full_like(vt, 1.0)], axis=1)
+    base_r = quat_to_mat(_roll_quat(tracker_amp * np.sin(2 * np.pi * 2.0 * vt)))
+    return _streams(
+        np.array([0.0]),
+        np.array([[0.5, 0.0, 0.0]]),
+        lt=lt,
+        lquat=_roll_quat(imu_amp * np.sin(2 * np.pi * 2.0 * lt)),
+        vt=vt,
+        vp=vp,
+        vq=np.stack([mat_to_quat(r @ mount_matrix()) for r in base_r]),
+    )
+
+
+def test_real_summary_reads_attitude_from_the_imu_not_the_tracker():
+    """The 5e instrument split: the tracker's flexing mount invents rotation,
+    so oscillation statistics must come from the rigidly-mounted IMU while
+    position stays with the tracker."""
+    from dimos.robot.unitree.go2.sim.sysid.ground import real_summary
+
+    st = _split_streams(imu_amp=0.02, tracker_amp=0.10)
+    s = real_summary(st, start=0.0, seconds=20.0)
+    assert s.source == "pos:tracker att:imu"
+    assert s.speed == pytest.approx(0.5, abs=0.03)  # position: still the tracker
+    assert s.roll_std == pytest.approx(0.02 / np.sqrt(2), rel=0.15)
+    # the retracted instrument stays available for diagnosis, clearly labelled
+    old = real_summary(st, start=0.0, seconds=20.0, attitude="tracker")
+    assert old.source == "pos:tracker att:tracker"
+    assert old.tilt_p99 > 3 * s.tilt_p99
+
+
+def test_real_summary_without_a_tracker_scores_attitude_only():
+    from dimos.robot.unitree.go2.sim.sysid.ground import real_summary
+
+    lt = np.arange(0, 20, 0.002)
+    st = _streams(
+        np.array([0.0]),
+        np.array([[0.5, 0.0, 0.0]]),
+        lt=lt,
+        lquat=_roll_quat(0.02 * np.sin(2 * np.pi * 2.0 * lt)),
+    )
+    s = real_summary(st, start=0.0, seconds=20.0)
+    assert s.source == "att:imu (no tracker)"
+    assert np.isnan(s.speed) and np.isnan(s.gait_hz)
+    assert s.roll_std == pytest.approx(0.02 / np.sqrt(2), rel=0.15)
+    with pytest.raises(ValueError, match="no tracker"):
+        real_summary(st, start=0.0, seconds=20.0, attitude="tracker")
+
+
+def test_snr_leaves_out_statistics_that_are_nan_on_either_side():
+    """NaN means NOT COMPARABLE on this recording — neither scored nor counted."""
+    nan = float("nan")
+    rep = _report(
+        _summary(speed=0.6),
+        _summary(speed=nan, speed_gain=nan, speed_lag=nan, height_std=nan, gait_hz=nan),
+        dict.fromkeys(Summary.__dataclass_fields__, 0.05),
+    )
+    snr = rep.snr()
+    assert len(snr) == 5  # 10 comparable - 5 NaN pairs
+    assert "speed" not in snr and "roll_std" in snr
+    assert np.isfinite(rep.loss())
+    _n, of = rep.n_matched()
+    assert of == 5
 
 
 def test_obs_noise_scales_every_level_together():
