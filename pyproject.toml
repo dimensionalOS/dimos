@@ -316,7 +316,7 @@ cuda = [
 
 sim = [
     # Simulation
-    "mujoco>=3.3.4",
+    "mujoco==3.10.0",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -327,7 +327,10 @@ sim = [
 # not define, and `pygame`, which this package has no use for. Everything here
 # is needed; nothing here is optional.
 go2sim = [
-    "mujoco>=3.3.4",
+    # Exact pin, not a range: the plant claims reproduction to rel=1e-9 while
+    # measuring 12-14 mm of contact creep, and contact-solver behaviour can
+    # change between mujoco minors. Bump = re-run the go2sim acceptance suite.
+    "mujoco==3.10.0",
     "mcap>=1.1.1",
     "optuna>=4.0",  # sysid.fit: seeded CMA-ES studies
     "cmaes>=0.11",  # optuna's CmaEsSampler backend, not pulled in by default
@@ -462,7 +465,7 @@ tests = [
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
-    "mujoco>=3.3.4",
+    "mujoco==3.10.0",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
