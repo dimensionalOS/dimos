@@ -120,7 +120,10 @@ jobs:
           [ -n "$id" ] || { echo "no baseline run yet"; exit 0; }
           gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
       - name: Comment on the PR
-        if: always() && github.event_name == 'pull_request'
+        # Fork PRs get a read-only token: posting would 403 and fail the run.
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
@@ -129,7 +132,7 @@ jobs:
           [ -f metrics.json ] || exit 0
           bin/rusage-comment metrics.json baseline/metrics.json \
             "${BASELINE_REF:-main}" >comment.md
-          id=$(gh api "repos/$REPO/issues/$PR/comments" \
+          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq '.[]|select(.body|contains("<!-- dimos-profile -->"))|.id' | head -1)
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md
