@@ -81,6 +81,16 @@ methods and inherits the entire referee. Backends are PICKLABLE by contract —
 configuration only, no live engine state — which is what lets worker
 processes receive the configured backend itself instead of rebuilding one.
 
+**The recording format is the third seamed axis** (engine, robot wire
+format, and — via `RobotSpec` in `anchors.py` — the robot's physical
+constants): readers implement `RecordingReader` (`sysid/recording.py`),
+everything downstream consumes `Streams`, and the Go2 DDS reader in
+`ingest.py` is one implementation. All of this is held by `test_seam.py`,
+not convention: every above-seam module is imported in a clean interpreter
+(no engine may arrive), and an AST pass allows the engine's name only
+inside a `main()` — the leak route that once put `mj_step` inside loop 2 is
+closed by test.
+
 **Fitted values do not transfer between backends.** The recordings, the
 anchors (a weighed robot is 16.5 kg in any simulator), the regime labels and
 the method do.
