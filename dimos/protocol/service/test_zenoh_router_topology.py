@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import socket
 import time
 from typing import Any
 
@@ -23,7 +24,15 @@ import pytest
 
 from dimos.protocol.service.zenohservice import ZenohService, ZenohSessionPool
 
-_ROUTER_ENDPOINT = "tcp/127.0.0.1:17452"
+
+def _free_endpoint() -> str:
+    """A loopback endpoint nothing holds. A fixed port collides between runs."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"tcp/127.0.0.1:{sock.getsockname()[1]}"
+
+
+_ROUTER_ENDPOINT = _free_endpoint()
 _KEY = "dimos_test/router_topology"
 
 

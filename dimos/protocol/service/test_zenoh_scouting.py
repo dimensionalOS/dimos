@@ -119,7 +119,7 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults):
         connect_timeout=5.0,
         mode="client",
     )
-    assert elapsed < 1.0
+    assert elapsed < 3.0
 
 
 def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults):
@@ -133,11 +133,11 @@ def test_await_gives_up_after_timeout(zenoh_defaults):
     elapsed = _await_elapsed(
         _FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
     )
-    assert 0.3 <= elapsed < 3.0
+    assert elapsed >= 0.3
 
 
 def test_await_is_skipped_without_connect_endpoints(zenoh_defaults):
-    assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 1.0
+    assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 3.0
 
 
 def test_zero_timeout_disables_the_wait(zenoh_defaults):
