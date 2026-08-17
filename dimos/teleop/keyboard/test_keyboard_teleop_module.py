@@ -130,12 +130,14 @@ def test_keyup_publishes_directly_without_timeout_wait(
     publish.assert_called_once()
 
 
-def test_gripper_emits_a_wish_only_when_it_changes(module: KeyboardTeleopModule, mocker) -> None:
+def test_gripper_emits_closed_state_only_when_it_changes(
+    module: KeyboardTeleopModule, mocker
+) -> None:
     publish = mocker.patch.object(module.gripper_command, "publish")
 
     module._set_gripper_closed(GRIPPER_OPEN)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data is GRIPPER_OPEN
+    assert publish.call_args.args[0].data is False
 
     publish.reset_mock()
     module._set_gripper_closed(GRIPPER_OPEN)
@@ -143,4 +145,4 @@ def test_gripper_emits_a_wish_only_when_it_changes(module: KeyboardTeleopModule,
 
     module._set_gripper_closed(GRIPPER_CLOSED)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data is GRIPPER_CLOSED
+    assert publish.call_args.args[0].data is True

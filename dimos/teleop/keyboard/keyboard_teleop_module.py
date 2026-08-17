@@ -60,8 +60,8 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
 DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
 # The keyboard sends open/closed intent; GripperControlTask owns the units.
-GRIPPER_OPEN = True
-GRIPPER_CLOSED = False
+GRIPPER_OPEN = False
+GRIPPER_CLOSED = True
 
 TwistVector = tuple[float, float, float]
 
