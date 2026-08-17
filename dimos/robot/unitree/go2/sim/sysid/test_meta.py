@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The outer space stays tiny: the weight vector's three live axes."""
+"""The outer space stays tiny: the weight vector's four live axes."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from dimos.robot.unitree.go2.sim.backend import CHANNELS
 from dimos.robot.unitree.go2.sim.sysid.fit import Objective, PooledObjective
 from dimos.robot.unitree.go2.sim.sysid.meta import (
     DEFAULT_POINT,
+    INCUMBENT_POINT,
     MDD_N8,
     OuterPoint,
     second_dr_component,
@@ -30,20 +31,26 @@ from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, Span
 from dimos.robot.unitree.go2.sim.sysid.test_score import _result
 
 
-def test_the_outer_point_is_three_decisions_and_no_more():
+def test_the_outer_point_is_four_decisions_and_no_more():
     fields = set(OuterPoint.__dataclass_fields__) - {"name"}
-    assert fields == {"w_flight", "w_dq", "w_tau"}
+    assert fields == {"w_accel", "w_flight", "w_dq", "w_tau"}
 
 
-def test_the_point_maps_onto_the_joint_level_weight_vector():
-    p = OuterPoint("t", w_flight=0.25, w_dq=1.0, w_tau=0.5)
+def test_the_partition_point_carries_no_body_level_channel():
+    p = OuterPoint("t", w_accel=0.0, w_flight=0.25, w_dq=1.0, w_tau=0.5)
     w = p.weights()
-    assert w[("joint", "floor")] == pytest.approx(0.75)
-    assert w[("joint", "flight")] == pytest.approx(0.25)
-    assert w[("dq", "floor")] == pytest.approx(0.75)
-    assert w[("tau", "floor")] == pytest.approx(0.375)
-    # the partition: no body-level channel appears at any weight
+    assert w[("joint", "floor")] == pytest.approx(0.30)
+    assert w[("dq", "flight")] == pytest.approx(0.10)
+    assert w[("tau", "floor")] == pytest.approx(0.15)
     assert not any(c in ("accel", "gyro", "pos", "rot") for c, _r in w)
+
+
+def test_the_incumbents_objective_is_reachable_exactly():
+    """The search must contain the winner as a point, not an approximation:
+    w_accel=1, w_flight=0.5 IS the accel scorer the shipped plant was
+    fitted under (README 4's reachability argument)."""
+    w = INCUMBENT_POINT.weights()
+    assert w == {("accel", "floor"): pytest.approx(0.5), ("accel", "flight"): pytest.approx(0.5)}
 
 
 def test_the_default_point_matches_the_shipped_default_weights():

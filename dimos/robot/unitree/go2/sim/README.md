@@ -53,9 +53,10 @@ good, because it is corrected every 0.4 s.
 ### What to trust with your eyes, and what not to
 
 **Do not judge body tilt against the ghost.** The ghost is the recorded
-*tracker* pose, and the tracker's ATTITUDE is a retired instrument (§6):
-its flexing mount inflates roll by ~2.5x. The ghost will visibly rock more
-than the sim, and that difference is the mount, not the physics.
+*tracker* pose, and the tracker's attitude RATE is a retired instrument
+(§6): it invents roll rate at ~2.5x the gyro's truth. The ghost will
+visibly rock more than the sim, and that difference is the instrument,
+not the physics.
 
 **Trust the ghost's POSITION**, which is what it is good for: trajectory,
 where it ends up, how it turns.
@@ -388,7 +389,7 @@ fitting body acceleration over 0.4 s while loop 2 judges body motion over
 12 studies, cap hit — the region is wider than the data pins) improved
 its own objective **−11.4%** and held-out 153320 **−16.7%**, and grounds
 at **2.21** with the envelope (2.53 bare) against the incumbent's
-**1.61** — worse by ~3.7× the n=8 MDD, the anti-transfer's signature
+**1.61** — worse by ~9× the re-measured n=8 MDD (0.064, §8), the anti-transfer's signature
 intact (attitude family better: roll_std 1.1 vs 1.6; speed family worse:
 speed_gain 0.769 vs 0.814). Removing the accel overlap did not remove
 the anti-transfer, so the overlap was not its cause. What stands, now
@@ -443,18 +444,39 @@ must bind the weights too:
 | segment count / length   | fit CLI `--segments`/`--segment-length`, seeded              |
 | loss statistic           | mean (p50 measured better, never switched)                   |
 
-`OuterPoint` is exactly the weight vector's three live axes — `w_flight`,
-and the `dq`/`tau` weights relative to `joint`. Two axes it once exposed
-are GONE, not parked: `normalised` (raw residual summation is a unit
-choice, not a hypothesis — normalisation is always on) and `stratified`
-(a coverage question `sysid.identify` answers more cheaply; segment
+`OuterPoint` is the weight vector's four live axes: `w_accel` (the accel
+share of channel mass), `w_flight`, and the `dq`/`tau` weights relative
+to `joint` within the family's remainder. Two axes it once exposed are
+GONE, not parked: `normalised` (raw residual summation is a unit choice,
+not a hypothesis — normalisation is always on) and `stratified` (a
+coverage question `sysid.identify` answers more cheaply; segment
 sampling lives on the fit CLI). `w_flight` became real when the fit set
 gained flight: `fit` pools recordings into one objective with shared
 scales, default set `194142` (79.8 s floor) + sport-jumps (22 flight
-spans, 2.5 s — sport recordings are legitimate loop-1 data; the replay is
-policy-agnostic). The 2.5 s vs 60 s imbalance is handled by shape, not
-count: each (channel, regime) term is a per-regime MEAN, so `w_flight`
-sets flight's share wherever it occurs.
+spans, 2.5 s — sport recordings are legitimate loop-1 data; the replay
+is policy-agnostic). The 2.5 s vs 60 s imbalance is handled by shape,
+not count: each (channel, regime) term is a per-regime MEAN, so
+`w_flight` sets flight's share wherever it occurs.
+
+**Why `w_accel` is an axis when the partition zeroes it in the default:**
+reachability. The shipped plant was fitted under the accel scorer, which
+grounds at 1.61 against the partition fit's 2.21 — so a search over the
+joint family alone is confined to the family the referee just rejected,
+with the one dial measured at 0.6 of loss pinned by fiat. The partition's
+*independence* rationale survives its *performance* claim failing, and
+the outer loop is the mechanism that prices exactly that trade — it must
+not have the answer pre-decided. `w_accel=1, w_flight=0.5` reproduces
+the incumbent's objective EXACTLY (the search contains the winner as a
+point), `run_outer` seeds from both the incumbent and the partition
+points, and any nonzero accel weight must justify itself on the held-out
+RECORDING, not merely held-out segments — which converts the
+independence claim from an architectural assumption into a measured one.
+Axis sensitivities measured so far: `w_accel` endpoints differ by ~0.6
+of referee loss; `w_flight` 0.25→0 (full refits, same seeds) differs by
+**0.03** — inert at the n=8 resolution. The gating step before any full
+search is therefore a 3–4 point sweep of `w_accel` alone (~50 min per
+point): if accel-only wins it, the remaining axes have no demonstrated
+headroom and the search should not run.
 
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
@@ -482,7 +504,7 @@ Three consequences worth designing around:
   defaults, each labelled *"chosen because X, never validated"*.
 - **The losers are DR samples, not discards.** Every trial's fitted plant
   persists in the `--out` log with its grounding score; the trials the
-  referee cannot distinguish from the winner (within the n=8 MDD, 0.16 —
+  referee cannot distinguish from the winner (within the n=8 MDD, 0.064 —
   the fit's 1-SE harvest one storey up) span a SECOND DR component:
   misspecification spread — *depending on which discrepancies the weights
   absorb, the parameters land elsewhere* — which no amount of data
@@ -739,11 +761,15 @@ structure is the claim, not the third decimal), full span:
   position; duration 71→40→20 s reads 0.85→1.14→1.51. Both effects dwarf
   chaos: **losses compare ONLY on the identical window.**
 
-**Minimum detectable difference** (bootstrap, 95%, same window and floor):
-single draws **0.77** — the size of a verdict itself; median-of-4 **0.31**;
-median-of-8 **0.16**; median-of-16 **0.07**. The match count stays coarse
-at any n — **k wobbles ±1** whenever statistics sit near SNR 1; quote it
-with its draw range, never alone.
+**Minimum detectable difference** (bootstrap, 95%, same window and floor),
+re-measured 2026-08-17 on the CURRENT 16-term loss from a 16-replicate
+pool: median-of-4 **0.098**, median-of-8 **0.064**, median-of-16
+**0.054**. Finer than the old 11-term loss's 0.31/0.16/0.07 — the five
+divergence terms are deterministic per plant, so they dilute draw
+variance rather than adding to it (the pool: 15 of 16 draws in
+1.56–1.72, one right-tail outlier at 2.57 — the heavy tail persists).
+The match count stays coarse at any n — **k wobbles ±1** whenever
+statistics sit near SNR 1; quote it with its draw range, never alone.
 
 So `ground --replicates` (default 8) rolls perturbed rollouts: the verdict
 is the per-statistic MEDIAN (§4a's shape), the per-draw loss and k ranges
@@ -764,7 +790,7 @@ or more than two or three decisions per recording (§4).
 physics. What fails for `measured`: `div_yaw` 5.1 (the 6.3 deg/s heading
 drift §4 found), `roll_std` 1.6, `div_along`/`speed_gain` ~1.5–1.7, with
 `height_std`/`speed_lag`/`div_cross`/`div_roll` on the 1.0 boundary. The
-measured-vs-stock separation is ~55× the n=8 MDD. The envelope's loss
+measured-vs-stock separation is ~140× the n=8 MDD. The envelope's loss
 contribution (~0.44, measured under the prior native-runner floor) also
 clears it, replicated; its match-count gain does not — the envelope's
 attitude cost sits ON the robot floor, so k is not a claim the envelope

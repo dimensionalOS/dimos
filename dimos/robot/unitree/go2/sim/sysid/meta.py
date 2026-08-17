@@ -14,15 +14,17 @@
 
 """Loop 2's meta-search: the grounding adjudicates loop-1's hyperparameters.
 
-The outer space is the loop-1 WEIGHT VECTOR's three live axes (README 4):
-``w_flight`` (how much the flight regime counts, real now that a
-flight-bearing recording is in the fit set) and the ``dq``/``tau`` channel
-weights relative to ``joint``. The axes the two retired scorers once
-disagreed on — stratified segment sampling and per-channel normalisation —
-are gone: normalisation is always on (raw residual summation is a unit
-choice, not a hypothesis), and segment sampling is the fit CLI's
-``--segments``/``--segment-length``, a coverage question loop 1's own
-identifiability instrument answers more cheaply than the referee can.
+The outer space is the loop-1 WEIGHT VECTOR's four live axes (README 4):
+``w_accel`` (the accel share — the measured principal axis of the
+misspecification map, and what keeps the incumbent's objective REACHABLE),
+``w_flight`` (real now that a flight-bearing recording is in the fit set)
+and the ``dq``/``tau`` weights relative to ``joint``. The axes the two
+retired scorers once disagreed on — stratified segment sampling and
+per-channel normalisation — are gone: normalisation is always on (raw
+residual summation is a unit choice, not a hypothesis), and segment
+sampling is the fit CLI's ``--segments``/``--segment-length``, a coverage
+question loop 1's own identifiability instrument answers more cheaply
+than the referee can.
 
     # ground candidate plants under one shared floor:
     python -m dimos.robot.unitree.go2.sim.sysid.meta experiment REC.mcap \
@@ -95,38 +97,60 @@ from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
-# Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%):
-# outer trials whose grounding losses sit within this of the best are a
-# TIE, and their fitted plants are admissible DR samples (module docstring).
-MDD_N8 = 0.16
+# Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%),
+# re-measured 2026-08-17 on the CURRENT 16-term loss from a 16-replicate
+# pool (the deterministic divergence terms dilute draw variance, so the
+# 16-term loss resolves finer than the old 11-term one's 0.16): outer
+# trials within this of the best are a TIE, their fitted plants
+# admissible DR samples (module docstring).
+MDD_N8 = 0.064
 
 
 @dataclass(frozen=True)
 class OuterPoint:
     """One loop-1 hyperparameter setting — a point the outer study evaluates.
 
-    Deliberately three decisions and no more — the weight vector's live
-    axes under the README-4 partition. Channel weights are RELATIVE to
-    ``joint`` = 1 (the score renormalises, so only ratios matter).
-    Everything else in the inner objective stays at its documented default.
+    Four decisions: ``w_accel`` (the fraction of channel mass on ``accel``
+    — the MEASURED principal axis of the misspecification map, worth
+    0.6-0.9 of referee loss between its endpoints), ``w_flight``, and the
+    ``dq``/``tau`` weights relative to ``joint`` within the joint family's
+    (1 - w_accel) share. One more axis than the two-or-three rule wants,
+    kept because pinning it at zero confines the search to the family the
+    referee just rejected while the incumbent's objective sits outside the
+    reachable set (README 4). ``w_accel=1, w_flight=0.5`` reproduces the
+    incumbent's objective exactly; any nonzero ``w_accel`` re-couples
+    loop 1 to a referee quantity, so it must justify itself on the
+    held-out RECORDING, not merely on held-out segments.
     """
 
     name: str
-    w_flight: float = 0.25  # share of each channel's weight on the flight regime
-    w_dq: float = 1.0  # dq weight relative to joint
-    w_tau: float = 0.5  # tau weight relative to joint
+    w_accel: float = 0.0  # fraction of channel mass on accel
+    w_flight: float = 0.25  # share of every channel's weight on the flight regime
+    w_dq: float = 1.0  # dq weight relative to joint, within the family share
+    w_tau: float = 0.5  # tau weight relative to joint, within the family share
 
     def weights(self) -> dict[tuple[str, str], float]:
+        family = {"joint": 1.0, "dq": self.w_dq, "tau": self.w_tau}
+        total = sum(family.values()) or 1.0
         out: dict[tuple[str, str], float] = {}
-        for channel, wc in (("joint", 1.0), ("dq", self.w_dq), ("tau", self.w_tau)):
-            out[(channel, "floor")] = wc * (1.0 - self.w_flight)
-            out[(channel, "flight")] = wc * self.w_flight
+        for channel, wc in family.items():
+            mass = (1.0 - self.w_accel) * wc / total
+            if mass > 0:
+                out[(channel, "floor")] = mass * (1.0 - self.w_flight)
+                out[(channel, "flight")] = mass * self.w_flight
+        if self.w_accel > 0:
+            out[("accel", "floor")] = self.w_accel * (1.0 - self.w_flight)
+            out[("accel", "flight")] = self.w_accel * self.w_flight
         return out
 
 
-# The incumbent setting — the outer study's seed, and DEFAULT_WEIGHTS'
-# shape (joint .4 / dq .4 / tau .2, w_flight .25) expressed in ratios.
-DEFAULT_POINT = OuterPoint("default")
+# The two seed points: the PARTITION's default (DEFAULT_WEIGHTS' shape —
+# joint .3/.1, dq .3/.1, tau .15/.05) and the INCUMBENT's objective (the
+# accel scorer the shipped plant was actually fitted under, which grounds
+# at 1.61 against the partition point's 2.21) — the search must be able to
+# reach the winner, not only the principle.
+DEFAULT_POINT = OuterPoint("partition-default")
+INCUMBENT_POINT = OuterPoint("incumbent-accel", w_accel=1.0, w_flight=0.5)
 
 
 def inner_fit(
@@ -634,6 +658,7 @@ def run_outer(
     def objective(trial: optuna.Trial) -> float:
         point = OuterPoint(
             name=f"trial-{trial.number}",
+            w_accel=trial.suggest_float("w_accel", 0.0, 1.0),
             w_flight=trial.suggest_float("w_flight", 0.0, 1.0),
             w_dq=trial.suggest_float("w_dq", 0.0, 2.0),
             w_tau=trial.suggest_float("w_tau", 0.0, 2.0),
@@ -680,8 +705,10 @@ def run_outer(
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=0))
-    p = DEFAULT_POINT
-    study.enqueue_trial({"w_flight": p.w_flight, "w_dq": p.w_dq, "w_tau": p.w_tau})
+    for p in (INCUMBENT_POINT, DEFAULT_POINT):
+        study.enqueue_trial(
+            {"w_accel": p.w_accel, "w_flight": p.w_flight, "w_dq": p.w_dq, "w_tau": p.w_tau}
+        )
     study.optimize(objective, n_trials=trials)
     best = study.best_trial
     print(f"best outer point: {best.params}  ground loss {best.value:.3f}")
