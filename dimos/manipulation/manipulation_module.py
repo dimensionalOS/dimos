@@ -26,6 +26,8 @@ from typing import Any, Literal, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
 from pydantic import Field
+from reactivex.abc import DisposableBase
+from reactivex.disposable import Disposable
 
 from dimos.agents.skill_result import SkillResult
 from dimos.control.coordinator import ControlCoordinator
@@ -227,6 +229,8 @@ class ManipulationModule(Module):
         self._init_joints: dict[RobotName, JointState] = {}
 
         self._robot_tf_edges: dict[RobotName, list[tuple[str, str]]] = {}
+        self._joint_state_subscription: DisposableBase | None = None
+        self._planning_voxel_subscription: DisposableBase | None = None
 
         logger.info("ManipulationModule initialized")
 
@@ -234,6 +238,7 @@ class ManipulationModule(Module):
     def start(self) -> None:
         """Start the manipulation module."""
         super().start()
+        self._dispose_input_subscriptions()
 
         # Execution state must exist before planning starts observers such as visualization.
         self._initialize_execution()
@@ -241,10 +246,17 @@ class ManipulationModule(Module):
 
         # Subscribe to joint state via port
         if self.coordinator_joint_state is not None:
-            self.coordinator_joint_state.subscribe(self._on_joint_state)
+            self._joint_state_subscription = self.register_disposable(
+                Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
+            )
             logger.info("Subscribed to coordinator_joint_state port")
-        if self.planning_voxel_map is not None:
-            self.planning_voxel_map.subscribe(self._on_planning_voxel_map)
+        if (
+            self.planning_voxel_map.connection is not None
+            or self.planning_voxel_map._transport is not None
+        ):
+            self._planning_voxel_subscription = self.register_disposable(
+                Disposable(self.planning_voxel_map.subscribe(self._on_planning_voxel_map))
+            )
             logger.info("Subscribed to planning_voxel_map port")
 
         logger.info("ManipulationModule started")
@@ -423,7 +435,14 @@ class ManipulationModule(Module):
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
-                self._publish_robot_tf(robot_name, robot_id, config, msg.ts)
+                model_joint_state = JointState(
+                    name=list(config.joint_names),
+                    position=sub_positions,
+                    velocity=sub_velocities,
+                    ts=msg.ts,
+                    frame_id=msg.frame_id,
+                )
+                self._publish_robot_tf(robot_name, robot_id, config, model_joint_state)
 
                 # Capture per-robot init joints on first update
                 if robot_name not in self._init_joints:
@@ -469,7 +488,7 @@ class ManipulationModule(Module):
         robot_name: RobotName,
         robot_id: WorldRobotID,
         config: RobotModelConfig,
-        timestamp: float,
+        joint_state: JointState,
     ) -> None:
         """Publish the complete model TF tree from one measured joint state."""
         if self._world_monitor is None:
@@ -480,14 +499,14 @@ class ManipulationModule(Module):
         links = {config.base_link, *(link for edge in edges for link in edge)}
         world_transforms: dict[str, Transform] = {}
         for link in links:
-            pose = self._world_monitor.get_link_pose(robot_id, link)
+            pose = self._world_monitor.get_link_pose(robot_id, link, joint_state)
             if pose is None:
                 logger.warning("Skipping robot TF sample: pose unavailable for %s", link)
                 return
             transform = Transform.from_pose(link, pose)
             transform.frame_id = self.config.planning_world_frame
             transform.child_frame_id = link
-            transform.ts = timestamp
+            transform.ts = joint_state.ts
             world_transforms[link] = transform
 
         transforms = [world_transforms[config.base_link]]
@@ -495,7 +514,7 @@ class ManipulationModule(Module):
             relative = world_transforms[parent].inverse() + world_transforms[child]
             relative.frame_id = parent
             relative.child_frame_id = child
-            relative.ts = timestamp
+            relative.ts = joint_state.ts
             transforms.append(relative)
         self.tf.publish(TFMessage(*transforms))
 
@@ -1845,8 +1864,17 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
+        # Stop callbacks before clearing the monitor registry they dispatch into.
+        self._dispose_input_subscriptions()
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
             self._world_monitor.stop_all_monitors()
 
         super().stop()
+
+    def _dispose_input_subscriptions(self) -> None:
+        for attribute in ("_joint_state_subscription", "_planning_voxel_subscription"):
+            subscription = getattr(self, attribute, None)
+            setattr(self, attribute, None)
+            if subscription is not None:
+                subscription.dispose()
