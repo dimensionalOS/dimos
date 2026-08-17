@@ -181,7 +181,7 @@ class ManipulationModuleConfig(ModuleConfig):
     execution_timeout: float = Field(default=60.0, gt=0.0)
     planning_voxel_resolution: float = Field(default=0.05, gt=0.0)
     planning_world_frame: str = "world"
-    planning_collision_max_age_s: float | None = None
+    planning_collision_max_age_s: float | None = Field(default=None, gt=0.0)
 
 
 class ManipulationModule(Module):
@@ -207,9 +207,9 @@ class ManipulationModule(Module):
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
         self._planning_collision_snapshot = PlanningCollisionSnapshot(
-            resolution=float(getattr(self.config, "planning_voxel_resolution", 0.05)),
-            planning_frame=str(getattr(self.config, "planning_world_frame", "world")),
-            max_age_s=getattr(self.config, "planning_collision_max_age_s", None),
+            resolution=self.config.planning_voxel_resolution,
+            planning_frame=self.config.planning_world_frame,
+            max_age_s=self.config.planning_collision_max_age_s,
         )
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
@@ -264,40 +264,22 @@ class ManipulationModule(Module):
     def _on_planning_voxel_map(self, cloud: PointCloud2) -> None:
         """Stage the latest complete planning collision snapshot."""
         try:
-            if not hasattr(self, "_planning_collision_snapshot"):
-                self._planning_collision_snapshot = self._new_planning_collision_snapshot()
             self._planning_collision_snapshot.stage(cloud)
         except ValueError as exc:
             logger.warning("Rejected planning collision snapshot: %s", exc)
 
     def _synchronize_planning_collision_snapshot(self) -> None:
         """Commit staged collision input before collision-aware planning work."""
-        if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         if self._world_monitor is not None:
             self._planning_collision_snapshot.synchronize(self._world_monitor)
 
     def committed_planning_collision_snapshot(self) -> PointCloud2 | None:
         """Return the completely committed planning collision snapshot."""
-        if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         return self._planning_collision_snapshot.committed()
 
     def latest_planning_collision_snapshot(self) -> PointCloud2 | None:
         """Return the latest validated snapshot for prompt visualization."""
-        if not hasattr(self, "_planning_collision_snapshot"):
-            self._planning_collision_snapshot = self._new_planning_collision_snapshot()
         return self._planning_collision_snapshot.staged()
-
-    def _new_planning_collision_snapshot(self) -> PlanningCollisionSnapshot:
-        resolution = getattr(self.config, "planning_voxel_resolution", 0.05)
-        planning_frame = getattr(self.config, "planning_world_frame", "world")
-        max_age_s = getattr(self.config, "planning_collision_max_age_s", None)
-        return PlanningCollisionSnapshot(
-            resolution=float(resolution) if isinstance(resolution, (int, float)) else 0.05,
-            planning_frame=planning_frame if isinstance(planning_frame, str) else "world",
-            max_age_s=float(max_age_s) if isinstance(max_age_s, (int, float)) else None,
-        )
 
     def _initialize_planning(self) -> None:
         """Initialize world, planner, and trajectory generator."""
@@ -493,7 +475,7 @@ class ManipulationModule(Module):
         """Publish the complete model TF tree from one measured joint state."""
         if self._world_monitor is None:
             return
-        edges = getattr(self, "_robot_tf_edges", {}).get(robot_name)
+        edges = self._robot_tf_edges.get(robot_name)
         if edges is None:
             return
         links = {config.base_link, *(link for edge in edges for link in edge)}

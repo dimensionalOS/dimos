@@ -115,7 +115,12 @@ class PlanningCollisionSnapshot:
                 if not active_obstacle_id:
                     raise RuntimeError("Failed to register planning collision obstacle")
                 self._active_obstacle_id = active_obstacle_id
-            elif not world_monitor.update_obstacle(self._active_obstacle_id, obstacle):
+            else:
+                obstacle.name = self._active_obstacle_id
+                if world_monitor.update_obstacle(obstacle):
+                    self._committed = staged
+                    self._committed_generation = generation
+                    return self.committed()
                 raise RuntimeError(
                     f"Planning collision obstacle '{self._active_obstacle_id}' is missing"
                 )

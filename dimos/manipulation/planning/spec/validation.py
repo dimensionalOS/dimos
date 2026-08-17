@@ -60,6 +60,17 @@ def validate_obstacle(
     elif obstacle.obstacle_type == ObstacleType.MESH:
         if not obstacle.mesh_path:
             raise ValueError("MESH obstacle requires mesh_path")
+    elif obstacle.obstacle_type == ObstacleType.OCTREE:
+        if obstacle.points is None:
+            raise ValueError("OCTREE obstacle requires points")
+        points = np.asarray(obstacle.points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
+            raise ValueError("OCTREE obstacle points must be a non-empty Nx3 array")
+        if not np.isfinite(points).all():
+            raise ValueError("OCTREE obstacle points must be finite")
+        resolution = obstacle.octree_resolution
+        if resolution is None or not np.isfinite(resolution) or resolution <= 0.0:
+            raise ValueError("OCTREE obstacle requires a positive octree_resolution")
     else:
         raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
     color = np.asarray(obstacle.color, dtype=np.float64)

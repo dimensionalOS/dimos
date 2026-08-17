@@ -15,6 +15,9 @@ from dimos.manipulation.planning.monitor.planning_collision_snapshot import (
     PlanningCollisionSnapshot,
 )
 from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.validation import validate_obstacle
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -56,6 +59,18 @@ def test_latest_snapshot_commits_without_freshness_rejection() -> None:
     assert obstacle.points.tolist() == [[2.0, 0.0, 0.0]]
 
 
+def test_planning_octree_passes_shared_obstacle_validation() -> None:
+    obstacle = Obstacle(
+        name="planning-collision",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(frame_id="world"),
+        points=np.asarray([[1.0, 2.0, 3.0]], dtype=np.float64),
+        octree_resolution=0.05,
+    )
+
+    validate_obstacle(obstacle, np.eye(4))
+
+
 def test_staged_exposes_latest_valid_snapshot_before_commit() -> None:
     snapshot = PlanningCollisionSnapshot()
     snapshot.stage(_cloud([[0.0, 0.0, 0.0]], timestamp=1.0))
@@ -83,9 +98,8 @@ def test_nonempty_snapshots_update_one_stable_native_id() -> None:
     assert committed.as_numpy()[0].tolist() == [[2.0, 0.0, 0.0]]
     monitor.add_obstacle.assert_called_once()
     monitor.update_obstacle.assert_called_once()
-    native_id, replacement = monitor.update_obstacle.call_args.args
-    assert native_id == "native-id"
-    assert replacement.name == "planning-collision"
+    (replacement,) = monitor.update_obstacle.call_args.args
+    assert replacement.name == "native-id"
     assert replacement.points.tolist() == [[2.0, 0.0, 0.0]]
     monitor.remove_obstacle.assert_not_called()
 
