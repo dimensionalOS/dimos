@@ -17,20 +17,21 @@ the referee, and the closest thing to "does it look right":
 python -m dimos.robot.unitree.go2.sim.sysid.ground \
     ~/recordings/hard_floor/20260816-194142_policy-freewalk-hard_vive.mcap \
     data/ml-trajectory-research/freewalk_mcf.bin \
-    --view --start 6 --seconds 40 --seeds 1
+    --view --start 6 --seconds 40 --replicates 1
 ```
 
-`--seeds 1` skips the extra floor rollouts and gets to the viewer sooner;
-`--speed 0.25` slows it down to watch footfalls. Add `--preset stock` to see
-what bare menagerie does, which is the comparison every claim here rests on.
+`--replicates 1` runs a single rollout and gets to the viewer sooner — the
+report labels it "a draw, not a verdict" (§5k); `--speed 0.25` slows it
+down to watch footfalls. Add `--preset stock` to see what bare
+menagerie does, which is the comparison every claim here rests on.
 
-> **The numbers these commands print are NOT the verdict.** A short window with
-> one seed measures its floor from a single perturbed rerun, so the floor is
-> narrow and the SNRs are inflated — an 8 s `--seeds 1` run reports loss ~13.8
-> and 2 of 11, against the headline 0.74–0.90 and 6–8 of 11. The verdict needs
-> the full span, `--seeds 4`, and the robot-repeat floor via
-> `--noise-from <two same-session repeats>` (§5f). Use these to LOOK; use §5f's
-> invocation to judge.
+> **The numbers these commands print are NOT the verdict.** A short window
+> with one replicate measures its floor from itself, so the floor is narrow
+> and the SNRs are inflated — and a single 40 s draw of the SAME plant reads
+> anywhere in loss 0.78–1.35, 4–9 of 11 (§5k). The verdict needs the full
+> span, the default `--replicates 8`, and the robot-repeat floor via
+> `--noise-from <two same-session repeats>` (§5f). Use these to LOOK; use
+> §5f's invocation to judge.
 
 **Loop 1 — open-loop plant replay, no policy.** Recorded joint targets driven
 straight into the plant:
@@ -385,6 +386,9 @@ out loud instead of papering over with a point estimate.
 covers (n−1)/(n+1) of the distribution — 60% at n=4 — so a small-n range is too
 NARROW, and under-randomising training is the dangerous direction to be wrong
 in.
+
+**Loop 2's verdict follows the same discipline** since 2026-08-17 (§5k)
+— replicated rollouts, per-statistic median, the spread beside the point.
 
 ### Parallelism: pure functions fan out, the sampler stays sequential
 
@@ -1218,7 +1222,8 @@ claims the current tree reproduces):
   chaotic rollout: a 1e-7 anchor perturbation — physically nothing —
   resamples it across **loss 0.74–0.90, 6–8 of 11**. The pre-consolidation
   "8/11, 0.77" was one such draw; quote the spread, not the draw (§4a,
-  applied to our own headline).
+  applied to our own headline). *(§5k measured the spread properly and
+  replicated the verdict; the current headline lives there.)*
 
 ---
 
@@ -1258,6 +1263,64 @@ comparison anyone can reproduce, not "whatever your checkout had that day".
 
 ---
 
+## 5k. The verdict was one draw — loop 2 replicated (2026-08-17)
+
+§4a's discipline — replicate, ship a median and a spread — was never
+applied to loop 2: `ground()`'s point estimate was a SINGLE unperturbed
+rollout, `--seeds` built only the floor, and with `--noise-from` (the
+headline configuration) the verdict had no replication at all. Every
+"loss X, k of 11" above was one draw, and `meta.run_outer` would have
+compared outer trials on such draws. Measured (194142, shipped plant,
+robot-repeat floor, full span):
+
+* **Chaos.** 16 replicate groundings of the identical plant (±3° initial
+  pose) span **loss 0.77–1.68** (median 0.86, heavy right tail) and **5–9
+  of 11**; every outlier is an attitude-family excursion
+  (`pitch_std`/`roll_std`/`tilt_p99` at SNR 2–3.5 on a rough patch).
+* **Numerics.** `armature`×(1+δ), δ = ±1e-9..±1e-3: |Δloss| is FLAT in δ
+  (0.001–0.31, no convergence as δ shrinks) — any perturbation redraws
+  from the chaos distribution: not "sensitive" (a numerical fix) but
+  unresolvable per draw (a statistical one).
+* **Window.** Median-of-6 verdicts on 20 s windows read 1.35–1.86 by
+  start; duration 71→40→20 s reads 0.85→1.14→1.51. Both dwarf chaos:
+  losses compare ONLY on the identical window (§1's finding, again).
+
+**Minimum detectable difference** (bootstrap, 95%, same window and
+floor): single draws **0.77** — the size of the verdict itself;
+median-of-4 **0.31**; median-of-8 **0.16**; median-of-16 **0.07**. The
+match count stays coarse at any n — k wobbles ±1 whenever statistics sit
+near SNR 1; quote it with its draw range, never alone.
+
+**Which published comparisons survive:** `measured` vs `stock` trivially
+(~40× the n=8 MDD). The envelope promotion's LOSS ordering (§5g: 1.23 →
+0.77) survives — replicated, env-off 1.25 (draws 1.22–1.44) vs env-on
+0.81–0.85, inversion ~0 — but a single-draw pair reads in the WRONG order
+with probability **12.5%**, and the published comparison was one such
+pair. The promotion's MATCH-COUNT claim ("7/11 → 8/11") is **retracted**:
+env-off sits at 7 of 11 on every draw, env-on at 6–7 with
+`pitch_std`/`roll_std` at SNR 0.9–1.1 — the envelope's attitude cost sits
+ON the robot floor, not inside it, and "8/11" was a favourable draw. The
+promotion's case was always the loss, not the match count. §5i's headline
+re-bases to: `measured` **loss 0.81, 7 of 11** (draws 0.78–1.35, 4–9 of
+11); `stock` **6.95, 3 of 11** (draws 6.50–7.50).
+
+**The fix, built.** `ground --replicates` (default 8) rolls perturbed
+rollouts: the verdict is the per-statistic MEDIAN (§4a's shape), the
+per-draw loss and k ranges print on every table, and a single-rollout
+report labels itself "a draw, not a verdict". Without a robot-repeat
+floor the same replicates ARE the sim-perturb floor — cheaper than the
+old 1+4 rollouts. `meta experiment`/`run_outer` ground replicated, log
+the draw range, and declare losses closer than it a tie.
+
+**The outer study is viable**: eight verdict rollouts add ~2 min to a
+1–2 h trial (<2%), resolving differences above ~0.16 — plant-scale
+effects (envelope 0.44, tuning 6.1) clear it; anything closer is a tie
+at n=8 and wants `--replicates 16` (0.07), still minutes. What no
+replication buys: comparisons across windows, or more than two or three
+decisions (§4).
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -1291,9 +1354,11 @@ spring-recovery tests — §5h), and the preset consolidation (§5i: one
 shipped plant with derived anchors and per-value provenance, `stock` as the
 control, structural tests for containment and derivation), and the pinned
 base model (§5j: vendored menagerie @ `4c358ef` via `get_data`, tree-hash
-test, `mujoco==3.10.0`). Acceptance is bit-frozen against the shipped plant
-(re-based §5i, decomposed and predicted), and parallel is bit-identical to
-serial.
+test, `mujoco==3.10.0`), and the replicated loop-2 verdict (§5k: median
+over `--replicates` rollouts, draw spread on every table, variance
+components measured, MDD 0.16 at n=8). Acceptance is bit-frozen against
+the shipped plant (re-based §5i, decomposed and predicted), and parallel
+is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each).
 
