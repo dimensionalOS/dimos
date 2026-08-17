@@ -74,6 +74,7 @@ from dimos.robot.unitree.go2.sim.plant import (
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
+from dimos.robot.unitree.go2.sim.sysid.gait import strides
 from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
@@ -395,11 +396,21 @@ def sim_summary(run: PolicyRun, cmd: np.ndarray | None = None) -> Summary:
     can only be regressed against the same raw schedule — asymmetric axes
     (slewed on one side, raw on the other) would bias the lags. ``None``
     falls back to the slewed command the policy actually saw.
+
+    The stride pair comes from ``run.q`` through the same FK instrument the
+    real side uses (``sysid.gait``); a run without joints (an old caller)
+    leaves it NaN and the pair drops out of the SNR.
     """
     rot = quat_to_mat(run.quat)
     p = run.pos.copy()
     p[:, 2] = (run.pos + rot @ np.array([0.0, 0.0, TRACKER_Z]))[:, 2]
-    return replace(summarize(run.t, p, run.quat, run.cmd if cmd is None else cmd), source="sim")
+    c = run.cmd if cmd is None else cmd
+    s = summarize(run.t, p, run.quat, c)
+    if len(run.q) == len(run.t) and len(run.t):
+        moving = np.linalg.norm(c[:, :2], axis=1) > 0.25
+        g = strides(run.t, run.q, run.quat, run.pos[:, :2], moving)
+        s = replace(s, stride_hz=g.stride_hz, stride_len=g.stride_len)
+    return replace(s, source="sim")
 
 
 # ------------------------------------------------------------- noise floors

@@ -89,7 +89,7 @@ def test_summarize_reads_a_synthetic_walk_correctly():
     assert s.gait_hz == pytest.approx(2.0, abs=0.15)
     assert s.height_mean == pytest.approx(0.30, abs=0.01)
     assert s.tilt_p99 == pytest.approx(0.0, abs=1e-6)
-    assert len(s.as_dict()) == 11
+    assert len(s.as_dict()) == 13
     assert "height_mean" in NOT_COMPARABLE  # room frame: mean is not comparable
 
 

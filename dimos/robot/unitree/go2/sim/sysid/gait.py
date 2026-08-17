@@ -122,15 +122,16 @@ def strides(
     t: np.ndarray,
     q: np.ndarray,
     quat: np.ndarray,
-    planar: np.ndarray,
+    planar: np.ndarray | None,
     moving: np.ndarray,
 ) -> Strides:
     """Stride frequency and length from joints + body attitude + planar travel.
 
     ``planar`` is the (n, 2) body position at ``t`` (tracker on the real
-    side, ``run.pos`` in sim); ``moving`` masks samples where the operator
-    commanded motion, so pauses cannot read as long strides (the interval
-    gate drops any stride spanning a mask edge).
+    side, ``run.pos`` in sim); ``None`` — a tracker-less recording — still
+    measures the cadence and leaves every length NaN. ``moving`` masks
+    samples where the operator commanded motion, so pauses cannot read as
+    long strides (the interval gate drops any stride spanning a mask edge).
     """
     fb = foot_base(q)
     R = quat_to_mat(quat)
@@ -149,10 +150,13 @@ def strides(
             hz.append(float("nan"))
             ln.append(float("nan"))
             continue
-        p = np.stack([np.interp(ev, t, planar[:, k]) for k in range(2)], 1)
-        d = np.linalg.norm(np.diff(p, axis=0), axis=1)
         hz.append(1.0 / float(np.median(iv[good])))
-        ln.append(float(np.median(d[good])))
+        if planar is None:
+            ln.append(float("nan"))
+        else:
+            p = np.stack([np.interp(ev, t, planar[:, k]) for k in range(2)], 1)
+            d = np.linalg.norm(np.diff(p, axis=0), axis=1)
+            ln.append(float(np.median(d[good])))
         n += int(good.sum())
     return Strides(
         stride_hz=float(np.nanmean(hz)) if np.isfinite(hz).any() else float("nan"),
@@ -164,15 +168,19 @@ def strides(
 
 
 def real_strides(st: Streams, *, start: float = 6.0, seconds: float | None = None) -> Strides:
-    """A recording's strides: joints + IMU attitude at 500 Hz, tracker travel."""
+    """A recording's strides: joints + IMU attitude at 500 Hz, tracker travel.
+
+    Tracker-less recordings measure the cadence only (lengths NaN).
+    """
     from dimos.robot.unitree.go2.sim.sysid.ingest import mount_matrix
     from dimos.robot.unitree.go2.sim.sysid.real import cmd_at
 
-    span = float(st.wt[-1]) - start
-    seconds = span if seconds is None else seconds
+    seconds = float(st.wt[-1]) - start if seconds is None else seconds
     sel = (st.lt >= start) & (st.lt < start + seconds)
     t, q, quat = st.lt[sel], st.lq[sel], st.lquat[sel]
     moving = np.linalg.norm(cmd_at(st, t)[:, :2], axis=1) > 0.25
-    base_p, _ = st.base_pose_room(mount_matrix())
-    planar = np.stack([np.interp(t, st.vt, base_p[:, k]) for k in range(2)], 1)
+    planar = None
+    if st.has_markers:
+        base_p, _ = st.base_pose_room(mount_matrix())
+        planar = np.stack([np.interp(t, st.vt, base_p[:, k]) for k in range(2)], 1)
     return strides(t, q, quat, planar, moving)

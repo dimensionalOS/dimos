@@ -62,11 +62,11 @@ def test_snr_leaves_out_statistics_that_are_nan_on_either_side():
         dict.fromkeys(Summary.__dataclass_fields__, 0.05),
     )
     snr = rep.snr()
-    assert len(snr) == 5  # 10 comparable - 5 NaN pairs
+    assert len(snr) == 7  # 11 comparable - 4 NaN pairs (gait_hz was never scored)
     assert "speed" not in snr and "roll_std" in snr
     assert np.isfinite(rep.loss())
     _n, of = rep.n_matched()
-    assert of == 5
+    assert of == 7
 
 
 def test_obs_noise_scales_every_level_together():
@@ -90,16 +90,17 @@ def test_snr_is_the_difference_over_the_floor_and_height_mean_is_excluded():
     snr = rep.snr()
     assert snr["speed"] == pytest.approx(2.0)
     assert "height_mean" not in snr  # room frame: no honest comparison exists
-    assert len(snr) == 10
+    assert "gait_hz" not in snr  # retired: it measured its own estimator (README 5g)
+    assert len(snr) == 11
 
 
 def test_loss_is_rms_and_n_matched_counts_within_floor():
     noise = dict.fromkeys(Summary.__dataclass_fields__, 0.1)
     rep = _report(_summary(speed=0.7), _summary(speed=0.5), noise)  # speed SNR 2, rest 0
-    assert rep.loss() == pytest.approx(np.sqrt(4.0 / 10.0))
+    assert rep.loss() == pytest.approx(np.sqrt(4.0 / 11.0))
     n, of = rep.n_matched()
-    assert (n, of) == (9, 10)
-    assert "9 of 10" in rep.table()
+    assert (n, of) == (10, 11)
+    assert "10 of 11" in rep.table()
 
 
 # ------------------------------------------------- against the real recording

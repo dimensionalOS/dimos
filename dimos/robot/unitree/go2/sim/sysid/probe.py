@@ -72,10 +72,10 @@ from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
-# The under-oscillation verdict's statistics, in its order. `speed` and
-# `gait_hz` belong with them: slower and lower-cadence are the same
-# over-damped story.
-FOCUS = ("roll_std", "pitch_std", "tilt_p99", "height_std", "gait_hz", "speed")
+# The probed statistics: the 5b oscillation family, then the 5g speed family
+# measured by the stride instrument (`gait_hz` was retired from scoring — it
+# measured its own estimator, README 5g).
+FOCUS = ("roll_std", "pitch_std", "tilt_p99", "height_std", "stride_hz", "stride_len", "speed")
 
 
 @dataclass(frozen=True)

@@ -87,6 +87,42 @@ def test_pauses_do_not_read_as_strides() -> None:
     assert s.n_strides == 0
 
 
+def test_real_summary_scores_the_stride_pair() -> None:
+    """The referee's cadence claim comes from the legs, end to end."""
+    from dimos.robot.unitree.go2.sim.sysid.ingest import Streams
+    from dimos.robot.unitree.go2.sim.sysid.real import real_summary
+
+    f, v = 1.8, 0.5
+    t, q, quat, planar = _synthetic_gait(f, v, seconds=30.0)
+    n = len(t)
+    vt, ct = t[::2], t[::10]
+    m = len(ct)
+    st = Streams(
+        lt=t,
+        lq=q,
+        ldq=np.zeros((n, 12)),
+        ltau=np.zeros((n, 12)),
+        lquat=quat,
+        lgyro=np.zeros((n, 3)),
+        lacc=np.zeros((n, 3)),
+        ct=ct,
+        cq=np.zeros((m, 12)),
+        ckp=np.zeros((m, 12)),
+        ckd=np.zeros((m, 12)),
+        ctau=np.zeros((m, 12)),
+        cdq=np.zeros((m, 12)),
+        vt=vt,
+        vp=np.concatenate([planar[::2], np.full((len(vt), 1), 0.3)], axis=1),
+        vq=np.tile([1.0, 0.0, 0.0, 0.0], (len(vt), 1)),
+        wt=np.array([0.0]),
+        wcmd=np.array([[v, 0.0, 0.0]]),
+    )
+    s = real_summary(st, start=1.0, seconds=25.0)
+    assert s.stride_hz == pytest.approx(f, rel=0.05)
+    assert np.isfinite(s.stride_len)
+    assert "stride_hz" in s.as_dict()
+
+
 def test_touchdowns_hysteresis() -> None:
     t = np.arange(0.0, 10.0, 0.002)
     h = -0.3 + 0.04 * np.sin(2 * np.pi * 2.0 * t)

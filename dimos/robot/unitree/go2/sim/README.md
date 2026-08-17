@@ -950,6 +950,34 @@ the robot, attitude family untouched.
 0.409 vs real 0.445), 61% of `speed_gain`, `speed_lag` to exact, with
 attitude unchanged. The §5d select/report discipline, passed.
 
+**The referee, upgraded (statistic set v2).** The findings above changed
+the instrument, so the change is recorded here rather than applied
+silently. Scored set: the stride pair joins (from `sysid.gait`, filled by
+`real_summary` and `sim_summary` through the same FK instrument), and
+`gait_hz` retires to `NOT_COMPARABLE` — kept in every table, never scored.
+It is the SECOND statistic retired for measuring its own instrument
+(`height_mean` was the first: its value is the room-frame calibration, not
+the robot), and the pattern deserves a name: a statistic is untrustworthy
+when perturbing its estimator's nuisance parameters (a band edge, a peak
+margin, a frame offset) moves it by more than the claim's floor. A cheap
+standing guard would compute each statistic under nudged nuisance
+parameters and flag any that move past the robot floor — a third floor,
+beside chaos and repeatability; proposed, not built. Old and new, same
+rollouts, robot-repeat floor, 194142:
+
+| plant | v1 referee (10 scored, incl `gait_hz`) | v2 referee (11 scored, stride pair, no `gait_hz`) |
+|---|---|---|
+| `measured` | 6/10, loss 1.30 | 7/11, loss 1.23 |
+| `measured-env` | 6/10, loss 0.87 | **8/11, loss 0.77** |
+
+The v2 failures on `measured` are `speed_gain` 2.7, `speed_lag` 2.0,
+`speed` 1.7, `stride_len` 1.1 — the same one family, now with the
+instrument-artifact member removed and the true cadence shown passing
+(`stride_hz` 0.1). On `measured-env` what remains is `speed_gain` 1.6,
+`speed` 1.1, and `speed_lag` on the 1.0 boundary. `measured-env` is now a
+built-in preset (the measured plant + its measured envelope, one claim);
+**the default plant is unchanged** — promotion is pending with the owner.
+
 **Verdict: no admissible knob setting closes the speed family; the torque
 envelope — a measured mechanism with zero free parameters — closes about
 half of it, on both recordings, without touching attitude.** It is the

@@ -194,9 +194,15 @@ def _gain(
     return float((c @ a[m]) / (c @ c)), lag / rate
 
 
-# The recorded height lives in the tracker room frame, whose floor is unknown,
-# so the mean cannot be compared — carried for context only.
-NOT_COMPARABLE = ("height_mean",)
+# Carried for context, never scored. Both entries failed the same way: the
+# statistic measured its own instrument rather than the robot. `height_mean`
+# lives in the tracker room frame, whose floor is unknown — its value is the
+# frame calibration. `gait_hz` is the bob autocorrelation's chosen peak, and
+# on the freewalk grounding it reads 1.33 (sim) vs 1.67 (real) while the legs
+# of BOTH cycle at 1.93/1.96 Hz (measured directly by ``sysid.gait``) — its
+# sim-real gap was a property of the estimator, not of either gait. The
+# stride pair below is the cadence claim now.
+NOT_COMPARABLE = ("height_mean", "gait_hz")
 
 
 @dataclass
@@ -214,6 +220,11 @@ class Summary:
     pitch_std: float  # gait-driven pitch oscillation, rad
     roll_std: float  # same, about the roll axis
     tilt_p99: float  # near-worst-case body tilt, rad — the stability tail
+    # The stride pair (sysid.gait): measured from foot FK + touchdown events,
+    # not from any body-signal estimator. NaN when the run carries no joint
+    # trajectory (an old caller) or no travel reference for the length.
+    stride_hz: float = float("nan")  # leg cadence: 1 / median touchdown interval
+    stride_len: float = float("nan")  # body planar travel per stride, m
     # Instrument provenance ("pos:tracker att:imu", "sim", ...): part of any
     # claim, never scored. A claim whose instrument changed is a new claim.
     source: str = ""
@@ -231,6 +242,8 @@ class Summary:
             "pitch_std": self.pitch_std,
             "roll_std": self.roll_std,
             "tilt_p99": self.tilt_p99,
+            "stride_hz": self.stride_hz,
+            "stride_len": self.stride_len,
         }
 
 

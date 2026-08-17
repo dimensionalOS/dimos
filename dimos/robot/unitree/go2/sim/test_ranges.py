@@ -110,8 +110,16 @@ def test_an_envelope_free_preset_writes_no_envelope_key(tmp_path):
     assert "envelope" not in d  # older readers see the exact old shape
 
 
-def test_builtins_carry_no_envelope():
-    assert all(p.envelope is None for p in BUILTIN_PRESETS.values())
+def test_builtins_carry_no_envelope_except_measured_env():
+    """`measured-env` IS the measured plant plus its envelope — that pairing
+    is the preset's whole claim (README 5g); every other built-in stays bare."""
+    for name, p in BUILTIN_PRESETS.items():
+        if name == "measured-env":
+            assert p.envelope == "central"
+            assert p.physics == BUILTIN_PRESETS["measured"].physics
+            assert p.actuator_tau == BUILTIN_PRESETS["measured"].actuator_tau
+        else:
+            assert p.envelope is None
 
 
 def test_an_unknown_envelope_name_is_rejected_at_construction():

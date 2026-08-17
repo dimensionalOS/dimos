@@ -162,7 +162,8 @@ class Preset:
     claim: knobs fitted with the envelope on absorb a different share of the
     drive, and running such a plant without its envelope silently changes the
     physics (§5b: the reverse mistake — stacking the envelope on knobs fitted
-    without it — double-counts). Every built-in carries ``None``.
+    without it — double-counts). Every built-in carries ``None`` except
+    ``measured-env``, whose envelope IS the claim (README 5g).
     """
 
     name: str
@@ -252,7 +253,20 @@ MEASURED = Preset(
 )
 ACCEL = Preset(name="accel", physics=dict(ACCEL_PHYSICS), actuator_tau=ACCEL_ACTUATOR_TAU)
 
-BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED, ACCEL)}
+# The measured plant run WITH the measured torque envelope (R10-STRIDE,
+# README 5g): closes ~half the closed-loop speed family on the fit recording
+# AND the held-out rubber span without touching the attitude family — the
+# best-grounded plant known. NOT the default: §5b/§5d caution that `measured`'s
+# knobs were fitted open loop without the envelope, so promotion (or an
+# envelope-consistent refit that grounds at least as well) is an owner's call.
+MEASURED_ENV = Preset(
+    name="measured-env",
+    physics=dict(MEASURED_PHYSICS),
+    actuator_tau=MEASURED_ACTUATOR_TAU,
+    envelope="central",
+)
+
+BUILTIN_PRESETS: dict[str, Preset] = {p.name: p for p in (STOCK, MEASURED, ACCEL, MEASURED_ENV)}
 DEFAULT_PRESET = "measured"
 
 

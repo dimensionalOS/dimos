@@ -30,6 +30,7 @@ from dataclasses import replace
 import numpy as np
 
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat
+from dimos.robot.unitree.go2.sim.sysid.gait import real_strides
 from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, mount_matrix
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary, spread_of, summarize
 
@@ -63,12 +64,15 @@ def real_summary(st: Streams, *, start: float, seconds: float, attitude: str = "
     if attitude not in ("imu", "tracker"):
         raise ValueError(f"attitude must be 'imu' or 'tracker', got {attitude!r}")
     isel = (st.lt >= start) & (st.lt < start + seconds)
+    g = real_strides(st, start=start, seconds=seconds)
     if not st.has_markers:
         if attitude == "tracker":
             raise ValueError("recording has no tracker: there is no tracker attitude to read")
         t_att = st.lt[isel] - start
         s = summarize(t_att, None, st.lquat[isel], cmd_at(st, st.lt[isel]))
-        return replace(s, source="att:imu (no tracker)")
+        return replace(
+            s, stride_hz=g.stride_hz, stride_len=g.stride_len, source="att:imu (no tracker)"
+        )
     base_p, base_r = st.base_pose_room(mount_matrix())
     sel = (st.vt >= start) & (st.vt < start + seconds)
     p = base_p[sel].copy()
@@ -79,7 +83,9 @@ def real_summary(st: Streams, *, start: float, seconds: float, attitude: str = "
         t_att = st.vt[sel] - start
         quat = np.stack([mat_to_quat(r) for r in base_r[sel]])
     s = summarize(st.vt[sel] - start, p, quat, cmd_at(st, st.vt[sel]), t_att=t_att)
-    return replace(s, source=f"pos:tracker att:{attitude}")
+    return replace(
+        s, stride_hz=g.stride_hz, stride_len=g.stride_len, source=f"pos:tracker att:{attitude}"
+    )
 
 
 def robot_noise(
