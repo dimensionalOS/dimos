@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from dimos.evals.vqa.families import InsufficientEvidenceError
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection3d.pointcloud import ProjectedPointCloud
 
 ObjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -71,8 +72,8 @@ class EdgeTamLidarRangeEstimator:
         self._segmenter = segmenter
         self._min_supporting_points = min_supporting_points
         self._cached_frame: CalibratedFrame | None = None
-        self._cached_pixels = np.empty((0, 2), dtype=np.intp)
-        self._cached_camera_points = np.empty((0, 3), dtype=np.float64)
+        self._cached_projection: ProjectedPointCloud | None = None
+        self._cached_evidence: dict[str, ObjectRangeEvidence] = {}
 
     def estimate(self, frame: CalibratedFrame, object_name: str) -> ObjectRangeEvidence:
         """Estimate robust camera-origin range to one detected object."""
@@ -81,6 +82,13 @@ class EdgeTamLidarRangeEstimator:
         normalized_name = object_name.strip()
         if not normalized_name:
             raise ValueError("object_name must not be blank")
+        if frame is not self._cached_frame:
+            self._cached_frame = frame
+            self._cached_projection = None
+            self._cached_evidence.clear()
+        cache_key = normalized_name
+        if cached := self._cached_evidence.get(cache_key):
+            return cached
 
         detections = self._detector.detect(frame.image, normalized_name)
         valid_detections = [detection for detection in detections if detection.is_valid()]
@@ -112,9 +120,21 @@ class EdgeTamLidarRangeEstimator:
             )
         segmented_detection, mask = valid_masks[0]
 
-        pixels, camera_points = self._project_frame(frame)
-        covered = mask[pixels[:, 1], pixels[:, 0]] != 0
-        supporting_points = camera_points[covered]
+        if (frame.camera_info.height, frame.camera_info.width) != (
+            frame.image.height,
+            frame.image.width,
+        ):
+            raise ValueError("camera calibration dimensions do not match the rectified image")
+        if self._cached_projection is None:
+            self._cached_projection = ProjectedPointCloud.from_pointcloud(
+                frame.pointcloud,
+                frame.camera_info,
+                frame.pointcloud_to_camera,
+            )
+        _, supporting_points = self._cached_projection.points_in_detection(
+            segmented_detection,
+            nearest_per_pixel=True,
+        )
         if len(supporting_points) < self._min_supporting_points:
             raise InsufficientEvidenceError(
                 f"object range requires at least {self._min_supporting_points} supporting "
@@ -125,7 +145,7 @@ class EdgeTamLidarRangeEstimator:
         quartiles = np.quantile(ranges, (0.25, 0.5, 0.75))
         bbox = detection.bbox
         mask_bbox = segmented_detection.bbox
-        return ObjectRangeEvidence(
+        evidence = ObjectRangeEvidence(
             object_name=normalized_name,
             camera_range_m=float(quartiles[1]),
             supporting_point_count=len(supporting_points),
@@ -145,6 +165,8 @@ class EdgeTamLidarRangeEstimator:
             synchronization_delta_s=float(frame.synchronization_delta_s),
             calibration_source=frame.calibration_source,
         )
+        self._cached_evidence[cache_key] = evidence
+        return evidence
 
     def _get_segmenter(self) -> EdgeTAMImageSegmenterCompatible:
         if self._segmenter is None:
@@ -152,67 +174,6 @@ class EdgeTamLidarRangeEstimator:
 
             self._segmenter = EdgeTAMImageSegmenter()
         return self._segmenter
-
-    def _project_frame(
-        self, frame: CalibratedFrame
-    ) -> tuple[np.ndarray[Any, np.dtype[np.intp]], np.ndarray[Any, np.dtype[np.float64]]]:
-        if frame is self._cached_frame:
-            return self._cached_pixels, self._cached_camera_points
-
-        image_height, image_width = frame.image.height, frame.image.width
-        camera_info = frame.camera_info
-        if (camera_info.height, camera_info.width) != (image_height, image_width):
-            raise ValueError("camera calibration dimensions do not match the rectified image")
-
-        intrinsics = np.asarray(camera_info.K, dtype=np.float64)
-        if intrinsics.size != 9:
-            raise ValueError("camera intrinsics must contain nine values")
-        intrinsics = intrinsics.reshape(3, 3)
-        if not np.all(np.isfinite(intrinsics)) or intrinsics[0, 0] <= 0 or intrinsics[1, 1] <= 0:
-            raise ValueError("camera intrinsics must be finite with positive focal lengths")
-
-        raw_points, _ = frame.pointcloud.as_numpy()
-        points = np.asarray(raw_points, dtype=np.float64)
-        if points.ndim != 2 or points.shape[1] != 3:
-            raise ValueError("point cloud positions must have shape (N, 3)")
-
-        transform = np.asarray(frame.pointcloud_to_camera.to_matrix(), dtype=np.float64)
-        if transform.shape != (4, 4) or not np.all(np.isfinite(transform)):
-            raise ValueError("pointcloud_to_camera must be a finite 4x4 transform")
-
-        finite = np.all(np.isfinite(points), axis=1)
-        points = points[finite]
-        homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
-        camera_points = (transform @ homogeneous.T).T[:, :3]
-        camera_points = camera_points[np.all(np.isfinite(camera_points), axis=1)]
-        camera_points = camera_points[camera_points[:, 2] > 0]
-
-        projected = (intrinsics @ camera_points.T).T
-        image_points = projected[:, :2] / projected[:, 2, np.newaxis]
-        in_frame = (
-            np.all(np.isfinite(image_points), axis=1)
-            & (image_points[:, 0] >= 0)
-            & (image_points[:, 0] < image_width)
-            & (image_points[:, 1] >= 0)
-            & (image_points[:, 1] < image_height)
-        )
-        camera_points = camera_points[in_frame]
-        pixels = image_points[in_frame].astype(np.intp)
-
-        # Sort each pixel by camera Z and retain its nearest visible return.
-        linear_pixels = pixels[:, 1] * image_width + pixels[:, 0]
-        order = np.lexsort((camera_points[:, 2], linear_pixels))
-        sorted_linear = linear_pixels[order]
-        first_per_pixel = np.empty(len(order), dtype=bool)
-        if len(order):
-            first_per_pixel[0] = True
-            first_per_pixel[1:] = sorted_linear[1:] != sorted_linear[:-1]
-        keep = order[first_per_pixel]
-
-        self._cached_frame = frame
-        self._cached_pixels = pixels[keep]
-        self._cached_camera_points = camera_points[keep]
-        return self._cached_pixels, self._cached_camera_points
 
 
 class ObjectRangeEstimator(Protocol):
