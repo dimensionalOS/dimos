@@ -1448,6 +1448,8 @@ class ViserPanelGui:
                 return
             if not ok:
                 self.state.plan_state.status = PlanStatus.FAILED
+            else:
+                self.state.plan_state.status = PlanStatus.STALE
             self._finish_operation(
                 f"execute={ok}", operation_id=operation_id, selection_epoch=selection_epoch
             )

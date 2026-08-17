@@ -606,6 +606,8 @@ def test_plan_target_sequence_invalidation_and_unfiltered_all_robot_execute(
     gui.state.target_status = TargetStatus.FEASIBLE
     gui._submit_execute()
     assert module.executions == 1
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.plan_state.status == PlanStatus.STALE
 
 
 def test_cartesian_space_mode_requests_sparse_time_optimal_trajectory(

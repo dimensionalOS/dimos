@@ -1610,8 +1610,8 @@ class ManipulationModule(Module):
         with self._lock:
             self._last_plan = plan
             self._state = ManipulationState.COMPLETED
-        result = self.execute(blocking=False)
-        return result.status is ExecutionStatus.ACCEPTED
+        result = self.execute(blocking=True)
+        return result.status is ExecutionStatus.COMPLETED
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
