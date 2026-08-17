@@ -157,8 +157,7 @@ class CuvslamConfig(NativeModuleConfig):
     # builds the pinned rev (jeff/feat/imu_info tip; tag on merge). `nix build`
     # drops the `result` symlink in the cwd.
     build_command: str | None = Field(
-        default_factory=lambda: "nix build github:dimensionalOS/dimSLAM/"
-        f"53cc07dad60fb5435b5c82974a037e586aed855b#{sdk_variant()}"
+        default_factory=lambda: f"nix build github:dimensionalOS/dimSLAM/v0.2.0#{sdk_variant()}"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=_driver_env)
