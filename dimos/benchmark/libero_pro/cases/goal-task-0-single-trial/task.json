@@ -32,7 +32,7 @@
   },
   "contract": {
     "robot": "Panda",
-    "controller": "JOINT_POSITION",
+    "controller": "OSC_POSE",
     "cameras": [
       {"name": "agentview", "width": 128, "height": 128},
       {"name": "robot0_eye_in_hand", "width": 128, "height": 128}

@@ -55,6 +55,7 @@ def joint_trajectory_task(
     joint_names: Sequence[str],
     priority: int = 10,
     start_position_tolerance: float = 0.05,
+    goal_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
@@ -65,7 +66,10 @@ def joint_trajectory_task(
         type="trajectory",
         joint_names=list(joint_names),
         priority=priority,
-        params={"start_position_tolerance": start_position_tolerance},
+        params={
+            "start_position_tolerance": start_position_tolerance,
+            "goal_position_tolerance": goal_position_tolerance,
+        },
     )
 
 
@@ -131,6 +135,8 @@ class JointTrajectoryTaskConfig:
         priority: Priority for arbitration (higher wins)
         start_position_tolerance: Maximum difference between current joint
             position and the first trajectory point.
+        goal_position_tolerance: Maximum difference between measured and
+            commanded joint positions before execution completes.
     """
 
     joint_names: Annotated[
@@ -139,6 +145,11 @@ class JointTrajectoryTaskConfig:
     ] = Field(min_length=1)
     priority: int = Field(default=10, strict=True)
     start_position_tolerance: float = Field(
+        default=0.05,
+        ge=0.0,
+        allow_inf_nan=False,
+    )
+    goal_position_tolerance: float = Field(
         default=0.05,
         ge=0.0,
         allow_inf_nan=False,
@@ -226,14 +237,21 @@ class JointTrajectoryTask(BaseControlTask):
         t_elapsed = state.t_now - self._start_time
         self._last_elapsed = max(0.0, t_elapsed)
 
-        # Check completion - clamp to final position to ensure we reach goal
+        # Clamp to the final command after its nominal duration, but do not
+        # report success until feedback confirms that the hardware reached it.
         if t_elapsed >= self._trajectory.duration:
-            self._state = TrajectoryState.COMPLETED
-            logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
-            # Return final position to hold at goal
             q_ref, _ = self._trajectory.sample(self._trajectory.duration)
             final_names = list(self._trajectory.joint_names)
-            self._clear_active_trajectory()
+            reached_goal = all(
+                (measured := state.joints.get_position(name)) is not None
+                and math.isfinite(measured)
+                and abs(measured - target) <= self._config.goal_position_tolerance
+                for name, target in zip(final_names, q_ref, strict=True)
+            )
+            if reached_goal:
+                self._state = TrajectoryState.COMPLETED
+                logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
+                self._clear_active_trajectory()
             return JointCommandOutput(
                 joint_names=final_names,
                 positions=list(q_ref),
@@ -459,6 +477,11 @@ class JointTrajectoryTaskParams(BaseConfig):
         ge=0.0,
         allow_inf_nan=False,
     )
+    goal_position_tolerance: float = Field(
+        default=0.05,
+        ge=0.0,
+        allow_inf_nan=False,
+    )
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -472,5 +495,6 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
+            goal_position_tolerance=params.goal_position_tolerance,
         ),
     )

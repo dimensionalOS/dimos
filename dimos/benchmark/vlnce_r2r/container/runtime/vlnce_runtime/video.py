@@ -17,7 +17,6 @@ import json
 import os
 import tempfile
 
-import cv2
 from habitat.utils.visualizations.utils import images_to_video, observations_to_image
 import numpy as np
 
@@ -75,6 +74,8 @@ class NativeEpisodeVideo:
         _write_json_atomic(self.metadata_path, payload)
 
     def _capture(self, repeats=1):
+        import cv2
+
         if self.diagnostic is not None:
             return
         try:

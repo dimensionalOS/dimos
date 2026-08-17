@@ -144,9 +144,10 @@ from dimos.porcelain.dimos import Dimos
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.porcelain.dimos import Dimos
 
-memory = SqliteStore(path={environment.recording_path!r}, must_exist=True, read_only=True)
-memory.start()
-app = Dimos.connect()
+app = Dimos.connect(
+    memory=SqliteStore(path={environment.recording_path!r}, must_exist=True, read_only=True)
+)
+app.memory.start()
 """
 
 

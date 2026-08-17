@@ -38,6 +38,63 @@ Use submit_policy to test each revision. Every submission runs a fresh episode o
 the exact task below. The final submitted callable is frozen and evaluated on a
 fresh initial state. The simulator advances continuously at 20 Hz while the
 callable runs, so policies must tolerate real execution latency.
+
+Inspect the actual recorded RGB images after every debug submission. `python_exec`
+supports rich image output, just as it does in the navigation benchmark:
+
+    trial = submit_policy(policy)
+    from IPython.display import display
+    from PIL import Image as PILImage
+    with trial.open_memory() as memory:
+        frame = memory.stream("agentview_color_image").last().data
+        display(PILImage.fromarray(frame.to_rgb().data))
+
+Displayed images are delivered to you visually. Inspect both `agentview_color_image`
+and `eye_in_hand_color_image` when the wrist view can disambiguate contact. Do not
+substitute ASCII art, pixel statistics, database internals, or textual image
+representations for viewing the RGB frames directly.
+
+Inside policy(app), `app.memory` is the live read-only Memory2 recording and normal
+modules are available by class name. Use the calibrated RGB-D helper rather than
+guessing camera geometry:
+
+    from dimos.perception.rgbd import latest_rgbd, project_depth
+    observation = latest_rgbd(
+        app.memory,
+        color_stream="agentview_color_image",
+        depth_stream="agentview_depth_image",
+        camera_info_stream="agentview_camera_info",
+        optical_frame="agentview_optical",
+    )
+    masks = app.GroundedSegmentationModule.segment(observation.color, ["object description"])
+    objects = project_depth(masks, observation)
+
+`objects` contains world-frame point clouds and ordinary shape helpers. Request ranked
+grasps with `app.GraspGenXModule.propose_grasps(objects[0].pointcloud)`. A proposal's
+header supplies its timestamp and frame. Turn each ranked candidate into a planning
+target with `PoseStamped(ts=grasps.header.timestamp,
+frame_id=grasps.header.frame_id, position=candidate.pose.position,
+orientation=candidate.pose.orientation)`. Inspect
+`app.ManipulationModule.list_planning_groups()` and use a returned `.id` instead of
+guessing group IDs. Try targets in rank order with `plan_to_poses({group.id: target})`,
+then call `execute()` only for a successful PlanResult. Every motion, gripper command,
+and execution call returns a typed result; inspect `.succeeded` and `.message` rather
+than assuming that a command moved the robot. Re-observe after motion and keep the
+policy closed-loop. The Panda gripper positions are 0.04 m open and 0.0 m closed.
+Use collision-checked planning for the free-space approach. Once that route is clear,
+`move_to_pose(..., check_collision=False)` provides the low-latency absolute Cartesian
+updates needed for contact-rich motion; keep those updates small and verify each result.
+
+Plan with the complete hand volume, not only the TCP. Infer the grasp and motion axes
+from observed geometry. For articulated handles, compare a force-closure pinch with a
+geometric hook: approach through free space, place closed fingers behind the handle,
+engage it orthogonally, then withdraw along the articulation axis. Test equivalent
+wrist-roll candidates because the fingers can reach while the wrist or forearm still
+collides with nearby objects. If IK fails at a joint boundary, retry nearby poses a few
+millimeters away instead of abandoning the strategy. Prefer short, smooth, measured
+waypoint updates over one large target jump, but do not waste the real-time horizon on
+long sleeps. A held final setpoint continues executing after policy(app) returns, so
+finish the callable once the commanded motion is safely engaged.
 """
 
 
@@ -112,7 +169,7 @@ class LiberoProEvaluation:
             "policy_execution_status": native["policy_execution_status"],
             "source_revision": manifest.source.revision,
             "dataset_revision": manifest.source.dataset_revision,
-            "deviations": ["continuous_real_time", "joint_position_controller"],
+            "deviations": ["continuous_real_time", "joint_target_to_native_osc_adapter"],
         }
         (scored_path / "score.json").write_text(
             json.dumps(native_value, indent=2, sort_keys=True) + "\n"
@@ -195,12 +252,17 @@ def _run_trial(
         os.environ[DIMOS_RUN_ID_ENV] = run_id
         coordinator = ModuleCoordinator.build(blueprint)
         coordinator.start_rpc_service()
-        execution = runtime.prepare(policy, startup_timeout_s=30.0)
+        execution = runtime.prepare(
+            policy,
+            memory_path=memory_path,
+            startup_timeout_s=30.0,
+        )
         control.start()
         execution.start()
         timeout = manifest.contract.horizon_ticks / manifest.contract.control_frequency_hz + 15.0
         terminal = control.wait_terminal(timeout)
         policy_result = execution.finish()
+        policy_execution_status = "completed" if terminal.success else policy_result.status
         native = {
             "success": bool(terminal.success),
             "score": float(terminal.score),
@@ -208,17 +270,17 @@ def _run_trial(
             "terminal_reason": terminal.terminal_reason,
             "policy_ticks": int(terminal.policy_ticks),
             "backend_ticks": int(terminal.backend_ticks),
-            "policy_execution_status": policy_result.status,
+            "policy_execution_status": policy_execution_status,
         }
         _log(log_path, "trial_terminal", **native)
         status: Literal["completed", "policy_error", "infrastructure_error"]
         if terminal.terminal_reason == "failure" or policy_result.status == "infrastructure_error":
             status = "infrastructure_error"
-        elif policy_result.status == "policy_error":
+        elif policy_execution_status == "policy_error":
             status = "policy_error"
         else:
             status = "completed"
-        error = terminal.error or policy_result.error
+        error = terminal.error or ("" if terminal.success else policy_result.error)
     except BaseException as exc:
         if execution is not None:
             try:

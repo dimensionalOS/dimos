@@ -45,4 +45,8 @@
   <joint name="right_hand_fixed" type="fixed">
     <parent link="link7"/><child link="right_hand"/><origin xyz="0 0 0.1065" rpy="0 0 -0.78539816339"/>
   </joint>
+  <link name="tcp"/>
+  <joint name="tcp_fixed" type="fixed">
+    <parent link="right_hand"/><child link="tcp"/><origin xyz="0 0 0.097" rpy="0 0 -1.57079632679"/>
+  </joint>
 </robot>

@@ -37,6 +37,9 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -115,6 +118,36 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert generate.call_args.kwargs["check_collision"] is False
     assert generate.call_args.kwargs["speed_scale"] == pytest.approx(0.5)
     execute.assert_called_once_with(blocking=False, timeout=None)
+
+
+def test_move_to_pose_uses_current_tcp_as_absolute_path_start(
+    module_factory,
+    mocker: MockerFixture,
+) -> None:
+    module = module_factory()
+    _set_groups(module, _robot())
+    current = Pose(position=Vector3(0.1, 0.2, 0.3))
+    target = PoseStamped(frame_id="world", position=Vector3(0.4, 0.5, 0.6))
+    module._world_monitor.current_group_joint_state.return_value = JointState(
+        name=["arm/j0"], position=[0.1]
+    )
+    module._world_monitor.get_group_ee_pose.return_value = current
+    generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=_plan())
+    mocker.patch.object(
+        module,
+        "execute",
+        return_value=ExecutionResult(ExecutionStatus.ACCEPTED),
+    )
+
+    result = module.move_to_pose(target, check_collision=True)
+
+    assert result.succeeded
+    targets, _config = generate.call_args.args
+    start, goal = targets["arm/tool"]
+    assert start.position == current.position
+    assert start.orientation == current.orientation
+    assert goal == target
+    assert generate.call_args.kwargs["check_collision"] is True
 
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:

@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
+from typing import Any, cast
 
 import pytest
 
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory2.module import StreamModule
+from dimos.memory2.module import Recorder, StreamModule
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
 from dimos.memory2.type.observation import Observation
@@ -93,3 +95,19 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
+
+
+def test_poseless_recorder_stream_skips_tf_lookup() -> None:
+    class UnexpectedTF:
+        def get(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("poseless streams must not query TF")
+
+        def dispose(self) -> None:
+            pass
+
+    recorder = Recorder(poseless_streams=["measurements"])
+    try:
+        recorder._tf = cast("Any", UnexpectedTF())
+        assert asyncio.run(recorder._resolve_pose("measurements", object(), 1.0)) is None
+    finally:
+        recorder.stop()

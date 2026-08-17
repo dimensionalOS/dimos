@@ -247,6 +247,16 @@ class ManipulationSpec(Spec, Protocol):
         timeout: float | None = None,
     ) -> MoveResult: ...
 
+    def move_to_pose(
+        self,
+        target: PoseStamped,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        blocking: bool = True,
+        timeout: float | None = None,
+    ) -> MoveResult: ...
+
     def set_gripper_position(
         self,
         position: float,

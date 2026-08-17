@@ -6,7 +6,6 @@ from pathlib import Path
 import threading
 from typing import Any
 
-import cv2
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -136,6 +135,8 @@ def _compose(agentview: Image, eye_in_hand: Image) -> np.ndarray[Any, np.dtype[n
 
 
 def _open_writer(path: Path, fps: float) -> Any:
+    import cv2
+
     return cv2.VideoWriter(
         str(path),
         cv2.VideoWriter.fourcc(*"mp4v"),

@@ -14,6 +14,17 @@ from dimos.benchmark.libero_pro.podman import ContainerEndpoints
 CASE = Path(__file__).parent / "cases" / "goal-task-0-single-trial" / "task.json"
 
 
+def test_evaluation_protocol_requires_rich_visual_inspection_of_debug_trials() -> None:
+    protocol = evaluation.EVALUATION_PROTOCOL
+
+    assert "trial.open_memory()" in protocol
+    assert "from IPython.display import display" in protocol
+    assert 'memory.stream("agentview_color_image").last().data' in protocol
+    assert "display(PILImage.fromarray(frame.to_rgb().data))" in protocol
+    assert "ASCII art" in protocol
+    assert "pixel statistics" in protocol
+
+
 def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
     mocker: MockerFixture,
     tmp_path: Path,
@@ -51,12 +62,12 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
         def wait_terminal(self, _timeout: float) -> SimpleNamespace:
             events.append("control.wait")
             return SimpleNamespace(
-                success=False,
-                score=0.0,
-                reward=0.0,
-                terminal_reason="horizon",
-                policy_ticks=300,
-                backend_ticks=305,
+                success=True,
+                score=1.0,
+                reward=1.0,
+                terminal_reason="success",
+                policy_ticks=210,
+                backend_ticks=215,
                 error="",
             )
 
@@ -73,10 +84,17 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
         def finish(self, *, grace_s: float = 1.0) -> PolicyExecution:
             del grace_s
             events.append("policy.finish")
-            return PolicyExecution("stopped", 15.0)
+            return PolicyExecution("policy_error", 10.5, "RPC closed after native success")
 
     class FakeRuntime:
-        def prepare(self, _policy: PolicyArtifact, *, startup_timeout_s: float) -> FakeExecution:
+        def prepare(
+            self,
+            _policy: PolicyArtifact,
+            *,
+            memory_path: Path,
+            startup_timeout_s: float,
+        ) -> FakeExecution:
+            assert memory_path.name == "recording.db"
             assert startup_timeout_s == 30.0
             events.append("policy.prepare")
             return FakeExecution()
@@ -111,7 +129,8 @@ def test_trial_starts_clock_and_prepared_policy_only_after_blueprint_is_ready(
     )
 
     assert trial.outcome.status == "completed"
-    assert native["score"] == 0.0
+    assert native["score"] == 1.0
+    assert native["policy_execution_status"] == "completed"
     assert events == [
         "container.start",
         "control.ready",

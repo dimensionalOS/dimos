@@ -134,6 +134,9 @@ def test_policy_artifact_records_serialized_callable(tmp_path: Path) -> None:
 def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> None:
     serialized_path = tmp_path / "policy.pkl"
     serialized_path.write_bytes(cloudpickle.dumps(policy))
+    memory_path = tmp_path / "recording.db"
+    with SqliteStore(path=str(memory_path)) as memory:
+        memory.stream("events", int).append(1)
     app = mocker.Mock(spec=Dimos)
     connect = mocker.patch.object(Dimos, "connect", return_value=app)
     results, worker_results = multiprocessing.Pipe(duplex=False)
@@ -141,13 +144,15 @@ def test_policy_worker_connects_and_invokes_callable(mocker, tmp_path: Path) -> 
 
     worker = threading.Thread(
         target=_execute_policy_worker,
-        args=(str(serialized_path), worker_results, start_event),
+        args=(str(serialized_path), str(memory_path), worker_results, start_event),
     )
     worker.start()
 
     assert results.poll(1)
     assert results.recv() == ("ready", None)
-    connect.assert_called_once_with()
+    connect.assert_called_once()
+    attached = connect.call_args.kwargs["memory"]
+    assert attached.config.read_only is True
     start_event.set()
     assert results.poll(1)
     assert results.recv() == ("completed", None)

@@ -199,6 +199,7 @@ class CodePolicyRuntimeFactory:
         self,
         policy: PolicyArtifact,
         *,
+        memory_path: Path,
         startup_timeout_s: float,
     ) -> PolicyExecutionHandle:
         if startup_timeout_s <= 0:
@@ -208,7 +209,7 @@ class CodePolicyRuntimeFactory:
         start_event = context.Event()
         process = context.Process(
             target=_execute_policy_worker,
-            args=(str(policy.serialized_path), worker_messages, start_event),
+            args=(str(policy.serialized_path), str(memory_path), worker_messages, start_event),
             daemon=True,
         )
         try:
@@ -389,7 +390,12 @@ class _SubmissionManager:
         return trial
 
 
-def _execute_policy_worker(serialized_path: str, messages: Any, start_event: Any) -> None:
+def _execute_policy_worker(
+    serialized_path: str,
+    memory_path: str,
+    messages: Any,
+    start_event: Any,
+) -> None:
     try:
         try:
             import cloudpickle
@@ -402,9 +408,12 @@ def _execute_policy_worker(serialized_path: str, messages: Any, start_event: Any
             )
             return
         try:
+            from dimos.memory2.store.sqlite import SqliteStore
             from dimos.porcelain.dimos import Dimos
 
-            app = Dimos.connect()
+            memory = SqliteStore(path=memory_path, must_exist=True, read_only=True)
+            memory.start()
+            app = Dimos.connect(memory=memory)
         except Exception as exc:
             messages.send(
                 ("infrastructure_error", f"DimOS connection failed: {type(exc).__name__}: {exc}")

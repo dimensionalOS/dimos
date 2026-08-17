@@ -443,6 +443,8 @@ class Recorder(MemoryModule):
         """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
         ``world <- frame_id`` tf lookup."""
+        if name in self.config.poseless_streams:
+            return None
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))

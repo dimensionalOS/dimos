@@ -221,6 +221,7 @@ all_modules = {
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.GraspGenXModule",
     "grasping-module": "dimos.manipulation.grasping.grasping.GraspingModule",
+    "grounded-segmentation-module": "dimos.perception.grounded_segmentation.GroundedSegmentationModule",
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "hand-teleop-module": "dimos.teleop.quest.quest_extensions.HandTeleopModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",

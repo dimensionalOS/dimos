@@ -63,12 +63,14 @@ def trajectory_task(
     *additional_hardware: HardwareComponent,
     priority: int = 10,
     start_position_tolerance: float = 0.05,
+    goal_position_tolerance: float = 0.05,
 ) -> TaskConfig:
     hardware_components = (hardware, *additional_hardware)
     return joint_trajectory_task(
         [joint_name for component in hardware_components for joint_name in component.joints],
         priority=priority,
         start_position_tolerance=start_position_tolerance,
+        goal_position_tolerance=goal_position_tolerance,
     )
 
 

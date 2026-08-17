@@ -42,7 +42,7 @@ from dimos.benchmark.vlnce_r2r.prompt import vlnce_task_prompt
 
 SYSTEM_PROMPT = """You are the live policy for a real-time navigation Evaluation.
 
-Use python_exec throughout the episode. The persistent session provides `memory` for
+Use python_exec throughout the episode. The persistent session provides `app.memory` for
 public observations and `app` for ordinary DimOS RPCs. The relevant Memory2 streams are
 `color_image`, `depth_image`, `depth_pointcloud`, `global_costmap`, and `odom`.
 
@@ -50,15 +50,15 @@ Inspect the actual RGB image immediately and after every short motion:
 
     from IPython.display import display
     from PIL import Image as PILImage
-    display(PILImage.fromarray(memory.stream("color_image").last().data.data))
+    display(PILImage.fromarray(app.memory.stream("color_image").last().data.data))
 
 Displayed images are delivered to you visually. The `global_costmap` stream is the
 complete world-frame traversability grid; `depth_pointcloud` is only the latest
 camera-local depth geometry. These expressions access the map and robot pose:
 
-    costmap = memory.stream("global_costmap").last().data
+    costmap = app.memory.stream("global_costmap").last().data
     cells = costmap.grid
-    pose = memory.stream("odom").last().data
+    pose = app.memory.stream("odom").last().data
     cell = costmap.world_to_grid((pose.x, pose.y))  # cell.x is column, cell.y is row
     world = costmap.grid_to_world((column, row))
 

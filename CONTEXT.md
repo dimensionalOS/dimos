@@ -65,8 +65,16 @@ The measured stage in which the Policy Artifact executes without an agent in a f
 _Avoid_: Agent session, policy generation
 
 **Policy Environment**:
-The capabilities exposed by the fresh policy-only DimOS blueprint while a policy runs. Simulated, live, and replay-backed evaluations all pass the policy a connected `Dimos` application; completed trials additionally expose their Memory2 recording read-only through `TrialRun`.
+The capabilities exposed by the fresh policy-only DimOS blueprint while a policy runs. Simulated, live, and replay-backed evaluations all pass the policy a connected `Dimos` application whose `app.memory` property is the active read-only Memory2 store. Completed trials expose the same recording through `TrialRun`.
 _Avoid_: Agent tools, scorer context
+
+**RGB-D Observation**:
+A timestamp-aligned bundle of one public color image, metric depth image, exact camera calibration, and world-to-optical transform selected from Memory2. It is sensor evidence chosen by the policy, not a persistent scene model or simulator snapshot.
+_Avoid_: Scene façade, latest-camera RPC, simulator observation
+
+**Grounded Segmentation**:
+An ordinary on-demand DimOS perception capability that accepts an explicit timestamped image and text descriptions and returns typed image masks. It has no camera stream subscription and can operate identically on live, simulated, replayed, or post-trial images.
+_Avoid_: LIBERO perception, implicit latest frame, privileged object mask
 
 **Policy Interface**:
 The non-privileged robot observations, state, commands, and operational health that a simulator or real robot connection contributes to the complete Policy Environment.

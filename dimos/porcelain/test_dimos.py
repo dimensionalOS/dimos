@@ -95,6 +95,21 @@ def test_construction_with_overrides():
         instance.stop()
 
 
+def test_attached_memory_is_exposed_and_owned(mocker):
+    memory = mocker.Mock()
+    instance = Dimos(memory=memory)
+
+    assert instance.memory is memory
+    instance.stop()
+
+    memory.stop.assert_called_once_with()
+
+
+def test_memory_without_attachment_raises(app):
+    with pytest.raises(RuntimeError, match="No Memory2 store"):
+        app.memory  # noqa: B018
+
+
 def test_repr_when_stopped(app):
     assert "stopped" in repr(app)
 

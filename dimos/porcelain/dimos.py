@@ -18,7 +18,7 @@ import atexit
 import importlib
 import inspect
 import threading
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
@@ -34,12 +34,16 @@ from dimos.porcelain.skills_proxy import SkillsProxy
 from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
 
+if TYPE_CHECKING:
+    from dimos.memory2.store.base import Store
+
 DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
 
 
 class Dimos:
-    def __init__(self, **config_overrides: Any) -> None:
+    def __init__(self, *, memory: Store | None = None, **config_overrides: Any) -> None:
         self._config_overrides = config_overrides
+        self._memory = memory
         self._coordinator: ModuleCoordinator | None = None
         self._source: ModuleSource | None = None
         self._lock = threading.RLock()
@@ -104,7 +108,7 @@ class Dimos:
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
     @classmethod
-    def connect(cls, *, timeout: float = 5.0) -> Dimos:
+    def connect(cls, *, timeout: float = 5.0, memory: Store | None = None) -> Dimos:
         """Connect to the running DimOS coordinator on the current transport bus.
 
         One coordinator serves the configured bus. This works for both
@@ -117,9 +121,20 @@ class Dimos:
         `stop()` closes the connection without terminating the remote process.
         """
         source = RemoteModuleSource(timeout=timeout)
-        instance = cls()
+        instance = cls(memory=memory)
         instance._source = source
         return instance
+
+    @property
+    def memory(self) -> Store:
+        """Return the Memory2 store attached to this runtime capability.
+
+        Evaluation policy runtimes attach the active read-only recording so the
+        same query interface works during execution and after a trial.
+        """
+        if self._memory is None:
+            raise RuntimeError("No Memory2 store is attached to this Dimos instance")
+        return self._memory
 
     def list_modules(self) -> list[ModuleInfo]:
         """Return structured information for the currently deployed module instances.
@@ -276,6 +291,10 @@ class Dimos:
             if self._coordinator is not None:
                 self._coordinator.stop()
                 self._coordinator = None
+
+            if self._memory is not None:
+                self._memory.stop()
+                self._memory = None
 
     @property
     def is_running(self) -> bool:

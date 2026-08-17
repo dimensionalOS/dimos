@@ -208,6 +208,26 @@ class TestConnectedHardware:
             ((0.07,), {}),
         ]
 
+    def test_direct_gripper_command_is_retained_by_arm_only_commands(self, mock_adapter):
+        mock_adapter.read_gripper_position.return_value = 0.035
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            gripper_joints=["arm/gripper"],
+            gripper_open_position=0.07,
+            gripper_closed_position=0.0,
+        )
+        hardware = ConnectedHardware(mock_adapter, component)
+
+        assert hardware.set_gripper_position(0.0)
+        hardware.write_command({"arm/joint1": 0.5}, ControlMode.POSITION)
+
+        assert mock_adapter.write_gripper_position.call_args_list == [
+            ((0.0,), {}),
+            ((0.0,), {}),
+        ]
+
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names
         assert names == [
@@ -444,7 +464,10 @@ class TestControlCoordinatorTrajectoryExecution:
         assert config.type == "trajectory"
         assert config.joint_names == ["arm/joint1", "arm/joint2"]
         assert config.priority == 7
-        assert config.params == {"start_position_tolerance": 0.02}
+        assert config.params == {
+            "start_position_tolerance": 0.02,
+            "goal_position_tolerance": 0.05,
+        }
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
@@ -501,6 +524,17 @@ class TestJointTrajectoryTask:
                 start_position_tolerance=tolerance,
             )
 
+    @pytest.mark.parametrize(
+        "tolerance",
+        [-0.01, math.nan, math.inf, -math.inf],
+    )
+    def test_config_requires_finite_non_negative_goal_tolerance(self, tolerance):
+        with pytest.raises(ValueError):
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1"],
+                goal_position_tolerance=tolerance,
+            )
+
     def test_initial_state(self, trajectory_task):
         assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
         assert not trajectory_task.is_active()
@@ -523,13 +557,22 @@ class TestJointTrajectoryTask:
 
     def test_status_snapshot_is_non_destructive(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
-        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
+        reached = JointStateSnapshot(
+            joint_positions=dict(
+                zip(
+                    simple_trajectory.joint_names,
+                    simple_trajectory.points[-1].positions,
+                    strict=True,
+                )
+            )
+        )
+        trajectory_task.compute(CoordinatorState(joints=reached, t_now=10.0, dt=0.01))
 
         active = trajectory_task.get_status(10.25)
         assert active.state is TrajectoryState.EXECUTING
         assert active.progress == pytest.approx(0.25)
 
-        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
+        trajectory_task.compute(CoordinatorState(joints=reached, t_now=11.5, dt=0.01))
         terminal = trajectory_task.get_status(11.5)
         assert terminal.state is TrajectoryState.COMPLETED
         assert terminal.progress == pytest.approx(1.0)
@@ -663,18 +706,19 @@ class TestJointTrajectoryTask:
             trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
-        trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
-        output = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.5, dt=0.01))
+        reached = JointStateSnapshot(joint_positions={"arm/joint2": 1.0})
+        trajectory_task.compute(CoordinatorState(joints=reached, t_now=10.0, dt=0.01))
+        output = trajectory_task.compute(CoordinatorState(joints=reached, t_now=10.5, dt=0.01))
         assert output is not None
         assert output.joint_names == ["arm/joint2"]
         assert output.positions == [pytest.approx(0.5)]
 
-        final = trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=11.5, dt=0.01))
+        final = trajectory_task.compute(CoordinatorState(joints=reached, t_now=11.5, dt=0.01))
         assert final is not None
         assert final.joint_names == ["arm/joint2"]
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
         assert (
-            trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=12.0, dt=0.01))
+            trajectory_task.compute(CoordinatorState(joints=reached, t_now=12.0, dt=0.01))
             is None
         )
 
@@ -753,8 +797,18 @@ class TestJointTrajectoryTask:
         trajectory_task.compute(state0)
 
         # Compute past trajectory duration
+        reached_joints = JointStateSnapshot(
+            joint_positions={
+                name: position
+                for name, position in zip(
+                    simple_trajectory.joint_names,
+                    simple_trajectory.points[-1].positions,
+                    strict=True,
+                )
+            }
+        )
         state = CoordinatorState(
-            joints=coordinator_state.joints,
+            joints=reached_joints,
             t_now=t_start + 1.5,
             dt=0.01,
         )
@@ -765,6 +819,27 @@ class TestJointTrajectoryTask:
         assert output.positions == [1.0, 0.5, 0.25]  # Final trajectory point
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
+
+    def test_trajectory_holds_final_command_until_measured_goal_is_reached(
+        self, trajectory_task, simple_trajectory, coordinator_state
+    ):
+        t_start = time.perf_counter()
+        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        trajectory_task.compute(
+            CoordinatorState(joints=coordinator_state.joints, t_now=t_start, dt=0.01)
+        )
+
+        output = trajectory_task.compute(
+            CoordinatorState(
+                joints=coordinator_state.joints,
+                t_now=t_start + 1.5,
+                dt=0.01,
+            )
+        )
+
+        assert output is not None
+        assert output.positions == simple_trajectory.points[-1].positions
+        assert trajectory_task.get_state() is TrajectoryState.EXECUTING
 
     def test_cancel_trajectory(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
@@ -980,6 +1055,14 @@ class TestTickLoop:
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter, wait_until):
+        measured_positions = [0.0] * 6
+        mock_adapter.read_joint_positions.side_effect = lambda: measured_positions.copy()
+
+        def track_command(positions):
+            measured_positions[:] = positions
+            return True
+
+        mock_adapter.write_joint_positions.side_effect = track_command
         component = HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,

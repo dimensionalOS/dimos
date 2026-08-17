@@ -111,8 +111,10 @@ def test_live_repl_bootstraps_public_runtime_without_credentials(
     source = _bootstrap_source(environment)
     kernel_environment = _kernel_environment(config)
 
-    assert "memory = SqliteStore" in source
-    assert "app = Dimos.connect()" in source
+    assert "app = Dimos.connect(" in source
+    assert "memory=SqliteStore" in source
+    assert "\nmemory =" not in source
+    assert "app.memory.start()" in source
     assert "submit_policy" not in source
     assert "OPENAI_API_KEY" not in kernel_environment
     assert kernel_environment["ORDINARY_SETTING"] == "retained"

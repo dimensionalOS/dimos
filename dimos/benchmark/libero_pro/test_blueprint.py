@@ -6,7 +6,9 @@ from dimos.benchmark.libero_pro.blueprint import libero_trial_blueprint
 from dimos.benchmark.libero_pro.connection import LiberoConnection, LiberoRecorder
 from dimos.benchmark.libero_pro.video import LiberoVideoRecorder
 from dimos.control.coordinator import ControlCoordinator
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.perception.grounded_segmentation import GroundedSegmentationModule
 
 
 def test_trial_blueprint_exposes_normal_control_manipulation_and_memory(
@@ -24,6 +26,8 @@ def test_trial_blueprint_exposes_normal_control_manipulation_and_memory(
         LiberoConnection,
         ControlCoordinator,
         ManipulationModule,
+        GroundedSegmentationModule,
+        GraspGenXModule,
         LiberoRecorder,
         LiberoVideoRecorder,
     } <= atoms.keys()
@@ -41,7 +45,16 @@ def test_trial_blueprint_exposes_normal_control_manipulation_and_memory(
         "panda/gripper",
     ]
     assert atoms[ControlCoordinator].kwargs["tick_rate"] == 20.0
+    robot_model = atoms[ManipulationModule].kwargs["robots"][0]
+    assert robot_model.planning_groups[0].tip_link == "tcp"
     assert atoms[LiberoVideoRecorder].kwargs["output_path"] == tmp_path / "trial.mp4"
+    assert atoms[LiberoRecorder].kwargs["record_tf"] is True
+    assert atoms[LiberoRecorder].kwargs["stream_codecs"] == {
+        "agentview_depth_image": "pickle",
+        "eye_in_hand_depth_image": "pickle",
+    }
+    assert atoms[GraspGenXModule].kwargs["gripper"]["extents_open"] == (0.08, 0.04, 0.10)
+    assert atoms[GraspGenXModule].kwargs["max_candidates"] == 25
 
 
 def test_recorder_has_no_privileged_evaluation_streams() -> None:
@@ -50,8 +63,10 @@ def test_recorder_has_no_privileged_evaluation_streams() -> None:
     assert public_inputs == {
         "joint_state",
         "agentview_color_image",
+        "agentview_depth_image",
         "agentview_camera_info",
         "eye_in_hand_color_image",
+        "eye_in_hand_depth_image",
         "eye_in_hand_camera_info",
     }
     assert public_inputs.isdisjoint(

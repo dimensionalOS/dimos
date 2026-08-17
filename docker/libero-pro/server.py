@@ -18,6 +18,9 @@ import numpy as np
 from dimos.benchmark.libero_pro.proto import libero_pro_pb2 as pb2, libero_pro_pb2_grpc as pb2_grpc
 
 GRIPPER_APERTURE_TOLERANCE_M = 1e-4
+CAMERA_RENDER_INTERVAL_TICKS = 4
+OSC_POSITION_DELTA_M = 0.05
+OSC_ORIENTATION_DELTA_RAD = 0.5
 
 
 class Runtime:
@@ -41,6 +44,10 @@ class Runtime:
         self.initialize_error = None
         self.initialization_requested = False
         self.initialize_done = threading.Event()
+        self.camera_intrinsics = {}
+        self.camera_observation = {}
+        self.get_camera_to_robot_base = None
+        self.get_real_depth_map = None
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
@@ -61,6 +68,11 @@ class Runtime:
             from libero.envs import OffScreenRenderEnv
         except ImportError:
             from libero.libero.envs import OffScreenRenderEnv
+        from robosuite.utils.camera_utils import (
+            get_camera_extrinsic_matrix,
+            get_camera_intrinsic_matrix,
+            get_real_depth_map,
+        )
 
         manifest = json.loads(Path("/task/task.json").read_text())
         task = manifest["task"]
@@ -75,16 +87,29 @@ class Runtime:
         self.environment = OffScreenRenderEnv(
             bddl_file_name="/task/task.bddl",
             robots=["Panda"],
-            use_camera_obs=True,
+            use_camera_obs=False,
             has_renderer=False,
             has_offscreen_renderer=True,
             camera_heights=128,
             camera_widths=128,
             camera_names=["agentview", "robot0_eye_in_hand"],
-            controller="JOINT_POSITION",
+            camera_depths=True,
+            controller="OSC_POSE",
             control_freq=request.control_frequency_hz,
             horizon=request.horizon_ticks + request.settling_ticks,
         )
+        from robosuite.utils.control_utils import orientation_error
+
+        self.orientation_error = orientation_error
+        self.get_camera_to_robot_base = lambda sim, camera: _camera_to_robot_base(
+            sim,
+            get_camera_extrinsic_matrix(sim, camera),
+        )
+        self.get_real_depth_map = get_real_depth_map
+        self.camera_intrinsics = {
+            camera: get_camera_intrinsic_matrix(self.environment.sim, camera, 128, 128)
+            for camera in ("agentview", "robot0_eye_in_hand")
+        }
         with zipfile.ZipFile("/task/init_states.pruned_init") as archive:
             states = pickle.loads(archive.read("archive/data.pkl"))
         if request.init_state_index >= len(states):
@@ -92,8 +117,11 @@ class Runtime:
         self.environment.reset()
         observation = self.environment.set_init_state(states[request.init_state_index])
         for _ in range(request.settling_ticks):
-            observation, _, _, _ = self.environment.step(np.zeros(8, dtype=np.float64))
+            observation, _, _, _ = self.environment.step(
+                np.zeros(self.environment.env.action_dim, dtype=np.float64)
+            )
             self.backend_ticks += 1
+        self._render_cameras()
         self.frequency = request.control_frequency_hz
         self.horizon = request.horizon_ticks
         self.policy_ticks = 0
@@ -169,6 +197,8 @@ class Runtime:
                         observation, reward, done, info = self.environment.step(self._action())
                         self.policy_ticks += 1
                         self.backend_ticks += 1
+                        if self.policy_ticks % CAMERA_RENDER_INTERVAL_TICKS == 0:
+                            self._render_cameras()
                         self._publish(observation, self.policy_ticks)
                         check_success = getattr(self.environment, "check_success", None)
                         if check_success is None:
@@ -201,9 +231,18 @@ class Runtime:
 
     def _action(self) -> np.ndarray:
         observation = self.snapshot
-        measured = np.asarray(observation.joint_position, dtype=np.float64)
         target = np.asarray(self.target, dtype=np.float64)
-        arm = np.clip((target[:7] - measured) / 0.05, -1.0, 1.0)
+        target_position, target_orientation = self._target_eef_pose(target[:7])
+        controller = self.environment.env.robots[0].controller
+        position = (target_position - controller.ee_pos) / OSC_POSITION_DELTA_M
+        orientation = (
+            self.orientation_error(
+                target_orientation,
+                controller.ee_ori_mat,
+            )
+            / OSC_ORIENTATION_DELTA_RAD
+        )
+        arm = np.concatenate([position, orientation])
         gripper_error = target[7] - observation.gripper_position
         if abs(gripper_error) <= GRIPPER_APERTURE_TOLERANCE_M:
             gripper = 0.0
@@ -211,14 +250,54 @@ class Runtime:
             gripper = -1.0 if gripper_error > 0.0 else 1.0
         return np.concatenate([arm, [gripper]])
 
+    def _target_eef_pose(self, joint_position: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Evaluate a DimOS joint target as an OSC end-effector target."""
+        sim = self.environment.sim
+        robot = self.environment.env.robots[0]
+        state = sim.get_state()
+        try:
+            sim.data.qpos[robot._ref_joint_pos_indexes] = joint_position
+            sim.data.qvel[robot._ref_joint_vel_indexes] = 0.0
+            sim.forward()
+            position = np.asarray(sim.data.site_xpos[robot.eef_site_id]).copy()
+            orientation = np.asarray(sim.data.site_xmat[robot.eef_site_id]).reshape(3, 3).copy()
+        finally:
+            sim.set_state(state)
+            sim.forward()
+        return position, orientation
+
     def _publish(self, observation, tick: int) -> None:
         joints = np.asarray(observation["robot0_joint_pos"], dtype=np.float64)[:7]
         velocities = np.asarray(observation["robot0_joint_vel"], dtype=np.float64)[:7]
         gripper = float(np.mean(np.abs(observation["robot0_gripper_qpos"])))
-        images = []
+        cameras = []
+        if self.get_real_depth_map is None or self.get_camera_to_robot_base is None:
+            raise RuntimeError("camera calibration helpers are not initialized")
+        camera_observation = self.camera_observation or observation
         for camera in ("agentview", "robot0_eye_in_hand"):
-            rgb = np.ascontiguousarray(np.flipud(observation[f"{camera}_image"]), dtype=np.uint8)
-            images.append(pb2.ImageFrame(camera=camera, width=128, height=128, rgb=rgb.tobytes()))
+            rgb = np.ascontiguousarray(
+                np.flipud(camera_observation[f"{camera}_image"]), dtype=np.uint8
+            )
+            depth = self.get_real_depth_map(
+                self.environment.sim,
+                camera_observation[f"{camera}_depth"],
+            )
+            depth = np.ascontiguousarray(np.flipud(depth).reshape(128, 128), dtype=np.float32)
+            camera_to_robot_base = self.get_camera_to_robot_base(
+                self.environment.sim,
+                camera,
+            )
+            cameras.append(
+                pb2.CameraFrame(
+                    camera=camera,
+                    width=128,
+                    height=128,
+                    rgb=rgb.tobytes(),
+                    depth_meters=depth.tobytes(),
+                    intrinsic=np.asarray(self.camera_intrinsics[camera]).reshape(-1).tolist(),
+                    camera_to_robot_base=np.asarray(camera_to_robot_base).reshape(-1).tolist(),
+                )
+            )
         with self.condition:
             self.snapshot = pb2.RobotSnapshot(
                 tick=tick,
@@ -226,10 +305,24 @@ class Runtime:
                 joint_position=joints,
                 joint_velocity=velocities,
                 gripper_position=gripper,
-                images=images,
+                cameras=cameras,
             )
             self.snapshot_version += 1
             self.condition.notify_all()
+
+    def _render_cameras(self) -> None:
+        """Refresh RGB-D independently of the 20 Hz physics/control loop."""
+        frames = {}
+        for camera in ("agentview", "robot0_eye_in_hand"):
+            rgb, depth = self.environment.sim.render(
+                width=128,
+                height=128,
+                camera_name=camera,
+                depth=True,
+            )
+            frames[f"{camera}_image"] = rgb
+            frames[f"{camera}_depth"] = depth
+        self.camera_observation = frames
 
     def _measured_target(self, observation) -> np.ndarray:
         return np.array(
@@ -249,6 +342,15 @@ class Runtime:
             backend_ticks=self.backend_ticks,
             error=error,
         )
+
+
+def _camera_to_robot_base(sim, camera_to_world: np.ndarray) -> np.ndarray:
+    """Express an OpenCV camera pose in the Panda base frame."""
+    base_id = sim.model.body_name2id("robot0_base")
+    robot_base_to_world = np.eye(4, dtype=np.float64)
+    robot_base_to_world[:3, :3] = np.asarray(sim.data.xmat[base_id]).reshape(3, 3)
+    robot_base_to_world[:3, 3] = np.asarray(sim.data.xpos[base_id])
+    return np.linalg.inv(robot_base_to_world) @ np.asarray(camera_to_world)
 
 
 class PolicyService:

@@ -74,7 +74,7 @@ from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanPlannerConfig,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
@@ -774,6 +774,7 @@ class ManipulationModule(Module):
             {group_id: target_pose}, seed=seed, check_collision=check_collision
         )
 
+    @rpc
     def solve_ik(
         self,
         pose: Pose,
@@ -1052,6 +1053,86 @@ class ManipulationModule(Module):
             )
             return None
         return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+
+    @rpc
+    def move_to_pose(
+        self,
+        target: PoseStamped,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        blocking: bool = True,
+        timeout: float | None = None,
+    ) -> MoveResult:
+        """Move one end effector to an absolute world-frame pose."""
+
+        self._clear_pending_plan()
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+            return MoveResult(plan_result, None, (0.0, 0.0, 0.0), check_collision)
+        current = self.get_state().groups[group.id].end_effector_pose
+        if current is None:
+            plan_result = PlanResult(PlanStatus.FAILED, "End-effector pose is unavailable")
+            return MoveResult(plan_result, None, (0.0, 0.0, 0.0), check_collision)
+        delta = (
+            target.position.x - current.position.x,
+            target.position.y - current.position.y,
+            target.position.z - current.position.z,
+        )
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        start_marker = PoseStamped(
+            frame_id="world",
+            position=current.position,
+            orientation=current.orientation,
+        )
+        if check_collision:
+            plan = self.generate_cartesian_plan(
+                {group.id: (start_marker, target)},
+                RoboPlanCartesianPathConfig(),
+                speed_scale=resolved_speed,
+                check_collision=True,
+            )
+        else:
+            planning = self._begin_group_planning(resolved_speed)
+            if planning is None:
+                plan = None
+            else:
+                planning_epoch, resolved_speed = planning
+                resolved = self._resolve_group_plan_start((group.id,), planning_epoch)
+                if resolved is None:
+                    plan = None
+                else:
+                    _selection, start = resolved
+                    ik = self.inverse_kinematics(
+                        {group.id: target},
+                        seed=start,
+                        check_collision=False,
+                    )
+                    if not ik.is_success() or ik.joint_state is None:
+                        detail = f": {ik.message}" if ik.message else ""
+                        self._fail_planning_epoch(
+                            planning_epoch,
+                            f"IK failed: {ik.status.name}{detail}",
+                        )
+                        plan = None
+                    else:
+                        direct_path = PlanningResult(
+                            status=PlanningStatus.SUCCESS,
+                            path=[start, ik.joint_state],
+                        )
+                        plan = self._store_generated_plan(
+                            (group.id,),
+                            direct_path,
+                            planning_epoch,
+                            resolved_speed,
+                        )
+        if plan is None:
+            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+            return MoveResult(plan_result, None, delta, check_collision)
+        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+        execution = self.execute(blocking=blocking, timeout=timeout)
+        return MoveResult(plan_result, execution, delta, check_collision)
 
     @rpc
     def move_linear(

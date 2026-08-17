@@ -5,11 +5,14 @@ package dimos.benchmark.libero_pro.v1;
 message Empty {}
 message Health { bool ready = 1; string detail = 2; }
 message WatchRequest {}
-message ImageFrame {
+message CameraFrame {
   string camera = 1;
   uint32 width = 2;
   uint32 height = 3;
   bytes rgb = 4;
+  bytes depth_meters = 5;
+  repeated double intrinsic = 6;
+  repeated double camera_to_robot_base = 7;
 }
 message RobotSnapshot {
   uint64 tick = 1;
@@ -17,7 +20,7 @@ message RobotSnapshot {
   repeated double joint_position = 3;
   repeated double joint_velocity = 4;
   double gripper_position = 5;
-  repeated ImageFrame images = 6;
+  repeated CameraFrame cameras = 6;
 }
 message JointTargets {
   repeated double joint_position = 1;

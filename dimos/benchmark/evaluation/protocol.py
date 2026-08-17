@@ -169,6 +169,7 @@ class CodePolicyRuntime(EvaluationRuntime, Protocol):
         self,
         policy: PolicyArtifact,
         *,
+        memory_path: Path,
         startup_timeout_s: float,
     ) -> PolicyExecutionHandle: ...
 

@@ -5,6 +5,7 @@ easydict==1.9
 future==0.18.2
 gym==0.25.2
 glfw==2.10.2
+h5py==3.8.0
 matplotlib==3.5.3
 mujoco==2.3.7
 numpy==1.22.4

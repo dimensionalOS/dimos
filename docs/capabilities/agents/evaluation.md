@@ -81,7 +81,11 @@ be ready, and loads the serialized callable in a clean process behind a start
 gate:
 
 ```python
-execution = context.runtime.prepare(policy, startup_timeout_s=30.0)
+execution = context.runtime.prepare(
+    policy,
+    memory_path=recording_path,
+    startup_timeout_s=30.0,
+)
 evaluator.start_trial()
 execution.start()
 terminal = evaluator.wait_for_terminal()
@@ -158,7 +162,7 @@ records both the requested condition and resolved profile.
 
 The `live-agent-v1` profile prepares one Pi session and one persistent Python
 workspace before the evaluator's start gate. The workspace provides `app` for
-ordinary DimOS RPCs and `memory` for read-only public observations. Pi can make
+ordinary DimOS RPCs and `app.memory` for read-only public observations. Pi can make
 repeated `python_exec` calls while the native environment advances. The native
 terminal condition or evaluator timeout stops Pi and closes the workspace.
 

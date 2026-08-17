@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import secrets
 import subprocess
@@ -12,7 +13,27 @@ from dimos.benchmark.libero_pro.assets import PreparedAssets
 from dimos.benchmark.libero_pro.models import LiberoTaskManifest
 from dimos.constants import DIMOS_PROJECT_ROOT
 
-IMAGE = "localhost/dimos-libero-pro:eafdb809"
+
+def _image_source_digest() -> str:
+    """Identify the exact local sources copied into the trial image."""
+    sources = [
+        path
+        for root in (
+            DIMOS_PROJECT_ROOT / "docker" / "libero-pro",
+            DIMOS_PROJECT_ROOT / "dimos" / "benchmark" / "libero_pro" / "proto",
+        )
+        for path in root.rglob("*")
+        if path.is_file()
+        and (path.name == "Dockerfile" or path.suffix in {".proto", ".py", ".pyi", ".txt", ".yaml"})
+    ]
+    digest = hashlib.sha256()
+    for path in sorted(sources):
+        digest.update(path.relative_to(DIMOS_PROJECT_ROOT).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+IMAGE = f"localhost/dimos-libero-pro:{_image_source_digest()}"
 POLICY_CONTAINER_PORT = 50051
 CONTROL_CONTAINER_PORT = 50052
 

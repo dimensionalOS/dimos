@@ -62,7 +62,7 @@ class CameraContract(LiberoModel):
 
 class ComparisonContract(LiberoModel):
     robot: Literal["Panda"]
-    controller: Literal["JOINT_POSITION"]
+    controller: Literal["OSC_POSE"]
     cameras: tuple[CameraContract, CameraContract]
     control_frequency_hz: Literal[20]
     settling_ticks: Literal[5]
