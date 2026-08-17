@@ -35,9 +35,6 @@ from pydantic import Field, create_model
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 
-# Producing wins: a topic any member publishes is an output of the whole host.
-_PRODUCING = (Out, IO)
-
 
 class BakedHostConfig(NativeModuleConfig):
     """Config for a baked host. Per-member configs are `<member>_config` fields."""
@@ -58,9 +55,13 @@ def _union_ports(
     members: Mapping[str, type[NativeModule]],
     remaps: Mapping[tuple[str, str], str],
 ) -> dict[str, object]:
-    """Host port annotations: one per effective name, Out if anything produces it."""
-    ports: dict[str, object] = {}
+    """Host port annotations, one per effective name.
+
+    A member reading and writing one name keeps both directions. Otherwise a
+    name anything publishes is an output of the whole host.
+    """
     msg_types: dict[str, tuple[type, str]] = {}
+    origins: dict[str, set[object]] = {}
     for instance, member in members.items():
         for port, hint in _member_ports(member).items():
             name = remaps.get((instance, port), port)
@@ -72,9 +73,12 @@ def _union_ports(
                     f"{msg_type.__name__} on {instance}.{port}; remap one of them"
                 )
             msg_types[name] = (msg_type, f"{instance}.{port}")
-            produces = get_origin(hint) in _PRODUCING
-            if produces or name not in ports:
-                ports[name] = Out[msg_type] if produces else hint  # type: ignore[valid-type]
+            origins.setdefault(name, set()).add(get_origin(hint))
+
+    ports: dict[str, object] = {}
+    for name, (msg_type, _) in msg_types.items():
+        kind = IO if IO in origins[name] else Out if Out in origins[name] else In
+        ports[name] = kind[msg_type]  # type: ignore[index]
     return ports
 
 

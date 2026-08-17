@@ -22,7 +22,7 @@ import pytest
 
 from dimos.core.baked_host import BakedHost, baked_host
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -103,6 +103,21 @@ def test_member_configs_default_and_are_overridable():
     assert host.config.planner_config.world_frame == "map"
     assert host.config.executable == "dist/go2-nav"
     host.stop()
+
+
+def test_a_duplex_member_port_keeps_both_directions():
+    """Collapsing IO to Out would leave the host deaf on the channel."""
+
+    class DuplexConfig(NativeModuleConfig):
+        executable: str = "unused"
+        stdin_config: bool = True
+
+    class Duplex(NativeModule):
+        config: DuplexConfig
+        cmd: IO[PointCloud2]
+
+    cls = baked_host("H", executable="h", members={"duplex": Duplex})
+    assert get_origin(get_type_hints(cls)["cmd"]) is IO
 
 
 def test_a_baked_host_spawns_its_binary_with_no_arguments():

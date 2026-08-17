@@ -244,13 +244,40 @@ fn merge_qos(defaults: &Value, overrides: Option<&Value>, suppress: &[String]) -
 /// A stdin entry names a channel (`local_map`) or a full topic, like the CLI's
 /// `--suppress`. An entry matching nothing this host touches is an error: a
 /// typo must not silently publish the topic it meant to keep in-process.
+/// Whether a `suppress` entry names this topic, by full topic or channel name.
+fn suppresses(topic: &str, entry: &str) -> bool {
+    topic == entry || topic.split('/').nth(1) == Some(entry)
+}
+
+/// The baked list, kept to the topics this host actually touches.
+///
+/// A python driver can rewire a channel, which leaves a baked entry naming a
+/// topic nothing here publishes. Suppressing that is a no-op, so drop it and
+/// say so rather than reporting a suppression that does nothing.
+fn baked_suppress(spec: &HostSpec, known: &[String]) -> Vec<String> {
+    let mut resolved: Vec<String> = Vec::new();
+    for entry in spec.default_suppress {
+        let mut matched = false;
+        for topic in known.iter().filter(|t| suppresses(t, entry)) {
+            matched = true;
+            if !resolved.contains(topic) {
+                resolved.push(topic.clone());
+            }
+        }
+        if !matched {
+            warn!(
+                host = spec.name,
+                topic = entry,
+                "baked suppression names a topic this host does not touch, ignoring it"
+            );
+        }
+    }
+    resolved
+}
+
 fn resolve_suppress(spec: &HostSpec, stdin: &Value, known: &[String]) -> io::Result<Vec<String>> {
     let Some(value) = stdin.get("suppress") else {
-        return Ok(spec
-            .default_suppress
-            .iter()
-            .map(|s| s.to_string())
-            .collect());
+        return Ok(baked_suppress(spec, known));
     };
     let list = value
         .as_array()
@@ -260,10 +287,7 @@ fn resolve_suppress(spec: &HostSpec, stdin: &Value, known: &[String]) -> io::Res
         let entry = value
             .as_str()
             .ok_or_else(|| invalid("`suppress` entries must be topic strings"))?;
-        let matches: Vec<&String> = known
-            .iter()
-            .filter(|t| t.as_str() == entry || t.split('/').nth(1) == Some(entry))
-            .collect();
+        let matches: Vec<&String> = known.iter().filter(|t| suppresses(t, entry)).collect();
         if matches.is_empty() {
             return Err(invalid(format!(
                 "`suppress` names `{entry}`, which no baked module touches"
@@ -700,10 +724,24 @@ mod tests {
     #[test]
     fn suppress_defaults_to_the_baked_list() {
         let spec = spec_with("{}");
+        let known = vec!["dimos/global_map".to_string()];
         assert_eq!(
-            resolve_suppress(&spec, &json!({}), &[]).unwrap(),
+            resolve_suppress(&spec, &json!({}), &known).unwrap(),
             vec!["dimos/global_map".to_string()]
         );
+    }
+
+    /// The stdin path errors on an entry nothing touches. The baked path cannot,
+    /// because a python driver may legitimately have rewired the channel.
+    #[test]
+    #[tracing_test::traced_test]
+    fn a_baked_suppression_the_host_does_not_touch_is_dropped() {
+        let spec = spec_with("{}");
+        let known = vec!["dimos/local_map/sensor_msgs.PointCloud2".to_string()];
+        assert!(resolve_suppress(&spec, &json!({}), &known)
+            .unwrap()
+            .is_empty());
+        assert!(logs_contain("does not touch"));
     }
 
     #[test]
