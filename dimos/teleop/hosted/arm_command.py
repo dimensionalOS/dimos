@@ -203,7 +203,7 @@ class ArmCommandModule(ArmTeleopModule):
         elif kind == "teleop_scale":
             self._handle_teleop_scale(msg)
         elif kind == "gripper" and not self._estopped:
-            self.gripper_command.publish(Bool(data=bool(msg.get("closed", False))))
+            self.gripper_command.publish(Bool(data=not bool(msg.get("closed", False))))
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
         try:

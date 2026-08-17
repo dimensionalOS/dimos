@@ -163,7 +163,7 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
-    # Input: Gripper toggle (True = closed). Routed to GripperControlTask,
+    # Input: Gripper toggle (True = open). Routed to GripperControlTask,
     # the sole owner of gripper joints.
     gripper_command: In[Bool]
 

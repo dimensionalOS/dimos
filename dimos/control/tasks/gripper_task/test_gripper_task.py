@@ -73,12 +73,13 @@ def test_measured_normalized_value_is_not_clamped() -> None:
     assert task.get_normalized() == [1.5]
 
 
-def test_bool_input_routes_through_normalized_command() -> None:
+@pytest.mark.parametrize(("open_", "expected"), [(True, 850.0), (False, 0.0)])
+def test_bool_input_routes_through_normalized_command(open_: bool, expected: float) -> None:
     task = _task()
-    assert task.on_gripper_command(Bool(data=False), 0.0)
+    assert task.on_gripper_command(Bool(data=open_), 0.0)
     output = task.compute(_state())
     assert output is not None
-    assert output.positions == [850.0]
+    assert output.positions == [expected]
 
 
 def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedHardware]:

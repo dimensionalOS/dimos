@@ -202,8 +202,8 @@ class GripperControlTask(BaseControlTask):
         return normalized
 
     def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        """Handle an open/closed toggle (True = closed)."""
-        value = _CLOSED if msg.data else _OPEN
+        """Handle normalized binary intent (True = open, False = closed)."""
+        value = _OPEN if msg.data else _CLOSED
         return self.set_normalized([value] * len(self._joint_names), t_now)
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:

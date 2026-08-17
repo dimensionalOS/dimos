@@ -21,8 +21,6 @@ import pytest
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
-    GRIPPER_CLOSED,
-    GRIPPER_OPEN,
     KeyboardTeleopModule,
     _twist_from_keys,
 )
@@ -130,19 +128,26 @@ def test_keyup_publishes_directly_without_timeout_wait(
     publish.assert_called_once()
 
 
-def test_gripper_emits_closed_state_only_when_it_changes(
+def test_gripper_keys_publish_normalized_open_state_only_when_it_changes(
     module: KeyboardTeleopModule, mocker
 ) -> None:
     publish = mocker.patch.object(module.gripper_command, "publish")
+    held: set[int] = set()
+    open_event = keyboard_mod.pygame.event.Event(
+        keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_LEFTBRACKET
+    )
+    close_event = keyboard_mod.pygame.event.Event(
+        keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_RIGHTBRACKET
+    )
 
-    module._set_gripper_closed(GRIPPER_OPEN)
-    publish.assert_called_once()
-    assert publish.call_args.args[0].data is False
-
-    publish.reset_mock()
-    module._set_gripper_closed(GRIPPER_OPEN)
-    publish.assert_not_called()
-
-    module._set_gripper_closed(GRIPPER_CLOSED)
+    module._handle_pygame_event(open_event, held)
     publish.assert_called_once()
     assert publish.call_args.args[0].data is True
+
+    publish.reset_mock()
+    module._handle_pygame_event(open_event, held)
+    publish.assert_not_called()
+
+    module._handle_pygame_event(close_event, held)
+    publish.assert_called_once()
+    assert publish.call_args.args[0].data is False

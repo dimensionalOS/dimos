@@ -59,9 +59,6 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 # Default jog speeds
 DEFAULT_LINEAR_SPEED = 0.05  # m/s
 DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
-# The keyboard sends open/closed intent; GripperControlTask owns the units.
-GRIPPER_OPEN = False
-GRIPPER_CLOSED = True
 
 TwistVector = tuple[float, float, float]
 
@@ -112,12 +109,12 @@ class KeyboardTeleopModule(Module):
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
-    _gripper_closed: bool | None = None
+    _gripper_open: bool | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        self._gripper_closed = None
+        self._gripper_open = None
 
     @rpc
     def start(self) -> None:
@@ -219,9 +216,9 @@ class KeyboardTeleopModule(Module):
             if event.key in _motion_key_codes():
                 held_motion_keys.add(event.key)
             elif event.key == left_bracket:
-                self._set_gripper_closed(GRIPPER_OPEN)
+                self._publish_gripper_command(open_=True)
             elif event.key == right_bracket:
-                self._set_gripper_closed(GRIPPER_CLOSED)
+                self._publish_gripper_command(open_=False)
         elif event.type == pygame.KEYUP and event.key in _motion_key_codes():
             held_motion_keys.discard(event.key)
             linear, angular = _twist_from_keys(
@@ -240,12 +237,12 @@ class KeyboardTeleopModule(Module):
     ) -> None:
         self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
 
-    def _set_gripper_closed(self, closed: bool) -> None:
-        """Latch and publish a changed open/closed wish."""
-        if self._gripper_closed == closed:
+    def _publish_gripper_command(self, *, open_: bool) -> None:
+        """Publish changed gripper intent using the normalized open convention."""
+        if self._gripper_open == open_:
             return
-        self._gripper_closed = closed
-        self.gripper_command.publish(Bool(data=closed))
+        self._gripper_open = open_
+        self.gripper_command.publish(Bool(data=open_))
 
 
 def _twist_from_keys(
