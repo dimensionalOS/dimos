@@ -99,9 +99,12 @@ from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 # Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%),
 # re-measured 2026-08-17 on the CURRENT 16-term loss from a 16-replicate
-# pool (the deterministic divergence terms dilute draw variance, so the
-# 16-term loss resolves finer than the old 11-term one's 0.16): outer
-# trials within this of the best are a TIE, their fitted plants
+# pool. DILUTED by construction: the five divergence terms come from one
+# unreplicated rollout (measured licence in ground.Divergence) and add
+# zero replicate variance, so this is optimistic as a resolution on the
+# eleven varying terms — a selection that needs 0.064 rather than
+# surviving the conservative 11-term 0.16 is a tie, not a win. Outer
+# trials within this of the best are ties, their fitted plants
 # admissible DR samples (module docstring).
 MDD_N8 = 0.064
 

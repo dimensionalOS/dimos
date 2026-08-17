@@ -471,12 +471,17 @@ point), `run_outer` seeds from both the incumbent and the partition
 points, and any nonzero accel weight must justify itself on the held-out
 RECORDING, not merely held-out segments — which converts the
 independence claim from an architectural assumption into a measured one.
-Axis sensitivities measured so far: `w_accel` endpoints differ by ~0.6
-of referee loss; `w_flight` 0.25→0 (full refits, same seeds) differs by
-**0.03** — inert at the n=8 resolution. The gating step before any full
-search is therefore a 3–4 point sweep of `w_accel` alone (~50 min per
-point): if accel-only wins it, the remaining axes have no demonstrated
-headroom and the search should not run.
+Axis sensitivities measured so far — and they hold under BOTH MDD
+thresholds (§8's diluted 0.064 and the conservative 11-term 0.16), which
+is worth more than a conclusion needing the favourable one: `w_accel`
+endpoints differ by ~0.60 of referee loss (~9× diluted, ~4×
+conservative); `w_flight` 0.25→0 (full refits, same seeds) differs by
+**0.03** — inert under both. The gating step before any full search is
+therefore a 3–4 point sweep of `w_accel` alone (~50 min per point) —
+and its endpoints are ALREADY KNOWN (accel-only is the incumbent at
+1.61, joint-only the partition at 2.21), so the sweep's entire value is
+whether an interior blend beats 1.61: an interior-optimum question, not
+a fresh measurement of the axis.
 
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
@@ -764,12 +769,21 @@ structure is the claim, not the third decimal), full span:
 **Minimum detectable difference** (bootstrap, 95%, same window and floor),
 re-measured 2026-08-17 on the CURRENT 16-term loss from a 16-replicate
 pool: median-of-4 **0.098**, median-of-8 **0.064**, median-of-16
-**0.054**. Finer than the old 11-term loss's 0.31/0.16/0.07 — the five
-divergence terms are deterministic per plant, so they dilute draw
-variance rather than adding to it (the pool: 15 of 16 draws in
-1.56–1.72, one right-tail outlier at 2.57 — the heavy tail persists).
-The match count stays coarse at any n — **k wobbles ±1** whenever
-statistics sit near SNR 1; quote it with its draw range, never alone.
+**0.054**. Finer than the old 11-term loss's 0.31/0.16/0.07 — **by
+construction, and the dilution must ride every quote**: five of the 16
+terms come from one unreplicated rollout and contribute zero replicate
+variance, which lowers the loss's spread arithmetically without any
+gain in resolving the eleven varying terms. The unreplicated scoring is
+itself LICENSED by measurement, not determinism (three ±3° perturbed
+rollouts move every scored rate by less than its jackknife SE — spreads
+0.001–0.019 vs SEs 0.012–0.064 — bit-identical and
+perturbation-insensitive being different claims, §5k's lesson), so the
+dilution is benign; still, a conclusion that needs 0.064 rather than
+surviving the conservative 11-term 0.16 is not one to ship. The pool:
+15 of 16 draws in 1.56–1.72, one right-tail outlier at 2.57 — the
+heavy tail persists. The match count stays coarse at any n — **k
+wobbles ±1** whenever statistics sit near SNR 1; quote it with its
+draw range, never alone.
 
 So `ground --replicates` (default 8) rolls perturbed rollouts: the verdict
 is the per-statistic MEDIAN (§4a's shape), the per-draw loss and k ranges

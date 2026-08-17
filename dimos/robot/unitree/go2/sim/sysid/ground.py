@@ -681,10 +681,15 @@ def _rate_of(x: np.ndarray, tau: np.ndarray, moving: np.ndarray | None = None) -
 @dataclass(frozen=True)
 class Divergence:
     """The divergence-rate verdict: one :class:`TermRate` per term, from a
-    single deterministic snapped rollout. The scored rates ride beside the
-    eleven statistics (README 4), each judged against its own jackknife
-    SE: SNR under ~1 means no divergence resolvable at the instrument's
-    resolution."""
+    single UNREPLICATED snapped rollout — licensed by measurement, not by
+    determinism (bit-identical is not the same claim as
+    perturbation-insensitive, and §5k is what conflating them cost):
+    three rollouts under the verdict replicates' own +-3 deg perturbations
+    move every scored rate by LESS than its own jackknife SE (spreads
+    0.001-0.019 against SEs 0.012-0.064 on the shipped plant) — the 2 s
+    snap bounds realisation-dependence below the fit's resolution. The
+    scored rates ride beside the eleven statistics (README 4), each
+    judged against its own jackknife SE."""
 
     window_s: float
     n_windows: int
