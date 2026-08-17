@@ -297,6 +297,10 @@
       "destination": "/usage/evals"
     },
     {
+      "source": "/docs/usage/vqa.md",
+      "destination": "/usage/vqa"
+    },
+    {
       "source": "/docs/usage/data_streams/index.md",
       "destination": "/usage/data_streams/index"
     },
