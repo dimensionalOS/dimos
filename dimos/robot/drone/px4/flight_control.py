@@ -51,6 +51,11 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.drone.px4.mid360_mount_tf import BASE_TO_MID360
 from dimos.utils.logging_config import setup_logger
 
+# MAVSDK installs uvloop as the process-wide policy during import. DimOS Modules
+# use Python's default policy; restoring it prevents uvloop and native LCM
+# lifecycle teardown from corrupting later Module instances in the same worker.
+asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
 logger: Logger = setup_logger()
 
 _VisionQuaternion: TypeAlias = tuple[float, float, float, float]
