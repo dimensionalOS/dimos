@@ -22,10 +22,12 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.sysid.ingest import (
-    Declarations,
     _velocity_command,
     command_coverage,
     mount_matrix,
+)
+from dimos.robot.unitree.go2.sim.sysid.recording import (
+    Declarations,
     read_declarations,
     sidecar_path,
 )

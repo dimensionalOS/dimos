@@ -21,7 +21,7 @@ import itertools
 import numpy as np
 import pytest
 
-from dimos.robot.unitree.go2.sim.sysid.ingest import Declarations, Streams
+from dimos.robot.unitree.go2.sim.sysid.recording import Declarations, Streams
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
     Span,
     clip_schedule,

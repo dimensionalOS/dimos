@@ -59,7 +59,7 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.anchors import RobotSpec, derive
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, Preset, load_preset
-from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations
+from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
     Segment,
     Span,

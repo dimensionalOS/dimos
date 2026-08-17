@@ -20,8 +20,9 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, mount_matrix
+from dimos.robot.unitree.go2.sim.sysid.ingest import mount_matrix
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 
 
 def _streams(

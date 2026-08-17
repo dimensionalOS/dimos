@@ -66,7 +66,8 @@ import numpy as np
 
 from dimos.robot.unitree.go2.sim.backend import CHANNELS, Backend
 from dimos.robot.unitree.go2.sim.ranges import CONTACT_DEFAULTS, Knob, load_preset
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_declarations, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import (
     Segment,
     protected,

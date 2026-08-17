@@ -77,8 +77,9 @@ from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, Preset, load_preset
 from dimos.robot.unitree.go2.sim.rotations import mat_to_quat, quat_to_mat
 from dimos.robot.unitree.go2.sim.sysid.gait import strides
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
 from dimos.robot.unitree.go2.sim.sysid.stats import NOT_COMPARABLE, Summary, spread_of, summarize
 

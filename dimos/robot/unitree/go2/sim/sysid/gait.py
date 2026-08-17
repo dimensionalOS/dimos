@@ -38,7 +38,7 @@ import numpy as np
 from dimos.robot.unitree.go2.sim.rotations import quat_to_mat
 
 if TYPE_CHECKING:
-    from dimos.robot.unitree.go2.sim.sysid.ingest import Streams
+    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 
 # Go2 leg geometry, metres, from the menagerie go2.xml body tree (base ->
 # hip -> thigh -> calf -> foot geom). Joint axes: hip abduction about +x,

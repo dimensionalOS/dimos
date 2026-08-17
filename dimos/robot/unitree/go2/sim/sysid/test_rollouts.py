@@ -119,7 +119,7 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     pytest.importorskip("optuna")
     from dimos.robot.unitree.go2.sim.ranges import KNOBS
     from dimos.robot.unitree.go2.sim.sysid.fit import Objective, base_values, default_plan, fit
-    from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations
+    from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
     from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 

@@ -69,8 +69,9 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     sim_summary,
     usable_floor,
 )
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
 # The probed statistics: the 5b oscillation family, then the 5g speed family

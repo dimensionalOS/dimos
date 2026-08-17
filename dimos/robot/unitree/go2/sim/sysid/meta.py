@@ -72,7 +72,7 @@ from dimos.robot.unitree.go2.sim.sysid.ground import (
     sim_noise,
     usable_floor,
 )
-from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_declarations, read_streams
+from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
 from dimos.robot.unitree.go2.sim.sysid.loop import (
     LATENCY_BAND_S,
     sensor_noise,
@@ -81,6 +81,7 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
 )
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
 from dimos.robot.unitree.go2.sim.sysid.real import real_summary
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
 from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary

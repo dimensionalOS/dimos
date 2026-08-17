@@ -183,7 +183,7 @@ def test_bad_segment_arguments_raise():
 def test_the_segment_report_names_where_the_information_came_from():
     """A user whose recording resolves 7 of 14 needs to know it is because the
     robot never did anything hard, not because the method failed."""
-    from dimos.robot.unitree.go2.sim.sysid.ingest import Streams
+    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 
     n = 200
     t = np.linspace(0.0, 20.0, n)

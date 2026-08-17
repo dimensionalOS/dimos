@@ -44,7 +44,8 @@ from dimos.robot.unitree.go2.sim.backend import (
 )
 from dimos.robot.unitree.go2.sim.ranges import Preset
 from dimos.robot.unitree.go2.sim.rotations import quat_to_mat, rotation_angle, strip_yaw
-from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, Streams, mount_matrix
+from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
+from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.regimes import clip_schedule
 
 
@@ -319,7 +320,8 @@ def main() -> None:
 
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import load_preset
-    from dimos.robot.unitree.go2.sim.sysid.ingest import read_declarations, read_streams
+    from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
+    from dimos.robot.unitree.go2.sim.sysid.recording import read_declarations
     from dimos.robot.unitree.go2.sim.sysid.regimes import protected, regimes
 
     st = read_streams(args.recording)

@@ -151,7 +151,7 @@ def test_the_sport_recording_falls_back_to_rt_lowcmd_by_coverage(hanging_streams
 
 @needs_hanging
 def test_the_hanging_file_needs_a_declaration_and_honours_one(hanging_streams):
-    from dimos.robot.unitree.go2.sim.sysid.ingest import Declarations
+    from dimos.robot.unitree.go2.sim.sysid.recording import Declarations
     from dimos.robot.unitree.go2.sim.sysid.regimes import propose_suspended, regimes
 
     assert propose_suspended(hanging_streams)  # unloaded legs: tau p50 ~0.45
