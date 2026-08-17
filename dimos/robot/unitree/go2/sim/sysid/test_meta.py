@@ -12,34 +12,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The outer space stays tiny, and both incumbent scorers live inside it."""
+"""The outer space stays tiny: the weight vector's three live axes."""
 
 from __future__ import annotations
 
 import pytest
 
 from dimos.robot.unitree.go2.sim.backend import CHANNELS
-from dimos.robot.unitree.go2.sim.sysid.fit import Objective
-from dimos.robot.unitree.go2.sim.sysid.meta import FROZEN_STYLE, GO2SIM_STYLE, OuterPoint
+from dimos.robot.unitree.go2.sim.sysid.fit import Objective, PooledObjective
+from dimos.robot.unitree.go2.sim.sysid.meta import (
+    DEFAULT_POINT,
+    MDD_N8,
+    OuterPoint,
+    second_dr_component,
+)
 from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, Span
 from dimos.robot.unitree.go2.sim.sysid.test_score import _result
 
 
 def test_the_outer_point_is_three_decisions_and_no_more():
     fields = set(OuterPoint.__dataclass_fields__) - {"name"}
-    assert fields == {"stratified", "normalised", "w_flight"}
+    assert fields == {"w_flight", "w_dq", "w_tau"}
 
 
-def test_w_flight_maps_onto_the_weight_vector():
-    p = OuterPoint("t", stratified=True, normalised=True, w_flight=0.3)
-    assert p.weights() == {("accel", "floor"): 0.7, ("accel", "flight"): 0.3}
+def test_the_point_maps_onto_the_joint_level_weight_vector():
+    p = OuterPoint("t", w_flight=0.25, w_dq=1.0, w_tau=0.5)
+    w = p.weights()
+    assert w[("joint", "floor")] == pytest.approx(0.75)
+    assert w[("joint", "flight")] == pytest.approx(0.25)
+    assert w[("dq", "floor")] == pytest.approx(0.75)
+    assert w[("tau", "floor")] == pytest.approx(0.375)
+    # the partition: no body-level channel appears at any weight
+    assert not any(c in ("accel", "gyro", "pos", "rot") for c, _r in w)
 
 
-def test_the_two_incumbent_scorers_are_seed_points():
-    """The disagreement is two points in one space, not two philosophies."""
-    assert not FROZEN_STYLE.stratified and not FROZEN_STYLE.normalised
-    assert GO2SIM_STYLE.stratified and GO2SIM_STYLE.normalised
-    assert FROZEN_STYLE.w_flight == GO2SIM_STYLE.w_flight == 0.5
+def test_the_default_point_matches_the_shipped_default_weights():
+    from dimos.robot.unitree.go2.sim.sysid.score import DEFAULT_WEIGHTS
+
+    w = DEFAULT_POINT.weights()
+    # same RATIOS as score.DEFAULT_WEIGHTS (the score renormalises, so only
+    # ratios matter): joint/floor anchors the comparison
+    k = DEFAULT_WEIGHTS[("joint", "floor")] / w[("joint", "floor")]
+    for key, val in DEFAULT_WEIGHTS.items():
+        assert w[key] * k == pytest.approx(val), key
+
+
+def test_second_dr_component_keeps_ties_and_excludes_losers():
+    log = [
+        {"trial": 0, "ground_loss": 1.00, "values": {"armature": 0.010}},
+        {"trial": 1, "ground_loss": 1.00 + MDD_N8 / 2, "values": {"armature": 0.020}},
+        {"trial": 2, "ground_loss": 1.00 + 3 * MDD_N8, "values": {"armature": 0.500}},
+    ]
+    dr2 = second_dr_component(log)
+    assert dr2["admissible_trials"] == [0, 1]  # the clear loser is not DR
+    assert dr2["spread"] == {"armature": [0.010, 0.020]}
+    assert "coarse" in str(dr2["caveat"])
 
 
 class _StubRollouts:
@@ -47,29 +74,39 @@ class _StubRollouts:
         return [_result(accel_err=3.0) for _ in specs]
 
 
-def _objective(normalise: bool) -> Objective:
+def _objective(weights=None) -> Objective:
     return Objective(
         _StubRollouts(),  # type: ignore[arg-type]
         segments=[Segment(0.0, 1.0)],
         spans=[Span("floor", 0.0, 1.0)],
-        weights={("accel", "floor"): 1.0},
+        weights=weights or {("accel", "floor"): 1.0},
         backend_channels=frozenset(CHANNELS),
-        normalise=normalise,
     )
 
 
-def test_normalised_scoring_freezes_the_baseline_scale():
-    obj = _objective(normalise=True)
+def test_scoring_always_freezes_the_baseline_scale():
+    obj = _objective()
     s = obj.calibrate({})
-    assert obj.scales == {"accel": pytest.approx(3.0)}
+    assert obj.scales is not None and obj.scales["accel"] == pytest.approx(3.0)
     assert s.total == pytest.approx(1.0)  # the baseline normalises to itself
 
 
-def test_raw_scoring_is_the_frozen_conventions_shape():
-    obj = _objective(normalise=False)
+def test_zero_weight_channels_are_still_computed_and_reported():
+    """README 4: the de-weighted residuals ARE the misspecification map."""
+    obj = _objective(weights={("joint", "floor"): 1.0})
     s = obj.calibrate({})
-    assert obj.scales == {"accel": 1.0}
-    assert s.total == pytest.approx(3.0)  # natural units, unscaled
+    assert ("accel", "floor") in s.terms  # unscored, still reported
+    assert s.terms[("accel", "floor")] == pytest.approx(3.0)
+
+
+def test_pooled_objective_shares_one_scale_across_parts():
+    a, b = _objective(), _objective()
+    pooled = PooledObjective([a, b])
+    s = pooled.calibrate({})
+    assert pooled.scales is not None and pooled.scales["accel"] == pytest.approx(3.0)
+    assert len(s.per_segment) == 2  # both parts' segments pool into the mean
+    with pytest.raises(ValueError, match="one weight vector"):
+        PooledObjective([_objective(), _objective(weights={("dq", "floor"): 1.0})])
 
 
 def test_probe_builders_propagate_the_plants_envelope():

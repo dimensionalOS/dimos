@@ -14,28 +14,29 @@
 
 """Loop 2's meta-search: the grounding adjudicates loop-1's hyperparameters.
 
-Two self-consistent scorers disagree about which plant is better: the frozen
-one (raw residual, one contiguous window) prefers ``accel`` over ``measured``
-by 11-18% on held-out jumps; this package's (per-channel normalisation,
-stratified segments) says ``accel`` is marginally worse. Those are not rival
-philosophies — they are TWO POINTS in the hyperparameter space this module
-searches. Loop 1 cannot arbitrate, because that would judge a scorer with a
-scorer; the grounding (:mod:`~dimos.robot.unitree.go2.sim.sysid.ground`) is
-the referee that lives outside both.
+The outer space is the loop-1 WEIGHT VECTOR's three live axes (README 4):
+``w_flight`` (how much the flight regime counts, real now that a
+flight-bearing recording is in the fit set) and the ``dq``/``tau`` channel
+weights relative to ``joint``. The axes the two retired scorers once
+disagreed on — stratified segment sampling and per-channel normalisation —
+are gone: normalisation is always on (raw residual summation is a unit
+choice, not a hypothesis), and segment sampling is the fit CLI's
+``--segments``/``--segment-length``, a coverage question loop 1's own
+identifiability instrument answers more cheaply than the referee can.
 
-    # the experiment that decides which scorer survives (run this first):
+    # ground candidate plants under one shared floor:
     python -m dimos.robot.unitree.go2.sim.sysid.meta experiment REC.mcap \
-        NET.bin --presets measured accel results/fit5-freewalk.plant.json
+        NET.bin --presets measured stock results/fit.plant.json
 
     # the full nested search (EXPENSIVE: every trial is a whole inner fit):
-    python -m dimos.robot.unitree.go2.sim.sysid.meta outer FIT.mcap VAL.mcap \
-        NET.bin --trials 10 --workers 16
+    python -m dimos.robot.unitree.go2.sim.sysid.meta outer FIT.mcap [FIT2...] \
+        VAL.mcap NET.bin --trials 10 --workers 16 --out results/outer.json
 
 Three design constraints, each load-bearing:
 
 * OUTER TRIALS ARE EXPENSIVE — each runs a full inner fit (seeded restarts,
   median + spread). Ten or twenty, not hundreds; TPE, not CMA-ES.
-* THREE SPLITS. Inner fits on the fit recording, the outer study selects on
+* THREE SPLITS. Inner fits on the fit recordings, the outer study selects on
   a validation recording, and the final number is quoted on a THIRD recording
   neither has touched. Selecting hyperparameters on the recording you then
   report is overfitting one storey up, with the added insult that it looks
@@ -43,11 +44,18 @@ Three design constraints, each load-bearing:
 * THE OUTER DIMENSION STAYS TINY. Loop 2 yields ~11 statistics per
   recording; that supports two or three decisions. Everything else stays at
   a documented default.
+
+One obligation: EVERY trial's fitted plant persists with its loop-2 score.
+The trials the referee cannot distinguish from the winner (within the MDD)
+are samples of a SECOND DR component — misspecification spread, which no
+amount of data shrinks — beside the fit's own p10-p90. Reported
+separately, never merged.
 """
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -60,6 +68,7 @@ from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.fit import (
     FitResult,
     Objective,
+    PooledObjective,
     base_values,
     default_plan,
     fit,
@@ -82,40 +91,46 @@ from dimos.robot.unitree.go2.sim.sysid.loop import (
 from dimos.robot.unitree.go2.sim.sysid.probe import FOCUS, Probe, Spectrum, spectrum
 from dimos.robot.unitree.go2.sim.sysid.real import real_summary
 from dimos.robot.unitree.go2.sim.sysid.recording import Streams, read_declarations
-from dimos.robot.unitree.go2.sim.sysid.regimes import Segment, regimes, sample_segments
+from dimos.robot.unitree.go2.sim.sysid.regimes import regimes, sample_segments
 from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
+
+# Loop 2's n=8 minimum detectable difference (README 8, bootstrap, 95%):
+# outer trials whose grounding losses sit within this of the best are a
+# TIE, and their fitted plants are admissible DR samples (module docstring).
+MDD_N8 = 0.16
 
 
 @dataclass(frozen=True)
 class OuterPoint:
     """One loop-1 hyperparameter setting — a point the outer study evaluates.
 
-    Deliberately three decisions and no more. ``stratified`` and
-    ``normalised`` are the axes the two incumbent scorers actually disagree
-    on; ``w_flight`` is the invented constant the README flags as loop 2's
-    first selection. Everything else in the inner objective stays at its
-    documented default.
+    Deliberately three decisions and no more — the weight vector's live
+    axes under the README-4 partition. Channel weights are RELATIVE to
+    ``joint`` = 1 (the score renormalises, so only ratios matter).
+    Everything else in the inner objective stays at its documented default.
     """
 
     name: str
-    stratified: bool  # sampled segments across the recording vs one contiguous window
-    normalised: bool  # per-channel baseline scales vs raw residual
-    w_flight: float = 0.5
+    w_flight: float = 0.25  # share of each channel's weight on the flight regime
+    w_dq: float = 1.0  # dq weight relative to joint
+    w_tau: float = 0.5  # tau weight relative to joint
 
     def weights(self) -> dict[tuple[str, str], float]:
-        return {("accel", "floor"): 1.0 - self.w_flight, ("accel", "flight"): self.w_flight}
+        out: dict[tuple[str, str], float] = {}
+        for channel, wc in (("joint", 1.0), ("dq", self.w_dq), ("tau", self.w_tau)):
+            out[(channel, "floor")] = wc * (1.0 - self.w_flight)
+            out[(channel, "flight")] = wc * self.w_flight
+        return out
 
 
-# The two known settings — the seeds of the outer study, and the whole of the
-# first experiment. FROZEN_STYLE reproduces the frozen scorer's SHAPE (raw
-# accel residual over one contiguous stretch), not its byte-level behaviour.
-FROZEN_STYLE = OuterPoint("frozen-style", stratified=False, normalised=False)
-GO2SIM_STYLE = OuterPoint("go2sim-style", stratified=True, normalised=True)
+# The incumbent setting — the outer study's seed, and DEFAULT_WEIGHTS'
+# shape (joint .4 / dq .4 / tau .2, w_flight .25) expressed in ratios.
+DEFAULT_POINT = OuterPoint("default")
 
 
 def inner_fit(
-    recording: str | Path,
+    recordings: Sequence[str | Path],
     point: OuterPoint,
     backend: ClosedLoopBackend,
     *,
@@ -128,41 +143,46 @@ def inner_fit(
     """One full loop-1 fit under ``point``'s hyperparameters.
 
     Returns the complete knob values of the fitted POINT (median, never the
-    best draw) and the full result. The non-stratified variant scores one
-    contiguous segment — the frozen convention — which also collapses the
-    paired-SE harvest to exact ties; the restart median still pools across
-    studies.
+    best draw) and the full result. ``recordings`` pool into one objective
+    with shared scales (fit.PooledObjective) — the fit set is expected to
+    carry both `floor` and `flight` so the regime axis refers to something.
     """
+    from contextlib import ExitStack
+
     base = base_values("measured")
     plan = default_plan(backend.knobs())
-    declared = read_declarations(recording)
-    rollouts = Rollouts(recording, backend, workers=workers)
-    st = rollouts.streams
-    spans = regimes(st, declared)
-    t_lo = max(float(st.lt[0]), float(st.ct[0]))
-    t_hi = min(float(st.lt[-1]), float(st.ct[-1]))
-    if point.stratified:
-        segments = sample_segments(t_lo, t_hi, n=n_segments, seed=schedule_seed)
-    else:
-        segments = [Segment(t_lo, t_hi - t_lo)]
-    objective = Objective(
-        rollouts,
-        segments=segments,
-        spans=spans,
-        weights=point.weights(),
-        backend_channels=backend.channels(),
-        schedule_seed=schedule_seed,
-        suspended=bool(declared.suspended),
-        normalise=point.normalised,
-    )
-    with rollouts:
+    part_workers = max(1, workers // len(list(recordings)))
+    parts = []
+    n_total = 0
+    with ExitStack() as stack:
+        for idx, rec in enumerate(recordings):
+            declared = read_declarations(rec)
+            rollouts = stack.enter_context(Rollouts(rec, backend, workers=part_workers))
+            st = rollouts.streams
+            spans = regimes(st, declared)
+            t_lo = max(float(st.lt[0]), float(st.ct[0]))
+            t_hi = min(float(st.lt[-1]), float(st.ct[-1]))
+            seed = schedule_seed + 100 * idx
+            segments = sample_segments(t_lo, t_hi, n=n_segments, seed=seed)
+            parts.append(
+                Objective(
+                    rollouts,
+                    segments=segments,
+                    spans=spans,
+                    weights=point.weights(),
+                    backend_channels=backend.channels(),
+                    schedule_seed=seed,
+                    suspended=bool(declared.suspended),
+                )
+            )
+            n_total += len(segments)
         res = fit(
-            objective,
+            PooledObjective(parts),
             plan,
             base,
             trials=trials,
             max_studies=max_studies,
-            batch=max(1, workers // max(len(segments), 1)),
+            batch=max(1, workers // max(n_total, 1)),
         )
     return merged(base, plan, res.point), res
 
@@ -244,10 +264,11 @@ def experiment(
 ) -> str:
     """Ground each plant under one shared floor and say which the referee prefers.
 
-    THE FIRST DELIVERABLE, and it is an experiment, not a feature: the frozen
-    scorer's winner (``accel``) and this package's (``measured``, plus the
-    phase-4 fitted point) disagree; whichever plant the grounding prefers
-    tells us which scorer survives into the outer study's seed.
+    The referee's plant-vs-plant instrument: candidates share one floor (a
+    per-candidate floor would let a plant buy small SNRs with its own
+    chaos), losses closer than the widest draw range are declared a tie,
+    and the ordering — not any loop-1 score — is what promotes a plant
+    (README 4's converse rule).
 
     ``start``/``seconds`` window the comparison — for a mixed recording, run
     it on the span the verified net actually drove and nothing else.
@@ -562,8 +583,27 @@ def run_latency(
 # ------------------------------------------------------------ the outer study
 
 
+def second_dr_component(log: Sequence[dict[str, object]]) -> dict[str, object]:
+    """The misspecification DR component: per-knob spread over the trials
+    tied with the best (within :data:`MDD_N8` — the fit's 1-SE harvest, one
+    storey up). Small tied sets make it coarse; the output says so."""
+    losses = [float(e["ground_loss"]) for e in log]  # type: ignore[arg-type]
+    best = min(losses)
+    tied = [e for e, loss in zip(log, losses, strict=True) if loss - best <= MDD_N8]
+    knobs: dict[str, list[float]] = {}
+    for e in tied:
+        for k, v in dict(e["values"]).items():  # type: ignore[call-overload]
+            knobs.setdefault(k, []).append(float(v))
+    return {
+        "admissible_trials": [e["trial"] for e in tied],
+        "mdd": MDD_N8,
+        "caveat": f"n={len(tied)} tied trials: a coarse estimate, not a distribution",
+        "spread": {k: [min(v), max(v)] for k, v in knobs.items() if max(v) > min(v)},
+    }
+
+
 def run_outer(
-    fit_recording: str | Path,
+    fit_recordings: Sequence[str | Path],
     validation: str | Path,
     policy_bin: str | Path,
     backend: ClosedLoopBackend,
@@ -577,9 +617,13 @@ def run_outer(
 ) -> None:
     """Nested Optuna: TPE over :class:`OuterPoint`, each trial a full inner fit.
 
-    Seeded with the two known settings. The final number must be quoted on a
+    Seeded with :data:`DEFAULT_POINT`. The final number must be quoted on a
     THIRD recording this function never sees — quoting the validation score
-    as the result is the one-storey-up overfit this module exists to prevent.
+    as the result is the one-storey-up overfit this module exists to
+    prevent. Every trial's fitted plant persists in the ``--out`` log with
+    its grounding score — the losers within the MDD of the winner are the
+    samples of the second DR component (:func:`second_dr_component`), not
+    discards.
     """
     import optuna
 
@@ -590,12 +634,12 @@ def run_outer(
     def objective(trial: optuna.Trial) -> float:
         point = OuterPoint(
             name=f"trial-{trial.number}",
-            stratified=bool(trial.suggest_categorical("stratified", [True, False])),
-            normalised=bool(trial.suggest_categorical("normalised", [True, False])),
             w_flight=trial.suggest_float("w_flight", 0.0, 1.0),
+            w_dq=trial.suggest_float("w_dq", 0.0, 2.0),
+            w_tau=trial.suggest_float("w_tau", 0.0, 2.0),
         )
         values, res = inner_fit(
-            fit_recording,
+            fit_recordings,
             point,
             backend,
             workers=workers,
@@ -618,7 +662,10 @@ def run_outer(
             {
                 "trial": trial.number,
                 "point": point.__dict__,
+                # EVERY trial's fitted plant, spread included — the tied
+                # ones are DR samples, not discards (module docstring).
                 "values": values,
+                "spread": {k: list(v) for k, v in res.spread.items()},
                 "inner_stopped": res.stopped,
                 "ground_loss": rep.loss(),
                 "ground_loss_draws": [lo, hi],
@@ -626,18 +673,24 @@ def run_outer(
             }
         )
         if out is not None:
-            Path(out).write_text(json.dumps(log, indent=2))
+            Path(out).write_text(
+                json.dumps({"trials": log, "second_dr": second_dr_component(log)}, indent=2)
+            )
         return rep.loss()
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=0))
-    for p in (FROZEN_STYLE, GO2SIM_STYLE):
-        study.enqueue_trial(
-            {"stratified": p.stratified, "normalised": p.normalised, "w_flight": p.w_flight}
-        )
+    p = DEFAULT_POINT
+    study.enqueue_trial({"w_flight": p.w_flight, "w_dq": p.w_dq, "w_tau": p.w_tau})
     study.optimize(objective, n_trials=trials)
     best = study.best_trial
     print(f"best outer point: {best.params}  ground loss {best.value:.3f}")
+    dr2 = second_dr_component(log)
+    print(
+        f"second DR component (misspecification spread over {len(dr2['admissible_trials'])} "  # type: ignore[arg-type]
+        f"trials tied within MDD {MDD_N8}): {dr2['spread']}"
+    )
+    print(f"  caveat: {dr2['caveat']}")
     print(
         "Selected on the validation recording — quote the final number on a "
         "third recording this run never touched."
@@ -663,7 +716,12 @@ def main() -> None:
     ex.add_argument("--replicates", type=int, default=8, help="verdict rollouts per preset")
 
     ot = sub.add_parser("outer", help="the nested search (EXPENSIVE: trials are inner fits)")
-    ot.add_argument("fit_recording")
+    ot.add_argument(
+        "fit_recordings",
+        nargs="+",
+        help="fit-set recordings (pooled; include a flight-bearing one), then "
+        "the validation recording, then the policy blob",
+    )
     ot.add_argument("validation")
     ot.add_argument("policy_bin")
     ot.add_argument("--trials", type=int, default=10)
@@ -752,7 +810,7 @@ def main() -> None:
         )
     else:
         run_outer(
-            args.fit_recording,
+            args.fit_recordings,
             args.validation,
             args.policy_bin,
             backend,

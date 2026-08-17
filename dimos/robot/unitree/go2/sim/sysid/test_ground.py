@@ -22,9 +22,14 @@ import numpy as np
 import pytest
 
 from dimos.robot.unitree.go2.sim.sysid.ground import (
+    DIVERGENCE_FIT_S,
+    DIVERGENCE_TERMS,
     ObsNoise,
+    PolicyRun,
     Report,
+    aggregate_divergence,
     usable_floor,
+    window_curves,
 )
 from dimos.robot.unitree.go2.sim.sysid.stats import Summary
 
@@ -141,6 +146,120 @@ def test_median_summary_keeps_nan_not_comparable():
     assert med.speed_gain == 0.9
 
 
+# ----------------------------------------------------- the divergence rate
+
+
+def _static_streams(seconds: float = 12.0) -> Streams:
+    """A synthetic recording: robot parked at the origin, identity attitude.
+
+    The tracker frame carries a 30-degree room yaw the IMU does not see, so
+    the constant tracker-IMU yaw offset the window anchor must absorb is
+    genuinely non-zero here.
+    """
+    from dimos.robot.unitree.go2.sim.rotations import mat_to_quat
+    from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, mount_matrix
+    from dimos.robot.unitree.go2.sim.sysid.recording import Streams
+
+    lt = np.arange(0.0, seconds, 0.01)
+    n = len(lt)
+    ident = np.tile([1.0, 0.0, 0.0, 0.0], (n, 1))
+    yaw = np.pi / 6
+    rz = np.array(
+        [[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0], [0.0, 0.0, 1.0]]
+    )
+    vq = np.tile(mat_to_quat(rz @ mount_matrix()), (n, 1))  # derived base attitude = Rz(30 deg)
+    # vp such that the derived base position is exactly the origin
+    vp = np.tile([0.0, 0.0, TRACKER_Z], (n, 1))
+    return Streams(
+        lt=lt,
+        lq=np.zeros((n, 12)),
+        ldq=np.zeros((n, 12)),
+        ltau=np.zeros((n, 12)),
+        lquat=ident,
+        lgyro=np.zeros((n, 3)),
+        lacc=np.tile([0.0, 0.0, 9.81], (n, 1)),
+        ct=lt,
+        cq=np.zeros((n, 12)),
+        ckp=np.zeros((n, 12)),
+        ckd=np.zeros((n, 12)),
+        ctau=np.zeros((n, 12)),
+        cdq=np.zeros((n, 12)),
+        vt=lt.copy(),
+        vp=vp,
+        vq=vq,
+        wt=lt.copy(),
+        wcmd=np.zeros((n, 3)),
+    )
+
+
+def _drifting_run(v_err: float, window: float = 2.0, seconds: float = 10.0) -> PolicyRun:
+    """A sim that drifts +x at ``v_err`` m/s within each re-init window."""
+    t = np.arange(0.0, seconds, 0.02)
+    reinit_t = np.arange(0.5, seconds - 1e-9, window)
+    pos = np.zeros((len(t), 3))
+    for t0 in reinit_t:
+        m = t >= t0 - 1e-9
+        tau = t[m] - t0
+        pos[m, 0] = v_err * tau  # resets to 0 at each snap, then drifts
+    quat = np.tile([1.0, 0.0, 0.0, 0.0], (len(t), 1))
+    return PolicyRun(
+        t=t,
+        pos=pos,
+        quat=quat,
+        cmd=np.zeros((len(t), 3)),
+        target=np.zeros((len(t), 12)),
+        q=np.zeros((len(t), 12)),
+        reinit_t=reinit_t,
+        reinit_pos=np.zeros((len(reinit_t), 3)),
+        reinit_quat=np.tile([1.0, 0.0, 0.0, 0.0], (len(reinit_t), 1)),
+    )
+
+
+def test_the_divergence_rate_reads_a_known_drift():
+    """End to end through the anchor math: a sim drifting 4 cm/s along the
+    robot's heading must read an along rate of 4 cm/s, zero cross, zero
+    attitude — including through the constant tracker-IMU yaw offset."""
+    st = _static_streams()
+    run = _drifting_run(v_err=0.04)
+    curves = window_curves(run, st, start=0.0)
+    assert set(curves) == set(DIVERGENCE_TERMS)
+    div = aggregate_divergence(curves, 2.0)
+    assert div.n_windows == 4  # 5 snaps in 10 s -> 4 closed windows
+    along = div.terms["along"]
+    assert along.rate == pytest.approx(0.04, abs=1e-6)
+    assert along.bias_rate == pytest.approx(0.04, abs=1e-6)  # signed: ahead, not behind
+    # a perfectly linear drift is interval-stable: all three rates agree
+    assert along.rates == pytest.approx((0.04,) * len(DIVERGENCE_FIT_S), abs=1e-6)
+    assert div.terms["cross"].rate == pytest.approx(0.0, abs=1e-9)
+    for term in ("yaw_trk", "yaw_imu", "pitch_trk", "roll_imu"):
+        assert div.terms[term].rate == pytest.approx(0.0, abs=1e-9)
+
+
+def test_divergence_terms_enter_the_report_loss_and_table():
+    st = _static_streams()
+    div = aggregate_divergence(window_curves(_drifting_run(0.04), st, start=0.0), 2.0)
+    noise = dict.fromkeys(Summary.__dataclass_fields__, 0.1)
+    base = _report(_summary(), _summary(), noise)
+    with_div = Report(
+        preset="test",
+        sim=_summary(),
+        real=_summary(),
+        noise=noise,
+        floor_source="test",
+        start=0.0,
+        seconds=1.0,
+        divergence=div,
+    )
+    snr = with_div.snr()
+    assert "div_along" in snr and "div_cross" in snr and "div_yaw" in snr
+    assert with_div.loss() != base.loss()  # visibly moves the number
+    n, of = with_div.n_matched()
+    assert of == base.n_matched()[1] + 5  # five scored divergence terms
+    text = with_div.table()
+    assert "div_along" in text and "DIVERGENCE RATE" in text
+    assert "DEFICIT" in text  # the signed-bias line stays connected to README 9
+
+
 # ------------------------------------------------- against the real recording
 
 
@@ -240,3 +359,42 @@ def test_a_perturbed_start_diverges_but_the_statistics_survive():
     # (locks onto a bob harmonic — README 6), which is why it was retired.
     # The stride instrument is the cadence claim, and it holds to ~0.015.
     assert abs(sa.stride_hz - sb.stride_hz) < 0.3
+
+
+@pytest.mark.go2sim
+@pytest.mark.skipif(not FREEWALK.is_file(), reason="needs the freewalk recording")
+@pytest.mark.skipif(not FREEWALK_BIN.is_file(), reason="needs the freewalk blob")
+def test_the_snapped_rollout_reinitialises_and_measures_a_finite_rate():
+    """The closed loop's re-init path: snaps fire on schedule, the run is
+    deterministic, and the divergence rates come out finite with the sim
+    world's yaw/xy preserved across snaps (no teleports)."""
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+    from dimos.robot.unitree.go2.sim.policy import FreePolicy
+    from dimos.robot.unitree.go2.sim.ranges import load_preset
+    from dimos.robot.unitree.go2.sim.sysid.ground import (
+        DIVERGENCE_SCORED,
+        reinit_schedule,
+        rollout_policy,
+    )
+    from dimos.robot.unitree.go2.sim.sysid.ingest import read_streams
+
+    st = read_streams(FREEWALK)
+    policy = FreePolicy.load(FREEWALK_BIN)
+    preset = load_preset("measured")
+    backend = MujocoBackend()
+    states = reinit_schedule(st, start=6.0, seconds=8.0, T=2.0)
+    kw: dict[str, float] = {"start": 6.0, "seconds": 8.0}
+    a = rollout_policy(st, policy, preset, backend, reinit=states, **kw)  # type: ignore[arg-type]
+    b = rollout_policy(st, policy, preset, backend, reinit=states, **kw)  # type: ignore[arg-type]
+    assert len(a.reinit_t) == len(states) == 4  # 0.5, 2.5, 4.5, 6.5
+    assert np.array_equal(a.pos, b.pos) and np.array_equal(a.reinit_pos, b.reinit_pos)
+    # no teleport: each snap keeps the base within a step of where it was
+    for k, t0 in enumerate(a.reinit_t):
+        i_prev = int(np.searchsorted(a.t, t0 - 1e-9, "left")) - 1
+        if i_prev >= 0:
+            assert float(np.linalg.norm(a.reinit_pos[k][:2] - a.pos[i_prev][:2])) < 0.15
+    curves = window_curves(a, st, start=6.0)
+    div = aggregate_divergence(curves, 2.0)
+    assert div.n_windows == 3
+    for term in DIVERGENCE_SCORED.values():
+        assert np.isfinite(div.terms[term].rate)

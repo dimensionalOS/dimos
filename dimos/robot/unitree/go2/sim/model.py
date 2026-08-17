@@ -240,6 +240,7 @@ class MujocoSession:
     ) -> None:
         self._model = model
         self._data = data
+        self._feet = foot_geom_ids(model)
         self._gi = mocap_index(model, GHOST_BODY) if ghost else -1
         self._speed = view_speed
         self._wall: float | None = None
@@ -283,6 +284,36 @@ class MujocoSession:
             else:
                 self._wall = time.perf_counter()
         return True
+
+    def snap(self, state: State) -> None:
+        """Mode A's re-init placement, preserving the sim's own yaw and x/y.
+
+        ``state.rot`` arrives yaw-stripped (as Mode A's does); composing the
+        sim's current world yaw back on keeps the run continuous — flat
+        ground is yaw- and translation-symmetric, so the physics is
+        identical and the window bookkeeping stays legible.
+        """
+        d, m = self._data, self._model
+        xy = d.qpos[0:2].copy()
+        w, x, y, z = d.qpos[3:7]
+        yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        rz = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]])
+        rot = rz @ state.rot
+        d.qpos[:] = 0.0
+        d.qvel[:] = 0.0
+        d.qpos[0:2] = xy
+        d.qpos[3:7] = mat_to_quat(rot)
+        d.qpos[7:19] = state.q
+        d.qpos[2] = 0.30
+        mujoco.mj_forward(m, d)
+        low = float(np.min(d.geom_xpos[self._feet, 2])) - FOOT_RADIUS
+        d.qpos[2] -= low  # lowest foot exactly on the floor
+        d.qvel[6:18] = state.dq
+        d.qvel[3:6] = rot @ state.gyro  # body rates -> world
+        if state.v_body is not None:
+            d.qvel[0:3] = rot @ state.v_body
+        mujoco.mj_forward(m, d)
 
     def show_ghost(self, pos: np.ndarray, quat: np.ndarray) -> None:
         if self._gi >= 0:

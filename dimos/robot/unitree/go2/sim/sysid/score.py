@@ -51,14 +51,24 @@ from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult
 # One (channel, regime) weight vector. Keys are (channel, span kind).
 WeightVector = Mapping[tuple[str, str], float]
 
-# The frozen instrument scored one channel (`accel`, which resolves 11-12 of
-# 14 knobs) with w_flight = 0.5 — a weight that was INVENTED: flight is ~4% of
-# samples but carries most of the inertia information, and 0.5 is a guess at
-# correcting for that. Chosen because that is the measured-best channel and
-# the incumbent flight weight; never validated — loop 2's first selection.
+# THE PARTITION (README 4): loop 1 scores only the joint-level channels;
+# body-level ones (`accel`, `gyro`, `pos`, `rot`) are the referee's and
+# carry zero weight — `accel` deliberately so despite resolving 11 of 14
+# knobs vs dq's 4, because any accel weight re-couples the fit to the
+# quantity loop 2 judges (the suspected anti-transfer overlap). Zero
+# weight never means unreported. Within the family, identifiability
+# (sysid.identify, 194142 + jumps): dq resolves 4 of 7 searched knobs
+# (only channel to resolve actuator_tau), joint 3, tau the same 3 from an
+# ESTIMATE — so tau gets half weight. w_flight 0.25 emphasises the 2.5 s
+# of flight ~6x its sample share. Chosen from the spectrum, never
+# validated — loop 2's outer study owns these numbers.
 DEFAULT_WEIGHTS: dict[tuple[str, str], float] = {
-    ("accel", "floor"): 0.5,
-    ("accel", "flight"): 0.5,
+    ("joint", "floor"): 0.30,
+    ("joint", "flight"): 0.10,
+    ("dq", "floor"): 0.30,
+    ("dq", "flight"): 0.10,
+    ("tau", "floor"): 0.15,
+    ("tau", "flight"): 0.05,
 }
 
 # The one honest choice for a hanging recording: the trunk is held, so only
@@ -84,9 +94,10 @@ def predicted(r: ReplayResult, channel: str) -> np.ndarray:
     WHICH CHANNEL MATTERS MORE THAN THE KNOBS. Trunk inertia hardly moves a
     joint angle — it moves the BODY, by counter-rotating it against the legs;
     scoring only ``joint`` reports it unidentifiable no matter how good the
-    data is. ``accel`` is the trunk's specific force at the full physics rate,
-    the quantity an impact actually lives in, and it resolves 12 of 14 knobs
-    against ``joint``'s 4.
+    data is. ``accel`` resolves 11-12 of 14 knobs against ``joint``'s 3-4 —
+    and is scored at zero anyway (:data:`DEFAULT_WEIGHTS`): resolution is
+    not correctness, and the body-level channels are the referee's
+    territory. The unresolved knobs ship as spread, not as fiction.
     """
     p = r.prediction
     if channel == "joint":

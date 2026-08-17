@@ -72,11 +72,24 @@ from dimos.robot.unitree.go2.sim.sysid.score import (
     DEFAULT_WEIGHTS,
     SUSPENDED_WEIGHTS,
     Score,
+    SegmentTerms,
     WeightVector,
     scales_from,
     score_terms,
     segment_terms,
 )
+
+# Natural units per channel, for the judgement tables. `rot` entries move
+# ~1:1 with radians (score.predicted).
+CHANNEL_UNITS = {
+    "joint": "rad",
+    "dq": "rad/s",
+    "tau": "N*m",
+    "accel": "m/s^2",
+    "gyro": "rad/s",
+    "pos": "m",
+    "rot": "rad",
+}
 
 # ------------------------------------------------------------------ knob plan
 
@@ -221,6 +234,12 @@ class Objective:
     all decided here, before any search — the scales by :meth:`calibrate`
     against the baseline plant, then FROZEN. After calibration this object is
     immutable and thread-safe: studies in flight share it.
+
+    Terms are computed for EVERY backend channel, not only the weighted
+    ones (zero weight never means unreported — README 4); the extras cost
+    array arithmetic, not physics. Normalisation is always on: raw
+    residual summation is a unit choice, and its toggle retired with the
+    frozen scorer.
     """
 
     def __init__(
@@ -234,7 +253,6 @@ class Objective:
         window: float | tuple[float, float] | None = (0.05, 0.8),
         schedule_seed: int = 0,
         suspended: bool = False,
-        normalise: bool = True,
     ) -> None:
         self.rollouts = rollouts
         self.segments = list(segments)
@@ -243,14 +261,9 @@ class Objective:
         self.window = window
         self.schedule_seed = schedule_seed
         self.suspended = suspended
-        # normalise=False scores RAW residuals (the frozen instrument's
-        # convention, meaningful only for a single-channel weight vector —
-        # m/s² and rad cannot be summed unscaled). It exists so the
-        # meta-search can hold the frozen scorer and this one in one space.
-        self.normalise = normalise
         self._protect = protected(list(spans))
+        self.channels = tuple(sorted(backend_channels))
         wanted = {c for (c, _r), w in self.weights.items() if w > 0}
-        self.channels = tuple(sorted(wanted & backend_channels))
         dropped = sorted(wanted - backend_channels)
         if dropped:
             print(f"note: backend predicts no {dropped}; those weights are dead here")
@@ -270,19 +283,54 @@ class Objective:
             for i, seg in enumerate(self.segments)
         ]
 
+    def terms(self, values: Mapping[str, float]) -> list[SegmentTerms]:
+        """Every segment's per-(channel, regime) terms under ``values``."""
+        results = self.rollouts.run(self._specs(values))
+        return [segment_terms(r, self.spans, self.channels) for r in results]
+
     def calibrate(self, baseline: Mapping[str, float]) -> Score:
         """Set the scales from the baseline plant's residuals, then freeze them."""
-        results = self.rollouts.run(self._specs(baseline))
-        terms = [segment_terms(r, self.spans, self.channels) for r in results]
-        self.scales = scales_from(terms) if self.normalise else {c: 1.0 for c in self.channels}
+        terms = self.terms(baseline)
+        self.scales = scales_from(terms)
         return score_terms(terms, self.weights, self.scales)
 
     def evaluate(self, values: Mapping[str, float]) -> Score:
         if self.scales is None:
             raise RuntimeError("calibrate() the objective on the baseline before evaluating")
-        results = self.rollouts.run(self._specs(values))
-        terms = [segment_terms(r, self.spans, self.channels) for r in results]
+        return score_terms(self.terms(values), self.weights, self.scales)
+
+
+class PooledObjective:
+    """Several recordings, ONE objective: terms pool, scales are shared.
+
+    How a flight-bearing recording joins the floor one (README 4). Scales
+    come from the pooled baseline residuals so a channel means one thing
+    across recordings; the total is the mean over all parts' segments;
+    weights must be identical across parts.
+    """
+
+    def __init__(self, parts: Sequence[Objective]) -> None:
+        if not parts:
+            raise ValueError("PooledObjective needs at least one part")
+        self.parts = list(parts)
+        self.weights = dict(parts[0].weights)
+        for p in parts[1:]:
+            if dict(p.weights) != self.weights:
+                raise ValueError("every pooled part must share one weight vector")
+        self.scales: dict[str, float] | None = None
+
+    def terms(self, values: Mapping[str, float]) -> list[SegmentTerms]:
+        return [t for p in self.parts for t in p.terms(values)]
+
+    def calibrate(self, baseline: Mapping[str, float]) -> Score:
+        terms = self.terms(baseline)
+        self.scales = scales_from(terms)
         return score_terms(terms, self.weights, self.scales)
+
+    def evaluate(self, values: Mapping[str, float]) -> Score:
+        if self.scales is None:
+            raise RuntimeError("calibrate() the objective on the baseline before evaluating")
+        return score_terms(self.terms(values), self.weights, self.scales)
 
 
 # ------------------------------------------------------------------- studies
@@ -302,7 +350,7 @@ class StudyOutcome:
 
 
 def run_study(
-    objective: Objective,
+    objective: Objective | PooledObjective,
     plan: KnobPlan,
     base: Mapping[str, float],
     *,
@@ -458,7 +506,7 @@ class FitResult:
 
 
 def fit(
-    objective: Objective,
+    objective: Objective | PooledObjective,
     plan: KnobPlan,
     base: Mapping[str, float],
     *,
@@ -530,7 +578,59 @@ def _pct(now: float, was: float) -> str:
     return f"{100.0 * (now - was) / was:+.1f}%"
 
 
-def format_report(res: FitResult, *, header: str = "") -> str:
+def channel_table(
+    baseline: Score,
+    candidate: Score | None,
+    weights: WeightVector,
+    scales: Mapping[str, float] | None,
+) -> list[str]:
+    """Every computed (channel, regime) residual, scored or not — zero
+    weight never means unreported (README 4: the de-weighted rows ARE the
+    misspecification map). ``share`` approximates each scored row's part
+    of the weighted total."""
+    who = candidate or baseline
+    keys = sorted(set(baseline.terms) | set(who.terms))
+    scored = {k: w for k, w in weights.items() if w > 0}
+    denom = sum(
+        w * who.terms.get(k, 0.0) / (scales or {}).get(k[0], 1.0)
+        for k, w in scored.items()
+        if k in who.terms and (scales or {}).get(k[0], 0.0) > 0
+    )
+    out = [
+        "CHANNELS  every residual the data can answer, scored or not — the",
+        "zero-weight rows are the misspecification map, not omissions",
+        f"  {'channel/regime':<20s} {'weight':>7s} {'baseline':>10s} {'-> value':>10s} "
+        f"{'unit':<7s} {'/scale':>7s} {'share':>6s}  scored?",
+    ]
+    for key in keys:
+        c, r = key
+        w = weights.get(key, 0.0)
+        b = baseline.terms.get(key)
+        v = who.terms.get(key)
+        scale = (scales or {}).get(c)
+        vs = f"{v:10.4f}" if v is not None else f"{'—':>10s}"
+        bs = f"{b:10.4f}" if b is not None else f"{'—':>10s}"
+        rel = f"{v / scale:7.2f}" if v is not None and scale else f"{'—':>7s}"
+        share = (
+            f"{100 * w * (v / scale) / denom:5.1f}%"
+            if w > 0 and v is not None and scale and denom > 0
+            else f"{'—':>6s}"
+        )
+        tag = "yes" if w > 0 else "SHOWN, not scored"
+        out.append(
+            f"  {c + '/' + r:<20s} {w:7.2f} {bs} {vs} {CHANNEL_UNITS.get(c, ''):<7s}"
+            f" {rel} {share}  {tag}"
+        )
+    return out
+
+
+def format_report(
+    res: FitResult,
+    *,
+    header: str = "",
+    weights: WeightVector | None = None,
+    scales: Mapping[str, float] | None = None,
+) -> str:
     out: list[str] = []
     if header:
         out += [header, ""]
@@ -597,11 +697,46 @@ def format_report(res: FitResult, *, header: str = "") -> str:
         f"  baseline {res.baseline.total:.5f} -> point {res.point_score.total:.5f}   "
         f"{_pct(res.point_score.total, res.baseline.total)}"
     )
-    for key in sorted(res.point_score.terms):
-        c, r = key
-        b = res.baseline.terms.get(key)
-        was = f"{b:.4f}" if b is not None else "   —"
-        out.append(f"    {c}/{r:<12s} {was} -> {res.point_score.terms[key]:.4f}")
+    out.append("")
+    out += channel_table(res.baseline, res.point_score, weights or {}, scales)
+    return "\n".join(out)
+
+
+def judgement(
+    objective: Objective | PooledObjective,
+    base: Mapping[str, float],
+    plan: KnobPlan,
+    target: Preset,
+    args: argparse.Namespace,
+) -> str:
+    """Loop 1's whole judgement of ONE plant, no search: what was compared,
+    with what weight, against what, and what came out (README 4). Scales
+    calibrate on the ``--preset`` incumbent exactly as a fit's would."""
+    baseline = objective.calibrate(merged(base, plan, {}))
+    tvals = {**CONTACT_DEFAULTS, **target.physics, "actuator_tau": target.actuator_tau}
+    cand = objective.evaluate(tvals)
+    out = [
+        f"LOOP-1 JUDGEMENT  plant {target.name!r}  (scales: baseline {args.preset!r})",
+        f"  weighted total  baseline {baseline.total:.5f} -> {target.name} {cand.total:.5f}   "
+        f"{_pct(cand.total, baseline.total)}",
+        f"  envelope {target.envelope or 'none'} (fitted-with; honoured by every rollout)",
+        "",
+        "KNOBS  value and provenance; [pinned]/[searched] shows the fit plan's view",
+    ]
+    for name in sorted(tvals):
+        disp = (
+            "[searched]"
+            if name in plan.searched
+            else ("[pinned]" if name in plan.pinned else "[base]")
+        )
+        why = target.provenance.get(name, "")
+        if not why and name in plan.pinned:
+            why = plan.pinned[name].why
+        if not why and name in CONTACT_DEFAULTS and tvals[name] == CONTACT_DEFAULTS[name]:
+            why = "menagerie default (never overridden)"
+        out.append(f"  {name:<26s} {tvals[name]:>10.5f}  {disp:<10s} {why}")
+    out.append("")
+    out += channel_table(baseline, cand, objective.weights, objective.scales)
     return "\n".join(out)
 
 
@@ -627,7 +762,12 @@ def _overlap_seconds(segments: Sequence[Segment]) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="go2.sim.sysid.fit")
-    ap.add_argument("recording")
+    ap.add_argument(
+        "recordings",
+        nargs="+",
+        help="one or more recordings; several POOL into one objective with "
+        "shared scales (how a flight-bearing recording joins the floor one)",
+    )
     ap.add_argument("--preset", default="measured", help="the incumbent the search starts from")
     ap.add_argument("--robot", default=None, help="robot.json; pins derive from it")
     ap.add_argument("--knobs", default=None, help="knobs.json: per-knob pin/search")
@@ -636,7 +776,18 @@ def main() -> None:
         "--weights",
         default=None,
         help='JSON {"channel": {"regime": w}}, inline or a file. '
-        "Default: accel 0.5 floor / 0.5 flight; suspended recordings score joint",
+        "Default: the joint-level partition (joint/dq/tau, README 4); "
+        "suspended recordings score joint",
+    )
+    ap.add_argument(
+        "--judge",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PLANT",
+        help="no search: print the full loop-1 judgement of PLANT (default: "
+        "--preset) under this objective — every channel's residual, scored "
+        "or not, with weights, scales and per-knob provenance",
     )
     ap.add_argument("--segments", type=int, default=8)
     ap.add_argument(
@@ -679,6 +830,8 @@ def main() -> None:
     ap.add_argument("--name", default=None, help="preset name for the plant JSON")
     args = ap.parse_args()
 
+    from contextlib import ExitStack
+
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
 
     backend = MujocoBackend(envelope=TORQUE_ENVELOPES[args.envelope] if args.envelope else None)
@@ -690,63 +843,84 @@ def main() -> None:
     else:
         plan = default_plan(backend.knobs(), robot, search=search)
 
-    declared = read_declarations(args.recording)
-    suspended = bool(declared.suspended)
-    weights = _parse_weights(args.weights, suspended)
-    if suspended and args.weights is None:
-        print("suspended recording: scoring joint on the suspended regime")
+    declarations = [read_declarations(r) for r in args.recordings]
+    all_suspended = all(bool(d.suspended) for d in declarations)
+    weights = _parse_weights(args.weights, all_suspended)
+    if all_suspended and args.weights is None:
+        print("suspended recording(s): scoring joint on the suspended regime")
 
-    rollouts = Rollouts(args.recording, backend, workers=args.workers)
-    st = rollouts.streams
-    spans = regimes(st, declared)
-    t_lo = max(float(st.lt[0]), float(st.ct[0]))
-    t_hi = min(float(st.lt[-1]), float(st.ct[-1]))
-    if args.start is not None:
-        t_lo = max(t_lo, args.start)
-    if args.seconds is not None:
-        t_hi = min(t_hi, t_lo + args.seconds)
-    segments = sample_segments(
-        t_lo,
-        t_hi,
-        n=args.segments,
-        length=(float(args.segment_length[0]), float(args.segment_length[1])),
-        seed=args.schedule_seed,
-    )
     window: float | tuple[float, float] = (
         float(args.window[0])
         if len(args.window) == 1
         else (float(args.window[0]), float(args.window[1]))
     )
-    objective = Objective(
-        rollouts,
-        segments=segments,
-        spans=spans,
-        weights=weights,
-        backend_channels=backend.channels(),
-        window=window,
-        schedule_seed=args.schedule_seed,
-        suspended=suspended,
-    )
-    overlap = _overlap_seconds(segments)
-    wtxt = ", ".join(f"{c}/{r}={w:g}" for (c, r), w in weights.items())
-    print(
-        f"{Path(args.recording).name}  {len(segments)} segments over t={t_lo:.1f}..{t_hi:.1f}s"
-        f" ({overlap:.1f}s double-covered)  weights {wtxt}  channels {objective.channels}"
-        + (f"  envelope {args.envelope}" if args.envelope else "")
-    )
-    batch = max(1, args.workers // max(len(segments), 1))
-    print(
-        f"{args.trials} trials/study, studies {args.min_studies}..{args.max_studies} in "
-        f"batches of {batch}, {args.workers} workers\n"
-    )
-
-    def progress(o: StudyOutcome) -> None:
+    part_workers = max(1, args.workers // len(args.recordings))
+    parts: list[Objective] = []
+    n_segments = 0
+    with ExitStack() as stack:
+        for idx, (rec, declared) in enumerate(zip(args.recordings, declarations, strict=True)):
+            suspended = bool(declared.suspended)
+            rollouts = stack.enter_context(Rollouts(rec, backend, workers=part_workers))
+            st = rollouts.streams
+            spans = regimes(st, declared)
+            t_lo = max(float(st.lt[0]), float(st.ct[0]))
+            t_hi = min(float(st.lt[-1]), float(st.ct[-1]))
+            if args.start is not None:
+                t_lo = max(t_lo, args.start)
+            if args.seconds is not None:
+                t_hi = min(t_hi, t_lo + args.seconds)
+            seed = args.schedule_seed + 100 * idx  # disjoint per-segment seed blocks
+            segments = sample_segments(
+                t_lo,
+                t_hi,
+                n=args.segments,
+                length=(float(args.segment_length[0]), float(args.segment_length[1])),
+                seed=seed,
+            )
+            parts.append(
+                Objective(
+                    rollouts,
+                    segments=segments,
+                    spans=spans,
+                    weights=weights,
+                    backend_channels=backend.channels(),
+                    window=window,
+                    schedule_seed=seed,
+                    suspended=suspended,
+                )
+            )
+            n_segments += len(segments)
+            kinds = {s.kind for s in spans}
+            print(
+                f"{Path(rec).name}  {len(segments)} segments over t={t_lo:.1f}..{t_hi:.1f}s"
+                f" ({_overlap_seconds(segments):.1f}s double-covered)  regimes {sorted(kinds)}"
+            )
+        objective = PooledObjective(parts)
+        wtxt = ", ".join(f"{c}/{r}={w:g}" for (c, r), w in weights.items())
         print(
-            f"  study seed {o.seed}: best {o.best_total:.5f}, "
-            f"harvested {o.n_harvested}/{o.n_trials} within tol {o.tol:.5f}"
+            f"weights {wtxt}"
+            + (f"  envelope {args.envelope}" if args.envelope else "")
+            + f"  channels {parts[0].channels} (all reported; only weighted ones scored)"
         )
 
-    with rollouts:
+        if args.judge is not None:
+            target = load_preset(args.judge or args.preset)
+            print()
+            print(judgement(objective, base, plan, target, args))
+            return
+
+        batch = max(1, args.workers // max(n_segments, 1))
+        print(
+            f"{args.trials} trials/study, studies {args.min_studies}..{args.max_studies} in "
+            f"batches of {batch}, {args.workers} workers\n"
+        )
+
+        def progress(o: StudyOutcome) -> None:
+            print(
+                f"  study seed {o.seed}: best {o.best_total:.5f}, "
+                f"harvested {o.n_harvested}/{o.n_trials} within tol {o.tol:.5f}"
+            )
+
         res = fit(
             objective,
             plan,
@@ -766,11 +940,9 @@ def main() -> None:
     if args.held_out:
         held_out_lines = _held_out(args, base, plan, res, weights, backend)
 
-    header = (
-        f"FIT  {Path(args.recording).name}  preset {args.preset}  "
-        f"schedule seed {args.schedule_seed}"
-    )
-    text = format_report(res, header=header)
+    names = "+".join(Path(r).name for r in args.recordings)
+    header = f"FIT  {names}  preset {args.preset}  schedule seed {args.schedule_seed}"
+    text = format_report(res, header=header, weights=weights, scales=objective.scales)
     if held_out_lines:
         text += "\n\n" + "\n".join(held_out_lines)
     print()
@@ -778,7 +950,7 @@ def main() -> None:
 
     if args.out:
         prefix = Path(args.out)
-        name = args.name or f"fit-{Path(args.recording).stem.split('_')[0]}"
+        name = args.name or f"fit-{Path(args.recordings[0]).stem.split('_')[0]}"
         values = merged(base, plan, res.point)
         tau = values.pop("actuator_tau", 0.0)
         Preset(name=name, physics=values, actuator_tau=tau, envelope=args.envelope).save(

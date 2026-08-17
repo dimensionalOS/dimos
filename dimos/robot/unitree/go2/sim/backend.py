@@ -280,6 +280,14 @@ class LoopSession(Protocol):
         """
         ...
 
+    def snap(self, state: State) -> None:
+        """Re-initialise the episode to a measured state, mid-run — the
+        divergence-rate instrument's multiple shooting. Mode A's placement
+        convention, except the sim's current world yaw and x/y are
+        preserved (flat ground is symmetric to both), keeping the
+        trajectory continuous."""
+        ...
+
     def show_ghost(self, pos: np.ndarray, quat: np.ndarray) -> None:
         """Place the recorded-pose ghost, sim world frame. Visual only."""
         ...
