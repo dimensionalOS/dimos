@@ -1,6 +1,6 @@
 # Native Modules
 
-Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
+Prerequisite for this is to understand dimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
 Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
 
@@ -8,7 +8,83 @@ Python will handle blueprint wiring, lifecycle, and logging. Native binary handl
 
 Python module **never touches the pubsub data**. It just passes configuration and LCM topic to use via CLI args to your executable.
 
-On how to speak LCM with the rest of dimos, you can read our [LCM intro](/docs/usage/lcm.md)
+To learn how to communicate with the rest of dimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
+
+## Isolated Python modules
+
+`IsolatedPythonModule` applies the same managed-process lifecycle to Python code that
+needs its own dependency environment. A host-side contract declares streams, RPCs,
+and skills. A concrete subclass in a sibling Python project implements them.
+
+```text
+my_module/
+├── contract.py
+└── python/
+    ├── pyproject.toml
+    └── my_runtime/
+        └── runtime.py
+```
+
+Define the public contract beside the sibling project:
+
+```python skip
+from dimos.core.core import rpc
+from dimos.core.isolated_python_module import IsolatedPythonModule, IsolatedPythonModuleConfig
+
+class MultiplierConfig(IsolatedPythonModuleConfig):
+    initial_multiplier: int = 2
+
+class Multiplier(IsolatedPythonModule):
+    implementation = "my_runtime.runtime:MultiplierRuntime"
+    config: MultiplierConfig
+
+    @rpc
+    def get_multiplier(self) -> int:
+        raise NotImplementedError
+```
+
+The sibling project depends on `dimos` and on the package containing the contract.
+Its runtime imports and subclasses that contract:
+
+```python skip
+from typing import Any
+
+from dimos.core.core import rpc
+from my_module.contract import Multiplier
+
+class MultiplierRuntime(Multiplier):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._multiplier = self.config.initial_multiplier
+
+    @rpc
+    def get_multiplier(self) -> int:
+        return self._multiplier
+```
+
+Every contract RPC and skill must be overridden with a compatible signature and
+the same `@rpc` or `@skill` classification. Startup fails before the blueprint
+runs when an implementation inherits a stub or changes the contract.
+
+During `build()`, dimOS runs `uv sync` in the sibling project. If `pixi.toml`
+exists, Pixi supplies `uv`; if `uv.lock` exists, dimOS uses `--frozen` and treats
+the committed lockfile as the source of truth. It then
+starts the isolated interpreter, assigns its stream transports and module
+references, and calls the runtime's `build()`. The later `start()` call starts
+the concrete runtime module.
+
+The host contract keeps the module's public RPC name. It forwards contract calls
+to a unique internal RPC endpoint owned by the runtime. RPC values, exceptions,
+timeouts, async methods, skills, and module references therefore use the same
+transport and serialization as ordinary dimOS modules. Restarting the contract
+starts a new interpreter and reloads the runtime package.
+
+A runnable example lives at
+[`examples/external_python_module/run.py`](/examples/external_python_module/run.py):
+
+```bash
+uv run python examples/external_python_module/run.py
+```
 
 ## Defining a native module
 
