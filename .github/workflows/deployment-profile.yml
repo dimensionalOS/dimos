@@ -20,12 +20,11 @@ on:
         default: go2_short
 
 permissions:
-  contents: read
-  pull-requests: write # Bencher posts the results table as a PR comment
+  contents: read  # For checkout
+  pull-requests: write  # To post a comment
 
-# A superseded profile is wasted runner time, and its numbers are stale anyway.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -38,40 +37,28 @@ jobs:
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
       PROFILE_DB: ${{ inputs.db || 'go2_short' }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      # Pinned: a moving interpreter would move the numbers this job exists to
-      # compare. Same version the cockpit e2e runs a real deployment on.
-      - name: Setup Python
-        uses: actions/setup-python@v6.3.0
-        with:
-          python-version: '3.12'
       - name: Install native dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libturbojpeg
-      # What a go2 install pulls, not what a test env pulls: default-groups is
-      # ['tests'], so a plain `uv sync` would add pytest we never run.
       - name: Install dimos
-        run: uv sync --frozen --no-default-groups --extra unitree
-
-      # Out of the measured window on purpose: an LFS pull inside it would show
-      # up as system time and wall, and the recording is not what we profile.
+        run: uv sync --frozen --group=deployment_profile
       - name: Fetch the replay recording
         run: |
           uv run python -c "
           from dimos.memory2.replay import resolve_db_path
           print(resolve_db_path('$PROFILE_DB'))
           "
-
       - name: Measure install size
         run: |
           printf '{"venv": {"install-size-mib": {"value": %s}}}\n' \
-            "$(du -sm .venv | cut -f1)" >size.json
-
+            "$(du -sm .venv | cut -f1)" > size.json
       # No --run-for: a replay run now ends when its recording does, so the
       # measured work is the same set of messages every time instead of
       # whatever fit in a fixed window. timeout is a backstop, so reaching it
@@ -82,7 +69,6 @@ jobs:
             timeout --kill-after=60s 600 \
             uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
             run "$PROFILE_BLUEPRINT"
-
       # One BMF object, one benchmark per top-level key. Tolerant of a missing
       # file so a failed run still reports whatever it did measure.
       - name: Merge metrics
@@ -96,7 +82,6 @@ jobs:
           # when a number moves, not worth two more columns on every comment.
           jq 'map_values(del(."cpu-user-seconds", ."cpu-system-seconds"))' \
             metrics.json >bencher.json
-
       - name: Job summary
         if: always()
         run: |
@@ -107,13 +92,11 @@ jobs:
             cat metrics.json
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: rusage
           path: metrics.json
-
       # The same artifact this job uploads, from the last green run on main --
       # no Bencher API needed to diff against it.
       - name: Fetch main baseline
@@ -136,7 +119,6 @@ jobs:
           echo "BASELINE_REF=$ref" >>"$GITHUB_ENV"
           [ -n "$id" ] || { echo "no baseline run yet"; exit 0; }
           gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
-
       - name: Comment on the PR
         if: always() && github.event_name == 'pull_request'
         env:
@@ -154,7 +136,6 @@ jobs:
           else
             gh pr comment "$PR" --body-file comment.md
           fi
-
       - name: Record in Bencher
         if: always() && env.BENCHER_API_KEY != ''
         uses: bencherdev/bencher@main
