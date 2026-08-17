@@ -128,7 +128,7 @@ def test_keyup_publishes_directly_without_timeout_wait(
     publish.assert_called_once()
 
 
-def test_gripper_keys_publish_normalized_open_state_only_when_it_changes(
+def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
     module: KeyboardTeleopModule, mocker
 ) -> None:
     publish = mocker.patch.object(module.gripper_command, "publish")
@@ -142,7 +142,7 @@ def test_gripper_keys_publish_normalized_open_state_only_when_it_changes(
 
     module._handle_pygame_event(open_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data is True
+    assert publish.call_args.args[0].data == pytest.approx(1.0)
 
     publish.reset_mock()
     module._handle_pygame_event(open_event, held)
@@ -150,4 +150,4 @@ def test_gripper_keys_publish_normalized_open_state_only_when_it_changes(
 
     module._handle_pygame_event(close_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].data is False
+    assert publish.call_args.args[0].data == pytest.approx(0.0)

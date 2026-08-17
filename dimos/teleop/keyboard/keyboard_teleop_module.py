@@ -48,7 +48,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -105,16 +105,16 @@ class KeyboardTeleopModule(Module):
     config: KeyboardTeleopConfig
 
     ee_twist_command: Out[TwistStamped]
-    gripper_command: Out[Bool]
+    gripper_command: Out[Float32]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
-    _gripper_open: bool | None = None
+    _gripper_opening: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        self._gripper_open = None
+        self._gripper_opening = None
 
     @rpc
     def start(self) -> None:
@@ -216,9 +216,9 @@ class KeyboardTeleopModule(Module):
             if event.key in _motion_key_codes():
                 held_motion_keys.add(event.key)
             elif event.key == left_bracket:
-                self._publish_gripper_command(open_=True)
+                self._publish_gripper_command(opening=1.0)
             elif event.key == right_bracket:
-                self._publish_gripper_command(open_=False)
+                self._publish_gripper_command(opening=0.0)
         elif event.type == pygame.KEYUP and event.key in _motion_key_codes():
             held_motion_keys.discard(event.key)
             linear, angular = _twist_from_keys(
@@ -237,12 +237,12 @@ class KeyboardTeleopModule(Module):
     ) -> None:
         self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
 
-    def _publish_gripper_command(self, *, open_: bool) -> None:
-        """Publish changed gripper intent using the normalized open convention."""
-        if self._gripper_open == open_:
+    def _publish_gripper_command(self, *, opening: float) -> None:
+        """Publish a changed normalized gripper opening."""
+        if self._gripper_opening == opening:
             return
-        self._gripper_open = open_
-        self.gripper_command.publish(Bool(data=open_))
+        self._gripper_opening = opening
+        self.gripper_command.publish(Float32(data=opening))
 
 
 def _twist_from_keys(

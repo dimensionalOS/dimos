@@ -167,7 +167,6 @@ def test_seeded_cards_load_into_registry() -> None:
     gripper = control_task_registry.bindings_for("gripper")
     assert gripper.consumes == (
         StreamBinding("gripper_command", "on_gripper_command", Routing.BROADCAST),
-        StreamBinding("teleop_buttons", "on_teleop_buttons", Routing.BROADCAST),
     )
     trajectory = control_task_registry.bindings_for("trajectory")
     assert trajectory.consumes == ()  # command-driven only

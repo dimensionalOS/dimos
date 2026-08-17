@@ -33,8 +33,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.std_msgs.Bool import Bool
-    from dimos.teleop.quest.quest_types import Buttons
+    from dimos.msgs.std_msgs.Float32 import Float32
 
 logger = setup_logger()
 
@@ -51,22 +50,15 @@ class GripperControlTaskConfig:
         joint_names: Ordinary joints this task owns, in command order.
         priority: Priority for arbitration.
         hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
-        hand: Which controller trigger drives this gripper, if any.
-        require_engagement: Accept the trigger only while that hand's primary
-            button is held.
     """
 
     joint_names: list[str]
     priority: int = 10
     hold_duration: float = 0.0
-    hand: str | None = None
-    require_engagement: bool = True
 
 
 class GripperControlTask(BaseControlTask):
-    """Command- and stream-driven owner of a device's gripper joints.
-    TODO: cleanup gripper call wiring
-    """
+    """Normalized-command owner of a device's gripper joints."""
 
     def __init__(
         self,
@@ -201,30 +193,9 @@ class GripperControlTask(BaseControlTask):
                 )
         return normalized
 
-    def on_gripper_command(self, msg: Bool, t_now: float) -> bool:
-        """Handle normalized binary intent (True = open, False = closed)."""
-        value = _OPEN if msg.data else _CLOSED
-        return self.set_normalized([value] * len(self._joint_names), t_now)
-
-    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
-        """Handle the configured hand's analog trigger; squeezing closes."""
-        hand = self._config.hand
-        if hand not in ("left", "right"):
-            return False
-
-        is_left = hand == "left"
-        primary = msg.left_primary if is_left else msg.right_primary
-        trigger = msg.left_trigger_analog if is_left else msg.right_trigger_analog
-
-        with self._lock:
-            if self._estopped:
-                return False
-            gated = self._config.require_engagement and not primary
-
-        if gated:
-            return False
-        squeeze = float(trigger)
-        return self.set_normalized([_OPEN - squeeze] * len(self._joint_names), t_now)
+    def on_gripper_command(self, msg: Float32, t_now: float) -> bool:
+        """Apply one normalized opening to every joint owned by the task."""
+        return self.set_normalized([float(msg.data)] * len(self._joint_names), t_now)
 
     def _validate_values(
         self, method: str, values: list[float], limits: list[tuple[float, float]]
@@ -270,8 +241,6 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
-    hand: str | None = None
-    require_engagement: bool = True
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
@@ -316,8 +285,6 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             joint_names=list(cfg.joint_names),
             priority=cfg.priority,
             hold_duration=params.hold_duration,
-            hand=params.hand,
-            require_engagement=params.require_engagement,
         ),
         limits=_resolve_limits(cfg, hardware),
     )

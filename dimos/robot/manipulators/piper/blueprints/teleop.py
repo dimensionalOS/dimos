@@ -102,7 +102,6 @@ coordinator_teleop_piper = autoconnect(
                 type="gripper",
                 joint_names=["arm/gripper"],
                 priority=20,
-                params={"hand": "left"},
             ),
             trajectory_task(_piper_teleop_hw),
         ],

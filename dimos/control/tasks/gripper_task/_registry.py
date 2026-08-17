@@ -16,12 +16,11 @@ TASK_FACTORIES = {
     "gripper": "dimos.control.tasks.gripper_task.gripper_task:create_task",
 }
 
-# Streams carry gripper intent (open/closed, trigger), never joint values;
-# numeric targets arrive through TASK_EXPOSES via task_invoke.
+# The stream carries normalized opening; native and per-joint targets arrive
+# through TASK_EXPOSES via task_invoke.
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
     "gripper": {
         "gripper_command": ("on_gripper_command", "broadcast"),
-        "teleop_buttons": ("on_teleop_buttons", "broadcast"),
     },
 }
 

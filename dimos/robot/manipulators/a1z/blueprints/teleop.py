@@ -84,7 +84,6 @@ coordinator_teleop_a1z = autoconnect(
                 type="gripper",
                 joint_names=["arm/gripper"],
                 priority=20,
-                params={"hand": "left"},
             ),
             trajectory_task(_a1z_quest_hw),
         ],

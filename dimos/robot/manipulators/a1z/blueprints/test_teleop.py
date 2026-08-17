@@ -60,13 +60,14 @@ def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
 
     assert gripper.name == "arm_gripper"
     assert gripper.joint_names == ["arm/gripper"]
-    assert gripper.params == {"hand": "left"}
+    assert gripper.params == {}
     assert not any(key.startswith("gripper_") for key in teleop.params)
 
 
 def test_quest_left_controller_routes_to_a1z_teleop() -> None:
     assert teleop_quest_a1z.remapping_map == {
-        ("armteleopmodule", "left_controller_output"): "cartesian_command"
+        ("armteleopmodule", "left_controller_output"): "cartesian_command",
+        ("armteleopmodule", "left_gripper_command"): "gripper_command",
     }
 
 

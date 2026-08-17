@@ -25,7 +25,7 @@ from dimos.control.tasks.gripper_task.gripper_task import (
     create_task,
 )
 from dimos.hardware.manipulators.spec import JointLimits, ManipulatorAdapter
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 
 
 def _task() -> GripperControlTask:
@@ -73,13 +73,21 @@ def test_measured_normalized_value_is_not_clamped() -> None:
     assert task.get_normalized() == [1.5]
 
 
-@pytest.mark.parametrize(("open_", "expected"), [(True, 850.0), (False, 0.0)])
-def test_bool_input_routes_through_normalized_command(open_: bool, expected: float) -> None:
+@pytest.mark.parametrize(("opening", "expected"), [(0.0, 0.0), (0.5, 425.0), (1.0, 850.0)])
+def test_stream_input_routes_through_normalized_command(opening: float, expected: float) -> None:
     task = _task()
-    assert task.on_gripper_command(Bool(data=open_), 0.0)
+    assert task.on_gripper_command(Float32(data=opening), 0.0)
     output = task.compute(_state())
     assert output is not None
     assert output.positions == [expected]
+
+
+@pytest.mark.parametrize("opening", [-0.1, 1.1, float("nan")])
+def test_stream_input_rejects_invalid_normalized_opening(opening: float) -> None:
+    task = _task()
+
+    assert task.on_gripper_command(Float32(data=opening), 0.0) is False
+    assert task.compute(_state()) is None
 
 
 def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedHardware]:

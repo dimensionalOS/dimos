@@ -66,7 +66,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.quest.quest_types import (
     Buttons,
@@ -163,9 +163,8 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     teleop_buttons: In[Buttons]
 
-    # Input: Gripper toggle (True = open). Routed to GripperControlTask,
-    # the sole owner of gripper joints.
-    gripper_command: In[Bool]
+    # Input: Normalized gripper opening (0.0 closed, 1.0 open).
+    gripper_command: In[Float32]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
