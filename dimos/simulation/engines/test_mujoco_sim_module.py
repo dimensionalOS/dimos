@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
@@ -164,6 +165,72 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         assert camera_link_tf.frame_id == "link7"
         assert camera_link_tf.child_frame_id == "wrist_camera_link"
         assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+    finally:
+        module.stop()
+
+
+def test_camera_tf_is_published_in_world_when_base_frame_is_empty() -> None:
+    module = MujocoSimModule(base_frame_id="")
+    messages: list[Any] = []
+    module.tf.subscribe(messages.append)
+    frame = CameraFrame(
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.float32),
+        cam_pos=np.array([1.0, 2.0, 3.0]),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=10.0,
+        base_pos=np.array([1.0, 2.0, 2.0]),
+        base_mat=np.eye(3),
+    )
+
+    try:
+        module._publish_tf(frame.timestamp, frame)
+
+        color_tf, _, camera_link_tf = messages[-1].transforms
+        assert color_tf.frame_id == "world"
+        assert color_tf.ts == frame.timestamp
+        np.testing.assert_allclose(color_tf.translation.to_numpy(), frame.cam_pos)
+        assert camera_link_tf.frame_id == "world"
+        np.testing.assert_allclose(camera_link_tf.translation.to_numpy(), frame.cam_pos)
+    finally:
+        module.stop()
+
+
+def test_pointcloud_publishes_tf_from_the_same_capture_first(mocker: Any) -> None:
+    module = MujocoSimModule(base_frame_id="", enable_pointcloud=True)
+    frame = CameraFrame(
+        rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+        depth=np.ones((1, 1), dtype=np.float32),
+        cam_pos=np.array([1.0, 2.0, 3.0]),
+        cam_mat=np.eye(3),
+        fovy=60.0,
+        timestamp=123.456,
+    )
+    engine = mocker.MagicMock()
+    engine.read_camera.return_value = frame
+    module._engine = engine
+    module._camera_info_base = mocker.MagicMock()
+    output = PointCloud2.from_numpy(
+        np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+        frame_id="wrist_camera_color_optical_frame",
+        timestamp=frame.timestamp,
+    )
+    mocker.patch.object(PointCloud2, "from_rgbd", return_value=output)
+    publish_tf = mocker.patch.object(module, "_publish_tf")
+    events: list[tuple[str, float]] = []
+    publish_tf.side_effect = lambda ts, _frame: events.append(("tf", ts))
+    mocker.patch.object(
+        module.pointcloud,
+        "publish",
+        side_effect=lambda cloud: events.append(("cloud", cloud.ts)),
+    )
+
+    try:
+        module._generate_pointcloud()
+
+        assert events == [("tf", frame.timestamp), ("cloud", frame.timestamp)]
+        publish_tf.assert_called_once_with(frame.timestamp, frame)
     finally:
         module.stop()
 

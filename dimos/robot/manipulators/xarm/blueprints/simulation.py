@@ -77,7 +77,7 @@ xarm_voxel_planning_viser_demo = (
         ),
         PointCloudSelfFilter.blueprint(
             robot_model=make_xarm7_sim_robot_config(),
-            padding_m=0.01,
+            padding_m=XARM_VOXEL_PLANNING_RESOLUTION / 2.0,
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
             planning_frame="world",
             tf_tolerance_s=0.02,

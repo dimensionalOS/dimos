@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -13,7 +14,8 @@ from dimos.perception.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
 )
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.protocol.tf.tf import TF, MultiTBuffer
+from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
 
 
 def _write_box_robot(path: Path) -> None:
@@ -115,3 +117,61 @@ def test_self_filter_stream_types_include_atomic_clear_mask() -> None:
     assert PointCloudSelfFilter.__annotations__["pointcloud"]
     assert PointCloudSelfFilter.__annotations__["filtered_pointcloud"]
     assert PointCloudSelfFilter.__annotations__["robot_clear_mask"]
+
+
+@pytest.mark.self_hosted
+def test_xarm_model_removes_base_arm_and_gripper_surfaces() -> None:
+    timestamp = 20.0
+    module = PointCloudSelfFilter(
+        robot_model=make_xarm7_sim_robot_config(),
+        padding_m=0.025,
+        voxel_size=0.05,
+        tf_tolerance_s=0.001,
+        tf_forward_tolerance_s=0.0,
+    )
+    try:
+        collision_links = {geometry.link for geometry in module._collision_geometry}
+        assert collision_links == {
+            "link_base",
+            "link1",
+            "link2",
+            "link3",
+            "link4",
+            "link5",
+            "link6",
+            "link7",
+            "xarm_gripper_base_link",
+            "left_outer_knuckle",
+            "left_finger",
+            "left_inner_knuckle",
+            "right_outer_knuckle",
+            "right_finger",
+            "right_inner_knuckle",
+        }
+        transforms = [
+            Transform(frame_id="world", child_frame_id=link, ts=timestamp)
+            for link in collision_links
+        ]
+        transforms.append(Transform(frame_id="world", child_frame_id="camera", ts=timestamp))
+        tf = TF()
+        tf.receive_transform(*transforms)
+        cast("dict[str, Any]", module.__dict__)["_tf"] = tf
+
+        robot_surface_points = []
+        for geometry in module._collision_geometry:
+            vertex = np.append(np.asarray(geometry.mesh.vertices[0], dtype=np.float64), 1.0)
+            robot_surface_points.append((geometry.link_from_geometry @ vertex)[:3])
+        external_point = np.array([10.0, 10.0, 10.0], dtype=np.float64)
+        cloud = PointCloud2.from_numpy(
+            np.asarray([*robot_surface_points, external_point], dtype=np.float32),
+            frame_id="camera",
+            timestamp=timestamp,
+        )
+
+        result = module.filter_cloud(cloud)
+
+        assert result is not None
+        filtered, _ = result
+        np.testing.assert_allclose(filtered.points_f32(), [external_point])
+    finally:
+        module.stop()

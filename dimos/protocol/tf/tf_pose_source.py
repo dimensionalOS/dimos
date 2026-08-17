@@ -54,6 +54,9 @@ class TfPoseSource(Module):
     def tick(self) -> bool:
         """Publish one sample, returning false when TF is unavailable."""
         config = self.pose_config
+        frames = self.tfbuffer.get_frames()
+        if config.target_frame not in frames or config.source_frame not in frames:
+            return False
         # Forward the latest sample with its original source timestamp. The consumer
         # compares that timestamp with the sensor capture timestamp; wall-clock age
         # here includes normal render and transport latency and is not synchronization.

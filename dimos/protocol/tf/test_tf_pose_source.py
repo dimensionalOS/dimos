@@ -49,14 +49,18 @@ def test_pose_source_publishes_pose_only_odometry() -> None:
     module.stop()
 
 
-def test_pose_source_reports_missing_tf_without_publishing() -> None:
+def test_pose_source_reports_missing_tf_without_publishing(mocker: Any) -> None:
     module = _module()
     published: list[Odometry] = []
     module.odometry.publish = published.append  # type: ignore[method-assign]
+    get = mocker.spy(module.tfbuffer, "get")
 
-    assert not module.tick()
-    assert published == []
-    module.stop()
+    try:
+        assert not module.tick()
+        assert published == []
+        get.assert_not_called()
+    finally:
+        module.stop()
 
 
 def test_pose_source_forwards_latest_capture_even_when_publication_is_delayed() -> None:

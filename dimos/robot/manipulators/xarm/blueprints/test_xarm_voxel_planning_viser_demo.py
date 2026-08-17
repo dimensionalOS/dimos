@@ -52,9 +52,7 @@ def test_sim_planning_world_matches_mujoco_robot_mount() -> None:
     assert robot.base_pose.x == 0.0
     assert robot.base_pose.y == 0.0
     assert robot.base_pose.z == 0.0
-    planning_base_position = [
-        float(value) for value in robot.xacro_args["attach_xyz"].split()
-    ]
+    planning_base_position = [float(value) for value in robot.xacro_args["attach_xyz"].split()]
     assert planning_base_position == mujoco_base_position
 
 
@@ -78,7 +76,7 @@ def test_demo_wires_camera_filter_voxel_map_and_snapshot() -> None:
 
     filter_kwargs = _atom(PointCloudSelfFilter).kwargs
     assert filter_kwargs["robot_model"].base_link == "link_base"
-    assert filter_kwargs["padding_m"] == 0.01
+    assert filter_kwargs["padding_m"] == 0.025
     assert filter_kwargs["tf_tolerance_s"] == 0.02
     assert filter_kwargs["tf_forward_tolerance_s"] == 0.05
     assert xarm_voxel_planning_viser_demo.remapping_map == {
