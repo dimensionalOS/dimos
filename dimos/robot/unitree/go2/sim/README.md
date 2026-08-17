@@ -16,6 +16,9 @@ class Backend(Protocol):
     def channels(self) -> frozenset[str]:       # what it can PREDICT
     def apply(self, values: Mapping[str, float]) -> None    # set the knobs
     def rollout(self, plan: RolloutPlan) -> Prediction      # run the physics
+
+class ClosedLoopBackend(Backend, Protocol):     # declared, like channels()
+    def session(self, pose, *, ghost, view, view_speed) -> LoopSession
 ```
 
 **`apply`** writes knob values into the engine — the only way the fit changes
@@ -65,6 +68,18 @@ plans and the cross-simulator comparison means something.
 Everything above the seam is simulator-agnostic: ingest, regimes, clips,
 segments, scoring, identifiability, the fit. The backend never sees a regime, a
 channel weight or a fit — it is handed a plan and returns a prediction.
+
+**The closed loop (Mode B) crosses the same seam through a second, declared
+capability.** A `RolloutPlan` is a complete instruction sheet decided before
+any physics — which a policy IN the loop deliberately cannot be. So loop 2's
+seam is a stepping primitive instead: `ClosedLoopBackend.session()` returns a
+`LoopSession` (`state()` / `step(torques)` / `show_ghost` / `close`), and the
+GENERIC driver (`sysid.ground.rollout_policy`) owns the policy, the
+observation build, the command slew, the actuator chain and all four
+default-off loop mechanisms. A second backend implements the five session
+methods and inherits the entire referee. Backends are PICKLABLE by contract —
+configuration only, no live engine state — which is what lets worker
+processes receive the configured backend itself instead of rebuilding one.
 
 **Fitted values do not transfer between backends.** The recordings, the
 anchors (a weighed robot is 16.5 kg in any simulator), the regime labels and

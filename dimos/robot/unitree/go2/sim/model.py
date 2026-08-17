@@ -31,6 +31,7 @@ from dimos.robot.unitree.go2.sim.backend import (
     CHANNELS,
     BaseCondition,
     GhostTrack,
+    LoopState,
     Prediction,
     RolloutPlan,
     State,
@@ -211,6 +212,82 @@ def foot_geom_ids(model: mujoco.MjModel) -> np.ndarray:
     )
 
 
+class MujocoSession:
+    """One closed-loop episode in a compiled MuJoCo model.
+
+    The engine's half of Mode B and nothing more: state out, torques in, one
+    ``mj_step`` per :meth:`step`. Policy, observation build and every loop
+    mechanism live in the generic driver
+    (:func:`~dimos.robot.unitree.go2.sim.sysid.ground.rollout_policy`).
+    """
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        *,
+        ghost: bool = False,
+        view: bool = False,
+        view_speed: float = 1.0,
+    ) -> None:
+        self._model = model
+        self._data = data
+        self._gi = mocap_index(model, GHOST_BODY) if ghost else -1
+        self._speed = view_speed
+        self._wall: float | None = None
+        self._viewer_cm = None
+        self._viewer = None
+        if view:
+            from mujoco import viewer as mj_viewer
+
+            self._viewer_cm = mj_viewer.launch_passive(model, data)
+            self._viewer = self._viewer_cm.__enter__()
+
+    @property
+    def timestep(self) -> float:
+        return float(self._model.opt.timestep)
+
+    def state(self) -> LoopState:
+        d = self._data
+        return LoopState(
+            pos=d.qpos[0:3].copy(),
+            quat=d.qpos[3:7].copy(),
+            q=d.qpos[7:19].copy(),
+            dq=d.qvel[6:18].copy(),
+            gyro=d.qvel[3:6].copy(),
+        )
+
+    def step(self, ctrl: np.ndarray) -> bool:
+        self._data.ctrl[:] = ctrl
+        mujoco.mj_step(self._model, self._data)
+        if self._viewer is not None:
+            import time
+
+            if not self._viewer.is_running():
+                return False
+            self._viewer.sync()
+            if self._wall is None:
+                self._wall = time.perf_counter()
+            self._wall += self.timestep / max(self._speed, 1e-6)
+            lag = self._wall - time.perf_counter()
+            if lag > 0:
+                time.sleep(lag)
+            else:
+                self._wall = time.perf_counter()
+        return True
+
+    def show_ghost(self, pos: np.ndarray, quat: np.ndarray) -> None:
+        if self._gi >= 0:
+            self._data.mocap_pos[self._gi] = pos
+            self._data.mocap_quat[self._gi] = quat
+
+    def close(self) -> None:
+        if self._viewer_cm is not None:
+            self._viewer_cm.__exit__(None, None, None)
+            self._viewer_cm = None
+            self._viewer = None
+
+
 class MujocoBackend:
     """The menagerie Go2 behind the seam.
 
@@ -270,6 +347,26 @@ class MujocoBackend:
         if unknown:
             raise ValueError(f"unknown knob(s) for {self.name}: {sorted(unknown)}")
         self._values = dict(values)
+
+    def session(
+        self,
+        pose: np.ndarray,
+        *,
+        ghost: bool = False,
+        view: bool = False,
+        view_speed: float = 1.0,
+    ) -> MujocoSession:
+        """A closed-loop episode: applied physics, keyframe home, joints at ``pose``."""
+        model, data = load(self._menagerie, ghost=ghost)
+        physics = {k: v for k, v in self._values.items() if k in PHYSICS_KEYS}
+        if physics:
+            apply_physics(model, physics)
+        kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")  # type: ignore[attr-defined]
+        if kid >= 0:
+            mujoco.mj_resetDataKeyframe(model, data, kid)
+        data.qpos[7:19] = pose
+        mujoco.mj_forward(model, data)
+        return MujocoSession(model, data, ghost=ghost, view=view, view_speed=view_speed)
 
     def rollout(self, plan: RolloutPlan) -> Prediction:
         pinned = plan.base is BaseCondition.PINNED

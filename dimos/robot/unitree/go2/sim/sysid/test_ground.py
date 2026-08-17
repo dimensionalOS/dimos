@@ -122,6 +122,7 @@ def _menagerie_available() -> bool:
 def test_the_closed_loop_rollout_is_deterministic_and_summarisable():
     if not _menagerie_available():
         pytest.skip("no mujoco_menagerie checkout")
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy, sim_summary
@@ -130,8 +131,9 @@ def test_the_closed_loop_rollout_is_deterministic_and_summarisable():
     st = read_streams(FREEWALK)
     policy = FreePolicy.load(FREEWALK_BIN)
     preset = load_preset("measured")
-    a = rollout_policy(st, policy, preset, start=6.0, seconds=4.0)
-    b = rollout_policy(st, policy, preset, start=6.0, seconds=4.0)
+    backend = MujocoBackend()
+    a = rollout_policy(st, policy, preset, backend, start=6.0, seconds=4.0)
+    b = rollout_policy(st, policy, preset, backend, start=6.0, seconds=4.0)
     assert np.array_equal(a.pos, b.pos) and np.array_equal(a.target, b.target)
     assert len(a.t) == pytest.approx(4.0 / 0.02, abs=2)
     # it walks rather than falls: the summary is computable and upright.
@@ -151,6 +153,7 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
     repeatable so a probe result is a measurement, not a draw."""
     if not _menagerie_available():
         pytest.skip("no mujoco_menagerie checkout")
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy
@@ -159,25 +162,27 @@ def test_loop_mechanisms_are_off_by_default_and_deterministic_when_on():
     st = read_streams(FREEWALK)
     policy = FreePolicy.load(FREEWALK_BIN)
     preset = load_preset("measured")
+    be = MujocoBackend()
     kw: dict[str, float] = {"start": 6.0, "seconds": 3.0}
-    base = rollout_policy(st, policy, preset, **kw)  # type: ignore[arg-type]
+    base = rollout_policy(st, policy, preset, be, **kw)  # type: ignore[arg-type]
     explicit_off = rollout_policy(
         st,
         policy,
         preset,
+        be,
         action_latency=0.0,
         obs_noise=None,
         **kw,  # type: ignore[arg-type]
     )
     assert np.array_equal(base.pos, explicit_off.pos)
 
-    lat = rollout_policy(st, policy, preset, action_latency=0.01, **kw)  # type: ignore[arg-type]
-    lat2 = rollout_policy(st, policy, preset, action_latency=0.01, **kw)  # type: ignore[arg-type]
+    lat = rollout_policy(st, policy, preset, be, action_latency=0.01, **kw)  # type: ignore[arg-type]
+    lat2 = rollout_policy(st, policy, preset, be, action_latency=0.01, **kw)  # type: ignore[arg-type]
     assert not np.array_equal(base.pos, lat.pos)
     assert np.array_equal(lat.pos, lat2.pos)
 
-    nz = rollout_policy(st, policy, preset, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
-    nz2 = rollout_policy(st, policy, preset, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
+    nz = rollout_policy(st, policy, preset, be, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
+    nz2 = rollout_policy(st, policy, preset, be, obs_noise=ObsNoise(), **kw)  # type: ignore[arg-type]
     assert not np.array_equal(base.pos, nz.pos)
     assert np.array_equal(nz.pos, nz2.pos)
 
@@ -190,6 +195,7 @@ def test_a_perturbed_start_diverges_but_the_statistics_survive():
     the summary statistics stay within a sensible band."""
     if not _menagerie_available():
         pytest.skip("no mujoco_menagerie checkout")
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import rollout_policy, sim_summary
@@ -198,8 +204,11 @@ def test_a_perturbed_start_diverges_but_the_statistics_survive():
     st = read_streams(FREEWALK)
     policy = FreePolicy.load(FREEWALK_BIN)
     preset = load_preset("measured")
-    a = rollout_policy(st, policy, preset, start=6.0, seconds=8.0)
-    b = rollout_policy(st, policy, preset, start=6.0, seconds=8.0, perturb=np.full(12, 0.02))
+    backend = MujocoBackend()
+    a = rollout_policy(st, policy, preset, backend, start=6.0, seconds=8.0)
+    b = rollout_policy(
+        st, policy, preset, backend, start=6.0, seconds=8.0, perturb=np.full(12, 0.02)
+    )
     # chaos: the trajectories separate ...
     assert np.abs(a.pos - b.pos).max() > 0.01
     # ... the distributional statistics do not

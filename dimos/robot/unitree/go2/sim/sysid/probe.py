@@ -57,6 +57,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend
 from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import DEFAULT_PRESET, KNOBS, Preset, load_preset
@@ -96,17 +97,26 @@ class Probe:
 
 
 # Worker-process state, set once by the initializer (spawned, never forked —
-# a forked MuJoCo is a bug that looks like a speedup).
+# a forked MuJoCo is a bug that looks like a speedup). The backend arrives
+# PICKLED — a seam requirement (see backend.Backend) — so serial and worker
+# rollouts run identically configured engines.
 _WORKER: dict[str, object] = {}
 
 
-def _init_worker(recording: str, policy_bin: str, menagerie: str | None) -> None:
+def _init_worker(recording: str, policy_bin: str, backend: ClosedLoopBackend) -> None:
     _WORKER["st"] = read_streams(recording)  # cache-warm: the parent read it first
     _WORKER["policy"] = FreePolicy.load(policy_bin)
-    _WORKER["menagerie"] = Path(menagerie) if menagerie else None
+    _WORKER["backend"] = backend
 
 
-def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: float) -> Summary:
+def _eval(
+    st: Streams,
+    policy: FreePolicy,
+    backend: ClosedLoopBackend,
+    probe: Probe,
+    start: float,
+    seconds: float,
+) -> Summary:
     """THE evaluation, serial and parallel alike: one rollout, one Summary."""
     perturb = None
     if probe.perturb_seed is not None:
@@ -121,6 +131,7 @@ def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: 
         st,
         policy,
         Preset(name=probe.name, physics=probe.physics, actuator_tau=probe.actuator_tau),
+        backend,
         start=start,
         seconds=seconds,
         action_latency=probe.action_latency,
@@ -129,7 +140,6 @@ def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: 
         control_intervals=np.array(probe.timing) if probe.timing is not None else None,
         envelope=TORQUE_ENVELOPES[probe.envelope] if probe.envelope else None,
         perturb=perturb,
-        menagerie=_WORKER.get("menagerie"),  # type: ignore[arg-type]
     )
     return sim_summary(run, cmd_at(st, run.t + start))
 
@@ -137,8 +147,9 @@ def _eval(st: Streams, policy: FreePolicy, probe: Probe, start: float, seconds: 
 def _eval_in_worker(probe: Probe, start: float, seconds: float) -> Summary:
     st = _WORKER["st"]
     policy = _WORKER["policy"]
+    backend = _WORKER["backend"]
     assert isinstance(st, Streams) and isinstance(policy, FreePolicy)
-    return _eval(st, policy, probe, start, seconds)
+    return _eval(st, policy, backend, probe, start, seconds)  # type: ignore[arg-type]
 
 
 def default_probes(
@@ -267,13 +278,13 @@ def spectrum(
     recording: str | Path,
     policy_bin: str | Path,
     probes: list[Probe],
+    backend: ClosedLoopBackend,
     *,
     preset: str = "measured",
     start: float = 6.0,
     seconds: float | None = None,
     floor_seeds: int = 4,
     workers: int = 1,
-    menagerie: Path | None = None,
 ) -> Spectrum:
     """Run the probes (fanned across processes) against one shared floor.
 
@@ -299,14 +310,13 @@ def spectrum(
     all_probes = [base_probe, *floor_probes, *probes]
 
     if workers <= 1:
-        _init_worker(str(recording), str(policy_bin), str(menagerie) if menagerie else None)
-        summaries = [_eval(st, policy, pr, start, seconds) for pr in all_probes]
+        summaries = [_eval(st, policy, backend, pr, start, seconds) for pr in all_probes]
     else:
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=workers,
             mp_context=multiprocessing.get_context("spawn"),
             initializer=_init_worker,
-            initargs=(str(recording), str(policy_bin), str(menagerie) if menagerie else None),
+            initargs=(str(recording), str(policy_bin), backend),
         ) as pool:
             futures = [pool.submit(_eval_in_worker, pr, start, seconds) for pr in all_probes]
             summaries = [f.result() for f in futures]
@@ -347,6 +357,8 @@ def main() -> None:
     ap.add_argument("--envelopes", nargs="*", default=["central", "central-signed"], metavar="NAME")
     args = ap.parse_args()
 
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+
     p = load_preset(args.preset)
     probes = default_probes(
         dict(p.physics),
@@ -360,6 +372,7 @@ def main() -> None:
         args.recording,
         args.policy_bin,
         probes,
+        MujocoBackend(),
         preset=args.preset,
         start=args.start,
         seconds=args.seconds,

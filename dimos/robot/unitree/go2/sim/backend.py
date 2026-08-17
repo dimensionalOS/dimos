@@ -190,7 +190,15 @@ class Prediction:
 
 
 class Backend(Protocol):
-    """What a simulator must provide to be identified against a recording."""
+    """What a simulator must provide to be identified against a recording.
+
+    A backend must be PICKLABLE: parallel fitting ships the configured
+    backend object to spawned worker processes (``sysid.rollouts``,
+    ``sysid.probe``), so a backend holds configuration — paths, knob values,
+    an envelope — never live engine state. Compiling the engine's model per
+    rollout (as :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`
+    does) satisfies this for free.
+    """
 
     @property
     def name(self) -> str: ...
@@ -222,4 +230,86 @@ class Backend(Protocol):
 
     def rollout(self, plan: RolloutPlan) -> Prediction:
         """Drive the plan and return what the real robot also measures."""
+        ...
+
+
+@dataclass(frozen=True)
+class LoopState:
+    """The instantaneous state a closed-loop driver reads between steps.
+
+    Exactly what the robot's own estimator hands its policy — nothing an
+    engine could expose but a robot could not. Arrays are fresh copies: a
+    session must never hand out views into live engine memory.
+    """
+
+    pos: np.ndarray  # (3,) base position, sim world
+    quat: np.ndarray  # (4,) base attitude, wxyz
+    q: np.ndarray  # (n_joints,) joint angles, actuator order
+    dq: np.ndarray  # (n_joints,) joint speeds
+    gyro: np.ndarray  # (3,) base angular rate, as an onboard gyro reads it
+
+
+class LoopSession(Protocol):
+    """One closed-loop episode: the engine's half of Mode B.
+
+    Mode A's :class:`RolloutPlan` is a complete instruction sheet decided
+    before any physics — which a policy IN the loop deliberately cannot be.
+    So the closed-loop seam is a stepping primitive instead: the generic
+    driver (:func:`~dimos.robot.unitree.go2.sim.sysid.ground.rollout_policy`)
+    owns the policy, the observation build, the command slew and every loop
+    mechanism; the session only steps physics and reports state. A second
+    backend implements THIS, and inherits the whole driver.
+    """
+
+    @property
+    def timestep(self) -> float:
+        """The engine's physics step, s."""
+        ...
+
+    def state(self) -> LoopState:
+        """The current state, as fresh copies."""
+        ...
+
+    def step(self, ctrl: np.ndarray) -> bool:
+        """Apply per-joint torques and advance one physics step.
+
+        Returns ``False`` when the episode cannot continue (an attached
+        viewer was closed); a headless session always returns ``True``. A
+        viewing session paces itself to wall clock here — THE VIEWER AND THE
+        HEADLESS RUN ARE THE SAME FUNCTION.
+        """
+        ...
+
+    def show_ghost(self, pos: np.ndarray, quat: np.ndarray) -> None:
+        """Place the recorded-pose ghost, sim world frame. Visual only."""
+        ...
+
+    def close(self) -> None:
+        """Release the episode (detach any viewer)."""
+        ...
+
+
+class ClosedLoopBackend(Backend, Protocol):
+    """A backend that can also put a policy IN the loop (Mode B).
+
+    A declared capability, exactly like :meth:`Backend.channels`: a backend
+    that cannot host a closed loop simply does not implement this protocol,
+    and loop 2 asks for a :class:`ClosedLoopBackend` rather than discovering
+    the gap by exception.
+    """
+
+    def session(
+        self,
+        pose: np.ndarray,
+        *,
+        ghost: bool = False,
+        view: bool = False,
+        view_speed: float = 1.0,
+    ) -> LoopSession:
+        """Start an episode: currently applied knobs, joints at ``pose``.
+
+        The base starts where the engine's nominal standing pose puts it;
+        ``ghost`` compiles in the recorded-pose ghost body; ``view`` attaches
+        a viewer paced by ``view_speed``.
+        """
         ...

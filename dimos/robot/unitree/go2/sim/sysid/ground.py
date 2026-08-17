@@ -42,8 +42,11 @@ floor's SOURCE is a parameter of the claim:
   ``--noise-from REC2.mcap REC3.mcap``, not a rewrite.
 
 The REAL side of the comparison (:mod:`~dimos.robot.unitree.go2.sim.sysid
-.real`) is pure recording processing and lives outside this engine-coupled
-module — position from the tracker, attitude from the IMU (README 5e).
+.real`) is pure recording processing and lives outside this module —
+position from the tracker, attitude from the IMU (README 5e). The SIM side
+is engine-free too: :func:`rollout_policy` is a generic closed-loop driver
+over the :class:`~dimos.robot.unitree.go2.sim.backend.LoopSession` seam,
+and the engine enters only through the ``backend`` argument.
 
 A well-stabilised policy can drive a floor to ~0, sending that SNR to
 infinity and letting one term dominate; :func:`usable_floor` clamps against
@@ -60,11 +63,10 @@ from __future__ import annotations
 import argparse
 import collections
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 
 import numpy as np
 
-from dimos.robot.unitree.go2.sim.backend import GhostTrack
+from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend, GhostTrack
 from dimos.robot.unitree.go2.sim.plant import (
     TORQUE_ENVELOPES,
     TORQUE_LIMITS,
@@ -148,6 +150,7 @@ def rollout_policy(
     st: Streams,
     policy: FreePolicy,
     preset: Preset,
+    backend: ClosedLoopBackend,
     *,
     start: float = 6.0,
     seconds: float | None = None,
@@ -159,17 +162,20 @@ def rollout_policy(
     control_intervals: np.ndarray | None = None,
     envelope: TorqueEnvelope | None = None,
     perturb: np.ndarray | None = None,
-    menagerie: Path | None = None,
     view: bool = False,
     speed: float = 1.0,
     ghost: GhostTrack | None = None,
 ) -> PolicyRun:
     """Step the real policy in the candidate plant, driven by the recording.
 
-    Closed loop, so it lives below the Mode-A seam: the policy must sit
-    INSIDE the physics step loop, which :class:`RolloutPlan` (a complete
-    instruction sheet decided before any physics) deliberately cannot
-    express. A second backend brings its own closed-loop driver.
+    Closed loop, so :class:`RolloutPlan` (a complete instruction sheet
+    decided before any physics) deliberately cannot express it: the policy
+    sits INSIDE the physics step loop. The seam is a stepping primitive
+    instead — this driver owns the policy, the observation build, the
+    command slew and every loop mechanism, and asks the ``backend`` for a
+    :class:`~dimos.robot.unitree.go2.sim.backend.LoopSession` that only
+    steps physics and reports state. A second backend implements the
+    session and inherits this whole loop.
 
     ``perturb`` offsets the initial joint pose — :func:`sim_noise`'s knob.
     ``command_delay`` is kept at 0 by default: it is not identified open
@@ -206,15 +212,6 @@ def rollout_policy(
     attaches a viewer and paces to wall clock; ``ghost`` draws the recorded
     tracker pose, anchored once at the start pose (closed loop never snaps).
     """
-    import mujoco
-
-    from dimos.robot.unitree.go2.sim.model import (
-        GHOST_BODY,
-        apply_physics,
-        load,
-        mocap_index,
-    )
-
     if envelope is None and preset.envelope is not None:
         envelope = TORQUE_ENVELOPES[preset.envelope]
     if len(st.wt) == 0:
@@ -225,27 +222,20 @@ def rollout_policy(
     duration = span - start if seconds is None else seconds
 
     ghost = ghost if view else None
-    model, data = load(menagerie, ghost=ghost is not None)
-    if preset.physics:
-        apply_physics(model, preset.physics)
-    sim_dt = float(model.opt.timestep)
-    decim = max(1, round(CONTROL_DT / sim_dt))
-    gi = mocap_index(model, GHOST_BODY) if ghost is not None else -1
-
-    kid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")  # type: ignore[attr-defined]
-    if kid >= 0:
-        mujoco.mj_resetDataKeyframe(model, data, kid)
+    backend.apply(preset.physics)
     pose0 = policy.default_pose + (perturb if perturb is not None else 0.0)
-    data.qpos[7:19] = pose0
-    mujoco.mj_forward(model, data)
+    session = backend.session(pose0, ghost=ghost is not None, view=view, view_speed=speed)
+    sim_dt = session.timestep
+    decim = max(1, round(CONTROL_DT / sim_dt))
+    s = session.state()
 
     # Ghost anchor: rigid room -> sim-world map, fixed at the start pose.
     g_anchor_r = np.eye(3)
     g_anchor_p = np.zeros(3)
     if ghost is not None:
         j = int(np.clip(np.searchsorted(ghost.t, start, "right") - 1, 0, len(ghost.t) - 1))
-        g_anchor_r = quat_to_mat(data.qpos[3:7].copy()) @ ghost.rot[j].T
-        g_anchor_p = data.qpos[0:3].copy() - g_anchor_r @ ghost.pos[j]
+        g_anchor_r = quat_to_mat(s.quat) @ ghost.rot[j].T
+        g_anchor_p = s.pos - g_anchor_r @ ghost.pos[j]
 
     hist: collections.deque[np.ndarray] = collections.deque(maxlen=policy.hist)
     last_action = np.zeros(policy.act_dim)
@@ -271,10 +261,10 @@ def rollout_policy(
             i += 1
 
     def observe(cmd: np.ndarray, height: float) -> np.ndarray:
-        q = data.qpos[7:19]
-        dq = data.qvel[6:18]
-        gyro = data.qvel[3:6]
-        grav = projected_gravity(data.qpos[3:7])
+        q = s.q
+        dq = s.dq
+        gyro = s.gyro
+        grav = projected_gravity(s.quat)
         if obs_noise is not None and rng is not None:
             gyro = gyro + obs_noise.gyro * rng.uniform(-1.0, 1.0, 3)
             grav = grav + obs_noise.gravity * rng.uniform(-1.0, 1.0, 3)
@@ -310,19 +300,10 @@ def rollout_policy(
     targets: list[np.ndarray] = []
     joints: list[np.ndarray] = []
 
-    viewer_cm = None
-    if view:
-        from mujoco import viewer as mj_viewer
-
-        viewer_cm = mj_viewer.launch_passive(model, data)
-    viewer = viewer_cm.__enter__() if viewer_cm is not None else None
-
     try:
-        import time
-
-        wall = time.perf_counter()
         for step in range(int(duration / sim_dt)):
             t = step * sim_dt
+            s = session.state()
             if (step % decim == 0) if ctrl_steps is None else (step in ctrl_steps):
                 vel_cmd += np.clip(target_cmd(t) - vel_cmd, -COMMAND_SLEW, COMMAND_SLEW)
                 if t >= settle:
@@ -341,38 +322,28 @@ def rollout_policy(
                             np.searchsorted(ghost.t, t + start, "right") - 1, 0, len(ghost.t) - 1
                         )
                     )
-                    data.mocap_pos[gi] = g_anchor_r @ ghost.pos[j] + g_anchor_p
-                    data.mocap_quat[gi] = mat_to_quat(g_anchor_r @ ghost.rot[j])
+                    session.show_ghost(
+                        g_anchor_r @ ghost.pos[j] + g_anchor_p,
+                        mat_to_quat(g_anchor_r @ ghost.rot[j]),
+                    )
                 ts.append(t)
-                pos.append(data.qpos[0:3].copy())
-                quat.append(data.qpos[3:7].copy())
+                pos.append(s.pos)
+                quat.append(s.quat)
                 used.append(vel_cmd.copy())
                 targets.append(target.copy())
-                joints.append(data.qpos[7:19].copy())
+                joints.append(s.q)
 
             while pending and pending[0][0] <= step:
                 target = pending.popleft()[1]
-            tau = policy.kp * (target - data.qpos[7:19]) - policy.kd * data.qvel[6:18]
+            tau = policy.kp * (target - s.q) - policy.kd * s.dq
             tau = np.clip(tau, -TORQUE_LIMITS, TORQUE_LIMITS)
             applied = actuator_step(
-                applied, tau, sim_dt, preset.actuator_tau, dq=data.qvel[6:18], envelope=envelope
+                applied, tau, sim_dt, preset.actuator_tau, dq=s.dq, envelope=envelope
             )
-            data.ctrl[:] = applied
-            mujoco.mj_step(model, data)
-
-            if viewer is not None:
-                if not viewer.is_running():
-                    break
-                viewer.sync()
-                wall += sim_dt / max(speed, 1e-6)
-                lag = wall - time.perf_counter()
-                if lag > 0:
-                    time.sleep(lag)
-                else:
-                    wall = time.perf_counter()
+            if not session.step(applied):
+                break
     finally:
-        if viewer_cm is not None:
-            viewer_cm.__exit__(None, None, None)
+        session.close()
 
     return PolicyRun(
         t=np.array(ts),
@@ -420,6 +391,7 @@ def sim_noise(
     st: Streams,
     policy: FreePolicy,
     preset: Preset,
+    backend: ClosedLoopBackend,
     *,
     seeds: int = 4,
     start: float = 6.0,
@@ -439,6 +411,7 @@ def sim_noise(
             st,
             policy,
             preset,
+            backend,
             start=start,
             seconds=seconds,
             perturb=rng.normal(0.0, PERTURB_RAD, 12),
@@ -533,6 +506,7 @@ def ground(
     st: Streams,
     policy: FreePolicy,
     preset: Preset,
+    backend: ClosedLoopBackend,
     *,
     start: float = 6.0,
     seconds: float | None = None,
@@ -546,7 +520,6 @@ def ground(
     view: bool = False,
     speed: float = 1.0,
     with_ghost: bool = True,
-    menagerie: Path | None = None,
 ) -> Report:
     """THE loop-2 call: one closed-loop run, both summaries, the report.
 
@@ -570,9 +543,9 @@ def ground(
         st,
         policy,
         preset,
+        backend,
         start=start,
         seconds=seconds,
-        menagerie=menagerie,
         view=view,
         speed=speed,
         ghost=ghost_track(st) if with_ghost else None,
@@ -585,10 +558,10 @@ def ground(
             st,
             policy,
             preset,
+            backend,
             seeds=seeds,
             start=start,
             seconds=seconds,
-            menagerie=menagerie,
             **mechanisms,
         )
         noise = usable_floor(raw, real.as_dict())
@@ -652,9 +625,12 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0, help="viewer playback rate")
     args = ap.parse_args()
 
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+
     st = read_streams(args.recording)
     policy = FreePolicy.load(args.policy_bin)
     preset = load_preset(args.preset)
+    backend = MujocoBackend()
     obs_noise: ObsNoise | None
     if args.obs_noise == "measured":
         from dimos.robot.unitree.go2.sim.sysid.loop import sensor_noise
@@ -684,6 +660,7 @@ def main() -> None:
         st,
         policy,
         preset,
+        backend,
         start=args.start,
         seconds=args.seconds,
         noise=noise,

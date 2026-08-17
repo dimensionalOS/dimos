@@ -54,6 +54,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dimos.robot.unitree.go2.sim.backend import ClosedLoopBackend
 from dimos.robot.unitree.go2.sim.policy import FreePolicy
 from dimos.robot.unitree.go2.sim.ranges import Preset, load_preset
 from dimos.robot.unitree.go2.sim.sysid.fit import (
@@ -171,6 +172,7 @@ def ground_values(
     validation: str | Path,
     policy: FreePolicy,
     values: dict[str, float],
+    backend: ClosedLoopBackend,
     *,
     name: str,
     noise: dict[str, float],
@@ -183,13 +185,21 @@ def ground_values(
     preset = Preset(name=name, physics=physics, actuator_tau=tau)
     st = read_streams(validation)
     return ground(
-        st, policy, preset, start=start, noise=noise, floor_source=floor_source, with_ghost=False
+        st,
+        policy,
+        preset,
+        backend,
+        start=start,
+        noise=noise,
+        floor_source=floor_source,
+        with_ghost=False,
     )
 
 
 def shared_floor(
     validation: str | Path,
     policy: FreePolicy,
+    backend: ClosedLoopBackend,
     *,
     baseline: str = "measured",
     seeds: int = 4,
@@ -206,7 +216,7 @@ def shared_floor(
     """
     st = read_streams(validation)
     base = load_preset(baseline)
-    raw = sim_noise(st, policy, base, seeds=seeds, start=start, seconds=seconds)
+    raw = sim_noise(st, policy, base, backend, seeds=seeds, start=start, seconds=seconds)
     span = float(st.wt[-1]) - start if seconds is None else seconds
     real = real_summary(st, start=start, seconds=span)
     return usable_floor(raw, real.as_dict()), f"sim-perturb ({baseline} plant, shared)"
@@ -219,6 +229,7 @@ def experiment(
     recording: str | Path,
     policy_bin: str | Path,
     presets: list[str],
+    backend: ClosedLoopBackend,
     *,
     start: float = 6.0,
     seconds: float | None = None,
@@ -235,7 +246,9 @@ def experiment(
     it on the span the verified net actually drove and nothing else.
     """
     policy = FreePolicy.load(policy_bin)
-    noise, source = shared_floor(recording, policy, seeds=seeds, start=start, seconds=seconds)
+    noise, source = shared_floor(
+        recording, policy, backend, seeds=seeds, start=start, seconds=seconds
+    )
     st = read_streams(recording)
     reports: list[Report] = []
     lines: list[str] = [
@@ -248,6 +261,7 @@ def experiment(
             st,
             policy,
             p,
+            backend,
             start=start,
             seconds=seconds,
             noise=noise,
@@ -383,6 +397,7 @@ def mechanism_table(spec: Spectrum) -> str:
 def run_mechanisms(
     recording: str | Path,
     policy_bin: str | Path,
+    backend: ClosedLoopBackend,
     *,
     preset: str = "measured",
     start: float = 6.0,
@@ -402,6 +417,7 @@ def run_mechanisms(
         recording,
         policy_bin,
         probes,
+        backend,
         preset=preset,
         start=start,
         seconds=seconds,
@@ -448,6 +464,7 @@ def run_latency(
     select_rec: str | Path,
     report_rec: str | Path,
     policy_bin: str | Path,
+    backend: ClosedLoopBackend,
     *,
     preset: str = "measured",
     grid_ms: tuple[float, ...] = (0.0, 1.5, 3.0, 4.5, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0),
@@ -480,7 +497,14 @@ def run_latency(
             dict(p.physics), p.actuator_tau, grid, ml, replicates=replicates, envelope=p.envelope
         )
         spec = spectrum(
-            rec, policy_bin, probes, preset=preset, start=start, seconds=seconds, workers=workers
+            rec,
+            policy_bin,
+            probes,
+            backend,
+            preset=preset,
+            start=start,
+            seconds=seconds,
+            workers=workers,
         )
         return {
             float(name.split("=")[1].removesuffix("ms")) / 1e3: (loss, spread)
@@ -529,6 +553,7 @@ def run_outer(
     fit_recording: str | Path,
     validation: str | Path,
     policy_bin: str | Path,
+    backend: ClosedLoopBackend,
     *,
     trials: int = 10,
     workers: int = 1,
@@ -545,7 +570,7 @@ def run_outer(
     import optuna
 
     policy = FreePolicy.load(policy_bin)
-    noise, source = shared_floor(validation, policy)
+    noise, source = shared_floor(validation, policy, backend)
     log: list[dict[str, object]] = []
 
     def objective(trial: optuna.Trial) -> float:
@@ -559,7 +584,7 @@ def run_outer(
             fit_recording, point, workers=workers, trials=inner_trials, max_studies=max_studies
         )
         rep = ground_values(
-            validation, policy, values, name=point.name, noise=noise, floor_source=source
+            validation, policy, values, backend, name=point.name, noise=noise, floor_source=source
         )
         n, of = rep.n_matched()
         log.append(
@@ -651,12 +676,17 @@ def main() -> None:
     la.add_argument("--report-seconds", type=float, default=None)
 
     args = ap.parse_args()
+
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+
+    backend = MujocoBackend()
     if args.cmd == "experiment":
         print(
             experiment(
                 args.recording,
                 args.policy_bin,
                 args.presets,
+                backend,
                 start=args.start,
                 seconds=args.seconds,
                 seeds=args.seeds,
@@ -666,6 +696,7 @@ def main() -> None:
         run_mechanisms(
             args.recording,
             args.policy_bin,
+            backend,
             preset=args.preset,
             start=args.start,
             seconds=args.seconds,
@@ -677,6 +708,7 @@ def main() -> None:
             args.select_recording,
             args.report_recording,
             args.policy_bin,
+            backend,
             preset=args.preset,
             grid_ms=tuple(args.grid_ms),
             with_measured=not args.bare,
@@ -692,6 +724,7 @@ def main() -> None:
             args.fit_recording,
             args.validation,
             args.policy_bin,
+            backend,
             trials=args.trials,
             workers=args.workers,
             inner_trials=args.inner_trials,

@@ -238,6 +238,7 @@ def test_measured_control_timing_is_default_off_and_deterministic():
     bit-for-bit; the measured sequence changes the physics, repeatably."""
     if not _menagerie_available():
         pytest.skip("no mujoco_menagerie checkout")
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.policy import FreePolicy
     from dimos.robot.unitree.go2.sim.ranges import load_preset
     from dimos.robot.unitree.go2.sim.sysid.ground import CONTROL_DT, rollout_policy
@@ -247,20 +248,22 @@ def test_measured_control_timing_is_default_off_and_deterministic():
     st = read_streams(FREEWALK)
     policy = FreePolicy.load(FREEWALK_BIN)
     preset = load_preset("measured")
+    be = MujocoBackend()
     kw: dict[str, float] = {"start": 6.0, "seconds": 3.0}
-    base = rollout_policy(st, policy, preset, **kw)  # type: ignore[arg-type]
+    base = rollout_policy(st, policy, preset, be, **kw)  # type: ignore[arg-type]
     grid = rollout_policy(
         st,
         policy,
         preset,
+        be,
         control_intervals=np.full(400, CONTROL_DT),
         **kw,  # type: ignore[arg-type]
     )
     assert np.array_equal(base.pos, grid.pos) and np.array_equal(base.target, grid.target)
 
     iv = control_timing(FREEWALK).intervals
-    a = rollout_policy(st, policy, preset, control_intervals=iv, **kw)  # type: ignore[arg-type]
-    b = rollout_policy(st, policy, preset, control_intervals=iv, **kw)  # type: ignore[arg-type]
+    a = rollout_policy(st, policy, preset, be, control_intervals=iv, **kw)  # type: ignore[arg-type]
+    b = rollout_policy(st, policy, preset, be, control_intervals=iv, **kw)  # type: ignore[arg-type]
     assert not np.array_equal(base.pos, a.pos)
     assert np.array_equal(a.pos, b.pos)
     # the measured rate is ~44 Hz: fewer policy ticks over the same span
