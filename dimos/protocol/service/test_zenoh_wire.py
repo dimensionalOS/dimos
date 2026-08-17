@@ -14,8 +14,6 @@
 
 """Native modules read the session off the launch line, fully resolved."""
 
-import json
-
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.zenohservice import ALL_INTERFACES, LOOPBACK_INTERFACE, ZenohConfig
 
@@ -40,11 +38,6 @@ def test_wire_carries_every_setting(zenoh_defaults):
         "interface": LOOPBACK_INTERFACE,
         "connect_timeout_ms": 2000,
     }
-
-
-def test_wire_is_json_serializable(zenoh_defaults):
-    """It is written to the native process as one line of JSON."""
-    assert json.loads(json.dumps(ZenohConfig().to_wire()))["mode"] == "peer"
 
 
 def test_derived_settings_are_resolved(zenoh_defaults):

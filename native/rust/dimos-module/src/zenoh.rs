@@ -437,6 +437,15 @@ mod tests {
     }
 
     /// Session settings for a test topology, with discovery off.
+    /// A loopback endpoint nothing is listening on yet.
+    ///
+    /// A fixed port collides between concurrent runs on a shared CI runner.
+    fn free_endpoint() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        format!("tcp/127.0.0.1:{port}")
+    }
+
     fn topology(mode: &str, connect: &[&str], listen: &[&str]) -> serde_json::Value {
         serde_json::json!({
             "mode": mode,
@@ -448,16 +457,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn from_launch_opens_the_session_the_launch_describes() {
-        let endpoint = "tcp/127.0.0.1:17465";
-        let transport = ZenohTransport::from_launch(&launch(topology("router", &[], &[endpoint])))
+        let endpoint = free_endpoint();
+        let transport = ZenohTransport::from_launch(&launch(topology("router", &[], &[&endpoint])))
             .await
             .expect("open from launch");
 
         // The listen endpoint reached zenoh only if a peer can dial it.
-        let peer = open_session("peer", &[endpoint], &[]).await;
+        let peer = open_session("peer", &[&endpoint], &[]).await;
         await_connect(
             &peer,
-            &[endpoint.to_string()],
+            std::slice::from_ref(&endpoint),
             Mode::Peer,
             Duration::from_secs(10),
         )
@@ -480,14 +489,14 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn await_connect_returns_once_the_endpoint_links() {
-        let endpoint = "tcp/127.0.0.1:17461";
-        let _router = open_session("router", &[], &[endpoint]).await;
-        let peer = open_session("peer", &[endpoint], &[]).await;
+        let endpoint = free_endpoint();
+        let _router = open_session("router", &[], &[&endpoint]).await;
+        let peer = open_session("peer", &[&endpoint], &[]).await;
 
         let started = Instant::now();
         await_connect(
             &peer,
-            &[endpoint.to_string()],
+            std::slice::from_ref(&endpoint),
             Mode::Peer,
             Duration::from_secs(10),
         )
@@ -500,13 +509,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn await_connect_gives_up_after_the_timeout() {
         // Nothing listens here, so the endpoint never links.
-        let endpoint = "tcp/127.0.0.1:17462";
-        let peer = open_session("peer", &[endpoint], &[]).await;
+        let endpoint = free_endpoint();
+        let peer = open_session("peer", &[&endpoint], &[]).await;
 
         let started = Instant::now();
         await_connect(
             &peer,
-            &[endpoint.to_string()],
+            std::slice::from_ref(&endpoint),
             Mode::Peer,
             Duration::from_millis(300),
         )
@@ -521,27 +530,21 @@ mod tests {
         let peer = open_session("peer", &[], &[]).await;
         let started = Instant::now();
         await_connect(&peer, &[], Mode::Peer, Duration::from_secs(30)).await;
-        await_connect(
-            &peer,
-            &["tcp/127.0.0.1:17462".to_string()],
-            Mode::Peer,
-            Duration::ZERO,
-        )
-        .await;
+        await_connect(&peer, &[free_endpoint()], Mode::Peer, Duration::ZERO).await;
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn client_await_is_satisfied_by_one_of_its_alternatives() {
-        let endpoint = "tcp/127.0.0.1:17463";
-        let unreachable = "tcp/127.0.0.1:17464";
-        let _router = open_session("router", &[], &[endpoint]).await;
-        let client = open_session("client", &[endpoint, unreachable], &[]).await;
+        let endpoint = free_endpoint();
+        let unreachable = free_endpoint();
+        let _router = open_session("router", &[], &[&endpoint]).await;
+        let client = open_session("client", &[&endpoint, &unreachable], &[]).await;
 
         let started = Instant::now();
         await_connect(
             &client,
-            &[endpoint.to_string(), unreachable.to_string()],
+            &[endpoint.clone(), unreachable.clone()],
             Mode::Client,
             Duration::from_secs(10),
         )

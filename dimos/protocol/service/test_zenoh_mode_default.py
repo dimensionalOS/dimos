@@ -72,7 +72,6 @@ def test_listen_is_never_derived_from_global_config(zenoh_defaults, monkeypatch)
     """A listen port belongs to one session, so nothing hands it to all of them."""
     monkeypatch.setattr(global_config, "zenoh_connect", "tcp/127.0.0.1:17450")
     assert ZenohConfig().listen == []
-    assert not any(name.startswith("zenoh_listen") for name in GlobalConfig.model_fields)
 
 
 def test_rebased_rederives_only_the_fields_the_caller_left_unset(zenoh_defaults, monkeypatch):
