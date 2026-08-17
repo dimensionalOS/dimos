@@ -21,6 +21,8 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
+from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
@@ -45,9 +47,19 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return kwargs["tasks"]
 
 
-@pytest.mark.parametrize("blueprint", [keyboard_teleop_xarm6, keyboard_teleop_xarm7])
-def test_keyboard_teleop_uses_roboplan_compatible_visualization(blueprint: Blueprint) -> None:
-    manipulation = next(atom for atom in blueprint.blueprints if atom.module is ManipulationModule)
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        keyboard_teleop_xarm6,
+        keyboard_teleop_xarm7,
+        xarm_perception,
+        xarm_perception_sim,
+    ],
+)
+def test_xarm_roboplan_blueprints_use_compatible_visualization(blueprint: Blueprint) -> None:
+    manipulation = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ManipulationModule)
+    )
     config = ManipulationModuleConfig.model_validate(manipulation.kwargs)
 
     assert config.world_backend == "roboplan"

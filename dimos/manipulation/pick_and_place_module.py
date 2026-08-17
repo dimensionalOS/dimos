@@ -438,10 +438,24 @@ then refreshes perception obstacles.
             min_duration: Minimum time an object must be seen to be included.
             robot_name: Robot context (only needed for multi-arm setups).
         """
-        # Go to init for a clear camera view
-        init_result = self.go_init(robot_name)
-        if not init_result.is_success():
-            return init_result
+        # Go to init for a clear camera view. Pick/place remains a legacy
+        # subclass, so resolve its robot selector internally and call primitives.
+        robot = self._get_robot(robot_name)
+        if robot is None or self._world_monitor is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        resolved_name, _, _ = robot
+        group_id = self._world_monitor.planning_groups.default_group_id_for_robot(resolved_name)
+        if group_id is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Planning group is ambiguous")
+        init = self.get_state().groups[group_id].joint_presets.get("init")
+        if init is None:
+            return SkillResult.fail("NOT_CONFIGURED", "No init joints captured")
+        plan = self.plan_to_joints({group_id: init})
+        if not plan.succeeded:
+            return SkillResult.fail("PLANNING_FAILED", plan.message)
+        execution = self.execute(blocking=True)
+        if not execution.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", execution.message)
 
         obstacles = self.refresh_obstacles(min_duration)
 

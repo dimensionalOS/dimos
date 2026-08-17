@@ -51,6 +51,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
         self.config = SimpleNamespace(
             control_loop_hz=50.0,
             cmd_stale_after_sec=0.5,
+            enable_ui_scaling=False,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
@@ -75,10 +76,12 @@ def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
     return PoseStamped(ts=time.time() if ts is None else ts, frame_id=frame_id).lcm_encode()
 
 
-def _twist_bytes(x: float = 0.1, ts: float | None = None) -> bytes:
+def _twist_bytes(x: float = 0.1, angular_x: float = 0.0, ts: float | None = None) -> bytes:
     # ts=None keeps TwistStamped's default stamp (now) — a fresh command.
     kwargs = {} if ts is None else {"ts": ts}
-    return TwistStamped(frame_id="eef_twist_arm", linear=[x, 0.0, 0.0], **kwargs).lcm_encode()
+    return TwistStamped(
+        frame_id="eef_twist_arm", linear=[x, 0.0, 0.0], angular=[angular_x, 0.0, 0.0], **kwargs
+    ).lcm_encode()
 
 
 def _tick(module: ArmCommandModule) -> None:
@@ -160,6 +163,25 @@ def test_twist_republished_without_task_address(module: ArmCommandModule) -> Non
     out = module.ee_twist_command.publish.call_args.args[0]
     assert out.frame_id == ""  # addressing is the port wiring, not the payload
     assert out.linear.x == pytest.approx(0.2)
+
+
+def test_ui_scale_disabled_is_rejected(module: ArmCommandModule) -> None:
+    module._on_state_json(b'{"type": "teleop_scale", "scale": 0.5, "nonce": 3}')
+
+    assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 3, "ok": False}]
+    assert module._translation_scale == 1.0
+
+
+def test_ui_scale_updates_pose_and_keyboard_twist(module: ArmCommandModule) -> None:
+    module.config.enable_ui_scaling = True
+    module._on_state_json(b'{"type": "teleop_scale", "scale": 0.5, "nonce": 4}')
+    module._on_cmd_raw(_twist_bytes(0.2, angular_x=0.3))
+
+    assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 4, "ok": True}]
+    assert module._translation_scale == 0.5
+    out = module.ee_twist_command.publish.call_args.args[0]
+    assert out.linear.x == pytest.approx(0.1)
+    assert out.angular.x == pytest.approx(0.3)
 
 
 def test_twist_dropped_while_estopped(module: ArmCommandModule) -> None:

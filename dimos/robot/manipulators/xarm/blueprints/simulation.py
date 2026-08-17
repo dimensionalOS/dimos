@@ -36,7 +36,7 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[_xarm7_sim_model],
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(target_frame="world"),

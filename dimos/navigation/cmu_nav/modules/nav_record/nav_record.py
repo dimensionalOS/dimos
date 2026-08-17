@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NavRecord: records all nav stack streams to a memory2 SQLite database."""
+"""NavRecord: records all nav stack streams to a memory SQLite database."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from dimos_lcm.std_msgs import Bool as LcmBool  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.memory.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -35,7 +35,7 @@ class NavRecordConfig(RecorderConfig):
 
 
 class NavRecord(Recorder):
-    """Records nav stack outputs to SQLite via memory2 (only connected streams are recorded)."""
+    """Records nav stack outputs to SQLite via memory (only connected streams are recorded)."""
 
     config: NavRecordConfig
 

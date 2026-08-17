@@ -85,11 +85,10 @@ class TaskConfig:
 
     name: str
     type: str = "trajectory"
-    joint_names: list[str] = field(default_factory=lambda: [])
+    joint_names: list[str] = field(default_factory=list)
     priority: int = 10
     auto_start: bool = False
     params: dict[str, Any] = field(default_factory=dict)
-    # card input name -> the port this instance reads instead
     stream_bind: dict[str, str] = field(default_factory=dict)
 
 
@@ -130,7 +129,8 @@ class ControlCoordinator(Module):
     Example:
         >>> from dimos.control.components import HardwareComponent, HardwareType
         >>> from dimos.control.components import make_joints
-        >>> from dimos.control.coordinator import ControlCoordinator, TaskConfig
+        >>> from dimos.control.coordinator import ControlCoordinator
+        >>> from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
         >>>
         >>> coordinator = ControlCoordinator.blueprint(
         ...     tick_rate=100.0,
@@ -144,12 +144,7 @@ class ControlCoordinator(Module):
         ...         ),
         ...     ],
         ...     tasks=[
-        ...         TaskConfig(
-        ...             name="traj_arm",
-        ...             type="trajectory",
-        ...             joint_names=make_joints("arm", 7),
-        ...             priority=10,
-        ...         ),
+        ...         joint_trajectory_task(make_joints("arm", 7)),
         ...     ],
         ... )
     """
