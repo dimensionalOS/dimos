@@ -20,6 +20,9 @@ class FakeTF(MultiTBuffer):
     def stop(self) -> None:
         pass
 
+    def dispose(self) -> None:
+        pass
+
 
 def _module(**kwargs: object) -> TfPoseSource:
     module = TfPoseSource(**kwargs)
@@ -38,7 +41,7 @@ def test_pose_source_publishes_pose_only_odometry() -> None:
         child_frame_id="camera",
         ts=time.time(),
     )
-    module.tf.receive_transform(transform)
+    module.tfbuffer.receive_transform(transform)
 
     assert module.tick()
     assert len(published) == 1
@@ -69,7 +72,7 @@ def test_pose_source_forwards_latest_capture_even_when_publication_is_delayed() 
     module.odometry.publish = published.append  # type: ignore[method-assign]
     capture_time = time.time() - 0.05
     try:
-        module.tf.receive_transform(
+        module.tfbuffer.receive_transform(
             Transform(frame_id="world", child_frame_id="base_link", ts=capture_time)
         )
 
@@ -84,7 +87,7 @@ def test_pose_source_fixed_rate_lifecycle() -> None:
     module = _module(publish_rate_hz=20.0)
     published: list[Odometry] = []
     module.odometry.publish = published.append  # type: ignore[method-assign]
-    module.tf.receive_transform(
+    module.tfbuffer.receive_transform(
         Transform(frame_id="world", child_frame_id="base_link", ts=time.time())
     )
 

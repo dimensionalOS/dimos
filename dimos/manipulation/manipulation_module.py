@@ -516,7 +516,7 @@ class ManipulationModule(Module):
             relative.child_frame_id = child
             relative.ts = joint_state.ts
             transforms.append(relative)
-        self.tf.publish(TFMessage(*transforms))
+        self.tfbuffer.publish(*transforms)
 
     @rpc
     def get_state(self) -> ManipulationSnapshot:

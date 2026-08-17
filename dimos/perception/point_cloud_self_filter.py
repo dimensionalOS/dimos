@@ -25,6 +25,7 @@ from dimos.core.stream import In, Out
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -73,6 +74,7 @@ class PointCloudSelfFilter(Module):
     config: PointCloudSelfFilterConfig  # type: ignore[assignment]
 
     pointcloud: In[PointCloud2]
+    tf: In[TFMessage]
     filtered_pointcloud: Out[PointCloud2]
     robot_clear_mask: Out[PointCloud2]
 
@@ -99,14 +101,14 @@ class PointCloudSelfFilter(Module):
         current_clear_keys: set[tuple[int, int, int]] = set()
 
         for geometry in self._collision_geometry:
-            sensor_from_link = self.tf.get(
+            sensor_from_link = self.tfbuffer.get(
                 cloud.frame_id,
                 geometry.link,
                 time_point=cloud.ts,
                 time_tolerance=self.filter_config.tf_tolerance_s,
                 forward_tolerance=self.filter_config.tf_forward_tolerance_s,
             )
-            world_from_link = self.tf.get(
+            world_from_link = self.tfbuffer.get(
                 self.filter_config.planning_frame,
                 geometry.link,
                 time_point=cloud.ts,

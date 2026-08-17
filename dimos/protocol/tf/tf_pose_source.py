@@ -12,9 +12,10 @@ import time
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class TfPoseSourceConfig(ModuleConfig):
@@ -27,6 +28,7 @@ class TfPoseSource(Module):
     """Publish pose-only odometry from TF at a fixed rate."""
 
     config: TfPoseSourceConfig  # type: ignore[assignment]
+    tf: In[TFMessage]
     odometry: Out[Odometry]
 
     def __init__(self, **kwargs: object) -> None:
@@ -60,7 +62,7 @@ class TfPoseSource(Module):
         # Forward the latest sample with its original source timestamp. The consumer
         # compares that timestamp with the sensor capture timestamp; wall-clock age
         # here includes normal render and transport latency and is not synchronization.
-        transform = self.tf.get(
+        transform = self.tfbuffer.get(
             config.target_frame,
             config.source_frame,
         )

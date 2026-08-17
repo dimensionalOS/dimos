@@ -246,29 +246,6 @@ class ViserManipulationVisualizer:
         if self._gui is not None:
             self._gui.refresh()
 
-    def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
-        """Render an accepted obstacle under its stable native ID."""
-        if self._closed:
-            return
-        self._ensure_started()
-        if self._scene is not None:
-            self._scene.add_vis_obstacle(obstacle_id, obstacle)
-
-    def remove_vis_obstacle(self, obstacle_id: str) -> None:
-        """Remove one accepted obstacle, ignoring unknown IDs deterministically."""
-        if self._scene is not None:
-            self._scene.remove_vis_obstacle(obstacle_id)
-
-    def clear_vis_obstacles(self) -> None:
-        """Remove all accepted obstacle visuals."""
-        if self._scene is not None:
-            self._scene.clear_vis_obstacles()
-
-    def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
-        """Update one accepted obstacle visual pose by native ID."""
-        if self._scene is not None:
-            self._scene.update_vis_obstacle_pose(obstacle_id, pose)
-
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:

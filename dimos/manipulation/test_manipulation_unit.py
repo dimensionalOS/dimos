@@ -1035,8 +1035,8 @@ class TestPlanningDiagnostics:
 class TestPlanningCollisionSnapshots:
     """Test planning-module collision snapshot integration."""
 
-    def test_invalid_snapshot_does_not_change_committed_state(self) -> None:
-        module = _make_module()
+    def test_invalid_snapshot_does_not_change_committed_state(self, module_factory) -> None:
+        module = module_factory()
         module._on_planning_voxel_map(PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]])))
         assert module.committed_planning_collision_snapshot() is None
 
