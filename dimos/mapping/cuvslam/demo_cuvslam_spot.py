@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 import cuvslam as vslam
-import cv2
 import numpy as np
 
 from dimos.memory2.store.sqlite import SqliteStore
@@ -234,6 +233,8 @@ def replay_spot(
     use_gpu: bool = True,
 ) -> dict[str, Any]:
     """Replay the recording through a Multisensor tracker; returns trajectory and stats."""
+    import cv2
+
     gray_infos = camera_infos(store, "grayscale_info")
     depth_infos = camera_infos(store, "depth_info")
     extrinsics = rig_extrinsics(store)
