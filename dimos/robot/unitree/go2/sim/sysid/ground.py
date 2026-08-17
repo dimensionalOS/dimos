@@ -456,13 +456,12 @@ DIVERGENCE_WINDOW_S = 2.0
 DIVERGENCE_FIT_S = (0.5, 1.0, 2.0)
 DIVERGENCE_SCORED_FIT_S = 1.0
 
-# The SIGNED bias fits a different, later stretch, on moving windows only.
-# Measured: the snap's velocity re-seed HEALS the speed deficit for ~1 s
-# (bias reads +0.005 m/s at 1 s), and past the heal it converges on the
-# deficit — shipped plant -0.053 vs speed_gain's implied -0.050 — staying
-# linear because chaos cancels in a signed mean but adds in an RMS.
-# Caveat: the heal time is the plant's own relaxation (calibrated on the
-# shipped plant); across plants speed_gain stays the deficit's measure.
+# The SIGNED bias fits a later stretch (past the snap's ~1 s velocity
+# re-seed heal), moving windows only. REPORTED, NEVER SCORED: across
+# three plants it bears no reliable relation to the speed deficit
+# (over-reads stock 2x, under-reads joint-partition 7x, inverted
+# ordering) and its jackknife SE is the size of the plant-to-plant
+# spread — speed_gain stays the deficit's measure (README 4).
 BIAS_FIT_S = (1.0, 2.0)
 BIAS_MOVING_CMD = 0.3  # windows with mean |cmd| below this dilute the bias
 
@@ -623,6 +622,7 @@ class TermRate:
     rates: tuple[float, ...]
     se: float
     bias_rate: float
+    bias_se: float = float("nan")  # jackknife over moving windows
 
 
 def _rate_of(x: np.ndarray, tau: np.ndarray, moving: np.ndarray | None = None) -> TermRate:
@@ -661,8 +661,21 @@ def _rate_of(x: np.ndarray, tau: np.ndarray, moving: np.ndarray | None = None) -
         else float("nan")
     )
     b_lo, b_hi = BIAS_FIT_S
-    bias = slope(xm, b_lo, min(b_hi, float(tau[-1])), signed=True) if len(xm) else float("nan")
-    return TermRate(rate, rates, se, bias)
+    b_hi = min(b_hi, float(tau[-1]))
+    bias = slope(xm, b_lo, b_hi, signed=True) if len(xm) else float("nan")
+    bj = np.array(
+        [
+            slope(xm[[i for i in range(len(xm)) if i != k]], b_lo, b_hi, signed=True)
+            for k in range(len(xm))
+        ]
+    )
+    bj = bj[np.isfinite(bj)]
+    bias_se = (
+        float(np.sqrt((len(bj) - 1) / len(bj) * np.sum((bj - bj.mean()) ** 2)))
+        if len(bj) > 2
+        else float("nan")
+    )
+    return TermRate(rate, rates, se, bias, bias_se)
 
 
 @dataclass(frozen=True)
@@ -760,9 +773,9 @@ def divergence_detail(div: Divergence) -> str:
         note += _stability_note(tc)
         if t == "along":
             note += (
-                f"; DEFICIT: signed bias {tc.bias_rate:+.3f} m/s over "
-                f"{BIAS_FIT_S[0]:g}-{BIAS_FIT_S[1]:g}s moving windows (the snap's velocity "
-                "re-seed heals the deficit for ~1s; negative = falls behind)"
+                f"; signed bias {tc.bias_rate:+.3f} +- {tc.bias_se:.3f} m/s over "
+                f"{BIAS_FIT_S[0]:g}-{BIAS_FIT_S[1]:g}s moving windows (reported only: "
+                "no reliable cross-plant relation to the deficit — README 4)"
             )
         lines.append(
             f"  {t:<11} {tc.rate:+10.4f} {unit[t]:<6} {tc.se:8.4f}   {triple} {deg} {note}"

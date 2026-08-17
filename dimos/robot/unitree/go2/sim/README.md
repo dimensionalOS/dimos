@@ -347,20 +347,21 @@ each scores **only** what is its own.
   194142: along 11.4 vs 15.2 cm/s, yaw 6.3 vs 33.0 deg/s, cross 2.5 vs
   5.7 cm/s — and yaw is a new find: 6.3 deg/s heading drift, SNR 5.1,
   both instruments agreeing to 0.1 deg/s, invisible to the eleven
-  statistics). The signed BIAS measures the stride DEFICIT (§9), and it
-  needs its own, later fit interval: the snap's velocity re-seed HEALS
-  the deficit for ~1 s (bias reads +0.005 m/s at 1 s), after which it
-  converges on `speed_gain`'s prediction — shipped plant **−0.053 m/s
-  over 1–2 s moving windows vs the −0.050 m/s the speed deficit
-  implies** (and −0.048 out at 4 s: linear, because chaos cancels in a
-  signed mean but adds in an RMS). One caveat, stated: the heal time is
-  the PLANT'S relaxation, calibrated here on the shipped plant — a
-  slower-relaxing plant under-reads its bias (the joint-partition fit
-  reads −0.013 against a −0.06 implied deficit), so ACROSS plants
-  `speed_gain` remains the deficit's measure and the bias is the shipped
-  plant's consistency check. The RMS rates compare across plants cleanly
-  (identical windows), and all of it rides BESIDE the eleven statistics,
-  never replacing them.
+  statistics). The signed BIAS was meant to measure the stride DEFICIT
+  (§9) past the snap's velocity-re-seed heal (~1 s), and it CANNOT: over
+  three plants it over-reads, matches, and under-reads the implied
+  deficit — stock −0.053 vs −0.025 implied, shipped −0.053 vs −0.050,
+  joint-partition −0.013 vs −0.092 — an inverted ordering, so it bears
+  no reliable cross-plant relation to the deficit; and its own jackknife
+  SE (±0.033/±0.069/±0.028) is the size of the plant-to-plant spread,
+  so no pair of plants is resolved and the shipped plant's apparent
+  match was luck inside its band. It prints with its SE, reported never
+  scored — the same species of failure as `gait_hz` and `height_mean`
+  (§6: a statistic whose noise exceeds the claim it supports), and the
+  first concrete customer for the proposed nuisance guard. The deficit's
+  measure remains `speed_gain`. The RMS rates are unaffected — they
+  compare across plants cleanly (identical windows) — and ride BESIDE
+  the eleven statistics, never replacing them.
 
 **The partition is what makes loop 2 a referee.** A referee that judges what
 the fit optimised is not an independent check, and the pair collapses into one

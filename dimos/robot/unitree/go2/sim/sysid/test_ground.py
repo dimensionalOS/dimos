@@ -257,7 +257,7 @@ def test_divergence_terms_enter_the_report_loss_and_table():
     assert of == base.n_matched()[1] + 5  # five scored divergence terms
     text = with_div.table()
     assert "div_along" in text and "DIVERGENCE RATE" in text
-    assert "DEFICIT" in text  # the signed-bias line stays connected to README 9
+    assert "signed bias" in text  # reported with its own SE, never scored
 
 
 # ------------------------------------------------- against the real recording
