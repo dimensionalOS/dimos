@@ -1865,6 +1865,7 @@ class ManipulationModule(Module):
         robot_name: RobotName | None = None,
         min_z: float = 0.05,
         group_id: PlanningGroupID | None = None,
+        preview_duration: float = 0.5,
     ) -> SkillResult[ManipulationSkillError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
         ee = self._current_tip_pose(robot_name, group_id)
@@ -1879,7 +1880,7 @@ class ManipulationModule(Module):
                 "PLANNING_FAILED",
                 f"Failed to plan lift from z={ee.position.z:.3f}",
             )
-        return self._preview_execute_wait(robot_name)
+        return self._preview_execute_wait(robot_name, preview_duration)
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
@@ -1888,10 +1889,11 @@ class ManipulationModule(Module):
 
         Args:
             robot_name: Robot to operate on
-            preview_duration: Duration to animate the preview in Meshcat (seconds)
+            preview_duration: Duration to animate the preview in the viewer (seconds)
         """
-        logger.info("Previewing trajectory...")
-        self.preview_path(preview_duration, robot_name)
+        if preview_duration > 0.0:
+            logger.info("Previewing trajectory...")
+            self.preview_path(preview_duration, robot_name)
 
         logger.info("Executing trajectory...")
         if not self.execute():
@@ -1946,6 +1948,7 @@ class ManipulationModule(Module):
         robot_name: str | None = None,
         group_id: str | None = None,
         pre_lift: bool = True,
+        preview_duration: float = 0.5,
     ) -> SkillResult[ManipulationSkillError]:
         """Move the robot end-effector to a target pose.
 
@@ -1964,6 +1967,8 @@ class ManipulationModule(Module):
                 the robot has more than one pose-targetable group.
             pre_lift: Insert the generic low-tool clearance lift before planning.
                 Disable only when the caller has verified a direct collision-free path.
+            preview_duration: Seconds to animate the planned path before execution.
+                Set to zero to execute immediately.
         """
         logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
@@ -1993,7 +1998,11 @@ class ManipulationModule(Module):
         # This is an optional convenience heuristic because its absolute Z
         # threshold only makes sense when the world origin is at ground level.
         if pre_lift:
-            lift = self._lift_if_low(robot_name, group_id=group_id)
+            lift = self._lift_if_low(
+                robot_name,
+                group_id=group_id,
+                preview_duration=preview_duration,
+            )
             if not lift.is_success():
                 return lift
 
@@ -2003,7 +2012,7 @@ class ManipulationModule(Module):
                 f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
             )
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._preview_execute_wait(robot_name, preview_duration)
         if not exec_result.is_success():
             return exec_result
 
@@ -2105,7 +2114,11 @@ class ManipulationModule(Module):
 
     @skill
     def go_init(
-        self, robot_name: str | None = None, group_id: str | None = None
+        self,
+        robot_name: str | None = None,
+        group_id: str | None = None,
+        pre_lift: bool = True,
+        preview_duration: float = 0.5,
     ) -> SkillResult[ManipulationSkillError]:
         """Move the robot to its init position (captured at startup or set manually).
 
@@ -2117,6 +2130,10 @@ class ManipulationModule(Module):
             group_id: Planning group whose tool the safe waypoint is computed for.
                 Robots with several pose-targetable groups skip the waypoint
                 unless one is named.
+            pre_lift: Insert the generic low-tool clearance lift before returning.
+                Disable when the caller's world origin is not at ground level.
+            preview_duration: Seconds to animate each planned path before execution.
+                Set to zero to execute immediately.
         """
         robot = self._get_robot(robot_name)
         if robot is None:
@@ -2130,10 +2147,14 @@ class ManipulationModule(Module):
                 "No init joints captured — robot may not have reported joint state yet",
             )
 
-        # Lift if EE is low before moving to init
-        lift = self._lift_if_low(robot_name, group_id=group_id)
-        if not lift.is_success():
-            return lift
+        if pre_lift:
+            lift = self._lift_if_low(
+                robot_name,
+                group_id=group_id,
+                preview_duration=preview_duration,
+            )
+            if not lift.is_success():
+                return lift
 
         # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
         # This avoids direct paths through the workspace that could collide with objects.
@@ -2148,7 +2169,7 @@ class ManipulationModule(Module):
                 init_ee.orientation,
             )
             if self.plan_to_pose(wp, robot_name, group_id):
-                wp_result = self._preview_execute_wait(robot_name)
+                wp_result = self._preview_execute_wait(robot_name, preview_duration)
                 if not wp_result.is_success():
                     return wp_result
             else:
@@ -2180,7 +2201,7 @@ class ManipulationModule(Module):
         if not self.plan_to_joints(goal, robot_name, group_id):
             return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._preview_execute_wait(robot_name, preview_duration)
         if not exec_result.is_success():
             return exec_result
 

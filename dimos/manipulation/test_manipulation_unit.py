@@ -1114,6 +1114,21 @@ class TestExecute:
         assert module.execute() is False
         assert module._state == ManipulationState.IDLE
 
+    def test_zero_duration_skips_preview_and_executes_immediately(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        module = module_factory()
+        preview = mocker.patch.object(module, "preview_path")
+        execute = mocker.patch.object(module, "execute", return_value=True)
+        wait = mocker.patch.object(module, "_wait_for_trajectory_completion", return_value=True)
+
+        result = module._preview_execute_wait("g1", preview_duration=0.0)
+
+        assert result.is_success()
+        preview.assert_not_called()
+        execute.assert_called_once_with()
+        wait.assert_called_once_with()
+
 
 class TestMoveToPose:
     def test_direct_motion_can_skip_the_world_origin_dependent_pre_lift(
@@ -1150,7 +1165,7 @@ class TestMoveToPose:
         pre_lift.assert_not_called()
         planned_pose = plan.call_args.args[0]
         assert planned_pose.position == Vector3(0.3, 0.2, -0.27)
-        execute.assert_called_once_with("g1")
+        execute.assert_called_once_with("g1", 0.5)
 
     def test_pre_lift_remains_enabled_by_default(
         self, module_factory, mocker: MockerFixture
@@ -1170,7 +1185,7 @@ class TestMoveToPose:
         assert not result.is_success()
         assert result.error_code == "PLANNING_FAILED"
         assert result.message == "lift unavailable"
-        pre_lift.assert_called_once_with(None, group_id=None)
+        pre_lift.assert_called_once_with(None, group_id=None, preview_duration=0.5)
         plan.assert_not_called()
 
 

@@ -534,8 +534,14 @@ def g1_groot_coordinator(
     extra_tasks: Sequence[TaskConfig] = (),
     locomotion_task: TaskConfig | None = None,
     twist_sources: Sequence[TwistSourceConfig] = (),
+    gravity_ff_payloads: Sequence[tuple[str, float]] = (),
 ) -> Any:
-    """GR00T WBC coordinator blueprint; ``extra_tasks`` lets variants add tasks."""
+    """Build GR00T WBC with optional tasks, Twist sources, and frame payloads.
+
+    ``gravity_ff_payloads`` contains ``(URDF frame, kilograms)`` point masses;
+    the configured gravity feedforward scale applies to the arm and payload
+    model together.
+    """
     return _G1GrootCoordinator.blueprint(
         instance_name="ControlCoordinator",
         publish_robot_joint_states=True,
@@ -559,6 +565,7 @@ def g1_groot_coordinator(
                         (name, f"{name.removeprefix('g1/')}_joint") for name in g1_joints
                     ),
                     gravity_ff_joints=tuple(g1_arms),
+                    gravity_ff_payloads=tuple(gravity_ff_payloads),
                     gravity_ff_scale=_gravity_ff_scale
                     if global_config.gravity_ff_scale is None
                     else global_config.gravity_ff_scale,

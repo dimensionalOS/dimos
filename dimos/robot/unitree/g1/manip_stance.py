@@ -44,7 +44,7 @@ DEFAULT_MAP_PATH = Path(__file__).resolve().parent / "artifacts" / "right_arm_po
 
 # Pour height above the floor. The pot's own height is irrelevant: the tool
 # pours from a height the arm is comfortable at and the water falls.
-POUR_Z = 0.90
+POUR_Z = 0.8
 # Tipping about the tool's roll axis toward the robot's left; the pitch-axis
 # tip stops solving past 60 deg, this one solves at 90.
 TIP_RADIANS = -np.pi / 2
@@ -230,6 +230,19 @@ class PourReachMap:
     def contains(self, offset: tuple[float, float], margin_cells: int = 2) -> bool:
         """Is the pot reachable from here, with room to spare?"""
         return self.margin(offset) >= margin_cells
+
+    def closest_offset(
+        self, offset: tuple[float, float], margin_cells: int = 1
+    ) -> tuple[float, float]:
+        """Project an offset onto the nearest cell with the requested margin."""
+        candidates = np.argwhere(self._distance >= margin_cells)
+        if not len(candidates):
+            raise ValueError(f"reach map has no cell {margin_cells} cells inside the region")
+        ys = self.y0 + candidates[:, 0] * self.cell
+        xs = self.x0 + candidates[:, 1] * self.cell
+        squared_distance = np.square(xs - offset[0]) + np.square(ys - offset[1])
+        nearest = int(np.argmin(squared_distance))
+        return float(xs[nearest]), float(ys[nearest])
 
     def best_offset(
         self, margin_cells: int = 2, max_bearing: float = np.deg2rad(35.0)

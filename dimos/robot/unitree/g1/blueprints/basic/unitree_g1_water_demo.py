@@ -149,12 +149,15 @@ _CAMERA_ENTITY = "world/color_compressed"
 
 # All three tags mark pot plants at different spots; the first one the robot
 # sees consistently becomes the target. Physical black-border edge, printed at
-# 100% from `dimos apriltag --ids 0,1,2 --size-mm 150`.
+# 100% from `dimos apriltag --ids 0,1,2 --size-mm 100`.
 _PLANT_MARKER_IDS = [0, 1, 2]
-_MARKER_LENGTH_M = 0.15
+_MARKER_LENGTH_M = 0.1
 _WORLD_FRAME = "world"
 _BASE_FRAME = "pelvis"
 _SPOUT_OFFSET_IN_PALM = DEFAULT_SPOUT_OFFSET_IN_PALM
+# Filled watering-can mass in kilograms. The gravity model treats it as a
+# point mass at the right palm; leave at zero to disable payload compensation.
+_WATERING_CAN_MASS_KG = 0.0
 
 
 def _plant_perception() -> Any:
@@ -249,6 +252,9 @@ unitree_g1_water_demo = (
             extra_tasks=(_ARM_TRAJECTORY_TASK,),
             locomotion_task=_HARDWARE_GROOT_TASK,
             twist_sources=_TWIST_SOURCES,
+            gravity_ff_payloads=(
+                ((RIGHT_PALM_FRAME, _WATERING_CAN_MASS_KG),) if _WATERING_CAN_MASS_KG > 0.0 else ()
+            ),
         ),
         PointLio.blueprint(
             frame_id="world",
@@ -297,6 +303,8 @@ unitree_g1_water_demo = (
             # right_hand_palm_link frame: +y is the robot's left when upright.
             # Tune this tuple to the measured palm -> water-exit displacement.
             spout_offset_in_palm=_SPOUT_OFFSET_IN_PALM,
+            approach_timeout=90.0,
+            settle_timeout=15.0,
             motion_enabled=False,
             approach_motion_enabled=True,
             pour_motion_enabled=True,

@@ -105,6 +105,17 @@ def test_offset_outside_the_grid_is_not_reachable():
     assert not reach.contains((-3.0, 0.0))
 
 
+def test_closest_offset_projects_to_the_nearest_cell_with_margin():
+    reachable = np.zeros((7, 7), dtype=int)
+    reachable[1:6, 1:6] = 1
+    reach = _map(reachable, cell=0.1, x0=0.0, y0=0.0)
+
+    projected = reach.closest_offset((0.62, 0.31), margin_cells=2)
+
+    assert projected == pytest.approx((0.4, 0.3))
+    assert reach.contains(projected, margin_cells=2)
+
+
 def test_best_offset_needs_a_cell_inside_the_facing_cone():
     # A region only reachable straight behind the robot: pourable, but never
     # while facing the pot, so the stance search must refuse rather than
@@ -169,7 +180,7 @@ def test_tipped_spout_tcp_moves_the_sampled_palm_above_the_water_exit():
         DEFAULT_SPOUT_OFFSET_IN_PALM,
     )
 
-    assert palm == pytest.approx([0.4, -0.2, POUR_Z + 0.20])
+    assert palm == pytest.approx([0.4, -0.2, POUR_Z + DEFAULT_SPOUT_OFFSET_IN_PALM[1]])
 
 
 def test_a_map_sampled_for_a_different_pour_is_refused():

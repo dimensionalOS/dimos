@@ -109,10 +109,15 @@ class WateringManipulationSpec(Spec, Protocol):
         robot_name: str | None = None,
         group_id: str | None = None,
         pre_lift: bool = True,
+        preview_duration: float = 0.5,
     ) -> SkillResult[ManipulationSkillError]: ...
 
     def go_init(
-        self, robot_name: str | None = None, group_id: str | None = None
+        self,
+        robot_name: str | None = None,
+        group_id: str | None = None,
+        pre_lift: bool = True,
+        preview_duration: float = 0.5,
     ) -> SkillResult[ManipulationSkillError]: ...
 
 
@@ -135,6 +140,7 @@ class WateringState(str, Enum):
     MOVING_OVER_TARGET = "moving_over_target"
     TIPPING = "tipping"
     HOLDING = "holding"
+    UNTIPPING = "untipping"
     RETURNING = "returning"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
@@ -186,7 +192,8 @@ class WateringTaskConfig(ModuleConfig):
     spout_offset_in_palm: tuple[float, float, float] = DEFAULT_SPOUT_OFFSET_IN_PALM
     reach_map_path: Path = DEFAULT_MAP_PATH
     servo_hz: float = Field(default=10.0, gt=0.0)
-    servo_timeout: float = Field(default=90.0, gt=0.0)
+    approach_timeout: float = Field(default=90.0, gt=0.0)
+    settle_timeout: float = Field(default=15.0, gt=0.0)
     input_wait_timeout: float = Field(default=10.0, gt=0.0)
     target_max_age: float = Field(default=2.0, gt=0.0)
     base_pose_max_age: float = Field(default=2.0, gt=0.0)
@@ -427,8 +434,8 @@ class WateringSequence:
                 raise _WateringFailureError(f"Manipulation reset failed: {reset}")
 
             self._approach(target_id, snapshot)
-            target, yaw, pour_z = self._latch_for_pour(target_id)
-            self._pour(target, yaw, pour_z)
+            target, yaw, pour_z, requested_xy = self._latch_for_pour(target_id)
+            self._pour(target, yaw, pour_z, requested_xy)
             message = f"Watered target '{target_id}'"
             self._transition(WateringState.COMPLETED, message, 0)
             return WateringRunResult(True, WateringState.COMPLETED, message)
@@ -520,8 +527,8 @@ class WateringSequence:
             if not reset.is_success():
                 raise _WateringFailureError(f"Manipulation reset failed: {reset}")
 
-            target, yaw, pour_z = self._latch_for_pour(target_id)
-            self._pour(target, yaw, pour_z)
+            target, yaw, pour_z, requested_xy = self._latch_for_pour(target_id)
+            self._pour(target, yaw, pour_z, requested_xy)
             message = f"Poured at target '{target_id}' without moving the base"
             self._transition(WateringState.COMPLETED, message, 0)
             return WateringRunResult(True, WateringState.COMPLETED, message)
@@ -567,7 +574,7 @@ class WateringSequence:
         # The watering state machine owns the goal and safety supervision; the
         # navigation module owns the control law and publishes autonomy Twist.
         self._approach_commands.start(path)
-        deadline = self._monotonic() + self._config.servo_timeout
+        deadline = self._monotonic() + self._config.approach_timeout
         period = 1.0 / self._config.servo_hz
         initial_pot = self._pot_xy(initial)
         previous_base = self._base_pose(initial)
@@ -615,40 +622,66 @@ class WateringSequence:
                 )
                 previous_phase = step.phase
             if step.arrived:
-                self._approach_commands.stop()
-                self._transition(
-                    WateringState.SETTLING,
-                    f"Base reached stance at ({current_base[0]:.2f}, {current_base[1]:.2f})",
-                    0,
-                )
-                self._wait_or_cancel(self._config.settle_seconds)
-                settled_snapshot = self._require_snapshot(target_id)
-                settled_step = approach_step(
-                    self._base_pose(settled_snapshot),
-                    (
-                        float(goal.position.x),
-                        float(goal.position.y),
-                        float(goal.orientation.to_euler().z),
-                    ),
-                    self._controller_config,
-                )
-                if settled_step.arrived:
-                    return
-                previous_base = self._base_pose(settled_snapshot)
-                previous_phase = None
-                self._transition(
-                    WateringState.APPROACHING,
-                    "Settling moved the base outside stance tolerance; resuming path follower",
-                    0,
-                )
-                self._approach_commands.start(path)
-                continue
+                self._settle_at_goal(target_id, path, goal, current_base, period)
+                return
             self._wait_or_cancel(period)
         raise _WateringFailureError(
-            f"Path follower timed out after {self._config.servo_timeout:.1f}s"
+            f"Approach timed out after {self._config.approach_timeout:.1f}s"
         )
 
-    def _latch_for_pour(self, target_id: str) -> tuple[TargetObservation, float, float]:
+    def _settle_at_goal(
+        self,
+        target_id: str,
+        path: NavPath,
+        goal: PoseStamped,
+        arrived_base: tuple[float, float, float],
+        period: float,
+    ) -> None:
+        """Give near-goal correction its own deadline, then accept best effort."""
+        self._approach_commands.stop()
+        self._transition(
+            WateringState.SETTLING,
+            f"Base reached stance at ({arrived_base[0]:.2f}, {arrived_base[1]:.2f})",
+            0,
+        )
+        deadline = self._monotonic() + self._config.settle_timeout
+        self._wait_or_cancel(self._config.settle_seconds)
+        correcting = False
+        while self._monotonic() < deadline:
+            self._check_cancelled()
+            snapshot = self._require_snapshot(target_id)
+            current_base = self._base_pose(snapshot)
+            step = approach_step(
+                current_base,
+                (
+                    float(goal.position.x),
+                    float(goal.position.y),
+                    float(goal.orientation.to_euler().z),
+                ),
+                self._controller_config,
+            )
+            if step.arrived:
+                if correcting:
+                    self._approach_commands.stop()
+                return
+            if not correcting:
+                self._approach_commands.start(path)
+                correcting = True
+            self._wait_or_cancel(period)
+
+        self._approach_commands.stop()
+        snapshot = self._require_snapshot(target_id)
+        current_base = self._base_pose(snapshot)
+        self._transition(
+            WateringState.SETTLING,
+            f"Accepted closest stance at ({current_base[0]:.2f}, {current_base[1]:.2f}) "
+            f"after {self._config.settle_timeout:.1f}s settle timeout",
+            0,
+        )
+
+    def _latch_for_pour(
+        self, target_id: str
+    ) -> tuple[TargetObservation, float, float, tuple[float, float]]:
         """Latch the stopped base and express the reach-map pour in LIO world.
 
         The approach stance already comes from the TCP-aware reach map. The
@@ -665,16 +698,57 @@ class WateringSequence:
             raise _WateringFailureError(f"Base latch failed: {self._manipulation.get_error()}")
 
         seen = self._seen_offset(snapshot)
-        _, _, base_yaw = self._base_pose(snapshot)
-        yaw = tool_yaw_for(seen, base_yaw)
-        return snapshot.target, yaw, self._pour_world_z(snapshot)
+        base_x, base_y, base_yaw = self._base_pose(snapshot)
+        commanded_offset = seen
+        requested_xy = self._pot_xy(snapshot)
+        target = snapshot.target
+        if not self._reach.contains(seen, self._config.reach_margin_cells):
+            commanded_offset = self._reach.closest_offset(seen, self._config.reach_margin_cells)
+            cos_yaw, sin_yaw = math.cos(base_yaw), math.sin(base_yaw)
+            command_x = base_x + cos_yaw * commanded_offset[0] - sin_yaw * commanded_offset[1]
+            command_y = base_y + sin_yaw * commanded_offset[0] + cos_yaw * commanded_offset[1]
+            projected_pose = copy_pose_stamped(target.pose)
+            projected_pose.position = Vector3(
+                command_x,
+                command_y,
+                float(projected_pose.position.z),
+            )
+            target = TargetObservation(
+                object_id=target.object_id,
+                label=target.label,
+                pose=projected_pose,
+                source=target.source,
+                observed_at=target.observed_at,
+                confidence=target.confidence,
+            )
+            logger.warning(
+                "Projecting pour XY from requested (%.3f, %.3f) to nearest "
+                "robust reachable point (%.3f, %.3f); base-frame offset "
+                "(%.3f, %.3f) -> (%.3f, %.3f)",
+                requested_xy[0],
+                requested_xy[1],
+                command_x,
+                command_y,
+                seen[0],
+                seen[1],
+                commanded_offset[0],
+                commanded_offset[1],
+            )
+        yaw = tool_yaw_for(commanded_offset, base_yaw)
+        return target, yaw, self._pour_world_z(snapshot), requested_xy
 
     def _pour_world_z(self, snapshot: WateringInputSnapshot) -> float:
         """Convert the ground-relative reach-map height into the live LIO world."""
         ground_z = float(snapshot.base_pose.position.z) - self._config.nominal_pelvis_height
         return ground_z + self._reach.pour_z
 
-    def _pour(self, target: TargetObservation, yaw: float, pour_z: float) -> None:
+    def _pour(
+        self,
+        target: TargetObservation,
+        yaw: float,
+        pour_z: float,
+        requested_xy: tuple[float, float],
+    ) -> None:
         pot = (float(target.pose.position.x), float(target.pose.position.y))
         spout = Vector3(pot[0], pot[1], pour_z)
         tipped_pose = palm_pose_for_spout(
@@ -687,10 +761,17 @@ class WateringSequence:
             Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
         )
         self._check_cancelled()
+        adjustment = math.dist(pot, requested_xy)
+        aim_message = f"target ({pot[0]:.2f}, {pot[1]:.2f})"
+        if adjustment > 1e-6:
+            aim_message = (
+                f"closest reachable ({pot[0]:.2f}, {pot[1]:.2f}) for requested "
+                f"({requested_xy[0]:.2f}, {requested_xy[1]:.2f}); "
+                f"XY adjustment={adjustment:.2f} m"
+            )
         self._transition(
             WateringState.MOVING_OVER_TARGET,
-            f"Planning and moving right tool over target at "
-            f"({pot[0]:.2f}, {pot[1]:.2f}), spout world z={pour_z:.2f} m",
+            f"Planning and moving right tool over {aim_message}, spout world z={pour_z:.2f} m",
             0,
         )
         over = self._manipulation.move_to_pose(
@@ -703,10 +784,13 @@ class WateringSequence:
             robot_name=self._config.robot_name,
             group_id=self._config.group_id,
             pre_lift=False,
+            preview_duration=0.0,
         )
         if not over.is_success():
+            detail = self._manipulation.get_error().strip()
             self._manipulation.reset()
-            raise _WateringFailureError(f"Failed to move over target: {over}")
+            suffix = f"; planner: {detail}" if detail else ""
+            raise _WateringFailureError(f"Failed to move over target: {over}{suffix}")
 
         self._check_cancelled()
         self._transition(WateringState.TIPPING, "Tipping the watering tool", 0)
@@ -720,15 +804,52 @@ class WateringSequence:
             robot_name=self._config.robot_name,
             group_id=self._config.group_id,
             pre_lift=False,
+            preview_duration=0.0,
         )
         if not tipped.is_success():
+            detail = self._manipulation.get_error().strip()
             self._manipulation.reset()
-            raise _WateringFailureError(f"Failed to tip over target: {tipped}")
+            suffix = f"; planner: {detail}" if detail else ""
+            raise _WateringFailureError(f"Failed to tip over target: {tipped}{suffix}")
 
         self._transition(WateringState.HOLDING, "Holding the tipped pose", 0)
         self._wait_or_cancel(self._config.hold_seconds)
+
+        # Undo the wrist roll while the arm is still extended over the plant.
+        # Going straight from the tipped pose to init can sweep the can inward
+        # across the torso even when the bare-hand robot model is collision-free.
+        self._transition(
+            WateringState.UNTIPPING,
+            "Returning the watering tool upright before retracting",
+            0,
+        )
+        untipped = self._manipulation.move_to_pose(
+            x=float(upright.position.x),
+            y=float(upright.position.y),
+            z=float(upright.position.z),
+            roll=0.0,
+            pitch=0.0,
+            yaw=yaw,
+            robot_name=self._config.robot_name,
+            group_id=self._config.group_id,
+            pre_lift=False,
+            preview_duration=0.0,
+        )
+        if not untipped.is_success():
+            detail = self._manipulation.get_error().strip()
+            self._manipulation.reset()
+            suffix = f"; planner: {detail}" if detail else ""
+            raise _WateringFailureError(
+                f"Pour completed but failed to return tool upright: {untipped}{suffix}"
+            )
+
         self._transition(WateringState.RETURNING, "Returning the right arm to init", 0)
-        home = self._manipulation.go_init(self._config.robot_name, self._config.group_id)
+        home = self._manipulation.go_init(
+            self._config.robot_name,
+            self._config.group_id,
+            pre_lift=False,
+            preview_duration=0.0,
+        )
         if not home.is_success():
             raise _WateringFailureError(f"Pour completed but arm return failed: {home}")
 

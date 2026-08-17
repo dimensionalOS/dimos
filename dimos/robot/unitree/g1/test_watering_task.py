@@ -152,6 +152,7 @@ def _sequence(
     cancelled: threading.Event,
     transitions: list[WateringState],
     wait: MagicMock | None = None,
+    monotonic: MagicMock | None = None,
     config: WateringTaskConfig | None = None,
 ) -> WateringSequence:
     return WateringSequence(
@@ -169,7 +170,7 @@ def _sequence(
         cancelled=cancelled,
         transition=lambda state, _message, _attempt: transitions.append(state),
         wait=wait or MagicMock(return_value=False),
-        monotonic=lambda: NOW,
+        monotonic=monotonic or (lambda: NOW),
         wall_time=lambda: NOW,
     )
 
@@ -238,15 +239,21 @@ def test_successful_sequence_preserves_the_verified_sim_order(
         WateringState.MOVING_OVER_TARGET,
         WateringState.TIPPING,
         WateringState.HOLDING,
+        WateringState.UNTIPPING,
         WateringState.RETURNING,
         WateringState.COMPLETED,
     ]
     manipulation.latch_base_pose.assert_called_once()
-    assert manipulation.move_to_pose.call_count == 2
+    assert manipulation.move_to_pose.call_count == 3
     assert all(
         call.kwargs["pre_lift"] is False for call in manipulation.move_to_pose.call_args_list
     )
-    manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
+    assert all(
+        call.kwargs["preview_duration"] == 0.0 for call in manipulation.move_to_pose.call_args_list
+    )
+    manipulation.go_init.assert_called_once_with(
+        "g1", "g1/right_arm", pre_lift=False, preview_duration=0.0
+    )
     base.start.assert_called_once()
     assert base.stop.call_count == 2
 
@@ -285,16 +292,18 @@ def test_approach_only_reaches_the_stance_without_touching_manipulation(
     assert base.stop.call_count == 2
 
 
-def test_path_follower_approach_rechecks_stance_after_settling(
+def test_settle_stage_reacquires_without_consuming_the_approach_deadline(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
 ) -> None:
-    cancelled = threading.Event()
     inputs = _inputs(reach_map)
+    arrived_snapshot = inputs.snapshot(TARGET_ID)
+    assert arrived_snapshot is not None
+    arrived_pose = arrived_snapshot.base_pose
     wait_calls = 0
 
-    def drift_then_cancel(_seconds: float) -> bool:
+    def drift_then_recover(_seconds: float) -> bool:
         nonlocal wait_calls
         wait_calls += 1
         if wait_calls == 1:
@@ -306,9 +315,9 @@ def test_path_follower_approach_rechecks_stance_after_settling(
                     orientation=[0.0, 0.0, 0.0, 1.0],
                 )
             )
-            return False
-        cancelled.set()
-        return True
+        else:
+            inputs.update_base_pose(arrived_pose)
+        return False
 
     transitions: list[WateringState] = []
     sequence = _sequence(
@@ -316,9 +325,9 @@ def test_path_follower_approach_rechecks_stance_after_settling(
         inputs,
         base,
         manipulation,
-        cancelled,
+        threading.Event(),
         transitions,
-        wait=MagicMock(side_effect=drift_then_cancel),
+        wait=MagicMock(side_effect=drift_then_recover),
         config=WateringTaskConfig(
             settle_seconds=3.0,
             target_max_age=2.0,
@@ -328,15 +337,65 @@ def test_path_follower_approach_rechecks_stance_after_settling(
 
     result = sequence.run_approach(TARGET_ID)
 
-    assert not result.success
-    assert result.state is WateringState.CANCELLED
-    assert transitions[:4] == [
+    assert result.success
+    assert result.state is WateringState.COMPLETED
+    assert transitions == [
         WateringState.WAITING_INPUT,
         WateringState.APPROACHING,
         WateringState.SETTLING,
-        WateringState.APPROACHING,
+        WateringState.COMPLETED,
     ]
     assert base.start.call_count == 2
+
+
+def test_settle_timeout_accepts_the_closest_pose_instead_of_failing(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    inputs = _inputs(reach_map)
+
+    def drift_while_settling(_seconds: float) -> bool:
+        inputs.update_base_pose(
+            PoseStamped(
+                ts=NOW,
+                frame_id="world",
+                position=[0.0, 0.0, 0.74],
+                orientation=[0.0, 0.0, 0.0, 1.0],
+            )
+        )
+        return False
+
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        inputs,
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+        wait=MagicMock(side_effect=drift_while_settling),
+        monotonic=MagicMock(side_effect=[0.0, 0.0, 0.0, 0.0, 16.0]),
+        config=WateringTaskConfig(
+            approach_timeout=90.0,
+            settle_timeout=15.0,
+            settle_seconds=3.0,
+            target_max_age=2.0,
+            base_pose_max_age=2.0,
+        ),
+    )
+
+    result = sequence.run_approach(TARGET_ID)
+
+    assert result.success
+    assert result.state is WateringState.COMPLETED
+    assert transitions == [
+        WateringState.WAITING_INPUT,
+        WateringState.APPROACHING,
+        WateringState.SETTLING,
+        WateringState.SETTLING,
+        WateringState.COMPLETED,
+    ]
 
 
 def test_pour_only_executes_the_arm_without_commanding_base_motion(
@@ -366,12 +425,15 @@ def test_pour_only_executes_the_arm_without_commanding_base_motion(
         WateringState.MOVING_OVER_TARGET,
         WateringState.TIPPING,
         WateringState.HOLDING,
+        WateringState.UNTIPPING,
         WateringState.RETURNING,
         WateringState.COMPLETED,
     ]
     manipulation.latch_base_pose.assert_called_once()
-    assert manipulation.move_to_pose.call_count == 2
-    manipulation.go_init.assert_called_once_with("g1", "g1/right_arm")
+    assert manipulation.move_to_pose.call_count == 3
+    manipulation.go_init.assert_called_once_with(
+        "g1", "g1/right_arm", pre_lift=False, preview_duration=0.0
+    )
     base.start.assert_not_called()
     assert base.stop.call_count == 2
 
@@ -402,10 +464,42 @@ def test_pour_uses_spout_tcp_and_keeps_the_palm_fixed_while_tipping(
     assert result.success
     upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
     tipped_move = manipulation.move_to_pose.call_args_list[1].kwargs
+    untipped_move = manipulation.move_to_pose.call_args_list[2].kwargs
     assert (upright_move["x"], upright_move["y"], upright_move["z"]) == pytest.approx(
         (tipped_move["x"], tipped_move["y"], tipped_move["z"])
     )
     assert upright_move["z"] == pytest.approx(POUR_Z + 0.20)
+    assert untipped_move == upright_move
+
+
+def test_failed_untip_does_not_sweep_the_loaded_arm_back_to_init(
+    reach_map: PourReachMap,
+    manipulation: MagicMock,
+    base: MagicMock,
+) -> None:
+    manipulation.move_to_pose.side_effect = [
+        SkillResult.ok("upright"),
+        SkillResult.ok("tipped"),
+        SkillResult.fail("PLANNING_FAILED", "cannot untip safely"),
+    ]
+    manipulation.get_error.return_value = "collision near torso"
+    transitions: list[WateringState] = []
+    sequence = _sequence(
+        reach_map,
+        _inputs(reach_map),
+        base,
+        manipulation,
+        threading.Event(),
+        transitions,
+    )
+
+    result = sequence.run_pour(TARGET_ID)
+
+    assert not result.success
+    assert result.state is WateringState.FAILED
+    assert "failed to return tool upright" in result.message
+    assert transitions[-2:] == [WateringState.UNTIPPING, WateringState.FAILED]
+    manipulation.go_init.assert_not_called()
 
 
 def test_pour_only_relies_on_move_planning_as_the_live_reach_gate(
@@ -414,6 +508,7 @@ def test_pour_only_relies_on_move_planning_as_the_live_reach_gate(
     base: MagicMock,
 ) -> None:
     manipulation.move_to_pose.return_value = SkillResult.fail("PLANNING_FAILED", "no IK")
+    manipulation.get_error.return_value = "IK failed: NO_SOLUTION: qp-error"
     transitions: list[WateringState] = []
     sequence = _sequence(
         reach_map,
@@ -428,7 +523,10 @@ def test_pour_only_relies_on_move_planning_as_the_live_reach_gate(
 
     assert not result.success
     assert result.state is WateringState.FAILED
-    assert "Failed to move over target: PLANNING_FAILED: no IK" == result.message
+    assert (
+        "Failed to move over target: PLANNING_FAILED: no IK; "
+        "planner: IK failed: NO_SOLUTION: qp-error"
+    ) == result.message
     assert manipulation.reset.call_count == 2
     manipulation.latch_base_pose.assert_called_once()
     manipulation.move_to_pose.assert_called_once()
@@ -436,7 +534,7 @@ def test_pour_only_relies_on_move_planning_as_the_live_reach_gate(
     assert base.stop.call_count == 2
 
 
-def test_pour_only_accepts_offline_map_miss_when_live_plans_succeed(
+def test_pour_only_projects_an_offline_map_miss_to_the_nearest_robust_offset(
     reach_map: PourReachMap,
     manipulation: MagicMock,
     base: MagicMock,
@@ -453,7 +551,10 @@ def test_pour_only_accepts_offline_map_miss_when_live_plans_succeed(
     result = sequence.run_pour(TARGET_ID)
 
     assert result.success
-    assert manipulation.move_to_pose.call_count == 2
+    assert manipulation.move_to_pose.call_count == 3
+    expected = reach_map.closest_offset((1.0, 0.0), margin_cells=3)
+    upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
+    assert (upright_move["x"], upright_move["y"]) == pytest.approx(expected)
     base.start.assert_not_called()
 
 
@@ -474,7 +575,7 @@ def test_pour_only_converts_ground_relative_height_into_the_lio_world_frame(
     result = sequence.run_pour(TARGET_ID)
 
     assert result.success
-    expected_world_z = -0.27 - 0.74 + 0.90
+    expected_world_z = -0.27 - 0.74 + reach_map.pour_z
     upright_move = manipulation.move_to_pose.call_args_list[0].kwargs
     expected_palm = palm_pose_for_spout(
         Vector3(1.0, 0.0, expected_world_z),
@@ -557,6 +658,6 @@ def test_full_run_does_not_repeat_probe_plans_before_pouring(
 
     assert result.success
     manipulation.latch_base_pose.assert_called_once()
-    assert manipulation.move_to_pose.call_count == 2
+    assert manipulation.move_to_pose.call_count == 3
     assert manipulation.reset.call_count == 1
     base.start.assert_called_once()
