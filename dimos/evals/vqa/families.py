@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, model_validator
 
 if TYPE_CHECKING:
+    from dimos.evals.vqa.preprocessing import CalibratedFrame
+    from dimos.evals.vqa.primitives.edgetam import ObjectRangeEstimator
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -33,7 +35,7 @@ class QuestionProposal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    family: Literal["presence", "horizontal_direction", "object_count"]
+    family: Literal["presence", "horizontal_direction", "object_count", "object_distance"]
     object_name: NonEmptyString
 
 
@@ -82,7 +84,17 @@ OBJECT_COUNT_FAMILY = FamilySpec(
     required_fields=("object_name",),
     description="Count a small number of clearly visible, distinct object instances.",
 )
-AVAILABLE_FAMILIES = (PRESENCE_FAMILY, HORIZONTAL_DIRECTION_FAMILY, OBJECT_COUNT_FAMILY)
+OBJECT_DISTANCE_FAMILY = FamilySpec(
+    name="object_distance",
+    required_fields=("object_name",),
+    description="Estimate the range to one clearly visible object instance.",
+)
+AVAILABLE_FAMILIES = (
+    PRESENCE_FAMILY,
+    HORIZONTAL_DIRECTION_FAMILY,
+    OBJECT_COUNT_FAMILY,
+    OBJECT_DISTANCE_FAMILY,
+)
 
 
 class InsufficientEvidenceError(ValueError):
@@ -96,7 +108,11 @@ class ObjectDetector(Protocol):
 
 
 def answer_question(
-    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+    proposal: QuestionProposal,
+    image: Image,
+    detector: ObjectDetector,
+    calibrated_frame: CalibratedFrame | None = None,
+    range_estimator: ObjectRangeEstimator | None = None,
 ) -> FamilyAnswer:
     """Dispatch one constrained proposal to its deterministic family."""
     if proposal.family == "presence":
@@ -105,6 +121,12 @@ def answer_question(
         return _answer_horizontal_direction(proposal, image, detector)
     if proposal.family == "object_count":
         return _answer_object_count(proposal, image, detector)
+    if proposal.family == "object_distance":
+        if calibrated_frame is None or range_estimator is None:
+            raise InsufficientEvidenceError(
+                "object distance requires calibrated point-cloud evidence"
+            )
+        return _answer_object_distance(proposal, calibrated_frame, range_estimator)
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
@@ -188,3 +210,43 @@ def _answer_object_count(
             "boxes": cast("JsonValue", boxes),
         },
     )
+
+
+def _answer_object_distance(
+    proposal: QuestionProposal,
+    calibrated_frame: CalibratedFrame,
+    range_estimator: ObjectRangeEstimator,
+) -> FamilyAnswer:
+    """Answer an object-distance proposal from EdgeTAM and point-cloud evidence."""
+    evidence = range_estimator.estimate(calibrated_frame, proposal.object_name)
+    choices = (
+        "under 1 meter",
+        "1 to under 2 meters",
+        "2 to under 3 meters",
+        "3 meters or more",
+    )
+    lower_quartile, _, upper_quartile = evidence.range_quartiles_m
+    if _distance_bucket(lower_quartile) != _distance_bucket(upper_quartile):
+        raise InsufficientEvidenceError(
+            "object range uncertainty crosses a distance answer boundary"
+        )
+    answer = choices[_distance_bucket(evidence.camera_range_m)]
+    return FamilyAnswer(
+        question=f"Approximately how far is the visible {proposal.object_name} from the camera?",
+        choices=choices,
+        answer=answer,
+        evidence={
+            "primitive": "edgetam_lidar_range",
+            **evidence.model_dump(mode="json"),
+        },
+    )
+
+
+def _distance_bucket(distance_m: float) -> int:
+    if distance_m < 1:
+        return 0
+    if distance_m < 2:
+        return 1
+    if distance_m < 3:
+        return 2
+    return 3

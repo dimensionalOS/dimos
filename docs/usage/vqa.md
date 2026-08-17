@@ -27,6 +27,14 @@ Generated datasets default to:
 
 Use `--output <directory>` to override that location. The destination must be empty.
 
+Legacy Go2 recordings without `camera_info` and `tf` require explicit calibration:
+
+```bash skip
+dimos evals vqa generate go2_short.db --image-index 500 --calibration-profile go2
+```
+
+Image and LiDAR observations must be within `--sync-tolerance` seconds, which defaults to `0.1`.
+
 ## Question Families
 
 The image-only question author selects object names and applicable families. It does not produce
@@ -37,9 +45,13 @@ answers.
 | `presence` | yes, no | At least one Moondream detection |
 | `horizontal_direction` | left, center, right | Exactly one detection; use its horizontal center |
 | `object_count` | one, two, three, four or more | Count Moondream detections |
+| `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
 
 Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
 can be answered, generation fails without publishing a dataset.
+
+Distance questions require one Moondream detection, one EdgeTAM mask, and at least five projected
+LiDAR points. Evidence whose range quartiles cross an answer boundary is rejected.
 
 ## Dataset Layout
 
