@@ -32,8 +32,9 @@ ITSELF under chaos, so ``SNR = |sim - real| / floor``, and an SNR under ~1
 means matched to within what chaos already does — no better is askable. The
 floor's SOURCE is a parameter of the claim:
 
-* :func:`sim_noise` repeats the rollout from perturbed initial poses —
-  measures what chaos alone does. Available today, and the default.
+* sim-perturb (the default): the spread of the verdict's own replicate
+  rollouts — perturbed initial poses, what chaos alone does
+  (:func:`sim_noise` measures the same thing standalone).
 * :func:`~dimos.robot.unitree.go2.sim.sysid.real.robot_noise` spreads the
   statistics across REPEAT RECORDINGS of the same walk — captures battery
   sag and motor temperature too, and is the yardstick the publishable claim
@@ -81,7 +82,13 @@ from dimos.robot.unitree.go2.sim.sysid.ingest import TRACKER_Z, read_streams
 from dimos.robot.unitree.go2.sim.sysid.real import cmd_at, real_summary, robot_noise
 from dimos.robot.unitree.go2.sim.sysid.recording import Streams
 from dimos.robot.unitree.go2.sim.sysid.replay import ghost_track
-from dimos.robot.unitree.go2.sim.sysid.stats import NOT_COMPARABLE, Summary, spread_of, summarize
+from dimos.robot.unitree.go2.sim.sysid.stats import (
+    NOT_COMPARABLE,
+    Summary,
+    median_summary,
+    spread_of,
+    summarize,
+)
 
 CONTROL_DT = 0.02  # 50 Hz policy rate; not stored in the blob
 
@@ -445,7 +452,16 @@ def usable_floor(
 
 @dataclass
 class Report:
-    """One plant's grounding: sim vs real statistics over their noise floor."""
+    """One plant's grounding: sim vs real statistics over their noise floor.
+
+    ``sim`` is the VERDICT summary — the per-statistic median over the
+    replicate rollouts in ``sims`` (README 4a applied to loop 2: a 40 s
+    contact-rich rollout is one draw of a chaotic system, and a single draw
+    resamples across ~±10% of the loss under a 1e-7 anchor wiggle, README
+    5i). ``sims`` carries the replicates so the spread can always be quoted
+    beside the point; an empty ``sims`` means a single-rollout report (a
+    probe cell, a quick look) and prints without a spread.
+    """
 
     preset: str
     sim: Summary
@@ -454,6 +470,7 @@ class Report:
     floor_source: str  # "sim-perturb" | "robot-repeat" — part of any claim
     start: float
     seconds: float
+    sims: list[Summary] = field(default_factory=list)
 
     def snr(self) -> dict[str, float]:
         """Sim-real difference over the statistic's own floor, per statistic.
@@ -484,6 +501,23 @@ class Report:
         snr = self.snr()
         return sum(1 for v in snr.values() if v <= 1.0), len(snr)
 
+    def _replicate(self, s: Summary) -> Report:
+        return replace(self, sim=s, sims=[])
+
+    def replicate_losses(self) -> list[float]:
+        """Each replicate's own loss — what a single draw COULD have read."""
+        return [self._replicate(s).loss() for s in self.sims]
+
+    def loss_range(self) -> tuple[float, float]:
+        """Min-max of the per-replicate losses (empty ``sims``: the point twice)."""
+        ls = self.replicate_losses() or [self.loss()]
+        return min(ls), max(ls)
+
+    def matched_range(self) -> tuple[int, int]:
+        """Min-max of per-replicate "k of M" counts."""
+        ks = [self._replicate(s).n_matched()[0] for s in self.sims] or [self.n_matched()[0]]
+        return min(ks), max(ks)
+
     def table(self) -> str:
         s, r = self.sim.as_dict(), self.real.as_dict()
         snr = self.snr()
@@ -499,7 +533,19 @@ class Report:
             )
         for k in NOT_COMPARABLE:
             lines.append(f"{k:>14} {s[k]:9.3f} {r[k]:9.3f} {'--':>9} {'n/a':>7}")
-        lines.append(f"{'loss':>14} {self.loss():9.2f}   ({n} of {of} within the floor)")
+        if self.sims:
+            lo, hi = self.loss_range()
+            klo, khi = self.matched_range()
+            lines.append(
+                f"{'loss':>14} {self.loss():9.2f}   ({n} of {of} within the floor)  "
+                f"[median of {len(self.sims)} replicates; "
+                f"single draws read {lo:.2f}-{hi:.2f}, {klo}-{khi} of {of}]"
+            )
+        else:
+            lines.append(
+                f"{'loss':>14} {self.loss():9.2f}   ({n} of {of} within the floor)  "
+                "[SINGLE ROLLOUT — a draw, not a verdict]"
+            )
         return "\n".join(lines)
 
 
@@ -513,7 +559,7 @@ def ground(
     seconds: float | None = None,
     noise: dict[str, float] | None = None,
     floor_source: str = "sim-perturb",
-    seeds: int = 4,
+    replicates: int = 8,
     action_latency: float = 0.0,
     obs_noise: ObsNoise | None = None,
     control_intervals: np.ndarray | None = None,
@@ -522,16 +568,27 @@ def ground(
     speed: float = 1.0,
     with_ghost: bool = True,
 ) -> Report:
-    """THE loop-2 call: one closed-loop run, both summaries, the report.
+    """THE loop-2 call: a REPLICATED closed-loop verdict, with its spread.
 
-    ``noise=None`` measures the sim-perturb floor here (``seeds`` extra
-    rollouts); pass a floor from :func:`robot_noise` to ground against the
-    robot's own variability instead — the ``floor_source`` string travels
-    with the report so no claim silently upgrades itself. The default-off
-    loop mechanisms (``action_latency``, ``obs_noise``, ``envelope`` — see
-    :func:`rollout_policy`) apply to the floor rollouts too, so a mechanism
-    is judged against its own chaos, not the ideal loop's.
+    The verdict is ``replicates`` rollouts from perturbed initial poses
+    (README 4a applied to loop 2): the report's ``sim`` is the per-statistic
+    MEDIAN and the replicates ride along so the loss is always quotable as a
+    spread. One rollout of a contact-rich 40 s gait is a single draw of a
+    chaotic system — a 1e-7 anchor wiggle resamples it across ~0.74-0.90 in
+    loss (README 5i) — so a single draw is a LOOK, never a verdict.
+    ``replicates=1`` is that look, and the report says so.
+
+    ``noise=None`` reuses the SAME replicate rollouts as the sim-perturb
+    floor (their spread is exactly what :func:`sim_noise` measured
+    separately before); pass a floor from :func:`robot_noise` to ground
+    against the robot's own variability instead — the ``floor_source``
+    string travels with the report so no claim silently upgrades itself.
+    The default-off loop mechanisms (``action_latency``, ``obs_noise``,
+    ``envelope`` — see :func:`rollout_policy`) apply to every replicate, so
+    a mechanism is judged against its own chaos, not the ideal loop's.
     """
+    if replicates < 1:
+        raise ValueError("replicates must be >= 1")
     span = float(st.wt[-1]) - start
     seconds = span if seconds is None else seconds
     mechanisms: dict[str, object] = {
@@ -540,41 +597,36 @@ def ground(
         "control_intervals": control_intervals,
         "envelope": envelope,
     }
-    run = rollout_policy(
-        st,
-        policy,
-        preset,
-        backend,
-        start=start,
-        seconds=seconds,
-        view=view,
-        speed=speed,
-        ghost=ghost_track(st) if with_ghost else None,
-        **mechanisms,  # type: ignore[arg-type]
-    )
-    sim = sim_summary(run, cmd_at(st, run.t + start))
-    real = real_summary(st, start=start, seconds=seconds)
-    if noise is None:
-        raw = sim_noise(
+    sims = []
+    for seed in range(replicates):
+        rng = np.random.default_rng(seed)
+        run = rollout_policy(
             st,
             policy,
             preset,
             backend,
-            seeds=seeds,
             start=start,
             seconds=seconds,
-            **mechanisms,
+            perturb=rng.normal(0.0, PERTURB_RAD, 12),
+            view=view and seed == 0,
+            speed=speed,
+            ghost=ghost_track(st) if with_ghost and seed == 0 else None,
+            **mechanisms,  # type: ignore[arg-type]
         )
-        noise = usable_floor(raw, real.as_dict())
+        sims.append(sim_summary(run, cmd_at(st, run.t + start)))
+    real = real_summary(st, start=start, seconds=seconds)
+    if noise is None:
+        noise = usable_floor(spread_of(sims), real.as_dict())
         floor_source = "sim-perturb"
     return Report(
         preset=preset.name,
-        sim=sim,
+        sim=median_summary(sims),
         real=real,
         noise=noise,
         floor_source=floor_source,
         start=start,
         seconds=seconds,
+        sims=sims if replicates > 1 else [],
     )
 
 
@@ -585,7 +637,14 @@ def main() -> None:
     ap.add_argument("--preset", default=DEFAULT_PRESET, help="plant preset name or JSON path")
     ap.add_argument("--start", type=float, default=6.0)
     ap.add_argument("--seconds", type=float, default=None)
-    ap.add_argument("--seeds", type=int, default=4, help="perturbed reruns for the sim floor")
+    ap.add_argument(
+        "--replicates",
+        type=int,
+        default=8,
+        help="perturbed verdict rollouts: the report is their per-statistic median "
+        "with the loss spread beside it; 1 = a single-draw LOOK, labelled as such "
+        "(when no --noise-from floor is given, the same rollouts are the sim-perturb floor)",
+    )
     ap.add_argument(
         "--noise-from",
         nargs="+",
@@ -666,7 +725,7 @@ def main() -> None:
         seconds=args.seconds,
         noise=noise,
         floor_source=source,
-        seeds=args.seeds,
+        replicates=args.replicates,
         action_latency=args.latency,
         obs_noise=obs_noise,
         control_intervals=intervals,

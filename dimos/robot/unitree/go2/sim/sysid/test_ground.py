@@ -101,6 +101,44 @@ def test_loss_is_rms_and_n_matched_counts_within_floor():
     n, of = rep.n_matched()
     assert (n, of) == (10, 11)
     assert "10 of 11" in rep.table()
+    # no replicates: the table refuses to let one draw look like a verdict
+    assert "SINGLE ROLLOUT" in rep.table()
+
+
+def test_a_replicated_report_is_the_median_with_the_draw_spread_beside_it():
+    """The verdict is the per-statistic median over replicates (README 4a on
+    loop 2); the spread of what single draws would have read prints with it,
+    because a single chaotic rollout resamples across ~20% of the loss."""
+    from dimos.robot.unitree.go2.sim.sysid.stats import median_summary
+
+    noise = dict.fromkeys(Summary.__dataclass_fields__, 0.1)
+    sims = [_summary(speed=0.5), _summary(speed=0.7), _summary(speed=0.9)]
+    rep = Report(
+        preset="test",
+        sim=median_summary(sims),
+        real=_summary(speed=0.5),
+        noise=noise,
+        floor_source="test",
+        start=0.0,
+        seconds=1.0,
+        sims=sims,
+    )
+    assert rep.sim.speed == pytest.approx(0.7)  # the median draw, not any single one
+    lo, hi = rep.loss_range()
+    assert lo == pytest.approx(0.0)  # the speed=0.5 draw matches the real side exactly
+    assert hi == pytest.approx(np.sqrt(16.0 / 11.0))  # the speed=0.9 draw, SNR 4
+    klo, khi = rep.matched_range()
+    assert (klo, khi) == (10, 11)
+    assert "single draws read" in rep.table() and "SINGLE ROLLOUT" not in rep.table()
+
+
+def test_median_summary_keeps_nan_not_comparable():
+    from dimos.robot.unitree.go2.sim.sysid.stats import median_summary
+
+    nan = float("nan")
+    med = median_summary([_summary(speed=nan), _summary(speed=nan)])
+    assert np.isnan(med.speed)  # a statistic no replicate measures stays out
+    assert med.speed_gain == 0.9
 
 
 # ------------------------------------------------- against the real recording

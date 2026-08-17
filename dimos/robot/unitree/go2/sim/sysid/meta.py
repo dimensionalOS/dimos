@@ -177,8 +177,14 @@ def ground_values(
     noise: dict[str, float],
     floor_source: str,
     start: float = 6.0,
+    replicates: int = 8,
 ) -> Report:
-    """Score a fitted point on the grounding — the outer study's objective."""
+    """Score a fitted point on the grounding — the outer study's objective.
+
+    Replicated (README 4a): the returned report's loss is the median over
+    ``replicates`` rollouts, and its spread bounds what a single draw would
+    have read — outer trials separated by less than that spread are ties.
+    """
     tau = values.get("actuator_tau", 0.0)
     physics = {k: v for k, v in values.items() if k != "actuator_tau"}
     preset = Preset(name=name, physics=physics, actuator_tau=tau)
@@ -191,6 +197,7 @@ def ground_values(
         start=start,
         noise=noise,
         floor_source=floor_source,
+        replicates=replicates,
         with_ghost=False,
     )
 
@@ -233,6 +240,7 @@ def experiment(
     start: float = 6.0,
     seconds: float | None = None,
     seeds: int = 4,
+    replicates: int = 8,
 ) -> str:
     """Ground each plant under one shared floor and say which the referee prefers.
 
@@ -265,6 +273,7 @@ def experiment(
             seconds=seconds,
             noise=noise,
             floor_source=source,
+            replicates=replicates,
             with_ghost=False,
         )
         reports.append(rep)
@@ -273,7 +282,12 @@ def experiment(
     lines.append("VERDICT  (loss = RMS over SNRs; lower = closer to the real run)")
     for r in order:
         n, of = r.n_matched()
-        lines.append(f"  {r.preset:<28s} loss {r.loss():6.2f}   {n} of {of} within the floor")
+        lo, hi = r.loss_range()
+        lines.append(
+            f"  {r.preset:<28s} loss {r.loss():6.2f} (draws {lo:.2f}-{hi:.2f})   "
+            f"{n} of {of} within the floor"
+        )
+    lines.append("  Losses closer than the widest draw range above are a TIE, not an ordering.")
     return "\n".join(lines)
 
 
@@ -558,6 +572,7 @@ def run_outer(
     workers: int = 1,
     inner_trials: int = 90,
     max_studies: int = 12,
+    replicates: int = 8,
     out: str | Path | None = None,
 ) -> None:
     """Nested Optuna: TPE over :class:`OuterPoint`, each trial a full inner fit.
@@ -588,9 +603,17 @@ def run_outer(
             max_studies=max_studies,
         )
         rep = ground_values(
-            validation, policy, values, backend, name=point.name, noise=noise, floor_source=source
+            validation,
+            policy,
+            values,
+            backend,
+            name=point.name,
+            noise=noise,
+            floor_source=source,
+            replicates=replicates,
         )
         n, of = rep.n_matched()
+        lo, hi = rep.loss_range()
         log.append(
             {
                 "trial": trial.number,
@@ -598,6 +621,7 @@ def run_outer(
                 "values": values,
                 "inner_stopped": res.stopped,
                 "ground_loss": rep.loss(),
+                "ground_loss_draws": [lo, hi],
                 "matched": [n, of],
             }
         )
@@ -635,7 +659,8 @@ def main() -> None:
     )
     ex.add_argument("--start", type=float, default=6.0)
     ex.add_argument("--seconds", type=float, default=None)
-    ex.add_argument("--seeds", type=int, default=4)
+    ex.add_argument("--seeds", type=int, default=4, help="floor rollouts (shared_floor)")
+    ex.add_argument("--replicates", type=int, default=8, help="verdict rollouts per preset")
 
     ot = sub.add_parser("outer", help="the nested search (EXPENSIVE: trials are inner fits)")
     ot.add_argument("fit_recording")
@@ -645,6 +670,7 @@ def main() -> None:
     ot.add_argument("--workers", type=int, default=1)
     ot.add_argument("--inner-trials", type=int, default=90)
     ot.add_argument("--max-studies", type=int, default=12)
+    ot.add_argument("--replicates", type=int, default=8, help="verdict rollouts per trial")
     ot.add_argument("--out", default=None, help="JSON log path, written after every trial")
 
     me = sub.add_parser("mechanisms", help="ground each loop mechanism at its MEASURED value")
@@ -694,6 +720,7 @@ def main() -> None:
                 start=args.start,
                 seconds=args.seconds,
                 seeds=args.seeds,
+                replicates=args.replicates,
             )
         )
     elif args.cmd == "mechanisms":
@@ -733,6 +760,7 @@ def main() -> None:
             workers=args.workers,
             inner_trials=args.inner_trials,
             max_studies=args.max_studies,
+            replicates=args.replicates,
             out=args.out,
         )
 

@@ -321,6 +321,20 @@ def summarize(
     )
 
 
+def median_summary(summaries: list[Summary]) -> Summary:
+    """Per-statistic median across replicate runs — the verdict's point estimate.
+
+    README 4a's shape ("point = per-parameter median of the pool") applied to
+    loop 2: one chaotic rollout is a draw, not a verdict, so the point
+    estimate is the per-statistic median over replicates and the spread rides
+    beside it (:func:`spread_of`). NaN statistics stay NaN — a statistic no
+    replicate can measure is still not comparable.
+    """
+    keys = summaries[0].as_dict()
+    med = {k: float(np.median([s.as_dict()[k] for s in summaries])) for k in keys}
+    return Summary(**med, source=summaries[0].source)
+
+
 def spread_of(summaries: list[Summary]) -> dict[str, float]:
     """Peak-to-peak of each statistic across repeated runs — a noise floor.
 
