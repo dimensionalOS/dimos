@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 import dataclasses
 import importlib
 import inspect
@@ -360,12 +361,20 @@ class ModuleCoordinator(Resource):
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
-        coordinator._connect_streams(blueprint, transports)
-        _connect_module_refs(blueprint, coordinator)
+        try:
+            _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            coordinator._connect_streams(blueprint, transports)
+            _connect_module_refs(blueprint, coordinator)
 
-        coordinator.build_all_modules()
-        coordinator.start_all_modules()
+            coordinator.build_all_modules()
+            coordinator.start_all_modules()
+        except BaseException:
+            # The caller never gets a reference to a build that raised, so
+            # nothing else can stop the modules that did start, and they keep
+            # whatever ports and sockets they took.
+            with suppress(Exception):
+                coordinator.stop()
+            raise
 
         _log_blueprint_graph(blueprint, coordinator)
 
