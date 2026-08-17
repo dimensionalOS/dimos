@@ -3,16 +3,16 @@
     "dimos-repo": {
       "flake": false,
       "locked": {
-        "lastModified": 1784689481,
-        "narHash": "sha256-mA+EF/WT3g3roVDoaTZxpvOoL9vZHep+oNED2evYvxQ=",
-        "ref": "main",
-        "rev": "cdd577bfc0a7775d125462ad51ee956f65cb943c",
-        "revCount": 962,
+        "lastModified": 1786905762,
+        "narHash": "sha256-6va1FH2v7++O7wcNR/BN+1+5etXC2xhhUtXAZhCib60=",
+        "ref": "andrew/feat/dimos-bake",
+        "rev": "e198b685d876213c739e078839251ca8deae5536",
+        "revCount": 1099,
         "type": "git",
         "url": "file:../../../.."
       },
       "original": {
-        "ref": "main",
+        "ref": "andrew/feat/dimos-bake",
         "type": "git",
         "url": "file:../../../.."
       }

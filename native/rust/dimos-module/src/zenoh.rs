@@ -27,7 +27,7 @@ use tokio::sync::Mutex;
 
 use crate::transport::{Dispatch, Transport};
 
-const SESSION_KEY: &str = "session";
+pub(crate) const SESSION_KEY: &str = "session";
 
 /// Poll interval while waiting for the dialed endpoints to link.
 const CONNECT_POLL: Duration = Duration::from_millis(50);
@@ -648,9 +648,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_session_local_publisher_still_reaches_its_own_session() {
-        // A baked host suppresses an internal hop by pinning the publisher to
-        // SessionLocal. Its sibling modules share the session, so they must
-        // keep receiving; only the rest of the network stops seeing it.
+        // Siblings share the session, so a session-local publisher must still
+        // deliver in-process.
         let transport = ZenohTransport::new().await.expect("open session");
         transport.set_publisher_qos(&serde_json::json!({
             "dimos_test/suppressed": {"locality": "session_local"},

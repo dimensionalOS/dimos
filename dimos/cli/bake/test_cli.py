@@ -45,6 +45,13 @@ def test_a_bake_error_exits_nonzero() -> None:
     assert "cannot name the host binary" in result.output
 
 
+def test_emit_config_leaves_the_session_to_the_deployment() -> None:
+    """Only the machine the host runs on knows its interface and endpoints."""
+    selected = select_modules(discover_modules(), ["ray_tracing", "mls_planner"])
+    graph = build_graph("go2-nav", selected)
+    assert "session" not in emit_config(graph, selected)
+
+
 def test_emit_config_is_a_complete_stdin_blob() -> None:
     registry = discover_modules()
     selected = select_modules(registry, ["ray_tracing", "mls_planner"])

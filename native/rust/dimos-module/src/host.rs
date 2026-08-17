@@ -36,7 +36,7 @@ use crate::module::{
     validate_config, Module,
 };
 use crate::transport::{SharedTransport, Transport};
-use crate::zenoh::ZenohTransport;
+use crate::zenoh::{ZenohTransport, SESSION_KEY};
 
 /// How long the host waits for the remaining modules to unwind once one has
 /// exited or ctrl_c arrived.
@@ -360,12 +360,26 @@ fn check_topics_match_transport(transport: &str, known: &[String]) -> io::Result
     Ok(())
 }
 
+/// The launch line owns the session. Bake cannot know the deployment's network,
+/// so it emits no `session` block and zenoh's defaults stand until one is added.
+fn note_default_session(launch: &Value) {
+    if matches!(launch.get(SESSION_KEY), None | Some(Value::Null)) {
+        warn!(
+            "no `{SESSION_KEY}` block on the launch line, opening zenoh's defaults; \
+             add one to pin the mode, interface and endpoints"
+        );
+    }
+}
+
 async fn open_transport(launch: &Value) -> io::Result<SharedTransport> {
     match std::env::var("DIMOS_TRANSPORT").as_deref() {
         Ok("lcm") => Ok(SharedTransport::new(LcmTransport::new().await?)),
-        Ok("zenoh") => Ok(SharedTransport::new(
-            ZenohTransport::from_launch(launch).await?,
-        )),
+        Ok("zenoh") => {
+            note_default_session(launch);
+            Ok(SharedTransport::new(
+                ZenohTransport::from_launch(launch).await?,
+            ))
+        }
         other => Err(invalid(format!(
             "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
         ))),
@@ -584,6 +598,20 @@ mod tests {
     fn render_graph_falls_back_to_the_raw_string() {
         let spec = graph_spec("not json");
         assert_eq!(render_graph(&spec, false), "not json");
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn a_launch_line_with_no_session_says_so() {
+        note_default_session(&json!({}));
+        assert!(logs_contain("opening zenoh's defaults"));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn a_launch_line_with_a_session_is_quiet() {
+        note_default_session(&json!({"session": {"mode": "peer"}}));
+        assert!(!logs_contain("opening zenoh's defaults"));
     }
 
     #[test]
