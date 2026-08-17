@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import inspect
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -195,7 +196,7 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
-def _run_seconds() -> float | None:
+def _run_seconds(blueprint: Blueprint) -> float | None:
     """How long to run, or None to run until interrupted.
 
     A replay has an end, but the blueprint does not notice one -- from its side
@@ -203,13 +204,19 @@ def _run_seconds() -> float | None:
     to the recording's own length keeps a ``--replay`` run bounded by its data
     rather than by a number someone guessed.
     """
-    if global_config.run_for is not None or not global_config.replay:
-        return global_config.run_for
+    if global_config.run_for is not None:
+        # `--run-for inf` restores run-until-interrupted (Event.wait(inf) raises).
+        return None if math.isinf(global_config.run_for) else global_config.run_for
+    if not global_config.replay:
+        return None
+    # Only modules replaying the global db make its length the run's length;
+    # drone replays, say, play their own recordings.
+    if not any(bp.module.uses_replay_db for bp in blueprint.active_blueprints):
+        return None
 
-    from dimos.memory2.replay import resolve_db_path
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory2.cli.dataset import open_dataset
 
-    store = SqliteStore(path=str(resolve_db_path(global_config.replay_db)), must_exist=True)
+    store = open_dataset(global_config.replay_db)
     store.start()
     try:
         seconds = store.replay().duration()
@@ -356,7 +363,13 @@ def run(
 
     # After build() so the parsed config is resolved, and because build()
     # returns once the modules are up -- which is when the clock should start.
-    run_seconds = _run_seconds()
+    # Nothing below has run yet (no RunEntry, watchdog or signal handlers), so
+    # on failure the workers must be stopped here or nothing will stop them.
+    try:
+        run_seconds = _run_seconds(blueprint)
+    except BaseException:
+        coordinator.stop()
+        raise
 
     if daemon:
         # Health check before daemonizing — catch early crashes
@@ -391,7 +404,10 @@ def run(
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
-        coordinator.loop(run_seconds)
+        try:
+            coordinator.loop(run_seconds)
+        finally:
+            entry.remove()
     else:
         entry = RunEntry(
             run_id=run_id,

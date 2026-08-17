@@ -109,12 +109,15 @@ class Replay(Configurable):
 
     def duration(self) -> float | None:
         """Wall-clock seconds one pass of this replay takes, None when empty."""
-        if self.config.duration is not None:
-            return self.config.duration / self.config.speed
         first, last = self.first_ts(), self.last_ts()
         if first is None or last is None:
             return None
-        return max(0.0, last - first - (self.config.seek or 0.0)) / self.config.speed
+        cfg = self.config
+        # Mirror _base_stream: from_timestamp wins over seek, and the window
+        # ends at the recording or the configured duration, whichever is first.
+        start = cfg.from_timestamp if cfg.from_timestamp is not None else first + (cfg.seek or 0.0)
+        end = last if cfg.duration is None else min(last, start + cfg.duration)
+        return max(0.0, end - start) / cfg.speed
 
     def _resolve_anchor(self, candidate_first_ts: float) -> tuple[float, float]:
         """Pin (wall_t0, replay_t0) on first call; return shared anchor."""

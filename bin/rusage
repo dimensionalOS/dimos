@@ -48,6 +48,13 @@ if [[ -z $name || -z $out || $# -eq 0 ]]; then
 	exit 2
 fi
 
+# The name is spliced into a JSON document verbatim, so keep it to characters
+# that cannot break out of the string.
+if [[ ! $name =~ ^[A-Za-z0-9._-]+$ ]]; then
+	echo "rusage: --name may only contain [A-Za-z0-9._-], got: $name" >&2
+	exit 2
+fi
+
 if [[ ! -e /sys/fs/cgroup/cgroup.controllers ]]; then
 	echo "rusage: needs cgroup v2 (no /sys/fs/cgroup/cgroup.controllers)" >&2
 	exit 1
@@ -81,9 +88,7 @@ inner='
 	cat "$cg/cpu.stat" >"$RUSAGE_DIR/stats"
 	echo "memory_peak_bytes $(cat "$cg/memory.peak")" >>"$RUSAGE_DIR/stats"
 	echo "pids_peak $(cat "$cg/pids.peak")" >>"$RUSAGE_DIR/stats"
-	for f in io.stat io.pressure memory.pressure cpu.pressure; do
-		[ -r "$cg/$f" ] && cat "$cg/$f" >"$RUSAGE_DIR/$f"
-	done
+	[ -r "$cg/io.stat" ] && cat "$cg/io.stat" >"$RUSAGE_DIR/io.stat"
 	# There is no cgroup file for network bytes. systemd keeps its own eBPF
 	# counters per unit, readable while this shell still holds the unit open.
 	systemctl "$RUSAGE_MANAGER" show -p IPIngressBytes -p IPEgressBytes \
@@ -104,12 +109,9 @@ started=$EPOCHREALTIME
 	-- bash -c "$inner" rusage-payload "$@" && rc=0 || rc=$?
 wall=$(awk -v a="$started" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.3f", b - a }')
 
+# Empty when the key (or the whole stats file) is absent.
 field() {
-	awk -v key="$1" '$1 == key && NF >= 2 { print $2; found = 1 } END { exit !found }' "$stats" ||
-		{
-			echo "rusage: '$1' missing from cgroup accounting -- is the controller delegated?" >&2
-			exit 1
-		}
+	awk -v key="$1" '$1 == key && NF >= 2 { print $2 }' "$stats" 2>/dev/null || true
 }
 
 user_usec=$(field user_usec)
@@ -119,6 +121,15 @@ peak_bytes=$(field memory_peak_bytes)
 # Tasks, so threads not just processes -- which is the number that regresses
 # when a native library quietly sizes another pool to all cores.
 peak_threads=$(field pids_peak)
+
+# A gap here means the scope never ran or the controller is not delegated.
+# The payload's own failure is the more useful exit code, so only turn this
+# into a failure when the payload itself passed.
+if [[ -z $user_usec || -z $system_usec || -z $usage_usec || -z $peak_bytes || -z $peak_threads ]]; then
+	echo "rusage: cgroup accounting incomplete -- is the controller delegated?" >&2
+	[[ $rc -ne 0 ]] || rc=1
+	exit "$rc"
+fi
 
 read -r cpu_user cpu_system cpu_total peak_mib < <(
 	awk -v u="$user_usec" -v s="$system_usec" -v t="$usage_usec" -v p="$peak_bytes" \

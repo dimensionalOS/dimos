@@ -177,9 +177,12 @@ def reserved_global_short_names() -> set[str]:
 def global_environment_names() -> dict[str, str]:
     names: dict[str, str] = {}
     for field_name, info in GlobalConfig.model_fields.items():
-        names[field_name.lower()] = field_name
         alias = info.validation_alias
-        if isinstance(alias, str):
+        # Match pydantic-settings: an explicit validation_alias replaces the
+        # bare field name as the environment binding.
+        if alias is None:
+            names[field_name.lower()] = field_name
+        elif isinstance(alias, str):
             names[alias.lower()] = field_name
         elif isinstance(alias, AliasChoices):
             for choice in alias.choices:

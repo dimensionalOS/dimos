@@ -135,6 +135,10 @@ class ModuleBase(Configurable, CompositeResource):
     # each other for CPU and the GIL.
     dedicated_worker: ClassVar[bool] = False
 
+    # When True, this module plays back ``global_config.replay_db`` under
+    # ``--replay``, so the CLI may bound the run by that recording's length.
+    uses_replay_db: ClassVar[bool] = False
+
     _rpc: RPCSpec | None = None
     _tf: TF | None = None
     _loop: asyncio.AbstractEventLoop | None = None

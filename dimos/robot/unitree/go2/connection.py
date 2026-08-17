@@ -268,6 +268,8 @@ _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 class GO2Connection(Module, Camera, Pointcloud):
     dedicated_worker = True
+    # In replay mode make_connection() plays global_config.replay_db.
+    uses_replay_db = True
 
     config: ConnectionConfig
     cmd_vel: In[Twist]

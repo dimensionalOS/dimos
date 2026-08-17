@@ -19,23 +19,33 @@ on:
         description: Recording to replay
         default: go2_short
 
-permissions:
-  contents: read  # For checkout
-  pull-requests: write  # To post a comment
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+env:
+  # Disable implicit `uv run` syncs, which would drag the default `tests`
+  # group back into the venv this job measures.
+  UV_NO_SYNC: "1"
+
 jobs:
   profile:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+      actions: read  # For `gh run download` of the baseline artifact
+      pull-requests: write  # To post a comment
     env:
       # The CLI rejects a project key passed as --token; it wants BENCHER_API_KEY.
       BENCHER_API_KEY: ${{ secrets.BENCHER_API_TOKEN }}
       PROFILE_BLUEPRINT: ${{ inputs.blueprint || 'unitree-go2' }}
       PROFILE_DB: ${{ inputs.db || 'go2_short' }}
+      # The recording is part of the benchmark's identity: a dispatch run over
+      # a different db must not land in (or diff against) the default series.
+      BENCH_NAME: ${{ inputs.blueprint || 'unitree-go2' }}-replay-${{ inputs.db || 'go2_short' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -52,8 +62,9 @@ jobs:
       - name: Fetch the replay recording
         run: |
           uv run python -c "
+          import os
           from dimos.memory2.replay import resolve_db_path
-          print(resolve_db_path('$PROFILE_DB'))
+          print(resolve_db_path(os.environ['PROFILE_DB']))
           "
       - name: Measure install size
         run: |
@@ -65,7 +76,7 @@ jobs:
       # (124) means a hung teardown and should fail the job.
       - name: Profile a replay deployment
         run: |
-          bin/rusage --name "$PROFILE_BLUEPRINT-replay" --out rusage.json -- \
+          bin/rusage --name "$BENCH_NAME" --out rusage.json -- \
             timeout --kill-after=60s 600 \
             uv run dimos --replay --replay-db "$PROFILE_DB" --viewer none \
             run "$PROFILE_BLUEPRINT"
@@ -78,8 +89,9 @@ jobs:
           [ -n "$files" ] || exit 0
           jq -s 'reduce .[] as $x ({}; . * $x)' $files >metrics.json
           cat metrics.json
-          # The user/sys split is diagnostic -- worth having in the artifact
-          # when a number moves, not worth two more columns on every comment.
+          # The user/sys split is diagnostic -- kept in the artifact and the
+          # PR comment, not worth tracking (and gating) as two more Bencher
+          # series.
           jq 'map_values(del(."cpu-user-seconds", ."cpu-system-seconds"))' \
             metrics.json >bencher.json
       - name: Job summary
@@ -92,17 +104,22 @@ jobs:
             cat metrics.json
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: rusage
+          name: rusage-${{ env.BENCH_NAME }}
           path: metrics.json
+          # Artifacts are immutable; without this a re-run of a failed job
+          # dies at the upload it already did on the first attempt.
+          overwrite: true
       # The same artifact this job uploads, from the last green run on main --
       # no Bencher API needed to diff against it.
       - name: Fetch main baseline
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fork branch names are attacker-chosen: env only, never inline.
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           latest() {
             gh run list --workflow deployment-profile.yml --branch "$1" \
@@ -113,12 +130,13 @@ jobs:
           # Until main has profiled once, compare against this branch's own
           # previous green run so the deltas mean something.
           if [ -z "$id" ]; then
-            ref="${{ github.head_ref || github.ref_name }}"
+            ref="$HEAD_REF"
             id=$(latest "$ref")
           fi
           echo "BASELINE_REF=$ref" >>"$GITHUB_ENV"
           [ -n "$id" ] || { echo "no baseline run yet"; exit 0; }
-          gh run download "$id" -n rusage -D baseline || echo "no baseline artifact"
+          gh run download "$id" -n "rusage-$BENCH_NAME" -D baseline ||
+            echo "no baseline artifact"
       - name: Comment on the PR
         # Fork PRs get a read-only token: posting would 403 and fail the run.
         if: >-
@@ -139,18 +157,38 @@ jobs:
           else
             gh pr comment "$PR" --body-file comment.md
           fi
+      # On success only, not always(): a failed or timed-out run must not
+      # become a datapoint in the history the gate compares against.
       - name: Record in Bencher
-        if: always() && env.BENCHER_API_KEY != ''
-        uses: bencherdev/bencher@main
+        if: env.BENCHER_API_KEY != ''
+        uses: bencherdev/bencher@v0.6.11
       - name: Push metrics
-        if: always() && env.BENCHER_API_KEY != ''
+        if: env.BENCHER_API_KEY != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BASE_BRANCH: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # A PR branch starts from main's history and thresholds; without the
+          # start point a new branch has nothing to alert against and the gate
+          # cannot fire on a PR's first (usually only) run.
+          start_point=()
+          if [ -n "$BASE_BRANCH" ]; then
+            start_point=(
+              --start-point "$BASE_BRANCH"
+              --start-point-hash "$BASE_SHA"
+              --start-point-clone-thresholds
+              --start-point-reset
+            )
+          fi
           bencher run \
             --project dimos \
-            --branch "${{ github.head_ref || github.ref_name }}" \
+            --branch "$BRANCH" \
+            "${start_point[@]}" \
             --testbed gh-ubuntu-latest \
             --adapter json \
-            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            --github-actions "$GITHUB_TOKEN" \
             --ci-only-on-alert \
             --error-on-alert \
             --file bencher.json

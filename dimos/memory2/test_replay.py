@@ -82,6 +82,24 @@ def test_duration_bounds_window(sqlite_store: SqliteStore) -> None:
     assert [v for _, v in replay.streams.lidar.iterate_ts()] == [0, 1, 2]
 
 
+def test_duration_matches_playback_window(sqlite_store: SqliteStore) -> None:
+    _populate(sqlite_store, "lidar", [100.0, 130.0, 160.0])
+    assert sqlite_store.replay().duration() == 60.0
+    assert sqlite_store.replay(speed=2.0).duration() == 30.0
+    assert sqlite_store.replay(seek=30.0).duration() == 30.0
+    # _base_stream ignores seek once from_timestamp is set; so does duration().
+    assert sqlite_store.replay(from_timestamp=110.0, seek=30.0).duration() == 50.0
+    # The window ends at the recording or the configured duration, whichever
+    # comes first.
+    assert sqlite_store.replay(duration=3600.0).duration() == 60.0
+    assert sqlite_store.replay(seek=50.0, duration=20.0).duration() == 10.0
+    assert sqlite_store.replay(from_timestamp=200.0).duration() == 0.0
+
+
+def test_duration_empty_store(sqlite_store: SqliteStore) -> None:
+    assert sqlite_store.replay(duration=5.0).duration() is None
+
+
 def test_from_timestamp_absolute(sqlite_store: SqliteStore) -> None:
     _populate(sqlite_store, "lidar", [100.0, 100.1, 100.2, 100.3])
     replay = sqlite_store.replay(from_timestamp=100.2)
