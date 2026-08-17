@@ -33,6 +33,7 @@ Let's learn how to build stuff like the above, starting with a simple camera mod
 ```python skip session=camera_module_demo output=assets/camera_module.svg
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.core.introspection.svg import to_svg
+
 to_svg(CameraModule.module_info(), "assets/camera_module.svg")
 ```
 
@@ -105,6 +106,7 @@ Let's load a standard 2D detector module and hook it up to a camera.
 
 ```python skip ansi=false session=detection_module
 from dimos.perception.detection.module2D import Detection2DModule, Config
+
 print(Detection2DModule.io())
 ```
 
@@ -296,6 +298,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 
+
 class MovementManager(Module):
     clicked_point: In[PointStamped]
     nav_cmd_vel: In[Twist]
@@ -334,6 +337,7 @@ Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
+
 class NameModule(Module):
     @rpc
     async def say_hello(self, name: str) -> str:
@@ -354,9 +358,11 @@ from typing import Protocol
 from dimos.core.module import Module
 from dimos.spec.utils import Spec
 
+
 class NameSpec(Spec, Protocol):
     async def say_hello(self, name: str) -> str: ...
     async def set_my_name(self, new_name: str) -> None: ...
+
 
 class StartModule(Module):
     _name_module: NameSpec
@@ -372,6 +378,7 @@ class StartModule(Module):
 from typing import Protocol
 
 from dimos.spec.utils import Spec
+
 
 class SyncNameSpec(Spec, Protocol):
     def say_hello(self, name: str) -> str: ...
@@ -391,6 +398,7 @@ import asyncio
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
+
 
 class TimerExample(Module):
     @rpc
@@ -421,8 +429,8 @@ def start(self) -> None:
     fast = self.foo.observable().pipe(ops.filter(lambda v: v > threshold))
     self.process_observable(fast, self._on_fast_foo)
 
-async def _on_fast_foo(self, v: int) -> None:
-    ...
+
+async def _on_fast_foo(self, v: int) -> None: ...
 ```
 
 ### `main()`: combined setup/teardown
@@ -435,13 +443,16 @@ from typing import Any
 
 from dimos.core.module import Module
 
+
 def create(name: str) -> Any:
     del name
+
     class _Model:
         def stop(self) -> None:
             pass
 
     return _Model()
+
 
 class PersonFollowSkillContainer(Module):
     async def main(self) -> AsyncIterator[None]:

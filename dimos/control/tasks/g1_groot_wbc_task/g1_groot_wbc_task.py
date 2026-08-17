@@ -813,16 +813,16 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
         )
 
     model_dir = Path(params.model_path)
-    kwargs: dict[str, Any] = dict(
-        balance_onnx=model_dir / "balance.onnx",
-        walk_onnx=model_dir / "walk.onnx",
-        joint_names=cfg.joint_names,
-        all_joint_names=hw.joint_names,
-        priority=cfg.priority,
-        auto_arm=params.auto_arm,
-        auto_dry_run=params.auto_dry_run,
-        default_ramp_seconds=params.default_ramp_seconds,
-    )
+    kwargs: dict[str, Any] = {
+        "balance_onnx": model_dir / "balance.onnx",
+        "walk_onnx": model_dir / "walk.onnx",
+        "joint_names": cfg.joint_names,
+        "all_joint_names": hw.joint_names,
+        "priority": cfg.priority,
+        "auto_arm": params.auto_arm,
+        "auto_dry_run": params.auto_dry_run,
+        "default_ramp_seconds": params.default_ramp_seconds,
+    }
     if params.decimation is not None:
         kwargs["decimation"] = params.decimation
     return G1GrootWBCTask(

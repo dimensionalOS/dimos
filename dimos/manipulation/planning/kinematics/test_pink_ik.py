@@ -27,8 +27,8 @@ from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.factory import create_kinematics
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupDefinition
+from dimos.manipulation.planning.kinematics import pink_ik
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-import dimos.manipulation.planning.kinematics.pink_ik as pink_ik
 from dimos.manipulation.planning.kinematics.pink_ik import (
     PinkIK,
     PinkIKConfig,

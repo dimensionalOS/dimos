@@ -60,12 +60,12 @@ def sleeper():
 
 
 def _entry(run_id: str, pid: int, blueprint: str = "test", **kwargs) -> RunEntry:
-    defaults = dict(
-        started_at=datetime.now(timezone.utc).isoformat(),
-        log_dir="/tmp/dimos-test",
-        cli_args=[blueprint],
-        config_overrides={},
-    )
+    defaults = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "log_dir": "/tmp/dimos-test",
+        "cli_args": [blueprint],
+        "config_overrides": {},
+    }
     defaults.update(kwargs)
     e = RunEntry(run_id=run_id, pid=pid, blueprint=blueprint, **defaults)
     e.save()

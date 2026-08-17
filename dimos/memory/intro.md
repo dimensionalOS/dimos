@@ -86,6 +86,7 @@ Live queries backfill existing matches, then emit new ones as they arrive:
 ```python session=memory ansi=false
 import time
 
+
 def emit_some_logs():
     last_ts = logs.last().ts
     logs.append("Heartbeat ok", ts=last_ts + 1, pose=(3.0, 1.5, 0.0), tags={"level": "info"})
@@ -102,7 +103,6 @@ with logs.tags(level="error").live() as errors:
     sub = errors.subscribe(lambda obs: print(f"{obs.ts} - {obs.data}"))
     emit_some_logs()
     sub.dispose()
-
 ```
 
 <!--Result:-->
@@ -145,7 +145,9 @@ from dimos.memory.embed import EmbedText
 
 clip = CLIPModel()
 
-for obs in logs.transform(EmbedText(clip)).search(clip.embed_text("hardware problem"), k=3).to_list():
+for obs in (
+    logs.transform(EmbedText(clip)).search(clip.embed_text("hardware problem"), k=3).to_list()
+):
     print(f"{obs.similarity:.3f}  {obs.data}")
 ```
 
@@ -160,12 +162,7 @@ The embedded stream above was ephemeral — built on the fly for one query. To p
 
 ```python skip
 embedded_logs = store.stream("embedded_logs", str)
-handle = (
-    logs.live()
-    .transform(EmbedText(clip))
-    .save(embedded_logs)
-    .drain_thread()
-)
+handle = logs.live().transform(EmbedText(clip)).save(embedded_logs).drain_thread()
 
 # every new log is now automatically embedded and stored
 # embedded_logs.search(query, k=5).to_list() to query at any time

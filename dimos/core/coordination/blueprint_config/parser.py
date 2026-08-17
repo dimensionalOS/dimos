@@ -349,9 +349,7 @@ class BlueprintConfigParser:
         for target in targets:
             canonical_names = {target.qualified_name}
             shorthand_names: set[str] = set()
-            if target.section == "global":
-                shorthand_names.add(target.relative_name)
-            elif target.section == "transport":
+            if target.section == "global" or target.section == "transport":
                 shorthand_names.add(target.relative_name)
             else:
                 escaped = cli_path((config_key(target.root), *target.path))
