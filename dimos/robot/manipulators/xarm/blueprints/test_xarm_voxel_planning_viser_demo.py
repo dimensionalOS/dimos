@@ -5,8 +5,17 @@
 
 import xml.etree.ElementTree as ET
 
+import numpy as np
+import pytest
+
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
+from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter, SelfFilterBox
 from dimos.protocol.tf.tf_pose_source import TfPoseSource
 from dimos.robot.manipulators.xarm.blueprints.simulation import (
@@ -109,3 +118,35 @@ def test_demo_is_simulation_only_and_pose_feeds_voxel_odometry() -> None:
     )
     assert pose_out.direction == "out"
     assert voxel_in.direction == "in"
+
+
+@pytest.mark.self_hosted
+def test_roboplan_jacobian_reaches_world_frame_xarm_gizmo_target() -> None:
+    robot = make_xarm7_sim_robot_config()
+    assert robot.home_joints is not None
+    seed = JointState(name=robot.joint_names, position=robot.home_joints)
+    world = RoboPlanWorld()
+    robot_id = world.add_robot(robot)
+    world.finalize()
+    group = PlanningGroupRegistry([robot]).get("arm/manipulator")
+    with world.scratch_context() as context:
+        world.set_joint_state(context, robot_id, seed)
+        current = world.get_group_ee_pose(context, group.id)
+    target = PoseStamped(
+        frame_id="world",
+        position=Vector3(current.position.x, current.position.y + 0.05, current.position.z),
+        orientation=current.orientation,
+    )
+
+    result = JacobianIK().solve_pose_targets(
+        world,
+        {group: target},
+        seed=seed,
+        check_collision=False,
+        max_attempts=1,
+    )
+
+    assert result.is_success()
+    assert result.joint_state is not None
+    assert result.position_error < 0.001
+    assert np.max(np.abs(np.asarray(result.joint_state.position) - seed.position)) > 0.05

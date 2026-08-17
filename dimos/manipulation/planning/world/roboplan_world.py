@@ -416,7 +416,8 @@ class RoboPlanWorld:
             result = scene.computeFrameJacobian(
                 scene_q,
                 model.native_link(robot.config.name, group.tip_link),
-                True,
+                # JacobianIK expresses its error twist in the world frame.
+                False,
             )
         arr = np.asarray(result, dtype=np.float64)
         if arr.shape[0] != 6:

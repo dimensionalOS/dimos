@@ -260,22 +260,13 @@ class PointCloudSelfFilter(Module):
             )
 
         bounds = geometry.mesh.bounds
-        broadphase = np.all(
-            (points >= bounds[0] - padding) & (points <= bounds[1] + padding), axis=1
+        # Collision meshes are already conservative robot geometry. Their
+        # link-local bounds form an oriented box in the sensor frame, avoiding
+        # expensive per-point mesh proximity queries while retaining safe
+        # self-exclusion at mapping resolution.
+        return np.asarray(
+            np.all((points >= bounds[0] - padding) & (points <= bounds[1] + padding), axis=1)
         )
-        remove = np.zeros(len(points), dtype=bool)
-        candidate_indices = np.flatnonzero(broadphase)
-        if not len(candidate_indices):
-            return remove
-        candidates = points[candidate_indices]
-        _, distances, _ = trimesh.proximity.closest_point(  # type: ignore[no-untyped-call]
-            geometry.mesh, candidates
-        )
-        inside = np.zeros(len(candidates), dtype=bool)
-        if geometry.mesh.is_watertight:
-            inside = geometry.mesh.contains(candidates)
-        remove[candidate_indices] = inside | (distances <= padding)
-        return remove
 
     def _clear_samples(self, mesh: trimesh.Trimesh) -> np.ndarray:
         pitch = self.filter_config.voxel_size
@@ -297,8 +288,9 @@ class PointCloudSelfFilter(Module):
     def _transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
         if not len(points):
             return np.empty((0, 3), dtype=np.float64)
-        homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
-        return np.asarray((transform @ homogeneous.T).T[:, :3], dtype=np.float64)
+        rotation = transform[:3, :3]
+        translation = transform[:3, 3]
+        return np.asarray(points @ rotation.T + translation, dtype=np.float64)
 
     @property
     def filter_config(self) -> PointCloudSelfFilterConfig:

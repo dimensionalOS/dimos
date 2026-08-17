@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+import trimesh
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -14,6 +15,7 @@ from dimos.perception.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
     SelfFilterBox,
+    _CollisionGeometry,
 )
 from dimos.protocol.tf.tf import TF, MultiTBuffer
 from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
@@ -141,6 +143,45 @@ def test_self_filter_stream_types_include_atomic_clear_mask() -> None:
     assert PointCloudSelfFilter.__annotations__["pointcloud"]
     assert PointCloudSelfFilter.__annotations__["filtered_pointcloud"]
     assert PointCloudSelfFilter.__annotations__["robot_clear_mask"]
+
+
+def test_transform_points_applies_rotation_and_translation() -> None:
+    points = np.asarray([[1.0, 0.0, 0.0], [0.0, 2.0, 3.0]], dtype=np.float32)
+    transform = np.asarray(
+        [
+            [0.0, -1.0, 0.0, 4.0],
+            [1.0, 0.0, 0.0, 5.0],
+            [0.0, 0.0, 1.0, 6.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+
+    transformed = PointCloudSelfFilter._transform_points(points, transform)
+
+    np.testing.assert_allclose(transformed, [[4.0, 6.0, 6.0], [2.0, 5.0, 9.0]])
+
+
+def test_mesh_filter_uses_conservative_link_local_bounds() -> None:
+    mesh = trimesh.creation.icosphere(radius=1.0)
+    geometry = _CollisionGeometry(
+        link="arm",
+        link_from_geometry=np.eye(4),
+        mesh=mesh,
+        shape="mesh",
+        dimensions=(),
+        clear_samples=np.empty((0, 3)),
+    )
+    points = np.asarray(
+        [
+            [0.9, 0.9, 0.0],  # Outside the sphere, inside its conservative bounds.
+            [1.02, 0.0, 0.0],  # Included by padding.
+            [1.2, 0.0, 0.0],
+        ]
+    )
+
+    removed = PointCloudSelfFilter._points_inside_geometry(points, geometry, padding=0.05)
+
+    np.testing.assert_array_equal(removed, [True, True, False])
 
 
 @pytest.mark.self_hosted
