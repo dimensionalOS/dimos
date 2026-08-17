@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.teleop.quest.quest_extensions import HandTeleopModule
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule
 from dimos.teleop.quest.quest_types import Hand, QuestControllerState
 
@@ -83,3 +84,60 @@ def test_final_client_disconnect_clears_state_and_publishes_safe_buttons(
     assert status.right_pose is None
     assert status.buttons.data == 0
     assert published[-1].data == 0
+
+
+def test_translation_scale_changes_pose_delta(module: QuestTeleopModule) -> None:
+    module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
+    module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
+
+    module._set_translation_scale(2.0)
+
+    output = module._get_output_pose(Hand.RIGHT)
+    assert output is not None
+    assert output.position.x == pytest.approx(0.4)
+    assert output.position.y == pytest.approx(-1.0)
+    assert output.position.z == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("translation_scale", [0.0, -1.0, float("inf")])
+def test_translation_scale_must_be_positive_and_finite(
+    module: QuestTeleopModule, translation_scale: float
+) -> None:
+    with pytest.raises(ValueError):
+        module._set_translation_scale(translation_scale)
+
+    assert module._translation_scale == 1.0
+
+
+def test_hand_teleop_pinch_toggles_engagement(mocker) -> None:
+    module = HandTeleopModule()
+    try:
+        publish = mocker.patch.object(module.teleop_buttons, "publish")
+        module._current_poses[Hand.RIGHT] = mocker.Mock()
+        module._controllers[Hand.RIGHT] = QuestControllerState(
+            is_left=False, primary=True, trigger=1.0
+        )
+
+        module._handle_engage()
+
+        assert module._is_engaged[Hand.RIGHT]
+        module._publish_button_state(None, module._controllers[Hand.RIGHT])
+        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
+
+        module._handle_engage()
+
+        assert module._is_engaged[Hand.RIGHT]
+
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=False)
+        module._handle_engage()
+        module._publish_button_state(None, module._controllers[Hand.RIGHT])
+        assert publish.call_args.args[0].right_primary
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
+        module._handle_engage()
+
+        assert not module._is_engaged[Hand.RIGHT]
+        module._publish_button_state(None, module._controllers[Hand.RIGHT])
+        assert not publish.call_args.args[0].right_primary
+    finally:
+        module.stop()

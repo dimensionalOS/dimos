@@ -57,6 +57,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-hosted-xarm7",
         "teleop-quest-dual",
         "teleop-quest-go2",
+        "teleop-quest-hand-xarm7",
         "teleop-quest-piper",
         "teleop-quest-rerun",
         "teleop-quest-xarm6",

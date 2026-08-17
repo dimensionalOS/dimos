@@ -43,7 +43,7 @@ from dimos.imitation.dataprep.core import (
     SyncConfig,
     extract_episodes,
 )
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 

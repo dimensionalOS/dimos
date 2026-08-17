@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import math
 
-from dimos.memory2.vis.space.elements import Point, Polyline, Text
-from dimos.memory2.vis.space.space import Space
+from dimos.memory.vis.space.elements import Point, Polyline, Text
+from dimos.memory.vis.space.space import Space
 from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -41,7 +41,7 @@ _MARKER_RADIUS = 0.06
 
 
 def _xy_to_path(executed_xy: list[tuple[float, float]]) -> Path:
-    """Wrap (x, y) tuples in a nav_msgs.Path so memory2 Polyline can render them."""
+    """Wrap (x, y) tuples in a nav_msgs.Path so memory Polyline can render them."""
     poses = [
         PoseStamped(
             position=Vector3(x, y, 0.0),
@@ -428,7 +428,7 @@ _COHORT_COLORS = (
 
 
 def path_to_svg(path: Path, size_px: int = 400, margin_px: int = 20) -> str:
-    """Render a Path as an SVG polyline via memory2.vis.space.
+    """Render a Path as an SVG polyline via memory.vis.space.
 
     ``size_px`` / ``margin_px`` are kept for API compatibility but ignored;
     Space picks its own dimensions from world-space content bounds.
@@ -449,7 +449,7 @@ def trajectory_to_svg(
     size_px: int = 500,
     margin_px: int = 20,
 ) -> str:
-    """Reference path (gray) + executed trajectory (blue), via memory2.vis.space."""
+    """Reference path (gray) + executed trajectory (blue), via memory.vis.space."""
     if not reference.poses or not executed_xy:
         return Space().to_svg()
 
@@ -470,7 +470,7 @@ def multi_trajectory_to_svg(
     margin_px: int = 30,
     title: str | None = None,
 ) -> str:
-    """Reference + multiple executed trajectories overlaid, via memory2.vis.space.
+    """Reference + multiple executed trajectories overlaid, via memory.vis.space.
 
     Each cohort gets a distinct color from ``_COHORT_COLORS`` (10 unique
     entries; no collisions for the current cohort matrix). A small dot at
@@ -478,7 +478,7 @@ def multi_trajectory_to_svg(
     converge. The legend is emitted as ``Polyline`` stubs + ``Text`` labels
     placed in world space below the plot bounds, so it sits inside the
     auto-fit viewBox alongside the trajectories. Axes / grid / tick labels
-    are drawn by memory2's Space renderer (`show_axes=True`).
+    are drawn by memory's Space renderer (`show_axes=True`).
     """
     if not reference.poses:
         return Space().to_svg()

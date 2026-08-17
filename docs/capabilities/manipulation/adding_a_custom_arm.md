@@ -1,11 +1,11 @@
 ---
 title: "How to Integrate a New Manipulator Arm"
 ---
-This guide walks through integrating a new robot arm with DimOS, from writing the hardware adapter to creating blueprints for planning and control.
+This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
 
-DimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
+dimOS uses a **Protocol-based adapter pattern** — no base class inheritance required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -72,7 +72,7 @@ Below is a complete annotated adapter. Implement each method by wrapping your ve
 """YourArm adapter — implements ManipulatorAdapter protocol.
 
 SDK Units: <describe your SDK's native units here>
-DimOS Units: angles=radians, distance=meters, velocity=rad/s
+dimOS Units: angles=radians, distance=meters, velocity=rad/s
 """
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ class YourArmAdapter:
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode.
 
-        Map DimOS ControlMode enum values to your SDK's mode codes.
+        Map dimOS ControlMode enum values to your SDK's mode codes.
         Return False for modes your arm doesn't support.
         """
         if not self._sdk:
@@ -389,7 +389,7 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in DimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
 
 ### 3a. Create the robot directory
 
@@ -428,7 +428,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 
 # YourArm (6-DOF) — real hardware
@@ -447,12 +448,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_arm",                          # Task name (used by ManipulationModule RPC)
-            type="trajectory",                        # Trajectory execution task
-            joint_names=[f"arm_joint{i+1}" for i in range(6)],
-            priority=10,                              # Higher priority wins arbitration
-        ),
+        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
     ],
 )
 
@@ -474,11 +470,38 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 
 ## Step 4: Add URDF and Planning Integration (Optional)
 
-If you want motion planning (collision-free trajectories via Drake), you need a URDF and a planning blueprint. Add these to your robot's own `blueprints.py`.
+If you want motion planning, you need a URDF and a planning blueprint. Add these
+to your robot's own `blueprints.py`.
 
 ### 4a. Add your URDF
 
 Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
+
+If the planning blueprint selects the RoboPlan TOPP-RA trajectory
+parametrizer, dimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
+each selected planning group must provide finite, positive velocity limits.
+Authored extended acceleration limits take precedence; when absent, dimOS
+temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
+model composition:
+
+```xml
+<joint name="joint1" type="revolute">
+  <!-- parent, child, origin, and axis omitted -->
+  <limit
+    lower="-3.14"
+    upper="3.14"
+    effort="100"
+    velocity="2.0"
+    acceleration="4.0"
+  />
+</joint>
+```
+
+RoboPlan loads both limits from its scene model. If either is absent, zero,
+negative, or non-finite, plan materialization fails before preview or execution
+and identifies the affected joint. dimOS does not substitute
+`RobotModelConfig.max_velocity`, `velocity_limits`, or `max_acceleration` for
+this backend. Formal per-joint dimOS overrides will be added separately.
 
 ```python skip
 from dimos.utils.data import LfsPath
@@ -551,10 +574,31 @@ yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm")],
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
+    trajectory_parametrization={"backend": "simple_trapezoid"},
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`
 # topic, so no `.transports(...)` override is needed.
+```
+
+You may omit `trajectory_parametrization` when the world-based default is
+appropriate: `world_backend="roboplan"` selects `roboplan_toppra`, while
+`world_backend="drake"` selects `simple_trapezoid`.
+
+To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
+parametrizer after adding the URDF limits described above:
+
+```python skip
+yourarm_planner = manipulation_module(
+    robots=[_make_yourarm_config("arm")],
+    world_backend="roboplan",
+    trajectory_parametrization={
+        "backend": "roboplan_toppra",
+        "velocity_scale": 0.8,
+        "acceleration_scale": 0.8,
+    },
+    visualization={"backend": "viser"},
+)
 ```
 
 ### Key config fields

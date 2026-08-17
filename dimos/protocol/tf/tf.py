@@ -38,7 +38,7 @@ class TFLookup(Protocol):
     """Read side of a tf buffer: resolve ``parent ← child`` at a time point.
 
     Satisfied by the live buffers (:class:`MultiTBuffer`, :class:`TF`) and by
-    replay backends like ``dimos.memory2.tf.StreamTF``. Code that only queries
+    replay backends like ``dimos.memory.tf.StreamTF``. Code that only queries
     transforms should accept this instead of a concrete implementation.
     """
 
