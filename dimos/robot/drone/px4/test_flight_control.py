@@ -17,39 +17,64 @@ from collections.abc import AsyncIterator, Iterator
 import math
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.drone.px4 import flight_control
 from dimos.robot.drone.px4.flight_control import FlightController
 
 
-@pytest.fixture
-def controller(mocker: MockerFixture) -> Iterator[FlightController]:
-    module = FlightController()
-    module._system = mocker.Mock(
-        action=mocker.Mock(
-            arm=mocker.AsyncMock(),
-            disarm=mocker.AsyncMock(),
-            set_takeoff_altitude=mocker.AsyncMock(),
-            takeoff=mocker.AsyncMock(),
-            land=mocker.AsyncMock(),
-            hold=mocker.AsyncMock(),
+def _mock_system() -> MagicMock:
+    return MagicMock(
+        action=MagicMock(
+            arm=AsyncMock(),
+            disarm=AsyncMock(),
+            set_takeoff_altitude=AsyncMock(),
+            takeoff=AsyncMock(),
+            land=AsyncMock(),
+            hold=AsyncMock(),
         ),
-        offboard=mocker.Mock(
-            set_velocity_body=mocker.AsyncMock(),
-            set_position_ned=mocker.AsyncMock(),
-            start=mocker.AsyncMock(),
-            stop=mocker.AsyncMock(),
+        offboard=MagicMock(
+            set_velocity_body=AsyncMock(),
+            set_position_ned=AsyncMock(),
+            start=AsyncMock(),
+            stop=AsyncMock(),
         ),
-        mocap=mocker.Mock(set_vision_position_estimate=mocker.AsyncMock()),
-        telemetry=mocker.Mock(),
+        mocap=MagicMock(set_vision_position_estimate=AsyncMock()),
+        telemetry=MagicMock(),
     )
+
+
+@pytest.fixture(scope="module")
+def flight_controller() -> Iterator[FlightController]:
+    module = FlightController()
     yield module
     module.__dict__.pop("_system", None)
     module.stop()
+
+
+@pytest.fixture
+def controller(flight_controller: FlightController) -> Iterator[FlightController]:
+    flight_controller._system = _mock_system()
+    flight_controller._connected = False
+    flight_controller._armed = None
+    flight_controller._in_air = None
+    flight_controller._flight_mode = None
+    flight_controller._offboard_active = False
+    flight_controller._position_ned = None
+    flight_controller._yaw_deg = None
+    flight_controller._telemetry_tasks.clear()
+    yield flight_controller
+    for task in flight_controller._telemetry_tasks:
+        if not task.done():
+            task.cancel()
+    flight_controller._telemetry_tasks.clear()
+    flight_controller.__dict__.pop("_system", None)
 
 
 def _mavsdk_error(error_type: type[Exception]) -> Exception:
@@ -57,9 +82,66 @@ def _mavsdk_error(error_type: type[Exception]) -> Exception:
     return error_type(result, "test")
 
 
+def _odometry() -> Odometry:
+    message = Odometry(ts=12.3456789, frame_id="odom", child_frame_id="mid360_link")
+    message.pose.position.x, message.pose.position.y, message.pose.position.z = (3.0, -2.0, 1.5)
+    message.pose.orientation.w = 1.0
+    message.pose.covariance = np.eye(6).reshape(-1)
+    return message
+
+
 def _run(controller: FlightController, coroutine: Any) -> Any:
     assert controller._loop is not None
     return asyncio.run_coroutine_threadsafe(coroutine, controller._loop).result()
+
+
+def test_pointlio_odometry_builds_mavsdk_vision_estimate() -> None:
+    estimate = flight_control._build_vision_position_estimate(_odometry())
+
+    assert estimate.time_usec == 12_345_679
+    assert (
+        estimate.position_body.x_m,
+        estimate.position_body.y_m,
+        estimate.position_body.z_m,
+    ) == pytest.approx((2.973909, 2.02329, -1.443681), abs=1e-6)
+    assert len(estimate.pose_covariance.covariance_matrix) == 21
+
+
+def test_invalid_vision_covariance_uses_unknown_sentinel() -> None:
+    covariance = flight_control._transform_pose_covariance_to_frd(
+        (1.0,), (1.0, 0.0, 0.0, 0.0)
+    )
+
+    assert len(covariance) == 1
+    assert math.isnan(covariance[0])
+
+
+def test_external_vision_rejects_invalid_samples() -> None:
+    message = _odometry()
+    message.frame_id = "map"
+    with pytest.raises(
+        flight_control._InvalidExternalVisionSampleError, match="odom -> mid360_link"
+    ):
+        flight_control._build_vision_position_estimate(message)
+
+    message = _odometry()
+    message.ts = 0.0
+    with pytest.raises(flight_control._InvalidExternalVisionSampleError, match="timestamp"):
+        flight_control._build_vision_position_estimate(message)
+
+    message = _odometry()
+    message.pose.orientation.w = 2.0
+    with pytest.raises(
+        flight_control._InvalidExternalVisionSampleError, match="orientation quaternion"
+    ):
+        flight_control._build_vision_position_estimate(message)
+
+    message = _odometry()
+    message.pose.position.x = math.inf
+    with pytest.raises(
+        flight_control._InvalidExternalVisionSampleError, match="position must be finite"
+    ):
+        flight_control._build_vision_position_estimate(message)
 
 
 @pytest.mark.parametrize(

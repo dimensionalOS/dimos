@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 import importlib.util
 import sys
 from types import SimpleNamespace
@@ -36,28 +36,27 @@ else:
     from dimos.robot.drone.px4 import gstreamer_tee_camera as camera
 
 
-@pytest.fixture
-def camera_factory(
-    mocker: MockerFixture,
-) -> Iterator[Callable[..., camera.GsTeeCamera]]:
-    instances: list[camera.GsTeeCamera] = []
-    mocker.patch.object(camera, "Thread")
-
-    def create(**kwargs: object) -> camera.GsTeeCamera:
-        instance = camera.GsTeeCamera(**kwargs)
-        instances.append(instance)
-        return instance
-
-    yield create
-    for instance in instances:
-        instance.stop()
+@pytest.fixture(scope="module")
+def camera_module() -> Iterator[camera.GsTeeCamera]:
+    instance = camera.GsTeeCamera()
+    yield instance
+    instance.stop()
 
 
 @pytest.fixture
 def module(
-    camera_factory: Callable[..., camera.GsTeeCamera],
-) -> camera.GsTeeCamera:
-    return camera_factory()
+    camera_module: camera.GsTeeCamera,
+    mocker: MockerFixture,
+) -> Iterator[camera.GsTeeCamera]:
+    mocker.patch.object(camera, "Thread")
+    camera_module.config.input_pipeline = camera.DEFAULT_INPUT_PIPELINE
+    camera_module.config.input_format = camera.GstInputFormat.RAW
+    camera_module.config.encoder = camera.GstEncoder.NVV4L2
+    camera_module.config.bitrate = 4_000_000
+    camera_module.config.gop = 30
+    camera_module._release_pipeline()
+    yield camera_module
+    camera_module._release_pipeline()
 
 
 @pytest.fixture
@@ -85,14 +84,12 @@ def gst_pipeline(mocker: MockerFixture) -> SimpleNamespace:
 
 
 def test_x264_pipeline_uses_configured_bitrate_and_gop(
-    camera_factory: Callable[..., camera.GsTeeCamera],
+    module: camera.GsTeeCamera,
     gst_pipeline: SimpleNamespace,
 ) -> None:
-    module = camera_factory(
-        encoder=camera.GstEncoder.X264,
-        bitrate=2_000_000,
-        gop=15,
-    )
+    module.config.encoder = camera.GstEncoder.X264
+    module.config.bitrate = 2_000_000
+    module.config.gop = 15
 
     module.start()
 
