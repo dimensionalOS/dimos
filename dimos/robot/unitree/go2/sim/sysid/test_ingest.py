@@ -23,6 +23,7 @@ import pytest
 
 from dimos.robot.unitree.go2.sim.sysid.ingest import (
     Declarations,
+    _velocity_command,
     command_coverage,
     mount_matrix,
     read_declarations,
@@ -45,6 +46,29 @@ def test_a_single_message_covers_nothing():
 
 def test_a_zero_span_does_not_divide_by_zero():
     assert command_coverage(0.0, 1.0, 10, 0.0) == pytest.approx(1.0)
+
+
+def test_both_executor_spellings_of_the_velocity_command_are_read():
+    """The executor renamed this between the 08-16 and 08-17 sessions. Reading
+    only the old spelling gave every 08-17 recording an EMPTY schedule, which
+    reads downstream as "never asked to move" (speed 0.0, no closed loop at
+    all) rather than as an error — so both must parse, identically."""
+    old = {"action": "walk", "type": "policy", "vx": 0.4, "vy": -0.1, "vyaw": 0.25}
+    new = {"type": "velocity_input", "lx": 0.4, "ly": -0.1, "az": 0.25}
+    assert _velocity_command(old) == (0.4, -0.1, 0.25)
+    assert _velocity_command(new) == (0.4, -0.1, 0.25)
+
+
+def test_non_velocity_control_log_entries_are_not_mistaken_for_commands():
+    """`rage` and `sport` ride the same topic and carry a `type` key; treating
+    one as a zero velocity would inject a phantom stop into the schedule."""
+    assert _velocity_command({"on": True, "type": "rage"}) is None
+    assert _velocity_command({"id": 1006, "type": "sport"}) is None
+    assert _velocity_command({"action": "gait_height", "gh": 0.09}) is None
+
+
+def test_a_missing_axis_is_zero_not_a_crash():
+    assert _velocity_command({"type": "velocity_input", "az": -0.94}) == (0.0, 0.0, -0.94)
 
 
 def test_the_mount_matrix_is_a_rotation():

@@ -380,6 +380,10 @@ it never reads.
 ---
 
 ## 5b. The over-damped verdict, probed: it is a missing mechanism
+> **See 5e — the premise below did not survive.** The ~2x oscillation
+> deficit is mostly the VR tracker's flexing mount, not the simulator.
+> The negative results in this section still stand; the gap they were
+> aimed at does not.
 
 After the lag-axis fix the referee's verdict left one coherent story: every
 body-oscillation statistic ~2x too small and the speed low — the sim walks
@@ -457,6 +461,10 @@ saying so.
 ---
 
 ## 5c. The mechanisms, measured — and the proxy verdict
+> **See 5e — the premise below did not survive.** The ~2x oscillation
+> deficit is mostly the VR tracker's flexing mount, not the simulator.
+> The negative results in this section still stand; the gap they were
+> aimed at does not.
 
 §5b earned its mechanisms a fitted value each; this section replaces the
 fits with MEASUREMENTS (`sysid.loop`), and reports honestly how much of the
@@ -534,6 +542,10 @@ nothing here earned a default promotion, and the honest headline is that
 ---
 
 ## 5d. The drive, measured directly — two suspects out, the proxy survives
+> **See 5e — the premise below did not survive.** The ~2x oscillation
+> deficit is mostly the VR tracker's flexing mount, not the simulator.
+> The negative results in this section still stand; the gap they were
+> aimed at does not.
 
 §5c left three candidates. `sysid.drive` interrogates the first two with
 ZERO free parameters and no simulator in the loop: the recorded commands
@@ -632,6 +644,74 @@ scoped separately.
 
 ---
 
+## 5e. RETRACTION: the premise of 5b–5d was an instrument artifact
+
+**The ~2x oscillation deficit that 5b, 5c and 5d were chasing is mostly the
+VR tracker's mount, not the simulator.** Measured 2026-08-17. The three
+investigations' *negative* results stand — they are about knobs, latency and
+the drive, and none of them depended on the gap being real — but their shared
+premise did not survive, and no conclusion should be drawn from the gap
+itself.
+
+Loop 2 takes `roll_std`/`pitch_std`/`tilt_p99` from the tracker
+(`ground.real_summary` → `Streams.base_pose_room`). Against the **raw gyro** —
+a direct body-rate measurement no attitude filter has touched, so it can
+arbitrate between two fused estimates — the tracker is wrong:
+
+| | raw gyro | tracker | ratio | corr |
+|---|---|---|---|---|
+| roll rate | 0.389 | 0.962 | 2.47x | **0.44** |
+| pitch rate | 0.321 | 0.608 | 1.90x | 0.52 |
+| yaw rate | 1.022 | 1.378 | 1.35x | 0.73 |
+
+The correlation matters more than the ratio: a rigid mount correlates 0.95+.
+
+**It is mount FLEX, not tracker noise.** Binned by how hard the robot is
+moving (both sides low-passed at 15 Hz — an unfiltered comparison amplifies
+the tracker's differentiation noise and misleadingly looks flat), the excess
+rotation the tracker invents grows **34x** with activity: 0.033 rad/s in the
+quietest bin, 1.133 in the loudest. Noise would be constant; flex is excited.
+So the tracker is accurate when the robot is calm and fails exactly in the
+regime being scored. Tightening the mount screws did not fix it.
+
+**Calibration cannot rescue it.** A full 3-DOF mount rotation plus room-frame
+tilt, fitted against the IMU, moved `roll_std` from 0.0415 to 0.0415 — a
+*constant* transform cannot remove a *time-varying* relationship. Nor can the
+translation offset: where the tracker sits does not affect which way it
+points. (`TRACKER_Z = 0.207` is a documented guess against a true ~0.15 m,
+but sweeping it 0 → 0.25 m moves `speed` by 0.0009 m/s — harmless, because
+the velocity estimator smooths.)
+
+**The gyro is trustworthy, three ways.** (a) It reads 0.0103 rad/s RMS with
+the robot still — a **38x** SNR against the 0.389 rad/s walking roll rate.
+(b) The Go2's own attitude filter, a separate output path, reproduces the raw
+gyro at correlation **0.992–1.000**, ratio 0.96–1.00, so the quaternion is not
+smoothing oscillation away. (c) Accel reads 9.591 m/s² static vs 9.81 — a 2.2%
+scale error, irrelevant to rates but worth knowing if accelerations are ever
+scored. The contrast that makes this intuitive: 0.0103 rad/s integrated for
+60 s is ~0.6 rad of drift — useless for dead reckoning, ample for an AC
+measurement in a band.
+
+**By the gyro the simulator was already right about oscillation**: sim
+`roll_std` 0.0200 vs IMU 0.0203, `pitch_std` 0.0180 vs 0.0206, `tilt_p99`
+0.1240 vs 0.1322. Which also explains 5b cleanly — no knob closed the gap
+because there was no physical gap to close, and the referee's latency demand
+tracked each plant's stability cliff (5c/5d) because delay was the only way to
+manufacture oscillation that was never missing.
+
+**What survives:** the **speed deficit** (0.571 vs 0.484) is position-derived,
+and mast flex at 0.15 m contributes millimetres — it is real and unexplained.
+And 5d's **anti-transfer** result is untouched: it compares plants against each
+other, not against the tracker's attitude.
+
+**Consequence for loop 2:** split by what each instrument is actually good at —
+**tracker for position** (trajectory, speed, height), **raw gyro for attitude**
+(roll, pitch, tilt). Not yet implemented; the statistics above still come from
+the tracker, so every oscillation number in 5b–5d should be read as a
+tracker-frame number.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -655,8 +735,17 @@ preset and honoured by every downstream path). Acceptance is bit-identical
 to the frozen instrument, and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each);
-the robot-repeat noise floor (needs two recordings of the same walk).
+the robot-repeat noise floor — no longer blocked, three same-session walking
+recordings landed 2026-08-17 (`20260817-153320/153558/154201`, hard floor,
+tracker, himloco freewalk).
+
+**Owed:** loop 2 still reads attitude from the tracker, which §5e shows is
+unusable for it — the instrument split (tracker for position, gyro for
+attitude) is designed and unimplemented. Every oscillation number in §5b–§5d
+is a tracker-frame number until then.
 
 **Honest caveat:** none of this is validated by a policy transferring to
 hardware. The value on offer is the method and the provenance, not an accuracy
-claim.
+claim — and §5e is the sharpest illustration of why that distinction matters:
+three careful investigations, all sound, all aimed at a gap that was mostly a
+loose instrument. The referee is only ever as good as the sensor behind it.

@@ -301,9 +301,6 @@ def torque_timing(
     return out
 
 
-# ---------------------------------------------------------------------- CLI
-
-
 def _type_mean(vals: list[float]) -> dict[str, float]:
     return {
         t: float(np.mean([v for v, jt in zip(vals, JOINT_TYPES, strict=True) if jt == t]))

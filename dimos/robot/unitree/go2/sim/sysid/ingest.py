@@ -22,9 +22,11 @@ present — a bare Go2 walked around a room is a first-class input.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -72,8 +74,9 @@ class Streams:
     vq: np.ndarray = field(default_factory=lambda: np.zeros((0, 4)))
     seg_t: np.ndarray = field(default_factory=lambda: np.zeros(0))
     seg_mode: tuple[str, ...] = ()
-    # Operator command schedule (control_log "walk" actions): what drives the
-    # policy closed loop in Mode B, and the cmd axis of loop 2's statistics.
+    # Operator command schedule (control_log velocity commands, either executor
+    # spelling): what drives the policy closed loop in Mode B, and the cmd axis
+    # of loop 2's statistics.
     wt: np.ndarray = field(default_factory=lambda: np.zeros(0))  # walk cmd time, s
     wcmd: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))  # vx, vy, vyaw
     # Gait-height slider ("gait_height" actions); empty when never touched.
@@ -155,8 +158,30 @@ def command_coverage(cmd_t0: float, cmd_t1: float, n_cmd: int, span_s: float) ->
     return (cmd_t1 - cmd_t0) / (span_s or 1.0)
 
 
-# Bumped whenever the cached field set changes.
-_CACHE_VERSION = 2
+def _velocity_command(d: Mapping[str, Any]) -> tuple[float, float, float] | None:
+    """The operator's vx/vy/vyaw from either executor schema, else ``None``.
+
+    The executor renamed this between the 2026-08-16 and 2026-08-17 sessions::
+
+        old  {"action": "walk",           "vx": …, "vy": …, "vyaw": …}
+        new  {"type":   "velocity_input", "lx": …, "ly": …, "az": …}
+
+    Both carry stick values, not SI rates. Reading only the old spelling
+    produced an EMPTY schedule for every 08-17 recording, and an empty schedule
+    is indistinguishable downstream from "the robot was never asked to move":
+    :func:`~...ground.cmd_at` returns zeros, the ``moving`` mask is empty, and
+    ``speed`` reads 0.0 — a silent wrong answer rather than a failure.
+    """
+    if d.get("action") == "walk":
+        return float(d.get("vx", 0.0)), float(d.get("vy", 0.0)), float(d.get("vyaw", 0.0))
+    if d.get("type") == "velocity_input":
+        return float(d.get("lx", 0.0)), float(d.get("ly", 0.0)), float(d.get("az", 0.0))
+    return None
+
+
+# Bumped whenever the cached field set OR the parse changes: a stale cache
+# would otherwise hide this file's fixes behind a v2 npz. v3 = velocity_input.
+_CACHE_VERSION = 3
 
 
 def _cache_path(path: Path) -> Path:
@@ -173,9 +198,10 @@ def read_streams(path: str | Path, *, cache: bool = True) -> Streams:
     when it covers >= 50% of the measured span; otherwise ``rt/lowcmd``, the
     DDS channel the motors actually listen to (see :func:`command_coverage`).
 
-    EPOCH. Times are rebased on the first ``action == "walk"`` control_log
-    entry; a sport-only recording has none, so its first command stands in —
-    readable, but the epoch is comparable within the file only.
+    EPOCH. Times are rebased on the first operator velocity command in
+    control_log — either executor spelling, see :func:`_velocity_command`. A
+    sport-only recording has none, so its first command stands in — readable,
+    but the epoch is comparable within the file only.
 
     Decoding a large file takes tens of seconds, so parsed streams are cached
     under ``~/.cache/dimos_go2sim`` keyed by path, mtime and size.
@@ -312,9 +338,9 @@ def _read_streams_uncached(path: Path) -> Streams:
             elif ch.topic == "policy/state":
                 if d.get("mode") and d["mode"] != "climb_engage":
                     seg.append((t, str(d["mode"])))
-            elif d.get("action") == "walk":
+            elif (vel := _velocity_command(d)) is not None:
                 first_walk = t if first_walk is None else min(first_walk, t)
-                walk.append([t, d.get("vx", 0.0), d.get("vy", 0.0), d.get("vyaw", 0.0)])
+                walk.append([t, *vel])
             elif d.get("action") == "gait_height":
                 gait.append([t, float(d["gh"])])
     if not low or not cmd:
