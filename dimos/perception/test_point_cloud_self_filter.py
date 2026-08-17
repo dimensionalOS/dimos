@@ -13,6 +13,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
+    SelfFilterBox,
 )
 from dimos.protocol.tf.tf import TF, MultiTBuffer
 from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
@@ -30,7 +31,9 @@ def _write_box_robot(path: Path) -> None:
     )
 
 
-def _filter(tmp_path: Path) -> PointCloudSelfFilter:
+def _filter(
+    tmp_path: Path, *, additional_boxes: tuple[SelfFilterBox, ...] = ()
+) -> PointCloudSelfFilter:
     urdf = tmp_path / "robot.urdf"
     _write_box_robot(urdf)
     module = object.__new__(PointCloudSelfFilter)
@@ -46,6 +49,7 @@ def _filter(tmp_path: Path) -> PointCloudSelfFilter:
         voxel_size=0.05,
         tf_tolerance_s=0.001,
         tf_forward_tolerance_s=0.0,
+        additional_boxes=additional_boxes,
     )
     state["_tf"] = MultiTBuffer()
     state["_collision_geometry"] = module._load_collision_geometry()
@@ -90,6 +94,26 @@ def test_model_filter_removes_robot_surface_and_preserves_external_point(tmp_pat
     keys = clear_mask.points_f32()
     assert len(keys) > 0
     np.testing.assert_array_equal(keys, np.floor(keys))
+
+
+def test_additional_box_removes_attached_geometry(tmp_path: Path) -> None:
+    module = _filter(
+        tmp_path,
+        additional_boxes=(
+            SelfFilterBox(
+                link="base",
+                center_xyz=(2.0, 0.0, 0.0),
+                size_xyz=(0.2, 0.4, 0.6),
+            ),
+        ),
+    )
+    _publish_link_pose(module, 12.5)
+
+    result = module.filter_cloud(_cloud([(2.0, 0.0, 0.0), (3.0, 0.0, 0.0)]))
+
+    assert result is not None
+    filtered, _ = result
+    np.testing.assert_allclose(filtered.points_f32(), [[3.0, 0.0, 0.0]])
 
 
 def test_clear_mask_contains_previous_and_current_robot_volumes(tmp_path: Path) -> None:

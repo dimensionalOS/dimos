@@ -21,7 +21,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter, SelfFilterBox
 from dimos.protocol.tf.tf_pose_source import TfPoseSource
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -78,6 +78,13 @@ xarm_voxel_planning_viser_demo = (
         PointCloudSelfFilter.blueprint(
             robot_model=make_xarm7_sim_robot_config(),
             padding_m=XARM_VOXEL_PLANNING_RESOLUTION / 2.0,
+            additional_boxes=[
+                SelfFilterBox(
+                    link="link7",
+                    center_xyz=(0.0, 0.0, 0.08),
+                    size_xyz=(0.08, 0.18, 0.18),
+                )
+            ],
             voxel_size=XARM_VOXEL_PLANNING_RESOLUTION,
             planning_frame="world",
             tf_tolerance_s=0.02,

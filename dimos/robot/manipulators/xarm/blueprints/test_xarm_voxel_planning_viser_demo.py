@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter
+from dimos.perception.point_cloud_self_filter import PointCloudSelfFilter, SelfFilterBox
 from dimos.protocol.tf.tf_pose_source import TfPoseSource
 from dimos.robot.manipulators.xarm.blueprints.simulation import (
     XARM_VOXEL_PLANNING_RESOLUTION,
@@ -76,6 +76,13 @@ def test_demo_wires_camera_filter_voxel_map_and_snapshot() -> None:
     filter_kwargs = _atom(PointCloudSelfFilter).kwargs
     assert filter_kwargs["robot_model"].base_link == "link_base"
     assert filter_kwargs["padding_m"] == 0.025
+    assert filter_kwargs["additional_boxes"] == [
+        SelfFilterBox(
+            link="link7",
+            center_xyz=(0.0, 0.0, 0.08),
+            size_xyz=(0.08, 0.18, 0.18),
+        )
+    ]
     assert filter_kwargs["tf_tolerance_s"] == 0.02
     assert filter_kwargs["tf_forward_tolerance_s"] == 0.05
     assert xarm_voxel_planning_viser_demo.remapping_map == {

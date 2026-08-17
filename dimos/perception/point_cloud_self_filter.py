@@ -40,6 +40,23 @@ class _CollisionGeometry:
     clear_samples: np.ndarray
 
 
+@dataclass(frozen=True)
+class SelfFilterBox:
+    """Conservative attached geometry expressed in a robot link frame."""
+
+    link: str
+    center_xyz: tuple[float, float, float]
+    size_xyz: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        if not self.link:
+            raise ValueError("Self-filter box link must not be empty")
+        if not np.isfinite(self.center_xyz).all():
+            raise ValueError("Self-filter box center must contain only finite values")
+        if not np.isfinite(self.size_xyz).all() or any(size <= 0.0 for size in self.size_xyz):
+            raise ValueError("Self-filter box size must contain finite positive values")
+
+
 class PointCloudSelfFilterConfig(ModuleConfig):
     robot_model: RobotModelConfig
     padding_m: float = Field(default=0.01, ge=0.0)
@@ -47,6 +64,7 @@ class PointCloudSelfFilterConfig(ModuleConfig):
     planning_frame: str = "world"
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
+    additional_boxes: list[SelfFilterBox] = Field(default_factory=list)
 
 
 class PointCloudSelfFilter(Module):
@@ -174,6 +192,20 @@ class PointCloudSelfFilter(Module):
                         clear_samples=self._clear_samples(mesh),
                     )
                 )
+        for box in self.filter_config.additional_boxes:
+            link_from_geometry = np.eye(4, dtype=np.float64)
+            link_from_geometry[:3, 3] = box.center_xyz
+            mesh = trimesh.creation.box(extents=box.size_xyz)
+            result.append(
+                _CollisionGeometry(
+                    link=box.link,
+                    link_from_geometry=link_from_geometry,
+                    mesh=mesh,
+                    shape="box",
+                    dimensions=box.size_xyz,
+                    clear_samples=self._clear_samples(mesh),
+                )
+            )
         return result
 
     @staticmethod
