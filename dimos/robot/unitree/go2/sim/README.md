@@ -533,6 +533,96 @@ nothing here earned a default promotion, and the honest headline is that
 
 ---
 
+## 5d. The drive, measured directly — two suspects out, the proxy survives
+
+§5c left three candidates. `sysid.drive` interrogates the first two with
+ZERO free parameters and no simulator in the loop: the recorded commands
+plus the board's own `q`/`dq` fix the torque the PD law DEMANDED at every
+500 Hz sample, and `tau_est` is what the drive DELIVERED — the transfer
+between them IS the drive, measured on the real robot.
+
+    python -m dimos.robot.unitree.go2.sim.sysid.drive REC.mcap
+
+**Drive dynamics beyond first order: OUT.** Free second-order fits land at
+35-60 Hz with damping ~0.8-1.1 — mimicking a lag, never a peak; |H| exceeds
+1 nowhere in band, so the drive cannot inject energy at gait frequency. The
+equivalent first-order lag is 2-9 ms (walking: hips 4.9 / thighs 7.4 / calf
+1.8 ms), the same order as the fitted `actuator_tau`. The sensor is not
+late either: ddq — which never touches `tau_est` — correlates best with the
+demand AND with `tau_est` at ~0 ms on the suspended file.
+
+**Backlash / deadband: OUT.** At |dq| < 3 rad/s the delivered/demanded gain
+is 0.94-1.03 in EVERY amplitude bin down to 0-0.5 N·m; every low-gain cell
+is |dq| ≥ 3, which is the torque envelope, already a named mechanism.
+
+**What the drive DOES show is the envelope acting in-band** — thigh |H|
+dips to ~0.83 over 3-16 Hz, exactly where swing passes 3 rad/s — and §5b
+had already warned the `measured` knobs were fitted WITHOUT it, absorbing
+that deficit into the viscous/inertial knobs (armature 0.029 = 6x the
+accel-fit spread; Mode A shows the sim OVER-driving real tau 1.1-1.35x at
+gait frequencies while walking slower and smoother). So §5b's prescription
+was finally run: `fit --envelope central`, same objective and procedure as
+the phase-4 refit, the envelope name recorded ON the preset so the plant
+can never silently run bare (`results/fit6-freewalk-env`). The knobs
+deflate exactly as the story predicts — armature 0.029 → 0.0048,
+actuator_tau 5.25 → 1.2 ms, frictionloss 1.47 → 1.30 — the open-loop score
+improves 20.3% over the `measured` baseline, and held-out jumps improve
+2.7%. As an open-loop identification, the envelope-consistent plant is the
+better-identified one.
+
+**The bigger finding is the ANTI-TRANSFER.** The envelope-refit plant is
+better on the loop-1 objective (−20.3%, held-out jumps −2.7%) and WORSE on
+the referee everywhere: 6.16 vs 5.47 at 0 ms on the select window, 7.68 vs
+6.37 on the held-out reference, best-case 4.13 vs 2.83. An open-loop
+improvement that anti-transfers to closed loop is a result about the
+METHOD, not about this plant: the `accel/floor` objective is not a reliable
+proxy for closed-loop fidelity — the same disagreement the referee already
+showed over fit5 (§5a), now reproduced under an envelope-consistent fit.
+That bears on the two-loop design itself and is what the outer study has to
+adjudicate.
+
+**The decisive test answers NO — the demand does not shrink.** The §5c
+select/report latency split, identical windows (select on the fit
+recording, report on the rubber freewalk span t=68.3-83.2), measured
+timing+noise on:
+
+| plant                     | unbounded pick | select at pick | report 0 ms → pick |
+|---------------------------|----------------|----------------|--------------------|
+| `measured` (no envelope)  | 12 ms          | 2.83 ± .24     | 6.37 → 6.20        |
+| `fit6-env` (env central)  | **16 ms**      | 4.13 ± .12     | 7.68 → 6.34        |
+
+The demand ROSE, 12 → 16 ms. The variance structure says how: past 12 ms
+`measured` loses the gait outright (30.9 ± 33.2 at 16 ms, 57.4 ± 34.5 at
+20) while the refit plant is still stable at 16 ms (± 0.12) — it TOLERATES
+more delay before destabilising and NEEDS more delay to fake the same
+oscillation. In effect the refit walks even more over-damped, the opposite
+of what deflating `armature`/`actuator_tau`/`leg_mass_scale` was supposed
+to buy.
+
+**Verdict: a confident negative.** The drive is first-order to within
+measurement error, backlash is absent, the envelope-consistent refit is
+implemented and grounded — and the ~12-16 ms latency demand survives all of
+it. Of §5c's candidates, foot-contact compliance was already bounded by the
+§5b knob-endpoint probe (all four contact knobs, under ~35% of the gap), so
+the proxy now points OUTSIDE everything this plant parameterises. Nothing
+here earns a default promotion: the mechanisms stay off, `measured` stays
+the default plant, and the envelope-refit plant ships as a results artifact
+with its spread.
+
+**The surviving named candidate is a HYPOTHESIS, not a measurement:**
+series compliance between the motor-side sensors and the body — leg-link /
+belt flex. It is motivated by this instrument's blind spot (`q`, `dq`,
+`tau_est` all live motor-side, so a compliance after the gear is
+structurally invisible to `sysid.drive`), it adds exactly the loop phase
+lag the referee keeps buying as latency, and no rigid-body knob expresses
+it. It has a test that needs no new recording: motor-side `q` through rigid
+kinematics predicts a trunk pose, the tracker measures the actual one, and
+the discrepancy should GROW WITH LOAD — deflection against measured torque
+is a series stiffness with zero free parameters. Not implemented here;
+scoped separately.
+
+---
+
 ## 6. State
 
 **Built:** seam (knobs AND channels), MuJoCo backend, plant, ranges, anchors,
@@ -546,10 +636,14 @@ latency search — §5c), `--view` on both modes (ghost, `--speed`,
 `--no-reinit`; the viewer and the headless run are the same function),
 loop 2's identifiability probe (`sysid.probe`), the four default-off loop
 mechanisms (`action_latency`, `ObsNoise`, `control_intervals`, the torque
-envelope — §5b/§5c), and the loop-measurement instruments (`sysid.loop`:
+envelope — §5b/§5c), the loop-measurement instruments (`sysid.loop`:
 transport leg, control timing, sensor noise, command-shift sweep — every
-mechanism's value is measured, not fitted). Acceptance is bit-identical to
-the frozen instrument, and parallel is bit-identical to serial.
+mechanism's value is measured, not fitted), the drive instrument
+(`sysid.drive`: demanded-vs-delivered transfer function, model
+discrimination, deadband detector, ddq torque timing — §5d), and
+envelope-consistent fitting (`fit --envelope`, the envelope recorded on the
+preset and honoured by every downstream path). Acceptance is bit-identical
+to the frozen instrument, and parallel is bit-identical to serial.
 
 **Not run yet:** the full outer study (10-20 trials × one inner fit each);
 the robot-repeat noise floor (needs two recordings of the same walk).
