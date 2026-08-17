@@ -68,6 +68,7 @@ def _equal_results(a, b) -> None:
 
 @needs_hard
 def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
     from dimos.robot.unitree.go2.sim.ranges import MEASURED
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts, RolloutSpec
 
@@ -81,10 +82,10 @@ def test_worker_processes_reproduce_the_serial_rollouts_bit_for_bit():
             for i in range(3)
         ]
 
-    with Rollouts(HARD, workers=1) as serial:
+    with Rollouts(HARD, MujocoBackend(), workers=1) as serial:
         specs = make_specs(serial)
         got_serial = serial.run(specs)
-    with Rollouts(HARD, workers=3) as parallel:
+    with Rollouts(HARD, MujocoBackend(), workers=3) as parallel:
         got_parallel = parallel.run(specs)
     assert len(got_serial) == len(got_parallel) == 3
     for a, b in zip(got_serial, got_parallel, strict=True):
@@ -100,7 +101,7 @@ def test_the_parallel_jacobian_is_the_serial_jacobian():
     from dimos.robot.unitree.go2.sim.sysid.rollouts import Rollouts
 
     values = {**MEASURED.physics, "actuator_tau": MEASURED.actuator_tau}
-    with Rollouts(HARD, workers=3) as rollouts:
+    with Rollouts(HARD, MujocoBackend(), workers=3) as rollouts:
         st = rollouts.streams
         t_lo = max(float(st.lt[0]), float(st.ct[0]))
         segs = sample_segments(t_lo, t_lo + 12.0, n=2, length=(1.5, 2.5), seed=0)
@@ -125,8 +126,10 @@ def test_a_parallel_fit_is_the_serial_fit_bit_for_bit():
     plan = default_plan(KNOBS, search=("armature", "actuator_tau"))
     base = base_values("measured")
 
+    from dimos.robot.unitree.go2.sim.model import MujocoBackend
+
     def run_fit(workers: int):
-        with Rollouts(HARD, workers=workers) as rollouts:
+        with Rollouts(HARD, MujocoBackend(), workers=workers) as rollouts:
             st = rollouts.streams
             spans = regimes(st, read_declarations(HARD))
             t_lo = max(float(st.lt[0]), float(st.ct[0]))

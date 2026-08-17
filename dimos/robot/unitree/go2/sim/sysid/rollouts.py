@@ -26,8 +26,11 @@ restart-and-median argument rests on.
 
 Serial and parallel are BIT-IDENTICAL by construction: both paths run
 :func:`_eval`, byte for byte — a worker differs only in which process the pure
-function runs in. MuJoCo is not thread-safe on shared ``MjData``, hence
-processes, each compiling its own model (which
+function runs in. Workers receive the CONFIGURED BACKEND itself, pickled
+(a seam requirement — see :class:`~dimos.robot.unitree.go2.sim.backend
+.Backend`), so no engine is named here and a different simulator
+parallelises by construction. MuJoCo is not thread-safe on shared
+``MjData``, hence processes, each compiling its own model (which
 :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend` does per rollout
 anyway).
 """
@@ -40,15 +43,12 @@ from dataclasses import dataclass
 import multiprocessing
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.robot.unitree.go2.sim.backend import Backend
 from dimos.robot.unitree.go2.sim.sysid.ingest import Streams, read_streams
 from dimos.robot.unitree.go2.sim.sysid.replay import ReplayResult, replay
-
-if TYPE_CHECKING:
-    from dimos.robot.unitree.go2.sim.backend import Backend
 
 
 @dataclass(frozen=True)
@@ -86,20 +86,15 @@ def _eval(backend: Backend, st: Streams, spec: RolloutSpec) -> ReplayResult:
 
 
 # Worker-process state, set once by the initializer. One backend and one
-# Streams per process; every task recompiles its model, so nothing leaks
-# between tasks.
+# Streams per process; the backend arrives pickled from the parent, so
+# serial and worker rollouts run identically configured engines, and every
+# task recompiles its model, so nothing leaks between tasks.
 _WORKER: dict[str, object] = {}
 
 
-def _init_worker(recording: str, menagerie: str | None, envelope: str | None = None) -> None:
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
-    from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-
+def _init_worker(recording: str, backend: Backend) -> None:
     _WORKER["st"] = read_streams(recording)  # cache-warm: the parent read it first
-    _WORKER["backend"] = MujocoBackend(
-        Path(menagerie) if menagerie else None,
-        envelope=TORQUE_ENVELOPES[envelope] if envelope else None,
-    )
+    _WORKER["backend"] = backend
 
 
 def _eval_in_worker(spec: RolloutSpec) -> ReplayResult:
@@ -112,48 +107,27 @@ def _eval_in_worker(spec: RolloutSpec) -> ReplayResult:
 class Rollouts:
     """Evaluates rollout specs against one recording, serially or across processes.
 
-    ``workers <= 1`` runs in-process; more spawns that many worker processes
-    (spawned, not forked — a forked MuJoCo is a bug that looks like a
-    speedup). Results always come back in input order.
-
-    ``envelope`` names a measured torque envelope
-    (:data:`~dimos.robot.unitree.go2.sim.plant.TORQUE_ENVELOPES`) every
-    backend — serial and worker alike — applies in its actuator chain.
-    ``None`` (the default) keeps the ideal actuator, bit-identical to every
-    number scored before the parameter existed.
+    ``backend`` is the configured engine — an envelope-carrying
+    :class:`~dimos.robot.unitree.go2.sim.model.MujocoBackend`, an Isaac
+    backend, anything behind the seam. ``workers <= 1`` runs it in-process;
+    more spawns that many worker processes (spawned, not forked — a forked
+    MuJoCo is a bug that looks like a speedup), each receiving the SAME
+    backend by pickle. Results always come back in input order.
     """
 
     def __init__(
         self,
         recording: str | Path,
+        backend: Backend,
         *,
         workers: int = 1,
-        menagerie: Path | None = None,
-        envelope: str | None = None,
     ) -> None:
-        from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-
-        if envelope is not None and envelope not in TORQUE_ENVELOPES:
-            raise ValueError(f"unknown envelope {envelope!r}: {sorted(TORQUE_ENVELOPES)}")
         self.recording = Path(recording)
         self.workers = workers
-        self._menagerie = menagerie
-        self._envelope = envelope
         self.streams = read_streams(self.recording)  # also warms the cache for workers
-        self._backend: Backend | None = None
+        self._backend = backend
         self._pool: concurrent.futures.ProcessPoolExecutor | None = None
         self._lock = threading.Lock()  # run() is called from study threads
-
-    def _local_backend(self) -> Backend:
-        if self._backend is None:
-            from dimos.robot.unitree.go2.sim.model import MujocoBackend
-            from dimos.robot.unitree.go2.sim.plant import TORQUE_ENVELOPES
-
-            self._backend = MujocoBackend(
-                self._menagerie,
-                envelope=TORQUE_ENVELOPES[self._envelope] if self._envelope else None,
-            )
-        return self._backend
 
     def _ensure_pool(self) -> concurrent.futures.ProcessPoolExecutor:
         with self._lock:
@@ -162,11 +136,7 @@ class Rollouts:
                     max_workers=self.workers,
                     mp_context=multiprocessing.get_context("spawn"),
                     initializer=_init_worker,
-                    initargs=(
-                        str(self.recording),
-                        str(self._menagerie) if self._menagerie else None,
-                        self._envelope,
-                    ),
+                    initargs=(str(self.recording), self._backend),
                 )
         return self._pool
 
@@ -175,8 +145,7 @@ class Rollouts:
             # One in-process backend; the lock keeps concurrent study threads
             # from interleaving apply() and rollout() on it.
             with self._lock:
-                backend = self._local_backend()
-                return [_eval(backend, self.streams, s) for s in specs]
+                return [_eval(self._backend, self.streams, s) for s in specs]
         pool = self._ensure_pool()
         futures = [pool.submit(_eval_in_worker, s) for s in specs]
         return [f.result() for f in futures]

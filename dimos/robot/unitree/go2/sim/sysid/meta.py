@@ -116,6 +116,7 @@ GO2SIM_STYLE = OuterPoint("go2sim-style", stratified=True, normalised=True)
 def inner_fit(
     recording: str | Path,
     point: OuterPoint,
+    backend: ClosedLoopBackend,
     *,
     workers: int = 1,
     n_segments: int = 8,
@@ -131,13 +132,10 @@ def inner_fit(
     paired-SE harvest to exact ties; the restart median still pools across
     studies.
     """
-    from dimos.robot.unitree.go2.sim.model import MujocoBackend
-
-    backend = MujocoBackend()
     base = base_values("measured")
     plan = default_plan(backend.knobs())
     declared = read_declarations(recording)
-    rollouts = Rollouts(recording, workers=workers)
+    rollouts = Rollouts(recording, backend, workers=workers)
     st = rollouts.streams
     spans = regimes(st, declared)
     t_lo = max(float(st.lt[0]), float(st.ct[0]))
@@ -581,7 +579,12 @@ def run_outer(
             w_flight=trial.suggest_float("w_flight", 0.0, 1.0),
         )
         values, res = inner_fit(
-            fit_recording, point, workers=workers, trials=inner_trials, max_studies=max_studies
+            fit_recording,
+            point,
+            backend,
+            workers=workers,
+            trials=inner_trials,
+            max_studies=max_studies,
         )
         rep = ground_values(
             validation, policy, values, backend, name=point.name, noise=noise, floor_source=source

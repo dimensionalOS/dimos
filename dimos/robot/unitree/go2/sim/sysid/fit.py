@@ -681,7 +681,7 @@ def main() -> None:
 
     from dimos.robot.unitree.go2.sim.model import MujocoBackend
 
-    backend = MujocoBackend()
+    backend = MujocoBackend(envelope=TORQUE_ENVELOPES[args.envelope] if args.envelope else None)
     base = base_values(args.preset)
     robot = RobotSpec.from_json(args.robot) if args.robot else None
     search = tuple(args.search.split(",")) if args.search else None
@@ -696,7 +696,7 @@ def main() -> None:
     if suspended and args.weights is None:
         print("suspended recording: scoring joint on the suspended regime")
 
-    rollouts = Rollouts(args.recording, workers=args.workers, envelope=args.envelope)
+    rollouts = Rollouts(args.recording, backend, workers=args.workers)
     st = rollouts.streams
     spans = regimes(st, declared)
     t_lo = max(float(st.lt[0]), float(st.ct[0]))
@@ -823,7 +823,7 @@ def _held_out(
     comparison is honest because BOTH plants see the identical objective.
     """
     declared = read_declarations(args.held_out)
-    ho = Rollouts(args.held_out, workers=args.workers, envelope=args.envelope)
+    ho = Rollouts(args.held_out, backend, workers=args.workers)
     with ho:
         st = ho.streams
         spans = regimes(st, declared)

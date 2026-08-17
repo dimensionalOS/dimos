@@ -411,7 +411,7 @@ def main() -> None:
         f"{Path(args.recording).name}  {len(segs)} segments over t={t_lo:.1f}..{t_hi:.1f}s  "
         f"base {args.preset}  frac {args.frac}  channel {args.channel}"
     )
-    rollouts = Rollouts(args.recording, workers=args.workers) if args.workers > 1 else None
+    rollouts = Rollouts(args.recording, backend, workers=args.workers) if args.workers > 1 else None
     sens = jacobian(
         st,
         segs,
