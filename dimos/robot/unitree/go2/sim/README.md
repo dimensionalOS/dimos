@@ -519,6 +519,37 @@ alone (~50 min per point) — and its endpoints are ALREADY KNOWN
 1.52: an interior-optimum question, not a fresh measurement of the
 axis.
 
+**Both were RUN (2026-08-18), and both answered NO.** The sweep first:
+graded at 16 replicates on the fit recording, the axis is monotone toward
+pure accel (measured 1.77, λ=.75 2.40, λ=.5 2.83, λ=.25 2.87,
+joint-family 2.55, envelope-on; bare orders identically) — no interior
+optimum, best blend 2.4× the MDD behind. Then the full ten-trial outer
+study (TPE over `w_accel`/`w_dq`/`w_tau`, seeded with the incumbent, the
+partition and the sweep winner; selection on held-out 195401, fixed
+robot-repeat floor, `--replicates 16`), run as the confirmation test of
+the sweep's no-headroom prediction. It confirmed it, and sharpened it:
+
+- **Held-out, the axis is FLAT.** All ten verdicts span 2.47–3.63 bare;
+  the three seeds read 2.47/2.69/2.75 — within ~1× MDD of each other —
+  and no TPE exploration beat any seed. The sweep's clean in-sample
+  ordering does not survive the held-out recording.
+- **Refit stochasticity dominates judge weights.** The incumbent's OWN
+  objective, refit from scratch, grounds at 2.20 envelope-on against the
+  shipped plant's 1.79 on the same recording and floor — a 0.41 gap
+  (~1.6× MDD) with the weights IDENTICAL. The differences the outer axis
+  produces are smaller than the differences a reseeded fit produces.
+- **The shipped plant keeps its seat**, now against every judge weighting
+  the search can express: best refit under ANY weights, envelope-on,
+  2.20–2.26 (bare winner t01 and the incumbent-objective t00 swap places
+  under the envelope — tie either way) vs shipped 1.79.
+
+Consequence for effort allocation: the cheap lever is not the judge
+weights, it is DRAW SELECTION within a fit — the shipped plant is a
+favourable draw from its fit's region (§4a), and grounding a few draws
+to ship the best one buys more than any weighting scheme. The
+misspecification-DR spread over the study's tied trials is in the
+study's `--out` log (§ the losers are DR samples).
+
 Implementation is **nested Optuna**: an outer study over loop-1's
 hyperparameters, where evaluating one outer trial means running a whole inner
 study and scoring its winner on loop 2.
