@@ -123,16 +123,16 @@ The PX4 integration provides three runnable blueprints. `px4-basic` is the compl
 
 | Skill | Parameters | Purpose and prerequisites |
 |-------|------------|---------------------------|
-| `arm()` | None | Arm the motors; first verify that the flight area is safe and PX4 permits arming |
-| `disarm()` | None | Disarm the motors; call only after landing and when PX4 permits it |
-| `takeoff(altitude=3.0)` | `altitude`: height above the takeoff point in meters | Take off to the target height; normally call after `arm()` succeeds |
+| `arm()` | None | Arm the vehicle |
+| `disarm()` | None | Disarm the vehicle |
+| `takeoff(altitude=3.0)` | `altitude`: takeoff altitude in meters | Take off to the specified altitude |
 | `land()` | None | Land at the current position |
-| `enter_offboard()` | None | Send a zero-velocity setpoint and enter Offboard mode; must succeed before viewer direction controls are used |
+| `enter_offboard()` | None | Enter Offboard mode |
 | `exit_offboard()` | None | Exit Offboard mode |
-| `hold()` | None | Exit Offboard control and switch PX4 to Hold mode |
-| `move(forward=0, left=0, up=0, yaw_rate=0)` | Body-FLU velocity in m/s; counter-clockwise `yaw_rate` in rad/s | Set a body-frame velocity; requires Offboard mode |
-| `goto(north, east, down, yaw=0)` | Local-NED position in meters; clockwise `yaw` in degrees | Set a local position and heading target; requires Offboard mode and valid local position data |
-| `hover()` | None | Hold the latest local-NED position and heading; requires valid position data |
+| `hold()` | None | Enter position-hold mode |
+| `move(forward=0, left=0, up=0, yaw_rate=0)` | Body-FLU velocity in m/s; counter-clockwise `yaw_rate` in rad/s | Move briefly; repeat calls to continue moving; requires Offboard mode |
+| `goto(north, east, down, yaw=0)` | NED position in meters; clockwise `yaw` in degrees | Fly to the specified local position; requires Offboard mode |
+| `hover()` | None | Hover at the current position; requires Offboard mode |
 
 For example, run the following basic flight sequence in `dimos shell`. A successful RPC return means that the command was sent, not that the maneuver has completed, so check PX4 telemetry between steps. In particular, wait until the vehicle reaches a safe altitude and stabilizes before entering Offboard mode.
 

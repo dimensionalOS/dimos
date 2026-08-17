@@ -62,6 +62,7 @@ _UNKNOWN_COVARIANCE: Final[_VisionCovariance] = (float("nan"),)
 class FlightControllerConfig(ModuleConfig):
     connection_url: str = "serial:///dev/ttyTHS3:921600"
     connection_timeout_s: float = 10.0
+    move_watchdog_timeout_s: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +177,8 @@ class FlightController(Module):
         self._position_ned: tuple[float, float, float] | None = None
         self._yaw_deg: float | None = None
         self._telemetry_tasks: list[asyncio.Task[None]] = []
+        self._move_watchdog_task: asyncio.Task[None] | None = None
+        self._move_watchdog_lock = asyncio.Lock()
 
     def _auto_bind_handlers(self) -> None:
         """Bind only inputs connected by the selected PX4 blueprint."""
@@ -238,11 +241,18 @@ class FlightController(Module):
             VelocityBodyYawspeed(forward, -left, -up, -math.degrees(yaw_rate))
         )
 
+    async def _cancel_move_watchdog(self) -> None:
+        task = self._move_watchdog_task
+        self._move_watchdog_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     @skill(uses=[CAP_MOVEMENT])
     async def move(
         self, forward: float = 0.0, left: float = 0.0, up: float = 0.0, yaw_rate: float = 0.0
     ) -> str:
-        """Set a body-FLU velocity setpoint.
+        """Set a temporary body-FLU velocity, returning to zero when calls stop.
 
         Args:
             forward: Forward velocity in meters per second.
@@ -250,8 +260,28 @@ class FlightController(Module):
             up: Up velocity in meters per second.
             yaw_rate: Counter-clockwise yaw rate in radians per second.
         """
+        timeout = self.config.move_watchdog_timeout_s
+        if not math.isfinite(timeout) or timeout <= 0.0:
+            return "move failed: watchdog timeout must be a finite positive number"
+
+        async def _watchdog() -> None:
+            try:
+                await asyncio.sleep(timeout)
+                async with self._move_watchdog_lock:
+                    await self._set_body_velocity(0.0, 0.0, 0.0, 0.0)
+            except asyncio.CancelledError:
+                raise
+            except OffboardError as error:
+                logger.warning("PX4 rejected move watchdog stop: %s", error)
+            finally:
+                if asyncio.current_task() is self._move_watchdog_task:
+                    self._move_watchdog_task = None
+
         try:
-            await self._set_body_velocity(forward, left, up, yaw_rate)
+            async with self._move_watchdog_lock:
+                await self._set_body_velocity(forward, left, up, yaw_rate)
+                await self._cancel_move_watchdog()
+                self._move_watchdog_task = asyncio.create_task(_watchdog())
         except (ValueError, OffboardError) as error:
             return f"move failed: {error}"
         return "move command sent"
@@ -270,7 +300,9 @@ class FlightController(Module):
         if not all(math.isfinite(value) for value in values):
             return "goto failed: position and yaw must be finite"
         try:
-            await self._system.offboard.set_position_ned(PositionNedYaw(*values))
+            async with self._move_watchdog_lock:
+                await self._system.offboard.set_position_ned(PositionNedYaw(*values))
+                await self._cancel_move_watchdog()
         except OffboardError as error:
             return f"goto failed: {error}"
         return "goto command sent"
@@ -278,6 +310,7 @@ class FlightController(Module):
     @skill(uses=[CAP_MOVEMENT])
     async def enter_offboard(self) -> str:
         """Enter Offboard mode with a zero body-velocity setpoint."""
+        await self._cancel_move_watchdog()
         try:
             await self._system.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
             await self._system.offboard.start()
@@ -293,6 +326,7 @@ class FlightController(Module):
             await self._system.offboard.stop()
         except OffboardError as error:
             return f"exit offboard failed: {error}"
+        await self._cancel_move_watchdog()
         self._offboard_active = False
         return "offboard mode exited"
 
@@ -314,7 +348,9 @@ class FlightController(Module):
         if position is None or yaw is None:
             return "hover failed: local NED position and yaw are unavailable"
         try:
-            await self._system.offboard.set_position_ned(PositionNedYaw(*position, yaw))
+            async with self._move_watchdog_lock:
+                await self._system.offboard.set_position_ned(PositionNedYaw(*position, yaw))
+                await self._cancel_move_watchdog()
         except OffboardError as error:
             return f"hover failed: {error}"
         return "hover command sent"
@@ -385,9 +421,11 @@ class FlightController(Module):
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         try:
-            await self._set_body_velocity(
-                twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z
-            )
+            async with self._move_watchdog_lock:
+                await self._set_body_velocity(
+                    twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z
+                )
+                await self._cancel_move_watchdog()
         except (ValueError, OffboardError) as error:
             logger.warning("PX4 rejected cmd_vel: %s", error)
 
@@ -423,6 +461,7 @@ class FlightController(Module):
             self._yaw_deg = value.yaw_deg
 
     async def _stop_mavsdk(self) -> None:
+        await self._cancel_move_watchdog()
         system = getattr(self, "_system", None)
         if system is None:
             return

@@ -15,6 +15,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 import math
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -60,6 +61,8 @@ def flight_controller() -> Iterator[FlightController]:
 
 @pytest.fixture
 def controller(flight_controller: FlightController) -> Iterator[FlightController]:
+    _run(flight_controller, flight_controller._cancel_move_watchdog())
+    flight_controller.config.move_watchdog_timeout_s = 0.5
     flight_controller._system = _mock_system()
     flight_controller._connected = False
     flight_controller._armed = None
@@ -70,6 +73,7 @@ def controller(flight_controller: FlightController) -> Iterator[FlightController
     flight_controller._yaw_deg = None
     flight_controller._telemetry_tasks.clear()
     yield flight_controller
+    _run(flight_controller, flight_controller._cancel_move_watchdog())
     for task in flight_controller._telemetry_tasks:
         if not task.done():
             task.cancel()
@@ -108,9 +112,7 @@ def test_pointlio_odometry_builds_mavsdk_vision_estimate() -> None:
 
 
 def test_invalid_vision_covariance_uses_unknown_sentinel() -> None:
-    covariance = flight_control._transform_pose_covariance_to_frd(
-        (1.0,), (1.0, 0.0, 0.0, 0.0)
-    )
+    covariance = flight_control._transform_pose_covariance_to_frd((1.0,), (1.0, 0.0, 0.0, 0.0))
 
     assert len(covariance) == 1
     assert math.isnan(covariance[0])
@@ -173,6 +175,20 @@ def test_action_skill_reports_mavsdk_error(controller: FlightController) -> None
     assert result.startswith("arm failed: DENIED")
 
 
+@pytest.mark.parametrize("method", ("land", "hold"))
+def test_action_mode_changes_leave_move_watchdog_running(
+    controller: FlightController, method: str
+) -> None:
+    assert controller.move(forward=1.0) == "move command sent"
+    watchdog_task = controller._move_watchdog_task
+    assert watchdog_task is not None
+
+    getattr(controller, method)()
+
+    assert controller._move_watchdog_task is watchdog_task
+    assert not watchdog_task.done()
+
+
 def test_takeoff_validates_altitude_and_sends_both_commands(
     controller: FlightController,
 ) -> None:
@@ -198,12 +214,74 @@ def test_move_converts_flu_velocity_to_mavsdk_frd(controller: FlightController) 
         velocity.down_m_s,
         velocity.yawspeed_deg_s,
     ) == pytest.approx((1.0, -2.0, -3.0, -90.0))
+    assert controller._move_watchdog_task is not None
+
+
+def test_move_replaces_existing_watchdog(controller: FlightController) -> None:
+    first_result = controller.move(forward=1.0)
+    first_task = controller._move_watchdog_task
+    assert first_task is not None
+
+    second_result = controller.move(left=1.0)
+
+    assert first_result == second_result == "move command sent"
+    assert first_task.cancelled()
+    assert controller._move_watchdog_task is not None
+    assert controller._move_watchdog_task is not first_task
+
+
+def test_move_watchdog_stops_velocity(controller: FlightController, mocker: MockerFixture) -> None:
+    sleep_started = Event()
+
+    async def make_release_event() -> asyncio.Event:
+        return asyncio.Event()
+
+    release_watchdog = _run(controller, make_release_event())
+
+    async def expire_watchdog(timeout: float) -> None:
+        assert timeout == 0.5
+        sleep_started.set()
+        await release_watchdog.wait()
+
+    mocker.patch.object(flight_control.asyncio, "sleep", side_effect=expire_watchdog)
+
+    result = controller.move(forward=1.0)
+    assert sleep_started.wait(timeout=1.0)
+
+    async def wait_for_watchdog() -> None:
+        task = controller._move_watchdog_task
+        assert task is not None
+        release_watchdog.set()
+        await task
+
+    _run(controller, wait_for_watchdog())
+
+    assert result == "move command sent"
+    velocities = controller._system.offboard.set_velocity_body.await_args_list
+    assert len(velocities) == 2
+    stopped = velocities[-1].args[0]
+    assert (
+        stopped.forward_m_s,
+        stopped.right_m_s,
+        stopped.down_m_s,
+        stopped.yawspeed_deg_s,
+    ) == (0.0, 0.0, 0.0, 0.0)
+    assert controller._move_watchdog_task is None
 
 
 def test_move_rejects_non_finite_input(controller: FlightController) -> None:
     result = controller.move(forward=math.inf)
 
     assert result == "move failed: frame conversion inputs must be finite"
+    controller._system.offboard.set_velocity_body.assert_not_awaited()
+
+
+def test_move_rejects_invalid_watchdog_timeout(controller: FlightController) -> None:
+    controller.config.move_watchdog_timeout_s = 0.0
+
+    result = controller.move(forward=1.0)
+
+    assert result == "move failed: watchdog timeout must be a finite positive number"
     controller._system.offboard.set_velocity_body.assert_not_awaited()
 
 
@@ -225,12 +303,20 @@ def test_goto_validates_and_sends_ned_target(controller: FlightController) -> No
 def test_offboard_and_hover_follow_latest_telemetry(controller: FlightController) -> None:
     assert controller.hover() == ("hover failed: local NED position and yaw are unavailable")
 
+    assert controller.move(forward=1.0) == "move command sent"
+    enter_watchdog = controller._move_watchdog_task
+    assert enter_watchdog is not None
     assert controller.enter_offboard() == "offboard mode entered"
+    assert enter_watchdog.cancelled()
     assert controller._offboard_active is True
     controller._position_ned = (4.0, 5.0, -6.0)
     controller._yaw_deg = 30.0
     assert controller.hover() == "hover command sent"
+    assert controller.move(left=1.0) == "move command sent"
+    exit_watchdog = controller._move_watchdog_task
+    assert exit_watchdog is not None
     assert controller.exit_offboard() == "offboard mode exited"
+    assert exit_watchdog.cancelled()
     assert controller._offboard_active is False
 
     targets = controller._system.offboard.set_position_ned.await_args_list
@@ -246,10 +332,16 @@ def test_offboard_and_hover_follow_latest_telemetry(controller: FlightController
 def test_stream_handlers_forward_commands_and_reject_bad_odometry(
     controller: FlightController, mocker: MockerFixture
 ) -> None:
+    assert controller.move(forward=0.5) == "move command sent"
+    watchdog_task = controller._move_watchdog_task
+    assert watchdog_task is not None
+
     twist = Twist()
     twist.linear.x, twist.linear.y, twist.linear.z, twist.angular.z = (1.0, 2.0, 3.0, 0.5)
     _run(controller, controller.handle_cmd_vel(twist))
-    controller._system.offboard.set_velocity_body.assert_awaited_once()
+    assert watchdog_task.cancelled()
+    assert controller._move_watchdog_task is None
+    assert controller._system.offboard.set_velocity_body.await_count == 2
 
     invalid_odometry = mocker.Mock(frame_id="map", child_frame_id="mid360_link")
     _run(controller, controller.handle_odometry(invalid_odometry))
@@ -331,6 +423,9 @@ def test_stop_mavsdk_cancels_telemetry_and_resets_state(
 
     task = _run(controller, create_task())
     controller._telemetry_tasks = [task]
+    assert controller.move(forward=1.0) == "move command sent"
+    watchdog_task = controller._move_watchdog_task
+    assert watchdog_task is not None
     controller._connected = True
     controller._offboard_active = True
     controller._armed = True
@@ -340,6 +435,7 @@ def test_stop_mavsdk_cancels_telemetry_and_resets_state(
     _run(controller, controller._stop_mavsdk())
 
     assert task.cancelled()
+    assert watchdog_task.cancelled()
     system.offboard.stop.assert_awaited_once_with()
     assert controller.get_status() == {
         "connected": False,
