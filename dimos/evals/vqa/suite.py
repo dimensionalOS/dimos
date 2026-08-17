@@ -1,0 +1,128 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Standalone VQA dataset adapter for the shared evaluation runner."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from pathlib import Path, PurePosixPath
+from typing import Any, TypeVar, cast
+
+from dimos.evals.scorers import exact
+from dimos.evals.types import EvalCase, EvalResult, EvalRig, Suite
+from dimos.evals.vqa.generate import PrivateLabel, PublicCase
+from dimos.msgs.sensor_msgs.Image import Image
+
+Row = TypeVar("Row", PublicCase, PrivateLabel)
+
+
+@dataclass(frozen=True, kw_only=True)
+class VqaEvalCase(EvalCase):
+    """One standalone image question evaluated by the shared runner."""
+
+    image_path: Path
+    choices: tuple[str, ...]
+    expected: str
+
+    def evaluate(self, rig: EvalRig) -> EvalResult:
+        image = Image.from_file(self.image_path)
+        context = [] if rig.blind else cast("list[dict[str, Any]]", image.agent_encode())
+        prompt = (
+            f"{self.inputs}\nChoices: {json.dumps(self.choices)}\nAnswer with exactly one choice."
+        )
+        outputs = rig.ask(context, prompt)
+        answer = _parse_choice(outputs, self.choices)
+        return EvalResult(case_id=self.id, outputs=outputs, score=exact(self.expected, answer))
+
+    def preflight(self, rig: EvalRig) -> None:
+        if not self.image_path.is_file():
+            raise FileNotFoundError(f"VQA image does not exist: {self.image_path}")
+
+
+def _parse_choice(response: str, choices: tuple[str, ...]) -> str:
+    answer = response.strip().strip("`").strip().rstrip(".").strip()
+    if answer.casefold().startswith("answer:"):
+        answer = answer.split(":", 1)[1].strip()
+    answer = answer.strip("\"'")
+    matches = {choice.casefold(): choice for choice in choices}
+    try:
+        return matches[answer.casefold()]
+    except KeyError:
+        raise ValueError(f"response is not one of {choices}: {response[:80]!r}") from None
+
+
+def load_suite(dataset: Path) -> Suite:
+    """Load public cases, private labels, and images from a generated dataset."""
+    root = dataset.resolve()
+    cases = [PublicCase.model_validate(row) for row in _read_jsonl(root / "cases.jsonl")]
+    labels = [PrivateLabel.model_validate(row) for row in _read_jsonl(root / "labels.jsonl")]
+    if not cases:
+        raise ValueError(f"VQA dataset contains no cases: {root}")
+    case_by_id = _unique_by_id(cases, "case")
+    label_by_id = _unique_by_id(labels, "label")
+    if case_by_id.keys() != label_by_id.keys():
+        missing_labels = sorted(case_by_id.keys() - label_by_id.keys())
+        missing_cases = sorted(label_by_id.keys() - case_by_id.keys())
+        raise ValueError(
+            f"VQA case/label IDs do not match: missing_labels={missing_labels}, "
+            f"missing_cases={missing_cases}"
+        )
+
+    suite: list[VqaEvalCase] = []
+    for case in cases:
+        label = label_by_id[case.id]
+        if len(case.choices) < 2 or len(set(case.choices)) != len(case.choices):
+            raise ValueError(f"VQA case {case.id!r} requires at least two unique choices")
+        if label.answer not in case.choices:
+            raise ValueError(f"VQA label for {case.id!r} is not one of its choices")
+        suite.append(
+            VqaEvalCase(
+                id=case.id,
+                inputs=case.question,
+                image_path=_resolve_image(root, case.image),
+                choices=case.choices,
+                expected=label.answer,
+                tags=frozenset({"vqa"}),
+            )
+        )
+    return suite
+
+
+def _read_jsonl(path: Path) -> list[Any]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return [json.loads(line) for line in lines if line.strip()]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid VQA dataset file: {path}") from exc
+
+
+def _unique_by_id(rows: list[Row], name: str) -> dict[str, Row]:
+    by_id = {row.id: row for row in rows}
+    if len(by_id) != len(rows):
+        raise ValueError(f"VQA dataset contains duplicate {name} IDs")
+    return by_id
+
+
+def _resolve_image(root: Path, relative: str) -> Path:
+    path = PurePosixPath(relative)
+    if path.is_absolute() or not path.parts or ".." in path.parts:
+        raise ValueError(f"VQA image path must be dataset-relative: {relative!r}")
+    resolved = root.joinpath(*path.parts).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"VQA image path escapes the dataset: {relative!r}")
+    if not resolved.is_file():
+        raise FileNotFoundError(f"VQA image does not exist: {resolved}")
+    return resolved
