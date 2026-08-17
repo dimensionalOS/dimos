@@ -14,18 +14,17 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 import enum
 import inspect
 import os
 from pathlib import Path
-import threading
+import sqlite3
 import time
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import Field, field_validator
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -279,32 +278,9 @@ class RecorderConfig(MemoryModuleConfig):
     stream_codecs: dict[str, str] = Field(default_factory=dict)
     # Port names that inherently have no pose to anchor (command streams, etc.).
     poseless_streams: list[str] = Field(default_factory=list)
-    queue_maxsize: int = Field(default=1024, ge=1)
-    queue_overflow: Literal["drop_new"] = "drop_new"
-    drain_timeout: float = Field(default=30.0, gt=0)
-    drop_warning_interval: float = Field(default=5.0, ge=0)
 
 
 PoseSetter = Callable[[Any], "Awaitable[Pose | None]"]
-
-
-@dataclass
-class _RecorderMetrics:
-    received: int = 0
-    written: int = 0
-    queued: int = 0
-    dropped: int = 0
-    failed: int = 0
-
-
-@dataclass
-class _RecordItem:
-    name: str
-    stream: Stream[Any]
-    msg: Any
-    recv_ts: float
-    ts: float | None = None
-    resolve_pose: bool = True
 
 
 def pose_setter_for(*stream_names: str) -> Callable[[Any], Any]:
@@ -351,17 +327,6 @@ class Recorder(MemoryModule):
 
     _pose_setters: dict[str, Any] = {}
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._record_queue: asyncio.Queue[_RecordItem | None] | None = None
-        self._writer_task: asyncio.Task[None] | None = None
-        self._record_subscriptions: list[DisposableBase] = []
-        self._record_metrics: dict[str, _RecorderMetrics] = {}
-        self._writer_failures = 0
-        self._metrics_lock = threading.Lock()
-        self._accepting_records = False
-        self._last_drop_warning: dict[str, float] = {}
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -403,8 +368,6 @@ class Recorder(MemoryModule):
             logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
             return
 
-        self._start_record_queue()
-
         for name, port in self._data_ports().items():
             stream_name = self.config.stream_remapping.get(name, name)
             codec = self.config.stream_codecs.get(stream_name)
@@ -428,168 +391,27 @@ class Recorder(MemoryModule):
         already in world coords) fall back to ``config.default_frame_id`` —
         so every observation gets a robot-pose anchor when tf is publishing.
 
-        Each port feeds the recorder's bounded FIFO. A single writer task drains
-        that queue in arrival order and attaches poses before writing to SQLite.
+        Each port is recorded by an async callback dispatched on the module's
+        event loop via :meth:`process_observable`, which serialises invocations
+        and registers the subscription for cleanup on stop().
         """
 
-        def on_msg(msg: Any) -> None:
-            self._submit_record(_RecordItem(name, stream, msg, time.time()))
-
-        self._record_subscriptions.append(input_topic.pure_observable().subscribe(on_msg))
-
-    def _start_record_queue(self) -> None:
-        loop = self._loop
-        if loop is None or not loop.is_running():
-            raise RuntimeError(f"{type(self).__name__}._loop is not running")
-
-        async def bootstrap() -> tuple[asyncio.Queue[_RecordItem | None], asyncio.Task[None]]:
-            queue: asyncio.Queue[_RecordItem | None] = asyncio.Queue(
-                maxsize=self.config.queue_maxsize
-            )
-            self._record_queue = queue
-            return queue, asyncio.create_task(self._record_writer())
-
-        self._record_queue, self._writer_task = asyncio.run_coroutine_threadsafe(
-            bootstrap(), loop
-        ).result(timeout=5.0)
-        with self._metrics_lock:
-            self._accepting_records = True
-
-    def _submit_record(self, item: _RecordItem) -> None:
-        loop = self._loop
-        with self._metrics_lock:
-            metrics = self._record_metrics.setdefault(item.name, _RecorderMetrics())
-            metrics.received += 1
-            if not self._accepting_records or loop is None or not loop.is_running():
-                metrics.dropped += 1
-                self._warn_record_drop(item.name, metrics.dropped)
-                return
-            loop.call_soon_threadsafe(self._enqueue_record, item)
-
-    def _enqueue_record(self, item: _RecordItem) -> None:
-        queue = self._record_queue
-        if queue is None:
-            return
-        with self._metrics_lock:
-            metrics = self._record_metrics[item.name]
-            if queue.full():
-                metrics.dropped += 1
-                self._warn_record_drop(item.name, metrics.dropped)
-                return
-            queue.put_nowait(item)
-            metrics.queued += 1
-
-    def _warn_record_drop(self, name: str, dropped: int) -> None:
-        now = time.monotonic()
-        last = self._last_drop_warning.get(name, float("-inf"))
-        if now - last < self.config.drop_warning_interval:
-            return
-        self._last_drop_warning[name] = now
-        logger.warning(
-            "Recorder queue saturated; dropping new message for %s (dropped=%d, maxsize=%d)",
-            name,
-            dropped,
-            self.config.queue_maxsize,
-        )
-
-    async def _record_writer(self) -> None:
-        queue = self._record_queue
-        assert queue is not None
-        while True:
-            item = await queue.get()
-            if item is None:
-                queue.task_done()
-                return
-            with self._metrics_lock:
-                self._record_metrics[item.name].queued -= 1
-            try:
-                ts = item.ts if item.ts is not None else self._resolve_ts(item.name, item.msg)
-                pose = (
-                    await self._resolve_pose(item.name, item.msg, ts) if item.resolve_pose else None
+        async def on_msg(stamped: tuple[float, Any]) -> None:
+            recv_ts, msg = stamped
+            ts = self._resolve_ts(name, msg)
+            pose = await self._resolve_pose(name, msg, ts)
+            if not pose and name not in self.config.poseless_streams:
+                logger.warning(
+                    "[%s] No pose for time %s (msg ts: %s), storing without pose",
+                    name,
+                    ts,
+                    getattr(msg, "ts", None),
                 )
-                if not pose and item.resolve_pose and item.name not in self.config.poseless_streams:
-                    logger.warning(
-                        "[%s] No pose for time %s (msg ts: %s), storing without pose",
-                        item.name,
-                        ts,
-                        getattr(item.msg, "ts", None),
-                    )
-                item.stream.append(
-                    item.msg,
-                    ts=ts,
-                    pose=pose,
-                    tags={"reception_ts": item.recv_ts},
-                )
-                with self._metrics_lock:
-                    self._record_metrics[item.name].written += 1
-            except Exception:
-                with self._metrics_lock:
-                    self._record_metrics[item.name].failed += 1
-                    self._writer_failures += 1
-                logger.exception("Failed to record message for stream %s", item.name)
-            finally:
-                queue.task_done()
+            stream.append(msg, ts=ts, pose=pose, tags={"reception_ts": recv_ts})
 
-    @rpc
-    def recording_metrics(self) -> dict[str, dict[str, int]]:
-        """Return per-stream recorder queue and write counters."""
-        with self._metrics_lock:
-            return {
-                name: {
-                    "received": metrics.received,
-                    "written": metrics.written,
-                    "queued": metrics.queued,
-                    "dropped": metrics.dropped,
-                    "failed": metrics.failed,
-                }
-                for name, metrics in self._record_metrics.items()
-            }
-
-    @rpc
-    def stop(self) -> None:
-        if self.config.g.replay or self._record_queue is None:
-            super().stop()
-            return
-
-        for subscription in self._record_subscriptions:
-            subscription.dispose()
-        self._record_subscriptions.clear()
-        with self._metrics_lock:
-            self._accepting_records = False
-
-        loop = self._loop
-        if loop is None or not loop.is_running():
-            raise RuntimeError("Recorder event loop stopped before queued writes drained")
-
-        async def drain() -> None:
-            assert self._record_queue is not None
-            assert self._writer_task is not None
-            await self._record_queue.join()
-            await self._record_queue.put(None)
-            await self._writer_task
-
-        try:
-            asyncio.run_coroutine_threadsafe(drain(), loop).result(
-                timeout=self.config.drain_timeout
-            )
-        except TimeoutError as exc:
-            pending = sum(
-                metrics.received - metrics.written - metrics.dropped - metrics.failed
-                for metrics in self._record_metrics.values()
-            )
-            raise RuntimeError(
-                f"Recorder failed to drain {pending} queued messages within "
-                f"{self.config.drain_timeout}s; store left open"
-            ) from exc
-
-        if self._store is not None:
-            self._store.checkpoint()
-        failures = self._writer_failures
-        self._record_queue = None
-        self._writer_task = None
-        super().stop()
-        if failures:
-            raise RuntimeError(f"Recorder failed to write {failures} accepted messages")
+        # Stamp arrival time before the coalescing dispatch queue.
+        stamped = input_topic.pure_observable().pipe(ops.map(lambda msg: (time.time(), msg)))
+        self.process_observable(stamped, on_msg)
 
     def _prepare_streams(self) -> None:
         """On APPEND, drop the streams this recorder is about to (re)write — the
@@ -611,8 +433,6 @@ class Recorder(MemoryModule):
         """Pose to anchor *msg* with. Dispatches to the stream's (async)
         ``@pose_setter_for`` if one is defined, else falls back to a
         ``world <- frame_id`` tf lookup."""
-        if name in self.config.poseless_streams:
-            return None
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))
@@ -641,16 +461,11 @@ class Recorder(MemoryModule):
         tf_stream = self.store.stream("tf", TFMessage)
 
         def on_tf(msg: TFMessage) -> None:
-            for transform in msg.transforms:
-                self._submit_record(
-                    _RecordItem(
-                        "tf",
-                        tf_stream,
-                        TFMessage(transform),
-                        time.time(),
-                        ts=transform.ts,
-                        resolve_pose=False,
-                    )
-                )
+            try:
+                for transform in msg.transforms:
+                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+            except sqlite3.ProgrammingError:
+                # A late LCM callback raced teardown and hit the closed store.
+                pass
 
-        self._record_subscriptions.append(Disposable(self.tf.subscribe(on_tf)))
+        self.register_disposable(Disposable(self.tf.subscribe(on_tf)))

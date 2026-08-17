@@ -218,11 +218,6 @@ class SqliteStore(Store):
         self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_rtree"')
         self._registry.delete(name)
 
-    def checkpoint(self) -> None:
-        """Commit registry changes and checkpoint all WAL data to the database file."""
-        self._registry_conn.commit()
-        self._registry_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
     def stop(self) -> None:
         super().stop()
         self._registry_conn.close()
