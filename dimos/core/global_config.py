@@ -77,11 +77,11 @@ class GlobalConfig(BaseSettings):
     # Whether multicast scouting runs at all. zenoh_scouting only sets its reach.
     zenoh_multicast: bool = True
     # Whether peers propagate the peers they already know over established links.
-    # None follows zenoh_scouting, preserving its isolation contract above.
+    # None follows zenoh_scouting, so gossip stays off when scouting is off.
     zenoh_gossip: bool | None = None
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
-    zenoh_connect_timeout: float = 1.0
+    zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB

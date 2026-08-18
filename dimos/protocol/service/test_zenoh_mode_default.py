@@ -51,7 +51,6 @@ def test_a_session_can_be_opened_as_a_router(zenoh_defaults, monkeypatch):
     config = ZenohConfig(mode="router", listen=["tcp/127.0.0.1:17450"], connect=[])
     assert config.mode == "router"
     assert config.listen == ["tcp/127.0.0.1:17450"]
-    # An explicit empty list clears the endpoints robot_ip would have derived.
     assert config.connect == []
 
 
@@ -75,8 +74,7 @@ def test_listen_is_never_derived_from_global_config(zenoh_defaults, monkeypatch)
 
 
 def test_rebased_rederives_only_the_fields_the_caller_left_unset(zenoh_defaults, monkeypatch):
-    """Blueprints build configs before global config is settled, so unset
-    fields must follow the values in force at spawn time."""
+    """Unset fields must follow the global config values in force at spawn time."""
     pinned = ZenohConfig(mode="client")
     assert pinned.connect == []
 
