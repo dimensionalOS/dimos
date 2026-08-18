@@ -44,7 +44,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.preprocessing import CalibratedFrame
-    from dimos.evals.vqa.primitives.edgetam import ObjectRangeEstimator
+    from dimos.evals.vqa.primitives.range import ObjectRangeEstimator
 
 
 class GenerationRequest(BaseModel):
@@ -139,7 +139,8 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
         FrameGeometryUnavailableError,
         RecordingFramePreprocessor,
     )
-    from dimos.evals.vqa.primitives.edgetam import EdgeTamLidarRangeEstimator
+    from dimos.evals.vqa.primitives.edgetam import EdgeTamObjectMaskEstimator
+    from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
@@ -216,7 +217,7 @@ def generate_dataset(request: GenerationRequest) -> GenerationResult:
                 calibrated_frames(),
                 OpenAIQuestionAuthor(author_model),
                 detector,
-                EdgeTamLidarRangeEstimator(detector),
+                LidarRangeEstimator(EdgeTamObjectMaskEstimator(detector)),
                 model_names=model_names,
             )
     finally:
@@ -303,7 +304,7 @@ def _generate_frame(
     families = (
         AVAILABLE_FAMILIES
         if source.calibrated is not None and range_estimator is not None
-        else tuple(family for family in AVAILABLE_FAMILIES if family.name != "object_distance")
+        else tuple(family for family in AVAILABLE_FAMILIES if not family.requires_pointcloud)
     )
     proposals = _deduplicate_proposals(author.propose(image, families))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
@@ -320,7 +321,7 @@ def _generate_frame(
         except InsufficientEvidenceError as exc:
             audit_rows.append(
                 {
-                    "proposal": proposal.model_dump(mode="json"),
+                    "proposal": proposal.model_dump(mode="json", exclude_none=True),
                     "status": "rejected",
                     "reason": str(exc),
                 }
@@ -329,7 +330,7 @@ def _generate_frame(
             answered.append((proposal, answer))
             audit_rows.append(
                 {
-                    "proposal": proposal.model_dump(mode="json"),
+                    "proposal": proposal.model_dump(mode="json", exclude_none=True),
                     "status": "answered",
                     "answer": answer.model_dump(mode="json"),
                 }
@@ -361,7 +362,13 @@ def _generate_frame(
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
     unique: list[QuestionProposal] = []
+    closest_object_sets: set[frozenset[str]] = set()
     for proposal in proposals:
+        if proposal.family == "closest_object":
+            object_set = frozenset(name.casefold() for name in proposal.object_names)
+            if object_set in closest_object_sets:
+                continue
+            closest_object_sets.add(object_set)
         if proposal not in unique:
             unique.append(proposal)
     return tuple(unique)
@@ -371,7 +378,8 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
     counts: dict[str, int] = {}
     identifiers: list[str] = []
     for proposal in proposals:
-        object_id = re.sub(r"[^a-z0-9]+", "-", proposal.object_name.casefold()).strip("-")
+        object_names = "-vs-".join(proposal.object_names)
+        object_id = re.sub(r"[^a-z0-9]+", "-", object_names.casefold()).strip("-")
         base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
         count = counts.get(base, 0) + 1
         counts[base] = count
