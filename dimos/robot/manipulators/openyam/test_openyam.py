@@ -40,6 +40,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -113,6 +114,13 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
     assert limits is not None
     assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
     assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+
+
+def test_quest_teleop_module_accepts_blueprint_config() -> None:
+    kwargs = _module_kwargs(teleop_quest_openyam, ArmTeleopModule)
+
+    module = ArmTeleopModule(**kwargs)
+    module.stop()
 
 
 @pytest.mark.parametrize(
