@@ -174,6 +174,29 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
+def _spawn_env(extra_env: dict[str, str]) -> dict[str, str]:
+    """Environment for the native subprocess."""
+    env = {**os.environ, **extra_env}
+
+    # set transport so native modules know which one to spawn
+    env["DIMOS_TRANSPORT"] = global_config.transport
+
+    # Native zenoh sessions scout on their own; on multicast-filtering
+    # LANs they never find the robot. Hand them the same explicit dial
+    # endpoints the python sessions use.
+    from dimos.protocol.service.zenohservice import _default_connect_endpoints
+
+    endpoints = _default_connect_endpoints()
+    if endpoints:
+        env["DIMOS_ZENOH_CONNECT"] = ",".join(endpoints)
+
+    # set Rust logging to match Python level
+    env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+        os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+    )
+    return env
+
+
 class NativeModule(Module):
     """
     Module that wraps a native executable as a managed subprocess.
@@ -241,24 +264,9 @@ class NativeModule(Module):
 
         # Built before the spawn: a config that cannot be serialized must fail
         # without leaving a child blocked on a stdin line it will never get.
-        stdin_blob: bytes | None = None
-        if self.config.stdin_config:
-            config_dict = self.config.to_config_dict()
-            blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
-            qos = self._collect_output_qos()
-            if qos:
-                blob["qos"] = qos
-            stdin_blob = json.dumps(blob).encode() + b"\n"
+        stdin_blob = self._stdin_blob(topics)
 
-        env = {**os.environ, **self.config.extra_env}
-
-        # set transport so native modules know which one to spawn
-        env["DIMOS_TRANSPORT"] = global_config.transport
-
-        # set Rust logging to match Python level
-        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
-            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
-        )
+        env = _spawn_env(self.config.extra_env)
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
@@ -472,6 +480,17 @@ class NativeModule(Module):
             executable=str(exe),
             duration_sec=round(build_elapsed, 3),
         )
+
+    def _stdin_blob(self, topics: dict[str, str]) -> bytes | None:
+        """The single JSON line the native process reads its wiring from."""
+        if not self.config.stdin_config:
+            return None
+        config_dict = self.config.to_config_dict()
+        blob: dict[str, Any] = {"topics": topics, "config": config_dict or None}
+        qos = self._collect_output_qos()
+        if qos:
+            blob["qos"] = qos
+        return json.dumps(blob).encode() + b"\n"
 
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
