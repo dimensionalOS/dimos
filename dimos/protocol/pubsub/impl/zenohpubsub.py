@@ -290,13 +290,9 @@ class Zenoh(  # type: ignore[misc]
 ):
     """Zenoh pub/sub with LCM encoding for typed DimosMsg."""
 
-    ...
-
 
 class PickleZenoh(
     PickleEncoderMixin,  # type: ignore[type-arg]
     ZenohPubSubBase,
 ):
     """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
-
-    ...

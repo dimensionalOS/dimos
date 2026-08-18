@@ -67,7 +67,6 @@ class MockController:
 
     def stop(self) -> None:
         """Stop method to satisfy InputController protocol."""
-        pass
 
 
 def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:

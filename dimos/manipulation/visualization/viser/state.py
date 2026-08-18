@@ -174,7 +174,7 @@ class PanelState:
     def can_execute(self, action_status: ActionStatus | None = None) -> bool:
         plan = self.plan_state
         effective_action_status = action_status or self.action_status
-        if not (
+        return (
             self.runtime == PanelRuntime.RUNNING
             and self.backend_status == BackendConnectionStatus.READY
             and effective_action_status == ActionStatus.IDLE
@@ -184,9 +184,7 @@ class PanelState:
             and plan.plan is not None
             and plan.group_ids == self.selected_group_ids
             and plan.target_sequence_id == self.latest_sequence_id
-        ):
-            return False
-        return True
+        )
 
     @property
     def connected(self) -> bool:

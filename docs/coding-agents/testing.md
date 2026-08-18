@@ -15,14 +15,16 @@ All imports must be at module level, not inside test functions.
 def test_something() -> None:
     import threading
     from dimos.core.transport import pLCMTransport
+
     ...
+
 
 # GOOD
 import threading
 from dimos.core.transport import pLCMTransport
 
-def test_something() -> None:
-    ...
+
+def test_something() -> None: ...
 ```
 
 ## Always clean up resources
@@ -36,6 +38,7 @@ def test_something() -> None:
     store.start()
     assert store.count(StreamQuery()) == 0
 
+
 # BAD - module.stop() skipped if assertion fails
 def test_wiring() -> None:
     module = MyModule()
@@ -43,11 +46,13 @@ def test_wiring() -> None:
     assert received == [84]
     module.stop()
 
+
 # GOOD - context manager (ideal)
 def test_something() -> None:
     store = ListObservationStore(name="test", max_size=0)
     with store:
         assert store.count(StreamQuery()) == 0
+
 
 # GOOD - try/finally
 def test_wiring() -> None:
