@@ -79,6 +79,12 @@ dimos dataprep build \
 
 # HDF5 instead
 dimos dataprep build -s <session.db> -c <config.json> -f hdf5
+
+# Physical OpenYam + Quest + /dev/video0 wrist camera
+dimos run learning-collect-quest-openyam --can-port can0
+dimos dataprep build \
+  --source <session_openyam.db> \
+  --config dimos/imitation/dataprep/openyam_lerobot.json
 ```
 
 `--source` / `--output` / `--format` override whatever the config specifies, so
