@@ -31,6 +31,7 @@ from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     Sample,
+    Writer,
     extract_episodes,
     get_inspector,
     get_writer,
@@ -73,7 +74,7 @@ def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list
         json.dump(meta, f, indent=2, default=str)
 
 
-def run_dataprep(config: DataPrepConfig) -> Path:
+def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Path:
     """Build a dataset from a recording and return the dataset path.
 
     Opens the source store, extracts episodes, streams samples through the
@@ -122,7 +123,7 @@ def run_dataprep(config: DataPrepConfig) -> Path:
             sorted(action_keys),
             config.sync.model_dump(),
         )
-        writer = get_writer(config.output.format)
+        selected_writer = writer or get_writer(config.output.format)
         # fps drives written timestamps + video rate, so tie it to the resample
         # rate; an explicit metadata.fps still wins.
         output = config.output
@@ -163,7 +164,7 @@ def run_dataprep(config: DataPrepConfig) -> Path:
                     produced.append(ep)
                 episodes_done += 1
 
-        dataset_path = Path(writer(_all_samples(), output))
+        dataset_path = Path(selected_writer(_all_samples(), output))
         written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
         _write_dimos_meta(dataset_path, config, written)
         logger.info(
