@@ -7,7 +7,7 @@ name = "dimos-lerobot-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "lerobot==0.6.0",
+    "lerobot[dataset]==0.6.0",
     "opencv-contrib-python>=4.8,<5",
     "transformers[torch]>=5.4,<5.6",
 ]

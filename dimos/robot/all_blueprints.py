@@ -87,6 +87,7 @@ all_blueprints = {
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:keyboard_teleop_piper",
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
+    "learning-collect-quest-openyam": "dimos.imitation.collection.blueprint:learning_collect_quest_openyam",
     "learning-collect-webxr-piper": "dimos.imitation.collection.blueprint:learning_collect_webxr_piper",
     "learning-collect-webxr-xarm7": "dimos.imitation.collection.blueprint:learning_collect_webxr_xarm7",
     "lite6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:lite6_planner_coordinator",

@@ -389,7 +389,10 @@ def iter_episode_samples(
 def get_writer(format_name: str) -> Writer:
     """Lazy-import the format writer's `write` function."""
     if format_name == "lerobot":
-        from dimos.imitation.dataprep.formats.lerobot.writer import write
+        raise RuntimeError(
+            "LeRobot conversion requires its isolated environment; "
+            "run it through `dimos dataprep build`"
+        )
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.writer import write
     else:
