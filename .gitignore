@@ -94,5 +94,3 @@ yolo11n*.pt
 # Generic ignore patterns
 *.ignore
 *.ignore.*
-.evo/
-.pytest_cache/

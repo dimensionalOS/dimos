@@ -118,16 +118,18 @@ not a class:
 from dimos.evals.scorers import choice, exact, first_number, ramp, within, yes_no
 
 print(exact("yes", "yes"), within(2.0)(10.0, 11.0), ramp(1.0, band=2.0))
-print(first_number("around 12.5 m"), yes_no("Yes, clearly."), choice(" Chairs. "))
+print(first_number("around 12.5 m"), yes_no("Yes, clearly."))
+print(choice(["north", "northeast"])("it drifted north, then northeast"))
 ```
 
 ```results
 1.0 0.5 0.5
-12.5 yes chairs
+12.5 yes
+northeast
 ```
 
-- `exact` — equality (the default). Pair with a parser (`yes_no`, `choice`,
-  `int`) so formatting noise doesn't fail a correct answer.
+- `exact` — equality (the default). Pair with a parser (`yes_no`,
+  `choice(options)`, `int`) so formatting noise doesn't fail a correct answer.
 - `within(band)` — graded numeric credit: 1.0 exact, 0.5 halfway, 0 outside.
 - `ramp(distance, band)` — same ramp over meters; msg types support
   arithmetic, so physical scorers stay one-liners:
