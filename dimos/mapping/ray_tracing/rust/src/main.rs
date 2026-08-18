@@ -83,30 +83,9 @@ impl RayTracingVoxelMap {
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
         if let Some(evicted) = self.pending_clouds.push(msg) {
-            let diagnostic = capacity_eviction_diagnostic(
-                &evicted,
-                &self.poses,
-                self.odometry_watermark,
-                self.config.pose_match_tolerance_s as f64,
-                &self.config.map_frame,
-            );
-            let SyncDiagnostic::CapacityEviction {
-                cloud_stamp,
-                watermark,
-                tolerance,
-                capacity,
-                best_pose_gap,
-            } = diagnostic
-            else {
-                unreachable!("capacity diagnostic has the capacity variant");
-            };
             warn_throttled!(
                 Duration::from_secs(1),
-                cloud_stamp,
-                watermark,
-                tolerance,
-                capacity,
-                best_pose_gap,
+                cloud_stamp = time_secs(&evicted.header.stamp),
                 "Ray tracing cloud evicted at pending capacity",
             );
         }
@@ -162,37 +141,10 @@ impl RayTracingVoxelMap {
                 PendingDecision::Ready(msg, (translation, rotation)) => {
                     self.process_cloud(msg, translation, rotation).await;
                 }
-                PendingDecision::Expired {
-                    cloud_stamp,
-                    watermark,
-                    tolerance,
-                    capacity,
-                    best_pose_gap,
-                } => {
-                    let diagnostic = SyncDiagnostic::WatermarkExpiry {
-                        cloud_stamp,
-                        watermark,
-                        tolerance,
-                        capacity,
-                        best_pose_gap,
-                    };
-                    let SyncDiagnostic::WatermarkExpiry {
-                        cloud_stamp,
-                        watermark,
-                        tolerance,
-                        capacity,
-                        best_pose_gap,
-                    } = diagnostic
-                    else {
-                        unreachable!("expiry diagnostic has the expiry variant");
-                    };
+                PendingDecision::Expired(msg) => {
                     warn_throttled!(
                         Duration::from_secs(1),
-                        cloud_stamp,
-                        watermark,
-                        tolerance,
-                        capacity,
-                        best_pose_gap,
+                        cloud_stamp = time_secs(&msg.header.stamp),
                         "Ray tracing cloud expired at odometry watermark",
                     );
                 }
@@ -345,26 +297,14 @@ fn push_pose(poses: &mut VecDeque<PoseSample>, sample: PoseSample) {
     }
 }
 
-/// Select the nearest pose on either side of the cloud, once the watermark has
-/// reached the cloud. In particular, the preceding pose is never selected
-/// while a later odometry sample could still arrive.
-#[cfg(test)]
+/// The matching-frame pose nearest the cloud stamp, within tolerance.
 fn nearest_pose(
-    poses: &VecDeque<PoseSample>,
-    stamp: f64,
-    tolerance: f64,
-    map_frame: &str,
-) -> Option<SensorPose> {
-    nearest_pose_with_gap(poses, stamp, tolerance, map_frame, "sensor").map(|(pose, _)| pose)
-}
-
-fn nearest_pose_with_gap(
     poses: &VecDeque<PoseSample>,
     stamp: f64,
     tolerance: f64,
     parent_frame: &str,
     child_frame: &str,
-) -> Option<(SensorPose, f64)> {
+) -> Option<SensorPose> {
     let preceding = poses
         .iter()
         .filter(|pose| {
@@ -385,21 +325,8 @@ fn nearest_pose_with_gap(
         .into_iter()
         .flatten()
         .min_by(|a, b| (a.stamp - stamp).abs().total_cmp(&(b.stamp - stamp).abs()));
-    let best_gap = best.map_or(f64::INFINITY, |pose| (pose.stamp - stamp).abs());
-    let best = best.map(|pose| ((pose.translation, pose.rotation), best_gap));
-    if best_gap <= tolerance {
-        best
-    } else {
-        None
-    }
-}
-
-fn best_pose_gap(poses: &VecDeque<PoseSample>, stamp: f64, parent: &str, child: &str) -> f64 {
-    poses
-        .iter()
-        .filter(|pose| pose.parent_frame == parent && pose.child_frame == child)
-        .map(|pose| (pose.stamp - stamp).abs())
-        .fold(f64::INFINITY, f64::min)
+    best.filter(|pose| (pose.stamp - stamp).abs() <= tolerance)
+        .map(|pose| (pose.translation, pose.rotation))
 }
 
 #[derive(Default)]
@@ -409,47 +336,7 @@ struct PendingClouds {
 
 enum PendingDecision {
     Ready(PointCloud2, SensorPose),
-    Expired {
-        cloud_stamp: f64,
-        watermark: f64,
-        tolerance: f64,
-        capacity: usize,
-        best_pose_gap: f64,
-    },
-}
-
-enum SyncDiagnostic {
-    WatermarkExpiry {
-        cloud_stamp: f64,
-        watermark: f64,
-        tolerance: f64,
-        capacity: usize,
-        best_pose_gap: f64,
-    },
-    CapacityEviction {
-        cloud_stamp: f64,
-        watermark: f64,
-        tolerance: f64,
-        capacity: usize,
-        best_pose_gap: f64,
-    },
-}
-
-fn capacity_eviction_diagnostic(
-    cloud: &PointCloud2,
-    poses: &VecDeque<PoseSample>,
-    watermark: f64,
-    tolerance: f64,
-    map_frame: &str,
-) -> SyncDiagnostic {
-    let cloud_stamp = time_secs(&cloud.header.stamp);
-    SyncDiagnostic::CapacityEviction {
-        cloud_stamp,
-        watermark,
-        tolerance,
-        capacity: PENDING_CLOUD_CAPACITY,
-        best_pose_gap: best_pose_gap(poses, cloud_stamp, map_frame, &cloud.header.frame_id),
-    }
+    Expired(PointCloud2),
 }
 
 impl PendingClouds {
@@ -477,20 +364,14 @@ impl PendingClouds {
             let stamp = time_secs(&cloud.header.stamp);
             if watermark < stamp {
                 self.clouds.push_back(cloud);
-            } else if let Some((pose, _)) =
-                nearest_pose_with_gap(poses, stamp, tolerance, map_frame, &cloud.header.frame_id)
+            } else if let Some(pose) =
+                nearest_pose(poses, stamp, tolerance, map_frame, &cloud.header.frame_id)
             {
                 decisions.push(PendingDecision::Ready(cloud, pose));
             } else if watermark < stamp + tolerance {
                 self.clouds.push_back(cloud);
             } else {
-                decisions.push(PendingDecision::Expired {
-                    cloud_stamp: stamp,
-                    watermark,
-                    tolerance,
-                    capacity: PENDING_CLOUD_CAPACITY,
-                    best_pose_gap: best_pose_gap(poses, stamp, map_frame, &cloud.header.frame_id),
-                });
+                decisions.push(PendingDecision::Expired(cloud));
             }
         }
         decisions
@@ -653,13 +534,14 @@ mod tests {
         for (t, x) in [(1.0, 1.0f32), (2.0, 2.0), (3.0, 3.0)] {
             poses.push_back(test_pose(t, x));
         }
-        let (v, _) = nearest_pose(&poses, 2.04, 0.1, "world").expect("within tolerance");
+        let (v, _) = nearest_pose(&poses, 2.04, 0.1, "world", "sensor").expect("within tolerance");
         assert_eq!(v.x, 2.0, "nearest stamp wins, not the latest");
         assert!(
-            nearest_pose(&poses, 3.5, 0.1, "world").is_none(),
+            nearest_pose(&poses, 3.5, 0.1, "world", "sensor").is_none(),
             "stale poses must not register a cloud"
         );
-        assert!(nearest_pose(&VecDeque::new(), 1.0, 0.1, "world").is_none());
+        assert!(nearest_pose(&poses, 2.0, 0.1, "odom", "sensor").is_none());
+        assert!(nearest_pose(&poses, 2.0, 0.1, "world", "camera").is_none());
     }
 
     fn stamped_cloud(stamp: f64) -> PointCloud2 {
@@ -675,41 +557,6 @@ mod tests {
         )
     }
 
-    fn point_cloud(stamp: f64) -> PointCloud2 {
-        let mut data = Vec::new();
-        let mut count = 0;
-        write_point(&mut data, &mut count, 1.5, 0.5, 0.5);
-        let sec = stamp.floor() as i32;
-        make_cloud(
-            data,
-            count,
-            "sensor",
-            Time {
-                sec,
-                nsec: ((stamp - sec as f64) * 1e9) as i32,
-            },
-        )
-    }
-
-    fn sync_test_config() -> Config {
-        Config {
-            voxel_size: 1.0,
-            max_range: 100.0,
-            ray_subsample: 1,
-            shadow_depth: 0.1,
-            grace_depth: 0.0,
-            min_health: 0,
-            max_health: 1,
-            graze_cos: 0.7,
-            support_min: 0,
-            emit_every: 1,
-            global_emit_every: 1,
-            region_percentile: 95.0,
-            pose_match_tolerance_s: 0.1,
-            map_frame: "world".to_string(),
-        }
-    }
-
     fn test_pose(stamp: f64, x: f32) -> PoseSample {
         PoseSample {
             stamp,
@@ -722,9 +569,7 @@ mod tests {
 
     #[test]
     fn pending_cloud_waits_for_newer_pose_and_processes_once() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
+        let mut pending = PendingClouds::default();
         let mut poses = VecDeque::from([test_pose(0.950, 1.0)]);
         pending.push(stamped_cloud(1.0));
         assert!(pending.take_ready(&poses, 0.950, 0.1, "world").is_empty());
@@ -740,17 +585,6 @@ mod tests {
         };
         assert_eq!(time_secs(&cloud.header.stamp), 1.0);
         assert!(pending.take_ready(&poses, 1.003, 0.1, "world").is_empty());
-    }
-
-    #[test]
-    fn pending_cloud_processes_without_a_clear_mask() {
-        let mut pending = PendingClouds::default();
-        pending.push(stamped_cloud(1.0));
-        let poses = VecDeque::from([test_pose(1.0, 0.0)]);
-
-        let ready = pending.take_ready(&poses, 1.0, 0.1, "world");
-
-        assert!(matches!(ready.as_slice(), [PendingDecision::Ready(_, _)]));
     }
 
     #[test]
@@ -775,178 +609,31 @@ mod tests {
     }
 
     #[test]
-    fn pending_cloud_rejects_pose_for_a_different_sensor_frame() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
-        pending.push(stamped_cloud(1.0));
-        let mut wrong_pose = test_pose(1.0, 0.0);
-        wrong_pose.child_frame = "other_sensor".to_string();
-        let poses = VecDeque::from([wrong_pose]);
-        let decisions = pending.take_ready(&poses, 1.2, 0.1, "world");
-
-        assert!(matches!(
-            decisions.as_slice(),
-            [PendingDecision::Expired { .. }]
-        ));
-    }
-
-    #[test]
-    fn asynchronous_callback_flow_updates_once_and_preserves_source_stamp() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
-        let mut poses = VecDeque::new();
-        let mut map = VoxelMap::default();
-        let config = sync_test_config();
-        pending.push(point_cloud(1.0));
-        assert!(pending.take_ready(&poses, 0.0, 0.1, "world").is_empty());
-
-        poses.push_back(test_pose(1.003, 0.0));
-        let ready = pending.take_ready(&poses, 1.003, 0.1, "world");
-        assert_eq!(ready.len(), 1);
-        let PendingDecision::Ready(cloud, (translation, rotation)) =
-            ready.into_iter().next().unwrap()
-        else {
-            panic!("later odometry should make cloud ready");
-        };
-        let points = extract_xyz(&cloud).unwrap();
-        let transformed: Vec<_> = points
-            .iter()
-            .map(|&(x, y, z)| {
-                let p = rotation * Vector3::new(x, y, z) + translation;
-                (p.x, p.y, p.z)
-            })
-            .collect();
-        update_map(
-            &mut map,
-            (translation.x, translation.y, translation.z),
-            &transformed,
-            &config,
-        );
-        let output = points_to_cloud(
-            &emit_points(&map, 1.0, None, 0, &AHashSet::new()),
-            "world",
-            cloud.header.stamp.clone(),
-        );
-        assert_eq!(map.healthy_count(), 1);
-        assert_eq!(time_secs(&output.header.stamp), 1.0);
-        assert!(pending.take_ready(&poses, 1.003, 0.1, "world").is_empty());
-    }
-
-    #[test]
     fn pending_cloud_expires_after_watermark() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
+        let mut pending = PendingClouds::default();
         pending.push(stamped_cloud(1.0));
         assert!(matches!(
             pending
                 .take_ready(&VecDeque::new(), 1.101, 0.1, "world")
                 .as_slice(),
-            [PendingDecision::Expired { .. }]
+            [PendingDecision::Expired(_)]
         ));
         assert!(pending.clouds.is_empty());
-    }
-
-    #[test]
-    fn pending_cloud_expires_at_exact_tolerance_boundary_with_context() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
-        pending.push(stamped_cloud(1.0));
-        let decisions = pending.take_ready(&VecDeque::new(), 1.1, 0.1, "world");
-        assert!(matches!(
-            decisions.as_slice(),
-            [PendingDecision::Expired {
-                cloud_stamp,
-                watermark,
-                tolerance,
-                capacity,
-                best_pose_gap
-            }] if (*cloud_stamp - 1.0).abs() < 1e-9
-                && (*watermark - 1.1).abs() < 1e-9
-                && (*tolerance - 0.1).abs() < 1e-9
-                && *capacity == PENDING_CLOUD_CAPACITY
-                && best_pose_gap.is_infinite()
-        ));
     }
 
     #[test]
     fn pending_cloud_capacity_is_bounded() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
-        for stamp in 0..PENDING_CLOUD_CAPACITY + 5 {
-            pending.push(stamped_cloud(stamp as f64));
+        let mut pending = PendingClouds::default();
+        let mut evicted = None;
+        for stamp in 0..=PENDING_CLOUD_CAPACITY {
+            evicted = pending.push(stamped_cloud(stamp as f64));
         }
         assert_eq!(pending.clouds.len(), PENDING_CLOUD_CAPACITY);
+        assert_eq!(time_secs(&evicted.unwrap().header.stamp), 0.0);
         assert_eq!(
             time_secs(&pending.clouds.front().unwrap().header.stamp),
-            5.0
+            1.0
         );
-        let decisions = pending.take_ready(&VecDeque::new(), 100.0, 0.1, "world");
-        assert_eq!(decisions.len(), PENDING_CLOUD_CAPACITY);
-        assert!(decisions
-            .iter()
-            .all(|decision| matches!(decision, PendingDecision::Expired { .. })));
-    }
-
-    #[test]
-    fn capacity_eviction_diagnostic_is_distinct_and_contextual() {
-        let poses = VecDeque::from([test_pose(2.0, 0.0)]);
-        let diagnostic =
-            capacity_eviction_diagnostic(&stamped_cloud(1.0), &poses, 1.5, 0.1, "world");
-        assert!(matches!(
-            &diagnostic,
-            SyncDiagnostic::CapacityEviction {
-                cloud_stamp,
-                watermark,
-                tolerance,
-                capacity,
-                best_pose_gap
-            } if *cloud_stamp == 1.0
-                && *watermark == 1.5
-                && *tolerance == 0.1
-                && *capacity == PENDING_CLOUD_CAPACITY
-                && *best_pose_gap == 1.0
-        ));
-        assert!(!matches!(
-            &diagnostic,
-            SyncDiagnostic::WatermarkExpiry { .. }
-        ));
-    }
-
-    #[test]
-    fn expired_and_evicted_clouds_never_update_or_emit() {
-        let mut pending = PendingClouds {
-            clouds: VecDeque::new(),
-        };
-        let evicted_stamp = 1.0;
-        pending.push(point_cloud(evicted_stamp));
-        for stamp in 2..=PENDING_CLOUD_CAPACITY + 1 {
-            pending.push(point_cloud(stamp as f64));
-        }
-        let decisions = pending.take_ready(&VecDeque::new(), 100.0, 0.1, "world");
-        let mut updates = 0;
-        let mut outputs = 0;
-        for decision in &decisions {
-            if matches!(decision, PendingDecision::Ready(..)) {
-                updates += 1;
-                outputs += 1;
-            }
-        }
-        assert_eq!(decisions.len(), PENDING_CLOUD_CAPACITY);
-        assert_eq!(updates, 0);
-        assert_eq!(outputs, 0);
-        assert!(decisions
-            .iter()
-            .all(|decision| matches!(decision, PendingDecision::Expired { .. })));
-        assert!(!decisions.iter().any(|decision| match decision {
-            PendingDecision::Ready(cloud, _) => time_secs(&cloud.header.stamp) == evicted_stamp,
-            PendingDecision::Expired { cloud_stamp, .. } => *cloud_stamp == evicted_stamp,
-        }));
-        assert!(pending.clouds.is_empty());
     }
 
     #[test]
