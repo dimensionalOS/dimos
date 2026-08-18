@@ -50,6 +50,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.cli.cache import app as cache_app
+from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -178,6 +179,9 @@ main.add_typer(hardware_app, name="hardware")
 main.add_typer(piper_app, name="piper")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
+main.command("login")(cloud_login)
+main.command("logout")(cloud_logout)
+main.command("whoami")(cloud_whoami)
 
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
