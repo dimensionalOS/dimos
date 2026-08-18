@@ -12,16 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 import json
 from pathlib import Path
 import time
 from typing import Any
+import urllib.error
+import urllib.request
 
 import pytest
 import typer
 
 from dimos.cli import cloud
 from dimos.core.global_config import global_config
+
+
+class FakeKeyring:
+    """Dict-backed stand-in for the OS keyring."""
+
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, user: str) -> str | None:
+        return self.store.get((service, user))
+
+    def set_password(self, service: str, user: str, value: str) -> None:
+        self.store[(service, user)] = value
+
+    def delete_password(self, service: str, user: str) -> None:
+        del self.store[(service, user)]
 
 
 @pytest.fixture
@@ -94,3 +113,48 @@ def test_global_config_key_overrides_stored(
     filestore.write_text(json.dumps({"api_key": "dimos_sk_stored"}))
     monkeypatch.setattr(global_config, "dimos_api_key", "dimos_sk_env")
     assert cloud.api_key() == "dimos_sk_env"
+
+
+def test_keyring_store_load_forget(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    kr = FakeKeyring()
+    monkeypatch.setattr(cloud, "_keyring", lambda: kr)
+    monkeypatch.setattr(cloud, "CREDENTIALS_PATH", tmp_path / "never-written.json")
+    monkeypatch.setattr(global_config, "dimos_api_key", None)
+
+    assert cloud._store({"api_key": "dimos_sk_kr", "email": "e@x"}) == "system keyring"
+    assert not (tmp_path / "never-written.json").exists()  # keyring won; no file
+    assert cloud.api_key() == "dimos_sk_kr"
+    assert cloud._forget() is True
+    assert cloud.api_key() is None and cloud._forget() is False
+
+
+def test_whoami_displays_account(
+    monkeypatch: pytest.MonkeyPatch, filestore: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    filestore.write_text(json.dumps({"api_key": "dimos_sk_w"}))
+    seen: dict[str, str] = {}
+
+    def fake_urlopen(req: Any) -> io.BytesIO:
+        seen["auth"] = req.get_header("Authorization")
+        return io.BytesIO(json.dumps({"email": "e@x", "scopes": "data"}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    cloud.whoami()
+    assert seen["auth"] == "Bearer dimos_sk_w"
+    assert "e@x (scopes: data)" in capsys.readouterr().out
+
+
+def test_whoami_revoked_key_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) -> None:
+    filestore.write_text(json.dumps({"api_key": "dimos_sk_dead"}))
+
+    def fake_urlopen(req: Any) -> io.BytesIO:
+        raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(typer.Exit):
+        cloud.whoami()
+
+
+def test_whoami_not_logged_in_exits(filestore: Path) -> None:
+    with pytest.raises(typer.Exit):
+        cloud.whoami()
